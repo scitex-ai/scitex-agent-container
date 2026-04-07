@@ -386,19 +386,14 @@ class _SSHRemote:
 
     @staticmethod
     def is_running(config: AgentConfig) -> bool:
-        """Check if agent is running on remote machine."""
+        """Check if agent is running on remote machine via screen -ls."""
+        screen_name = config.screen_name or f"cld-{config.name}"
         result = _SSHRemote.run(
             config,
-            f"scitex-agent-container status {config.name} --json",
-            timeout=15,
+            f"screen -ls {screen_name}",
+            timeout=10,
         )
-        if result.returncode != 0:
-            return False
-        try:
-            data = json.loads(result.stdout)
-            return data.get("status") == "running"
-        except (json.JSONDecodeError, KeyError):
-            return False
+        return screen_name in (result.stdout or "")
 
     @staticmethod
     def logs(config: AgentConfig, lines: int = 50) -> str:
