@@ -7,7 +7,12 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-REGISTRY_DIR = Path(os.environ.get("CLD_AGENT_REGISTRY_DIR", "/tmp/cld-agent-registry"))
+REGISTRY_DIR = Path(
+    os.environ.get(
+        "SCITEX_AGENT_CONTAINER_REGISTRY_DIR",
+        os.path.expanduser("~/.scitex/agent-container/registry"),
+    )
+)
 
 
 class Registry:
