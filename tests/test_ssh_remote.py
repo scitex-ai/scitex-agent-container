@@ -68,7 +68,7 @@ _BATCHED_ALL_OK = (
     "===CHECK_SCREEN_END===\n"
     "===CHECK_SAC_START===\n"
     "/usr/local/bin/scitex-agent-container\n"
-    "scitex-agent-container, version 0.3.0\n"
+    "scitex-agent-container, version 0.3.3\n"
     "===CHECK_SAC_END===\n"
     "===CHECK_PYTHON_START===\n"
     "Python 3.11.5\n"

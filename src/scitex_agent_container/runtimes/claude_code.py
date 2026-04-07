@@ -298,7 +298,14 @@ class _SSHRemote:
 
     @staticmethod
     def copy_config(config: AgentConfig) -> str:
-        """SCP the YAML config to the remote machine. Returns remote path."""
+        """SCP the YAML config to the remote machine. Returns remote path.
+
+        The ``remote`` section is stripped from the copied config so that the
+        remote-side ``scitex-agent-container start`` runs locally instead of
+        attempting to SSH back to itself (which would cause infinite recursion).
+        """
+        import yaml as _yaml
+
         remote_path = f"/tmp/{config.name}.yaml"
         local_path = config.config_path
         if not local_path:
@@ -311,7 +318,11 @@ class _SSHRemote:
         logger.info("Copying config to remote: %s -> %s:%s", local_path, config.remote.host, remote_path)
         try:
             with open(local_path) as f:
-                content = f.read()
+                raw = _yaml.safe_load(f)
+            # Strip remote section so agent starts locally on the target host
+            if isinstance(raw, dict) and "spec" in raw and "remote" in raw["spec"]:
+                del raw["spec"]["remote"]
+            content = _yaml.dump(raw, default_flow_style=False, sort_keys=False)
             ssh_cmd = _SSHRemote._ssh_base(config) + [
                 f"cat > {remote_path}",
             ]
@@ -390,10 +401,11 @@ class _SSHRemote:
             _SSHRemote.check_or_raise(config)
 
         remote_path = _SSHRemote.copy_config(config)
+        start_timeout = getattr(config.remote, "timeout", 120)
         result = _SSHRemote.run(
             config,
             f"scitex-agent-container start {remote_path}",
-            timeout=60,
+            timeout=start_timeout,
         )
         if result.returncode != 0:
             # Try to capture screen output for diagnosis
@@ -474,8 +486,13 @@ class ClaudeCodeRuntime(RuntimeBase):
         parts = ["claude"]
         parts.append(f"--model '{config.model}'")
 
-        for channel in config.claude.channels:
-            parts.append(f"--channels {channel}")
+        # Channels are passed via SCITEX_OROCHI_CHANNELS env var, not CLI flags
+        # (Claude Code has no --channels flag).
+        if config.claude.channels:
+            logger.debug(
+                "Channels configured via YAML; ensure SCITEX_OROCHI_CHANNELS "
+                "is set in env for MCP-based delivery."
+            )
 
         for flag in config.claude.flags:
             parts.append(flag)
@@ -490,6 +507,10 @@ class ClaudeCodeRuntime(RuntimeBase):
         lines = []
         for key, value in config.env.items():
             lines.append(f'export {key}="{value}"')
+        # Pass channels as env var for MCP-based delivery
+        if config.claude.channels:
+            channels_str = ",".join(config.claude.channels)
+            lines.append(f'export SCITEX_OROCHI_CHANNELS="{channels_str}"')
         return "\n".join(lines)
 
     def _watchdog_screen_name(self, config: AgentConfig) -> str:
