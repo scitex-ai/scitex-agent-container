@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "scitex-agent-container"
-version = "0.3.3"
+version = "0.4.0"
 description = "Declarative YAML-based framework for defining, managing, and orchestrating AI coding agent instances"
 readme = "README.md"
 license = "AGPL-3.0"
@@ -41,6 +41,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+orochi = [
+    "scitex-orochi>=0.4.0",
+]
 telegram = [
     "claude-code-telegrammer>=0.1.0",
 ]

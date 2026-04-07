@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .config import AgentConfig, load_config
 from .health import health_monitor
+from .orochi_connector import start_orochi_sidecar
 from .registry import Registry
 from .runtimes.claude_code import ClaudeCodeRuntime
 
@@ -74,6 +75,9 @@ def agent_start(
 
     # Post-start hooks
     _run_hooks(config.hooks.get("post_start", []))
+
+    # Start Orochi sidecar if enabled
+    start_orochi_sidecar(config)
 
     # Start health monitor in background if enabled
     if config.health.enabled:

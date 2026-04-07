@@ -80,6 +80,24 @@ class SkillsSpec:
 
 
 @dataclass
+class OrochiSpec:
+    enabled: bool = False
+    hosts: list[str] = field(default_factory=list)  # tried in order (first reachable wins)
+    port: int = 8559  # Django Channels default (HTTP + WS unified)
+    ws_path: str = "/ws/agent/"  # WebSocket endpoint path
+    token_env: str = "SCITEX_OROCHI_TOKEN"  # env var holding the auth token
+    channels: list[str] = field(default_factory=list)  # channels to subscribe
+    heartbeat_interval: int = 30  # seconds between heartbeats
+    reconnect_interval: int = 10  # seconds between reconnect attempts
+    reconnect_max_retries: int = 0  # 0 = infinite
+
+    @property
+    def is_enabled(self) -> bool:
+        """Return True if Orochi auto-connect is configured."""
+        return self.enabled and len(self.hosts) > 0
+
+
+@dataclass
 class StartupCommand:
     delay: int = 0  # seconds after startup
     command: str = ""
@@ -105,6 +123,7 @@ class AgentConfig:
     telegram: TelegramSpec = field(default_factory=TelegramSpec)
     remote: RemoteSpec = field(default_factory=RemoteSpec)
     skills: SkillsSpec = field(default_factory=SkillsSpec)
+    orochi: OrochiSpec = field(default_factory=OrochiSpec)
     startup_commands: list[StartupCommand] = field(default_factory=list)
     config_path: str = ""
 
@@ -227,6 +246,26 @@ def load_config(path: str | Path) -> AgentConfig:
         login_shell=remote_raw.get("login_shell", True),
     )
 
+    # Orochi spec
+    orochi_raw = spec.get("orochi", {}) or {}
+    # Support both "host" (single string) and "hosts" (list) for backward compat
+    orochi_hosts = orochi_raw.get("hosts", []) or []
+    if not orochi_hosts:
+        single_host = orochi_raw.get("host", "")
+        if single_host:
+            orochi_hosts = [single_host]
+    orochi = OrochiSpec(
+        enabled=orochi_raw.get("enabled", False),
+        hosts=orochi_hosts,
+        port=int(orochi_raw.get("port", 8559)),
+        ws_path=orochi_raw.get("ws_path", "/ws/agent/"),
+        token_env=orochi_raw.get("token_env", "SCITEX_OROCHI_TOKEN"),
+        channels=orochi_raw.get("channels", []) or [],
+        heartbeat_interval=int(orochi_raw.get("heartbeat_interval", 30)),
+        reconnect_interval=int(orochi_raw.get("reconnect_interval", 10)),
+        reconnect_max_retries=int(orochi_raw.get("reconnect_max_retries", 0)),
+    )
+
     # Startup commands
     startup_raw = spec.get("startup_commands", []) or []
     startup_commands = [
@@ -255,6 +294,7 @@ def load_config(path: str | Path) -> AgentConfig:
         telegram=telegram,
         remote=remote,
         skills=skills,
+        orochi=orochi,
         startup_commands=startup_commands,
         config_path=str(path),
     )
