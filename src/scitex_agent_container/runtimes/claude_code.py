@@ -169,7 +169,7 @@ class _SSHRemote:
         # 1. SSH connection
         try:
             ssh_cmd = _SSHRemote._ssh_base(config) + ["echo ok"]
-            proc = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=15)
+            proc = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=60)
             if proc.returncode == 0 and "ok" in proc.stdout:
                 results.append(("SSH connection", True, "OK"))
             else:
@@ -194,7 +194,7 @@ class _SSHRemote:
         # 2. screen binary
         proc = subprocess.run(
             _SSHRemote._ssh_base(config) + ["which screen"],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, timeout=60,
         )
         if proc.returncode == 0 and proc.stdout.strip():
             results.append(("screen", True, "OK"))
@@ -211,7 +211,7 @@ class _SSHRemote:
             _SSHRemote._ssh_base(config) + [
                 _SSHRemote._wrap_login_shell("which scitex-agent-container")
             ],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, timeout=60,
         )
         if proc.returncode == 0 and proc.stdout.strip():
             # Get version
@@ -219,7 +219,7 @@ class _SSHRemote:
                 _SSHRemote._ssh_base(config) + [
                     _SSHRemote._wrap_login_shell("scitex-agent-container --version")
                 ],
-                capture_output=True, text=True, timeout=15,
+                capture_output=True, text=True, timeout=60,
             )
             version = ver_proc.stdout.strip() if ver_proc.returncode == 0 else "unknown"
             results.append(("scitex-agent-container", True, version))
@@ -236,7 +236,7 @@ class _SSHRemote:
             _SSHRemote._ssh_base(config) + [
                 _SSHRemote._wrap_login_shell("python3 --version")
             ],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, timeout=60,
         )
         if proc.returncode == 0 and proc.stdout.strip():
             results.append(("python", True, proc.stdout.strip()))
@@ -248,7 +248,7 @@ class _SSHRemote:
             _SSHRemote._ssh_base(config) + [
                 "df -h / | awk 'NR==2 {print $5}'"
             ],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, timeout=60,
         )
         if proc.returncode == 0 and proc.stdout.strip():
             usage = proc.stdout.strip()
@@ -409,7 +409,7 @@ class _SSHRemote:
         result = _SSHRemote.run(
             config,
             f"scitex-agent-container logs {config.name} -n {lines}",
-            timeout=15,
+            timeout=60,
         )
         if result.returncode != 0:
             return f"[SSH error] {result.stderr.strip()}"
