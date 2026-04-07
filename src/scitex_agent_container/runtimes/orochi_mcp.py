@@ -1,7 +1,7 @@
 """Orochi MCP config generation for Claude Code agents.
 
 When orochi is enabled in agent config, this module generates a temporary
-MCP config JSON file that launches the orochi-push TypeScript MCP server,
+MCP config JSON file that launches the scitex-orochi TypeScript MCP server,
 and provides the CLI flags needed for Claude Code to use it.
 """
 
@@ -20,13 +20,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def find_orochi_push_ts() -> str | None:
-    """Locate the orochi_push.ts MCP server script.
+def find_mcp_channel_ts() -> str | None:
+    """Locate the mcp_channel.ts MCP server script.
 
     Resolution order:
     1. SCITEX_OROCHI_PUSH_TS env var (explicit override)
     2. Relative to the scitex_orochi Python package (dev installs)
-    3. Well-known path /opt/scitex-orochi/ts/orochi_push.ts
+    3. Well-known path /opt/scitex-orochi/ts/mcp_channel.ts
     """
     # 1. Explicit env override
     env_path = os.environ.get("SCITEX_OROCHI_PUSH_TS")
@@ -38,15 +38,15 @@ def find_orochi_push_ts() -> str | None:
         import scitex_orochi
 
         pkg_file = Path(scitex_orochi.__file__)
-        # src/scitex_orochi/__init__.py -> ../../ts/orochi_push.ts
-        candidate = pkg_file.parent.parent.parent / "ts" / "orochi_push.ts"
+        # src/scitex_orochi/__init__.py -> ../../ts/mcp_channel.ts
+        candidate = pkg_file.parent.parent.parent / "ts" / "mcp_channel.ts"
         if candidate.is_file():
             return str(candidate.resolve())
     except ImportError:
         pass
 
     # 3. Well-known system path
-    system_path = Path("/opt/scitex-orochi/ts/orochi_push.ts")
+    system_path = Path("/opt/scitex-orochi/ts/mcp_channel.ts")
     if system_path.is_file():
         return str(system_path)
 
@@ -54,17 +54,17 @@ def find_orochi_push_ts() -> str | None:
 
 
 def build_orochi_mcp_config(config: AgentConfig) -> dict | None:
-    """Build the MCP server config dict for orochi-push.
+    """Build the MCP server config dict for scitex-orochi.
 
     Returns None if orochi is not enabled or the TS file cannot be found.
     """
     if not config.orochi.is_enabled:
         return None
 
-    ts_path = find_orochi_push_ts()
+    ts_path = find_mcp_channel_ts()
     if ts_path is None:
         logger.warning(
-            "Orochi enabled but orochi_push.ts not found. "
+            "Orochi enabled but mcp_channel.ts not found. "
             "Set SCITEX_OROCHI_PUSH_TS env var or install scitex-orochi."
         )
         return None
@@ -92,7 +92,7 @@ def build_orochi_mcp_config(config: AgentConfig) -> dict | None:
 
     return {
         "mcpServers": {
-            "orochi-push": {
+            "scitex-orochi": {
                 "command": "bun",
                 "args": [ts_path],
                 "env": env_block,
@@ -122,27 +122,68 @@ def write_mcp_config_file(config: AgentConfig) -> str | None:
         "Orochi MCP config written to %s (agent=%s, host=%s)",
         config_path,
         config.name,
-        mcp_config["mcpServers"]["orochi-push"]["env"]["SCITEX_OROCHI_HOST"],
+        mcp_config["mcpServers"]["scitex-orochi"]["env"]["SCITEX_OROCHI_HOST"],
     )
     return str(config_path)
+
+
+def write_project_mcp_config(config: AgentConfig) -> str | None:
+    """Write scitex-orochi MCP config into the project's .mcp.json.
+
+    Claude Code discovers project-level MCP servers from .mcp.json at the
+    project root (NOT .claude/mcp.json).  The --mcp-config CLI flag does NOT
+    make servers available for --dangerously-load-development-channels, so we
+    must write directly into the project config.
+
+    If a .mcp.json already exists, we merge the scitex-orochi entry into
+    the existing mcpServers dict (preserving other servers).
+
+    Returns the path to the written file, or None if orochi is not enabled.
+    """
+    mcp_config = build_orochi_mcp_config(config)
+    if mcp_config is None:
+        return None
+
+    workdir = Path(config.expanded_workdir)
+    mcp_path = workdir / ".mcp.json"
+
+    # Merge with existing config if present
+    existing: dict = {"mcpServers": {}}
+    if mcp_path.exists():
+        try:
+            existing = json.loads(mcp_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+        if "mcpServers" not in existing:
+            existing["mcpServers"] = {}
+
+    existing["mcpServers"]["scitex-orochi"] = mcp_config["mcpServers"]["scitex-orochi"]
+
+    mcp_path.write_text(json.dumps(existing, indent=2) + "\n")
+    logger.info(
+        "Orochi MCP config written to project %s (agent=%s)",
+        mcp_path,
+        config.name,
+    )
+    return str(mcp_path)
 
 
 def get_orochi_claude_flags(config: AgentConfig) -> list[str]:
     """Return extra CLI flags for Claude Code when orochi is enabled.
 
-    Generates the MCP config file and returns flags like:
-        --mcp-config /tmp/.../mcp-agent.json
-        --dangerously-load-development-channels server:orochi-push
+    Writes the MCP server config into the project .mcp.json and
+    returns the --dangerously-load-development-channels flag.
     """
     if not config.orochi.is_enabled:
         return []
 
-    mcp_path = write_mcp_config_file(config)
-    if mcp_path is None:
+    # Write MCP config to both temp file (for --mcp-config) and project .mcp.json
+    temp_mcp = write_mcp_config_file(config)
+    project_mcp = write_project_mcp_config(config)
+    if project_mcp is None:
         return []
 
     flags = [
-        f"--mcp-config '{mcp_path}'",
-        "--dangerously-load-development-channels server:orochi-push",
+        "--dangerously-load-development-channels server:scitex-orochi",
     ]
     return flags

@@ -120,7 +120,7 @@ class ClaudeCodeRuntime(RuntimeBase):
         parts = ["claude"]
         parts.append(f"--model '{config.model}'")
 
-        # Inject orochi-push MCP flags when orochi is enabled
+        # Inject scitex-orochi MCP flags when orochi is enabled
         orochi_flags = get_orochi_claude_flags(config)
         for flag in orochi_flags:
             parts.append(flag)
@@ -231,6 +231,92 @@ class ClaudeCodeRuntime(RuntimeBase):
             access_file,
         )
 
+    def _needs_auto_accept(self, config: AgentConfig) -> bool:
+        """Check if the claude command includes flags that trigger TUI prompts."""
+        all_flags = list(config.claude.flags)
+        # orochi adds --dangerously-load-development-channels
+        if config.orochi.is_enabled:
+            all_flags.append("--dangerously-load-development-channels")
+        dangerous_flags = [
+            "--dangerously-skip-permissions",
+            "--dangerously-load-development-channels",
+        ]
+        return any(any(df in f for df in dangerous_flags) for f in all_flags)
+
+    def _send_auto_accept_keystrokes(self, config: AgentConfig) -> None:
+        """Send keystrokes to accept TUI confirmation prompts in screen.
+
+        Claude Code shows confirmation prompts for dangerous flags:
+        - --dangerously-skip-permissions: y/n prompt -> needs "y\\n"
+        - --dangerously-load-development-channels: radio selection -> needs "\\n"
+        In unattended screen sessions, these block forever. This method sends
+        the appropriate keystrokes with delays to auto-accept them.
+        """
+        if not self._needs_auto_accept(config):
+            return
+
+        # Build ordered list of (prompt_type, keystroke) pairs.
+        # --dangerously-skip-permissions always comes first in Claude Code.
+        prompts: list[tuple[str, str]] = []
+        for f in config.claude.flags:
+            if "--dangerously-skip-permissions" in f:
+                prompts.append(("skip-permissions", "y\n"))
+        if config.orochi.is_enabled:
+            # --dangerously-load-development-channels is a radio-selection
+            # prompt where option 1 is pre-selected; just press Enter.
+            prompts.append(("load-dev-channels", "\n"))
+
+        if not prompts:
+            return
+
+        logger.info(
+            "Auto-accepting %d TUI confirmation prompt(s) for %s",
+            len(prompts),
+            config.screen_name,
+        )
+
+        for i, (prompt_type, keystroke) in enumerate(prompts):
+            # Wait for the prompt to render. First prompt needs more time
+            # for Claude Code to initialize; subsequent prompts are faster.
+            delay = 5 if i == 0 else 3
+            time.sleep(delay)
+
+            if not ScreenManager.exists(config.screen_name):
+                logger.warning(
+                    "Screen session %s disappeared before auto-accept "
+                    "could send keystroke %d/%d",
+                    config.screen_name,
+                    i + 1,
+                    len(prompts),
+                )
+                return
+
+            try:
+                subprocess.run(
+                    [
+                        "screen",
+                        "-S",
+                        config.screen_name,
+                        "-X",
+                        "stuff",
+                        keystroke,
+                    ],
+                    check=False,
+                    capture_output=True,
+                )
+                logger.info(
+                    "Sent auto-accept keystroke %d/%d (%s) to %s",
+                    i + 1,
+                    len(prompts),
+                    prompt_type,
+                    config.screen_name,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to send auto-accept keystroke to %s",
+                    config.screen_name,
+                )
+
     def _run_startup_commands(self, config: AgentConfig) -> None:
         """Send startup commands to the screen session with delays."""
         for sc in config.startup_commands:
@@ -263,7 +349,8 @@ class ClaudeCodeRuntime(RuntimeBase):
                 )
 
     def _post_start_tasks(self, config: AgentConfig) -> None:
-        """Run post-start tasks: telegram setup and startup commands."""
+        """Run post-start tasks: auto-accept prompts, telegram setup, startup commands."""
+        self._send_auto_accept_keystrokes(config)
         self._setup_telegram_access(config)
         self._run_startup_commands(config)
 
@@ -298,8 +385,10 @@ class ClaudeCodeRuntime(RuntimeBase):
             self._start_watchdog(config)
 
             has_tasks = (
-                config.telegram.auto_connect and config.telegram.allowed_users
-            ) or config.startup_commands
+                self._needs_auto_accept(config)
+                or (config.telegram.auto_connect and config.telegram.allowed_users)
+                or config.startup_commands
+            )
             if has_tasks:
                 thread = threading.Thread(
                     target=self._post_start_tasks,
