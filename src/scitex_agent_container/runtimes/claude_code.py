@@ -162,25 +162,40 @@ class _SSHRemote:
 
         Checks: SSH connectivity, screen binary, scitex-agent-container binary,
         python availability, and disk space.
+
+        Uses a single SSH call with batched commands to minimize round-trips,
+        which is critical for hosts with slow login shells (e.g., module loads
+        in .bashrc taking 30-60s per connection).
         """
         target = _SSHRemote._ssh_target(config)
         results: list[tuple[str, bool, str]] = []
+        timeout = getattr(config.remote, "timeout", 60)
+        host = config.remote.host
 
-        # 1. SSH connection
+        # Build a single batched command that runs all checks in one SSH call.
+        # We use sentinel markers to parse each check's output.
+        # The outer command uses login shell to get PATH, but the SSH
+        # connectivity test is implicit (if this SSH call works, SSH is OK).
+        batched_script = (
+            "echo '===CHECK_SSH_OK===';"
+            "echo '===CHECK_SCREEN_START==='; which screen 2>/dev/null; echo '===CHECK_SCREEN_END===';"
+            "echo '===CHECK_SAC_START==='; which scitex-agent-container 2>/dev/null && scitex-agent-container --version 2>/dev/null; echo '===CHECK_SAC_END===';"
+            "echo '===CHECK_PYTHON_START==='; python3 --version 2>&1; echo '===CHECK_PYTHON_END===';"
+            "echo '===CHECK_DISK_START==='; df -h / 2>/dev/null | awk 'NR==2 {print $5}'; echo '===CHECK_DISK_END==='"
+        )
+
+        use_login = getattr(config.remote, "login_shell", True)
+
         try:
-            ssh_cmd = _SSHRemote._ssh_base(config) + ["echo ok"]
-            proc = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=getattr(getattr(config, "remote", None), "timeout", 60))
-            if proc.returncode == 0 and "ok" in proc.stdout:
-                results.append(("SSH connection", True, "OK"))
+            ssh_cmd = _SSHRemote._ssh_base(config)
+            if use_login:
+                ssh_cmd.append(_SSHRemote._wrap_login_shell(batched_script))
             else:
-                results.append((
-                    "SSH connection", False,
-                    f"Cannot SSH to {target}\n"
-                    f"  Check: ssh {target} 'echo ok'\n"
-                    f"  Fix:   ssh-keygen && ssh-copy-id {target}",
-                ))
-                # Cannot proceed with other checks if SSH fails
-                return results
+                ssh_cmd.append(batched_script)
+
+            proc = subprocess.run(
+                ssh_cmd, capture_output=True, text=True, timeout=timeout,
+            )
         except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
             results.append((
                 "SSH connection", False,
@@ -191,40 +206,54 @@ class _SSHRemote:
             ))
             return results
 
+        output = proc.stdout or ""
+
+        # 1. SSH connection -- if we got the sentinel, SSH worked
+        if "===CHECK_SSH_OK===" in output:
+            results.append(("SSH connection", True, "OK"))
+        else:
+            results.append((
+                "SSH connection", False,
+                f"Cannot SSH to {target}\n"
+                f"  Check: ssh {target} 'echo ok'\n"
+                f"  Fix:   ssh-keygen && ssh-copy-id {target}",
+            ))
+            return results
+
+        def _extract(start_marker: str, end_marker: str) -> str:
+            """Extract text between two sentinel markers."""
+            s = output.find(start_marker)
+            e = output.find(end_marker)
+            if s == -1 or e == -1:
+                return ""
+            return output[s + len(start_marker):e].strip()
+
         # 2. screen binary
-        proc = subprocess.run(
-            _SSHRemote._ssh_base(config) + ["which screen"],
-            capture_output=True, text=True, timeout=getattr(getattr(config, "remote", None), "timeout", 60),
-        )
-        if proc.returncode == 0 and proc.stdout.strip():
+        screen_out = _extract("===CHECK_SCREEN_START===", "===CHECK_SCREEN_END===")
+        if screen_out and "/" in screen_out:
             results.append(("screen", True, "OK"))
         else:
-            host = config.remote.host
             results.append((
                 "screen", False,
                 f"GNU screen not installed on {host}\n"
                 f"  Fix: ssh {host} \"sudo apt install screen\"",
             ))
 
-        # 3. scitex-agent-container binary (via login shell so PATH is set)
-        proc = subprocess.run(
-            _SSHRemote._ssh_base(config) + [
-                _SSHRemote._wrap_login_shell("which scitex-agent-container")
-            ],
-            capture_output=True, text=True, timeout=getattr(getattr(config, "remote", None), "timeout", 60),
-        )
-        if proc.returncode == 0 and proc.stdout.strip():
-            # Get version
-            ver_proc = subprocess.run(
-                _SSHRemote._ssh_base(config) + [
-                    _SSHRemote._wrap_login_shell("scitex-agent-container --version")
-                ],
-                capture_output=True, text=True, timeout=getattr(getattr(config, "remote", None), "timeout", 60),
-            )
-            version = ver_proc.stdout.strip() if ver_proc.returncode == 0 else "unknown"
+        # 3. scitex-agent-container binary + version
+        sac_out = _extract("===CHECK_SAC_START===", "===CHECK_SAC_END===")
+        if sac_out and ("scitex-agent-container" in sac_out or "/" in sac_out):
+            # Try to find the version line
+            version = "unknown"
+            for line in sac_out.split("\n"):
+                line = line.strip()
+                if "version" in line.lower() or line.startswith("scitex"):
+                    version = line
+                    break
+                elif "/" in line:
+                    # This is the 'which' output, skip
+                    continue
             results.append(("scitex-agent-container", True, version))
         else:
-            host = config.remote.host
             results.append((
                 "scitex-agent-container", False,
                 f"scitex-agent-container not installed on {host}\n"
@@ -232,26 +261,22 @@ class _SSHRemote:
             ))
 
         # 4. python
-        proc = subprocess.run(
-            _SSHRemote._ssh_base(config) + [
-                _SSHRemote._wrap_login_shell("python3 --version")
-            ],
-            capture_output=True, text=True, timeout=getattr(getattr(config, "remote", None), "timeout", 60),
-        )
-        if proc.returncode == 0 and proc.stdout.strip():
-            results.append(("python", True, proc.stdout.strip()))
+        python_out = _extract("===CHECK_PYTHON_START===", "===CHECK_PYTHON_END===")
+        if python_out and "Python" in python_out:
+            # Extract just the version line
+            for line in python_out.split("\n"):
+                if "Python" in line:
+                    results.append(("python", True, line.strip()))
+                    break
+            else:
+                results.append(("python", True, python_out.split("\n")[0].strip()))
         else:
             results.append(("python", False, "python3 not found on remote"))
 
         # 5. disk space
-        proc = subprocess.run(
-            _SSHRemote._ssh_base(config) + [
-                "df -h / | awk 'NR==2 {print $5}'"
-            ],
-            capture_output=True, text=True, timeout=getattr(getattr(config, "remote", None), "timeout", 60),
-        )
-        if proc.returncode == 0 and proc.stdout.strip():
-            usage = proc.stdout.strip()
+        disk_out = _extract("===CHECK_DISK_START===", "===CHECK_DISK_END===")
+        if disk_out:
+            usage = disk_out.split("\n")[0].strip()
             results.append(("disk space", True, f"{usage} used"))
         else:
             results.append(("disk space", True, "unknown"))
@@ -312,7 +337,7 @@ class _SSHRemote:
 
     @staticmethod
     def run(config: AgentConfig, remote_cmd: str, timeout: int = 0,
-            login_shell: bool = True) -> subprocess.CompletedProcess:
+            login_shell: bool | None = None) -> subprocess.CompletedProcess:
         """Execute a command on the remote host via SSH.
 
         Args:
@@ -320,10 +345,13 @@ class _SSHRemote:
             remote_cmd: Command string to execute remotely.
             timeout: Timeout in seconds.
             login_shell: If True, wrap command in ``bash -l -c '...'`` so that
-                the remote user's PATH and environment are loaded.
+                the remote user's PATH and environment are loaded.  Defaults to
+                ``config.remote.login_shell`` (True unless overridden in YAML).
         """
         if timeout <= 0:
             timeout = getattr(config.remote, "timeout", 60)
+        if login_shell is None:
+            login_shell = getattr(config.remote, "login_shell", True)
         ssh_cmd = _SSHRemote._ssh_base(config)
         if login_shell:
             ssh_cmd.append(_SSHRemote._wrap_login_shell(remote_cmd))
@@ -348,13 +376,18 @@ class _SSHRemote:
         return result
 
     @staticmethod
-    def start(config: AgentConfig) -> bool:
+    def start(config: AgentConfig, no_preflight: bool = False) -> bool:
         """Deploy and start agent on remote machine.
 
         Runs preflight checks before attempting deployment so that missing
         dependencies produce clear, actionable error messages.
+
+        Args:
+            config: Agent configuration.
+            no_preflight: If True, skip preflight checks (useful for slow SSH hosts).
         """
-        _SSHRemote.check_or_raise(config)
+        if not no_preflight:
+            _SSHRemote.check_or_raise(config)
 
         remote_path = _SSHRemote.copy_config(config)
         result = _SSHRemote.run(
@@ -576,11 +609,11 @@ class ClaudeCodeRuntime(RuntimeBase):
         self._setup_telegram_access(config)
         self._run_startup_commands(config)
 
-    def start(self, config: AgentConfig) -> bool:
+    def start(self, config: AgentConfig, no_preflight: bool = False) -> bool:
         """Start a Claude Code agent."""
         # If remote, delegate to SSH
         if config.remote.is_remote:
-            return _SSHRemote.start(config)
+            return _SSHRemote.start(config, no_preflight=no_preflight)
 
         # If container runtime is requested, delegate
         if config.container.runtime != "none":

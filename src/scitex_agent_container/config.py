@@ -65,6 +65,7 @@ class RemoteSpec:
     key: str = ""           # Path to SSH key (optional)
     port: int = 22          # SSH port
     timeout: int = 60       # SSH command timeout in seconds
+    login_shell: bool = True  # Use bash -l -c (needed for PATH on most hosts)
 
     @property
     def is_remote(self) -> bool:
@@ -223,6 +224,7 @@ def load_config(path: str | Path) -> AgentConfig:
         user=remote_raw.get("user", ""),
         key=remote_raw.get("key", ""),
         port=int(remote_raw.get("port", 22)),
+        login_shell=remote_raw.get("login_shell", True),
     )
 
     # Startup commands

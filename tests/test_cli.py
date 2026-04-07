@@ -206,6 +206,13 @@ class TestCLI:
         assert "FAIL" in result.output
         Path(path).unlink()
 
+    def test_start_help_shows_no_preflight(self):
+        """start --help should show the --no-preflight option."""
+        runner = CliRunner()
+        result = runner.invoke(main, ["start", "--help"])
+        assert result.exit_code == 0
+        assert "--no-preflight" in result.output
+
     def test_find_no_match(self):
         """find command should return empty when no agents match."""
         import tempfile

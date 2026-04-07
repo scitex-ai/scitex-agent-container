@@ -35,8 +35,17 @@ def _run_hooks(hooks: list[str]) -> None:
                 print(f"       {result.stderr.strip()}", file=sys.stderr)
 
 
-def agent_start(config_path: str, registry: Registry | None = None) -> bool:
+def agent_start(
+    config_path: str,
+    registry: Registry | None = None,
+    no_preflight: bool = False,
+) -> bool:
     """Start an agent from a YAML config file.
+
+    Args:
+        config_path: Path to the YAML agent definition.
+        registry: Optional registry instance.
+        no_preflight: If True, skip SSH preflight checks (useful for slow hosts).
 
     Returns True on success, False on failure.
     """
@@ -52,7 +61,7 @@ def agent_start(config_path: str, registry: Registry | None = None) -> bool:
     _run_hooks(config.hooks.get("pre_start", []))
 
     # Start
-    success = runtime.start(config)
+    success = runtime.start(config, no_preflight=no_preflight)
     if not success:
         raise RuntimeError(f"Failed to start agent '{config.name}'")
 

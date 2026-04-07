@@ -412,3 +412,31 @@ class TestRemoteSpec:
         )
         assert config.remote.is_remote is True
         assert config.remote.host == "server1"
+
+    def test_login_shell_default(self):
+        """login_shell defaults to True."""
+        path = _write_config(MINIMAL_CONFIG)
+        config = load_config(path)
+        assert config.remote.login_shell is True
+        Path(path).unlink()
+
+    def test_login_shell_from_yaml(self):
+        """login_shell can be set to False in YAML."""
+        data = {
+            "apiVersion": "cld-agent/v1",
+            "kind": "Agent",
+            "metadata": {"name": "test-login-shell"},
+            "spec": {
+                "runtime": "claude-code",
+                "remote": {
+                    "host": "fast-host",
+                    "user": "deploy",
+                    "login_shell": False,
+                },
+            },
+        }
+        path = _write_config(data)
+        config = load_config(path)
+        assert config.remote.login_shell is False
+        assert config.remote.host == "fast-host"
+        Path(path).unlink()

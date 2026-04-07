@@ -11,7 +11,7 @@ class RuntimeBase(ABC):
     """Interface that all runtime adapters must implement."""
 
     @abstractmethod
-    def start(self, config: AgentConfig) -> bool:
+    def start(self, config: AgentConfig, no_preflight: bool = False) -> bool:
         """Start an agent. Returns True on success."""
         ...
 

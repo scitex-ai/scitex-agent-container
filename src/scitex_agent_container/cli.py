@@ -71,7 +71,9 @@ def main(ctx, help_recursive):
 
 @main.command()
 @click.argument("config_path", type=click.Path(exists=True))
-def start(config_path: str):
+@click.option("--no-preflight", is_flag=True, default=False,
+              help="Skip preflight checks (useful for slow SSH hosts).")
+def start(config_path: str, no_preflight: bool):
     """Start an agent from a YAML definition."""
     try:
         config = load_config(config_path)
@@ -84,7 +86,9 @@ def start(config_path: str):
             f"[blue]Starting agent '{config.name}' "
             f"(runtime: {config.runtime}, {location})...[/blue]"
         )
-        agent_start(config_path)
+        if no_preflight:
+            console.print("[dim]Preflight checks skipped (--no-preflight)[/dim]")
+        agent_start(config_path, no_preflight=no_preflight)
         console.print(f"[green]Agent '{config.name}' started successfully [{location}][/green]")
     except Exception as exc:
         console.print(f"[red]Error: {exc}[/red]")
