@@ -1,0 +1,39 @@
+apiVersion: cld-agent/v1
+kind: Agent
+metadata:
+  name: worker-general
+  labels:
+    role: worker
+    team: dev
+spec:
+  runtime: claude-code
+  model: sonnet
+  workdir: ~/proj
+
+  claude:
+    flags:
+      - --dangerously-skip-permissions
+    session: new
+
+  env:
+    CLAUDE_AGENT_ROLE: worker
+    CLAUDE_AGENT_ID: worker-general
+
+  screen:
+    name: cld-worker
+
+  health:
+    enabled: true
+    interval: 60
+    timeout: 5
+    method: screen-alive
+
+  restart:
+    policy: never
+    max_retries: 0
+
+  hooks:
+    pre_start: []
+    post_start: []
+    pre_stop: []
+    post_stop: []
