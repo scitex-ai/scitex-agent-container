@@ -1,3 +1,4 @@
+<!-- SciTeX Convention: Header (logo, tagline, badges) -->
 # scitex-agent-container
 
 <p align="center">
@@ -21,6 +22,7 @@
 
 ---
 
+<!-- SciTeX Convention: Problem & Solution -->
 ## Problem
 
 Managing AI coding agents (Claude Code, Cursor, Aider) in production requires manual script-writing, environment setup, and process monitoring for each agent instance. Scaling from one agent to a fleet means duplicating fragile shell scripts with no health checks, restart policies, or lifecycle management.
@@ -41,6 +43,7 @@ YAML manifest --> scitex-agent-container start --> screen session
                                                    + restart policy
 ```
 
+<!-- SciTeX Convention: Installation -->
 ## Installation
 
 Requires Python >= 3.10.
@@ -55,6 +58,7 @@ pip install scitex-agent-container[telegram]
 pip install scitex-agent-container[dev]
 ```
 
+<!-- SciTeX Convention: Quickstart -->
 ## Quickstart
 
 1. Write a YAML manifest:
@@ -117,6 +121,7 @@ scitex-agent-container logs telegram-master -n 100
 scitex-agent-container attach telegram-master   # Ctrl-A D to detach
 ```
 
+<!-- SciTeX Convention: Four Interfaces -->
 ## Four Interfaces
 
 <details>
@@ -193,10 +198,12 @@ Skills are planned for a future release. They will be available under `_skills/`
 
 </details>
 
+<!-- SciTeX Convention: Ecosystem -->
 ## Part of SciTeX
 
 scitex-agent-container is part of [**SciTeX**](https://scitex.ai). It depends on [scitex-container](https://github.com/ywatanabe1989/scitex-container) for container runtime abstractions and is used by [scitex-orochi](https://github.com/ywatanabe1989/scitex-orochi) for multi-machine agent orchestration.
 
+<!-- SciTeX Convention: Footer (Four Freedoms + icon) -->
 >Four Freedoms for Research
 >
 >0. The freedom to **run** your research anywhere -- your machine, your terms.
