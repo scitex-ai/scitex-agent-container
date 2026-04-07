@@ -363,9 +363,24 @@ class _SSHRemote:
             timeout=60,
         )
         if result.returncode != 0:
+            # Try to capture screen output for diagnosis
+            screen_name = config.screen_name or f"cld-{config.name}"
+            screen_output = ""
+            try:
+                diag = _SSHRemote.run(
+                    config,
+                    f"screen -ls {screen_name} 2>&1; "
+                    f"screen -S {screen_name} -X hardcopy /tmp/{screen_name}-diag.txt 2>/dev/null; "
+                    f"cat /tmp/{screen_name}-diag.txt 2>/dev/null | tail -30",
+                    timeout=30,
+                )
+                screen_output = diag.stdout.strip()
+            except Exception:
+                screen_output = "(could not capture screen output)"
             raise RuntimeError(
-                f"Failed to start agent '{config.name}' on {config.remote.host}: "
-                f"{result.stderr.strip()}"
+                f"Failed to start agent '{config.name}' on {config.remote.host}\n"
+                f"  stderr: {result.stderr.strip()}\n"
+                f"  screen output:\n{screen_output}"
             )
         logger.info(
             "Agent '%s' started on remote host %s", config.name, config.remote.host
