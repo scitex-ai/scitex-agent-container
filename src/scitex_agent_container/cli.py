@@ -217,11 +217,14 @@ def _get_agent_list_data(
                 pass
 
         # Check if running — remote or local
-        if cfg and cfg.remote.is_remote:
-            from .runtimes.claude_code import ClaudeCodeRuntime
-            is_running = ClaudeCodeRuntime().is_running(cfg)
-        else:
-            is_running = ScreenManager.exists(screen_name)
+        try:
+            if cfg and cfg.remote.is_remote:
+                from .runtimes.claude_code import ClaudeCodeRuntime
+                is_running = ClaudeCodeRuntime().is_running(cfg)
+            else:
+                is_running = ScreenManager.exists(screen_name)
+        except Exception:
+            is_running = False  # Graceful degradation on SSH timeout etc.
 
         # Apply filters
         if machine and labels.get("machine") != machine:

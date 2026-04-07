@@ -282,16 +282,21 @@ class _SSHRemote:
             )
 
         scp_cmd = _SSHRemote._scp_base(config)
-        target = f"{_SSHRemote._ssh_target(config)}:{remote_path}"
-        scp_cmd += [local_path, target]
-
-        logger.info("SCP config to remote: %s -> %s", local_path, target)
+        # Use ssh+cat instead of scp to avoid .bashrc output breaking scp
+        logger.info("Copying config to remote: %s -> %s:%s", local_path, config.remote.host, remote_path)
         try:
-            result = subprocess.run(scp_cmd, capture_output=True, text=True, timeout=30)
+            with open(local_path) as f:
+                content = f.read()
+            ssh_cmd = _SSHRemote._ssh_base(config) + [
+                f"cat > {remote_path}",
+            ]
+            result = subprocess.run(
+                ssh_cmd, input=content, capture_output=True, text=True, timeout=30
+            )
         except subprocess.TimeoutExpired:
             t = _SSHRemote._ssh_target(config)
             raise RuntimeError(
-                f"ERROR: SCP timed out copying config to {config.remote.host}\n"
+                f"ERROR: Timed out copying config to {config.remote.host}\n"
                 f"  Check: ssh {t} 'echo ok'\n"
                 f"  Fix:   ssh-keygen && ssh-copy-id {t}"
             )
@@ -388,12 +393,15 @@ class _SSHRemote:
     def is_running(config: AgentConfig) -> bool:
         """Check if agent is running on remote machine via screen -ls."""
         screen_name = config.screen_name or f"cld-{config.name}"
-        result = _SSHRemote.run(
-            config,
-            f"screen -ls {screen_name}",
-            timeout=10,
-        )
-        return screen_name in (result.stdout or "")
+        try:
+            result = _SSHRemote.run(
+                config,
+                f"screen -ls {screen_name}",
+                timeout=30,
+            )
+            return screen_name in (result.stdout or "")
+        except Exception:
+            return False  # Assume not running if SSH fails
 
     @staticmethod
     def logs(config: AgentConfig, lines: int = 50) -> str:
