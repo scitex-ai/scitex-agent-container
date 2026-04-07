@@ -75,9 +75,17 @@ def start(config_path: str):
     """Start an agent from a YAML definition."""
     try:
         config = load_config(config_path)
-        console.print(f"[blue]Starting agent '{config.name}' (runtime: {config.runtime})...[/blue]")
+        location = (
+            f"REMOTE: {config.remote.host}"
+            if config.remote.is_remote
+            else "LOCAL"
+        )
+        console.print(
+            f"[blue]Starting agent '{config.name}' "
+            f"(runtime: {config.runtime}, {location})...[/blue]"
+        )
         agent_start(config_path)
-        console.print(f"[green]Agent '{config.name}' started successfully[/green]")
+        console.print(f"[green]Agent '{config.name}' started successfully [{location}][/green]")
     except Exception as exc:
         console.print(f"[red]Error: {exc}[/red]")
         traceback.print_exc()
@@ -196,15 +204,19 @@ def _get_agent_list_data(
         started = entry.get("started_at", "?")
         is_running = ScreenManager.exists(screen_name)
 
-        # Load labels from config if filtering is requested
+        # Load config for labels, remote info, and filtering
         labels: dict[str, str] = {}
+        remote_host = ""
         config_path = entry.get("config")
-        if config_path and (capability or machine):
+        cfg = None
+        if config_path:
             try:
                 cfg = load_config(config_path)
                 labels = cfg.labels
+                if cfg.remote.is_remote:
+                    remote_host = cfg.remote.host
             except Exception:
-                labels = {}
+                pass
 
         # Apply filters
         if machine and labels.get("machine") != machine:
@@ -220,6 +232,8 @@ def _get_agent_list_data(
             "screen": screen_name,
             "started_at": started,
         }
+        if remote_host:
+            row["remote"] = remote_host
         if labels:
             row["labels"] = labels
         results.append(row)
@@ -250,6 +264,7 @@ def _print_agent_list(
     table = Table(title="Registered Agents")
     table.add_column("Name", style="bold")
     table.add_column("Status")
+    table.add_column("Location")
     table.add_column("Screen")
     table.add_column("Started")
 
@@ -258,7 +273,9 @@ def _print_agent_list(
             "[green]running[/green]" if row["status"] == "running"
             else "[red]stopped[/red]"
         )
-        table.add_row(row["name"], status_str, row["screen"], row["started_at"])
+        remote = row.get("remote", "")
+        location = f"[cyan]REMOTE: {remote}[/cyan]" if remote else "LOCAL"
+        table.add_row(row["name"], status_str, location, row["screen"], row["started_at"])
 
     console.print(table)
 

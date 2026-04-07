@@ -129,7 +129,7 @@ def agent_status(name: str, registry: Registry | None = None) -> dict:
         running = False
         config = None
 
-    return {
+    result = {
         "name": name,
         "config": entry.get("config", ""),
         "screen": entry.get("screen", ""),
@@ -138,6 +138,9 @@ def agent_status(name: str, registry: Registry | None = None) -> dict:
         "model": config.model if config else "unknown",
         "runtime": config.runtime if config else "unknown",
     }
+    if config and config.remote.is_remote:
+        result["remote"] = config.remote.host
+    return result
 
 
 def agent_logs(name: str, lines: int = 50, registry: Registry | None = None) -> str:

@@ -59,6 +59,19 @@ class TelegramSpec:
 
 
 @dataclass
+class RemoteSpec:
+    host: str = ""          # SSH host (hostname or IP)
+    user: str = ""          # SSH user
+    key: str = ""           # Path to SSH key (optional)
+    port: int = 22          # SSH port
+
+    @property
+    def is_remote(self) -> bool:
+        """Return True if this agent should be deployed via SSH."""
+        return bool(self.host)
+
+
+@dataclass
 class SkillsSpec:
     required: list[str] = field(default_factory=list)  # Auto-loaded at startup
     available: list[str] = field(default_factory=list)  # Available but not auto-loaded
@@ -88,6 +101,7 @@ class AgentConfig:
     restart: RestartSpec = field(default_factory=RestartSpec)
     hooks: dict[str, list[str]] = field(default_factory=dict)
     telegram: TelegramSpec = field(default_factory=TelegramSpec)
+    remote: RemoteSpec = field(default_factory=RemoteSpec)
     skills: SkillsSpec = field(default_factory=SkillsSpec)
     startup_commands: list[StartupCommand] = field(default_factory=list)
     config_path: str = ""
@@ -201,6 +215,15 @@ def load_config(path: str | Path) -> AgentConfig:
         available=skills_raw.get("available", []) or [],
     )
 
+    # Remote spec
+    remote_raw = spec.get("remote", {}) or {}
+    remote = RemoteSpec(
+        host=remote_raw.get("host", ""),
+        user=remote_raw.get("user", ""),
+        key=remote_raw.get("key", ""),
+        port=int(remote_raw.get("port", 22)),
+    )
+
     # Startup commands
     startup_raw = spec.get("startup_commands", []) or []
     startup_commands = [
@@ -227,6 +250,7 @@ def load_config(path: str | Path) -> AgentConfig:
         restart=restart,
         hooks=hooks,
         telegram=telegram,
+        remote=remote,
         skills=skills,
         startup_commands=startup_commands,
         config_path=str(path),

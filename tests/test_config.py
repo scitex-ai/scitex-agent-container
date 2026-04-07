@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from scitex_agent_container.config import AgentConfig, SkillsSpec, load_config, validate_config
+from scitex_agent_container.config import AgentConfig, RemoteSpec, SkillsSpec, load_config, validate_config
 
 
 MINIMAL_CONFIG = {
@@ -334,3 +334,81 @@ class TestClaudeMdGeneration:
             config = AgentConfig(name="test-agent")
             # Should not raise
             _cleanup_claude_md(config, tmpdir)
+
+
+class TestRemoteSpec:
+    def test_default_remote(self):
+        """Remote spec defaults to empty (local execution)."""
+        path = _write_config(MINIMAL_CONFIG)
+        config = load_config(path)
+        assert config.remote.host == ""
+        assert config.remote.user == ""
+        assert config.remote.key == ""
+        assert config.remote.port == 22
+        assert config.remote.is_remote is False
+        Path(path).unlink()
+
+    def test_remote_from_yaml(self):
+        """Remote spec parsed from YAML config."""
+        data = {
+            "apiVersion": "cld-agent/v1",
+            "kind": "Agent",
+            "metadata": {"name": "remote-agent"},
+            "spec": {
+                "runtime": "claude-code",
+                "remote": {
+                    "host": "mba",
+                    "user": "testuser",
+                },
+            },
+        }
+        path = _write_config(data)
+        config = load_config(path)
+        assert config.remote.host == "mba"
+        assert config.remote.user == "testuser"
+        assert config.remote.port == 22
+        assert config.remote.key == ""
+        assert config.remote.is_remote is True
+        Path(path).unlink()
+
+    def test_remote_full_spec(self):
+        """Remote spec with all fields specified."""
+        data = {
+            "apiVersion": "cld-agent/v1",
+            "kind": "Agent",
+            "metadata": {"name": "remote-full"},
+            "spec": {
+                "runtime": "claude-code",
+                "remote": {
+                    "host": "192.168.1.100",
+                    "user": "deploy",
+                    "key": "/home/deploy/.ssh/id_ed25519",
+                    "port": 2222,
+                },
+            },
+        }
+        path = _write_config(data)
+        config = load_config(path)
+        assert config.remote.host == "192.168.1.100"
+        assert config.remote.user == "deploy"
+        assert config.remote.key == "/home/deploy/.ssh/id_ed25519"
+        assert config.remote.port == 2222
+        assert config.remote.is_remote is True
+        Path(path).unlink()
+
+    def test_remote_spec_dataclass(self):
+        """RemoteSpec dataclass works standalone."""
+        r = RemoteSpec()
+        assert r.is_remote is False
+
+        r = RemoteSpec(host="myhost", user="me")
+        assert r.is_remote is True
+
+    def test_agent_config_with_remote(self):
+        """AgentConfig accepts RemoteSpec."""
+        config = AgentConfig(
+            name="test",
+            remote=RemoteSpec(host="server1", user="admin"),
+        )
+        assert config.remote.is_remote is True
+        assert config.remote.host == "server1"

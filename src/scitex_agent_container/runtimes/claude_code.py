@@ -107,6 +107,140 @@ def _cleanup_claude_md(config: AgentConfig, workdir: str) -> None:
         logger.info("CLAUDE.md cleaned up for agent %s at %s", agent_id, claude_md)
 
 
+class _SSHRemote:
+    """Helper for executing commands on a remote machine via SSH."""
+
+    SSH_OPTS = [
+        "-o", "BatchMode=yes",
+        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "ConnectTimeout=10",
+    ]
+
+    @staticmethod
+    def _ssh_base(config: AgentConfig) -> list[str]:
+        """Build the base SSH command with options."""
+        cmd = ["ssh"] + _SSHRemote.SSH_OPTS
+        if config.remote.key:
+            cmd += ["-i", config.remote.key]
+        if config.remote.port != 22:
+            cmd += ["-p", str(config.remote.port)]
+        cmd.append(f"{config.remote.user}@{config.remote.host}")
+        return cmd
+
+    @staticmethod
+    def _scp_base(config: AgentConfig) -> list[str]:
+        """Build the base SCP command with options."""
+        cmd = ["scp"] + _SSHRemote.SSH_OPTS
+        if config.remote.key:
+            cmd += ["-i", config.remote.key]
+        if config.remote.port != 22:
+            cmd += ["-P", str(config.remote.port)]
+        return cmd
+
+    @staticmethod
+    def copy_config(config: AgentConfig) -> str:
+        """SCP the YAML config to the remote machine. Returns remote path."""
+        remote_path = f"/tmp/{config.name}.yaml"
+        local_path = config.config_path
+        if not local_path:
+            raise RuntimeError(
+                f"Cannot deploy '{config.name}' remotely: config_path is not set"
+            )
+
+        scp_cmd = _SSHRemote._scp_base(config)
+        target = f"{config.remote.user}@{config.remote.host}:{remote_path}"
+        scp_cmd += [local_path, target]
+
+        logger.info("SCP config to remote: %s -> %s", local_path, target)
+        result = subprocess.run(scp_cmd, capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"Failed to copy config to {config.remote.host}: {result.stderr.strip()}"
+            )
+        return remote_path
+
+    @staticmethod
+    def run(config: AgentConfig, remote_cmd: str, timeout: int = 30) -> subprocess.CompletedProcess:
+        """Execute a command on the remote host via SSH."""
+        ssh_cmd = _SSHRemote._ssh_base(config)
+        ssh_cmd.append(remote_cmd)
+
+        logger.info("SSH [%s]: %s", config.remote.host, remote_cmd)
+        result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=timeout)
+        if result.returncode != 0:
+            logger.warning(
+                "SSH command failed on %s (exit %d): %s",
+                config.remote.host, result.returncode, result.stderr.strip(),
+            )
+        return result
+
+    @staticmethod
+    def start(config: AgentConfig) -> bool:
+        """Deploy and start agent on remote machine."""
+        remote_path = _SSHRemote.copy_config(config)
+        result = _SSHRemote.run(
+            config,
+            f"scitex-agent-container start {remote_path}",
+            timeout=60,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"Failed to start agent '{config.name}' on {config.remote.host}: "
+                f"{result.stderr.strip()}"
+            )
+        logger.info(
+            "Agent '%s' started on remote host %s", config.name, config.remote.host
+        )
+        return True
+
+    @staticmethod
+    def stop(config: AgentConfig) -> bool:
+        """Stop agent on remote machine."""
+        result = _SSHRemote.run(
+            config,
+            f"scitex-agent-container stop {config.name}",
+            timeout=30,
+        )
+        if result.returncode != 0:
+            logger.error(
+                "Failed to stop agent '%s' on %s: %s",
+                config.name, config.remote.host, result.stderr.strip(),
+            )
+            return False
+        logger.info(
+            "Agent '%s' stopped on remote host %s", config.name, config.remote.host
+        )
+        return True
+
+    @staticmethod
+    def is_running(config: AgentConfig) -> bool:
+        """Check if agent is running on remote machine."""
+        result = _SSHRemote.run(
+            config,
+            f"scitex-agent-container status {config.name} --json",
+            timeout=15,
+        )
+        if result.returncode != 0:
+            return False
+        try:
+            data = json.loads(result.stdout)
+            return data.get("status") == "running"
+        except (json.JSONDecodeError, KeyError):
+            return False
+
+    @staticmethod
+    def logs(config: AgentConfig, lines: int = 50) -> str:
+        """Get logs from remote agent."""
+        result = _SSHRemote.run(
+            config,
+            f"scitex-agent-container logs {config.name} -n {lines}",
+            timeout=15,
+        )
+        if result.returncode != 0:
+            return f"[SSH error] {result.stderr.strip()}"
+        return result.stdout
+
+
 class ClaudeCodeRuntime(RuntimeBase):
     """Runtime for launching Claude Code agents in screen sessions."""
 
@@ -252,6 +386,10 @@ class ClaudeCodeRuntime(RuntimeBase):
 
     def start(self, config: AgentConfig) -> bool:
         """Start a Claude Code agent."""
+        # If remote, delegate to SSH
+        if config.remote.is_remote:
+            return _SSHRemote.start(config)
+
         # If container runtime is requested, delegate
         if config.container.runtime != "none":
             from .docker import DockerRuntime
@@ -298,6 +436,10 @@ class ClaudeCodeRuntime(RuntimeBase):
 
     def stop(self, config: AgentConfig) -> bool:
         """Stop a Claude Code agent."""
+        # If remote, delegate to SSH
+        if config.remote.is_remote:
+            return _SSHRemote.stop(config)
+
         # Stop watchdog first
         self._stop_watchdog(config)
 
@@ -317,6 +459,9 @@ class ClaudeCodeRuntime(RuntimeBase):
 
     def is_running(self, config: AgentConfig) -> bool:
         """Check if the Claude Code agent is running."""
+        if config.remote.is_remote:
+            return _SSHRemote.is_running(config)
+
         if config.container.runtime == "docker":
             from .docker import DockerRuntime
             return DockerRuntime().is_running(config)
@@ -328,6 +473,9 @@ class ClaudeCodeRuntime(RuntimeBase):
 
     def logs(self, config: AgentConfig, lines: int = 50) -> str:
         """Get logs from the Claude Code agent."""
+        if config.remote.is_remote:
+            return _SSHRemote.logs(config, lines)
+
         if config.container.runtime == "docker":
             from .docker import DockerRuntime
             return DockerRuntime().logs(config, lines)
