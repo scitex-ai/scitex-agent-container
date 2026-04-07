@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+# File: src/scitex_agent_container/__init__.py
+
+"""SciTeX Agent Container -- Declarative agent management.
+
+Provides a YAML-based framework for defining, managing, and orchestrating
+AI coding agent instances across container runtimes.
+
+Modules:
+    - config: YAML config loading and validation
+    - lifecycle: Agent start/stop/restart/status
+    - registry: File-based agent tracking
+    - health: Health check implementation
+    - runtimes: Container runtime adapters (docker, apptainer, screen)
+"""
+
+from importlib.metadata import PackageNotFoundError as _PackageNotFoundError
+from importlib.metadata import version as _version
+
+try:
+    __version__ = _version("scitex-agent-container")
+except _PackageNotFoundError:
+    from pathlib import Path as _Path
+
+    _pyproject = _Path(__file__).parent.parent.parent / "pyproject.toml"
+    __version__ = "0.0.0"
+    if _pyproject.exists():
+        with open(_pyproject) as _f:
+            for _line in _f:
+                if _line.startswith("version"):
+                    __version__ = _line.split("=")[1].strip().strip('"')
+                    break
+
+from scitex_agent_container.config import AgentConfig, load_config, validate_config
+from scitex_agent_container.lifecycle import (
+    agent_logs,
+    agent_restart,
+    agent_start,
+    agent_status,
+    agent_stop,
+)
+from scitex_agent_container.registry import Registry
+
+__all__ = [
+    "__version__",
+    # Config
+    "AgentConfig",
+    "load_config",
+    "validate_config",
+    # Lifecycle
+    "agent_start",
+    "agent_stop",
+    "agent_restart",
+    "agent_status",
+    "agent_logs",
+    # Registry
+    "Registry",
+]
+
+# EOF

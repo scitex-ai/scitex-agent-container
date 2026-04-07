@@ -1,0 +1,43 @@
+apiVersion: cld-agent/v1
+kind: Agent
+metadata:
+  name: researcher-opus
+  labels:
+    role: researcher
+    team: research
+spec:
+  runtime: claude-code
+  model: opus
+  workdir: ~/proj
+
+  claude:
+    flags:
+      - --dangerously-skip-permissions
+    session: new
+
+  env:
+    CLAUDE_AGENT_ROLE: researcher
+    CLAUDE_AGENT_ID: researcher-opus
+
+  screen:
+    name: cld-researcher
+
+  health:
+    enabled: true
+    interval: 45
+    timeout: 5
+    method: screen-alive
+
+  restart:
+    policy: on-failure
+    max_retries: 5
+    backoff:
+      initial: 15
+      max: 120
+      multiplier: 2
+
+  hooks:
+    pre_start: []
+    post_start: []
+    pre_stop: []
+    post_stop: []

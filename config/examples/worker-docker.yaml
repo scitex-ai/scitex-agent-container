@@ -1,0 +1,29 @@
+apiVersion: cld-agent/v1
+kind: Agent
+metadata:
+  name: worker-docker
+  labels:
+    role: worker
+spec:
+  runtime: claude-code
+  model: sonnet
+  workdir: ~/proj
+
+  container:
+    runtime: docker          # docker | apptainer | none
+    image: scitex-agent-container:latest
+    volumes:
+      - ~/proj:/workspace
+    network: host            # host | bridge | none
+
+  claude:
+    flags:
+      - --dangerously-skip-permissions
+    session: new
+
+  env:
+    CLAUDE_AGENT_ROLE: worker
+    CLAUDE_AGENT_ID: worker-docker
+
+  screen:
+    name: cld-worker-docker
