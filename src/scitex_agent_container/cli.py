@@ -415,6 +415,109 @@ def health(name: str, as_json: bool):
 
 @main.command()
 @click.argument("config_path", type=click.Path(exists=True))
+def check(config_path: str):
+    """Run preflight checks for an agent deployment.
+
+    Verifies that all dependencies (SSH, screen, python, etc.) are
+    available before starting the agent.  Useful for debugging deployment
+    failures.
+    """
+    import shutil
+
+    try:
+        config = load_config(config_path)
+    except Exception as exc:
+        console.print(f"[red]Error loading config: {exc}[/red]")
+        sys.exit(1)
+
+    console.print(
+        f"[blue]Checking {config.name}"
+        + (f" (remote: {config.remote.host})" if config.remote.is_remote else " (local)")
+        + "...[/blue]"
+    )
+
+    all_ok = True
+
+    if config.remote.is_remote:
+        from .runtimes.claude_code import _SSHRemote
+
+        results = _SSHRemote.preflight(config)
+        for name, passed, detail in results:
+            if passed:
+                # Right-align the check name for readability
+                console.print(f"  {name + ':':30s} [green]{detail}[/green]")
+            else:
+                all_ok = False
+                console.print(f"  {name + ':':30s} [red]FAIL[/red]")
+                for line in detail.split("\n"):
+                    console.print(f"    [red]{line}[/red]")
+    else:
+        # Local checks
+        # 1. screen
+        screen_bin = shutil.which("screen")
+        if screen_bin:
+            console.print(f"  {'screen:':30s} [green]OK ({screen_bin})[/green]")
+        else:
+            all_ok = False
+            console.print(f"  {'screen:':30s} [red]FAIL[/red]")
+            console.print("    [red]GNU screen not found[/red]")
+            console.print("    [red]  Fix: sudo apt install screen[/red]")
+
+        # 2. python
+        import subprocess as _sp
+        try:
+            proc = _sp.run(
+                ["python3", "--version"], capture_output=True, text=True, timeout=5,
+            )
+            if proc.returncode == 0:
+                console.print(f"  {'python:':30s} [green]OK ({proc.stdout.strip()})[/green]")
+            else:
+                all_ok = False
+                console.print(f"  {'python:':30s} [red]FAIL[/red]")
+        except FileNotFoundError:
+            all_ok = False
+            console.print(f"  {'python:':30s} [red]FAIL (python3 not found)[/red]")
+
+        # 3. scitex-agent-container
+        sac_bin = shutil.which("scitex-agent-container")
+        if sac_bin:
+            try:
+                proc = _sp.run(
+                    ["scitex-agent-container", "--version"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                ver = proc.stdout.strip() if proc.returncode == 0 else "unknown"
+            except Exception:
+                ver = "unknown"
+            console.print(f"  {'scitex-agent-container:':30s} [green]OK ({ver})[/green]")
+        else:
+            all_ok = False
+            console.print(f"  {'scitex-agent-container:':30s} [red]FAIL[/red]")
+            console.print("    [red]  Fix: pip install scitex-agent-container[/red]")
+
+        # 4. disk space
+        try:
+            proc = _sp.run(
+                ["df", "-h", "/"], capture_output=True, text=True, timeout=5,
+            )
+            if proc.returncode == 0:
+                lines = proc.stdout.strip().split("\n")
+                if len(lines) >= 2:
+                    parts = lines[1].split()
+                    usage = parts[4] if len(parts) >= 5 else "unknown"
+                    console.print(f"  {'disk space:':30s} [green]OK ({usage} used)[/green]")
+        except Exception:
+            console.print(f"  {'disk space:':30s} [dim]unknown[/dim]")
+
+    if all_ok:
+        console.print("[green]Ready to deploy.[/green]")
+    else:
+        console.print("[red]Preflight checks failed. Fix the issues above before deploying.[/red]")
+        sys.exit(1)
+
+
+@main.command()
+@click.argument("config_path", type=click.Path(exists=True))
 def validate(config_path: str):
     """Validate a YAML config file."""
     errors = validate_config(config_path)

@@ -107,6 +107,10 @@ def _cleanup_claude_md(config: AgentConfig, workdir: str) -> None:
         logger.info("CLAUDE.md cleaned up for agent %s at %s", agent_id, claude_md)
 
 
+class SSHPreflightError(RuntimeError):
+    """Raised when SSH preflight checks fail with actionable guidance."""
+
+
 class _SSHRemote:
     """Helper for executing commands on a remote machine via SSH."""
 
@@ -117,6 +121,11 @@ class _SSHRemote:
     ]
 
     @staticmethod
+    def _ssh_target(config: AgentConfig) -> str:
+        """Return user@host string for display and commands."""
+        return f"{config.remote.user}@{config.remote.host}"
+
+    @staticmethod
     def _ssh_base(config: AgentConfig) -> list[str]:
         """Build the base SSH command with options."""
         cmd = ["ssh"] + _SSHRemote.SSH_OPTS
@@ -124,7 +133,7 @@ class _SSHRemote:
             cmd += ["-i", config.remote.key]
         if config.remote.port != 22:
             cmd += ["-p", str(config.remote.port)]
-        cmd.append(f"{config.remote.user}@{config.remote.host}")
+        cmd.append(_SSHRemote._ssh_target(config))
         return cmd
 
     @staticmethod
@@ -138,6 +147,131 @@ class _SSHRemote:
         return cmd
 
     @staticmethod
+    def _wrap_login_shell(remote_cmd: str) -> str:
+        """Wrap a command to run inside a login shell on the remote host.
+
+        This ensures ~/.bashrc, ~/.profile, and PATH modifications are loaded
+        so that tools installed via pip --user or pyenv are discoverable.
+        """
+        escaped = remote_cmd.replace("'", "'\\''")
+        return f"bash -l -c '{escaped}'"
+
+    @staticmethod
+    def preflight(config: AgentConfig) -> list[tuple[str, bool, str]]:
+        """Run preflight checks and return a list of (name, passed, detail).
+
+        Checks: SSH connectivity, screen binary, scitex-agent-container binary,
+        python availability, and disk space.
+        """
+        target = _SSHRemote._ssh_target(config)
+        results: list[tuple[str, bool, str]] = []
+
+        # 1. SSH connection
+        try:
+            ssh_cmd = _SSHRemote._ssh_base(config) + ["echo ok"]
+            proc = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=15)
+            if proc.returncode == 0 and "ok" in proc.stdout:
+                results.append(("SSH connection", True, "OK"))
+            else:
+                results.append((
+                    "SSH connection", False,
+                    f"Cannot SSH to {target}\n"
+                    f"  Check: ssh {target} 'echo ok'\n"
+                    f"  Fix:   ssh-keygen && ssh-copy-id {target}",
+                ))
+                # Cannot proceed with other checks if SSH fails
+                return results
+        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+            results.append((
+                "SSH connection", False,
+                f"Cannot SSH to {target}\n"
+                f"  Check: ssh {target} 'echo ok'\n"
+                f"  Fix:   ssh-keygen && ssh-copy-id {target}\n"
+                f"  Error: {exc}",
+            ))
+            return results
+
+        # 2. screen binary
+        proc = subprocess.run(
+            _SSHRemote._ssh_base(config) + ["which screen"],
+            capture_output=True, text=True, timeout=15,
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            results.append(("screen", True, "OK"))
+        else:
+            host = config.remote.host
+            results.append((
+                "screen", False,
+                f"GNU screen not installed on {host}\n"
+                f"  Fix: ssh {host} \"sudo apt install screen\"",
+            ))
+
+        # 3. scitex-agent-container binary (via login shell so PATH is set)
+        proc = subprocess.run(
+            _SSHRemote._ssh_base(config) + [
+                _SSHRemote._wrap_login_shell("which scitex-agent-container")
+            ],
+            capture_output=True, text=True, timeout=15,
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            # Get version
+            ver_proc = subprocess.run(
+                _SSHRemote._ssh_base(config) + [
+                    _SSHRemote._wrap_login_shell("scitex-agent-container --version")
+                ],
+                capture_output=True, text=True, timeout=15,
+            )
+            version = ver_proc.stdout.strip() if ver_proc.returncode == 0 else "unknown"
+            results.append(("scitex-agent-container", True, version))
+        else:
+            host = config.remote.host
+            results.append((
+                "scitex-agent-container", False,
+                f"scitex-agent-container not installed on {host}\n"
+                f"  Fix: ssh {host} \"pip install scitex-agent-container\"",
+            ))
+
+        # 4. python
+        proc = subprocess.run(
+            _SSHRemote._ssh_base(config) + [
+                _SSHRemote._wrap_login_shell("python3 --version")
+            ],
+            capture_output=True, text=True, timeout=15,
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            results.append(("python", True, proc.stdout.strip()))
+        else:
+            results.append(("python", False, "python3 not found on remote"))
+
+        # 5. disk space
+        proc = subprocess.run(
+            _SSHRemote._ssh_base(config) + [
+                "df -h / | awk 'NR==2 {print $5}'"
+            ],
+            capture_output=True, text=True, timeout=15,
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            usage = proc.stdout.strip()
+            results.append(("disk space", True, f"{usage} used"))
+        else:
+            results.append(("disk space", True, "unknown"))
+
+        return results
+
+    @staticmethod
+    def check_or_raise(config: AgentConfig) -> None:
+        """Run preflight checks and raise SSHPreflightError if any fail."""
+        results = _SSHRemote.preflight(config)
+        failures = [(name, detail) for name, passed, detail in results if not passed]
+        if failures:
+            lines = [f"Preflight check failed for {config.remote.host}:"]
+            for name, detail in failures:
+                lines.append(f"\nERROR: {name}")
+                for line in detail.split("\n"):
+                    lines.append(f"  {line}")
+            raise SSHPreflightError("\n".join(lines))
+
+    @staticmethod
     def copy_config(config: AgentConfig) -> str:
         """SCP the YAML config to the remote machine. Returns remote path."""
         remote_path = f"/tmp/{config.name}.yaml"
@@ -148,25 +282,57 @@ class _SSHRemote:
             )
 
         scp_cmd = _SSHRemote._scp_base(config)
-        target = f"{config.remote.user}@{config.remote.host}:{remote_path}"
+        target = f"{_SSHRemote._ssh_target(config)}:{remote_path}"
         scp_cmd += [local_path, target]
 
         logger.info("SCP config to remote: %s -> %s", local_path, target)
-        result = subprocess.run(scp_cmd, capture_output=True, text=True, timeout=30)
-        if result.returncode != 0:
+        try:
+            result = subprocess.run(scp_cmd, capture_output=True, text=True, timeout=30)
+        except subprocess.TimeoutExpired:
+            t = _SSHRemote._ssh_target(config)
             raise RuntimeError(
-                f"Failed to copy config to {config.remote.host}: {result.stderr.strip()}"
+                f"ERROR: SCP timed out copying config to {config.remote.host}\n"
+                f"  Check: ssh {t} 'echo ok'\n"
+                f"  Fix:   ssh-keygen && ssh-copy-id {t}"
+            )
+        if result.returncode != 0:
+            t = _SSHRemote._ssh_target(config)
+            raise RuntimeError(
+                f"ERROR: Failed to copy config to {config.remote.host}\n"
+                f"  SSH stderr: {result.stderr.strip()}\n"
+                f"  Check: ssh {t} 'echo ok'\n"
+                f"  Fix:   ssh-keygen && ssh-copy-id {t}"
             )
         return remote_path
 
     @staticmethod
-    def run(config: AgentConfig, remote_cmd: str, timeout: int = 30) -> subprocess.CompletedProcess:
-        """Execute a command on the remote host via SSH."""
+    def run(config: AgentConfig, remote_cmd: str, timeout: int = 30,
+            login_shell: bool = True) -> subprocess.CompletedProcess:
+        """Execute a command on the remote host via SSH.
+
+        Args:
+            config: Agent configuration with remote connection details.
+            remote_cmd: Command string to execute remotely.
+            timeout: Timeout in seconds.
+            login_shell: If True, wrap command in ``bash -l -c '...'`` so that
+                the remote user's PATH and environment are loaded.
+        """
         ssh_cmd = _SSHRemote._ssh_base(config)
-        ssh_cmd.append(remote_cmd)
+        if login_shell:
+            ssh_cmd.append(_SSHRemote._wrap_login_shell(remote_cmd))
+        else:
+            ssh_cmd.append(remote_cmd)
 
         logger.info("SSH [%s]: %s", config.remote.host, remote_cmd)
-        result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=timeout)
+        try:
+            result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            t = _SSHRemote._ssh_target(config)
+            raise RuntimeError(
+                f"ERROR: SSH command timed out on {config.remote.host}\n"
+                f"  Command: {remote_cmd}\n"
+                f"  Check: ssh {t} 'echo ok'"
+            )
         if result.returncode != 0:
             logger.warning(
                 "SSH command failed on %s (exit %d): %s",
@@ -176,7 +342,13 @@ class _SSHRemote:
 
     @staticmethod
     def start(config: AgentConfig) -> bool:
-        """Deploy and start agent on remote machine."""
+        """Deploy and start agent on remote machine.
+
+        Runs preflight checks before attempting deployment so that missing
+        dependencies produce clear, actionable error messages.
+        """
+        _SSHRemote.check_or_raise(config)
+
         remote_path = _SSHRemote.copy_config(config)
         result = _SSHRemote.run(
             config,

@@ -176,6 +176,36 @@ class TestCLI:
             assert data[0]["name"] == "test-gpu-agent"
             assert "gpu" in data[0]["capabilities"]
 
+    def test_check_local_agent(self):
+        """check command should run preflight checks on a local agent."""
+        path = _write_config(VALID_CONFIG)
+        runner = CliRunner()
+        result = runner.invoke(main, ["check", path])
+        # Should succeed on a local machine that has python and screen
+        # Even if screen is missing, the command itself should not crash
+        assert "Checking" in result.output
+        Path(path).unlink()
+
+    def test_check_remote_agent_no_ssh(self):
+        """check command on unreachable remote should fail gracefully."""
+        remote_config = {
+            **VALID_CONFIG,
+            "spec": {
+                **VALID_CONFIG["spec"],
+                "remote": {
+                    "host": "192.0.2.1",  # RFC 5737 TEST-NET, unreachable
+                    "user": "testuser",
+                },
+            },
+        }
+        path = _write_config(remote_config)
+        runner = CliRunner()
+        result = runner.invoke(main, ["check", path])
+        assert result.exit_code != 0
+        assert "SSH connection" in result.output
+        assert "FAIL" in result.output
+        Path(path).unlink()
+
     def test_find_no_match(self):
         """find command should return empty when no agents match."""
         import tempfile
