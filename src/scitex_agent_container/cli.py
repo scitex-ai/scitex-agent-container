@@ -202,8 +202,6 @@ def _get_agent_list_data(
         name = entry.get("name", "?")
         screen_name = entry.get("screen", "?")
         started = entry.get("started_at", "?")
-        is_running = ScreenManager.exists(screen_name)
-
         # Load config for labels, remote info, and filtering
         labels: dict[str, str] = {}
         remote_host = ""
@@ -217,6 +215,13 @@ def _get_agent_list_data(
                     remote_host = cfg.remote.host
             except Exception:
                 pass
+
+        # Check if running — remote or local
+        if cfg and cfg.remote.is_remote:
+            from .runtimes.claude_code import ClaudeCodeRuntime
+            is_running = ClaudeCodeRuntime().is_running(cfg)
+        else:
+            is_running = ScreenManager.exists(screen_name)
 
         # Apply filters
         if machine and labels.get("machine") != machine:
