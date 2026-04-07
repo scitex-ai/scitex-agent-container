@@ -2,14 +2,15 @@
 
 <p align="center">
   <a href="https://scitex.ai">
-    <img src="docs/scitex-logo-banner.png" alt="SciTeX Agent Container" width="400">
+    <img src="docs/scitex-logo-blue-cropped.png" alt="SciTeX" width="400">
   </a>
 </p>
 
-<p align="center"><b>Declarative YAML-based framework for defining, managing, and orchestrating AI coding agent instances</b></p>
+<p align="center"><b>Declarative YAML-based AI agent lifecycle management</b></p>
 
 <p align="center">
   <a href="https://badge.fury.io/py/scitex-agent-container"><img src="https://badge.fury.io/py/scitex-agent-container.svg" alt="PyPI version"></a>
+  <a href="https://scitex-agent-container.readthedocs.io/"><img src="https://readthedocs.org/projects/scitex-agent-container/badge/?version=latest" alt="Documentation"></a>
   <a href="https://github.com/ywatanabe1989/scitex-agent-container/actions/workflows/ci.yml"><img src="https://github.com/ywatanabe1989/scitex-agent-container/actions/workflows/ci.yml/badge.svg" alt="Tests"></a>
   <a href="https://www.gnu.org/licenses/agpl-3.0"><img src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg" alt="License: AGPL-3.0"></a>
 </p>
@@ -22,11 +23,11 @@
 
 ## Problem
 
-Running AI coding agents (Claude Code, Cursor, Aider) in production requires manual screen session management, ad-hoc watchdog scripts, and no standard way to declare agent configurations. Scaling from one agent to a fleet means duplicating fragile shell scripts with no health checks, restart policies, or lifecycle management.
+Managing AI coding agents (Claude Code, Cursor, Aider) in production requires manual script-writing, environment setup, and process monitoring for each agent instance. Scaling from one agent to a fleet means duplicating fragile shell scripts with no health checks, restart policies, or lifecycle management.
 
 ## Solution
 
-scitex-agent-container lets you define agents as declarative YAML manifests and manage their full lifecycle through a single CLI:
+scitex-agent-container provides declarative YAML definitions that fully specify an agent -- runtime, model, channels, environment, health checks -- started with a single command:
 
 - **YAML-first configuration** -- one file defines runtime, model, watchdog, health checks, restart policy, and hooks
 - **Pluggable runtimes** -- run agents bare on screen, inside Docker, or inside Apptainer (HPC clusters)
@@ -107,135 +108,94 @@ spec:
       multiplier: 2
 ```
 
-2. Start the agent:
+2. Start and monitor:
 
 ```bash
 scitex-agent-container start config/examples/telegram-master.yaml
-```
-
-3. Monitor:
-
-```bash
 scitex-agent-container status telegram-master
 scitex-agent-container logs telegram-master -n 100
 scitex-agent-container attach telegram-master   # Ctrl-A D to detach
 ```
 
-## CLI Reference
+## Four Interfaces
 
-```
-scitex-agent-container <command> [OPTIONS]
+<details>
+<summary><strong>Python API</strong></summary>
 
-Lifecycle:
-  start <config.yaml>       Start an agent from a YAML definition
-  stop <name>               Stop a running agent
-  restart <name>            Restart an agent
-  attach <name>             Attach to an agent's screen session
+<br>
 
-Inspection:
-  status [name] [--json]    Show agent status (one or all)
-  list [--json]             List all registered agents
-  ps [--json]               Alias for list
-  logs <name> [-n LINES]    Show recent agent output
-  health <name> [--json]    Run a health check on an agent
+```python
+from scitex_agent_container import (
+    AgentConfig, load_config, validate_config,
+    agent_start, agent_stop, agent_restart, agent_status, agent_logs,
+    Registry,
+)
 
-Configuration:
-  validate <config.yaml>    Validate a YAML config file
-  build [--runtime docker|apptainer] [--image TAG]
-                            Build container base image
-
-Maintenance:
-  cleanup                   Remove stale registry entries
-  list-python-apis [-v]     List public Python API tree
-
-Global:
-  --version                 Show version
-  --help-recursive          Show help for all commands
+config = load_config("agent.yaml")      # Parse YAML manifest
+agent_start("agent.yaml")               # Launch agent
+info = agent_status("telegram-master")   # Query status
+agent_stop("telegram-master")            # Stop agent
+agent_restart("telegram-master")         # Restart agent
+output = agent_logs("telegram-master")   # Read logs
+registry = Registry()                    # Access agent registry
 ```
 
-## YAML Schema
+</details>
 
-Every manifest follows this structure:
+<details>
+<summary><strong>CLI Commands</strong></summary>
 
-| Section | Required | Description |
-|---------|----------|-------------|
-| `apiVersion` | yes | Schema version (`cld-agent/v1`) |
-| `kind` | yes | Resource type (`Agent`) |
-| `metadata.name` | yes | Unique agent name |
-| `metadata.labels` | no | Key-value labels for filtering |
-| `spec.runtime` | yes | `claude-code`, `cursor`, `aider` |
-| `spec.model` | no | Model identifier (e.g., `opus[1m]`) |
-| `spec.workdir` | no | Working directory for the agent |
-| `spec.container` | no | Container config (`runtime`, `image`, `volumes`, `network`) |
-| `spec.claude` | no | Claude Code specific (`channels`, `flags`, `session`) |
-| `spec.env` | no | Environment variables |
-| `spec.screen` | no | Screen session config (`name`) |
-| `spec.telegram` | no | Telegram bot config (`bot_token_env`, `allowed_users`) |
-| `spec.startup_commands` | no | Commands to send after launch |
-| `spec.watchdog` | no | Auto-responder config (`enabled`, `interval`, `responses`) |
-| `spec.health` | no | Health check config (`enabled`, `interval`, `method`) |
-| `spec.restart` | no | Restart policy (`policy`, `max_retries`, `backoff`) |
-| `spec.hooks` | no | Lifecycle hooks (`pre_start`, `post_start`, `pre_stop`, `post_stop`) |
-
-## Architecture
-
-```
-scitex-agent-container start manifest.yaml
-        |
-        v
-  +-- Config Loader --+
-  |   Parse YAML      |
-  |   Validate schema |
-  +--------+----------+
-           |
-           v
-  +-- Lifecycle Manager ------+
-  |   1. Run pre_start hooks  |
-  |   2. Launch runtime       |
-  |   3. Start watchdog       |
-  |   4. Start health monitor |
-  |   5. Run post_start hooks |
-  +--------+------------------+
-           |
-    +------+------+--------+
-    |             |        |
-    v             v        v
-  Screen       Docker   Apptainer
-  Session      Container Container
-    |
-    +-- Watchdog (poll screen, auto-respond)
-    +-- Health Monitor (screen-alive check)
-    +-- Restart Controller (backoff retry)
-```
-
-The **Registry** (`~/.scitex/agents/`) tracks all running agents as JSON entries, enabling `status`, `list`, and `cleanup` operations across sessions.
-
-## Supported Runtimes
-
-| Runtime | Status | Description |
-|---------|--------|-------------|
-| `claude-code` | Stable | Claude Code CLI in a screen session |
-| `cursor` | Stub | Cursor editor (planned) |
-| `aider` | Stub | Aider CLI (planned) |
-
-## Container Support
-
-| Container Runtime | Status | Use Case |
-|-------------------|--------|----------|
-| `screen` | Default | Bare metal, no isolation |
-| `docker` | Supported | Local development, CI |
-| `apptainer` | Supported | HPC clusters (rootless) |
-
-Build a container image:
+<br>
 
 ```bash
-scitex-agent-container build --runtime docker --image scitex-agent:latest
-scitex-agent-container build --runtime apptainer
+scitex-agent-container --help-recursive          # Show all commands
+
+# Lifecycle
+scitex-agent-container start <config.yaml>       # Start an agent
+scitex-agent-container stop <name>               # Stop an agent
+scitex-agent-container restart <name>            # Restart an agent
+scitex-agent-container attach <name>             # Attach to screen session
+
+# Inspection
+scitex-agent-container status [name] [--json]    # Show agent status
+scitex-agent-container list [--json]             # List all agents
+scitex-agent-container ps [--json]               # Alias for list
+scitex-agent-container logs <name> [-n LINES]    # Show recent output
+scitex-agent-container health <name> [--json]    # Run health check
+
+# Configuration
+scitex-agent-container validate <config.yaml>    # Validate YAML config
+scitex-agent-container build [--runtime docker|apptainer]
+
+# Maintenance
+scitex-agent-container cleanup                   # Remove stale entries
+scitex-agent-container list-python-apis [-v]     # List public API tree
+scitex-agent-container version                   # Show version
 ```
+
+</details>
+
+<details>
+<summary><strong>MCP Server -- for AI Agents</strong></summary>
+
+<br>
+
+Not yet implemented. Planned for a future release.
+
+</details>
+
+<details>
+<summary><strong>Skills -- for AI Agent Discovery</strong></summary>
+
+<br>
+
+Skills are planned for a future release. They will be available under `_skills/` and via the CLI.
+
+</details>
 
 ## Part of SciTeX
 
-scitex-agent-container is part of [**SciTeX**](https://scitex.ai).
+scitex-agent-container is part of [**SciTeX**](https://scitex.ai). It depends on [scitex-container](https://github.com/ywatanabe1989/scitex-container) for container runtime abstractions and is used by [scitex-orochi](https://github.com/ywatanabe1989/scitex-orochi) for multi-machine agent orchestration.
 
 >Four Freedoms for Research
 >
