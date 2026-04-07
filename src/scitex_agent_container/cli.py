@@ -148,13 +148,17 @@ def status(name: str | None, as_json: bool):
 @main.command(name="list")
 @click.option("--json", "as_json", is_flag=True, default=False,
               help="Output as JSON.")
-def list_agents(as_json: bool):
+@click.option("--capability", "-c", default=None,
+              help="Filter by capability label (comma-separated in YAML).")
+@click.option("--machine", "-m", default=None,
+              help="Filter by machine label.")
+def list_agents(as_json: bool, capability: str | None, machine: str | None):
     """List all registered agents."""
     registry = Registry()
     if as_json:
-        _print_agent_list_json(registry)
+        _print_agent_list_json(registry, capability=capability, machine=machine)
     else:
-        _print_agent_list(registry)
+        _print_agent_list(registry, capability=capability, machine=machine)
 
 
 @main.command()
@@ -169,8 +173,19 @@ def ps(as_json: bool):
         _print_agent_list(registry)
 
 
-def _get_agent_list_data(registry: Registry) -> list[dict]:
-    """Get agent list as plain dicts for JSON or table output."""
+def _get_agent_list_data(
+    registry: Registry,
+    capability: str | None = None,
+    machine: str | None = None,
+) -> list[dict]:
+    """Get agent list as plain dicts for JSON or table output.
+
+    Args:
+        registry: The agent registry to query.
+        capability: If set, only include agents whose ``capabilities`` label
+            contains this value (comma-separated matching).
+        machine: If set, only include agents whose ``machine`` label matches.
+    """
     from .runtimes.screen import ScreenManager
 
     entries = registry.list_all()
@@ -180,24 +195,54 @@ def _get_agent_list_data(registry: Registry) -> list[dict]:
         screen_name = entry.get("screen", "?")
         started = entry.get("started_at", "?")
         is_running = ScreenManager.exists(screen_name)
-        results.append({
+
+        # Load labels from config if filtering is requested
+        labels: dict[str, str] = {}
+        config_path = entry.get("config")
+        if config_path and (capability or machine):
+            try:
+                cfg = load_config(config_path)
+                labels = cfg.labels
+            except Exception:
+                labels = {}
+
+        # Apply filters
+        if machine and labels.get("machine") != machine:
+            continue
+        if capability:
+            caps = [c.strip() for c in labels.get("capabilities", "").split(",") if c.strip()]
+            if capability not in caps:
+                continue
+
+        row: dict = {
             "name": name,
             "status": "running" if is_running else "stopped",
             "screen": screen_name,
             "started_at": started,
-        })
+        }
+        if labels:
+            row["labels"] = labels
+        results.append(row)
     return results
 
 
-def _print_agent_list_json(registry: Registry) -> None:
+def _print_agent_list_json(
+    registry: Registry,
+    capability: str | None = None,
+    machine: str | None = None,
+) -> None:
     """Print agent list as JSON."""
-    data = _get_agent_list_data(registry)
+    data = _get_agent_list_data(registry, capability=capability, machine=machine)
     click.echo(json_mod.dumps(data, indent=2))
 
 
-def _print_agent_list(registry: Registry) -> None:
+def _print_agent_list(
+    registry: Registry,
+    capability: str | None = None,
+    machine: str | None = None,
+) -> None:
     """Print a rich table of all registered agents."""
-    data = _get_agent_list_data(registry)
+    data = _get_agent_list_data(registry, capability=capability, machine=machine)
     if not data:
         console.print("[dim]No agents registered.[/dim]")
         return
@@ -215,6 +260,57 @@ def _print_agent_list(registry: Registry) -> None:
         )
         table.add_row(row["name"], status_str, row["screen"], row["started_at"])
 
+    console.print(table)
+
+
+@main.command()
+@click.argument("capability")
+@click.option("--dir", "-d", "search_dir", default=None,
+              help="Directory of YAML agent configs to search.")
+@click.option("--json", "as_json", is_flag=True, default=False,
+              help="Output as JSON.")
+def find(capability: str, search_dir: str | None, as_json: bool):
+    """Find agents with a specific capability label from YAML configs.
+
+    Searches agent definition files for those whose ``capabilities`` label
+    includes the given value.  Useful for routing tasks to the right agent.
+    """
+    import glob as glob_mod
+
+    if search_dir is None:
+        search_dir = "."
+    search_path = Path(search_dir).expanduser().resolve()
+
+    matches = []
+    for yaml_path in sorted(search_path.glob("*.yaml")):
+        try:
+            cfg = load_config(yaml_path)
+        except Exception:
+            continue
+        caps = [c.strip() for c in cfg.labels.get("capabilities", "").split(",") if c.strip()]
+        if capability in caps:
+            matches.append({
+                "name": cfg.name,
+                "machine": cfg.labels.get("machine", ""),
+                "capabilities": caps,
+                "config": str(yaml_path),
+            })
+
+    if as_json:
+        click.echo(json_mod.dumps(matches, indent=2))
+        return
+
+    if not matches:
+        console.print(f"[dim]No agents found with capability '{capability}'[/dim]")
+        return
+
+    table = Table(title=f"Agents with capability: {capability}")
+    table.add_column("Name", style="bold")
+    table.add_column("Machine")
+    table.add_column("Capabilities")
+    table.add_column("Config")
+    for m in matches:
+        table.add_row(m["name"], m["machine"], ",".join(m["capabilities"]), m["config"])
     console.print(table)
 
 
