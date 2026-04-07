@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from scitex_agent_container.config import AgentConfig, load_config, validate_config
+from scitex_agent_container.config import AgentConfig, SkillsSpec, load_config, validate_config
 
 
 MINIMAL_CONFIG = {
@@ -190,3 +190,147 @@ class TestValidateConfig:
         errors = validate_config(path)
         assert any("restart.policy" in e for e in errors)
         Path(path).unlink()
+
+
+class TestSkillsSpec:
+    def test_default_skills(self):
+        path = _write_config(MINIMAL_CONFIG)
+        config = load_config(path)
+        assert config.skills.required == []
+        assert config.skills.available == []
+        Path(path).unlink()
+
+    def test_skills_from_yaml(self):
+        data = {
+            "apiVersion": "cld-agent/v1",
+            "kind": "Agent",
+            "metadata": {"name": "skills-agent"},
+            "spec": {
+                "runtime": "claude-code",
+                "skills": {
+                    "required": ["quality-guards", "autonomous"],
+                    "available": ["scitex", "code-review"],
+                },
+            },
+        }
+        path = _write_config(data)
+        config = load_config(path)
+        assert config.skills.required == ["quality-guards", "autonomous"]
+        assert config.skills.available == ["scitex", "code-review"]
+        Path(path).unlink()
+
+    def test_skills_partial(self):
+        data = {
+            "apiVersion": "cld-agent/v1",
+            "kind": "Agent",
+            "metadata": {"name": "partial-skills"},
+            "spec": {
+                "runtime": "claude-code",
+                "skills": {
+                    "required": ["speech"],
+                },
+            },
+        }
+        path = _write_config(data)
+        config = load_config(path)
+        assert config.skills.required == ["speech"]
+        assert config.skills.available == []
+        Path(path).unlink()
+
+
+class TestClaudeMdGeneration:
+    def test_setup_creates_claude_md(self):
+        from scitex_agent_container.runtimes.claude_code import _setup_claude_md
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = AgentConfig(
+                name="test-agent",
+                env={"CLAUDE_AGENT_ROLE": "worker", "CLAUDE_AGENT_ID": "test-agent"},
+                skills=SkillsSpec(required=["quality-guards", "autonomous"]),
+            )
+            _setup_claude_md(config, tmpdir)
+
+            claude_md = Path(tmpdir) / ".claude" / "CLAUDE.md"
+            assert claude_md.exists()
+            content = claude_md.read_text()
+            assert '<!-- agent-container:start id="test-agent" -->' in content
+            assert '<!-- agent-container:end id="test-agent" -->' in content
+            assert "quality-guards" in content
+            assert "autonomous" in content
+            assert "Role: worker" in content
+
+    def test_setup_preserves_existing_content(self):
+        from scitex_agent_container.runtimes.claude_code import _setup_claude_md
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            claude_dir = Path(tmpdir) / ".claude"
+            claude_dir.mkdir(parents=True)
+            claude_md = claude_dir / "CLAUDE.md"
+            claude_md.write_text("# My Project\n\nSome existing content.\n")
+
+            config = AgentConfig(name="test-agent")
+            _setup_claude_md(config, tmpdir)
+
+            content = claude_md.read_text()
+            assert "# My Project" in content
+            assert "Some existing content." in content
+            assert '<!-- agent-container:start id="test-agent" -->' in content
+
+    def test_setup_replaces_existing_section(self):
+        from scitex_agent_container.runtimes.claude_code import _setup_claude_md
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            claude_dir = Path(tmpdir) / ".claude"
+            claude_dir.mkdir(parents=True)
+            claude_md = claude_dir / "CLAUDE.md"
+            claude_md.write_text(
+                "# Header\n"
+                '<!-- agent-container:start id="test-agent" -->\n'
+                "old content\n"
+                '<!-- agent-container:end id="test-agent" -->\n'
+                "# Footer\n"
+            )
+
+            config = AgentConfig(
+                name="test-agent",
+                skills=SkillsSpec(required=["new-skill"]),
+            )
+            _setup_claude_md(config, tmpdir)
+
+            content = claude_md.read_text()
+            assert "old content" not in content
+            assert "new-skill" in content
+            assert "# Header" in content
+            assert "# Footer" in content
+
+    def test_cleanup_removes_section(self):
+        from scitex_agent_container.runtimes.claude_code import _cleanup_claude_md
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            claude_dir = Path(tmpdir) / ".claude"
+            claude_dir.mkdir(parents=True)
+            claude_md = claude_dir / "CLAUDE.md"
+            claude_md.write_text(
+                "# Header\n"
+                '<!-- agent-container:start id="test-agent" -->\n'
+                "agent section\n"
+                '<!-- agent-container:end id="test-agent" -->\n'
+                "# Footer\n"
+            )
+
+            config = AgentConfig(name="test-agent")
+            _cleanup_claude_md(config, tmpdir)
+
+            content = claude_md.read_text()
+            assert "agent section" not in content
+            assert "agent-container:start" not in content
+            assert "# Header" in content
+            assert "# Footer" in content
+
+    def test_cleanup_noop_when_no_file(self):
+        from scitex_agent_container.runtimes.claude_code import _cleanup_claude_md
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = AgentConfig(name="test-agent")
+            # Should not raise
+            _cleanup_claude_md(config, tmpdir)

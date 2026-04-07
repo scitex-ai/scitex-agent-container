@@ -59,6 +59,12 @@ class TelegramSpec:
 
 
 @dataclass
+class SkillsSpec:
+    required: list[str] = field(default_factory=list)  # Auto-loaded at startup
+    available: list[str] = field(default_factory=list)  # Available but not auto-loaded
+
+
+@dataclass
 class StartupCommand:
     delay: int = 0  # seconds after startup
     command: str = ""
@@ -82,6 +88,7 @@ class AgentConfig:
     restart: RestartSpec = field(default_factory=RestartSpec)
     hooks: dict[str, list[str]] = field(default_factory=dict)
     telegram: TelegramSpec = field(default_factory=TelegramSpec)
+    skills: SkillsSpec = field(default_factory=SkillsSpec)
     startup_commands: list[StartupCommand] = field(default_factory=list)
     config_path: str = ""
 
@@ -187,6 +194,13 @@ def load_config(path: str | Path) -> AgentConfig:
         greeting=telegram_raw.get("greeting", ""),
     )
 
+    # Skills spec
+    skills_raw = spec.get("skills", {}) or {}
+    skills = SkillsSpec(
+        required=skills_raw.get("required", []) or [],
+        available=skills_raw.get("available", []) or [],
+    )
+
     # Startup commands
     startup_raw = spec.get("startup_commands", []) or []
     startup_commands = [
@@ -213,6 +227,7 @@ def load_config(path: str | Path) -> AgentConfig:
         restart=restart,
         hooks=hooks,
         telegram=telegram,
+        skills=skills,
         startup_commands=startup_commands,
         config_path=str(path),
     )

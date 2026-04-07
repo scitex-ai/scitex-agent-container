@@ -17,6 +17,16 @@ spec:
   #     - ~/proj:/workspace
   #   network: host
 
+  skills:
+    required:
+      - quality-guards
+      - autonomous
+      - speech
+    available:
+      - scitex
+      - code-review
+      - orchestrator
+
   claude:
     channels:
       - plugin:telegram@claude-plugins-official
