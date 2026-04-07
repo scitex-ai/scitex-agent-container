@@ -64,6 +64,7 @@ class RemoteSpec:
     user: str = ""          # SSH user
     key: str = ""           # Path to SSH key (optional)
     port: int = 22          # SSH port
+    timeout: int = 60       # SSH command timeout in seconds
 
     @property
     def is_remote(self) -> bool:
