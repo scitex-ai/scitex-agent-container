@@ -13,9 +13,15 @@ from pathlib import Path
 
 from ..config import AgentConfig
 from .base import RuntimeBase
+from .orochi_mcp import get_orochi_claude_flags
 from .screen import ScreenManager
+from .ssh_remote import SSHPreflightError as SSHPreflightError  # noqa: F401
+from .ssh_remote import SSHRemote
 
 logger = logging.getLogger(__name__)
+
+# Backward-compatible alias: existing code imports _SSHRemote from this module
+_SSHRemote = SSHRemote
 
 
 def _setup_claude_md(config: AgentConfig, workdir: str) -> None:
@@ -27,12 +33,10 @@ def _setup_claude_md(config: AgentConfig, workdir: str) -> None:
     claude_dir = Path(workdir) / ".claude"
     claude_md = claude_dir / "CLAUDE.md"
 
-    # Read existing content
     existing = ""
     if claude_md.exists():
         existing = claude_md.read_text()
 
-    # Build the section content
     agent_id = config.name
     role = config.env.get("CLAUDE_AGENT_ROLE", config.labels.get("role", ""))
     agent_env_id = config.env.get("CLAUDE_AGENT_ID", config.name)
@@ -69,7 +73,6 @@ def _setup_claude_md(config: AgentConfig, workdir: str) -> None:
 
     section = "\n".join(lines)
 
-    # Replace or append
     pattern = (
         rf'<!-- agent-container:start id="{re.escape(agent_id)}" -->.*?'
         rf'<!-- agent-container:end id="{re.escape(agent_id)}" -->'
@@ -77,8 +80,10 @@ def _setup_claude_md(config: AgentConfig, workdir: str) -> None:
     if re.search(pattern, existing, re.DOTALL):
         updated = re.sub(pattern, section, existing, flags=re.DOTALL)
     else:
-        separator = "\n\n" if existing and not existing.endswith("\n\n") else (
-            "\n" if existing and not existing.endswith("\n") else ""
+        separator = (
+            "\n\n"
+            if existing and not existing.endswith("\n\n")
+            else ("\n" if existing and not existing.endswith("\n") else "")
         )
         updated = existing + separator + section + "\n"
 
@@ -107,377 +112,6 @@ def _cleanup_claude_md(config: AgentConfig, workdir: str) -> None:
         logger.info("CLAUDE.md cleaned up for agent %s at %s", agent_id, claude_md)
 
 
-class SSHPreflightError(RuntimeError):
-    """Raised when SSH preflight checks fail with actionable guidance."""
-
-
-class _SSHRemote:
-    """Helper for executing commands on a remote machine via SSH."""
-
-    SSH_OPTS = [
-        "-o", "BatchMode=yes",
-        "-o", "StrictHostKeyChecking=accept-new",
-        "-o", "ConnectTimeout=10",
-    ]
-
-    @staticmethod
-    def _ssh_target(config: AgentConfig) -> str:
-        """Return user@host string for display and commands."""
-        return f"{config.remote.user}@{config.remote.host}"
-
-    @staticmethod
-    def _ssh_base(config: AgentConfig) -> list[str]:
-        """Build the base SSH command with options."""
-        cmd = ["ssh"] + _SSHRemote.SSH_OPTS
-        if config.remote.key:
-            cmd += ["-i", config.remote.key]
-        if config.remote.port != 22:
-            cmd += ["-p", str(config.remote.port)]
-        cmd.append(_SSHRemote._ssh_target(config))
-        return cmd
-
-    @staticmethod
-    def _scp_base(config: AgentConfig) -> list[str]:
-        """Build the base SCP command with options."""
-        cmd = ["scp"] + _SSHRemote.SSH_OPTS
-        if config.remote.key:
-            cmd += ["-i", config.remote.key]
-        if config.remote.port != 22:
-            cmd += ["-P", str(config.remote.port)]
-        return cmd
-
-    @staticmethod
-    def _wrap_login_shell(remote_cmd: str) -> str:
-        """Wrap a command to run inside a login shell on the remote host.
-
-        This ensures ~/.bashrc, ~/.profile, and PATH modifications are loaded
-        so that tools installed via pip --user or pyenv are discoverable.
-        """
-        escaped = remote_cmd.replace("'", "'\\''")
-        return f"bash -l -c '{escaped}'"
-
-    @staticmethod
-    def preflight(config: AgentConfig) -> list[tuple[str, bool, str]]:
-        """Run preflight checks and return a list of (name, passed, detail).
-
-        Checks: SSH connectivity, screen binary, scitex-agent-container binary,
-        python availability, and disk space.
-
-        Uses a single SSH call with batched commands to minimize round-trips,
-        which is critical for hosts with slow login shells (e.g., module loads
-        in .bashrc taking 30-60s per connection).
-        """
-        target = _SSHRemote._ssh_target(config)
-        results: list[tuple[str, bool, str]] = []
-        timeout = getattr(config.remote, "timeout", 60)
-        host = config.remote.host
-
-        # Build a single batched command that runs all checks in one SSH call.
-        # We use sentinel markers to parse each check's output.
-        # The outer command uses login shell to get PATH, but the SSH
-        # connectivity test is implicit (if this SSH call works, SSH is OK).
-        batched_script = (
-            "echo '===CHECK_SSH_OK===';"
-            "echo '===CHECK_SCREEN_START==='; which screen 2>/dev/null; echo '===CHECK_SCREEN_END===';"
-            "echo '===CHECK_SAC_START==='; which scitex-agent-container 2>/dev/null && scitex-agent-container --version 2>/dev/null; echo '===CHECK_SAC_END===';"
-            "echo '===CHECK_PYTHON_START==='; python3 --version 2>&1; echo '===CHECK_PYTHON_END===';"
-            "echo '===CHECK_DISK_START==='; df -h / 2>/dev/null | awk 'NR==2 {print $5}'; echo '===CHECK_DISK_END==='"
-        )
-
-        use_login = getattr(config.remote, "login_shell", True)
-
-        try:
-            ssh_cmd = _SSHRemote._ssh_base(config)
-            if use_login:
-                ssh_cmd.append(_SSHRemote._wrap_login_shell(batched_script))
-            else:
-                ssh_cmd.append(batched_script)
-
-            proc = subprocess.run(
-                ssh_cmd, capture_output=True, text=True, timeout=timeout,
-            )
-        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-            results.append((
-                "SSH connection", False,
-                f"Cannot SSH to {target}\n"
-                f"  Check: ssh {target} 'echo ok'\n"
-                f"  Fix:   ssh-keygen && ssh-copy-id {target}\n"
-                f"  Error: {exc}",
-            ))
-            return results
-
-        output = proc.stdout or ""
-
-        # 1. SSH connection -- if we got the sentinel, SSH worked
-        if "===CHECK_SSH_OK===" in output:
-            results.append(("SSH connection", True, "OK"))
-        else:
-            results.append((
-                "SSH connection", False,
-                f"Cannot SSH to {target}\n"
-                f"  Check: ssh {target} 'echo ok'\n"
-                f"  Fix:   ssh-keygen && ssh-copy-id {target}",
-            ))
-            return results
-
-        def _extract(start_marker: str, end_marker: str) -> str:
-            """Extract text between two sentinel markers."""
-            s = output.find(start_marker)
-            e = output.find(end_marker)
-            if s == -1 or e == -1:
-                return ""
-            return output[s + len(start_marker):e].strip()
-
-        # 2. screen binary
-        screen_out = _extract("===CHECK_SCREEN_START===", "===CHECK_SCREEN_END===")
-        if screen_out and "/" in screen_out:
-            results.append(("screen", True, "OK"))
-        else:
-            results.append((
-                "screen", False,
-                f"GNU screen not installed on {host}\n"
-                f"  Fix: ssh {host} \"sudo apt install screen\"",
-            ))
-
-        # 3. scitex-agent-container binary + version
-        sac_out = _extract("===CHECK_SAC_START===", "===CHECK_SAC_END===")
-        if sac_out and ("scitex-agent-container" in sac_out or "/" in sac_out):
-            # Try to find the version line
-            version = "unknown"
-            for line in sac_out.split("\n"):
-                line = line.strip()
-                if "version" in line.lower() or line.startswith("scitex"):
-                    version = line
-                    break
-                elif "/" in line:
-                    # This is the 'which' output, skip
-                    continue
-            results.append(("scitex-agent-container", True, version))
-        else:
-            results.append((
-                "scitex-agent-container", False,
-                f"scitex-agent-container not installed on {host}\n"
-                f"  Fix: ssh {host} \"pip install scitex-agent-container\"",
-            ))
-
-        # 4. python
-        python_out = _extract("===CHECK_PYTHON_START===", "===CHECK_PYTHON_END===")
-        if python_out and "Python" in python_out:
-            # Extract just the version line
-            for line in python_out.split("\n"):
-                if "Python" in line:
-                    results.append(("python", True, line.strip()))
-                    break
-            else:
-                results.append(("python", True, python_out.split("\n")[0].strip()))
-        else:
-            results.append(("python", False, "python3 not found on remote"))
-
-        # 5. disk space
-        disk_out = _extract("===CHECK_DISK_START===", "===CHECK_DISK_END===")
-        if disk_out:
-            usage = disk_out.split("\n")[0].strip()
-            results.append(("disk space", True, f"{usage} used"))
-        else:
-            results.append(("disk space", True, "unknown"))
-
-        return results
-
-    @staticmethod
-    def check_or_raise(config: AgentConfig) -> None:
-        """Run preflight checks and raise SSHPreflightError if any fail."""
-        results = _SSHRemote.preflight(config)
-        failures = [(name, detail) for name, passed, detail in results if not passed]
-        if failures:
-            lines = [f"Preflight check failed for {config.remote.host}:"]
-            for name, detail in failures:
-                lines.append(f"\nERROR: {name}")
-                for line in detail.split("\n"):
-                    lines.append(f"  {line}")
-            raise SSHPreflightError("\n".join(lines))
-
-    @staticmethod
-    def copy_config(config: AgentConfig) -> str:
-        """SCP the YAML config to the remote machine. Returns remote path.
-
-        The ``remote`` section is stripped from the copied config so that the
-        remote-side ``scitex-agent-container start`` runs locally instead of
-        attempting to SSH back to itself (which would cause infinite recursion).
-        """
-        import yaml as _yaml
-
-        remote_path = f"/tmp/{config.name}.yaml"
-        local_path = config.config_path
-        if not local_path:
-            raise RuntimeError(
-                f"Cannot deploy '{config.name}' remotely: config_path is not set"
-            )
-
-        scp_cmd = _SSHRemote._scp_base(config)
-        # Use ssh+cat instead of scp to avoid .bashrc output breaking scp
-        logger.info("Copying config to remote: %s -> %s:%s", local_path, config.remote.host, remote_path)
-        try:
-            with open(local_path) as f:
-                raw = _yaml.safe_load(f)
-            # Strip remote section so agent starts locally on the target host
-            if isinstance(raw, dict) and "spec" in raw and "remote" in raw["spec"]:
-                del raw["spec"]["remote"]
-            content = _yaml.dump(raw, default_flow_style=False, sort_keys=False)
-            ssh_cmd = _SSHRemote._ssh_base(config) + [
-                f"cat > {remote_path}",
-            ]
-            result = subprocess.run(
-                ssh_cmd, input=content, capture_output=True, text=True, timeout=30
-            )
-        except subprocess.TimeoutExpired:
-            t = _SSHRemote._ssh_target(config)
-            raise RuntimeError(
-                f"ERROR: Timed out copying config to {config.remote.host}\n"
-                f"  Check: ssh {t} 'echo ok'\n"
-                f"  Fix:   ssh-keygen && ssh-copy-id {t}"
-            )
-        if result.returncode != 0:
-            t = _SSHRemote._ssh_target(config)
-            raise RuntimeError(
-                f"ERROR: Failed to copy config to {config.remote.host}\n"
-                f"  SSH stderr: {result.stderr.strip()}\n"
-                f"  Check: ssh {t} 'echo ok'\n"
-                f"  Fix:   ssh-keygen && ssh-copy-id {t}"
-            )
-        return remote_path
-
-    @staticmethod
-    def run(config: AgentConfig, remote_cmd: str, timeout: int = 0,
-            login_shell: bool | None = None) -> subprocess.CompletedProcess:
-        """Execute a command on the remote host via SSH.
-
-        Args:
-            config: Agent configuration with remote connection details.
-            remote_cmd: Command string to execute remotely.
-            timeout: Timeout in seconds.
-            login_shell: If True, wrap command in ``bash -l -c '...'`` so that
-                the remote user's PATH and environment are loaded.  Defaults to
-                ``config.remote.login_shell`` (True unless overridden in YAML).
-        """
-        if timeout <= 0:
-            timeout = getattr(config.remote, "timeout", 60)
-        if login_shell is None:
-            login_shell = getattr(config.remote, "login_shell", True)
-        ssh_cmd = _SSHRemote._ssh_base(config)
-        if login_shell:
-            ssh_cmd.append(_SSHRemote._wrap_login_shell(remote_cmd))
-        else:
-            ssh_cmd.append(remote_cmd)
-
-        logger.info("SSH [%s]: %s", config.remote.host, remote_cmd)
-        try:
-            result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=timeout)
-        except subprocess.TimeoutExpired:
-            t = _SSHRemote._ssh_target(config)
-            raise RuntimeError(
-                f"ERROR: SSH command timed out on {config.remote.host}\n"
-                f"  Command: {remote_cmd}\n"
-                f"  Check: ssh {t} 'echo ok'"
-            )
-        if result.returncode != 0:
-            logger.warning(
-                "SSH command failed on %s (exit %d): %s",
-                config.remote.host, result.returncode, result.stderr.strip(),
-            )
-        return result
-
-    @staticmethod
-    def start(config: AgentConfig, no_preflight: bool = False) -> bool:
-        """Deploy and start agent on remote machine.
-
-        Runs preflight checks before attempting deployment so that missing
-        dependencies produce clear, actionable error messages.
-
-        Args:
-            config: Agent configuration.
-            no_preflight: If True, skip preflight checks (useful for slow SSH hosts).
-        """
-        if not no_preflight:
-            _SSHRemote.check_or_raise(config)
-
-        remote_path = _SSHRemote.copy_config(config)
-        start_timeout = getattr(config.remote, "timeout", 120)
-        result = _SSHRemote.run(
-            config,
-            f"scitex-agent-container start {remote_path}",
-            timeout=start_timeout,
-        )
-        if result.returncode != 0:
-            # Try to capture screen output for diagnosis
-            screen_name = config.screen_name or f"cld-{config.name}"
-            screen_output = ""
-            try:
-                diag = _SSHRemote.run(
-                    config,
-                    f"screen -ls {screen_name} 2>&1; "
-                    f"screen -S {screen_name} -X hardcopy /tmp/{screen_name}-diag.txt 2>/dev/null; "
-                    f"cat /tmp/{screen_name}-diag.txt 2>/dev/null | tail -30",
-                    timeout=30,
-                )
-                screen_output = diag.stdout.strip()
-            except Exception:
-                screen_output = "(could not capture screen output)"
-            raise RuntimeError(
-                f"Failed to start agent '{config.name}' on {config.remote.host}\n"
-                f"  stderr: {result.stderr.strip()}\n"
-                f"  screen output:\n{screen_output}"
-            )
-        logger.info(
-            "Agent '%s' started on remote host %s", config.name, config.remote.host
-        )
-        return True
-
-    @staticmethod
-    def stop(config: AgentConfig) -> bool:
-        """Stop agent on remote machine."""
-        result = _SSHRemote.run(
-            config,
-            f"scitex-agent-container stop {config.name}",
-            timeout=30,
-        )
-        if result.returncode != 0:
-            logger.error(
-                "Failed to stop agent '%s' on %s: %s",
-                config.name, config.remote.host, result.stderr.strip(),
-            )
-            return False
-        logger.info(
-            "Agent '%s' stopped on remote host %s", config.name, config.remote.host
-        )
-        return True
-
-    @staticmethod
-    def is_running(config: AgentConfig) -> bool:
-        """Check if agent is running on remote machine via screen -ls."""
-        screen_name = config.screen_name or f"cld-{config.name}"
-        try:
-            result = _SSHRemote.run(
-                config,
-                f"screen -ls {screen_name}",
-                timeout=30,
-            )
-            return screen_name in (result.stdout or "")
-        except Exception:
-            return False  # Assume not running if SSH fails
-
-    @staticmethod
-    def logs(config: AgentConfig, lines: int = 50) -> str:
-        """Get logs from remote agent."""
-        result = _SSHRemote.run(
-            config,
-            f"scitex-agent-container logs {config.name} -n {lines}",
-            timeout=60,
-        )
-        if result.returncode != 0:
-            return f"[SSH error] {result.stderr.strip()}"
-        return result.stdout
-
-
 class ClaudeCodeRuntime(RuntimeBase):
     """Runtime for launching Claude Code agents in screen sessions."""
 
@@ -486,13 +120,10 @@ class ClaudeCodeRuntime(RuntimeBase):
         parts = ["claude"]
         parts.append(f"--model '{config.model}'")
 
-        # Channels are passed via SCITEX_OROCHI_CHANNELS env var, not CLI flags
-        # (Claude Code has no --channels flag).
-        if config.claude.channels:
-            logger.debug(
-                "Channels configured via YAML; ensure SCITEX_OROCHI_CHANNELS "
-                "is set in env for MCP-based delivery."
-            )
+        # Inject orochi-push MCP flags when orochi is enabled
+        orochi_flags = get_orochi_claude_flags(config)
+        for flag in orochi_flags:
+            parts.append(flag)
 
         for flag in config.claude.flags:
             parts.append(flag)
@@ -524,7 +155,6 @@ class ClaudeCodeRuntime(RuntimeBase):
 
         watchdog_bin = shutil.which("telegrammer-watchdog")
         if watchdog_bin is None:
-            # Try importing the package to resolve the script path
             try:
                 from claude_code_telegrammer import get_bin_path
 
@@ -559,7 +189,10 @@ class ClaudeCodeRuntime(RuntimeBase):
         if started:
             logger.info("Watchdog started in screen session: %s", watchdog_session)
         else:
-            logger.error("Failed to start watchdog screen session: %s", watchdog_session)
+            logger.error(
+                "Failed to start watchdog screen session: %s",
+                watchdog_session,
+            )
 
         return started
 
@@ -599,16 +232,20 @@ class ClaudeCodeRuntime(RuntimeBase):
         )
 
     def _run_startup_commands(self, config: AgentConfig) -> None:
-        """Send startup commands to the screen session with delays.
-
-        Runs in a background thread so start() returns immediately.
-        """
+        """Send startup commands to the screen session with delays."""
         for sc in config.startup_commands:
             if sc.delay > 0:
                 time.sleep(sc.delay)
             try:
                 subprocess.run(
-                    ["screen", "-S", config.screen_name, "-X", "stuff", f"{sc.command}\r"],
+                    [
+                        "screen",
+                        "-S",
+                        config.screen_name,
+                        "-X",
+                        "stuff",
+                        f"{sc.command}\r",
+                    ],
                     check=False,
                     capture_output=True,
                 )
@@ -632,14 +269,12 @@ class ClaudeCodeRuntime(RuntimeBase):
 
     def start(self, config: AgentConfig, no_preflight: bool = False) -> bool:
         """Start a Claude Code agent."""
-        # If remote, delegate to SSH
         if config.remote.is_remote:
-            return _SSHRemote.start(config, no_preflight=no_preflight)
+            return SSHRemote.start(config, no_preflight=no_preflight)
 
-        # If container runtime is requested, delegate
         if config.container.runtime != "none":
-            from .docker import DockerRuntime
             from .apptainer import ApptainerRuntime
+            from .docker import DockerRuntime
 
             if config.container.runtime == "docker":
                 return DockerRuntime().start(config)
@@ -650,7 +285,6 @@ class ClaudeCodeRuntime(RuntimeBase):
         env_exports = self._build_env_exports(config)
         workdir = config.expanded_workdir
 
-        # Inject agent section into CLAUDE.md before launching
         _setup_claude_md(config, workdir)
 
         started = ScreenManager.start(
@@ -660,15 +294,12 @@ class ClaudeCodeRuntime(RuntimeBase):
             env_exports=env_exports,
         )
 
-        # Start watchdog after the agent is running
         if started:
             self._start_watchdog(config)
 
-            # Run post-start tasks in background thread
             has_tasks = (
-                (config.telegram.auto_connect and config.telegram.allowed_users)
-                or config.startup_commands
-            )
+                config.telegram.auto_connect and config.telegram.allowed_users
+            ) or config.startup_commands
             if has_tasks:
                 thread = threading.Thread(
                     target=self._post_start_tasks,
@@ -682,23 +313,20 @@ class ClaudeCodeRuntime(RuntimeBase):
 
     def stop(self, config: AgentConfig) -> bool:
         """Stop a Claude Code agent."""
-        # If remote, delegate to SSH
         if config.remote.is_remote:
-            return _SSHRemote.stop(config)
+            return SSHRemote.stop(config)
 
-        # Stop watchdog first
         self._stop_watchdog(config)
 
         if config.container.runtime != "none":
-            from .docker import DockerRuntime
             from .apptainer import ApptainerRuntime
+            from .docker import DockerRuntime
 
             if config.container.runtime == "docker":
                 return DockerRuntime().stop(config)
             elif config.container.runtime == "apptainer":
                 return ApptainerRuntime().stop(config)
 
-        # Clean up agent section from CLAUDE.md
         _cleanup_claude_md(config, config.expanded_workdir)
 
         return ScreenManager.stop(config.screen_name)
@@ -706,13 +334,15 @@ class ClaudeCodeRuntime(RuntimeBase):
     def is_running(self, config: AgentConfig) -> bool:
         """Check if the Claude Code agent is running."""
         if config.remote.is_remote:
-            return _SSHRemote.is_running(config)
+            return SSHRemote.is_running(config)
 
         if config.container.runtime == "docker":
             from .docker import DockerRuntime
+
             return DockerRuntime().is_running(config)
         elif config.container.runtime == "apptainer":
             from .apptainer import ApptainerRuntime
+
             return ApptainerRuntime().is_running(config)
 
         return ScreenManager.exists(config.screen_name)
@@ -720,13 +350,15 @@ class ClaudeCodeRuntime(RuntimeBase):
     def logs(self, config: AgentConfig, lines: int = 50) -> str:
         """Get logs from the Claude Code agent."""
         if config.remote.is_remote:
-            return _SSHRemote.logs(config, lines)
+            return SSHRemote.logs(config, lines)
 
         if config.container.runtime == "docker":
             from .docker import DockerRuntime
+
             return DockerRuntime().logs(config, lines)
         elif config.container.runtime == "apptainer":
             from .apptainer import ApptainerRuntime
+
             return ApptainerRuntime().logs(config, lines)
 
         return ScreenManager.capture_logs(config.screen_name, lines)
