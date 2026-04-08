@@ -21,17 +21,19 @@ spec:
       - orchestrator
 
   claude:
-    channels:
-      - plugin:telegram@claude-plugins-official
+    channels: []
     flags:
       - --dangerously-skip-permissions
-    session: continue
+      - "--mcp-config /tmp/scitex-agent-container/mcp-orochi-telegrammer.json"
+      - "--dangerously-load-development-channels server:telegram"
+    session: new
 
   env:
     CLAUDE_AGENT_ROLE: telegram
     CLAUDE_AGENT_ID: orochi-telegrammer
     SCITEX_OROCHI_DISABLE: "true"
     TELEGRAM_STATE_DIR: ~/.scitex/agent-container/telegram/8146978246
+    TELEGRAM_BOT_TOKEN: "${SCITEX_OROCHI_TELEGRAM_BOT_TOKEN}"
 
   screen:
     name: cld-orochi-tg
@@ -52,17 +54,10 @@ spec:
     channels:
       - server:scitex-orochi
 
-  startup_commands:
-    - delay: 5
-      command: "/speak-and-call"
+  startup_commands: []
 
   watchdog:
-    enabled: true
-    interval: 1.5
-    responses:
-      y_n: "1"
-      y_y_n: "2"
-      waiting: "/speak-and-call"
+    enabled: false
 
   health:
     enabled: true
@@ -79,6 +74,8 @@ spec:
       multiplier: 2
 
   hooks:
+    pre_start:
+      - "telegrammer-hook pre-start"
     post_start:
       - "telegrammer-hook post-start"
     pre_stop:

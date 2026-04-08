@@ -48,16 +48,29 @@ class ClaudeCodeRuntime(RuntimeBase):
         return " ".join(parts)
 
     def _build_env_exports(self, config: AgentConfig) -> str:
-        """Build export statements from env dict."""
+        """Build export statements from env dict.
+
+        Values support:
+        - ~ prefix: expanded to $HOME
+        - ${VAR} syntax: resolved from os.environ at launch time
+        """
+        import os as _os
+        import re
+
+        def _resolve(val: str) -> str:
+            """Expand ~ and ${VAR} references."""
+            if val.startswith("~"):
+                val = val.replace("~", "$HOME", 1)
+            # Resolve ${VAR} from os.environ
+            return re.sub(
+                r"\$\{(\w+)\}",
+                lambda m: _os.environ.get(m.group(1), m.group(0)),
+                val,
+            )
+
         lines = []
         for key, value in config.env.items():
-            # Expand ~ to $HOME so it works inside double quotes in bash
-            expanded = (
-                str(value).replace("~", "$HOME", 1)
-                if str(value).startswith("~")
-                else str(value)
-            )
-            lines.append(f'export {key}="{expanded}"')
+            lines.append(f'export {key}="{_resolve(str(value))}"')
         # Pass channels as env var for MCP-based delivery
         if config.claude.channels:
             channels_str = ",".join(config.claude.channels)
