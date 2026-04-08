@@ -77,3 +77,9 @@ spec:
       initial: 30
       max: 300
       multiplier: 2
+
+  hooks:
+    post_start:
+      - "telegrammer-hook post-start"
+    pre_stop:
+      - "telegrammer-hook pre-stop"

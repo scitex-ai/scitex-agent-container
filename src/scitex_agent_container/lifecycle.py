@@ -22,15 +22,27 @@ def _get_runtime(config: AgentConfig):
     raise ValueError(f"Unsupported runtime: {config.runtime}")
 
 
-def _run_hooks(hooks: list[str]) -> None:
-    """Execute a list of shell hook commands."""
+def _run_hooks(hooks: list[str], extra_env: dict[str, str] | None = None) -> None:
+    """Execute a list of shell hook commands.
+
+    Args:
+        hooks: Shell commands to execute.
+        extra_env: Additional env vars passed to hook subprocesses
+            (e.g., AGENT_CONFIG_PATH, AGENT_SCREEN_NAME, AGENT_NAME).
+    """
+    import os
+
+    env = {**os.environ, **(extra_env or {})}
     for hook in hooks:
         if not hook:
             continue
-        result = subprocess.run(hook, shell=True, capture_output=True, text=True)
+        result = subprocess.run(
+            hook, shell=True, capture_output=True, text=True, env=env
+        )
         if result.returncode != 0:
             # Log but don't fail
             import sys
+
             print(f"[WARN] Hook failed: {hook}", file=sys.stderr)
             if result.stderr:
                 print(f"       {result.stderr.strip()}", file=sys.stderr)
@@ -58,8 +70,15 @@ def agent_start(
     if registry.exists(config.name) and runtime.is_running(config):
         raise RuntimeError(f"Agent '{config.name}' is already running")
 
+    # Hook env vars — let hooks know about the agent context
+    hook_env = {
+        "AGENT_CONFIG_PATH": str(Path(config_path).resolve()),
+        "AGENT_SCREEN_NAME": config.screen_name,
+        "AGENT_NAME": config.name,
+    }
+
     # Pre-start hooks
-    _run_hooks(config.hooks.get("pre_start", []))
+    _run_hooks(config.hooks.get("pre_start", []), extra_env=hook_env)
 
     # Start
     success = runtime.start(config, no_preflight=no_preflight)
@@ -74,7 +93,7 @@ def agent_start(
     )
 
     # Post-start hooks
-    _run_hooks(config.hooks.get("post_start", []))
+    _run_hooks(config.hooks.get("post_start", []), extra_env=hook_env)
 
     # Start Orochi sidecar if enabled
     start_orochi_sidecar(config)
@@ -101,13 +120,19 @@ def agent_stop(name: str, registry: Registry | None = None) -> bool:
     config = load_config(entry["config"])
     runtime = _get_runtime(config)
 
+    hook_env = {
+        "AGENT_CONFIG_PATH": str(Path(entry["config"]).resolve()),
+        "AGENT_SCREEN_NAME": config.screen_name,
+        "AGENT_NAME": config.name,
+    }
+
     # Pre-stop hooks
-    _run_hooks(config.hooks.get("pre_stop", []))
+    _run_hooks(config.hooks.get("pre_stop", []), extra_env=hook_env)
 
     runtime.stop(config)
 
     # Post-stop hooks
-    _run_hooks(config.hooks.get("post_stop", []))
+    _run_hooks(config.hooks.get("post_stop", []), extra_env=hook_env)
 
     registry.remove(name)
     return True

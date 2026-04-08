@@ -32,6 +32,8 @@ class HealthSpec:
     method: str = "screen-alive"
 
 
+# Parsed for backward compat but not interpreted by runtime.
+# Watchdog lifecycle is managed by claude-code-telegrammer via hooks.
 @dataclass
 class WatchdogSpec:
     enabled: bool = False
@@ -50,6 +52,8 @@ class RestartSpec:
     backoff_multiplier: int = 2
 
 
+# Parsed for backward compat but not interpreted by runtime.
+# Telegram setup is managed by claude-code-telegrammer via hooks.
 @dataclass
 class TelegramSpec:
     bot_token_env: str = "TELEGRAM_BOT_TOKEN"
@@ -60,11 +64,11 @@ class TelegramSpec:
 
 @dataclass
 class RemoteSpec:
-    host: str = ""          # SSH host (hostname or IP)
-    user: str = ""          # SSH user
-    key: str = ""           # Path to SSH key (optional)
-    port: int = 22          # SSH port
-    timeout: int = 60       # SSH command timeout in seconds
+    host: str = ""  # SSH host (hostname or IP)
+    user: str = ""  # SSH user
+    key: str = ""  # Path to SSH key (optional)
+    port: int = 22  # SSH port
+    timeout: int = 60  # SSH command timeout in seconds
     login_shell: bool = True  # Use bash -l -c (needed for PATH on most hosts)
 
     @property
@@ -82,7 +86,9 @@ class SkillsSpec:
 @dataclass
 class OrochiSpec:
     enabled: bool = False
-    hosts: list[str] = field(default_factory=list)  # tried in order (first reachable wins)
+    hosts: list[str] = field(
+        default_factory=list
+    )  # tried in order (first reachable wins)
     port: int = 8559  # Django Channels default (HTTP + WS unified)
     ws_path: str = "/ws/agent/"  # WebSocket endpoint path
     token_env: str = "SCITEX_OROCHI_TOKEN"  # env var holding the auth token
@@ -156,7 +162,8 @@ def load_config(path: str | Path) -> AgentConfig:
     errors = _validate_raw(raw, str(path))
     if errors:
         raise ValueError(
-            f"Config validation failed for {path}:\n" + "\n".join(f"  - {e}" for e in errors)
+            f"Config validation failed for {path}:\n"
+            + "\n".join(f"  - {e}" for e in errors)
         )
 
     metadata = raw.get("metadata", {})
@@ -333,24 +340,32 @@ def _validate_raw(raw: dict, path: str) -> list[str]:
         runtime = spec.get("runtime")
         valid_runtimes = ("claude-code", "cursor", "aider")
         if runtime and runtime not in valid_runtimes:
-            errors.append(f"spec.runtime must be one of {valid_runtimes}, got '{runtime}'")
+            errors.append(
+                f"spec.runtime must be one of {valid_runtimes}, got '{runtime}'"
+            )
 
         # container.runtime
         container = spec.get("container", {}) or {}
         cr = container.get("runtime")
         if cr and cr not in ("none", "docker", "apptainer"):
-            errors.append(f"spec.container.runtime must be none|docker|apptainer, got '{cr}'")
+            errors.append(
+                f"spec.container.runtime must be none|docker|apptainer, got '{cr}'"
+            )
 
         # container.network
         network = container.get("network")
         if network and network not in ("host", "bridge", "none"):
-            errors.append(f"spec.container.network must be host|bridge|none, got '{network}'")
+            errors.append(
+                f"spec.container.network must be host|bridge|none, got '{network}'"
+            )
 
         # restart.policy
         restart = spec.get("restart", {}) or {}
         policy = restart.get("policy")
         if policy and policy not in ("never", "on-failure", "always"):
-            errors.append(f"spec.restart.policy must be never|on-failure|always, got '{policy}'")
+            errors.append(
+                f"spec.restart.policy must be never|on-failure|always, got '{policy}'"
+            )
 
         # health.method
         health = spec.get("health", {}) or {}

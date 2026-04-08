@@ -149,13 +149,8 @@ def get_orochi_claude_flags(config: AgentConfig) -> list[str]:
         logger.info("Skipping Orochi MCP — SCITEX_OROCHI_DISABLE is set")
         return []
 
-    # Zero-trust: telegram agents must never load Orochi MCP
-    role = os.environ.get("CLAUDE_AGENT_ROLE", "") or config.env.get(
-        "CLAUDE_AGENT_ROLE", ""
-    )
-    if role.lower() == "telegram":
-        logger.info("Skipping Orochi MCP — telegram agent must not load it")
-        return []
+    # Telegram agents use SCITEX_OROCHI_DISABLE=true in their YAML env section.
+    # No hardcoded role check needed here.
 
     if not config.orochi.is_enabled:
         return []

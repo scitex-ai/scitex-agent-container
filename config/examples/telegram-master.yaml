@@ -75,7 +75,7 @@ spec:
       multiplier: 2
 
   hooks:
-    pre_start: []
-    post_start: []
-    pre_stop: []
-    post_stop: []
+    post_start:
+      - "telegrammer-hook post-start"
+    pre_stop:
+      - "telegrammer-hook pre-stop"

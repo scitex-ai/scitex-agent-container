@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import json
 import logging
-import shutil
 import subprocess
 import threading
 import time
@@ -53,112 +51,21 @@ class ClaudeCodeRuntime(RuntimeBase):
         """Build export statements from env dict."""
         lines = []
         for key, value in config.env.items():
-            lines.append(f'export {key}="{value}"')
+            # Expand ~ to $HOME so it works inside double quotes in bash
+            expanded = (
+                str(value).replace("~", "$HOME", 1)
+                if str(value).startswith("~")
+                else str(value)
+            )
+            lines.append(f'export {key}="{expanded}"')
         # Pass channels as env var for MCP-based delivery
         if config.claude.channels:
             channels_str = ",".join(config.claude.channels)
             lines.append(f'export SCITEX_OROCHI_CHANNELS="{channels_str}"')
         return "\n".join(lines)
 
-    def _watchdog_screen_name(self, config: AgentConfig) -> str:
-        """Derive a screen session name for the watchdog."""
-        return f"{config.screen_name}-watchdog"
-
-    def _start_watchdog(self, config: AgentConfig) -> bool:
-        """Start telegrammer-watchdog in a companion screen session."""
-        if not config.watchdog.enabled:
-            return True
-
-        watchdog_bin = shutil.which("telegrammer-watchdog")
-        if watchdog_bin is None:
-            try:
-                from claude_code_telegrammer import get_bin_path
-
-                watchdog_bin = get_bin_path("telegrammer-watchdog")
-            except (ImportError, FileNotFoundError):
-                logger.warning(
-                    "Watchdog enabled but telegrammer-watchdog not found. "
-                    "Install claude-code-telegrammer: "
-                    "pip install claude-code-telegrammer"
-                )
-                return False
-
-        wd = config.watchdog
-        env_exports = (
-            f'export TELEGRAMMER_SESSION="{config.screen_name}"\n'
-            f'export TELEGRAMMER_WATCHDOG_INTERVAL="{wd.interval}"\n'
-            f'export TELEGRAMMER_RESP_Y_N="{wd.resp_y_n}"\n'
-            f'export TELEGRAMMER_RESP_Y_Y_N="{wd.resp_y_y_n}"\n'
-            f'export TELEGRAMMER_RESP_WAITING="{wd.resp_waiting}"'
-        )
-
-        watchdog_session = self._watchdog_screen_name(config)
-        cmd = f"{watchdog_bin} --session {config.screen_name} --interval {wd.interval}"
-
-        started = ScreenManager.start(
-            session_name=watchdog_session,
-            command=cmd,
-            workdir=config.expanded_workdir,
-            env_exports=env_exports,
-        )
-
-        if started:
-            logger.info("Watchdog started in screen session: %s", watchdog_session)
-        else:
-            logger.error(
-                "Failed to start watchdog screen session: %s",
-                watchdog_session,
-            )
-
-        return started
-
-    def _stop_watchdog(self, config: AgentConfig) -> bool:
-        """Stop the companion watchdog screen session."""
-        if not config.watchdog.enabled:
-            return True
-
-        watchdog_session = self._watchdog_screen_name(config)
-        if ScreenManager.exists(watchdog_session):
-            stopped = ScreenManager.stop(watchdog_session)
-            if stopped:
-                logger.info("Watchdog stopped: %s", watchdog_session)
-            return stopped
-        return True
-
-    def _setup_telegram_access(self, config: AgentConfig) -> None:
-        """Write access.json for Telegram channel if configured."""
-        import os as _os  # local import to satisfy linter
-
-        tg = config.telegram
-        if not (tg.auto_connect and tg.allowed_users):
-            return
-
-        # Resolve bot_id from the token (numeric prefix before ':')
-        bot_token = _os.environ.get(tg.bot_token_env, "")
-        bot_id = bot_token.split(":")[0] if bot_token else "default"
-
-        # Use TELEGRAM_STATE_DIR env var if set, otherwise derive from bot_id
-        state_dir = _os.environ.get("TELEGRAM_STATE_DIR")
-        if state_dir:
-            access_dir = Path(state_dir)
-        else:
-            access_dir = (
-                Path.home() / ".scitex" / "agent-container" / "telegram" / bot_id
-            )
-        access_dir.mkdir(parents=True, exist_ok=True)
-        access_file = access_dir / "access.json"
-
-        access_data = {
-            "dmPolicy": "pairing",
-            "allowFrom": tg.allowed_users,
-        }
-
-        access_file.write_text(json.dumps(access_data, indent=2) + "\n")
-        logger.info(
-            "Telegram access.json written with %d allowed users: %s",
-            len(tg.allowed_users),
-            access_file,
-        )
+    # Telegram access.json is managed by claude-code-telegrammer (telegrammer-init),
+    # not by agent-container. Agent-container only passes config via env vars.
 
     def _needs_auto_accept(self, config: AgentConfig) -> bool:
         """Check if the claude command includes flags that trigger TUI prompts."""
@@ -352,9 +259,9 @@ class ClaudeCodeRuntime(RuntimeBase):
                 )
 
     def _post_start_tasks(self, config: AgentConfig) -> None:
-        """Run post-start tasks: auto-accept prompts, telegram setup, startup commands."""
+        """Run post-start tasks: auto-accept prompts, startup commands."""
         self._send_auto_accept_keystrokes(config)
-        self._setup_telegram_access(config)
+        # Telegram access.json is managed by telegrammer-init (claude-code-telegrammer)
         self._run_startup_commands(config)
 
     def start(self, config: AgentConfig, no_preflight: bool = False) -> bool:
@@ -385,13 +292,7 @@ class ClaudeCodeRuntime(RuntimeBase):
         )
 
         if started:
-            self._start_watchdog(config)
-
-            has_tasks = (
-                self._needs_auto_accept(config)
-                or (config.telegram.auto_connect and config.telegram.allowed_users)
-                or config.startup_commands
-            )
+            has_tasks = self._needs_auto_accept(config) or config.startup_commands
             if has_tasks:
                 # Run post-start tasks in a foreground thread and wait for
                 # completion. Using daemon=True would let the CLI exit before
@@ -411,8 +312,6 @@ class ClaudeCodeRuntime(RuntimeBase):
         """Stop a Claude Code agent."""
         if config.remote.is_remote:
             return SSHRemote.stop(config)
-
-        self._stop_watchdog(config)
 
         if config.container.runtime != "none":
             from .apptainer import ApptainerRuntime
