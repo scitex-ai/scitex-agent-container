@@ -8,7 +8,7 @@ import time
 import traceback
 from pathlib import Path
 
-from .config import AgentConfig, load_config
+from .config import AgentConfig, load_config, resolve_config
 from .health import health_monitor
 from .orochi_connector import start_orochi_sidecar
 from .registry import Registry
