@@ -87,6 +87,35 @@ Four layers prevent cross-contamination:
 
 Guards run at flag-generation time (before Claude Code launches). Truthy: `true`, `1`, `yes`, `enable`, `enabled`.
 
+## Telegram Integration (Telegrammer Flow)
+
+### Credential Cascade
+
+```
+ENV (SCITEX_OROCHI_TELEGRAM_BOT_TOKEN)
+  ▼
+scitex-orochi
+  agents/orochi-telegrammer.yaml (bot_token_env references env var)
+  ▼
+scitex-agent-container  ◀── YOU ARE HERE
+  1. Reads bot_token_env from YAML
+  2. Resolves token from os.environ
+  3. Exports into screen session
+  4. Writes access.json
+  5. Launches watchdog
+  ▼
+claude-code-telegrammer
+  TUI watchdog, receives token via env
+```
+
+### Key Points
+
+- `bot_token_env` in YAML → resolved from `os.environ` at runtime
+- `access.json` written to `~/.claude/channels/telegram/`
+- Zero-trust guards prevent telegram agents from loading Orochi MCP
+- `CLAUDE_AGENT_ROLE=telegram` + `SCITEX_OROCHI_DISABLE=true` set automatically
+- MCP config isolation: telegrammer never sees Orochi channel config
+
 ## SSH Remote Deployment
 
 Deploy agents to remote hosts via SSH:

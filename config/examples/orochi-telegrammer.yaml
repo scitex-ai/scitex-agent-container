@@ -1,0 +1,78 @@
+apiVersion: cld-agent/v1
+kind: Agent
+metadata:
+  name: orochi-telegrammer
+  labels:
+    role: telegram
+    team: orochi
+spec:
+  runtime: claude-code
+  model: opus[1m]
+  workdir: ~/proj
+
+  skills:
+    required:
+      - quality-guards
+      - autonomous
+      - speech
+      - scitex
+    available:
+      - code-review
+      - orchestrator
+
+  claude:
+    channels:
+      - plugin:telegram@claude-plugins-official
+    flags:
+      - --dangerously-skip-permissions
+    session: continue
+
+  env:
+    CLAUDE_AGENT_ROLE: telegram
+    CLAUDE_AGENT_ID: orochi-telegrammer
+    SCITEX_OROCHI_DISABLE: "true"
+
+  screen:
+    name: cld-orochi-tg
+
+  telegram:
+    bot_token_env: SCITEX_OROCHI_TELEGRAM_BOT_TOKEN
+    allowed_users:
+      - "8379369979"
+    auto_connect: true
+    greeting: "SciTeX Orochi Telegrammer connected."
+
+  orochi:
+    hosts:
+      - 192.168.11.22
+      - scitex-orochi.com
+    port: 8559
+    token_env: SCITEX_OROCHI_TOKEN
+    channels:
+      - server:scitex-orochi
+
+  startup_commands:
+    - delay: 5
+      command: "/speak-and-call"
+
+  watchdog:
+    enabled: true
+    interval: 1.5
+    responses:
+      y_n: "1"
+      y_y_n: "2"
+      waiting: "/speak-and-call"
+
+  health:
+    enabled: true
+    interval: 30
+    timeout: 5
+    method: screen-alive
+
+  restart:
+    policy: on-failure
+    max_retries: 3
+    backoff:
+      initial: 30
+      max: 300
+      multiplier: 2

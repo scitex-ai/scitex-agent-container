@@ -276,6 +276,48 @@ spec:
 | `spec.env` | key-value pairs | Environment variables |
 | `spec.hooks` | `pre_start`, `post_start`, `pre_stop`, `post_stop` | Lifecycle hooks |
 
+## Telegram Integration (Telegrammer Example)
+
+The Telegrammer bot illustrates how credentials cascade through the SciTeX agent stack:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ ~/.bash.d/secrets/                                      │
+│  SCITEX_OROCHI_TELEGRAM_BOT_TOKEN="..."                 │
+└──────────────────────────┬──────────────────────────────┘
+                           ▼
+┌─────────────────────────────────────────────────────────┐
+│ scitex-orochi                                           │
+│  agents/orochi-telegrammer.yaml                         │
+│    bot_token_env: SCITEX_OROCHI_TELEGRAM_BOT_TOKEN      │
+│    (YAML holds env var NAME, never the secret)          │
+└──────────────────────────┬──────────────────────────────┘
+                           ▼
+┌─────────────────────────────────────────────────────────┐
+│ scitex-agent-container  ◀── YOU ARE HERE                │
+│  1. Reads bot_token_env from YAML                       │
+│  2. Resolves actual token from os.environ               │
+│  3. Exports into screen session / container             │
+│  4. Writes ~/.claude/channels/telegram/access.json      │
+│  5. Launches claude-code-telegrammer watchdog            │
+└──────────────────────────┬──────────────────────────────┘
+                           ▼
+┌─────────────────────────────────────────────────────────┐
+│ claude-code-telegrammer                                 │
+│  TUI watchdog: polls screen, auto-responds to prompts   │
+│  Claude Code's telegram plugin reads token from env     │
+│  (Never manages or stores the token itself)             │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Separation of Concerns
+
+| Layer | Responsibility | Token Handling |
+|-------|---------------|----------------|
+| **scitex-orochi** | Defines agent configs, Telegram bridge, dashboard | Owns env var name in YAML |
+| **scitex-agent-container** (this) | Reads YAML, launches agent, injects env | Resolves and exports token |
+| **claude-code-telegrammer** | TUI automation, screen polling | Receives via env, never manages |
+
 <!-- SciTeX Convention: Ecosystem -->
 ## Part of SciTeX
 
