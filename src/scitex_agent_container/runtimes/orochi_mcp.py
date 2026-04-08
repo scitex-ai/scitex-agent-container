@@ -128,66 +128,25 @@ def write_mcp_config_file(config: AgentConfig) -> str | None:
     return str(config_path)
 
 
-def write_project_mcp_config(config: AgentConfig) -> str | None:
-    """Write scitex-orochi MCP config into the project's .mcp.json.
-
-    Claude Code discovers project-level MCP servers from .mcp.json at the
-    project root (NOT .claude/mcp.json).  The --mcp-config CLI flag does NOT
-    make servers available for --dangerously-load-development-channels, so we
-    must write directly into the project config.
-
-    If a .mcp.json already exists, we merge the scitex-orochi entry into
-    the existing mcpServers dict (preserving other servers).
-
-    Returns the path to the written file, or None if orochi is not enabled.
-    """
-    mcp_config = build_orochi_mcp_config(config)
-    if mcp_config is None:
-        return None
-
-    workdir = Path(config.expanded_workdir)
-    mcp_path = workdir / ".mcp.json"
-
-    # Merge with existing config if present
-    existing: dict = {"mcpServers": {}}
-    if mcp_path.exists():
-        try:
-            existing = json.loads(mcp_path.read_text())
-        except (json.JSONDecodeError, OSError):
-            pass
-        if "mcpServers" not in existing:
-            existing["mcpServers"] = {}
-
-    existing["mcpServers"]["scitex-orochi"] = mcp_config["mcpServers"]["scitex-orochi"]
-
-    mcp_path.write_text(json.dumps(existing, indent=2) + "\n")
-    logger.info(
-        "Orochi MCP config written to project %s (agent=%s)",
-        mcp_path,
-        config.name,
-    )
-    return str(mcp_path)
-
-
 def get_orochi_claude_flags(config: AgentConfig) -> list[str]:
     """Return extra CLI flags for Claude Code when orochi is enabled.
 
-    Writes the MCP server config into the project .mcp.json and
-    returns the --dangerously-load-development-channels flag.
+    Writes the MCP config to a temp file (/tmp/scitex-agent-container/mcp-{name}.json)
+    and returns --mcp-config plus --dangerously-load-development-channels flags.
+
+    IMPORTANT: We deliberately avoid writing to {workdir}/.mcp.json because the
+    workdir may be shared with other Claude Code sessions (e.g., Telegram agent).
+    Writing there would cause MCP config conflicts between sessions.  The
+    --mcp-config flag loads the MCP server for THIS session only.
     """
     if not config.orochi.is_enabled:
         return []
 
-    # Write MCP config to both temp file (for --mcp-config) and project .mcp.json
-    temp_mcp = write_mcp_config_file(config)
-    project_mcp = write_project_mcp_config(config)
-    if project_mcp is None:
+    mcp_path = write_mcp_config_file(config)
+    if mcp_path is None:
         return []
 
-    # Only the channel flag is needed; the MCP server is discovered from
-    # .mcp.json that write_project_mcp_config() already wrote.
-    # Do NOT use --mcp-config or --strict-mcp-config here: --strict would
-    # hide the user's other MCP servers (filesystem, scitex, etc.).
     return [
+        f"--mcp-config '{mcp_path}'",
         "--dangerously-load-development-channels server:scitex-orochi",
     ]
