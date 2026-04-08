@@ -24,6 +24,7 @@ spec:
     channels: []
     flags:
       - --dangerously-skip-permissions
+      - --strict-mcp-config
       - "--mcp-config /tmp/scitex-agent-container/mcp-orochi-telegrammer.json"
       - "--dangerously-load-development-channels server:telegram"
     session: new
