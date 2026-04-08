@@ -111,7 +111,7 @@ claude-code-telegrammer
 ### Key Points
 
 - `bot_token_env` in YAML → resolved from `os.environ` at runtime
-- `access.json` written to `~/.claude/channels/telegram/`
+- `access.json` written to `TELEGRAM_STATE_DIR` (`~/.scitex/agent-container/telegram/{bot_id}/`)
 - Zero-trust guards prevent telegram agents from loading Orochi MCP
 - `CLAUDE_AGENT_ROLE=telegram` + `SCITEX_OROCHI_DISABLE=true` set automatically
 - MCP config isolation: telegrammer never sees Orochi channel config
