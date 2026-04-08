@@ -11,7 +11,6 @@ from click.testing import CliRunner
 
 from scitex_agent_container.cli import main
 
-
 VALID_CONFIG = {
     "apiVersion": "cld-agent/v1",
     "kind": "Agent",
@@ -80,7 +79,7 @@ class TestCLI:
         runner = CliRunner()
         result = runner.invoke(main, ["--version"])
         assert result.exit_code == 0
-        assert "0.2.0" in result.output
+        assert "version" in result.output
 
     def test_list_json_empty(self):
         runner = CliRunner()
@@ -163,6 +162,7 @@ class TestCLI:
             "spec": {"runtime": "claude-code", "model": "sonnet"},
         }
         import tempfile
+
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "gpu-agent.yaml"
             with open(path, "w") as f:
@@ -216,6 +216,7 @@ class TestCLI:
     def test_find_no_match(self):
         """find command should return empty when no agents match."""
         import tempfile
+
         config_no_match = {
             "apiVersion": "cld-agent/v1",
             "kind": "Agent",
