@@ -93,6 +93,7 @@ def build_orochi_mcp_config(config: AgentConfig) -> dict | None:
     return {
         "mcpServers": {
             "scitex-orochi": {
+                "type": "stdio",
                 "command": "bun",
                 "args": [ts_path],
                 "env": env_block,
@@ -183,7 +184,10 @@ def get_orochi_claude_flags(config: AgentConfig) -> list[str]:
     if project_mcp is None:
         return []
 
-    flags = [
+    # Only the channel flag is needed; the MCP server is discovered from
+    # .mcp.json that write_project_mcp_config() already wrote.
+    # Do NOT use --mcp-config or --strict-mcp-config here: --strict would
+    # hide the user's other MCP servers (filesystem, scitex, etc.).
+    return [
         "--dangerously-load-development-channels server:scitex-orochi",
     ]
-    return flags

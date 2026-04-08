@@ -243,79 +243,145 @@ class ClaudeCodeRuntime(RuntimeBase):
         ]
         return any(any(df in f for df in dangerous_flags) for f in all_flags)
 
+    def _get_screen_content(self, session_name: str) -> str:
+        """Capture current screen content via hardcopy."""
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(mode="r", suffix=".txt", delete=False) as f:
+            tmp_path = f.name
+
+        try:
+            subprocess.run(
+                ["screen", "-S", session_name, "-X", "hardcopy", tmp_path],
+                check=False,
+                capture_output=True,
+            )
+            time.sleep(0.3)
+            return Path(tmp_path).read_text(errors="replace")
+        except Exception:
+            return ""
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    def _wait_for_prompt(
+        self, config: AgentConfig, marker: str, timeout: int = 60
+    ) -> bool:
+        """Poll screen content until a prompt marker appears or timeout."""
+        start = time.monotonic()
+        while time.monotonic() - start < timeout:
+            if not ScreenManager.exists(config.screen_name):
+                return False
+            content = self._get_screen_content(config.screen_name)
+            if marker in content:
+                return True
+            time.sleep(2)
+        return False
+
     def _send_auto_accept_keystrokes(self, config: AgentConfig) -> None:
         """Send keystrokes to accept TUI confirmation prompts in screen.
 
-        Claude Code shows confirmation prompts for dangerous flags:
-        - --dangerously-skip-permissions: y/n prompt -> needs "y\\n"
-        - --dangerously-load-development-channels: radio selection -> needs "\\n"
-        In unattended screen sessions, these block forever. This method sends
-        the appropriate keystrokes with delays to auto-accept them.
+        Claude Code shows confirmation prompts for dangerous flags. This method
+        polls the screen content and responds to whichever prompt appears:
+        - y/n prompts (e.g. skip-permissions): send "y\\r"
+        - Radio selection prompts (e.g. dev channels): send "\\r" (Enter)
+        - Done when the main input prompt appears (bypass permissions)
+
+        Uses polling to handle variable Claude Code startup times.
         """
         if not self._needs_auto_accept(config):
             return
 
-        # Build ordered list of (prompt_type, keystroke) pairs.
-        # --dangerously-skip-permissions always comes first in Claude Code.
-        prompts: list[tuple[str, str]] = []
-        for f in config.claude.flags:
-            if "--dangerously-skip-permissions" in f:
-                prompts.append(("skip-permissions", "y\n"))
-        if config.orochi.is_enabled:
-            # --dangerously-load-development-channels is a radio-selection
-            # prompt where option 1 is pre-selected; just press Enter.
-            prompts.append(("load-dev-channels", "\n"))
+        # Detect which prompts we expect
+        expect_skip_permissions = any(
+            "--dangerously-skip-permissions" in f for f in config.claude.flags
+        )
+        expect_dev_channels = config.orochi.is_enabled
 
-        if not prompts:
-            return
+        expected = []
+        if expect_skip_permissions:
+            expected.append("skip-permissions")
+        if expect_dev_channels:
+            expected.append("load-dev-channels")
 
         logger.info(
-            "Auto-accepting %d TUI confirmation prompt(s) for %s",
-            len(prompts),
+            "Auto-accepting %d TUI confirmation prompt(s) for %s: %s",
+            len(expected),
             config.screen_name,
+            ", ".join(expected),
         )
 
-        for i, (prompt_type, keystroke) in enumerate(prompts):
-            # Wait for the prompt to render. First prompt needs more time
-            # for Claude Code to initialize; subsequent prompts are faster.
-            delay = 5 if i == 0 else 3
-            time.sleep(delay)
+        # Poll screen content and respond to prompts as they appear.
+        # The "bypass permissions" text in the input bar means we're done.
+        timeout = 90
+        start = time.monotonic()
+        accepted: set[str] = set()
 
+        while time.monotonic() - start < timeout:
             if not ScreenManager.exists(config.screen_name):
                 logger.warning(
-                    "Screen session %s disappeared before auto-accept "
-                    "could send keystroke %d/%d",
+                    "Screen session %s disappeared during auto-accept",
                     config.screen_name,
-                    i + 1,
-                    len(prompts),
                 )
                 return
 
-            try:
-                subprocess.run(
-                    [
-                        "screen",
-                        "-S",
-                        config.screen_name,
-                        "-X",
-                        "stuff",
-                        keystroke,
-                    ],
-                    check=False,
-                    capture_output=True,
-                )
+            content = self._get_screen_content(config.screen_name)
+
+            # Check if we've reached the main prompt (all prompts accepted)
+            if "bypass permissions" in content and "Enter to confirm" not in content:
                 logger.info(
-                    "Sent auto-accept keystroke %d/%d (%s) to %s",
-                    i + 1,
-                    len(prompts),
-                    prompt_type,
+                    "Auto-accept complete for %s (accepted: %s)",
                     config.screen_name,
+                    ", ".join(accepted) or "none needed",
                 )
-            except Exception:
-                logger.exception(
-                    "Failed to send auto-accept keystroke to %s",
-                    config.screen_name,
-                )
+                return
+
+            # Detect and respond to radio-selection prompt (dev channels)
+            # This prompt has "Enter to confirm" and radio options
+            if "Enter to confirm" in content and "load-dev-channels" not in accepted:
+                time.sleep(1)
+                try:
+                    subprocess.run(
+                        ["screen", "-S", config.screen_name, "-X", "stuff", "\r"],
+                        check=False, capture_output=True,
+                    )
+                    accepted.add("load-dev-channels")
+                    logger.info(
+                        "Sent auto-accept Enter for load-dev-channels to %s",
+                        config.screen_name,
+                    )
+                except Exception:
+                    logger.exception("Failed to send auto-accept to %s", config.screen_name)
+                time.sleep(2)
+                continue
+
+            # Detect and respond to y/n prompt (skip-permissions)
+            # This prompt has "Type 'y'" or similar y/n confirmation text
+            if ("skip-permissions" in content or "Trust" in content) and "skip-permissions" not in accepted:
+                time.sleep(1)
+                try:
+                    subprocess.run(
+                        ["screen", "-S", config.screen_name, "-X", "stuff", "y\r"],
+                        check=False, capture_output=True,
+                    )
+                    accepted.add("skip-permissions")
+                    logger.info(
+                        "Sent auto-accept y for skip-permissions to %s",
+                        config.screen_name,
+                    )
+                except Exception:
+                    logger.exception("Failed to send auto-accept to %s", config.screen_name)
+                time.sleep(2)
+                continue
+
+            time.sleep(2)
+
+        logger.warning(
+            "Timed out (%ds) during auto-accept for %s (accepted: %s, expected: %s)",
+            timeout,
+            config.screen_name,
+            ", ".join(accepted),
+            ", ".join(expected),
+        )
 
     def _run_startup_commands(self, config: AgentConfig) -> None:
         """Send startup commands to the screen session with delays."""
@@ -390,13 +456,17 @@ class ClaudeCodeRuntime(RuntimeBase):
                 or config.startup_commands
             )
             if has_tasks:
+                # Run post-start tasks in a foreground thread and wait for
+                # completion. Using daemon=True would let the CLI exit before
+                # auto-accept finishes, killing the thread prematurely.
                 thread = threading.Thread(
                     target=self._post_start_tasks,
                     args=(config,),
-                    daemon=True,
+                    daemon=False,
                     name=f"post-start-{config.screen_name}",
                 )
                 thread.start()
+                thread.join()
 
         return started
 
