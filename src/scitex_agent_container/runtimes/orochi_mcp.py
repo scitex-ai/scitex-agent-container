@@ -20,6 +20,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _is_truthy(val: str | None) -> bool:
+    """Check if env var value is truthy (true/1/yes/enable/enabled)."""
+    return (val or "").lower() in ("true", "1", "yes", "enable", "enabled")
+
+
 def find_mcp_channel_ts() -> str | None:
     """Locate the mcp_channel.ts MCP server script.
 
@@ -139,11 +144,16 @@ def get_orochi_claude_flags(config: AgentConfig) -> list[str]:
     Writing there would cause MCP config conflicts between sessions.  The
     --mcp-config flag loads the MCP server for THIS session only.
     """
+    # Generic disable switch (e.g., telegram agent, debugging)
+    if _is_truthy(os.environ.get("SCITEX_OROCHI_DISABLE")):
+        logger.info("Skipping Orochi MCP — SCITEX_OROCHI_DISABLE is set")
+        return []
+
     # Zero-trust: telegram agents must never load Orochi MCP
     role = os.environ.get("CLAUDE_AGENT_ROLE", "") or config.env.get(
         "CLAUDE_AGENT_ROLE", ""
     )
-    if role == "telegram":
+    if role.lower() == "telegram":
         logger.info("Skipping Orochi MCP — telegram agent must not load it")
         return []
 
