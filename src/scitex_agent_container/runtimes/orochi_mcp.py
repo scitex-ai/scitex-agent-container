@@ -139,6 +139,14 @@ def get_orochi_claude_flags(config: AgentConfig) -> list[str]:
     Writing there would cause MCP config conflicts between sessions.  The
     --mcp-config flag loads the MCP server for THIS session only.
     """
+    # Zero-trust: telegram agents must never load Orochi MCP
+    role = os.environ.get("CLAUDE_AGENT_ROLE", "") or config.env.get(
+        "CLAUDE_AGENT_ROLE", ""
+    )
+    if role == "telegram":
+        logger.info("Skipping Orochi MCP — telegram agent must not load it")
+        return []
+
     if not config.orochi.is_enabled:
         return []
 
