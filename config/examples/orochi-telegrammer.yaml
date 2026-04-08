@@ -31,6 +31,7 @@ spec:
     CLAUDE_AGENT_ROLE: telegram
     CLAUDE_AGENT_ID: orochi-telegrammer
     SCITEX_OROCHI_DISABLE: "true"
+    TELEGRAM_STATE_DIR: ~/.claude/channels/telegram-8146978246
 
   screen:
     name: cld-orochi-tg
