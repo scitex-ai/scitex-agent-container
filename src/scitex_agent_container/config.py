@@ -307,6 +307,26 @@ def load_config(path: str | Path) -> AgentConfig:
     )
 
 
+def resolve_config(name_or_path: str) -> str:
+    """Resolve agent name or path to a config file path."""
+    from pathlib import Path
+
+    p = Path(name_or_path)
+    if "/" in name_or_path or name_or_path.endswith((".yaml", ".yml")):
+        if p.exists():
+            return str(p)
+        raise FileNotFoundError(f"Config file not found: {name_or_path}")
+    user_dir = Path.home() / ".scitex" / "orochi" / "agents"
+    for ext in (".yaml", ".yml"):
+        candidate = user_dir / f"{name_or_path}{ext}"
+        if candidate.exists():
+            return str(candidate)
+    raise FileNotFoundError(
+        f"Agent '{name_or_path}' not found in ~/.scitex/orochi/agents/\n"
+        f"  Create: cp templates/... ~/.scitex/orochi/agents/{name_or_path}.yaml"
+    )
+
+
 def _validate_raw(raw: dict, path: str) -> list[str]:
     """Validate raw YAML dict. Returns list of error strings (empty means valid)."""
     errors: list[str] = []

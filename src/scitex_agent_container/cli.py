@@ -13,7 +13,7 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from .config import load_config, validate_config
+from .config import load_config, resolve_config, validate_config
 from .lifecycle import agent_logs, agent_restart, agent_start, agent_status, agent_stop
 from .registry import Registry
 
@@ -70,12 +70,13 @@ def main(ctx, help_recursive):
 
 
 @main.command()
-@click.argument("config_path", type=click.Path(exists=True))
+@click.argument("config_path", type=str)
 @click.option("--no-preflight", is_flag=True, default=False,
               help="Skip preflight checks (useful for slow SSH hosts).")
 def start(config_path: str, no_preflight: bool):
     """Start an agent from a YAML definition."""
     try:
+        config_path = resolve_config(config_path)
         config = load_config(config_path)
         location = (
             f"REMOTE: {config.remote.host}"
@@ -426,7 +427,7 @@ def health(name: str, as_json: bool):
 
 
 @main.command()
-@click.argument("config_path", type=click.Path(exists=True))
+@click.argument("config_path", type=str)
 def check(config_path: str):
     """Run preflight checks for an agent deployment.
 
@@ -529,7 +530,7 @@ def check(config_path: str):
 
 
 @main.command()
-@click.argument("config_path", type=click.Path(exists=True))
+@click.argument("config_path", type=str)
 def validate(config_path: str):
     """Validate a YAML config file."""
     errors = validate_config(config_path)

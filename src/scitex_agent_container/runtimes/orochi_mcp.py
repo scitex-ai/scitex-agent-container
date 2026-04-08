@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -119,7 +118,7 @@ def write_mcp_config_file(config: AgentConfig) -> str | None:
         return None
 
     # Write to a deterministic path so restarts reuse the same file
-    config_dir = Path(tempfile.gettempdir()) / "scitex-agent-container"
+    config_dir = Path.home() / ".scitex" / "agent-container" / "cache" / "mcp-configs"
     config_dir.mkdir(parents=True, exist_ok=True)
     config_path = config_dir / f"mcp-{config.name}.json"
 

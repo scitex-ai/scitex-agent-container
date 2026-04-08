@@ -62,6 +62,7 @@ def agent_start(
 
     Returns True on success, False on failure.
     """
+    config_path = resolve_config(config_path)
     registry = registry or Registry()
     config = load_config(config_path)
     runtime = _get_runtime(config)
