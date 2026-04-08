@@ -34,14 +34,15 @@ class ScreenManager:
             True if the screen session was created successfully.
         """
         shell_script = (
-            f"source ~/.bashrc 2>/dev/null || true\n"
             f"cd '{workdir}' || exit 1\n"
             f"{env_exports}\n"
             f"export CLAUDE_DISABLE_AUTO_UPDATE=1\n"
             f"exec {command}\n"
         )
+        # Use login shell (-l) so that ~/.bash_profile, module loads, and
+        # LD_LIBRARY_PATH are set correctly (e.g. HPC environments).
         subprocess.run(
-            ["screen", "-dmS", session_name, "bash", "-c", shell_script],
+            ["screen", "-dmS", session_name, "bash", "-l", "-c", shell_script],
             check=False,
         )
 

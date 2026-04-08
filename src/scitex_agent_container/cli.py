@@ -71,13 +71,25 @@ def main(ctx, help_recursive):
 
 @main.command()
 @click.argument("config_path", type=click.Path(exists=True))
-def start(config_path: str):
+@click.option("--no-preflight", is_flag=True, default=False,
+              help="Skip preflight checks (useful for slow SSH hosts).")
+def start(config_path: str, no_preflight: bool):
     """Start an agent from a YAML definition."""
     try:
         config = load_config(config_path)
-        console.print(f"[blue]Starting agent '{config.name}' (runtime: {config.runtime})...[/blue]")
-        agent_start(config_path)
-        console.print(f"[green]Agent '{config.name}' started successfully[/green]")
+        location = (
+            f"REMOTE: {config.remote.host}"
+            if config.remote.is_remote
+            else "LOCAL"
+        )
+        console.print(
+            f"[blue]Starting agent '{config.name}' "
+            f"(runtime: {config.runtime}, {location})...[/blue]"
+        )
+        if no_preflight:
+            console.print("[dim]Preflight checks skipped (--no-preflight)[/dim]")
+        agent_start(config_path, no_preflight=no_preflight)
+        console.print(f"[green]Agent '{config.name}' started successfully [{location}][/green]")
     except Exception as exc:
         console.print(f"[red]Error: {exc}[/red]")
         traceback.print_exc()
@@ -148,13 +160,17 @@ def status(name: str | None, as_json: bool):
 @main.command(name="list")
 @click.option("--json", "as_json", is_flag=True, default=False,
               help="Output as JSON.")
-def list_agents(as_json: bool):
+@click.option("--capability", "-c", default=None,
+              help="Filter by capability label (comma-separated in YAML).")
+@click.option("--machine", "-m", default=None,
+              help="Filter by machine label.")
+def list_agents(as_json: bool, capability: str | None, machine: str | None):
     """List all registered agents."""
     registry = Registry()
     if as_json:
-        _print_agent_list_json(registry)
+        _print_agent_list_json(registry, capability=capability, machine=machine)
     else:
-        _print_agent_list(registry)
+        _print_agent_list(registry, capability=capability, machine=machine)
 
 
 @main.command()
@@ -169,8 +185,19 @@ def ps(as_json: bool):
         _print_agent_list(registry)
 
 
-def _get_agent_list_data(registry: Registry) -> list[dict]:
-    """Get agent list as plain dicts for JSON or table output."""
+def _get_agent_list_data(
+    registry: Registry,
+    capability: str | None = None,
+    machine: str | None = None,
+) -> list[dict]:
+    """Get agent list as plain dicts for JSON or table output.
+
+    Args:
+        registry: The agent registry to query.
+        capability: If set, only include agents whose ``capabilities`` label
+            contains this value (comma-separated matching).
+        machine: If set, only include agents whose ``machine`` label matches.
+    """
     from .runtimes.screen import ScreenManager
 
     entries = registry.list_all()
@@ -179,25 +206,69 @@ def _get_agent_list_data(registry: Registry) -> list[dict]:
         name = entry.get("name", "?")
         screen_name = entry.get("screen", "?")
         started = entry.get("started_at", "?")
-        is_running = ScreenManager.exists(screen_name)
-        results.append({
+        # Load config for labels, remote info, and filtering
+        labels: dict[str, str] = {}
+        remote_host = ""
+        config_path = entry.get("config")
+        cfg = None
+        if config_path:
+            try:
+                cfg = load_config(config_path)
+                labels = cfg.labels
+                if cfg.remote.is_remote:
+                    remote_host = cfg.remote.host
+            except Exception:
+                pass
+
+        # Check if running — remote or local
+        try:
+            if cfg and cfg.remote.is_remote:
+                from .runtimes.claude_code import ClaudeCodeRuntime
+                is_running = ClaudeCodeRuntime().is_running(cfg)
+            else:
+                is_running = ScreenManager.exists(screen_name)
+        except Exception:
+            is_running = False  # Graceful degradation on SSH timeout etc.
+
+        # Apply filters
+        if machine and labels.get("machine") != machine:
+            continue
+        if capability:
+            caps = [c.strip() for c in labels.get("capabilities", "").split(",") if c.strip()]
+            if capability not in caps:
+                continue
+
+        row: dict = {
             "name": name,
             "status": "running" if is_running else "stopped",
             "screen": screen_name,
             "started_at": started,
-        })
+        }
+        if remote_host:
+            row["remote"] = remote_host
+        if labels:
+            row["labels"] = labels
+        results.append(row)
     return results
 
 
-def _print_agent_list_json(registry: Registry) -> None:
+def _print_agent_list_json(
+    registry: Registry,
+    capability: str | None = None,
+    machine: str | None = None,
+) -> None:
     """Print agent list as JSON."""
-    data = _get_agent_list_data(registry)
+    data = _get_agent_list_data(registry, capability=capability, machine=machine)
     click.echo(json_mod.dumps(data, indent=2))
 
 
-def _print_agent_list(registry: Registry) -> None:
+def _print_agent_list(
+    registry: Registry,
+    capability: str | None = None,
+    machine: str | None = None,
+) -> None:
     """Print a rich table of all registered agents."""
-    data = _get_agent_list_data(registry)
+    data = _get_agent_list_data(registry, capability=capability, machine=machine)
     if not data:
         console.print("[dim]No agents registered.[/dim]")
         return
@@ -205,6 +276,7 @@ def _print_agent_list(registry: Registry) -> None:
     table = Table(title="Registered Agents")
     table.add_column("Name", style="bold")
     table.add_column("Status")
+    table.add_column("Location")
     table.add_column("Screen")
     table.add_column("Started")
 
@@ -213,8 +285,61 @@ def _print_agent_list(registry: Registry) -> None:
             "[green]running[/green]" if row["status"] == "running"
             else "[red]stopped[/red]"
         )
-        table.add_row(row["name"], status_str, row["screen"], row["started_at"])
+        remote = row.get("remote", "")
+        location = f"[cyan]REMOTE: {remote}[/cyan]" if remote else "LOCAL"
+        table.add_row(row["name"], status_str, location, row["screen"], row["started_at"])
 
+    console.print(table)
+
+
+@main.command()
+@click.argument("capability")
+@click.option("--dir", "-d", "search_dir", default=None,
+              help="Directory of YAML agent configs to search.")
+@click.option("--json", "as_json", is_flag=True, default=False,
+              help="Output as JSON.")
+def find(capability: str, search_dir: str | None, as_json: bool):
+    """Find agents with a specific capability label from YAML configs.
+
+    Searches agent definition files for those whose ``capabilities`` label
+    includes the given value.  Useful for routing tasks to the right agent.
+    """
+    import glob as glob_mod
+
+    if search_dir is None:
+        search_dir = "."
+    search_path = Path(search_dir).expanduser().resolve()
+
+    matches = []
+    for yaml_path in sorted(search_path.glob("*.yaml")):
+        try:
+            cfg = load_config(yaml_path)
+        except Exception:
+            continue
+        caps = [c.strip() for c in cfg.labels.get("capabilities", "").split(",") if c.strip()]
+        if capability in caps:
+            matches.append({
+                "name": cfg.name,
+                "machine": cfg.labels.get("machine", ""),
+                "capabilities": caps,
+                "config": str(yaml_path),
+            })
+
+    if as_json:
+        click.echo(json_mod.dumps(matches, indent=2))
+        return
+
+    if not matches:
+        console.print(f"[dim]No agents found with capability '{capability}'[/dim]")
+        return
+
+    table = Table(title=f"Agents with capability: {capability}")
+    table.add_column("Name", style="bold")
+    table.add_column("Machine")
+    table.add_column("Capabilities")
+    table.add_column("Config")
+    for m in matches:
+        table.add_row(m["name"], m["machine"], ",".join(m["capabilities"]), m["config"])
     console.print(table)
 
 
@@ -297,6 +422,109 @@ def health(name: str, as_json: bool):
         console.print(f"[green]{message}[/green]")
     else:
         console.print(f"[red]{message}[/red]")
+        sys.exit(1)
+
+
+@main.command()
+@click.argument("config_path", type=click.Path(exists=True))
+def check(config_path: str):
+    """Run preflight checks for an agent deployment.
+
+    Verifies that all dependencies (SSH, screen, python, etc.) are
+    available before starting the agent.  Useful for debugging deployment
+    failures.
+    """
+    import shutil
+
+    try:
+        config = load_config(config_path)
+    except Exception as exc:
+        console.print(f"[red]Error loading config: {exc}[/red]")
+        sys.exit(1)
+
+    console.print(
+        f"[blue]Checking {config.name}"
+        + (f" (remote: {config.remote.host})" if config.remote.is_remote else " (local)")
+        + "...[/blue]"
+    )
+
+    all_ok = True
+
+    if config.remote.is_remote:
+        from .runtimes.claude_code import _SSHRemote
+
+        results = _SSHRemote.preflight(config)
+        for name, passed, detail in results:
+            if passed:
+                # Right-align the check name for readability
+                console.print(f"  {name + ':':30s} [green]{detail}[/green]")
+            else:
+                all_ok = False
+                console.print(f"  {name + ':':30s} [red]FAIL[/red]")
+                for line in detail.split("\n"):
+                    console.print(f"    [red]{line}[/red]")
+    else:
+        # Local checks
+        # 1. screen
+        screen_bin = shutil.which("screen")
+        if screen_bin:
+            console.print(f"  {'screen:':30s} [green]OK ({screen_bin})[/green]")
+        else:
+            all_ok = False
+            console.print(f"  {'screen:':30s} [red]FAIL[/red]")
+            console.print("    [red]GNU screen not found[/red]")
+            console.print("    [red]  Fix: sudo apt install screen[/red]")
+
+        # 2. python
+        import subprocess as _sp
+        try:
+            proc = _sp.run(
+                ["python3", "--version"], capture_output=True, text=True, timeout=5,
+            )
+            if proc.returncode == 0:
+                console.print(f"  {'python:':30s} [green]OK ({proc.stdout.strip()})[/green]")
+            else:
+                all_ok = False
+                console.print(f"  {'python:':30s} [red]FAIL[/red]")
+        except FileNotFoundError:
+            all_ok = False
+            console.print(f"  {'python:':30s} [red]FAIL (python3 not found)[/red]")
+
+        # 3. scitex-agent-container
+        sac_bin = shutil.which("scitex-agent-container")
+        if sac_bin:
+            try:
+                proc = _sp.run(
+                    ["scitex-agent-container", "--version"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                ver = proc.stdout.strip() if proc.returncode == 0 else "unknown"
+            except Exception:
+                ver = "unknown"
+            console.print(f"  {'scitex-agent-container:':30s} [green]OK ({ver})[/green]")
+        else:
+            all_ok = False
+            console.print(f"  {'scitex-agent-container:':30s} [red]FAIL[/red]")
+            console.print("    [red]  Fix: pip install scitex-agent-container[/red]")
+
+        # 4. disk space
+        try:
+            proc = _sp.run(
+                ["df", "-h", "/"], capture_output=True, text=True, timeout=5,
+            )
+            if proc.returncode == 0:
+                lines = proc.stdout.strip().split("\n")
+                if len(lines) >= 2:
+                    parts = lines[1].split()
+                    usage = parts[4] if len(parts) >= 5 else "unknown"
+                    console.print(f"  {'disk space:':30s} [green]OK ({usage} used)[/green]")
+        except Exception:
+            console.print(f"  {'disk space:':30s} [dim]unknown[/dim]")
+
+    if all_ok:
+        console.print("[green]Ready to deploy.[/green]")
+    else:
+        console.print("[red]Preflight checks failed. Fix the issues above before deploying.[/red]")
         sys.exit(1)
 
 

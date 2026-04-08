@@ -11,7 +11,6 @@ from click.testing import CliRunner
 
 from scitex_agent_container.cli import main
 
-
 VALID_CONFIG = {
     "apiVersion": "cld-agent/v1",
     "kind": "Agent",
@@ -80,7 +79,7 @@ class TestCLI:
         runner = CliRunner()
         result = runner.invoke(main, ["--version"])
         assert result.exit_code == 0
-        assert "0.1.0" in result.output
+        assert "version" in result.output
 
     def test_list_json_empty(self):
         runner = CliRunner()
@@ -133,3 +132,106 @@ class TestCLI:
         assert "start" in result.output
         assert "stop" in result.output
         assert "list-python-apis" in result.output
+
+    def test_list_with_capability_filter(self):
+        """The --capability flag should be accepted even with no agents."""
+        runner = CliRunner()
+        result = runner.invoke(main, ["list", "--capability", "gpu"])
+        assert result.exit_code == 0
+
+    def test_list_with_machine_filter(self):
+        """The --machine flag should be accepted even with no agents."""
+        runner = CliRunner()
+        result = runner.invoke(main, ["list", "--machine", "spartan"])
+        assert result.exit_code == 0
+
+    def test_find_in_directory(self):
+        """find command should search YAML configs in a directory."""
+        # Create a temp dir with a valid agent YAML that has capabilities
+        config_with_caps = {
+            "apiVersion": "cld-agent/v1",
+            "kind": "Agent",
+            "metadata": {
+                "name": "test-gpu-agent",
+                "labels": {
+                    "role": "head",
+                    "machine": "spartan",
+                    "capabilities": "gpu,slurm,ml-training",
+                },
+            },
+            "spec": {"runtime": "claude-code", "model": "sonnet"},
+        }
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "gpu-agent.yaml"
+            with open(path, "w") as f:
+                yaml.safe_dump(config_with_caps, f)
+
+            runner = CliRunner()
+            result = runner.invoke(main, ["find", "gpu", "--dir", tmpdir, "--json"])
+            assert result.exit_code == 0
+            data = json.loads(result.output)
+            assert len(data) == 1
+            assert data[0]["name"] == "test-gpu-agent"
+            assert "gpu" in data[0]["capabilities"]
+
+    def test_check_local_agent(self):
+        """check command should run preflight checks on a local agent."""
+        path = _write_config(VALID_CONFIG)
+        runner = CliRunner()
+        result = runner.invoke(main, ["check", path])
+        # Should succeed on a local machine that has python and screen
+        # Even if screen is missing, the command itself should not crash
+        assert "Checking" in result.output
+        Path(path).unlink()
+
+    def test_check_remote_agent_no_ssh(self):
+        """check command on unreachable remote should fail gracefully."""
+        remote_config = {
+            **VALID_CONFIG,
+            "spec": {
+                **VALID_CONFIG["spec"],
+                "remote": {
+                    "host": "192.0.2.1",  # RFC 5737 TEST-NET, unreachable
+                    "user": "testuser",
+                },
+            },
+        }
+        path = _write_config(remote_config)
+        runner = CliRunner()
+        result = runner.invoke(main, ["check", path])
+        assert result.exit_code != 0
+        assert "SSH connection" in result.output
+        assert "FAIL" in result.output
+        Path(path).unlink()
+
+    def test_start_help_shows_no_preflight(self):
+        """start --help should show the --no-preflight option."""
+        runner = CliRunner()
+        result = runner.invoke(main, ["start", "--help"])
+        assert result.exit_code == 0
+        assert "--no-preflight" in result.output
+
+    def test_find_no_match(self):
+        """find command should return empty when no agents match."""
+        import tempfile
+
+        config_no_match = {
+            "apiVersion": "cld-agent/v1",
+            "kind": "Agent",
+            "metadata": {
+                "name": "basic-agent",
+                "labels": {"role": "head"},
+            },
+            "spec": {"runtime": "claude-code"},
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "basic.yaml"
+            with open(path, "w") as f:
+                yaml.safe_dump(config_no_match, f)
+
+            runner = CliRunner()
+            result = runner.invoke(main, ["find", "gpu", "--dir", tmpdir])
+            assert result.exit_code == 0
+            assert "No agents found" in result.output

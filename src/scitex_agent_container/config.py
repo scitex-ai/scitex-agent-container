@@ -32,6 +32,8 @@ class HealthSpec:
     method: str = "screen-alive"
 
 
+# Parsed for backward compat but not interpreted by runtime.
+# Watchdog lifecycle is managed by claude-code-telegrammer via hooks.
 @dataclass
 class WatchdogSpec:
     enabled: bool = False
@@ -50,12 +52,55 @@ class RestartSpec:
     backoff_multiplier: int = 2
 
 
+# Parsed for backward compat but not interpreted by runtime.
+# Telegram setup is managed by claude-code-telegrammer via hooks.
 @dataclass
 class TelegramSpec:
     bot_token_env: str = "TELEGRAM_BOT_TOKEN"
     allowed_users: list[str] = field(default_factory=list)
     auto_connect: bool = True
     greeting: str = ""
+
+
+@dataclass
+class RemoteSpec:
+    host: str = ""  # SSH host (hostname or IP)
+    user: str = ""  # SSH user
+    key: str = ""  # Path to SSH key (optional)
+    port: int = 22  # SSH port
+    timeout: int = 60  # SSH command timeout in seconds
+    login_shell: bool = True  # Use bash -l -c (needed for PATH on most hosts)
+
+    @property
+    def is_remote(self) -> bool:
+        """Return True if this agent should be deployed via SSH."""
+        return bool(self.host)
+
+
+@dataclass
+class SkillsSpec:
+    required: list[str] = field(default_factory=list)  # Auto-loaded at startup
+    available: list[str] = field(default_factory=list)  # Available but not auto-loaded
+
+
+@dataclass
+class OrochiSpec:
+    enabled: bool = False
+    hosts: list[str] = field(
+        default_factory=list
+    )  # tried in order (first reachable wins)
+    port: int = 8559  # Django Channels default (HTTP + WS unified)
+    ws_path: str = "/ws/agent/"  # WebSocket endpoint path
+    token_env: str = "SCITEX_OROCHI_TOKEN"  # env var holding the auth token
+    channels: list[str] = field(default_factory=list)  # channels to subscribe
+    heartbeat_interval: int = 30  # seconds between heartbeats
+    reconnect_interval: int = 10  # seconds between reconnect attempts
+    reconnect_max_retries: int = 0  # 0 = infinite
+
+    @property
+    def is_enabled(self) -> bool:
+        """Return True if Orochi auto-connect is configured."""
+        return self.enabled and len(self.hosts) > 0
 
 
 @dataclass
@@ -82,6 +127,9 @@ class AgentConfig:
     restart: RestartSpec = field(default_factory=RestartSpec)
     hooks: dict[str, list[str]] = field(default_factory=dict)
     telegram: TelegramSpec = field(default_factory=TelegramSpec)
+    remote: RemoteSpec = field(default_factory=RemoteSpec)
+    skills: SkillsSpec = field(default_factory=SkillsSpec)
+    orochi: OrochiSpec = field(default_factory=OrochiSpec)
     startup_commands: list[StartupCommand] = field(default_factory=list)
     config_path: str = ""
 
@@ -114,7 +162,8 @@ def load_config(path: str | Path) -> AgentConfig:
     errors = _validate_raw(raw, str(path))
     if errors:
         raise ValueError(
-            f"Config validation failed for {path}:\n" + "\n".join(f"  - {e}" for e in errors)
+            f"Config validation failed for {path}:\n"
+            + "\n".join(f"  - {e}" for e in errors)
         )
 
     metadata = raw.get("metadata", {})
@@ -187,6 +236,43 @@ def load_config(path: str | Path) -> AgentConfig:
         greeting=telegram_raw.get("greeting", ""),
     )
 
+    # Skills spec
+    skills_raw = spec.get("skills", {}) or {}
+    skills = SkillsSpec(
+        required=skills_raw.get("required", []) or [],
+        available=skills_raw.get("available", []) or [],
+    )
+
+    # Remote spec
+    remote_raw = spec.get("remote", {}) or {}
+    remote = RemoteSpec(
+        host=remote_raw.get("host", ""),
+        user=remote_raw.get("user", ""),
+        key=remote_raw.get("key", ""),
+        port=int(remote_raw.get("port", 22)),
+        login_shell=remote_raw.get("login_shell", True),
+    )
+
+    # Orochi spec
+    orochi_raw = spec.get("orochi", {}) or {}
+    # Support both "host" (single string) and "hosts" (list) for backward compat
+    orochi_hosts = orochi_raw.get("hosts", []) or []
+    if not orochi_hosts:
+        single_host = orochi_raw.get("host", "")
+        if single_host:
+            orochi_hosts = [single_host]
+    orochi = OrochiSpec(
+        enabled=orochi_raw.get("enabled", False),
+        hosts=orochi_hosts,
+        port=int(orochi_raw.get("port", 8559)),
+        ws_path=orochi_raw.get("ws_path", "/ws/agent/"),
+        token_env=orochi_raw.get("token_env", "SCITEX_OROCHI_TOKEN"),
+        channels=orochi_raw.get("channels", []) or [],
+        heartbeat_interval=int(orochi_raw.get("heartbeat_interval", 30)),
+        reconnect_interval=int(orochi_raw.get("reconnect_interval", 10)),
+        reconnect_max_retries=int(orochi_raw.get("reconnect_max_retries", 0)),
+    )
+
     # Startup commands
     startup_raw = spec.get("startup_commands", []) or []
     startup_commands = [
@@ -213,6 +299,9 @@ def load_config(path: str | Path) -> AgentConfig:
         restart=restart,
         hooks=hooks,
         telegram=telegram,
+        remote=remote,
+        skills=skills,
+        orochi=orochi,
         startup_commands=startup_commands,
         config_path=str(path),
     )
@@ -251,24 +340,32 @@ def _validate_raw(raw: dict, path: str) -> list[str]:
         runtime = spec.get("runtime")
         valid_runtimes = ("claude-code", "cursor", "aider")
         if runtime and runtime not in valid_runtimes:
-            errors.append(f"spec.runtime must be one of {valid_runtimes}, got '{runtime}'")
+            errors.append(
+                f"spec.runtime must be one of {valid_runtimes}, got '{runtime}'"
+            )
 
         # container.runtime
         container = spec.get("container", {}) or {}
         cr = container.get("runtime")
         if cr and cr not in ("none", "docker", "apptainer"):
-            errors.append(f"spec.container.runtime must be none|docker|apptainer, got '{cr}'")
+            errors.append(
+                f"spec.container.runtime must be none|docker|apptainer, got '{cr}'"
+            )
 
         # container.network
         network = container.get("network")
         if network and network not in ("host", "bridge", "none"):
-            errors.append(f"spec.container.network must be host|bridge|none, got '{network}'")
+            errors.append(
+                f"spec.container.network must be host|bridge|none, got '{network}'"
+            )
 
         # restart.policy
         restart = spec.get("restart", {}) or {}
         policy = restart.get("policy")
         if policy and policy not in ("never", "on-failure", "always"):
-            errors.append(f"spec.restart.policy must be never|on-failure|always, got '{policy}'")
+            errors.append(
+                f"spec.restart.policy must be never|on-failure|always, got '{policy}'"
+            )
 
         # health.method
         health = spec.get("health", {}) or {}

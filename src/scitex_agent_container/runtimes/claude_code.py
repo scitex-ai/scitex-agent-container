@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import json
 import logging
-import shutil
 import subprocess
 import threading
 import time
@@ -12,9 +10,20 @@ from pathlib import Path
 
 from ..config import AgentConfig
 from .base import RuntimeBase
+from .claude_md import cleanup_claude_md, setup_claude_md
+from .orochi_mcp import get_orochi_claude_flags
 from .screen import ScreenManager
+from .ssh_remote import SSHPreflightError as SSHPreflightError  # noqa: F401
+from .ssh_remote import SSHRemote
 
 logger = logging.getLogger(__name__)
+
+# Backward-compatible alias: existing code imports _SSHRemote from this module
+_SSHRemote = SSHRemote
+
+# Backward-compatible aliases for extracted functions
+_setup_claude_md = setup_claude_md
+_cleanup_claude_md = cleanup_claude_md
 
 
 class ClaudeCodeRuntime(RuntimeBase):
@@ -25,8 +34,10 @@ class ClaudeCodeRuntime(RuntimeBase):
         parts = ["claude"]
         parts.append(f"--model '{config.model}'")
 
-        for channel in config.claude.channels:
-            parts.append(f"--channels {channel}")
+        # Inject scitex-orochi MCP flags when orochi is enabled
+        orochi_flags = get_orochi_claude_flags(config)
+        for flag in orochi_flags:
+            parts.append(flag)
 
         for flag in config.claude.flags:
             parts.append(flag)
@@ -37,108 +48,213 @@ class ClaudeCodeRuntime(RuntimeBase):
         return " ".join(parts)
 
     def _build_env_exports(self, config: AgentConfig) -> str:
-        """Build export statements from env dict."""
+        """Build export statements from env dict.
+
+        Values support:
+        - ~ prefix: expanded to $HOME
+        - ${VAR} syntax: resolved from os.environ at launch time
+        """
+        import os as _os
+        import re
+
+        def _resolve(val: str) -> str:
+            """Expand ~ and ${VAR} references."""
+            if val.startswith("~"):
+                val = val.replace("~", "$HOME", 1)
+            # Resolve ${VAR} from os.environ
+            return re.sub(
+                r"\$\{(\w+)\}",
+                lambda m: _os.environ.get(m.group(1), m.group(0)),
+                val,
+            )
+
         lines = []
         for key, value in config.env.items():
-            lines.append(f'export {key}="{value}"')
+            lines.append(f'export {key}="{_resolve(str(value))}"')
+        # Pass channels as env var for MCP-based delivery
+        if config.claude.channels:
+            channels_str = ",".join(config.claude.channels)
+            lines.append(f'export SCITEX_OROCHI_CHANNELS="{channels_str}"')
         return "\n".join(lines)
 
-    def _watchdog_screen_name(self, config: AgentConfig) -> str:
-        """Derive a screen session name for the watchdog."""
-        return f"{config.screen_name}-watchdog"
+    # Telegram access.json is managed by claude-code-telegrammer (telegrammer-init),
+    # not by agent-container. Agent-container only passes config via env vars.
 
-    def _start_watchdog(self, config: AgentConfig) -> bool:
-        """Start telegrammer-watchdog in a companion screen session."""
-        if not config.watchdog.enabled:
-            return True
+    def _needs_auto_accept(self, config: AgentConfig) -> bool:
+        """Check if the claude command includes flags that trigger TUI prompts."""
+        all_flags = list(config.claude.flags)
+        # orochi adds --dangerously-load-development-channels
+        if config.orochi.is_enabled:
+            all_flags.append("--dangerously-load-development-channels")
+        dangerous_flags = [
+            "--dangerously-skip-permissions",
+            "--dangerously-load-development-channels",
+        ]
+        return any(any(df in f for df in dangerous_flags) for f in all_flags)
 
-        watchdog_bin = shutil.which("telegrammer-watchdog")
-        if watchdog_bin is None:
-            # Try importing the package to resolve the script path
-            try:
-                from claude_code_telegrammer import get_bin_path
+    def _get_screen_content(self, session_name: str) -> str:
+        """Capture current screen content via hardcopy."""
+        import tempfile
 
-                watchdog_bin = get_bin_path("telegrammer-watchdog")
-            except (ImportError, FileNotFoundError):
-                logger.warning(
-                    "Watchdog enabled but telegrammer-watchdog not found. "
-                    "Install claude-code-telegrammer: "
-                    "pip install claude-code-telegrammer"
-                )
+        with tempfile.NamedTemporaryFile(mode="r", suffix=".txt", delete=False) as f:
+            tmp_path = f.name
+
+        try:
+            subprocess.run(
+                ["screen", "-S", session_name, "-X", "hardcopy", tmp_path],
+                check=False,
+                capture_output=True,
+            )
+            time.sleep(0.3)
+            return Path(tmp_path).read_text(errors="replace")
+        except Exception:
+            return ""
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    def _wait_for_prompt(
+        self, config: AgentConfig, marker: str, timeout: int = 60
+    ) -> bool:
+        """Poll screen content until a prompt marker appears or timeout."""
+        start = time.monotonic()
+        while time.monotonic() - start < timeout:
+            if not ScreenManager.exists(config.screen_name):
                 return False
+            content = self._get_screen_content(config.screen_name)
+            if marker in content:
+                return True
+            time.sleep(2)
+        return False
 
-        wd = config.watchdog
-        env_exports = (
-            f'export TELEGRAMMER_SESSION="{config.screen_name}"\n'
-            f'export TELEGRAMMER_WATCHDOG_INTERVAL="{wd.interval}"\n'
-            f'export TELEGRAMMER_RESP_Y_N="{wd.resp_y_n}"\n'
-            f'export TELEGRAMMER_RESP_Y_Y_N="{wd.resp_y_y_n}"\n'
-            f'export TELEGRAMMER_RESP_WAITING="{wd.resp_waiting}"'
-        )
+    def _send_auto_accept_keystrokes(self, config: AgentConfig) -> None:
+        """Send keystrokes to accept TUI confirmation prompts in screen.
 
-        watchdog_session = self._watchdog_screen_name(config)
-        cmd = f"{watchdog_bin} --session {config.screen_name} --interval {wd.interval}"
+        Claude Code shows confirmation prompts for dangerous flags. This method
+        polls the screen content and responds to whichever prompt appears:
+        - y/n prompts (e.g. skip-permissions): send "y\\r"
+        - Radio selection prompts (e.g. dev channels): send "\\r" (Enter)
+        - Done when the main input prompt appears (bypass permissions)
 
-        started = ScreenManager.start(
-            session_name=watchdog_session,
-            command=cmd,
-            workdir=config.expanded_workdir,
-            env_exports=env_exports,
-        )
-
-        if started:
-            logger.info("Watchdog started in screen session: %s", watchdog_session)
-        else:
-            logger.error("Failed to start watchdog screen session: %s", watchdog_session)
-
-        return started
-
-    def _stop_watchdog(self, config: AgentConfig) -> bool:
-        """Stop the companion watchdog screen session."""
-        if not config.watchdog.enabled:
-            return True
-
-        watchdog_session = self._watchdog_screen_name(config)
-        if ScreenManager.exists(watchdog_session):
-            stopped = ScreenManager.stop(watchdog_session)
-            if stopped:
-                logger.info("Watchdog stopped: %s", watchdog_session)
-            return stopped
-        return True
-
-    def _setup_telegram_access(self, config: AgentConfig) -> None:
-        """Write access.json for Telegram channel if configured."""
-        tg = config.telegram
-        if not (tg.auto_connect and tg.allowed_users):
+        Uses polling to handle variable Claude Code startup times.
+        """
+        if not self._needs_auto_accept(config):
             return
 
-        access_dir = Path.home() / ".claude" / "channels" / "telegram"
-        access_dir.mkdir(parents=True, exist_ok=True)
-        access_file = access_dir / "access.json"
+        # Detect which prompts we expect
+        expect_skip_permissions = any(
+            "--dangerously-skip-permissions" in f for f in config.claude.flags
+        )
+        expect_dev_channels = config.orochi.is_enabled
 
-        access_data = {
-            "dmPolicy": "pairing",
-            "allowFrom": tg.allowed_users,
-        }
+        expected = []
+        if expect_skip_permissions:
+            expected.append("skip-permissions")
+        if expect_dev_channels:
+            expected.append("load-dev-channels")
 
-        access_file.write_text(json.dumps(access_data, indent=2) + "\n")
         logger.info(
-            "Telegram access.json written with %d allowed users: %s",
-            len(tg.allowed_users),
-            access_file,
+            "Auto-accepting %d TUI confirmation prompt(s) for %s: %s",
+            len(expected),
+            config.screen_name,
+            ", ".join(expected),
+        )
+
+        # Poll screen content and respond to prompts as they appear.
+        # The "bypass permissions" text in the input bar means we're done.
+        timeout = 90
+        start = time.monotonic()
+        accepted: set[str] = set()
+
+        while time.monotonic() - start < timeout:
+            if not ScreenManager.exists(config.screen_name):
+                logger.warning(
+                    "Screen session %s disappeared during auto-accept",
+                    config.screen_name,
+                )
+                return
+
+            content = self._get_screen_content(config.screen_name)
+
+            # Check if we've reached the main prompt (all prompts accepted)
+            if "bypass permissions" in content and "Enter to confirm" not in content:
+                logger.info(
+                    "Auto-accept complete for %s (accepted: %s)",
+                    config.screen_name,
+                    ", ".join(accepted) or "none needed",
+                )
+                return
+
+            # Detect and respond to radio-selection prompt (dev channels)
+            # This prompt has "Enter to confirm" and radio options
+            if "Enter to confirm" in content and "load-dev-channels" not in accepted:
+                time.sleep(1)
+                try:
+                    subprocess.run(
+                        ["screen", "-S", config.screen_name, "-X", "stuff", "\r"],
+                        check=False,
+                        capture_output=True,
+                    )
+                    accepted.add("load-dev-channels")
+                    logger.info(
+                        "Sent auto-accept Enter for load-dev-channels to %s",
+                        config.screen_name,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to send auto-accept to %s", config.screen_name
+                    )
+                time.sleep(2)
+                continue
+
+            # Detect and respond to y/n prompt (skip-permissions)
+            # This prompt has "Type 'y'" or similar y/n confirmation text
+            if (
+                "skip-permissions" in content or "Trust" in content
+            ) and "skip-permissions" not in accepted:
+                time.sleep(1)
+                try:
+                    subprocess.run(
+                        ["screen", "-S", config.screen_name, "-X", "stuff", "y\r"],
+                        check=False,
+                        capture_output=True,
+                    )
+                    accepted.add("skip-permissions")
+                    logger.info(
+                        "Sent auto-accept y for skip-permissions to %s",
+                        config.screen_name,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to send auto-accept to %s", config.screen_name
+                    )
+                time.sleep(2)
+                continue
+
+            time.sleep(2)
+
+        logger.warning(
+            "Timed out (%ds) during auto-accept for %s (accepted: %s, expected: %s)",
+            timeout,
+            config.screen_name,
+            ", ".join(accepted),
+            ", ".join(expected),
         )
 
     def _run_startup_commands(self, config: AgentConfig) -> None:
-        """Send startup commands to the screen session with delays.
-
-        Runs in a background thread so start() returns immediately.
-        """
+        """Send startup commands to the screen session with delays."""
         for sc in config.startup_commands:
             if sc.delay > 0:
                 time.sleep(sc.delay)
             try:
                 subprocess.run(
-                    ["screen", "-S", config.screen_name, "-X", "stuff", f"{sc.command}\r"],
+                    [
+                        "screen",
+                        "-S",
+                        config.screen_name,
+                        "-X",
+                        "stuff",
+                        f"{sc.command}\r",
+                    ],
                     check=False,
                     capture_output=True,
                 )
@@ -156,16 +272,19 @@ class ClaudeCodeRuntime(RuntimeBase):
                 )
 
     def _post_start_tasks(self, config: AgentConfig) -> None:
-        """Run post-start tasks: telegram setup and startup commands."""
-        self._setup_telegram_access(config)
+        """Run post-start tasks: auto-accept prompts, startup commands."""
+        self._send_auto_accept_keystrokes(config)
+        # Telegram access.json is managed by telegrammer-init (claude-code-telegrammer)
         self._run_startup_commands(config)
 
-    def start(self, config: AgentConfig) -> bool:
+    def start(self, config: AgentConfig, no_preflight: bool = False) -> bool:
         """Start a Claude Code agent."""
-        # If container runtime is requested, delegate
+        if config.remote.is_remote:
+            return SSHRemote.start(config, no_preflight=no_preflight)
+
         if config.container.runtime != "none":
-            from .docker import DockerRuntime
             from .apptainer import ApptainerRuntime
+            from .docker import DockerRuntime
 
             if config.container.runtime == "docker":
                 return DockerRuntime().start(config)
@@ -176,6 +295,8 @@ class ClaudeCodeRuntime(RuntimeBase):
         env_exports = self._build_env_exports(config)
         workdir = config.expanded_workdir
 
+        _setup_claude_md(config, workdir)
+
         started = ScreenManager.start(
             session_name=config.screen_name,
             command=cmd,
@@ -183,60 +304,69 @@ class ClaudeCodeRuntime(RuntimeBase):
             env_exports=env_exports,
         )
 
-        # Start watchdog after the agent is running
         if started:
-            self._start_watchdog(config)
-
-            # Run post-start tasks in background thread
-            has_tasks = (
-                (config.telegram.auto_connect and config.telegram.allowed_users)
-                or config.startup_commands
-            )
+            has_tasks = self._needs_auto_accept(config) or config.startup_commands
             if has_tasks:
+                # Run post-start tasks in a foreground thread and wait for
+                # completion. Using daemon=True would let the CLI exit before
+                # auto-accept finishes, killing the thread prematurely.
                 thread = threading.Thread(
                     target=self._post_start_tasks,
                     args=(config,),
-                    daemon=True,
+                    daemon=False,
                     name=f"post-start-{config.screen_name}",
                 )
                 thread.start()
+                thread.join()
 
         return started
 
     def stop(self, config: AgentConfig) -> bool:
         """Stop a Claude Code agent."""
-        # Stop watchdog first
-        self._stop_watchdog(config)
+        if config.remote.is_remote:
+            return SSHRemote.stop(config)
 
         if config.container.runtime != "none":
-            from .docker import DockerRuntime
             from .apptainer import ApptainerRuntime
+            from .docker import DockerRuntime
 
             if config.container.runtime == "docker":
                 return DockerRuntime().stop(config)
             elif config.container.runtime == "apptainer":
                 return ApptainerRuntime().stop(config)
 
+        _cleanup_claude_md(config, config.expanded_workdir)
+
         return ScreenManager.stop(config.screen_name)
 
     def is_running(self, config: AgentConfig) -> bool:
         """Check if the Claude Code agent is running."""
+        if config.remote.is_remote:
+            return SSHRemote.is_running(config)
+
         if config.container.runtime == "docker":
             from .docker import DockerRuntime
+
             return DockerRuntime().is_running(config)
         elif config.container.runtime == "apptainer":
             from .apptainer import ApptainerRuntime
+
             return ApptainerRuntime().is_running(config)
 
         return ScreenManager.exists(config.screen_name)
 
     def logs(self, config: AgentConfig, lines: int = 50) -> str:
         """Get logs from the Claude Code agent."""
+        if config.remote.is_remote:
+            return SSHRemote.logs(config, lines)
+
         if config.container.runtime == "docker":
             from .docker import DockerRuntime
+
             return DockerRuntime().logs(config, lines)
         elif config.container.runtime == "apptainer":
             from .apptainer import ApptainerRuntime
+
             return ApptainerRuntime().logs(config, lines)
 
         return ScreenManager.capture_logs(config.screen_name, lines)

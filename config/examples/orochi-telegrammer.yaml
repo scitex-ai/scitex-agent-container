@@ -1,64 +1,64 @@
 apiVersion: cld-agent/v1
 kind: Agent
 metadata:
-  name: telegram-master
+  name: orochi-telegrammer
   labels:
     role: telegram
-    team: core
+    team: orochi
 spec:
   runtime: claude-code
   model: opus[1m]
   workdir: ~/proj
-
-  # container:                    # Uncomment to run in a container
-  #   runtime: docker              # docker | apptainer | none
-  #   image: scitex-agent-container:latest
-  #   volumes:
-  #     - ~/proj:/workspace
-  #   network: host
 
   skills:
     required:
       - quality-guards
       - autonomous
       - speech
-    available:
       - scitex
+    available:
       - code-review
       - orchestrator
 
   claude:
-    channels:
-      - plugin:telegram@claude-plugins-official
+    channels: []
     flags:
       - --dangerously-skip-permissions
-    session: continue
+      - --strict-mcp-config
+      - "--mcp-config /tmp/scitex-agent-container/mcp-orochi-telegrammer.json"
+      - "--dangerously-load-development-channels server:telegram"
+    session: new
 
   env:
     CLAUDE_AGENT_ROLE: telegram
-    CLAUDE_AGENT_ID: telegram-master
+    CLAUDE_AGENT_ID: orochi-telegrammer
+    SCITEX_OROCHI_DISABLE: "true"
+    TELEGRAM_STATE_DIR: ~/.scitex/agent-container/telegram/8146978246
+    TELEGRAM_BOT_TOKEN: "${SCITEX_OROCHI_TELEGRAM_BOT_TOKEN}"
 
   screen:
-    name: cld-telegram
+    name: cld-orochi-tg
 
   telegram:
-    bot_token_env: TELEGRAM_BOT_TOKEN
+    bot_token_env: SCITEX_OROCHI_TELEGRAM_BOT_TOKEN
     allowed_users:
       - "8379369979"
     auto_connect: true
-    greeting: "Telegram agent connected. Ready for instructions."
+    greeting: "SciTeX Orochi Telegrammer connected."
 
-  startup_commands:
-    - delay: 5
-      command: "/speak-and-call"
+  orochi:
+    hosts:
+      - 192.168.11.22
+      - scitex-orochi.com
+    port: 8559
+    token_env: SCITEX_OROCHI_TOKEN
+    channels:
+      - server:scitex-orochi
+
+  startup_commands: []
 
   watchdog:
-    enabled: true
-    interval: 1.5
-    responses:
-      y_n: "1"
-      y_y_n: "2"
-      waiting: "/speak-and-call"
+    enabled: false
 
   health:
     enabled: true

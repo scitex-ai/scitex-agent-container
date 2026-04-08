@@ -1,0 +1,37 @@
+# Minimal test agent for Orochi auto-connect verification
+# Usage:
+#   export SCITEX_OROCHI_TOKEN=wks_xxx
+#   scitex-agent-container start config/examples/test-orochi.yaml
+apiVersion: cld-agent/v1
+kind: Agent
+metadata:
+  name: test-orochi-local
+  labels:
+    role: worker
+    machine: ywata-note-win
+spec:
+  runtime: claude-code
+  model: sonnet
+  workdir: ~/proj
+
+  claude:
+    flags:
+      - --dangerously-skip-permissions
+    session: new
+
+  orochi:
+    enabled: true
+    hosts:
+      - 192.168.11.22       # MBA LAN
+      - scitex-orochi.com   # domain fallback
+    port: 8559
+    token_env: SCITEX_OROCHI_TOKEN
+    channels:
+      - "#general"
+    heartbeat_interval: 30
+
+  screen:
+    name: test-orochi-local
+
+  health:
+    enabled: false
