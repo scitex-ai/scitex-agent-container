@@ -24,14 +24,21 @@ def _is_truthy(val: str | None) -> bool:
     return (val or "").lower() in ("true", "1", "yes", "enable", "enabled")
 
 
-def find_mcp_channel_ts() -> str | None:
+def find_mcp_channel_ts(config_ts_path: str = "") -> str | None:
     """Locate the mcp_channel.ts MCP server script.
 
     Resolution order:
+    0. spec.orochi.ts_path from agent YAML (explicit config)
     1. SCITEX_OROCHI_PUSH_TS env var (explicit override)
     2. Relative to the scitex_orochi Python package (dev installs)
     3. Well-known path /opt/scitex-orochi/ts/mcp_channel.ts
     """
+    # 0. Explicit config from agent YAML
+    if config_ts_path:
+        expanded = Path(config_ts_path).expanduser()
+        if expanded.is_file():
+            return str(expanded.resolve())
+
     # 1. Explicit env override
     env_path = os.environ.get("SCITEX_OROCHI_PUSH_TS")
     if env_path and Path(env_path).is_file():
@@ -65,7 +72,7 @@ def build_orochi_mcp_config(config: AgentConfig) -> dict | None:
     if not config.orochi.is_enabled:
         return None
 
-    ts_path = find_mcp_channel_ts()
+    ts_path = find_mcp_channel_ts(config.orochi.ts_path)
     if ts_path is None:
         logger.warning(
             "Orochi enabled but mcp_channel.ts not found. "
@@ -90,9 +97,20 @@ def build_orochi_mcp_config(config: AgentConfig) -> dict | None:
         "SCITEX_OROCHI_PORT": str(orochi.port),
         "SCITEX_OROCHI_AGENT": config.name,
         "SCITEX_OROCHI_CHANNELS": channels_str,
+        # Prevent mcp_channel.ts telegram-guard from blocking when parent env
+        # has TELEGRAM_BOT_TOKEN (e.g., when launched from a telegrammer shell).
+        # Empty string is falsy, so the guard check passes harmlessly.
+        "TELEGRAM_BOT_TOKEN": "",
+        "SCITEX_NOTIFICATION_TELEGRAM_BOT_TOKEN": "",
+        "CLAUDE_AGENT_ROLE": "",
     }
     if token:
         env_block["SCITEX_OROCHI_TOKEN"] = token
+
+    # Agent icon (emoji or URL) for dashboard display
+    icon = config.labels.get("icon", "") or config.env.get("SCITEX_OROCHI_ICON", "")
+    if icon:
+        env_block["SCITEX_OROCHI_ICON"] = icon
 
     return {
         "mcpServers": {

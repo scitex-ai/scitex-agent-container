@@ -53,7 +53,7 @@ spec:
 When `orochi.enabled: true`, the launcher:
 1. Locates `mcp_channel.ts` (env override, package path, or `/opt/`)
 2. Builds MCP server config with agent name, host, port, channels
-3. Writes to `/tmp/scitex-agent-container/mcp-<name>.json` (NOT workdir)
+3. Writes to `~/.scitex/agent-container/cache/mcp-configs/mcp-<name>.json` (NOT workdir)
 4. Adds `--mcp-config` and `--dangerously-load-development-channels` flags
 
 Path isolation matters: workdir may be shared with Telegram or other sessions.

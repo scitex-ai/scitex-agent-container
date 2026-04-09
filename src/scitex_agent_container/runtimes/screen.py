@@ -21,7 +21,13 @@ class ScreenManager:
         return session_name in result.stdout
 
     @staticmethod
-    def start(session_name: str, command: str, workdir: str, env_exports: str = "") -> bool:
+    def start(
+        session_name: str,
+        command: str,
+        workdir: str,
+        env_exports: str = "",
+        venv: str = "",
+    ) -> bool:
         """Launch a command inside a new detached screen session.
 
         Args:
@@ -29,12 +35,20 @@ class ScreenManager:
             command: Shell command to execute.
             workdir: Working directory for the command.
             env_exports: Newline-separated export statements to prepend.
+            venv: Path to virtualenv to activate before running command.
 
         Returns:
             True if the screen session was created successfully.
         """
+        venv_activate = ""
+        if venv:
+            from pathlib import Path
+            activate = Path(venv).expanduser() / "bin" / "activate"
+            venv_activate = f"source '{activate}' || exit 1\n"
+
         shell_script = (
             f"cd '{workdir}' || exit 1\n"
+            f"{venv_activate}"
             f"{env_exports}\n"
             f"export CLAUDE_DISABLE_AUTO_UPDATE=1\n"
             f"exec {command}\n"

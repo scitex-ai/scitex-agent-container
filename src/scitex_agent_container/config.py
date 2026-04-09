@@ -96,6 +96,7 @@ class OrochiSpec:
     heartbeat_interval: int = 30  # seconds between heartbeats
     reconnect_interval: int = 10  # seconds between reconnect attempts
     reconnect_max_retries: int = 0  # 0 = infinite
+    ts_path: str = ""  # explicit path to mcp_channel.ts (overrides auto-detection)
 
     @property
     def is_enabled(self) -> bool:
@@ -117,6 +118,7 @@ class AgentConfig:
     runtime: str = "claude-code"
     model: str = "sonnet"
     workdir: str = "~/proj"
+    venv: str = ""  # path to virtualenv (e.g. ~/.venv); activates before claude
     env: dict[str, str] = field(default_factory=dict)
     screen_name: str = ""
     labels: dict[str, str] = field(default_factory=dict)
@@ -271,6 +273,7 @@ def load_config(path: str | Path) -> AgentConfig:
         heartbeat_interval=int(orochi_raw.get("heartbeat_interval", 30)),
         reconnect_interval=int(orochi_raw.get("reconnect_interval", 10)),
         reconnect_max_retries=int(orochi_raw.get("reconnect_max_retries", 0)),
+        ts_path=orochi_raw.get("ts_path", ""),
     )
 
     # Startup commands
@@ -289,6 +292,7 @@ def load_config(path: str | Path) -> AgentConfig:
         runtime=spec.get("runtime", "claude-code"),
         model=spec.get("model", "sonnet"),
         workdir=spec.get("workdir", "~/proj"),
+        venv=spec.get("venv", ""),
         env=spec.get("env", {}) or {},
         screen_name=screen_name,
         labels=metadata.get("labels", {}) or {},
@@ -319,6 +323,10 @@ def resolve_config(name_or_path: str) -> str:
     user_dir = Path.home() / ".scitex" / "orochi" / "agents"
     for ext in (".yaml", ".yml"):
         candidate = user_dir / f"{name_or_path}{ext}"
+        if candidate.exists():
+            return str(candidate)
+        # Subdirectory convention: agents/<name>/<name>.yaml
+        candidate = user_dir / name_or_path / f"{name_or_path}{ext}"
         if candidate.exists():
             return str(candidate)
     raise FileNotFoundError(

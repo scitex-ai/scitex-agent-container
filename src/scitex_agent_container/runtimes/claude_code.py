@@ -302,6 +302,7 @@ class ClaudeCodeRuntime(RuntimeBase):
             command=cmd,
             workdir=workdir,
             env_exports=env_exports,
+            venv=config.venv,
         )
 
         if started:
