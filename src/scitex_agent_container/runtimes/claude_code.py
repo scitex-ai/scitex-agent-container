@@ -11,7 +11,6 @@ from pathlib import Path
 from ..config import AgentConfig
 from .base import RuntimeBase
 from .claude_md import cleanup_claude_md, setup_claude_md
-from .orochi_mcp import get_orochi_claude_flags
 from .screen import ScreenManager
 from .ssh_remote import SSHPreflightError as SSHPreflightError  # noqa: F401
 from .ssh_remote import SSHRemote
@@ -33,11 +32,6 @@ class ClaudeCodeRuntime(RuntimeBase):
         """Build the claude CLI command from config."""
         parts = ["claude"]
         parts.append(f"--model '{config.model}'")
-
-        # Inject scitex-orochi MCP flags when orochi is enabled
-        orochi_flags = get_orochi_claude_flags(config)
-        for flag in orochi_flags:
-            parts.append(flag)
 
         for flag in config.claude.flags:
             parts.append(flag)
@@ -71,26 +65,21 @@ class ClaudeCodeRuntime(RuntimeBase):
         lines = []
         for key, value in config.env.items():
             lines.append(f'export {key}="{_resolve(str(value))}"')
-        # Pass channels as env var for MCP-based delivery
-        if config.claude.channels:
-            channels_str = ",".join(config.claude.channels)
-            lines.append(f'export SCITEX_OROCHI_CHANNELS="{channels_str}"')
+        # Channels are passed via the agent YAML env block (e.g.,
+        # SCITEX_OROCHI_CHANNELS) and exported above with the rest of
+        # config.env.  Do NOT hard-code cross-package vars here.
         return "\n".join(lines)
 
-    # Telegram access.json is managed by claude-code-telegrammer (telegrammer-init),
-    # not by agent-container. Agent-container only passes config via env vars.
+    # Telegram access.json is not managed by agent-container.
+    # Agent-container only passes config via env vars.
 
     def _needs_auto_accept(self, config: AgentConfig) -> bool:
         """Check if the claude command includes flags that trigger TUI prompts."""
-        all_flags = list(config.claude.flags)
-        # orochi adds --dangerously-load-development-channels
-        if config.orochi.is_enabled:
-            all_flags.append("--dangerously-load-development-channels")
         dangerous_flags = [
             "--dangerously-skip-permissions",
             "--dangerously-load-development-channels",
         ]
-        return any(any(df in f for df in dangerous_flags) for f in all_flags)
+        return any(any(df in f for df in dangerous_flags) for f in config.claude.flags)
 
     def _get_screen_content(self, session_name: str) -> str:
         """Capture current screen content via hardcopy."""
@@ -140,11 +129,16 @@ class ClaudeCodeRuntime(RuntimeBase):
         if not self._needs_auto_accept(config):
             return
 
-        # Detect which prompts we expect
+        # Detect which prompts we expect — driven purely by the flag list
+        # so any caller (including scitex-orochi) that injects dangerous
+        # flags gets the right auto-accept behavior without this runtime
+        # having to know which upstream feature caused the flag.
         expect_skip_permissions = any(
             "--dangerously-skip-permissions" in f for f in config.claude.flags
         )
-        expect_dev_channels = config.orochi.is_enabled
+        expect_dev_channels = any(
+            "--dangerously-load-development-channels" in f for f in config.claude.flags
+        )
 
         expected = []
         if expect_skip_permissions:
@@ -274,13 +268,23 @@ class ClaudeCodeRuntime(RuntimeBase):
     def _post_start_tasks(self, config: AgentConfig) -> None:
         """Run post-start tasks: auto-accept prompts, startup commands."""
         self._send_auto_accept_keystrokes(config)
-        # Telegram access.json is managed by telegrammer-init (claude-code-telegrammer)
+        # Telegram access.json is not managed by agent-container
         self._run_startup_commands(config)
 
-    def start(self, config: AgentConfig, no_preflight: bool = False) -> bool:
-        """Start a Claude Code agent."""
+    def start(
+        self,
+        config: AgentConfig,
+        no_preflight: bool = False,
+        force: bool = False,
+    ) -> bool:
+        """Start a Claude Code agent.
+
+        ``force`` is passed through to SSHRemote.start so the remote
+        ``scitex-agent-container start`` call receives ``--force`` and
+        stops any existing instance before relaunching.
+        """
         if config.remote.is_remote:
-            return SSHRemote.start(config, no_preflight=no_preflight)
+            return SSHRemote.start(config, no_preflight=no_preflight, force=force)
 
         if config.container.runtime != "none":
             from .apptainer import ApptainerRuntime
@@ -302,6 +306,7 @@ class ClaudeCodeRuntime(RuntimeBase):
             command=cmd,
             workdir=workdir,
             env_exports=env_exports,
+            venv=config.venv,
         )
 
         if started:

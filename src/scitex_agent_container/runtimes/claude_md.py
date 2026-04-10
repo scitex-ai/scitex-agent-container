@@ -25,8 +25,8 @@ def setup_claude_md(config: AgentConfig, workdir: str) -> None:
         existing = claude_md.read_text()
 
     agent_id = config.name
-    role = config.env.get("CLAUDE_AGENT_ROLE", config.labels.get("role", ""))
-    agent_env_id = config.env.get("CLAUDE_AGENT_ID", config.name)
+    role = config.env.get("SCITEX_AGENT_CONTAINER_ROLE", config.labels.get("role", ""))
+    agent_env_id = config.env.get("SCITEX_AGENT_CONTAINER_ID", config.name)
 
     lines = [
         f'<!-- agent-container:start id="{agent_id}" -->',

@@ -11,8 +11,18 @@ class RuntimeBase(ABC):
     """Interface that all runtime adapters must implement."""
 
     @abstractmethod
-    def start(self, config: AgentConfig, no_preflight: bool = False) -> bool:
-        """Start an agent. Returns True on success."""
+    def start(
+        self,
+        config: AgentConfig,
+        no_preflight: bool = False,
+        force: bool = False,
+    ) -> bool:
+        """Start an agent. Returns True on success.
+
+        ``force=True`` instructs the runtime to stop any existing
+        instance before starting, and (for dispatchers like SSHRemote)
+        to relay ``--force`` to the downstream CLI.
+        """
         ...
 
     @abstractmethod

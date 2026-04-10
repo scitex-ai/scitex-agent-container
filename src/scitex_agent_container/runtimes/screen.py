@@ -21,7 +21,13 @@ class ScreenManager:
         return session_name in result.stdout
 
     @staticmethod
-    def start(session_name: str, command: str, workdir: str, env_exports: str = "") -> bool:
+    def start(
+        session_name: str,
+        command: str,
+        workdir: str,
+        env_exports: str = "",
+        venv: str = "",
+    ) -> bool:
         """Launch a command inside a new detached screen session.
 
         Args:
@@ -29,12 +35,21 @@ class ScreenManager:
             command: Shell command to execute.
             workdir: Working directory for the command.
             env_exports: Newline-separated export statements to prepend.
+            venv: Path to virtualenv to activate before running command.
 
         Returns:
             True if the screen session was created successfully.
         """
+        venv_activate = ""
+        if venv:
+            from pathlib import Path
+
+            activate = Path(venv).expanduser() / "bin" / "activate"
+            venv_activate = f"source '{activate}' || exit 1\n"
+
         shell_script = (
             f"cd '{workdir}' || exit 1\n"
+            f"{venv_activate}"
             f"{env_exports}\n"
             f"export CLAUDE_DISABLE_AUTO_UPDATE=1\n"
             f"exec {command}\n"
@@ -48,21 +63,55 @@ class ScreenManager:
 
         # Give it a moment to start
         import time
+
         time.sleep(2)
 
         return ScreenManager.exists(session_name)
 
     @staticmethod
     def stop(session_name: str) -> bool:
-        """Terminate a screen session."""
+        """Terminate a screen session reliably.
+
+        Sends ``screen -X quit`` first (polite shutdown). If the session
+        is still listed afterwards, falls back to ``pkill -9`` on the
+        SCREEN parent process, which matches the session name in its
+        command line. Finally runs ``screen -wipe`` to clean up dead
+        socket entries.
+
+        Returns True if the session was alive and has been terminated
+        (or was already gone by the end), False if the session never
+        existed.
+        """
+        import time
+
         if not ScreenManager.exists(session_name):
             return False
+
         subprocess.run(
             ["screen", "-S", session_name, "-X", "quit"],
             capture_output=True,
             check=False,
         )
-        return True
+        # Give screen up to ~1.5s to release the socket.
+        for _ in range(15):
+            time.sleep(0.1)
+            if not ScreenManager.exists(session_name):
+                return True
+
+        # Escalate: find the SCREEN parent PID by pattern-matching the
+        # name in its cmdline and send SIGKILL. ``pkill -f`` matches the
+        # full command line, so ``SCREEN -dmS <name>`` gets caught.
+        subprocess.run(
+            ["pkill", "-9", "-f", f"SCREEN.*{session_name}"],
+            capture_output=True,
+            check=False,
+        )
+        subprocess.run(
+            ["screen", "-wipe"],
+            capture_output=True,
+            check=False,
+        )
+        return not ScreenManager.exists(session_name)
 
     @staticmethod
     def capture_logs(session_name: str, lines: int = 50) -> str:
@@ -89,4 +138,5 @@ class ScreenManager:
     def attach(session_name: str) -> None:
         """Attach to a screen session (replaces current process stdin/stdout)."""
         import os
+
         os.execvp("screen", ["screen", "-r", session_name])

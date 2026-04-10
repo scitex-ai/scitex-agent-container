@@ -303,16 +303,26 @@ class SSHRemote:
         return result
 
     @staticmethod
-    def start(config: AgentConfig, no_preflight: bool = False) -> bool:
-        """Deploy and start agent on remote machine."""
+    def start(
+        config: AgentConfig, no_preflight: bool = False, force: bool = False
+    ) -> bool:
+        """Deploy and start agent on remote machine.
+
+        If ``force=True``, the remote ``scitex-agent-container start``
+        call receives ``--force`` so it stops any existing instance
+        before starting fresh. Without this passthrough, ``--force`` on
+        the dispatcher side was silently lost at the SSH boundary and
+        the remote CLI would reject the start with "already running".
+        """
         if not no_preflight:
             SSHRemote.check_or_raise(config)
 
         remote_path = SSHRemote.copy_config(config)
         start_timeout = getattr(config.remote, "timeout", 120)
+        force_flag = " --force" if force else ""
         result = SSHRemote.run(
             config,
-            f"scitex-agent-container start {remote_path}",
+            f"scitex-agent-container start{force_flag} {remote_path}",
             timeout=start_timeout,
         )
         if result.returncode != 0:

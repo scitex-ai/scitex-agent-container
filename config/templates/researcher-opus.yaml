@@ -1,13 +1,13 @@
 apiVersion: cld-agent/v1
 kind: Agent
 metadata:
-  name: worker-general
+  name: researcher-opus
   labels:
-    role: worker
-    team: dev
+    role: researcher
+    team: research
 spec:
   runtime: claude-code
-  model: sonnet
+  model: opus
   workdir: ~/proj
 
   claude:
@@ -16,21 +16,25 @@ spec:
     session: new
 
   env:
-    CLAUDE_AGENT_ROLE: worker
-    CLAUDE_AGENT_ID: worker-general
+    SCITEX_AGENT_CONTAINER_ROLE: researcher
+    SCITEX_AGENT_CONTAINER_ID: researcher-opus
 
   screen:
-    name: cld-worker
+    name: cld-researcher
 
   health:
     enabled: true
-    interval: 60
+    interval: 45
     timeout: 5
     method: screen-alive
 
   restart:
-    policy: never
-    max_retries: 0
+    policy: on-failure
+    max_retries: 5
+    backoff:
+      initial: 15
+      max: 120
+      multiplier: 2
 
   hooks:
     pre_start: []

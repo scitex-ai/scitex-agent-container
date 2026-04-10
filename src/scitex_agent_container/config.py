@@ -33,7 +33,7 @@ class HealthSpec:
 
 
 # Parsed for backward compat but not interpreted by runtime.
-# Watchdog lifecycle is managed by claude-code-telegrammer via hooks.
+# Watchdog lifecycle is managed externally via hooks.
 @dataclass
 class WatchdogSpec:
     enabled: bool = False
@@ -53,10 +53,10 @@ class RestartSpec:
 
 
 # Parsed for backward compat but not interpreted by runtime.
-# Telegram setup is managed by claude-code-telegrammer via hooks.
+# Telegram setup is managed externally via hooks.
 @dataclass
 class TelegramSpec:
-    bot_token_env: str = "TELEGRAM_BOT_TOKEN"
+    bot_token_env: str = "SCITEX_AGENT_CONTAINER_TELEGRAM_BOT_TOKEN"
     allowed_users: list[str] = field(default_factory=list)
     auto_connect: bool = True
     greeting: str = ""
@@ -84,26 +84,6 @@ class SkillsSpec:
 
 
 @dataclass
-class OrochiSpec:
-    enabled: bool = False
-    hosts: list[str] = field(
-        default_factory=list
-    )  # tried in order (first reachable wins)
-    port: int = 8559  # Django Channels default (HTTP + WS unified)
-    ws_path: str = "/ws/agent/"  # WebSocket endpoint path
-    token_env: str = "SCITEX_OROCHI_TOKEN"  # env var holding the auth token
-    channels: list[str] = field(default_factory=list)  # channels to subscribe
-    heartbeat_interval: int = 30  # seconds between heartbeats
-    reconnect_interval: int = 10  # seconds between reconnect attempts
-    reconnect_max_retries: int = 0  # 0 = infinite
-
-    @property
-    def is_enabled(self) -> bool:
-        """Return True if Orochi auto-connect is configured."""
-        return self.enabled and len(self.hosts) > 0
-
-
-@dataclass
 class StartupCommand:
     delay: int = 0  # seconds after startup
     command: str = ""
@@ -117,6 +97,7 @@ class AgentConfig:
     runtime: str = "claude-code"
     model: str = "sonnet"
     workdir: str = "~/proj"
+    venv: str = ""  # path to virtualenv (e.g. ~/.venv); activates before claude
     env: dict[str, str] = field(default_factory=dict)
     screen_name: str = ""
     labels: dict[str, str] = field(default_factory=dict)
@@ -129,7 +110,6 @@ class AgentConfig:
     telegram: TelegramSpec = field(default_factory=TelegramSpec)
     remote: RemoteSpec = field(default_factory=RemoteSpec)
     skills: SkillsSpec = field(default_factory=SkillsSpec)
-    orochi: OrochiSpec = field(default_factory=OrochiSpec)
     startup_commands: list[StartupCommand] = field(default_factory=list)
     config_path: str = ""
 
@@ -230,7 +210,9 @@ def load_config(path: str | Path) -> AgentConfig:
     # Telegram spec
     telegram_raw = spec.get("telegram", {}) or {}
     telegram = TelegramSpec(
-        bot_token_env=telegram_raw.get("bot_token_env", "TELEGRAM_BOT_TOKEN"),
+        bot_token_env=telegram_raw.get(
+            "bot_token_env", "SCITEX_AGENT_CONTAINER_TELEGRAM_BOT_TOKEN"
+        ),
         allowed_users=[str(u) for u in (telegram_raw.get("allowed_users", []) or [])],
         auto_connect=telegram_raw.get("auto_connect", True),
         greeting=telegram_raw.get("greeting", ""),
@@ -253,26 +235,6 @@ def load_config(path: str | Path) -> AgentConfig:
         login_shell=remote_raw.get("login_shell", True),
     )
 
-    # Orochi spec
-    orochi_raw = spec.get("orochi", {}) or {}
-    # Support both "host" (single string) and "hosts" (list) for backward compat
-    orochi_hosts = orochi_raw.get("hosts", []) or []
-    if not orochi_hosts:
-        single_host = orochi_raw.get("host", "")
-        if single_host:
-            orochi_hosts = [single_host]
-    orochi = OrochiSpec(
-        enabled=orochi_raw.get("enabled", False),
-        hosts=orochi_hosts,
-        port=int(orochi_raw.get("port", 8559)),
-        ws_path=orochi_raw.get("ws_path", "/ws/agent/"),
-        token_env=orochi_raw.get("token_env", "SCITEX_OROCHI_TOKEN"),
-        channels=orochi_raw.get("channels", []) or [],
-        heartbeat_interval=int(orochi_raw.get("heartbeat_interval", 30)),
-        reconnect_interval=int(orochi_raw.get("reconnect_interval", 10)),
-        reconnect_max_retries=int(orochi_raw.get("reconnect_max_retries", 0)),
-    )
-
     # Startup commands
     startup_raw = spec.get("startup_commands", []) or []
     startup_commands = [
@@ -289,6 +251,7 @@ def load_config(path: str | Path) -> AgentConfig:
         runtime=spec.get("runtime", "claude-code"),
         model=spec.get("model", "sonnet"),
         workdir=spec.get("workdir", "~/proj"),
+        venv=spec.get("venv", ""),
         env=spec.get("env", {}) or {},
         screen_name=screen_name,
         labels=metadata.get("labels", {}) or {},
@@ -301,9 +264,33 @@ def load_config(path: str | Path) -> AgentConfig:
         telegram=telegram,
         remote=remote,
         skills=skills,
-        orochi=orochi,
         startup_commands=startup_commands,
         config_path=str(path),
+    )
+
+
+def resolve_config(name_or_path: str) -> str:
+    """Resolve agent name or path to a config file path."""
+    from pathlib import Path
+
+    p = Path(name_or_path)
+    if "/" in name_or_path or name_or_path.endswith((".yaml", ".yml")):
+        if p.exists():
+            return str(p)
+        raise FileNotFoundError(f"Config file not found: {name_or_path}")
+    user_dir = Path.home() / ".scitex" / "agent-container" / "agents"
+    for ext in (".yaml", ".yml"):
+        candidate = user_dir / f"{name_or_path}{ext}"
+        if candidate.exists():
+            return str(candidate)
+        # Subdirectory convention: agents/<name>/<name>.yaml
+        candidate = user_dir / name_or_path / f"{name_or_path}{ext}"
+        if candidate.exists():
+            return str(candidate)
+    raise FileNotFoundError(
+        f"Agent '{name_or_path}' not found in ~/.scitex/agent-container/agents/\n"
+        f"  Create: cp templates/... "
+        f"~/.scitex/agent-container/agents/{name_or_path}.yaml"
     )
 
 

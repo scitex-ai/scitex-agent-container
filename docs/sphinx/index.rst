@@ -25,7 +25,6 @@ Key Features
 - **Lifecycle Management**: Create, start, stop, and destroy agent instances
 - **Orchestration**: Multi-agent coordination and communication
 - **Claude Code Integration**: Native support for Claude Code agents
-- **Orochi Integration**: Optional real-time messaging via scitex-orochi
 - **Telegram Integration**: Optional Telegram channel support
 
 Quick Example

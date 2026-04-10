@@ -1,0 +1,63 @@
+"""Click entry point for scitex-agent-container.
+
+This module wires every subcommand defined in the sibling modules
+into a single click group, registered as the ``scitex-agent-container``
+console script (see pyproject.toml).
+"""
+
+from __future__ import annotations
+
+import click
+
+from ._helpers import HelpRecursiveGroup
+from .build_cmds import build, check, validate
+from .info_cmds import attach, find, list_python_apis, logs
+from .lifecycle_cmds import cleanup, restart, start, stop
+from .status_cmds import health, list_agents, ps, status
+
+
+@click.group(cls=HelpRecursiveGroup, invoke_without_command=True)
+@click.version_option(package_name="scitex-agent-container")
+@click.option(
+    "--help-recursive",
+    is_flag=True,
+    default=False,
+    help="Show help for all commands recursively.",
+)
+@click.pass_context
+def main(ctx: click.Context, help_recursive: bool) -> None:
+    """SciTeX Agent Container -- Declarative agent management."""
+    ctx.ensure_object(dict)
+    if help_recursive:
+        click.echo(ctx.command.get_help_recursive(ctx))  # type: ignore[attr-defined]
+        ctx.exit(0)
+    elif ctx.invoked_subcommand is None:
+        click.echo(ctx.get_help())
+
+
+# Lifecycle
+main.add_command(start)
+main.add_command(stop)
+main.add_command(restart)
+main.add_command(cleanup)
+
+# Status / listing
+main.add_command(status)
+main.add_command(list_agents)  # registered as 'list'
+main.add_command(ps)
+main.add_command(health)
+
+# Info / introspection
+main.add_command(find)
+main.add_command(logs)
+main.add_command(attach)
+main.add_command(list_python_apis)  # registered as 'list-python-apis'
+
+# Build / validation
+main.add_command(check)
+main.add_command(validate)
+main.add_command(build)
+
+
+if __name__ == "__main__":
+    main()

@@ -49,7 +49,13 @@ class TestCLI:
         assert result.exit_code != 0
         Path(path).unlink()
 
-    def test_status_no_agents(self):
+    def test_status_no_agents(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "scitex_agent_container.cli.Registry",
+            lambda: __import__(
+                "scitex_agent_container.registry", fromlist=["Registry"]
+            ).Registry(registry_dir=tmp_path / "empty_reg"),
+        )
         runner = CliRunner()
         result = runner.invoke(main, ["ps"])
         assert result.exit_code == 0

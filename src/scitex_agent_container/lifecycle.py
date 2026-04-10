@@ -8,9 +8,8 @@ import time
 import traceback
 from pathlib import Path
 
-from .config import AgentConfig, load_config
+from .config import AgentConfig, load_config, resolve_config
 from .health import health_monitor
-from .orochi_connector import start_orochi_sidecar
 from .registry import Registry
 from .runtimes.claude_code import ClaudeCodeRuntime
 
@@ -28,7 +27,7 @@ def _run_hooks(hooks: list[str], extra_env: dict[str, str] | None = None) -> Non
     Args:
         hooks: Shell commands to execute.
         extra_env: Additional env vars passed to hook subprocesses
-            (e.g., AGENT_CONFIG_PATH, AGENT_SCREEN_NAME, AGENT_NAME).
+            (e.g., SCITEX_AGENT_CONTAINER_CONFIG_PATH, SCITEX_AGENT_CONTAINER_SCREEN_NAME, SCITEX_AGENT_CONTAINER_NAME).
     """
     import os
 
@@ -52,6 +51,7 @@ def agent_start(
     config_path: str,
     registry: Registry | None = None,
     no_preflight: bool = False,
+    force: bool = False,
 ) -> bool:
     """Start an agent from a YAML config file.
 
@@ -59,29 +59,43 @@ def agent_start(
         config_path: Path to the YAML agent definition.
         registry: Optional registry instance.
         no_preflight: If True, skip SSH preflight checks (useful for slow hosts).
+        force: If True and the agent is already running, stop it first
+            and then start fresh. Also tolerates stale registry entries
+            and ghost screens (via force-stop).
 
     Returns True on success, False on failure.
     """
+    config_path = resolve_config(config_path)
     registry = registry or Registry()
     config = load_config(config_path)
     runtime = _get_runtime(config)
 
     # Already running?
     if registry.exists(config.name) and runtime.is_running(config):
-        raise RuntimeError(f"Agent '{config.name}' is already running")
+        if not force:
+            raise RuntimeError(f"Agent '{config.name}' is already running")
+        agent_stop(config.name, registry=registry, force=True)
+        # Small grace period so the screen is fully torn down before we
+        # try to create a new one with the same name.
+        time.sleep(1)
+    elif force and registry.exists(config.name):
+        # Registry says it exists but runtime says not running — stale entry.
+        agent_stop(config.name, registry=registry, force=True)
 
     # Hook env vars — let hooks know about the agent context
     hook_env = {
-        "AGENT_CONFIG_PATH": str(Path(config_path).resolve()),
-        "AGENT_SCREEN_NAME": config.screen_name,
-        "AGENT_NAME": config.name,
+        "SCITEX_AGENT_CONTAINER_CONFIG_PATH": str(Path(config_path).resolve()),
+        "SCITEX_AGENT_CONTAINER_SCREEN_NAME": config.screen_name,
+        "SCITEX_AGENT_CONTAINER_NAME": config.name,
     }
 
     # Pre-start hooks
     _run_hooks(config.hooks.get("pre_start", []), extra_env=hook_env)
 
-    # Start
-    success = runtime.start(config, no_preflight=no_preflight)
+    # Start — pass ``force`` through so remote dispatchers (SSHRemote)
+    # can relay ``--force`` to the remote CLI and skip its own
+    # already-running check.
+    success = runtime.start(config, no_preflight=no_preflight, force=force)
     if not success:
         raise RuntimeError(f"Failed to start agent '{config.name}'")
 
@@ -95,9 +109,6 @@ def agent_start(
     # Post-start hooks
     _run_hooks(config.hooks.get("post_start", []), extra_env=hook_env)
 
-    # Start Orochi sidecar if enabled
-    start_orochi_sidecar(config)
-
     # Start health monitor in background if enabled
     if config.health.enabled:
         thread = threading.Thread(
@@ -110,32 +121,90 @@ def agent_start(
     return True
 
 
-def agent_stop(name: str, registry: Registry | None = None) -> bool:
-    """Stop a running agent by name."""
+def agent_stop(
+    name: str,
+    registry: Registry | None = None,
+    force: bool = False,
+) -> bool:
+    """Stop a running agent by name.
+
+    Args:
+        name: Agent name.
+        registry: Optional registry instance.
+        force: If True, do not fail when the agent is missing from the
+            registry or when hooks/runtime.stop() raise; wipe stale
+            state and return True. Useful for bulk cleanup.
+    """
     registry = registry or Registry()
     entry = registry.get(name)
     if entry is None:
+        if force:
+            return True
         raise RuntimeError(f"Agent '{name}' not found in registry")
 
-    config = load_config(entry["config"])
+    try:
+        config = load_config(entry["config"])
+    except Exception:
+        if not force:
+            raise
+        # Config gone — just nuke the registry entry
+        registry.remove(name)
+        return True
+
     runtime = _get_runtime(config)
 
     hook_env = {
-        "AGENT_CONFIG_PATH": str(Path(entry["config"]).resolve()),
-        "AGENT_SCREEN_NAME": config.screen_name,
-        "AGENT_NAME": config.name,
+        "SCITEX_AGENT_CONTAINER_CONFIG_PATH": str(Path(entry["config"]).resolve()),
+        "SCITEX_AGENT_CONTAINER_SCREEN_NAME": config.screen_name,
+        "SCITEX_AGENT_CONTAINER_NAME": config.name,
     }
 
     # Pre-stop hooks
-    _run_hooks(config.hooks.get("pre_stop", []), extra_env=hook_env)
+    try:
+        _run_hooks(config.hooks.get("pre_stop", []), extra_env=hook_env)
+    except Exception:
+        if not force:
+            raise
 
-    runtime.stop(config)
+    try:
+        runtime.stop(config)
+    except Exception:
+        if not force:
+            raise
 
     # Post-stop hooks
-    _run_hooks(config.hooks.get("post_stop", []), extra_env=hook_env)
+    try:
+        _run_hooks(config.hooks.get("post_stop", []), extra_env=hook_env)
+    except Exception:
+        if not force:
+            raise
 
     registry.remove(name)
     return True
+
+
+def agent_stop_all(
+    registry: Registry | None = None,
+    force: bool = False,
+) -> list[tuple[str, bool, str]]:
+    """Stop every agent in the registry.
+
+    Returns a list of ``(name, success, message)`` tuples, one per agent.
+    With ``force=True``, continues through errors so a partial failure
+    doesn't block cleanup of the rest.
+    """
+    registry = registry or Registry()
+    results: list[tuple[str, bool, str]] = []
+    for entry in registry.list_all():
+        name = entry.get("name", "?")
+        try:
+            agent_stop(name, registry=registry, force=force)
+            results.append((name, True, "stopped"))
+        except Exception as exc:
+            results.append((name, False, str(exc)))
+            if not force:
+                break
+    return results
 
 
 def agent_restart(name: str, registry: Registry | None = None) -> bool:
