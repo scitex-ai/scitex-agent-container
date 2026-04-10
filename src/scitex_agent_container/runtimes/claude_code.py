@@ -272,10 +272,20 @@ class ClaudeCodeRuntime(RuntimeBase):
         # Telegram access.json is managed by telegrammer-init (claude-code-telegrammer)
         self._run_startup_commands(config)
 
-    def start(self, config: AgentConfig, no_preflight: bool = False) -> bool:
-        """Start a Claude Code agent."""
+    def start(
+        self,
+        config: AgentConfig,
+        no_preflight: bool = False,
+        force: bool = False,
+    ) -> bool:
+        """Start a Claude Code agent.
+
+        ``force`` is passed through to SSHRemote.start so the remote
+        ``scitex-agent-container start`` call receives ``--force`` and
+        stops any existing instance before relaunching.
+        """
         if config.remote.is_remote:
-            return SSHRemote.start(config, no_preflight=no_preflight)
+            return SSHRemote.start(config, no_preflight=no_preflight, force=force)
 
         if config.container.runtime != "none":
             from .apptainer import ApptainerRuntime

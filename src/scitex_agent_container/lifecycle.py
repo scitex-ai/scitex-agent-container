@@ -92,8 +92,10 @@ def agent_start(
     # Pre-start hooks
     _run_hooks(config.hooks.get("pre_start", []), extra_env=hook_env)
 
-    # Start
-    success = runtime.start(config, no_preflight=no_preflight)
+    # Start — pass ``force`` through so remote dispatchers (SSHRemote)
+    # can relay ``--force`` to the remote CLI and skip its own
+    # already-running check.
+    success = runtime.start(config, no_preflight=no_preflight, force=force)
     if not success:
         raise RuntimeError(f"Failed to start agent '{config.name}'")
 

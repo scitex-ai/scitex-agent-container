@@ -63,8 +63,18 @@ class DockerRuntime(RuntimeBase):
         args.extend(cmd_flags)
         return args
 
-    def start(self, config: AgentConfig) -> bool:
-        """Start agent in a Docker container."""
+    def start(
+        self,
+        config: AgentConfig,
+        no_preflight: bool = False,
+        force: bool = False,
+    ) -> bool:
+        """Start agent in a Docker container.
+
+        Docker's ``docker rm -f`` already handles the ``force``
+        semantics inline, so the flag is accepted for signature
+        compatibility with :class:`RuntimeBase`.
+        """
         container_name = self._container_name(config)
 
         # Remove existing container if present
@@ -90,8 +100,12 @@ class DockerRuntime(RuntimeBase):
     def stop(self, config: AgentConfig) -> bool:
         """Stop and remove a Docker container."""
         container_name = self._container_name(config)
-        subprocess.run(["docker", "stop", container_name], capture_output=True, check=False)
-        subprocess.run(["docker", "rm", container_name], capture_output=True, check=False)
+        subprocess.run(
+            ["docker", "stop", container_name], capture_output=True, check=False
+        )
+        subprocess.run(
+            ["docker", "rm", container_name], capture_output=True, check=False
+        )
         return True
 
     def is_running(self, config: AgentConfig) -> bool:
@@ -115,7 +129,9 @@ class DockerRuntime(RuntimeBase):
         return result.stdout + result.stderr
 
     @staticmethod
-    def build_image(image: str = "scitex-agent-container:latest", context: str = ".") -> bool:
+    def build_image(
+        image: str = "scitex-agent-container:latest", context: str = "."
+    ) -> bool:
         """Build a Docker image from the containers/ directory."""
         result = subprocess.run(
             ["docker", "build", "-t", image, context],

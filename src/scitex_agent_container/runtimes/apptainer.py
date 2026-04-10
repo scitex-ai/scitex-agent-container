@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import subprocess
-import time
 from pathlib import Path
 
 from ..config import AgentConfig
@@ -67,8 +66,17 @@ class ApptainerRuntime(RuntimeBase):
 
         return " ".join(parts)
 
-    def start(self, config: AgentConfig) -> bool:
-        """Start agent in Apptainer via a screen session."""
+    def start(
+        self,
+        config: AgentConfig,
+        no_preflight: bool = False,
+        force: bool = False,
+    ) -> bool:
+        """Start agent in Apptainer via a screen session.
+
+        ``no_preflight`` / ``force`` are accepted for signature
+        compatibility with :class:`RuntimeBase`.
+        """
         cmd = self._build_exec_command(config)
         workdir = config.expanded_workdir
 
