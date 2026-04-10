@@ -11,6 +11,7 @@ from pathlib import Path
 from ..config import AgentConfig
 from .base import RuntimeBase
 from .claude_md import cleanup_claude_md, setup_claude_md
+from .mcp_config import cleanup_mcp_config, setup_mcp_config
 from .screen import ScreenManager
 from .ssh_remote import SSHPreflightError as SSHPreflightError  # noqa: F401
 from .ssh_remote import SSHRemote
@@ -300,6 +301,7 @@ class ClaudeCodeRuntime(RuntimeBase):
         workdir = config.expanded_workdir
 
         _setup_claude_md(config, workdir)
+        setup_mcp_config(config, workdir)
 
         started = ScreenManager.start(
             session_name=config.screen_name,
@@ -341,6 +343,7 @@ class ClaudeCodeRuntime(RuntimeBase):
                 return ApptainerRuntime().stop(config)
 
         _cleanup_claude_md(config, config.expanded_workdir)
+        cleanup_mcp_config(config, config.expanded_workdir)
 
         return ScreenManager.stop(config.screen_name)
 

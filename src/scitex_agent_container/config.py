@@ -63,6 +63,16 @@ class TelegramSpec:
 
 
 @dataclass
+class OrochiSpec:
+    enabled: bool = False
+    hosts: list[str] = field(default_factory=list)
+    port: int = 8559
+    token_env: str = "SCITEX_OROCHI_TOKEN"
+    channels: list[str] = field(default_factory=list)
+    heartbeat_interval: int = 60
+
+
+@dataclass
 class RemoteSpec:
     host: str = ""  # SSH host (hostname or IP)
     user: str = ""  # SSH user
@@ -108,6 +118,7 @@ class AgentConfig:
     restart: RestartSpec = field(default_factory=RestartSpec)
     hooks: dict[str, list[str]] = field(default_factory=dict)
     telegram: TelegramSpec = field(default_factory=TelegramSpec)
+    orochi: OrochiSpec = field(default_factory=OrochiSpec)
     remote: RemoteSpec = field(default_factory=RemoteSpec)
     skills: SkillsSpec = field(default_factory=SkillsSpec)
     startup_commands: list[StartupCommand] = field(default_factory=list)
@@ -218,6 +229,19 @@ def load_config(path: str | Path) -> AgentConfig:
         greeting=telegram_raw.get("greeting", ""),
     )
 
+    # Orochi spec
+    orochi_raw = spec.get("orochi", {}) or {}
+    # enabled defaults to True when hosts list is non-empty
+    orochi_hosts = orochi_raw.get("hosts", []) or []
+    orochi = OrochiSpec(
+        enabled=orochi_raw.get("enabled", bool(orochi_hosts)),
+        hosts=orochi_hosts,
+        port=int(orochi_raw.get("port", 8559)),
+        token_env=orochi_raw.get("token_env", "SCITEX_OROCHI_TOKEN"),
+        channels=orochi_raw.get("channels", []) or [],
+        heartbeat_interval=int(orochi_raw.get("heartbeat_interval", 60)),
+    )
+
     # Skills spec
     skills_raw = spec.get("skills", {}) or {}
     skills = SkillsSpec(
@@ -262,6 +286,7 @@ def load_config(path: str | Path) -> AgentConfig:
         restart=restart,
         hooks=hooks,
         telegram=telegram,
+        orochi=orochi,
         remote=remote,
         skills=skills,
         startup_commands=startup_commands,
