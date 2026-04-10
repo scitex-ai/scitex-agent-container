@@ -22,28 +22,11 @@ claude:
   session: new  # Use 'new' for first launch, 'continue' after
 ```
 
-### Cause 2: `mcp_channel.ts` not found
+### Cause 2: Wrong python / missing packages
 
-The Orochi MCP server script can't be located. The agent starts, loads the MCP config pointing to a missing file, and crashes.
-
-**Error:** `Orochi enabled but mcp_channel.ts not found`
-
-**Fix:** Set `spec.orochi.ts_path` in the agent YAML (preferred) or `SCITEX_OROCHI_PUSH_TS` env var.
-
-```yaml
-orochi:
-  ts_path: ~/proj/scitex-orochi/ts/mcp_channel.ts
-```
-
-Resolution order for `find_mcp_channel_ts()`:
-1. `spec.orochi.ts_path` from agent YAML
-2. `SCITEX_OROCHI_PUSH_TS` env var
-3. `import scitex_orochi` package path (only works if installed in caller's python)
-4. `/opt/scitex-orochi/ts/mcp_channel.ts`
-
-### Cause 3: Wrong python / missing packages
-
-`scitex-agent-container` runs in the caller's python. If `scitex-orochi` isn't installed there, package-based path resolution fails silently.
+If the claude command depends on tools that live in a specific virtualenv
+(e.g. scitex CLIs), the screen session needs to activate that venv before
+running claude.
 
 **Fix:** Set `spec.venv` in the agent YAML so the screen session activates the correct virtualenv.
 
@@ -64,9 +47,7 @@ screen -S <name> -X quit; scitex-agent-container cleanup
 screen -dmS <name>-debug bash -l -c '
   source ~/.venv/bin/activate
   cd <workdir>
-  claude --model "<model>" --dangerously-skip-permissions \
-    --mcp-config <mcp-config-path> \
-    --dangerously-load-development-channels server:scitex-orochi
+  claude --model "<model>" --dangerously-skip-permissions
   exec bash
 '
 
@@ -93,15 +74,3 @@ screen -S <name> -X stuff "1\r"  # Select option 1
 screen -S <name> -X stuff "\r"   # Press Enter
 ```
 
-## Host resolution (orochi.hosts)
-
-Hosts are tried in order — first reachable wins. Place LAN IP first for speed:
-
-```yaml
-orochi:
-  hosts:
-    - 192.168.11.22      # LAN (fast, ~1ms)
-    - scitex-orochi.com  # Internet (fallback, ~50ms)
-```
-
-The MCP config only uses `hosts[0]`. The Python sidecar (`orochi_connector.py`) tries each host in order with full logging. No silent fallback.

@@ -29,12 +29,11 @@ Managing AI coding agents (Claude Code, Cursor, Aider) in production requires ma
 
 ## Solution
 
-scitex-agent-container provides declarative YAML definitions that fully specify an agent -- runtime, model, channels, environment, health checks, remote host, Orochi hub connection -- started with a single command:
+scitex-agent-container provides declarative YAML definitions that fully specify an agent -- runtime, model, channels, environment, health checks, remote host -- started with a single command:
 
 ```
 YAML manifest --> scitex-agent-container start --> screen session
                                                    + remote SSH deploy
-                                                   + Orochi auto-connect
                                                    + health monitor
                                                    + restart policy
 ```
@@ -46,9 +45,6 @@ Requires Python >= 3.10.
 
 ```bash
 pip install scitex-agent-container
-
-# With Orochi hub integration
-pip install scitex-agent-container[orochi]
 
 # With Telegram integration
 pip install scitex-agent-container[telegram]
@@ -79,17 +75,6 @@ spec:
     flags:
       - --dangerously-skip-permissions
     session: new
-
-  # Auto-connect to Orochi hub
-  orochi:
-    enabled: true
-    hosts:
-      - 192.168.11.22      # LAN (fast)
-      - scitex-orochi.com   # domain (fallback)
-    port: 8559
-    token_env: SCITEX_OROCHI_TOKEN
-    channels:
-      - "#general"
 
   health:
     enabled: true
@@ -136,32 +121,6 @@ scitex-agent-container start --no-preflight remote-agent.yaml
 
 # Run preflight checks without starting
 scitex-agent-container check remote-agent.yaml
-```
-
-## Orochi Auto-Connect
-
-Agents auto-register with the [scitex-orochi](https://github.com/ywatanabe1989/scitex-orochi) WebSocket hub on startup:
-
-```yaml
-spec:
-  orochi:
-    enabled: true
-    hosts:                      # tried in order, first reachable wins
-      - 127.0.0.1              # localhost (if hub runs here)
-      - 192.168.11.22          # LAN IP
-      - scitex-orochi.com      # domain (external fallback)
-    port: 8559
-    token_env: SCITEX_OROCHI_TOKEN
-    channels: ["#general", "#research"]
-    heartbeat_interval: 60
-    reconnect_interval: 10
-    reconnect_max_retries: 0    # 0 = infinite
-```
-
-No silent fallbacks -- every host attempt is logged:
-```
-INFO  Orochi connection report: [192.168.11.22:FAIL | scitex-orochi.com:OK]
-      -- connected via scitex-orochi.com (my-agent@spartan channels=['#general'])
 ```
 
 <!-- SciTeX Convention: Four Interfaces -->
@@ -264,7 +223,6 @@ spec:
 | `spec.runtime` | `claude-code`, `cursor`, `aider` | AI coding tool to use |
 | `spec.model` | `sonnet`, `opus[1m]` | Model selection |
 | `spec.remote` | `host`, `user`, `timeout`, `login_shell` | SSH remote deployment |
-| `spec.orochi` | `hosts[]`, `port`, `token_env`, `channels[]` | Orochi hub auto-connect |
 | `spec.claude` | `channels[]`, `flags[]`, `session` | Claude Code-specific options |
 | `spec.health` | `enabled`, `interval`, `method` | Health monitoring |
 | `spec.restart` | `policy`, `max_retries`, `backoff` | Auto-restart on failure |
@@ -321,7 +279,7 @@ The Telegrammer bot illustrates how credentials cascade through the SciTeX agent
 <!-- SciTeX Convention: Ecosystem -->
 ## Part of SciTeX
 
-scitex-agent-container is part of [**SciTeX**](https://scitex.ai). It depends on [scitex-container](https://github.com/ywatanabe1989/scitex-container) for container runtime abstractions and is used by [scitex-orochi](https://github.com/ywatanabe1989/scitex-orochi) for multi-machine agent orchestration.
+scitex-agent-container is part of [**SciTeX**](https://scitex.ai). It depends on [scitex-container](https://github.com/ywatanabe1989/scitex-container) for container runtime abstractions and is used as a generic agent lifecycle library by downstream orchestrators like [scitex-orochi](https://github.com/ywatanabe1989/scitex-orochi), which dispatches multi-machine fleets on top of it.
 
 <!-- SciTeX Convention: Footer (Four Freedoms + icon) -->
 >Four Freedoms for Research

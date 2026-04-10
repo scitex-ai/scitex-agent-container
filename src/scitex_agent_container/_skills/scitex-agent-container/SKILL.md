@@ -1,11 +1,11 @@
 ---
 name: scitex-agent-container
-description: Deploy and manage Claude Code agents via YAML config, with Orochi integration, SSH remote deployment, and zero-trust isolation.
+description: Deploy and manage Claude Code agents via YAML config, with SSH remote deployment and an extensible plugin architecture.
 ---
 
 # scitex-agent-container
 
-Declarative agent deployment. Define agents in YAML, launch them in screen sessions with auto-connect to Orochi hub.
+Declarative agent deployment. Define agents in YAML, launch them in screen sessions locally or on remote hosts via SSH. Downstream packages (e.g. [scitex-orochi](https://github.com/ywatanabe1989/scitex-orochi)) consume this library to layer on MCP bridges, multi-machine dispatch, and hub registration without touching the core.
 
 ## Agent Config (YAML)
 
@@ -21,42 +21,14 @@ spec:
   runtime: claude-code
   model: sonnet
   workdir: ~/proj
-  orochi:
-    enabled: true
-    hosts:
-      - 192.168.0.102
-      - orochi.example.com
-    port: 8559
-    ws_path: /ws/agent/
-    token_env: SCITEX_OROCHI_TOKEN
+  claude:
     channels:
       - "#general"
       - "#research"
+    flags:
+      - --dangerously-skip-permissions
+    session: new
 ```
-
-## OrochiSpec Fields
-
-| Field | Default | Description |
-|-------|---------|-------------|
-| `enabled` | `false` | Enable Orochi auto-connect |
-| `hosts` | `[]` | Host list, tried in order (first reachable wins) |
-| `port` | `8559` | Django Channels port (HTTP + WS unified) |
-| `ws_path` | `/ws/agent/` | WebSocket endpoint path |
-| `token_env` | `SCITEX_OROCHI_TOKEN` | Env var holding auth token |
-| `channels` | `[]` | Channels to subscribe |
-| `heartbeat_interval` | `30` | Seconds between heartbeats |
-| `reconnect_interval` | `10` | Seconds between reconnect attempts |
-| `reconnect_max_retries` | `0` | 0 = infinite retries |
-
-## MCP Config Auto-Generation (orochi_mcp.py)
-
-When `orochi.enabled: true`, the launcher:
-1. Locates `mcp_channel.ts` (env override, package path, or `/opt/`)
-2. Builds MCP server config with agent name, host, port, channels
-3. Writes to `~/.scitex/agent-container/cache/mcp-configs/mcp-<name>.json` (NOT workdir)
-4. Adds `--mcp-config` and `--dangerously-load-development-channels` flags
-
-Path isolation matters: workdir may be shared with Telegram or other sessions.
 
 ## Auto-Accept Watchdog
 
@@ -112,9 +84,6 @@ claude-code-telegrammer
 
 - `bot_token_env` in YAML → resolved from `os.environ` at runtime
 - `access.json` written to `TELEGRAM_STATE_DIR` (`~/.scitex/agent-container/telegram/{bot_id}/`)
-- Zero-trust guards prevent telegram agents from loading Orochi MCP
-- `CLAUDE_AGENT_ROLE=telegram` + `SCITEX_OROCHI_DISABLE=true` set automatically
-- MCP config isolation: telegrammer never sees Orochi channel config
 
 ## SSH Remote Deployment
 
@@ -130,18 +99,6 @@ remote:
 ```
 
 The launcher SSHs into the remote, creates a screen session, and launches Claude Code there. `login_shell: true` ensures PATH is set correctly.
-
-## Multi-Host Fallback
-
-Connection attempts produce a report for every host:
-
-```
-Orochi connection report: [192.168.0.102:OK] -- connected via 192.168.0.102
-Orochi connection report: [192.168.0.102:FAIL | orochi.example.com:OK] -- connected via orochi.example.com
-Orochi connection report: [192.168.0.102:FAIL | orochi.example.com:FAIL] -- ALL HOSTS FAILED (attempt 3)
-```
-
-No silent fallback. Every host result is logged.
 
 ## Message Format
 
