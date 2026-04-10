@@ -65,10 +65,9 @@ class ClaudeCodeRuntime(RuntimeBase):
         lines = []
         for key, value in config.env.items():
             lines.append(f'export {key}="{_resolve(str(value))}"')
-        # Pass channels as env var for MCP-based delivery
-        if config.claude.channels:
-            channels_str = ",".join(config.claude.channels)
-            lines.append(f'export SCITEX_OROCHI_CHANNELS="{channels_str}"')
+        # Channels are passed via the agent YAML env block (e.g.,
+        # SCITEX_OROCHI_CHANNELS) and exported above with the rest of
+        # config.env.  Do NOT hard-code cross-package vars here.
         return "\n".join(lines)
 
     # Telegram access.json is managed by claude-code-telegrammer (telegrammer-init),

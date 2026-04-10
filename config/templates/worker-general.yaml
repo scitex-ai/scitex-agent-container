@@ -16,8 +16,8 @@ spec:
     session: new
 
   env:
-    CLAUDE_AGENT_ROLE: worker
-    CLAUDE_AGENT_ID: worker-general
+    SCITEX_AGENT_CONTAINER_ROLE: worker
+    SCITEX_AGENT_CONTAINER_ID: worker-general
 
   screen:
     name: cld-worker

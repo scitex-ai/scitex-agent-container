@@ -256,7 +256,7 @@ The Telegrammer bot illustrates how credentials cascade through the SciTeX agent
 │  1. Reads bot_token_env from YAML                       │
 │  2. Resolves actual token from os.environ               │
 │  3. Exports into screen session / container             │
-│  4. Writes access.json via TELEGRAM_STATE_DIR            │
+│  4. Writes access.json via SCITEX_AGENT_CONTAINER_TELEGRAM_STATE_DIR            │
 │  5. Launches claude-code-telegrammer watchdog            │
 └──────────────────────────┬──────────────────────────────┘
                            ▼

@@ -56,7 +56,7 @@ class RestartSpec:
 # Telegram setup is managed by claude-code-telegrammer via hooks.
 @dataclass
 class TelegramSpec:
-    bot_token_env: str = "TELEGRAM_BOT_TOKEN"
+    bot_token_env: str = "SCITEX_AGENT_CONTAINER_TELEGRAM_BOT_TOKEN"
     allowed_users: list[str] = field(default_factory=list)
     auto_connect: bool = True
     greeting: str = ""
@@ -210,7 +210,7 @@ def load_config(path: str | Path) -> AgentConfig:
     # Telegram spec
     telegram_raw = spec.get("telegram", {}) or {}
     telegram = TelegramSpec(
-        bot_token_env=telegram_raw.get("bot_token_env", "TELEGRAM_BOT_TOKEN"),
+        bot_token_env=telegram_raw.get("bot_token_env", "SCITEX_AGENT_CONTAINER_TELEGRAM_BOT_TOKEN"),
         allowed_users=[str(u) for u in (telegram_raw.get("allowed_users", []) or [])],
         auto_connect=telegram_raw.get("auto_connect", True),
         greeting=telegram_raw.get("greeting", ""),

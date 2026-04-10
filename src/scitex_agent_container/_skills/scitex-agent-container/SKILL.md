@@ -53,8 +53,8 @@ watchdog:
 Four layers prevent cross-contamination:
 
 1. **`SCITEX_OROCHI_DISABLE=true`** -- env var kill switch
-2. **`CLAUDE_AGENT_ROLE=telegram`** -- role-based blocking
-3. **`TELEGRAM_BOT_TOKEN` detection** -- context-based blocking
+2. **`SCITEX_AGENT_CONTAINER_ROLE=telegram`** -- role-based blocking
+3. **`SCITEX_AGENT_CONTAINER_TELEGRAM_BOT_TOKEN` detection** -- context-based blocking
 4. **MCP config to `/tmp/`** -- session isolation
 
 Guards run at flag-generation time (before Claude Code launches). Truthy: `true`, `1`, `yes`, `enable`, `enabled`.
@@ -83,7 +83,7 @@ claude-code-telegrammer
 ### Key Points
 
 - `bot_token_env` in YAML → resolved from `os.environ` at runtime
-- `access.json` written to `TELEGRAM_STATE_DIR` (`~/.scitex/agent-container/telegram/{bot_id}/`)
+- `access.json` written to `SCITEX_AGENT_CONTAINER_TELEGRAM_STATE_DIR` (`~/.scitex/agent-container/telegram/{bot_id}/`)
 
 ## SSH Remote Deployment
 

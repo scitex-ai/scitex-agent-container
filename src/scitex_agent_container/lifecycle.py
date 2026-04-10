@@ -27,7 +27,7 @@ def _run_hooks(hooks: list[str], extra_env: dict[str, str] | None = None) -> Non
     Args:
         hooks: Shell commands to execute.
         extra_env: Additional env vars passed to hook subprocesses
-            (e.g., AGENT_CONFIG_PATH, AGENT_SCREEN_NAME, AGENT_NAME).
+            (e.g., SCITEX_AGENT_CONTAINER_CONFIG_PATH, SCITEX_AGENT_CONTAINER_SCREEN_NAME, SCITEX_AGENT_CONTAINER_NAME).
     """
     import os
 
@@ -84,9 +84,9 @@ def agent_start(
 
     # Hook env vars — let hooks know about the agent context
     hook_env = {
-        "AGENT_CONFIG_PATH": str(Path(config_path).resolve()),
-        "AGENT_SCREEN_NAME": config.screen_name,
-        "AGENT_NAME": config.name,
+        "SCITEX_AGENT_CONTAINER_CONFIG_PATH": str(Path(config_path).resolve()),
+        "SCITEX_AGENT_CONTAINER_SCREEN_NAME": config.screen_name,
+        "SCITEX_AGENT_CONTAINER_NAME": config.name,
     }
 
     # Pre-start hooks
@@ -154,9 +154,9 @@ def agent_stop(
     runtime = _get_runtime(config)
 
     hook_env = {
-        "AGENT_CONFIG_PATH": str(Path(entry["config"]).resolve()),
-        "AGENT_SCREEN_NAME": config.screen_name,
-        "AGENT_NAME": config.name,
+        "SCITEX_AGENT_CONTAINER_CONFIG_PATH": str(Path(entry["config"]).resolve()),
+        "SCITEX_AGENT_CONTAINER_SCREEN_NAME": config.screen_name,
+        "SCITEX_AGENT_CONTAINER_NAME": config.name,
     }
 
     # Pre-stop hooks

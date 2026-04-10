@@ -245,7 +245,7 @@ class TestClaudeMdGeneration:
         with tempfile.TemporaryDirectory() as tmpdir:
             config = AgentConfig(
                 name="test-agent",
-                env={"CLAUDE_AGENT_ROLE": "worker", "CLAUDE_AGENT_ID": "test-agent"},
+                env={"SCITEX_AGENT_CONTAINER_ROLE": "worker", "SCITEX_AGENT_CONTAINER_ID": "test-agent"},
                 skills=SkillsSpec(required=["quality-guards", "autonomous"]),
             )
             _setup_claude_md(config, tmpdir)

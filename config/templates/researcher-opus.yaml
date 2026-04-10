@@ -16,8 +16,8 @@ spec:
     session: new
 
   env:
-    CLAUDE_AGENT_ROLE: researcher
-    CLAUDE_AGENT_ID: researcher-opus
+    SCITEX_AGENT_CONTAINER_ROLE: researcher
+    SCITEX_AGENT_CONTAINER_ID: researcher-opus
 
   screen:
     name: cld-researcher
