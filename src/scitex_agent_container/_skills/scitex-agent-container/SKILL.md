@@ -76,8 +76,8 @@ scitex-agent-container  ◀── YOU ARE HERE
   4. Writes access.json
   5. Launches watchdog
   ▼
-claude-code-telegrammer
-  TUI watchdog, receives token via env
+External hook (e.g., TUI watchdog)
+  Receives token via env
 ```
 
 ### Key Points

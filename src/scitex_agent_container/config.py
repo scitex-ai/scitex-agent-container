@@ -33,7 +33,7 @@ class HealthSpec:
 
 
 # Parsed for backward compat but not interpreted by runtime.
-# Watchdog lifecycle is managed by claude-code-telegrammer via hooks.
+# Watchdog lifecycle is managed externally via hooks.
 @dataclass
 class WatchdogSpec:
     enabled: bool = False
@@ -53,7 +53,7 @@ class RestartSpec:
 
 
 # Parsed for backward compat but not interpreted by runtime.
-# Telegram setup is managed by claude-code-telegrammer via hooks.
+# Telegram setup is managed externally via hooks.
 @dataclass
 class TelegramSpec:
     bot_token_env: str = "SCITEX_AGENT_CONTAINER_TELEGRAM_BOT_TOKEN"
@@ -210,7 +210,9 @@ def load_config(path: str | Path) -> AgentConfig:
     # Telegram spec
     telegram_raw = spec.get("telegram", {}) or {}
     telegram = TelegramSpec(
-        bot_token_env=telegram_raw.get("bot_token_env", "SCITEX_AGENT_CONTAINER_TELEGRAM_BOT_TOKEN"),
+        bot_token_env=telegram_raw.get(
+            "bot_token_env", "SCITEX_AGENT_CONTAINER_TELEGRAM_BOT_TOKEN"
+        ),
         allowed_users=[str(u) for u in (telegram_raw.get("allowed_users", []) or [])],
         auto_connect=telegram_raw.get("auto_connect", True),
         greeting=telegram_raw.get("greeting", ""),

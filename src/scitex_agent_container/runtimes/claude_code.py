@@ -70,8 +70,8 @@ class ClaudeCodeRuntime(RuntimeBase):
         # config.env.  Do NOT hard-code cross-package vars here.
         return "\n".join(lines)
 
-    # Telegram access.json is managed by claude-code-telegrammer (telegrammer-init),
-    # not by agent-container. Agent-container only passes config via env vars.
+    # Telegram access.json is not managed by agent-container.
+    # Agent-container only passes config via env vars.
 
     def _needs_auto_accept(self, config: AgentConfig) -> bool:
         """Check if the claude command includes flags that trigger TUI prompts."""
@@ -268,7 +268,7 @@ class ClaudeCodeRuntime(RuntimeBase):
     def _post_start_tasks(self, config: AgentConfig) -> None:
         """Run post-start tasks: auto-accept prompts, startup commands."""
         self._send_auto_accept_keystrokes(config)
-        # Telegram access.json is managed by telegrammer-init (claude-code-telegrammer)
+        # Telegram access.json is not managed by agent-container
         self._run_startup_commands(config)
 
     def start(
