@@ -159,7 +159,7 @@ class ClaudeCodeRuntime(RuntimeBase):
             time.sleep(2)
         return False
 
-    def _send_auto_accept_keystrokes(self, config: AgentConfig) -> None:
+    def _send_auto_accept_keystrokes(self, config: AgentConfig) -> bool:
         """Send keystrokes to accept TUI confirmation prompts in screen.
 
         Claude Code shows confirmation prompts for dangerous flags. This method
@@ -171,7 +171,7 @@ class ClaudeCodeRuntime(RuntimeBase):
         Uses polling to handle variable Claude Code startup times.
         """
         if not self._needs_auto_accept(config):
-            return
+            return True
 
         # Detect which prompts we expect — driven purely by the flag list
         # so any caller (including scitex-orochi) that injects dangerous
@@ -209,9 +209,15 @@ class ClaudeCodeRuntime(RuntimeBase):
                     "Screen session %s disappeared during auto-accept",
                     config.screen_name,
                 )
-                return
+                return False
 
             content = self._get_screen_content(config.screen_name)
+            if content.strip():
+                logger.debug(
+                    "Screen content for %s:\n%s", config.screen_name, content[:500]
+                )
+            else:
+                logger.debug("Screen content empty for %s", config.screen_name)
 
             # Check if we've reached the main prompt (all prompts accepted)
             if "bypass permissions" in content and "Enter to confirm" not in content:
@@ -220,7 +226,7 @@ class ClaudeCodeRuntime(RuntimeBase):
                     config.screen_name,
                     ", ".join(accepted) or "none needed",
                 )
-                return
+                return True
 
             # Detect and respond to Bypass Permissions radio prompt
             # Shows "1. No, exit" / "2. Yes, I accept" with "Enter to confirm"
@@ -313,6 +319,7 @@ class ClaudeCodeRuntime(RuntimeBase):
             ", ".join(accepted),
             ", ".join(expected),
         )
+        return False
 
     def _run_startup_commands(self, config: AgentConfig) -> None:
         """Send startup commands to the screen session with delays."""
@@ -348,11 +355,10 @@ class ClaudeCodeRuntime(RuntimeBase):
     def _post_start_tasks(self, config: AgentConfig) -> None:
         """Run post-start tasks: auto-accept prompts, startup commands."""
         if self._needs_auto_accept(config):
-            self._send_auto_accept_keystrokes(config)
-            # Verify screen survived auto-accept before sending commands
-            if not ScreenManager.exists(config.screen_name):
+            accepted = self._send_auto_accept_keystrokes(config)
+            if not accepted:
                 logger.warning(
-                    "Screen %s gone after auto-accept; skipping startup commands",
+                    "Auto-accept failed for %s; skipping startup commands",
                     config.screen_name,
                 )
                 return
