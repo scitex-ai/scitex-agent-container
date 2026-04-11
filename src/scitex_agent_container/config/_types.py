@@ -19,6 +19,7 @@ class ClaudeSpec:
     channels: list[str] = field(default_factory=list)
     flags: list[str] = field(default_factory=list)
     session: str = "new"
+    auto_accept: bool = True
 
 
 @dataclass

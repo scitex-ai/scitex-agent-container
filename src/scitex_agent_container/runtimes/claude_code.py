@@ -90,6 +90,8 @@ class ClaudeCodeRuntime(RuntimeBase):
 
     def _needs_auto_accept(self, config: AgentConfig) -> bool:
         """Check if the claude command includes flags that trigger TUI prompts."""
+        if not config.claude.auto_accept:
+            return False
         dangerous_flags = [
             "--dangerously-skip-permissions",
             "--dangerously-load-development-channels",

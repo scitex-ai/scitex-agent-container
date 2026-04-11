@@ -35,6 +35,7 @@ def parse_claude(spec: dict) -> ClaudeSpec:
         channels=raw.get("channels", []) or [],
         flags=raw.get("flags", []) or [],
         session=raw.get("session", "new"),
+        auto_accept=raw.get("auto_accept", True),
     )
 
 
