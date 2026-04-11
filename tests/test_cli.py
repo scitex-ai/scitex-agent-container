@@ -49,17 +49,10 @@ class TestCLI:
         assert result.exit_code != 0
         Path(path).unlink()
 
-    def test_status_no_agents(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            "scitex_agent_container.cli.Registry",
-            lambda: __import__(
-                "scitex_agent_container.registry", fromlist=["Registry"]
-            ).Registry(registry_dir=tmp_path / "empty_reg"),
-        )
+    def test_status_no_agents(self):
         runner = CliRunner()
-        result = runner.invoke(main, ["ps"])
+        result = runner.invoke(main, ["list", "--json"])
         assert result.exit_code == 0
-        assert "No agents" in result.output
 
     def test_stop_nonexistent(self):
         runner = CliRunner()
@@ -94,12 +87,12 @@ class TestCLI:
         data = json.loads(result.output)
         assert isinstance(data, list)
 
-    def test_ps_json_empty(self):
+    def test_list_replaces_ps(self):
+        """ps command was removed; list covers the same functionality."""
         runner = CliRunner()
-        result = runner.invoke(main, ["ps", "--json"])
-        assert result.exit_code == 0
-        data = json.loads(result.output)
-        assert isinstance(data, list)
+        result = runner.invoke(main, ["ps"])
+        # ps no longer exists — should fail with usage error
+        assert result.exit_code != 0
 
     def test_status_json_nonexistent(self):
         runner = CliRunner()

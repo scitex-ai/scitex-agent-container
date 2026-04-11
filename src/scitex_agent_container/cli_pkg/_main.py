@@ -13,7 +13,7 @@ from ._helpers import HelpRecursiveGroup
 from .build_cmds import build, check, validate
 from .info_cmds import attach, find, list_python_apis, logs
 from .lifecycle_cmds import cleanup, restart, start, stop
-from .status_cmds import health, list_agents, ps, status
+from .status_cmds import health, list_agents, status
 
 
 @click.group(cls=HelpRecursiveGroup, invoke_without_command=True)
@@ -44,7 +44,6 @@ main.add_command(cleanup)
 # Status / listing
 main.add_command(status)
 main.add_command(list_agents)  # registered as 'list'
-main.add_command(ps)
 main.add_command(health)
 
 # Info / introspection

@@ -1,4 +1,4 @@
-"""Status commands: status, list, ps, health."""
+"""Status commands: status, list, health."""
 
 from __future__ import annotations
 
@@ -84,23 +84,6 @@ def list_agents(as_json: bool, capability: str | None, machine: str | None) -> N
         print_agent_list_json(registry, capability=capability, machine=machine)
     else:
         print_agent_list(registry, capability=capability, machine=machine)
-
-
-@click.command()
-@click.option(
-    "--json",
-    "as_json",
-    is_flag=True,
-    default=False,
-    help="Output as JSON.",
-)
-def ps(as_json: bool) -> None:
-    """List all registered agents (alias for list)."""
-    registry = Registry()
-    if as_json:
-        print_agent_list_json(registry)
-    else:
-        print_agent_list(registry)
 
 
 @click.command()

@@ -1,0 +1,40 @@
+# scitex-agent-container/v2 template
+# Auto-derives: workdir, screen.name, env.CLAUDE_AGENT_*, hooks.pre_start mkdir
+apiVersion: scitex-agent-container/v2
+kind: Agent
+metadata:
+  name: worker-general
+  labels:
+    role: worker
+    team: dev
+spec:
+  runtime: claude-code
+  model: sonnet
+
+  claude:
+    flags:
+      - --dangerously-skip-permissions
+    session: new
+
+  mcp_servers:
+    scitex-orochi:
+      type: stdio
+      command: bun
+      args:
+        - run
+        - "~/proj/scitex-orochi/ts/mcp_channel.ts"
+      env:
+        SCITEX_OROCHI_URL: "wss://scitex-orochi.com"
+        SCITEX_OROCHI_AGENT: "${metadata.name}"
+        SCITEX_OROCHI_CHANNELS: "#general"
+        SCITEX_OROCHI_TOKEN: "${SCITEX_OROCHI_TOKEN}"
+
+  health:
+    enabled: true
+    interval: 60
+    timeout: 5
+    method: screen-alive
+
+  restart:
+    policy: never
+    max_retries: 0

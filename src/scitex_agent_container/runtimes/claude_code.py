@@ -13,6 +13,12 @@ from .base import RuntimeBase
 from .claude_md import cleanup_claude_md, setup_claude_md
 from .mcp_config import cleanup_mcp_config, setup_mcp_config
 from .screen import ScreenManager
+from .src_files import (  # noqa: F401
+    cleanup_src_claude_md,
+    cleanup_src_mcp_json,
+    deploy_src_claude_md,
+    deploy_src_mcp_json,
+)
 from .ssh_remote import SSHPreflightError as SSHPreflightError  # noqa: F401
 from .ssh_remote import SSHRemote
 
@@ -24,6 +30,14 @@ _SSHRemote = SSHRemote
 # Backward-compatible aliases for extracted functions
 _setup_claude_md = setup_claude_md
 _cleanup_claude_md = cleanup_claude_md
+
+
+def _has_src_files(config: AgentConfig) -> bool:
+    """Check if src_CLAUDE.md or src_mcp.json exist next to the YAML."""
+    if not config.config_path:
+        return False
+    defdir = Path(config.config_path).parent
+    return (defdir / "src_CLAUDE.md").exists() or (defdir / "src_mcp.json").exists()
 
 
 class ClaudeCodeRuntime(RuntimeBase):
@@ -300,7 +314,14 @@ class ClaudeCodeRuntime(RuntimeBase):
         env_exports = self._build_env_exports(config)
         workdir = config.expanded_workdir
 
-        _setup_claude_md(config, workdir)
+        # v2: deploy src files from definition directory
+        # v1: generate from config (legacy)
+        is_v2 = bool(config.mcp_servers) or _has_src_files(config)
+        if is_v2:
+            deploy_src_claude_md(config, workdir)
+            deploy_src_mcp_json(config, workdir)
+        else:
+            _setup_claude_md(config, workdir)
         setup_mcp_config(config, workdir)
 
         started = ScreenManager.start(
@@ -342,7 +363,12 @@ class ClaudeCodeRuntime(RuntimeBase):
             elif config.container.runtime == "apptainer":
                 return ApptainerRuntime().stop(config)
 
-        _cleanup_claude_md(config, config.expanded_workdir)
+        is_v2 = bool(config.mcp_servers) or _has_src_files(config)
+        if is_v2:
+            cleanup_src_claude_md(config, config.expanded_workdir)
+            cleanup_src_mcp_json(config, config.expanded_workdir)
+        else:
+            _cleanup_claude_md(config, config.expanded_workdir)
         cleanup_mcp_config(config, config.expanded_workdir)
 
         return ScreenManager.stop(config.screen_name)
