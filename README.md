@@ -22,44 +22,50 @@
 
 ---
 
-<!-- SciTeX Convention: Problem & Solution -->
 ## Problem
 
 Managing AI coding agents (Claude Code, Cursor, Aider) in production requires manual script-writing, environment setup, and process monitoring for each agent instance. Scaling from one agent to a fleet across multiple machines means duplicating fragile shell scripts with no health checks, restart policies, remote deployment, or inter-agent communication.
 
 ## Solution
 
-scitex-agent-container provides declarative YAML definitions that fully specify an agent -- runtime, model, channels, environment, health checks, remote host -- started with a single command:
+scitex-agent-container provides declarative YAML definitions that fully specify an agent -- runtime, model, MCP servers, environment, health checks, remote host -- started with a single command:
 
 ```
-YAML manifest --> scitex-agent-container start --> screen session
-                                                   + remote SSH deploy
-                                                   + health monitor
-                                                   + restart policy
+YAML manifest + src_CLAUDE.md + src_mcp.json
+          |
+          v
+scitex-agent-container start
+          |
+          v
+tmux/screen session + auto-accept TUI prompts
+                     + remote SSH deploy
+                     + health monitor
+                     + restart policy
 ```
 
-<!-- SciTeX Convention: Installation -->
 ## Installation
 
 Requires Python >= 3.10.
 
 ```bash
 pip install scitex-agent-container
-
-# With Telegram integration
-pip install scitex-agent-container[telegram]
-
-# Development
-pip install scitex-agent-container[dev]
 ```
 
-<!-- SciTeX Convention: Quickstart -->
-## Quickstart
+## Quickstart (v2 config)
 
-1. Write a YAML manifest:
+1. Create agent definition directory:
+
+```
+my-agent/
+  my-agent.yaml     # Agent config
+  src_CLAUDE.md      # -> deployed to {workdir}/CLAUDE.md
+  src_mcp.json       # -> deployed to {workdir}/.mcp.json
+```
+
+2. Write a YAML manifest:
 
 ```yaml
-apiVersion: cld-agent/v1
+apiVersion: scitex-agent-container/v2
 kind: Agent
 metadata:
   name: my-agent
@@ -69,219 +75,142 @@ metadata:
 spec:
   runtime: claude-code
   model: sonnet
-  workdir: ~/proj
+  multiplexer: tmux       # tmux (default) or screen
 
   claude:
     flags:
       - --dangerously-skip-permissions
     session: new
 
+  skills:
+    required:
+      - scitex
+
   health:
     enabled: true
-    interval: 30
+    interval: 60
     method: screen-alive
 
   restart:
     policy: on-failure
     max_retries: 3
-    backoff:
-      initial: 30
-      max: 300
-      multiplier: 2
 ```
 
-2. Start and monitor:
+v2 auto-derives from `metadata.name`: workdir, session name, env vars (CLAUDE_AGENT_ID, CLAUDE_AGENT_ROLE, etc.), and pre-start hooks. Sibling `src_CLAUDE.md` and `src_mcp.json` files are deployed to the workspace with `${metadata.name}` and `${ENV_VAR}` interpolation.
+
+3. Start and monitor:
 
 ```bash
-scitex-agent-container start agent.yaml
+scitex-agent-container start my-agent.yaml
+scitex-agent-container inspect my-agent         # Live state detection
 scitex-agent-container status my-agent
 scitex-agent-container logs my-agent -n 100
-scitex-agent-container attach my-agent   # Ctrl-A D to detach
+scitex-agent-container attach my-agent          # Ctrl-B D to detach (tmux)
 ```
 
 ## Remote SSH Deployment
 
-Deploy agents to remote machines with a single YAML:
+Deploy agents to remote machines:
 
 ```yaml
 spec:
   remote:
-    host: spartan          # SSH hostname
+    host: mba              # SSH hostname
     user: ywatanabe
-    timeout: 120           # seconds (HPC module loads are slow)
-    login_shell: true      # bash -l -c (needed for PATH on most hosts)
+    timeout: 180
 ```
 
 ```bash
-# Preflight checks (SSH, screen, python, disk) then start
-scitex-agent-container start remote-agent.yaml
-
-# Skip preflight for slow hosts (e.g. HPC with module loads)
-scitex-agent-container start --no-preflight remote-agent.yaml
-
-# Run preflight checks without starting
-scitex-agent-container check remote-agent.yaml
+scitex-agent-container start remote-agent.yaml   # SSHs to remote, launches there
+scitex-agent-container stop remote-agent.yaml     # Accepts name or YAML path
+scitex-agent-container inspect my-remote-agent    # Live state from remote
 ```
 
-<!-- SciTeX Convention: Four Interfaces -->
-## Four Interfaces
+## MCP Servers (src_mcp.json)
 
-<details>
-<summary><strong>Python API</strong></summary>
+MCP config lives alongside the YAML as `src_mcp.json` -- visible, editable, version-controlled:
 
-<br>
+```json
+{
+  "mcpServers": {
+    "scitex-orochi": {
+      "type": "stdio",
+      "command": "bun",
+      "args": ["run", "~/proj/scitex-orochi/ts/mcp_channel.ts"],
+      "env": {
+        "SCITEX_OROCHI_URL": "wss://scitex-orochi.com",
+        "SCITEX_OROCHI_AGENT": "${metadata.name}",
+        "SCITEX_OROCHI_TOKEN": "${SCITEX_OROCHI_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+`~` in args is expanded at deploy time. `${metadata.name}` interpolates from YAML. `${ENV_VAR}` resolves from the environment.
+
+## Auto-Accept TUI Prompts
+
+Claude Code shows confirmation prompts for dangerous flags. The auto-accept system handles them automatically using modular prompt handlers (`runtimes/prompts.py`):
 
 ```python
-from scitex_agent_container import (
-    AgentConfig, load_config, validate_config,
-    agent_start, agent_stop, agent_restart, agent_status, agent_logs,
-    Registry,
-)
-
-config = load_config("agent.yaml")      # Parse YAML manifest
-agent_start("agent.yaml")               # Launch agent
-info = agent_status("my-agent")         # Query status
-agent_stop("my-agent")                  # Stop agent
-agent_restart("my-agent")               # Restart agent
-output = agent_logs("my-agent")         # Read logs
-registry = Registry()                    # Access agent registry
+# Each handler: detect prompt text -> send number key + Enter
+PromptHandler(name="bypass-permissions",
+              detect=lambda c: "2. Yes, I accept" in c,
+              keys=["2", "Enter"])
 ```
 
-</details>
+Handlers are order-agnostic, use numbered option text for reliability, and work with both tmux and screen. New prompts are added by appending to `PROMPT_HANDLERS`.
 
-<details>
-<summary><strong>CLI Commands</strong></summary>
+Diagnostics logged to `~/.scitex/agent-container/logs/{name}/auto-accept.log`.
 
-<br>
+## CLI Commands
 
 ```bash
-scitex-agent-container --help-recursive          # Show all commands
-
-# Lifecycle
-scitex-agent-container start <config.yaml>       # Start an agent
-scitex-agent-container start --no-preflight ...  # Skip SSH preflight checks
-scitex-agent-container stop <name>               # Stop an agent
-scitex-agent-container restart <name>            # Restart an agent
-scitex-agent-container attach <name>             # Attach to screen session
+# Lifecycle (accepts name or YAML path)
+scitex-agent-container start <config.yaml>
+scitex-agent-container stop <name|yaml>
+scitex-agent-container restart <name|yaml>
 
 # Inspection
-scitex-agent-container status [name] [--json]    # Show agent status
-scitex-agent-container list [--json]             # List all agents
-scitex-agent-container list --capability gpu     # Filter by capability
-scitex-agent-container list --machine spartan    # Filter by machine
-scitex-agent-container ps [--json]               # Alias for list
-scitex-agent-container logs <name> [-n LINES]    # Show recent output
-scitex-agent-container health <name> [--json]    # Run health check
-scitex-agent-container find --capability gpu     # Find agents by label
+scitex-agent-container inspect <name> [--json]   # Live pane state detection
+scitex-agent-container status [name] [--json]
+scitex-agent-container list [--json] [--capability X] [--machine Y]
+scitex-agent-container logs <name> [-n LINES]
+scitex-agent-container health <name> [--json]
+scitex-agent-container attach <name>
 
 # Configuration
-scitex-agent-container validate <config.yaml>    # Validate YAML syntax
-scitex-agent-container check <config.yaml>       # Run full preflight checks
-scitex-agent-container build [--runtime docker|apptainer]
+scitex-agent-container validate <config.yaml>
+scitex-agent-container check <config.yaml>
 
 # Maintenance
-scitex-agent-container cleanup                   # Remove stale entries
-scitex-agent-container list-python-apis [-v]     # List public API tree
-scitex-agent-container version                   # Show version
+scitex-agent-container cleanup
 ```
-
-</details>
-
-<details>
-<summary><strong>MCP Server -- for AI Agents</strong></summary>
-
-<br>
-
-Not yet implemented. Planned for a future release.
-
-</details>
-
-<details>
-<summary><strong>Skills -- for AI Agent Discovery</strong></summary>
-
-<br>
-
-Agent skills are declared in the YAML manifest and injected into the agent's CLAUDE.md at startup:
-
-```yaml
-spec:
-  skills:
-    required:
-      - python-scitex     # Auto-loaded at startup
-      - data-analysis
-    available:
-      - scitex             # Available but not auto-loaded
-```
-
-</details>
 
 ## YAML Spec Reference
 
 | Section | Key Fields | Description |
 |---------|-----------|-------------|
-| `metadata` | `name`, `labels` | Agent identity and capability labels |
-| `spec.runtime` | `claude-code`, `cursor`, `aider` | AI coding tool to use |
+| `apiVersion` | `scitex-agent-container/v2`, `cld-agent/v1` | Config format version |
+| `metadata` | `name`, `labels` | Agent identity and labels |
+| `spec.runtime` | `claude-code`, `cursor`, `aider` | AI coding tool |
 | `spec.model` | `sonnet`, `opus[1m]` | Model selection |
-| `spec.remote` | `host`, `user`, `timeout`, `login_shell` | SSH remote deployment |
-| `spec.claude` | `channels[]`, `flags[]`, `session` | Claude Code-specific options |
+| `spec.multiplexer` | `tmux` (default), `screen` | Terminal multiplexer |
+| `spec.remote` | `host`, `user`, `timeout` | SSH remote deployment |
+| `spec.claude` | `flags[]`, `session`, `auto_accept` | Claude Code options |
 | `spec.health` | `enabled`, `interval`, `method` | Health monitoring |
-| `spec.restart` | `policy`, `max_retries`, `backoff` | Auto-restart on failure |
-| `spec.watchdog` | `enabled`, `interval`, `responses` | Auto-respond to prompts |
+| `spec.restart` | `policy`, `max_retries`, `backoff` | Auto-restart |
 | `spec.skills` | `required[]`, `available[]` | Skill injection |
-| `spec.container` | `runtime`, `image`, `volumes` | Docker/Apptainer container |
-| `spec.telegram` | `bot_token_env`, `allowed_users` | Telegram integration |
-| `spec.screen` | `name` | Screen session name override |
 | `spec.env` | key-value pairs | Environment variables |
+| `spec.venv` | path | Python virtualenv to activate |
 | `spec.hooks` | `pre_start`, `post_start`, `pre_stop`, `post_stop` | Lifecycle hooks |
+| `spec.container` | `runtime`, `image`, `volumes` | Docker/Apptainer |
 
-## Telegram Integration (Telegrammer Example)
-
-The Telegrammer bot illustrates how credentials cascade through the SciTeX agent stack:
-
-```
-┌─────────────────────────────────────────────────────────┐
-│ ~/.bash.d/secrets/                                      │
-│  SCITEX_OROCHI_TELEGRAM_BOT_TOKEN="..."                 │
-└──────────────────────────┬──────────────────────────────┘
-                           ▼
-┌─────────────────────────────────────────────────────────┐
-│ scitex-orochi                                           │
-│  agents/orochi-telegrammer.yaml                         │
-│    bot_token_env: SCITEX_OROCHI_TELEGRAM_BOT_TOKEN      │
-│    (YAML holds env var NAME, never the secret)          │
-└──────────────────────────┬──────────────────────────────┘
-                           ▼
-┌─────────────────────────────────────────────────────────┐
-│ scitex-agent-container  ◀── YOU ARE HERE                │
-│  1. Reads bot_token_env from YAML                       │
-│  2. Resolves actual token from os.environ               │
-│  3. Exports into screen session / container             │
-│  4. Writes access.json via SCITEX_AGENT_CONTAINER_TELEGRAM_STATE_DIR            │
-│  5. Launches claude-code-telegrammer watchdog            │
-└──────────────────────────┬──────────────────────────────┘
-                           ▼
-┌─────────────────────────────────────────────────────────┐
-│ claude-code-telegrammer                                 │
-│  TUI watchdog: polls screen, auto-responds to prompts   │
-│  Claude Code's telegram plugin reads token from env     │
-│  (Never manages or stores the token itself)             │
-└─────────────────────────────────────────────────────────┘
-```
-
-### Separation of Concerns
-
-| Layer | Responsibility | Token Handling |
-|-------|---------------|----------------|
-| **scitex-orochi** | Defines agent configs, Telegram bridge, dashboard | Owns env var name in YAML |
-| **scitex-agent-container** (this) | Reads YAML, launches agent, injects env | Resolves and exports token |
-| **claude-code-telegrammer** | TUI automation, screen polling | Receives via env, never manages |
-
-<!-- SciTeX Convention: Ecosystem -->
 ## Part of SciTeX
 
-scitex-agent-container is part of [**SciTeX**](https://scitex.ai). It depends on [scitex-container](https://github.com/ywatanabe1989/scitex-container) for container runtime abstractions and is used as a generic agent lifecycle library by downstream orchestrators like [scitex-orochi](https://github.com/ywatanabe1989/scitex-orochi), which dispatches multi-machine fleets on top of it.
+scitex-agent-container is part of [**SciTeX**](https://scitex.ai), used as a generic agent lifecycle library by downstream orchestrators like [scitex-orochi](https://github.com/ywatanabe1989/scitex-orochi) for multi-machine fleet dispatch.
 
-<!-- SciTeX Convention: Footer (Four Freedoms + icon) -->
 >Four Freedoms for Research
 >
 >0. The freedom to **run** your research anywhere -- your machine, your terms.
@@ -289,7 +218,7 @@ scitex-agent-container is part of [**SciTeX**](https://scitex.ai). It depends on
 >2. The freedom to **redistribute** your workflows, not just your papers.
 >3. The freedom to **modify** any module and share improvements with the community.
 >
->AGPL-3.0 -- because we believe research infrastructure deserves the same freedoms as the software it runs on.
+>AGPL-3.0
 
 ---
 

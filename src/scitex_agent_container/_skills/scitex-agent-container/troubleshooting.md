@@ -5,72 +5,90 @@ description: Common launch failures and their fixes for scitex-agent-container a
 
 # Agent Launch Troubleshooting
 
-## "Screen session disappeared during auto-accept"
+## Session dies during auto-accept
 
-The screen session dies before the auto-accept logic can send keystrokes.
+The multiplexer session dies before prompts are accepted.
 
 ### Cause 1: `--continue` with no valid session
 
-Claude Code's `--continue` flag fails if there's no resumable session or the deferred tool marker is stale.
+Claude Code's `--continue` flag fails if there's no resumable session.
 
-**Error:** `No deferred tool marker found in the resumed session`
+**Fix:** Set `session: new` in the YAML.
 
-**Fix:** Set `session: new` in the agent YAML for first launch. Switch to `continue` after a successful session exists.
+### Cause 2: Startup commands sent into TUI prompt
 
-```yaml
-claude:
-  session: new  # Use 'new' for first launch, 'continue' after
-```
+If auto-accept times out (e.g., `hardcopy` fails on macOS with screen), startup commands get typed into the TUI prompt, selecting wrong options.
 
-### Cause 2: Wrong python / missing packages
+**Fix:** Use `multiplexer: tmux` (default) instead of screen. tmux's `capture-pane` works reliably on macOS.
 
-If the claude command depends on tools that live in a specific virtualenv
-(e.g. scitex CLIs), the screen session needs to activate that venv before
-running claude.
+### Cause 3: Wrong python / missing packages
 
-**Fix:** Set `spec.venv` in the agent YAML so the screen session activates the correct virtualenv.
+**Fix:** Set `spec.venv` to activate the correct virtualenv:
 
 ```yaml
 spec:
-  venv: ~/.venv  # Activated before claude command via source <venv>/bin/activate
+  venv: ~/.venv
 ```
+
+## Auto-accept logs
+
+Check `~/.scitex/agent-container/logs/{name}/auto-accept.log`:
+
+```bash
+cat ~/.scitex/agent-container/logs/my-agent/auto-accept.log
+```
+
+Shows every poll cycle: pane content, matched handlers, timeouts.
 
 ## Debugging a failed launch
 
-Manual launch to capture the actual error:
+### With tmux (recommended)
 
 ```bash
-# 1. Kill any stale session
-screen -S <name> -X quit; scitex-agent-container cleanup
+# Kill stale session
+tmux kill-session -t <name> 2>/dev/null
 
-# 2. Launch manually in screen with error capture
-screen -dmS <name>-debug bash -l -c '
-  source ~/.venv/bin/activate
-  cd <workdir>
-  claude --model "<model>" --dangerously-skip-permissions
-  exec bash
-'
+# Launch manually
+cd <workdir>
+tmux new-session -d -s <name>-debug "bash -l -c 'claude --model opus[1m] --dangerously-skip-permissions; sleep 30'"
 
-# 3. Wait, then check screen content
-sleep 10
-screen -S <name>-debug -X hardcopy /tmp/<name>-debug.txt
-strings /tmp/<name>-debug.txt | tail -30
+# Check content
+sleep 5
+tmux capture-pane -t <name>-debug -p
+
+# Send keystrokes manually
+tmux send-keys -t <name>-debug 2 Enter    # Select option 2
 ```
 
-The `strings` command handles binary characters in screen hardcopy output.
+### With screen (legacy)
+
+```bash
+screen -dmS <name>-debug bash -l -c 'claude --model opus[1m] --dangerously-skip-permissions; exec bash'
+sleep 10
+screen -S <name>-debug -X hardcopy /tmp/<name>-debug.txt
+cat /tmp/<name>-debug.txt
+```
 
 ## TUI prompt handling
 
-Claude Code shows up to 3 confirmation prompts:
-1. `--dangerously-skip-permissions` → "y/n" prompt
-2. `--dangerously-load-development-channels` → radio selection "1. I am using this for local development"
-3. Skills trust (if new skills loaded)
+Claude Code shows confirmation prompts for dangerous flags. The auto-accept system (`runtimes/prompts.py`) handles them:
 
-The auto-accept logic in `claude_code.py` polls screen content and sends keystrokes. If it fails, the session hangs at a prompt and eventually times out.
+| Prompt | Option | Keys |
+|--------|--------|------|
+| Bypass Permissions | "2. Yes, I accept" | `2`, `Enter` |
+| Dev channels | "1. I am using this for local development" | `1`, `Enter` |
+| Thinking effort | "1. Medium (recommended)" | `1`, `Enter` |
 
-**To send keystrokes manually:**
+Prompts may appear in any order. New prompts can be added to `PROMPT_HANDLERS` in `prompts.py`.
+
+**Manual keystroke sending (tmux):**
 ```bash
-screen -S <name> -X stuff "1\r"  # Select option 1
-screen -S <name> -X stuff "\r"   # Press Enter
+tmux send-keys -t <name> 2 Enter     # Select option 2
+tmux send-keys -t <name> 1 Enter     # Select option 1
 ```
 
+## macOS screen issues
+
+`screen -X hardcopy` returns empty on macOS. Additionally, SSH-started screens use `/var/folders/...` while local terminals use `~/.screen`.
+
+**Fix:** Use `multiplexer: tmux` (default since v0.7).
