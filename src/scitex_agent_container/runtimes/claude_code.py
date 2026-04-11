@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import subprocess
 import threading
 import time
 from pathlib import Path
@@ -11,7 +10,13 @@ from pathlib import Path
 from ..config import AgentConfig
 from .base import RuntimeBase
 from .claude_md import cleanup_claude_md, setup_claude_md
-from .screen import ScreenManager
+from .mcp_config import cleanup_mcp_config, setup_mcp_config
+from .src_files import (  # noqa: F401
+    cleanup_src_claude_md,
+    cleanup_src_mcp_json,
+    deploy_src_claude_md,
+    deploy_src_mcp_json,
+)
 from .ssh_remote import SSHPreflightError as SSHPreflightError  # noqa: F401
 from .ssh_remote import SSHRemote
 
@@ -23,6 +28,14 @@ _SSHRemote = SSHRemote
 # Backward-compatible aliases for extracted functions
 _setup_claude_md = setup_claude_md
 _cleanup_claude_md = cleanup_claude_md
+
+
+def _has_src_files(config: AgentConfig) -> bool:
+    """Check if src_CLAUDE.md or src_mcp.json exist next to the YAML."""
+    if not config.config_path:
+        return False
+    defdir = Path(config.config_path).parent
+    return (defdir / "src_CLAUDE.md").exists() or (defdir / "src_mcp.json").exists()
 
 
 class ClaudeCodeRuntime(RuntimeBase):
@@ -75,164 +88,156 @@ class ClaudeCodeRuntime(RuntimeBase):
 
     def _needs_auto_accept(self, config: AgentConfig) -> bool:
         """Check if the claude command includes flags that trigger TUI prompts."""
+        if not config.claude.auto_accept:
+            return False
         dangerous_flags = [
             "--dangerously-skip-permissions",
             "--dangerously-load-development-channels",
         ]
         return any(any(df in f for df in dangerous_flags) for f in config.claude.flags)
 
-    def _get_screen_content(self, session_name: str) -> str:
-        """Capture current screen content via hardcopy."""
-        import tempfile
+    def _get_mux(self, config: AgentConfig) -> type:
+        """Get the multiplexer class for this config."""
+        from .multiplexer import get_multiplexer
 
-        with tempfile.NamedTemporaryFile(mode="r", suffix=".txt", delete=False) as f:
-            tmp_path = f.name
+        return get_multiplexer(config)
 
-        try:
-            subprocess.run(
-                ["screen", "-S", session_name, "-X", "hardcopy", tmp_path],
-                check=False,
-                capture_output=True,
-            )
-            time.sleep(0.3)
-            return Path(tmp_path).read_text(errors="replace")
-        except Exception:
-            return ""
-        finally:
-            Path(tmp_path).unlink(missing_ok=True)
+    def _send_keys(self, config: AgentConfig, *keys: str) -> None:
+        """Send keys to the agent's multiplexer session."""
+        self._get_mux(config).send_keys(config.screen_name, *keys)
+
+    def _get_content(self, config: AgentConfig) -> str:
+        """Capture current content from the agent's multiplexer session."""
+        return self._get_mux(config).capture_content(config.screen_name)
 
     def _wait_for_prompt(
         self, config: AgentConfig, marker: str, timeout: int = 60
     ) -> bool:
         """Poll screen content until a prompt marker appears or timeout."""
+        mux = self._get_mux(config)
         start = time.monotonic()
         while time.monotonic() - start < timeout:
-            if not ScreenManager.exists(config.screen_name):
+            if not mux.exists(config.screen_name):
                 return False
-            content = self._get_screen_content(config.screen_name)
+            content = self._get_content(config)
             if marker in content:
                 return True
             time.sleep(2)
         return False
 
-    def _send_auto_accept_keystrokes(self, config: AgentConfig) -> None:
-        """Send keystrokes to accept TUI confirmation prompts in screen.
+    def _setup_auto_accept_log(self, config: AgentConfig) -> logging.Logger:
+        """Create a file logger for auto-accept diagnostics."""
+        from datetime import datetime
 
-        Claude Code shows confirmation prompts for dangerous flags. This method
-        polls the screen content and responds to whichever prompt appears:
-        - y/n prompts (e.g. skip-permissions): send "y\\r"
-        - Radio selection prompts (e.g. dev channels): send "\\r" (Enter)
-        - Done when the main input prompt appears (bypass permissions)
+        log_dir = Path.home() / ".scitex" / "agent-container" / "logs" / config.name
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / "auto-accept.log"
 
-        Uses polling to handle variable Claude Code startup times.
+        file_logger = logging.getLogger(f"auto-accept.{config.name}")
+        file_logger.setLevel(logging.DEBUG)
+        # Remove old handlers to avoid duplicates on restart
+        file_logger.handlers.clear()
+        handler = logging.FileHandler(str(log_file), mode="a")
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s: %(message)s")
+        )
+        file_logger.addHandler(handler)
+        file_logger.info(
+            "=== Auto-accept session started at %s ===",
+            datetime.now().isoformat(),
+        )
+        return file_logger
+
+    def _send_auto_accept_keystrokes(self, config: AgentConfig) -> bool:
+        """Poll multiplexer content and auto-accept TUI prompts.
+
+        Uses modular prompt handlers from prompts.py. Each handler
+        detects a specific prompt and sends the appropriate keystrokes.
+        Prompt order is not assumed — all handlers are checked each poll.
+
+        Logs every poll cycle to ~/.scitex/agent-container/logs/{name}/auto-accept.log
+        for post-mortem diagnosis of hung agents.
+
+        Returns True if all prompts were accepted, False on timeout.
         """
+        from .prompts import PROMPT_HANDLERS, detect_and_respond, is_ready
+
         if not self._needs_auto_accept(config):
-            return
+            return True
 
-        # Detect which prompts we expect — driven purely by the flag list
-        # so any caller (including scitex-orochi) that injects dangerous
-        # flags gets the right auto-accept behavior without this runtime
-        # having to know which upstream feature caused the flag.
-        expect_skip_permissions = any(
-            "--dangerously-skip-permissions" in f for f in config.claude.flags
-        )
-        expect_dev_channels = any(
-            "--dangerously-load-development-channels" in f for f in config.claude.flags
-        )
-
-        expected = []
-        if expect_skip_permissions:
-            expected.append("skip-permissions")
-        if expect_dev_channels:
-            expected.append("load-dev-channels")
-
+        flog = self._setup_auto_accept_log(config)
+        handler_names = [h.name for h in PROMPT_HANDLERS]
         logger.info(
-            "Auto-accepting %d TUI confirmation prompt(s) for %s: %s",
-            len(expected),
+            "Auto-accepting TUI prompts for %s (handlers: %s)",
             config.screen_name,
-            ", ".join(expected),
+            ", ".join(handler_names),
         )
+        flog.info("Handlers: %s", ", ".join(handler_names))
 
-        # Poll screen content and respond to prompts as they appear.
-        # The "bypass permissions" text in the input bar means we're done.
         timeout = 90
         start = time.monotonic()
         accepted: set[str] = set()
+        mux = self._get_mux(config)
+        poll_count = 0
+        content_preview = "(not yet polled)"
+
+        def _send(session_name: str, *keys: str) -> None:
+            mux.send_keys(session_name, *keys)
 
         while time.monotonic() - start < timeout:
-            if not ScreenManager.exists(config.screen_name):
-                logger.warning(
-                    "Screen session %s disappeared during auto-accept",
-                    config.screen_name,
+            poll_count += 1
+            elapsed = time.monotonic() - start
+
+            if not mux.exists(config.screen_name):
+                msg = f"Session {config.screen_name} disappeared at poll {poll_count} ({elapsed:.0f}s)"
+                logger.warning(msg)
+                flog.warning(msg)
+                return False
+
+            content = self._get_content(config)
+            content_preview = content.strip()[:300] if content.strip() else "(empty)"
+            flog.debug(
+                "Poll %d (%.0fs) accepted=%s content:\n%s",
+                poll_count,
+                elapsed,
+                accepted or "none",
+                content_preview,
+            )
+
+            # Check if claude is ready (all prompts done)
+            if is_ready(content):
+                msg = f"Auto-accept complete for {config.screen_name} (accepted: {accepted or 'none'}) after {elapsed:.0f}s"
+                logger.info(msg)
+                flog.info(msg)
+                return True
+
+            # Try each handler against current content
+            matched = detect_and_respond(
+                content,
+                accepted,
+                lambda *keys: _send(config.screen_name, *keys),
+            )
+            if matched:
+                accepted.add(matched)
+                flog.info(
+                    "Matched handler '%s' at poll %d (%.0fs), sent keys",
+                    matched,
+                    poll_count,
+                    elapsed,
                 )
-                return
-
-            content = self._get_screen_content(config.screen_name)
-
-            # Check if we've reached the main prompt (all prompts accepted)
-            if "bypass permissions" in content and "Enter to confirm" not in content:
-                logger.info(
-                    "Auto-accept complete for %s (accepted: %s)",
-                    config.screen_name,
-                    ", ".join(accepted) or "none needed",
-                )
-                return
-
-            # Detect and respond to radio-selection prompt (dev channels)
-            # This prompt has "Enter to confirm" and radio options
-            if "Enter to confirm" in content and "load-dev-channels" not in accepted:
-                time.sleep(1)
-                try:
-                    subprocess.run(
-                        ["screen", "-S", config.screen_name, "-X", "stuff", "\r"],
-                        check=False,
-                        capture_output=True,
-                    )
-                    accepted.add("load-dev-channels")
-                    logger.info(
-                        "Sent auto-accept Enter for load-dev-channels to %s",
-                        config.screen_name,
-                    )
-                except Exception:
-                    logger.exception(
-                        "Failed to send auto-accept to %s", config.screen_name
-                    )
-                time.sleep(2)
-                continue
-
-            # Detect and respond to y/n prompt (skip-permissions)
-            # This prompt has "Type 'y'" or similar y/n confirmation text
-            if (
-                "skip-permissions" in content or "Trust" in content
-            ) and "skip-permissions" not in accepted:
-                time.sleep(1)
-                try:
-                    subprocess.run(
-                        ["screen", "-S", config.screen_name, "-X", "stuff", "y\r"],
-                        check=False,
-                        capture_output=True,
-                    )
-                    accepted.add("skip-permissions")
-                    logger.info(
-                        "Sent auto-accept y for skip-permissions to %s",
-                        config.screen_name,
-                    )
-                except Exception:
-                    logger.exception(
-                        "Failed to send auto-accept to %s", config.screen_name
-                    )
                 time.sleep(2)
                 continue
 
             time.sleep(2)
 
-        logger.warning(
-            "Timed out (%ds) during auto-accept for %s (accepted: %s, expected: %s)",
-            timeout,
-            config.screen_name,
-            ", ".join(accepted),
-            ", ".join(expected),
+        msg = (
+            f"TIMEOUT ({timeout}s) for {config.screen_name} "
+            f"after {poll_count} polls. accepted={accepted or 'none'}. "
+            f"Last content:\n{content_preview}"
         )
+        logger.warning(msg)
+        flog.warning(msg)
+        return False
 
     def _run_startup_commands(self, config: AgentConfig) -> None:
         """Send startup commands to the screen session with delays."""
@@ -240,18 +245,7 @@ class ClaudeCodeRuntime(RuntimeBase):
             if sc.delay > 0:
                 time.sleep(sc.delay)
             try:
-                subprocess.run(
-                    [
-                        "screen",
-                        "-S",
-                        config.screen_name,
-                        "-X",
-                        "stuff",
-                        f"{sc.command}\r",
-                    ],
-                    check=False,
-                    capture_output=True,
-                )
+                self._send_keys(config, f"{sc.command}\r")
                 logger.info(
                     "Sent startup command to %s (delay=%ds): %s",
                     config.screen_name,
@@ -267,8 +261,14 @@ class ClaudeCodeRuntime(RuntimeBase):
 
     def _post_start_tasks(self, config: AgentConfig) -> None:
         """Run post-start tasks: auto-accept prompts, startup commands."""
-        self._send_auto_accept_keystrokes(config)
-        # Telegram access.json is not managed by agent-container
+        if self._needs_auto_accept(config):
+            accepted = self._send_auto_accept_keystrokes(config)
+            if not accepted:
+                logger.warning(
+                    "Auto-accept failed for %s; skipping startup commands",
+                    config.screen_name,
+                )
+                return
         self._run_startup_commands(config)
 
     def start(
@@ -299,9 +299,18 @@ class ClaudeCodeRuntime(RuntimeBase):
         env_exports = self._build_env_exports(config)
         workdir = config.expanded_workdir
 
-        _setup_claude_md(config, workdir)
+        # v2: deploy src files from definition directory
+        # v1: generate from config (legacy)
+        is_v2 = bool(config.mcp_servers) or _has_src_files(config)
+        if is_v2:
+            deploy_src_claude_md(config, workdir)
+            deploy_src_mcp_json(config, workdir)
+        else:
+            _setup_claude_md(config, workdir)
+        setup_mcp_config(config, workdir)
 
-        started = ScreenManager.start(
+        mux = self._get_mux(config)
+        started = mux.start(
             session_name=config.screen_name,
             command=cmd,
             workdir=workdir,
@@ -340,9 +349,15 @@ class ClaudeCodeRuntime(RuntimeBase):
             elif config.container.runtime == "apptainer":
                 return ApptainerRuntime().stop(config)
 
-        _cleanup_claude_md(config, config.expanded_workdir)
+        is_v2 = bool(config.mcp_servers) or _has_src_files(config)
+        if is_v2:
+            cleanup_src_claude_md(config, config.expanded_workdir)
+            cleanup_src_mcp_json(config, config.expanded_workdir)
+        else:
+            _cleanup_claude_md(config, config.expanded_workdir)
+        cleanup_mcp_config(config, config.expanded_workdir)
 
-        return ScreenManager.stop(config.screen_name)
+        return self._get_mux(config).stop(config.screen_name)
 
     def is_running(self, config: AgentConfig) -> bool:
         """Check if the Claude Code agent is running."""
@@ -358,7 +373,7 @@ class ClaudeCodeRuntime(RuntimeBase):
 
             return ApptainerRuntime().is_running(config)
 
-        return ScreenManager.exists(config.screen_name)
+        return self._get_mux(config).exists(config.screen_name)
 
     def logs(self, config: AgentConfig, lines: int = 50) -> str:
         """Get logs from the Claude Code agent."""
@@ -374,4 +389,4 @@ class ClaudeCodeRuntime(RuntimeBase):
 
             return ApptainerRuntime().logs(config, lines)
 
-        return ScreenManager.capture_logs(config.screen_name, lines)
+        return self._get_mux(config).capture_logs(config.screen_name, lines)

@@ -1,105 +1,156 @@
 ---
 name: scitex-agent-container
-description: Deploy and manage Claude Code agents via YAML config, with SSH remote deployment and an extensible plugin architecture.
+description: Declarative YAML-based AI agent lifecycle management with tmux/screen, SSH remote deployment, modular auto-accept, and live state inspection.
 ---
 
 # scitex-agent-container
 
-Declarative agent deployment. Define agents in YAML, launch them in screen sessions locally or on remote hosts via SSH. Downstream packages (e.g. [scitex-orochi](https://github.com/ywatanabe1989/scitex-orochi)) consume this library to layer on MCP bridges, multi-machine dispatch, and hub registration without touching the core.
+Declarative agent deployment. Define agents in YAML, launch them in tmux/screen sessions locally or on remote hosts via SSH.
 
-## Agent Config (YAML)
+## Config Versions
+
+### v2 (recommended): `apiVersion: scitex-agent-container/v2`
+
+Auto-derives workdir, session name, env vars from `metadata.name`. Uses sibling `src_CLAUDE.md` and `src_mcp.json` files.
 
 ```yaml
-apiVersion: cld-agent/v1
+apiVersion: scitex-agent-container/v2
 kind: Agent
 metadata:
   name: my-agent
   labels:
-    machine: mba
-    role: researcher
+    role: worker
+    machine: local
 spec:
   runtime: claude-code
-  model: sonnet
-  workdir: ~/proj
+  model: opus[1m]
+  multiplexer: tmux  # tmux (default) or screen
+
   claude:
-    channels:
-      - "#general"
-      - "#research"
     flags:
       - --dangerously-skip-permissions
     session: new
+
+  skills:
+    required:
+      - scitex
 ```
 
-## Auto-Accept Watchdog
+### v1 (legacy): `apiVersion: cld-agent/v1`
 
-Handles TUI prompts that block unattended agents (skills trust, permissions, channel flags).
+All fields explicit. Still fully supported.
 
-- Polling-based: inspects screen PTY at configurable interval
-- Sends `\r` (Enter) to accept defaults, not `y\n`
-- Configurable responses per prompt type in YAML:
+## Agent Definition Directory
+
+```
+agents/my-agent/
+  my-agent.yaml     # Agent config
+  src_CLAUDE.md      # Section-injected into {workdir}/CLAUDE.md at start
+  src_mcp.json       # Interpolated and copied to {workdir}/.mcp.json at start
+```
+
+`src_mcp.json` supports interpolation:
+- `${metadata.name}` -> agent name from YAML
+- `${ENV_VAR}` -> resolved from os.environ at deploy time
+- `~/` in args -> expanded to full home path
+
+## CLI
+
+```bash
+scitex-agent-container start <yaml|name>     # Start agent
+scitex-agent-container stop <yaml|name>      # Stop agent
+scitex-agent-container restart <yaml|name>   # Restart
+scitex-agent-container inspect <name>        # Live pane state detection
+scitex-agent-container status [name]         # Registry status
+scitex-agent-container list [--json]         # List all agents
+scitex-agent-container attach <name>         # Attach to session
+scitex-agent-container logs <name>           # Captured output
+scitex-agent-container health <name>         # Health check
+scitex-agent-container cleanup               # Remove stale entries
+```
+
+## Multiplexer: tmux (default) vs screen
+
+| Feature | tmux | screen |
+|---------|------|--------|
+| `capture-pane` | Works on macOS | Fails on macOS (hardcopy) |
+| Auto-accept | Reliable | Unreliable on macOS |
+| Socket dir | Consistent | Varies (SSH vs local) |
+| Default | Yes | Legacy |
+
+Set in YAML: `spec.multiplexer: tmux` or `spec.multiplexer: screen`
+
+## Auto-Accept TUI Prompts
+
+Modular prompt handlers in `runtimes/prompts.py`. Each handler detects a specific Claude Code TUI prompt and sends keystrokes:
+
+```python
+PromptHandler(
+    name="bypass-permissions",
+    detect=lambda c: "2. Yes, I accept" in c and "Bypass Permissions" in c,
+    keys=["2", "Enter"],   # Send number key, not arrow keys
+    priority=1,
+)
+```
+
+Built-in handlers: bypass-permissions, dev-channels, thinking-effort, skip-permissions-yn.
+
+Add new handlers:
+```python
+from scitex_agent_container.runtimes.prompts import register_prompt, PromptHandler
+register_prompt(PromptHandler(
+    name="my-new-prompt",
+    detect=lambda c: "3. My Option" in c and "Enter to confirm" in c,
+    keys=["3", "Enter"],
+))
+```
+
+Diagnostics: `~/.scitex/agent-container/logs/{name}/auto-accept.log`
+
+## Remote SSH Deployment
 
 ```yaml
-watchdog:
-  enabled: true
-  interval: 1.5
-  responses:
-    y_n: "1"
-    y_y_n: "2"
-    waiting: "/speak-and-call"
+spec:
+  remote:
+    host: mba
+    user: ywatanabe
+    timeout: 180
+  venv: ~/.venv     # Activated on remote before commands
 ```
 
-## Zero-Trust Guards
+The launcher:
+1. Copies YAML + `src_CLAUDE.md` + `src_mcp.json` to remote `/tmp/`
+2. SSHs to remote and runs `scitex-agent-container start` there
+3. Remote side handles auto-accept and startup commands
 
-Four layers prevent cross-contamination:
+## Python API
 
-1. **`SCITEX_OROCHI_DISABLE=true`** -- env var kill switch
-2. **`SCITEX_AGENT_CONTAINER_ROLE=telegram`** -- role-based blocking
-3. **`SCITEX_AGENT_CONTAINER_TELEGRAM_BOT_TOKEN` detection** -- context-based blocking
-4. **MCP config to `/tmp/`** -- session isolation
+```python
+from scitex_agent_container import (
+    AgentConfig, load_config, validate_config,
+    agent_start, agent_stop, agent_restart, agent_status,
+)
+from scitex_agent_container.runtimes.multiplexer import get_multiplexer
+from scitex_agent_container.runtimes.prompts import PROMPT_HANDLERS, register_prompt
 
-Guards run at flag-generation time (before Claude Code launches). Truthy: `true`, `1`, `yes`, `enable`, `enabled`.
-
-## Telegram Integration (Telegrammer Flow)
-
-### Credential Cascade
-
-```
-ENV (SCITEX_OROCHI_TELEGRAM_BOT_TOKEN)
-  ▼
-scitex-orochi
-  agents/orochi-telegrammer.yaml (bot_token_env references env var)
-  ▼
-scitex-agent-container  ◀── YOU ARE HERE
-  1. Reads bot_token_env from YAML
-  2. Resolves token from os.environ
-  3. Exports into screen session
-  4. Writes access.json
-  5. Launches watchdog
-  ▼
-External hook (e.g., TUI watchdog)
-  Receives token via env
+config = load_config("agent.yaml")
+mux = get_multiplexer(config)          # TmuxManager or ScreenManager
+content = mux.capture_content("name")  # Read pane
+mux.send_keys("name", "2", "Enter")   # Send keystrokes
 ```
 
-### Key Points
+## v2 Auto-Derived Fields
 
-- `bot_token_env` in YAML → resolved from `os.environ` at runtime
-- `access.json` written to `SCITEX_AGENT_CONTAINER_TELEGRAM_STATE_DIR` (`~/.scitex/agent-container/telegram/{bot_id}/`)
+From `metadata.name` and `metadata.labels`:
 
-## SSH Remote Deployment
+| Field | Derived as |
+|-------|-----------|
+| `workdir` | `~/.scitex/orochi/workspaces/{name}` |
+| `screen_name` | `{name}` |
+| `env.CLAUDE_AGENT_ID` | `{name}` |
+| `env.CLAUDE_AGENT_ROLE` | `{labels.role}` |
+| `env.SCITEX_OROCHI_AGENT` | `{name}` |
+| `env.SCITEX_OROCHI_MODEL` | human-readable from `spec.model` |
+| `hooks.pre_start` | `mkdir -p {workdir}/.claude` |
 
-Deploy agents to remote hosts via SSH:
-
-```yaml
-remote:
-  host: 192.168.0.200
-  user: ywatanabe
-  key: ~/.ssh/id_ed25519
-  port: 22
-  login_shell: true
-```
-
-The launcher SSHs into the remote, creates a screen session, and launches Claude Code there. `login_shell: true` ensures PATH is set correctly.
-
-## Message Format
-
-Django Channels uses flat message format: `msg.text` (not `msg.payload.text`).
+All overridable by explicit values in the YAML.

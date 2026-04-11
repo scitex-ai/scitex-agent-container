@@ -16,38 +16,50 @@ def health_check(config: AgentConfig) -> tuple[bool, str]:
 
     if method == "screen-alive":
         if config.remote.is_remote:
-            return _check_screen_alive_remote(config)
-        return _check_screen_alive(config.screen_name)
+            return _check_session_alive_remote(config)
+        return _check_session_alive(config)
 
     return False, f"Unknown health method: {method}"
 
 
-def _check_screen_alive(screen_name: str) -> tuple[bool, str]:
-    """Check if a screen session exists locally."""
-    result = subprocess.run(
-        ["screen", "-ls", screen_name],
-        capture_output=True,
-        text=True,
-    )
-    if screen_name in result.stdout:
+def _check_session_alive(config: AgentConfig) -> tuple[bool, str]:
+    """Check if a multiplexer session exists locally."""
+    from .runtimes.multiplexer import get_multiplexer
+
+    mux = get_multiplexer(config)
+    if mux.exists(config.screen_name):
         return True, "healthy"
-    return False, "unhealthy: screen session not found"
+    return False, f"unhealthy: {config.multiplexer} session not found"
 
 
-def _check_screen_alive_remote(config: AgentConfig) -> tuple[bool, str]:
-    """Check if a screen session exists on remote machine."""
-    screen_name = config.screen_name or f"cld-{config.name}"
+def _check_session_alive_remote(config: AgentConfig) -> tuple[bool, str]:
+    """Check if a multiplexer session exists on remote machine."""
+    session_name = config.screen_name or f"cld-{config.name}"
+    # Determine the check command based on multiplexer type
+    if config.multiplexer == "tmux":
+        check_cmd = (
+            f"tmux has-session -t {session_name} 2>/dev/null && echo {session_name}"
+        )
+    else:
+        check_cmd = f"screen -ls {session_name}"
     ssh_cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"]
     if config.remote.key:
         ssh_cmd += ["-i", config.remote.key]
     if config.remote.port != 22:
         ssh_cmd += ["-p", str(config.remote.port)]
-    target = f"{config.remote.user}@{config.remote.host}" if config.remote.user else config.remote.host
-    ssh_cmd += [target, f"screen -ls {screen_name}"]
+    target = (
+        f"{config.remote.user}@{config.remote.host}"
+        if config.remote.user
+        else config.remote.host
+    )
+    ssh_cmd += [target, check_cmd]
     result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=15)
-    if screen_name in result.stdout:
+    if session_name in result.stdout:
         return True, f"healthy (remote: {config.remote.host})"
-    return False, f"unhealthy: screen session not found on {config.remote.host}"
+    return (
+        False,
+        f"unhealthy: {config.multiplexer} session not found on {config.remote.host}",
+    )
 
 
 def health_monitor(

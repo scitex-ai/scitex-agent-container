@@ -1,4 +1,4 @@
-"""Status commands: status, list, ps, health."""
+"""Status commands: status, list, health."""
 
 from __future__ import annotations
 
@@ -87,23 +87,6 @@ def list_agents(as_json: bool, capability: str | None, machine: str | None) -> N
 
 
 @click.command()
-@click.option(
-    "--json",
-    "as_json",
-    is_flag=True,
-    default=False,
-    help="Output as JSON.",
-)
-def ps(as_json: bool) -> None:
-    """List all registered agents (alias for list)."""
-    registry = Registry()
-    if as_json:
-        print_agent_list_json(registry)
-    else:
-        print_agent_list(registry)
-
-
-@click.command()
 @click.argument("name")
 @click.option(
     "--json",
@@ -149,4 +132,86 @@ def health(name: str, as_json: bool) -> None:
         console.print(f"[green]{message}[/green]")
     else:
         console.print(f"[red]{message}[/red]")
+        sys.exit(1)
+
+
+def _detect_agent_state(content: str) -> str:
+    """Detect agent state from captured pane content."""
+    if not content.strip():
+        return "empty (no content captured)"
+    if "Enter to confirm" in content and "Bypass Permissions" in content:
+        return "waiting: Bypass Permissions prompt"
+    if "Enter to confirm" in content and "development channels" in content:
+        return "waiting: dev channels prompt"
+    if "Enter to confirm" in content:
+        return "waiting: TUI prompt"
+    if "bypass permissions" in content and "Enter to confirm" not in content:
+        return "idle (ready for input)"
+    if "Thinking" in content or "thinking" in content:
+        return "working (thinking)"
+    if "Tool" in content:
+        return "working (tool use)"
+    return "active"
+
+
+@click.command(name="inspect")
+@click.argument("name")
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Output as JSON.",
+)
+def check_agent(name: str, as_json: bool) -> None:
+    """Check live state of an agent by capturing pane content."""
+    registry = Registry()
+    entry = registry.get(name)
+    if entry is None:
+        if as_json:
+            click.echo(json_mod.dumps({"error": f"Agent '{name}' not found"}))
+        else:
+            console.print(f"[red]Agent '{name}' not found in registry[/red]")
+        sys.exit(1)
+
+    try:
+        config = load_config(entry["config"])
+    except Exception as exc:
+        if as_json:
+            click.echo(json_mod.dumps({"error": str(exc)}))
+        else:
+            console.print(f"[red]Error loading config: {exc}[/red]")
+        sys.exit(1)
+
+    from ..runtimes.multiplexer import get_multiplexer
+
+    mux = get_multiplexer(config)
+    session_name = config.screen_name
+    alive = mux.exists(session_name)
+    content = mux.capture_content(session_name) if alive else ""
+    state = _detect_agent_state(content) if alive else "stopped"
+
+    result = {
+        "name": name,
+        "session": session_name,
+        "multiplexer": config.multiplexer,
+        "alive": alive,
+        "state": state,
+    }
+
+    if as_json:
+        click.echo(json_mod.dumps(result, indent=2))
+    else:
+        status_color = "green" if alive else "red"
+        console.print(f"[bold]{name}[/bold] ({config.multiplexer}: {session_name})")
+        console.print(f"  Status: [{status_color}]{state}[/{status_color}]")
+        if content.strip():
+            # Show last 5 non-empty lines of content
+            lines = [ln for ln in content.splitlines() if ln.strip()]
+            preview = "\n".join(lines[-5:])
+            console.print(
+                f"  Preview:\n    {preview.replace(chr(10), chr(10) + '    ')}"
+            )
+
+    if not alive:
         sys.exit(1)

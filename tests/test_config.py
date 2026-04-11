@@ -8,8 +8,13 @@ from pathlib import Path
 import pytest
 import yaml
 
-from scitex_agent_container.config import AgentConfig, RemoteSpec, SkillsSpec, load_config, validate_config
-
+from scitex_agent_container.config import (
+    AgentConfig,
+    RemoteSpec,
+    SkillsSpec,
+    load_config,
+    validate_config,
+)
 
 MINIMAL_CONFIG = {
     "apiVersion": "cld-agent/v1",
@@ -245,7 +250,10 @@ class TestClaudeMdGeneration:
         with tempfile.TemporaryDirectory() as tmpdir:
             config = AgentConfig(
                 name="test-agent",
-                env={"SCITEX_AGENT_CONTAINER_ROLE": "worker", "SCITEX_AGENT_CONTAINER_ID": "test-agent"},
+                env={
+                    "SCITEX_AGENT_CONTAINER_ROLE": "worker",
+                    "SCITEX_AGENT_CONTAINER_ID": "test-agent",
+                },
                 skills=SkillsSpec(required=["quality-guards", "autonomous"]),
             )
             _setup_claude_md(config, tmpdir)

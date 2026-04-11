@@ -56,6 +56,18 @@ spec:
       max: integer                # Optional. Maximum backoff in seconds (default: 300)
       multiplier: integer         # Optional. Backoff multiplier (default: 2)
 
+  # Orochi agent communication hub (optional)
+  # When present and enabled, .mcp.json is auto-generated at start
+  orochi:
+    enabled: boolean               # Optional. Default: true when hosts is non-empty
+    hosts:                         # Required if enabled. Orochi server hosts (first used for MCP)
+      - string                     # e.g., 192.168.11.22, scitex-orochi.com
+    port: integer                  # Optional. Orochi WebSocket port (default: 8559)
+    token_env: string              # Optional. Env var name for auth token (default: SCITEX_OROCHI_TOKEN)
+    channels:                      # Optional. Channels to subscribe to
+      - string                     # e.g., "#general", "server:scitex-orochi"
+    heartbeat_interval: integer    # Optional. Heartbeat interval in seconds (default: 60)
+
   # Lifecycle hooks (lists of shell commands)
   hooks:
     pre_start: []                  # Optional. Commands to run before starting

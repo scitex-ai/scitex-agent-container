@@ -56,6 +56,17 @@ def start(config_path: str, no_preflight: bool, force: bool) -> None:
         console.print(
             f"[green]Agent '{config.name}' started successfully [{location}][/green]"
         )
+        if not config.claude.auto_accept and any(
+            df in f
+            for f in config.claude.flags
+            for df in (
+                "--dangerously-skip-permissions",
+                "--dangerously-load-development-channels",
+            )
+        ):
+            console.print(
+                f"[yellow]auto_accept: false — manual TUI acceptance required on {config.remote.host or 'local'}[/yellow]"
+            )
     except Exception as exc:
         console.print(f"[red]Error: {exc}[/red]")
         traceback.print_exc()
@@ -106,6 +117,11 @@ def stop(name: str | None, stop_all: bool, force: bool) -> None:
         return
 
     try:
+        # Accept either agent name or YAML path
+        if "/" in name or name.endswith((".yaml", ".yml")):  # type: ignore[union-attr]
+            config_path = resolve_config(name)  # type: ignore[arg-type]
+            config = load_config(config_path)
+            name = config.name
         agent_stop(name, force=force)  # type: ignore[arg-type]
         console.print(f"[green]Agent '{name}' stopped[/green]")
     except Exception as exc:
@@ -118,6 +134,10 @@ def stop(name: str | None, stop_all: bool, force: bool) -> None:
 def restart(name: str) -> None:
     """Restart an agent."""
     try:
+        if "/" in name or name.endswith((".yaml", ".yml")):
+            config_path = resolve_config(name)
+            config = load_config(config_path)
+            name = config.name
         agent_restart(name)
         console.print(f"[green]Agent '{name}' restarted[/green]")
     except Exception as exc:
