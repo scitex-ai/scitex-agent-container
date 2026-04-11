@@ -98,6 +98,17 @@ class ClaudeCodeRuntime(RuntimeBase):
         ]
         return any(any(df in f for df in dangerous_flags) for f in config.claude.flags)
 
+    def _screen_stuff(self, session_name: str, text: str) -> None:
+        """Send text to a screen session via stuff command."""
+        from .screen import _screen_env
+
+        subprocess.run(
+            ["screen", "-S", session_name, "-X", "stuff", text],
+            check=False,
+            capture_output=True,
+            env=_screen_env(),
+        )
+
     def _get_screen_content(self, session_name: str) -> str:
         """Capture current screen content via hardcopy.
 
@@ -111,10 +122,13 @@ class ClaudeCodeRuntime(RuntimeBase):
         try:
             # Remove stale file first
             Path(tmp_path).unlink(missing_ok=True)
+            from .screen import _screen_env
+
             subprocess.run(
                 ["screen", "-S", session_name, "-X", "hardcopy", tmp_path],
                 check=False,
                 capture_output=True,
+                env=_screen_env(),
             )
             time.sleep(0.5)
             if Path(tmp_path).exists():
@@ -134,6 +148,7 @@ class ClaudeCodeRuntime(RuntimeBase):
                 ],
                 check=False,
                 capture_output=True,
+                env=_screen_env(),
             )
             time.sleep(0.5)
             if Path(tmp_path).exists():
@@ -238,18 +253,7 @@ class ClaudeCodeRuntime(RuntimeBase):
                 time.sleep(1)
                 try:
                     # Arrow down to "2. Yes, I accept", then Enter
-                    subprocess.run(
-                        [
-                            "screen",
-                            "-S",
-                            config.screen_name,
-                            "-X",
-                            "stuff",
-                            "\x1b[B\r",
-                        ],
-                        check=False,
-                        capture_output=True,
-                    )
+                    self._screen_stuff(config.screen_name, "\x1b[B\r")
                     accepted.add("skip-permissions")
                     logger.info(
                         "Sent auto-accept for Bypass Permissions to %s",
@@ -267,11 +271,7 @@ class ClaudeCodeRuntime(RuntimeBase):
             if "Enter to confirm" in content and "load-dev-channels" not in accepted:
                 time.sleep(1)
                 try:
-                    subprocess.run(
-                        ["screen", "-S", config.screen_name, "-X", "stuff", "\r"],
-                        check=False,
-                        capture_output=True,
-                    )
+                    self._screen_stuff(config.screen_name, "\r")
                     accepted.add("load-dev-channels")
                     logger.info(
                         "Sent auto-accept Enter for load-dev-channels to %s",
@@ -293,11 +293,7 @@ class ClaudeCodeRuntime(RuntimeBase):
             ) and "skip-permissions" not in accepted:
                 time.sleep(1)
                 try:
-                    subprocess.run(
-                        ["screen", "-S", config.screen_name, "-X", "stuff", "y\r"],
-                        check=False,
-                        capture_output=True,
-                    )
+                    self._screen_stuff(config.screen_name, "y\r")
                     accepted.add("skip-permissions")
                     logger.info(
                         "Sent auto-accept y for skip-permissions to %s",
@@ -327,18 +323,7 @@ class ClaudeCodeRuntime(RuntimeBase):
             if sc.delay > 0:
                 time.sleep(sc.delay)
             try:
-                subprocess.run(
-                    [
-                        "screen",
-                        "-S",
-                        config.screen_name,
-                        "-X",
-                        "stuff",
-                        f"{sc.command}\r",
-                    ],
-                    check=False,
-                    capture_output=True,
-                )
+                self._screen_stuff(config.screen_name, f"{sc.command}\r")
                 logger.info(
                     "Sent startup command to %s (delay=%ds): %s",
                     config.screen_name,

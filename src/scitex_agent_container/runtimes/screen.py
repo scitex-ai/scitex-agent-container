@@ -2,9 +2,22 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import tempfile
 from pathlib import Path
+
+# Use a consistent screen socket directory across all contexts
+# (SSH, local terminal, cron). macOS defaults to /var/folders/...
+# when SCREENDIR is not set, which differs from the user's terminal.
+_SCREENDIR = str(Path.home() / ".screen")
+
+
+def _screen_env() -> dict[str, str]:
+    """Return env dict with SCREENDIR set consistently."""
+    env = dict(os.environ)
+    env["SCREENDIR"] = _SCREENDIR
+    return env
 
 
 class ScreenManager:
@@ -17,6 +30,7 @@ class ScreenManager:
             ["screen", "-ls", session_name],
             capture_output=True,
             text=True,
+            env=_screen_env(),
         )
         return session_name in result.stdout
 
@@ -42,8 +56,6 @@ class ScreenManager:
         """
         venv_activate = ""
         if venv:
-            from pathlib import Path
-
             activate = Path(venv).expanduser() / "bin" / "activate"
             venv_activate = f"source '{activate}' || exit 1\n"
 
@@ -56,9 +68,11 @@ class ScreenManager:
         )
         # Use login shell (-l) so that ~/.bash_profile, module loads, and
         # LD_LIBRARY_PATH are set correctly (e.g. HPC environments).
+        Path(_SCREENDIR).mkdir(parents=True, exist_ok=True)
         subprocess.run(
             ["screen", "-dmS", session_name, "bash", "-l", "-c", shell_script],
             check=False,
+            env=_screen_env(),
         )
 
         # Give it a moment to start
@@ -91,6 +105,7 @@ class ScreenManager:
             ["screen", "-S", session_name, "-X", "quit"],
             capture_output=True,
             check=False,
+            env=_screen_env(),
         )
         # Give screen up to ~1.5s to release the socket.
         for _ in range(15):
@@ -110,6 +125,7 @@ class ScreenManager:
             ["screen", "-wipe"],
             capture_output=True,
             check=False,
+            env=_screen_env(),
         )
         return not ScreenManager.exists(session_name)
 
@@ -123,6 +139,7 @@ class ScreenManager:
             ["screen", "-S", session_name, "-X", "hardcopy", "-h", tmp_path],
             capture_output=True,
             check=False,
+            env=_screen_env(),
         )
 
         log_path = Path(tmp_path)
@@ -137,6 +154,5 @@ class ScreenManager:
     @staticmethod
     def attach(session_name: str) -> None:
         """Attach to a screen session (replaces current process stdin/stdout)."""
-        import os
-
+        os.environ["SCREENDIR"] = _SCREENDIR
         os.execvp("screen", ["screen", "-r", session_name])
