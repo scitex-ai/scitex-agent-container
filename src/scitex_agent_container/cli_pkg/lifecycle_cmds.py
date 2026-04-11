@@ -21,8 +21,34 @@ from ..registry import Registry
 from ._helpers import console
 
 
+def _discover_all_agents() -> list[str]:
+    """Find all agent YAML files in ~/.scitex/orochi/agents/."""
+    from pathlib import Path
+
+    agents_dir = Path.home() / ".scitex" / "orochi" / "agents"
+    if not agents_dir.exists():
+        return []
+    yamls = []
+    for d in sorted(agents_dir.iterdir()):
+        if not d.is_dir() or d.name.startswith((".", "legacy", "_")):
+            continue
+        for ext in (".yaml", ".yml"):
+            candidate = d / f"{d.name}{ext}"
+            if candidate.exists():
+                yamls.append(str(candidate))
+                break
+    return yamls
+
+
 @click.command()
-@click.argument("config_path", type=str)
+@click.argument("config_path", type=str, required=False)
+@click.option(
+    "--all",
+    "start_all",
+    is_flag=True,
+    default=False,
+    help="Start all agents in ~/.scitex/orochi/agents/.",
+)
 @click.option(
     "--no-preflight",
     is_flag=True,
@@ -36,8 +62,43 @@ from ._helpers import console
     default=False,
     help="If already running or stale, stop first then start fresh.",
 )
-def start(config_path: str, no_preflight: bool, force: bool) -> None:
-    """Start an agent from a YAML definition."""
+def start(
+    config_path: str | None, start_all: bool, no_preflight: bool, force: bool
+) -> None:
+    """Start an agent from a YAML definition, or --all to start every agent."""
+    if start_all:
+        yamls = _discover_all_agents()
+        if not yamls:
+            console.print("[dim]No agents found in ~/.scitex/orochi/agents/[/dim]")
+            return
+        console.print(f"[blue]Starting {len(yamls)} agents...[/blue]")
+        for yaml_path in yamls:
+            try:
+                config = load_config(yaml_path)
+                location = (
+                    f"REMOTE: {config.remote.host}"
+                    if config.remote.is_remote
+                    else "LOCAL"
+                )
+                console.print(
+                    f"  [blue]{config.name}[/blue] ({location})...",
+                    end=" ",
+                )
+                agent_start(yaml_path, no_preflight=no_preflight, force=force)
+                console.print("[green]OK[/green]")
+            except Exception as exc:
+                console.print(f"[red]FAILED: {exc}[/red]")
+        return
+
+    if not config_path:
+        click.echo(
+            "Error: provide a CONFIG_PATH or use --all.\n"
+            "  scitex-agent-container start <config.yaml>\n"
+            "  scitex-agent-container start --all",
+            err=True,
+        )
+        sys.exit(2)
+
     try:
         config_path = resolve_config(config_path)
         config = load_config(config_path)

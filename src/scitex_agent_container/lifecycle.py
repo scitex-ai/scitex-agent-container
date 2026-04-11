@@ -95,6 +95,9 @@ def agent_start(
     # Start — pass ``force`` through so remote dispatchers (SSHRemote)
     # can relay ``--force`` to the remote CLI and skip its own
     # already-running check.
+    # Config-level no_preflight overrides CLI flag
+    if config.remote.no_preflight:
+        no_preflight = True
     success = runtime.start(config, no_preflight=no_preflight, force=force)
     if not success:
         raise RuntimeError(f"Failed to start agent '{config.name}'")

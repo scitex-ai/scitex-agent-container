@@ -114,6 +114,7 @@ def parse_remote(spec: dict) -> RemoteSpec:
         key=raw.get("key", ""),
         port=int(raw.get("port", 22)),
         login_shell=raw.get("login_shell", True),
+        no_preflight=raw.get("no_preflight", False),
     )
 
 
