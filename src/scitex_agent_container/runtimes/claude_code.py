@@ -99,20 +99,47 @@ class ClaudeCodeRuntime(RuntimeBase):
         return any(any(df in f for df in dangerous_flags) for f in config.claude.flags)
 
     def _get_screen_content(self, session_name: str) -> str:
-        """Capture current screen content via hardcopy."""
-        import tempfile
+        """Capture current screen content via hardcopy.
 
-        with tempfile.NamedTemporaryFile(mode="r", suffix=".txt", delete=False) as f:
-            tmp_path = f.name
+        Tries hardcopy to a temp file first. If that returns empty
+        (macOS issue), falls back to ``screen -X hardcopy`` without a path
+        (writes to screen's default hardcopy file) then reads it.
+        """
+
+        tmp_path = f"/tmp/.screen-hardcopy-{session_name}.txt"
 
         try:
+            # Remove stale file first
+            Path(tmp_path).unlink(missing_ok=True)
             subprocess.run(
                 ["screen", "-S", session_name, "-X", "hardcopy", tmp_path],
                 check=False,
                 capture_output=True,
             )
-            time.sleep(0.3)
-            return Path(tmp_path).read_text(errors="replace")
+            time.sleep(0.5)
+            if Path(tmp_path).exists():
+                content = Path(tmp_path).read_text(errors="replace")
+                if content.strip():
+                    return content
+
+            # Fallback: use screen's eval + hardcopy approach
+            subprocess.run(
+                [
+                    "screen",
+                    "-S",
+                    session_name,
+                    "-X",
+                    "eval",
+                    f"hardcopy {tmp_path}",
+                ],
+                check=False,
+                capture_output=True,
+            )
+            time.sleep(0.5)
+            if Path(tmp_path).exists():
+                return Path(tmp_path).read_text(errors="replace")
+
+            return ""
         except Exception:
             return ""
         finally:
@@ -320,8 +347,15 @@ class ClaudeCodeRuntime(RuntimeBase):
 
     def _post_start_tasks(self, config: AgentConfig) -> None:
         """Run post-start tasks: auto-accept prompts, startup commands."""
-        self._send_auto_accept_keystrokes(config)
-        # Telegram access.json is not managed by agent-container
+        if self._needs_auto_accept(config):
+            self._send_auto_accept_keystrokes(config)
+            # Verify screen survived auto-accept before sending commands
+            if not ScreenManager.exists(config.screen_name):
+                logger.warning(
+                    "Screen %s gone after auto-accept; skipping startup commands",
+                    config.screen_name,
+                )
+                return
         self._run_startup_commands(config)
 
     def start(
