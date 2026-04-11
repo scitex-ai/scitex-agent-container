@@ -125,12 +125,38 @@ class ClaudeCodeRuntime(RuntimeBase):
             time.sleep(2)
         return False
 
+    def _setup_auto_accept_log(self, config: AgentConfig) -> logging.Logger:
+        """Create a file logger for auto-accept diagnostics."""
+        from datetime import datetime
+
+        log_dir = Path.home() / ".scitex" / "agent-container" / "logs" / config.name
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / "auto-accept.log"
+
+        file_logger = logging.getLogger(f"auto-accept.{config.name}")
+        file_logger.setLevel(logging.DEBUG)
+        # Remove old handlers to avoid duplicates on restart
+        file_logger.handlers.clear()
+        handler = logging.FileHandler(str(log_file), mode="a")
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s: %(message)s")
+        )
+        file_logger.addHandler(handler)
+        file_logger.info(
+            "=== Auto-accept session started at %s ===",
+            datetime.now().isoformat(),
+        )
+        return file_logger
+
     def _send_auto_accept_keystrokes(self, config: AgentConfig) -> bool:
         """Poll multiplexer content and auto-accept TUI prompts.
 
         Uses modular prompt handlers from prompts.py. Each handler
         detects a specific prompt and sends the appropriate keystrokes.
         Prompt order is not assumed — all handlers are checked each poll.
+
+        Logs every poll cycle to ~/.scitex/agent-container/logs/{name}/auto-accept.log
+        for post-mortem diagnosis of hung agents.
 
         Returns True if all prompts were accepted, False on timeout.
         """
@@ -139,44 +165,50 @@ class ClaudeCodeRuntime(RuntimeBase):
         if not self._needs_auto_accept(config):
             return True
 
+        flog = self._setup_auto_accept_log(config)
         handler_names = [h.name for h in PROMPT_HANDLERS]
         logger.info(
             "Auto-accepting TUI prompts for %s (handlers: %s)",
             config.screen_name,
             ", ".join(handler_names),
         )
+        flog.info("Handlers: %s", ", ".join(handler_names))
 
         timeout = 90
         start = time.monotonic()
         accepted: set[str] = set()
         mux = self._get_mux(config)
+        poll_count = 0
+        content_preview = "(not yet polled)"
 
         def _send(session_name: str, *keys: str) -> None:
             mux.send_keys(session_name, *keys)
 
         while time.monotonic() - start < timeout:
+            poll_count += 1
+            elapsed = time.monotonic() - start
+
             if not mux.exists(config.screen_name):
-                logger.warning(
-                    "Session %s disappeared during auto-accept",
-                    config.screen_name,
-                )
+                msg = f"Session {config.screen_name} disappeared at poll {poll_count} ({elapsed:.0f}s)"
+                logger.warning(msg)
+                flog.warning(msg)
                 return False
 
             content = self._get_content(config)
-            if content.strip():
-                logger.debug(
-                    "Pane content for %s:\n%s", config.screen_name, content[:500]
-                )
-            else:
-                logger.debug("Pane content empty for %s", config.screen_name)
+            content_preview = content.strip()[:300] if content.strip() else "(empty)"
+            flog.debug(
+                "Poll %d (%.0fs) accepted=%s content:\n%s",
+                poll_count,
+                elapsed,
+                accepted or "none",
+                content_preview,
+            )
 
             # Check if claude is ready (all prompts done)
             if is_ready(content):
-                logger.info(
-                    "Auto-accept complete for %s (accepted: %s)",
-                    config.screen_name,
-                    ", ".join(accepted) or "none needed",
-                )
+                msg = f"Auto-accept complete for {config.screen_name} (accepted: {accepted or 'none'}) after {elapsed:.0f}s"
+                logger.info(msg)
+                flog.info(msg)
                 return True
 
             # Try each handler against current content
@@ -187,17 +219,24 @@ class ClaudeCodeRuntime(RuntimeBase):
             )
             if matched:
                 accepted.add(matched)
+                flog.info(
+                    "Matched handler '%s' at poll %d (%.0fs), sent keys",
+                    matched,
+                    poll_count,
+                    elapsed,
+                )
                 time.sleep(2)
                 continue
 
             time.sleep(2)
 
-        logger.warning(
-            "Timed out (%ds) during auto-accept for %s (accepted: %s)",
-            timeout,
-            config.screen_name,
-            ", ".join(accepted),
+        msg = (
+            f"TIMEOUT ({timeout}s) for {config.screen_name} "
+            f"after {poll_count} polls. accepted={accepted or 'none'}. "
+            f"Last content:\n{content_preview}"
         )
+        logger.warning(msg)
+        flog.warning(msg)
         return False
 
     def _run_startup_commands(self, config: AgentConfig) -> None:
