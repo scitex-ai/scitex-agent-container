@@ -112,22 +112,29 @@ def logs(name: str, lines: int) -> None:
 @click.command()
 @click.argument("name")
 def attach(name: str) -> None:
-    """Attach to an agent's screen session."""
+    """Attach to an agent's multiplexer session."""
     registry = Registry()
     entry = registry.get(name)
     if entry is None:
         console.print(f"[red]Agent '{name}' not found in registry[/red]")
         sys.exit(1)
 
-    screen_name = entry.get("screen", "")
-    from ..runtimes.screen import ScreenManager
+    from ..config import load_config
+    from ..runtimes.multiplexer import get_multiplexer
 
-    if not ScreenManager.exists(screen_name):
-        console.print(f"[red]Screen session '{screen_name}' not found[/red]")
+    config = load_config(entry["config"])
+    mux = get_multiplexer(config)
+    session_name = config.screen_name
+
+    if not mux.exists(session_name):
+        console.print(f"[red]Session '{session_name}' not found[/red]")
         sys.exit(1)
 
-    console.print(f"[blue]Attaching to '{screen_name}' (Ctrl-A D to detach)[/blue]")
-    ScreenManager.attach(screen_name)
+    detach_hint = "Ctrl-B D" if config.multiplexer == "tmux" else "Ctrl-A D"
+    console.print(
+        f"[blue]Attaching to '{session_name}' ({detach_hint} to detach)[/blue]"
+    )
+    mux.attach(session_name)
 
 
 @click.command(name="list-python-apis")

@@ -308,3 +308,51 @@ class TestSrcFiles:
             content = dest.read_text()
             assert "User content" in content
             assert "Managed" not in content
+
+
+class TestMultiplexerConfig:
+    def test_default_multiplexer(self):
+        path = _write_config(MINIMAL_V1_CONFIG)
+        config = load_config(path)
+        assert config.multiplexer == "screen"
+        Path(path).unlink()
+
+    def test_tmux_multiplexer(self):
+        data = {
+            **MINIMAL_V2_CONFIG,
+            "spec": {
+                **MINIMAL_V2_CONFIG["spec"],
+                "multiplexer": "tmux",
+            },
+        }
+        path = _write_config(data)
+        config = load_config(path)
+        assert config.multiplexer == "tmux"
+        Path(path).unlink()
+
+    def test_invalid_multiplexer(self):
+        data = {
+            **MINIMAL_V2_CONFIG,
+            "spec": {
+                **MINIMAL_V2_CONFIG["spec"],
+                "multiplexer": "invalid",
+            },
+        }
+        path = _write_config(data)
+        errors = validate_config(path)
+        assert any("multiplexer" in e for e in errors)
+        Path(path).unlink()
+
+    def test_get_multiplexer_screen(self):
+        from scitex_agent_container.runtimes.multiplexer import get_multiplexer
+        from scitex_agent_container.runtimes.screen import ScreenManager
+
+        config = AgentConfig(name="test", multiplexer="screen")
+        assert get_multiplexer(config) is ScreenManager
+
+    def test_get_multiplexer_tmux(self):
+        from scitex_agent_container.runtimes.multiplexer import get_multiplexer
+        from scitex_agent_container.runtimes.tmux import TmuxManager
+
+        config = AgentConfig(name="test", multiplexer="tmux")
+        assert get_multiplexer(config) is TmuxManager

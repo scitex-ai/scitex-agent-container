@@ -152,6 +152,40 @@ class ScreenManager:
         return ""
 
     @staticmethod
+    def capture_content(session_name: str) -> str:
+        """Capture current screen content via hardcopy."""
+        tmp_path = f"/tmp/.screen-hardcopy-{session_name}.txt"
+        try:
+            Path(tmp_path).unlink(missing_ok=True)
+            subprocess.run(
+                ["screen", "-S", session_name, "-X", "hardcopy", tmp_path],
+                check=False,
+                capture_output=True,
+                env=_screen_env(),
+            )
+            import time
+
+            time.sleep(0.5)
+            if Path(tmp_path).exists():
+                return Path(tmp_path).read_text(errors="replace")
+            return ""
+        except Exception:
+            return ""
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    @staticmethod
+    def send_keys(session_name: str, *keys: str) -> None:
+        """Send keys to a screen session via stuff command."""
+        for key in keys:
+            subprocess.run(
+                ["screen", "-S", session_name, "-X", "stuff", key],
+                check=False,
+                capture_output=True,
+                env=_screen_env(),
+            )
+
+    @staticmethod
     def attach(session_name: str) -> None:
         """Attach to a screen session (replaces current process stdin/stdout)."""
         os.environ["SCREENDIR"] = _SCREENDIR

@@ -121,6 +121,7 @@ class AgentConfig:
     skills: SkillsSpec = field(default_factory=SkillsSpec)
     startup_commands: list[StartupCommand] = field(default_factory=list)
     mcp_servers: dict[str, dict] = field(default_factory=dict)
+    multiplexer: str = "screen"  # "screen" or "tmux"
     config_path: str = ""
 
     def __post_init__(self) -> None:

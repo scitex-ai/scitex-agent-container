@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import subprocess
 import threading
 import time
 from pathlib import Path
@@ -12,7 +11,6 @@ from ..config import AgentConfig
 from .base import RuntimeBase
 from .claude_md import cleanup_claude_md, setup_claude_md
 from .mcp_config import cleanup_mcp_config, setup_mcp_config
-from .screen import ScreenManager
 from .src_files import (  # noqa: F401
     cleanup_src_claude_md,
     cleanup_src_mcp_json,
@@ -98,77 +96,30 @@ class ClaudeCodeRuntime(RuntimeBase):
         ]
         return any(any(df in f for df in dangerous_flags) for f in config.claude.flags)
 
-    def _screen_stuff(self, session_name: str, text: str) -> None:
-        """Send text to a screen session via stuff command."""
-        from .screen import _screen_env
+    def _get_mux(self, config: AgentConfig) -> type:
+        """Get the multiplexer class for this config."""
+        from .multiplexer import get_multiplexer
 
-        subprocess.run(
-            ["screen", "-S", session_name, "-X", "stuff", text],
-            check=False,
-            capture_output=True,
-            env=_screen_env(),
-        )
+        return get_multiplexer(config)
 
-    def _get_screen_content(self, session_name: str) -> str:
-        """Capture current screen content via hardcopy.
+    def _send_keys(self, config: AgentConfig, *keys: str) -> None:
+        """Send keys to the agent's multiplexer session."""
+        self._get_mux(config).send_keys(config.screen_name, *keys)
 
-        Tries hardcopy to a temp file first. If that returns empty
-        (macOS issue), falls back to ``screen -X hardcopy`` without a path
-        (writes to screen's default hardcopy file) then reads it.
-        """
-
-        tmp_path = f"/tmp/.screen-hardcopy-{session_name}.txt"
-
-        try:
-            # Remove stale file first
-            Path(tmp_path).unlink(missing_ok=True)
-            from .screen import _screen_env
-
-            subprocess.run(
-                ["screen", "-S", session_name, "-X", "hardcopy", tmp_path],
-                check=False,
-                capture_output=True,
-                env=_screen_env(),
-            )
-            time.sleep(0.5)
-            if Path(tmp_path).exists():
-                content = Path(tmp_path).read_text(errors="replace")
-                if content.strip():
-                    return content
-
-            # Fallback: use screen's eval + hardcopy approach
-            subprocess.run(
-                [
-                    "screen",
-                    "-S",
-                    session_name,
-                    "-X",
-                    "eval",
-                    f"hardcopy {tmp_path}",
-                ],
-                check=False,
-                capture_output=True,
-                env=_screen_env(),
-            )
-            time.sleep(0.5)
-            if Path(tmp_path).exists():
-                return Path(tmp_path).read_text(errors="replace")
-
-            return ""
-        except Exception:
-            return ""
-        finally:
-            Path(tmp_path).unlink(missing_ok=True)
+    def _get_content(self, config: AgentConfig) -> str:
+        """Capture current content from the agent's multiplexer session."""
+        return self._get_mux(config).capture_content(config.screen_name)
 
     def _wait_for_prompt(
         self, config: AgentConfig, marker: str, timeout: int = 60
     ) -> bool:
         """Poll screen content until a prompt marker appears or timeout."""
+        mux = self._get_mux(config)
         start = time.monotonic()
         while time.monotonic() - start < timeout:
-            if not ScreenManager.exists(config.screen_name):
+            if not mux.exists(config.screen_name):
                 return False
-            content = self._get_screen_content(config.screen_name)
+            content = self._get_content(config)
             if marker in content:
                 return True
             time.sleep(2)
@@ -218,15 +169,16 @@ class ClaudeCodeRuntime(RuntimeBase):
         start = time.monotonic()
         accepted: set[str] = set()
 
+        mux = self._get_mux(config)
         while time.monotonic() - start < timeout:
-            if not ScreenManager.exists(config.screen_name):
+            if not mux.exists(config.screen_name):
                 logger.warning(
-                    "Screen session %s disappeared during auto-accept",
+                    "Session %s disappeared during auto-accept",
                     config.screen_name,
                 )
                 return False
 
-            content = self._get_screen_content(config.screen_name)
+            content = self._get_content(config)
             if content.strip():
                 logger.debug(
                     "Screen content for %s:\n%s", config.screen_name, content[:500]
@@ -253,7 +205,7 @@ class ClaudeCodeRuntime(RuntimeBase):
                 time.sleep(1)
                 try:
                     # Arrow down to "2. Yes, I accept", then Enter
-                    self._screen_stuff(config.screen_name, "\x1b[B\r")
+                    self._send_keys(config, "\x1b[B\r")
                     accepted.add("skip-permissions")
                     logger.info(
                         "Sent auto-accept for Bypass Permissions to %s",
@@ -271,7 +223,7 @@ class ClaudeCodeRuntime(RuntimeBase):
             if "Enter to confirm" in content and "load-dev-channels" not in accepted:
                 time.sleep(1)
                 try:
-                    self._screen_stuff(config.screen_name, "\r")
+                    self._send_keys(config, "\r")
                     accepted.add("load-dev-channels")
                     logger.info(
                         "Sent auto-accept Enter for load-dev-channels to %s",
@@ -293,7 +245,7 @@ class ClaudeCodeRuntime(RuntimeBase):
             ) and "skip-permissions" not in accepted:
                 time.sleep(1)
                 try:
-                    self._screen_stuff(config.screen_name, "y\r")
+                    self._send_keys(config, "y\r")
                     accepted.add("skip-permissions")
                     logger.info(
                         "Sent auto-accept y for skip-permissions to %s",
@@ -323,7 +275,7 @@ class ClaudeCodeRuntime(RuntimeBase):
             if sc.delay > 0:
                 time.sleep(sc.delay)
             try:
-                self._screen_stuff(config.screen_name, f"{sc.command}\r")
+                self._send_keys(config, f"{sc.command}\r")
                 logger.info(
                     "Sent startup command to %s (delay=%ds): %s",
                     config.screen_name,
@@ -387,7 +339,8 @@ class ClaudeCodeRuntime(RuntimeBase):
             _setup_claude_md(config, workdir)
         setup_mcp_config(config, workdir)
 
-        started = ScreenManager.start(
+        mux = self._get_mux(config)
+        started = mux.start(
             session_name=config.screen_name,
             command=cmd,
             workdir=workdir,
@@ -434,7 +387,7 @@ class ClaudeCodeRuntime(RuntimeBase):
             _cleanup_claude_md(config, config.expanded_workdir)
         cleanup_mcp_config(config, config.expanded_workdir)
 
-        return ScreenManager.stop(config.screen_name)
+        return self._get_mux(config).stop(config.screen_name)
 
     def is_running(self, config: AgentConfig) -> bool:
         """Check if the Claude Code agent is running."""
@@ -450,7 +403,7 @@ class ClaudeCodeRuntime(RuntimeBase):
 
             return ApptainerRuntime().is_running(config)
 
-        return ScreenManager.exists(config.screen_name)
+        return self._get_mux(config).exists(config.screen_name)
 
     def logs(self, config: AgentConfig, lines: int = 50) -> str:
         """Get logs from the Claude Code agent."""
@@ -466,4 +419,4 @@ class ClaudeCodeRuntime(RuntimeBase):
 
             return ApptainerRuntime().logs(config, lines)
 
-        return ScreenManager.capture_logs(config.screen_name, lines)
+        return self._get_mux(config).capture_logs(config.screen_name, lines)

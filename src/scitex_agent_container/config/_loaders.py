@@ -50,6 +50,7 @@ def load_v1(raw: dict, path: Path) -> AgentConfig:
         remote=parse_remote(spec),
         skills=parse_skills(spec),
         startup_commands=parse_startup_commands(spec),
+        multiplexer=spec.get("multiplexer", "screen"),
         config_path=str(path),
     )
 
@@ -113,5 +114,6 @@ def load_v2(raw: dict, path: Path) -> AgentConfig:
         skills=parse_skills(spec),
         startup_commands=parse_startup_commands(spec),
         mcp_servers=mcp_servers,
+        multiplexer=spec.get("multiplexer", "screen"),
         config_path=str(path),
     )

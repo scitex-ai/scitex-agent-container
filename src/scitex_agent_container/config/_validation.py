@@ -71,6 +71,11 @@ def validate_raw(raw: dict, path: str) -> list[str]:
                 f"spec.restart.policy must be never|on-failure|always, got '{policy}'"
             )
 
+        # multiplexer
+        mux = spec.get("multiplexer")
+        if mux and mux not in ("screen", "tmux"):
+            errors.append(f"spec.multiplexer must be 'screen' or 'tmux', got '{mux}'")
+
         # health.method
         health = spec.get("health", {}) or {}
         method = health.get("method")
