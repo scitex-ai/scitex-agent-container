@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 from pathlib import Path
 
@@ -72,6 +73,12 @@ def setup_mcp_config(config: AgentConfig, workdir: str) -> None:
     host = config.orochi.hosts[0]
     port = str(config.orochi.port)
 
+    channels = (
+        ",".join(config.orochi.channels) if config.orochi.channels else "#general"
+    )
+    token_env = config.orochi.token_env or "SCITEX_OROCHI_TOKEN"
+    token_val = os.environ.get(token_env, "")
+
     server_entry = {
         "type": "stdio",
         "command": "bun",
@@ -79,6 +86,9 @@ def setup_mcp_config(config: AgentConfig, workdir: str) -> None:
         "env": {
             "SCITEX_OROCHI_HOST": host,
             "SCITEX_OROCHI_PORT": port,
+            "SCITEX_OROCHI_AGENT": config.name,
+            "SCITEX_OROCHI_CHANNELS": channels,
+            "SCITEX_OROCHI_TOKEN": token_val,
         },
     }
 
