@@ -78,6 +78,7 @@ class RemoteSpec:
     port: int = 22  # SSH port
     timeout: int = 60  # SSH command timeout in seconds
     login_shell: bool = True  # Use bash -l -c (needed for PATH on most hosts)
+    no_preflight: bool = False  # Skip preflight checks (HPC with module loads)
 
     @property
     def is_remote(self) -> bool:
