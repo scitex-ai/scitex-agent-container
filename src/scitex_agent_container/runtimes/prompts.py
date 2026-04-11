@@ -29,53 +29,97 @@ class PromptHandler:
 
 
 def _detect_bypass_permissions(content: str) -> bool:
-    return "Bypass Permissions" in content and "Enter to confirm" in content
+    """Bypass Permissions mode prompt with radio selector.
+
+    Matches:
+      "1. No, exit"
+      "2. Yes, I accept"
+      "Bypass Permissions"
+      "Enter to confirm"
+    """
+    return (
+        "Bypass Permissions" in content
+        and "2. Yes, I accept" in content
+        and "Enter to confirm" in content
+    )
 
 
 def _detect_dev_channels(content: str) -> bool:
-    return "development channels" in content and "Enter to confirm" in content
+    """Development channels loading confirmation.
+
+    Matches:
+      "1. I am using this for local development"
+      "2. Exit"
+      "development channels" or "dangerously-load-development-channels"
+      "Enter to confirm"
+    """
+    return (
+        "1. I am using this for local development" in content
+        and "Enter to confirm" in content
+    )
 
 
 def _detect_thinking_effort(content: str) -> bool:
-    return "thinking effort" in content.lower() and "Enter to confirm" in content
+    """Thinking effort level selector.
+
+    Matches:
+      "1. * Medium (recommended)" or similar
+      "thinking" in various casings
+      "Enter to confirm"
+    """
+    return (
+        "Medium" in content
+        and ("thinking" in content.lower() or "effort" in content.lower())
+        and "Enter to confirm" in content
+    )
 
 
 def _detect_skip_permissions_yn(content: str) -> bool:
-    """Legacy y/n prompt for skip-permissions (older Claude Code versions)."""
+    """Legacy y/n text prompt for skip-permissions (older Claude Code).
+
+    Matches text-based y/n prompts without radio selector.
+    """
     return (
-        "skip-permissions" in content or "Trust" in content
-    ) and "Enter to confirm" not in content
+        ("skip-permissions" in content or "Trust" in content)
+        and "Enter to confirm" not in content
+        and ("y/n" in content.lower() or "type" in content.lower())
+    )
 
 
 def _detect_done(content: str) -> bool:
-    """Check if all prompts are accepted and claude is at the main prompt."""
+    """Check if claude is at the main input prompt (all TUI prompts done).
+
+    The status bar shows "bypass permissions" when ready.
+    """
     return "bypass permissions" in content and "Enter to confirm" not in content
 
 
-# Default prompt handlers — order matters (checked by priority)
+# Default prompt handlers — checked by priority, order-agnostic.
+# Detection uses numbered options + prompt text for reliability.
+# To add a new prompt, append a PromptHandler or call register_prompt().
 PROMPT_HANDLERS: list[PromptHandler] = [
     PromptHandler(
         name="bypass-permissions",
         detect=_detect_bypass_permissions,
-        keys=["Down", "Enter"],  # Select option 2 "Yes, I accept"
+        keys=["2", "Enter"],  # "2. Yes, I accept"
         priority=1,
     ),
     PromptHandler(
         name="dev-channels",
         detect=_detect_dev_channels,
-        keys=["Enter"],  # Option 1 already selected
+        keys=["1", "Enter"],  # "1. I am using this for local development"
         priority=2,
     ),
     PromptHandler(
         name="thinking-effort",
         detect=_detect_thinking_effort,
-        keys=["Enter"],  # Option 1 (Medium) already selected
+        keys=["1", "Enter"],  # "1. Medium (recommended)"
         priority=3,
     ),
     PromptHandler(
         name="skip-permissions-yn",
         detect=_detect_skip_permissions_yn,
-        keys=["y", "Enter"],  # Legacy y/n prompt
+        keys=["y", "Enter"],  # Legacy y/n text prompt
         priority=5,
     ),
 ]
