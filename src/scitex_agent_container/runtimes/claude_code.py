@@ -193,6 +193,40 @@ class ClaudeCodeRuntime(RuntimeBase):
                 )
                 return
 
+            # Detect and respond to Bypass Permissions radio prompt
+            # Shows "1. No, exit" / "2. Yes, I accept" with "Enter to confirm"
+            if (
+                "Bypass Permissions" in content
+                and "Enter to confirm" in content
+                and "skip-permissions" not in accepted
+            ):
+                time.sleep(1)
+                try:
+                    # Arrow down to "2. Yes, I accept", then Enter
+                    subprocess.run(
+                        [
+                            "screen",
+                            "-S",
+                            config.screen_name,
+                            "-X",
+                            "stuff",
+                            "\x1b[B\r",
+                        ],
+                        check=False,
+                        capture_output=True,
+                    )
+                    accepted.add("skip-permissions")
+                    logger.info(
+                        "Sent auto-accept for Bypass Permissions to %s",
+                        config.screen_name,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to send auto-accept to %s", config.screen_name
+                    )
+                time.sleep(2)
+                continue
+
             # Detect and respond to radio-selection prompt (dev channels)
             # This prompt has "Enter to confirm" and radio options
             if "Enter to confirm" in content and "load-dev-channels" not in accepted:
@@ -218,7 +252,9 @@ class ClaudeCodeRuntime(RuntimeBase):
             # Detect and respond to y/n prompt (skip-permissions)
             # This prompt has "Type 'y'" or similar y/n confirmation text
             if (
-                "skip-permissions" in content or "Trust" in content
+                "skip-permissions" in content
+                or "Trust" in content
+                or "Bypass Permissions" in content
             ) and "skip-permissions" not in accepted:
                 time.sleep(1)
                 try:

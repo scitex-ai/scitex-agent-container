@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -258,6 +259,33 @@ class SSHRemote:
                 f"  Check: ssh {t} 'echo ok'\n"
                 f"  Fix:   ssh-keygen && ssh-copy-id {t}"
             )
+
+        # Copy sibling src_* files (src_CLAUDE.md, src_mcp.json) for v2
+        defdir = Path(local_path).parent
+        remote_dir = str(Path(remote_path).parent)
+        for src_file in ("src_CLAUDE.md", "src_mcp.json"):
+            local_src = defdir / src_file
+            if local_src.exists():
+                remote_src = f"{remote_dir}/{src_file}"
+                try:
+                    content_src = local_src.read_text()
+                    ssh_cmd_src = SSHRemote._ssh_base(config) + [f"cat > {remote_src}"]
+                    subprocess.run(
+                        ssh_cmd_src,
+                        input=content_src,
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
+                    logger.info(
+                        "Copied %s to %s:%s",
+                        src_file,
+                        config.remote.host,
+                        remote_src,
+                    )
+                except Exception:
+                    logger.warning("Failed to copy %s to remote", src_file)
+
         return remote_path
 
     @staticmethod
