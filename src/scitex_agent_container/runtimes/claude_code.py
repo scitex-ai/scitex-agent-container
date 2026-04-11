@@ -126,50 +126,34 @@ class ClaudeCodeRuntime(RuntimeBase):
         return False
 
     def _send_auto_accept_keystrokes(self, config: AgentConfig) -> bool:
-        """Send keystrokes to accept TUI confirmation prompts in screen.
+        """Poll multiplexer content and auto-accept TUI prompts.
 
-        Claude Code shows confirmation prompts for dangerous flags. This method
-        polls the screen content and responds to whichever prompt appears:
-        - y/n prompts (e.g. skip-permissions): send "y\\r"
-        - Radio selection prompts (e.g. dev channels): send "\\r" (Enter)
-        - Done when the main input prompt appears (bypass permissions)
+        Uses modular prompt handlers from prompts.py. Each handler
+        detects a specific prompt and sends the appropriate keystrokes.
+        Prompt order is not assumed — all handlers are checked each poll.
 
-        Uses polling to handle variable Claude Code startup times.
+        Returns True if all prompts were accepted, False on timeout.
         """
+        from .prompts import PROMPT_HANDLERS, detect_and_respond, is_ready
+
         if not self._needs_auto_accept(config):
             return True
 
-        # Detect which prompts we expect — driven purely by the flag list
-        # so any caller (including scitex-orochi) that injects dangerous
-        # flags gets the right auto-accept behavior without this runtime
-        # having to know which upstream feature caused the flag.
-        expect_skip_permissions = any(
-            "--dangerously-skip-permissions" in f for f in config.claude.flags
-        )
-        expect_dev_channels = any(
-            "--dangerously-load-development-channels" in f for f in config.claude.flags
-        )
-
-        expected = []
-        if expect_skip_permissions:
-            expected.append("skip-permissions")
-        if expect_dev_channels:
-            expected.append("load-dev-channels")
-
+        handler_names = [h.name for h in PROMPT_HANDLERS]
         logger.info(
-            "Auto-accepting %d TUI confirmation prompt(s) for %s: %s",
-            len(expected),
+            "Auto-accepting TUI prompts for %s (handlers: %s)",
             config.screen_name,
-            ", ".join(expected),
+            ", ".join(handler_names),
         )
 
-        # Poll screen content and respond to prompts as they appear.
-        # The "bypass permissions" text in the input bar means we're done.
         timeout = 90
         start = time.monotonic()
         accepted: set[str] = set()
-
         mux = self._get_mux(config)
+
+        def _send(session_name: str, *keys: str) -> None:
+            mux.send_keys(session_name, *keys)
+
         while time.monotonic() - start < timeout:
             if not mux.exists(config.screen_name):
                 logger.warning(
@@ -181,13 +165,13 @@ class ClaudeCodeRuntime(RuntimeBase):
             content = self._get_content(config)
             if content.strip():
                 logger.debug(
-                    "Screen content for %s:\n%s", config.screen_name, content[:500]
+                    "Pane content for %s:\n%s", config.screen_name, content[:500]
                 )
             else:
-                logger.debug("Screen content empty for %s", config.screen_name)
+                logger.debug("Pane content empty for %s", config.screen_name)
 
-            # Check if we've reached the main prompt (all prompts accepted)
-            if "bypass permissions" in content and "Enter to confirm" not in content:
+            # Check if claude is ready (all prompts done)
+            if is_ready(content):
                 logger.info(
                     "Auto-accept complete for %s (accepted: %s)",
                     config.screen_name,
@@ -195,77 +179,24 @@ class ClaudeCodeRuntime(RuntimeBase):
                 )
                 return True
 
-            # Detect and respond to Bypass Permissions radio prompt
-            # Shows "1. No, exit" / "2. Yes, I accept" with "Enter to confirm"
-            if (
-                "Bypass Permissions" in content
-                and "Enter to confirm" in content
-                and "skip-permissions" not in accepted
-            ):
-                time.sleep(1)
-                try:
-                    # Arrow down to "2. Yes, I accept", then Enter
-                    self._send_keys(config, "\x1b[B\r")
-                    accepted.add("skip-permissions")
-                    logger.info(
-                        "Sent auto-accept for Bypass Permissions to %s",
-                        config.screen_name,
-                    )
-                except Exception:
-                    logger.exception(
-                        "Failed to send auto-accept to %s", config.screen_name
-                    )
-                time.sleep(2)
-                continue
-
-            # Detect and respond to radio-selection prompt (dev channels)
-            # This prompt has "Enter to confirm" and radio options
-            if "Enter to confirm" in content and "load-dev-channels" not in accepted:
-                time.sleep(1)
-                try:
-                    self._send_keys(config, "\r")
-                    accepted.add("load-dev-channels")
-                    logger.info(
-                        "Sent auto-accept Enter for load-dev-channels to %s",
-                        config.screen_name,
-                    )
-                except Exception:
-                    logger.exception(
-                        "Failed to send auto-accept to %s", config.screen_name
-                    )
-                time.sleep(2)
-                continue
-
-            # Detect and respond to y/n prompt (skip-permissions)
-            # This prompt has "Type 'y'" or similar y/n confirmation text
-            if (
-                "skip-permissions" in content
-                or "Trust" in content
-                or "Bypass Permissions" in content
-            ) and "skip-permissions" not in accepted:
-                time.sleep(1)
-                try:
-                    self._send_keys(config, "y\r")
-                    accepted.add("skip-permissions")
-                    logger.info(
-                        "Sent auto-accept y for skip-permissions to %s",
-                        config.screen_name,
-                    )
-                except Exception:
-                    logger.exception(
-                        "Failed to send auto-accept to %s", config.screen_name
-                    )
+            # Try each handler against current content
+            matched = detect_and_respond(
+                content,
+                accepted,
+                lambda *keys: _send(config.screen_name, *keys),
+            )
+            if matched:
+                accepted.add(matched)
                 time.sleep(2)
                 continue
 
             time.sleep(2)
 
         logger.warning(
-            "Timed out (%ds) during auto-accept for %s (accepted: %s, expected: %s)",
+            "Timed out (%ds) during auto-accept for %s (accepted: %s)",
             timeout,
             config.screen_name,
             ", ".join(accepted),
-            ", ".join(expected),
         )
         return False
 
