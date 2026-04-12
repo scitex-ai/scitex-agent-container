@@ -24,10 +24,19 @@ from .status_cmds import check_agent, health, list_agents, status
     default=False,
     help="Show help for all commands recursively.",
 )
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Output as structured JSON (propagates to subcommands).",
+)
 @click.pass_context
-def main(ctx: click.Context, help_recursive: bool) -> None:
+def main(ctx: click.Context, help_recursive: bool, as_json: bool) -> None:
     """SciTeX Agent Container -- Declarative agent management."""
     ctx.ensure_object(dict)
+    if as_json:
+        ctx.obj["json"] = True
     if help_recursive:
         click.echo(ctx.command.get_help_recursive(ctx))  # type: ignore[attr-defined]
         ctx.exit(0)

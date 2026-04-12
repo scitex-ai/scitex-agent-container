@@ -12,7 +12,7 @@ from ..config import load_config
 from ..health import health_check
 from ..lifecycle import agent_status
 from ..registry import Registry
-from ._helpers import console, print_agent_list, print_agent_list_json
+from ._helpers import _json_flag, console, print_agent_list, print_agent_list_json
 
 
 @click.command()
@@ -24,21 +24,23 @@ from ._helpers import console, print_agent_list, print_agent_list_json
     default=False,
     help="Output as JSON.",
 )
-def status(name: str | None, as_json: bool) -> None:
+@click.pass_context
+def status(ctx: click.Context, name: str | None, as_json: bool) -> None:
     """Show agent status (one agent or all)."""
+    use_json = _json_flag(ctx, as_json)
     registry = Registry()
 
     if name:
         try:
             info = agent_status(name)
         except Exception as exc:
-            if as_json:
+            if use_json:
                 click.echo(json_mod.dumps({"error": str(exc)}))
             else:
                 console.print(f"[red]Error: {exc}[/red]")
             sys.exit(1)
 
-        if as_json:
+        if use_json:
             click.echo(json_mod.dumps(info, indent=2))
             return
 
@@ -51,7 +53,7 @@ def status(name: str | None, as_json: bool) -> None:
             table.add_row(key, str(value), style=style)
         console.print(table)
     else:
-        if as_json:
+        if use_json:
             print_agent_list_json(registry)
         else:
             print_agent_list(registry)
@@ -77,10 +79,17 @@ def status(name: str | None, as_json: bool) -> None:
     default=None,
     help="Filter by machine label.",
 )
-def list_agents(as_json: bool, capability: str | None, machine: str | None) -> None:
+@click.pass_context
+def list_agents(
+    ctx: click.Context,
+    as_json: bool,
+    capability: str | None,
+    machine: str | None,
+) -> None:
     """List all registered agents."""
+    use_json = _json_flag(ctx, as_json)
     registry = Registry()
-    if as_json:
+    if use_json:
         print_agent_list_json(registry, capability=capability, machine=machine)
     else:
         print_agent_list(registry, capability=capability, machine=machine)
@@ -95,12 +104,14 @@ def list_agents(as_json: bool, capability: str | None, machine: str | None) -> N
     default=False,
     help="Output as JSON.",
 )
-def health(name: str, as_json: bool) -> None:
+@click.pass_context
+def health(ctx: click.Context, name: str, as_json: bool) -> None:
     """Run a health check on an agent."""
+    use_json = _json_flag(ctx, as_json)
     registry = Registry()
     entry = registry.get(name)
     if entry is None:
-        if as_json:
+        if use_json:
             click.echo(json_mod.dumps({"error": f"Agent '{name}' not found"}))
         else:
             console.print(f"[red]Agent '{name}' not found in registry[/red]")
@@ -109,7 +120,7 @@ def health(name: str, as_json: bool) -> None:
     try:
         config = load_config(entry["config"])
     except Exception as exc:
-        if as_json:
+        if use_json:
             click.echo(json_mod.dumps({"error": str(exc)}))
         else:
             console.print(f"[red]Error loading config: {exc}[/red]")
@@ -117,7 +128,7 @@ def health(name: str, as_json: bool) -> None:
 
     is_healthy, message = health_check(config)
 
-    if as_json:
+    if use_json:
         click.echo(
             json_mod.dumps(
                 {"name": name, "healthy": is_healthy, "message": message},
@@ -163,12 +174,14 @@ def _detect_agent_state(content: str) -> str:
     default=False,
     help="Output as JSON.",
 )
-def check_agent(name: str, as_json: bool) -> None:
+@click.pass_context
+def check_agent(ctx: click.Context, name: str, as_json: bool) -> None:
     """Check live state of an agent by capturing pane content."""
+    use_json = _json_flag(ctx, as_json)
     registry = Registry()
     entry = registry.get(name)
     if entry is None:
-        if as_json:
+        if use_json:
             click.echo(json_mod.dumps({"error": f"Agent '{name}' not found"}))
         else:
             console.print(f"[red]Agent '{name}' not found in registry[/red]")
@@ -177,7 +190,7 @@ def check_agent(name: str, as_json: bool) -> None:
     try:
         config = load_config(entry["config"])
     except Exception as exc:
-        if as_json:
+        if use_json:
             click.echo(json_mod.dumps({"error": str(exc)}))
         else:
             console.print(f"[red]Error loading config: {exc}[/red]")
@@ -199,7 +212,7 @@ def check_agent(name: str, as_json: bool) -> None:
         "state": state,
     }
 
-    if as_json:
+    if use_json:
         click.echo(json_mod.dumps(result, indent=2))
     else:
         status_color = "green" if alive else "red"

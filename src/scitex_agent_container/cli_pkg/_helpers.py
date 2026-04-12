@@ -14,6 +14,11 @@ from ..registry import Registry
 console = Console()
 
 
+def _json_flag(ctx: click.Context, local: bool) -> bool:
+    """Return True if JSON output requested via local flag or top-level --json."""
+    return local or bool((ctx.obj or {}).get("json", False))
+
+
 class HelpRecursiveGroup(click.Group):
     """Click group that supports --help-recursive to dump every subcommand."""
 
