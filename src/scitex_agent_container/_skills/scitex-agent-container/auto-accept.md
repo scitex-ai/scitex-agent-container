@@ -36,6 +36,20 @@ register_prompt(PromptHandler(
 ))
 ```
 
+## Runtime Prompt Detection (via mamba-healer)
+
+In addition to startup auto-accept, mamba-healer's health scan includes runtime permission prompt detection. This catches prompts that appear mid-session (e.g., new tool permissions, MCP reconnect confirmations).
+
+**Detection patterns** (checked every health scan cycle):
+- "Do you want to" — general permission prompt
+- "Allow X to" — tool/MCP permission
+- "Enter to confirm" — confirmation dialog
+
+**Excluded** (false positive prevention):
+- Status bar text like "bypass permissions on" — not an actual prompt
+
+If a runtime prompt is detected, healer reports `stuck_prompt` status and can auto-respond via tmux `stuff`. This complements the startup auto-accept handlers above.
+
 ## Disabling Auto-Accept
 
 ```yaml

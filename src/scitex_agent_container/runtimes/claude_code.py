@@ -11,6 +11,7 @@ from ..config import AgentConfig
 from .base import RuntimeBase
 from .claude_md import cleanup_claude_md, setup_claude_md
 from .mcp_config import cleanup_mcp_config, setup_mcp_config
+from .settings_json import cleanup_settings_json, setup_settings_json
 from .src_files import (  # noqa: F401
     cleanup_src_claude_md,
     cleanup_src_mcp_json,
@@ -308,6 +309,7 @@ class ClaudeCodeRuntime(RuntimeBase):
         else:
             _setup_claude_md(config, workdir)
         setup_mcp_config(config, workdir)
+        setup_settings_json(config, workdir)
 
         mux = self._get_mux(config)
         started = mux.start(
@@ -356,6 +358,7 @@ class ClaudeCodeRuntime(RuntimeBase):
         else:
             _cleanup_claude_md(config, config.expanded_workdir)
         cleanup_mcp_config(config, config.expanded_workdir)
+        cleanup_settings_json(config, config.expanded_workdir)
 
         return self._get_mux(config).stop(config.screen_name)
 
