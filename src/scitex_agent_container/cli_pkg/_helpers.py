@@ -60,6 +60,23 @@ def get_agent_list_data(
         machine: If set, only include agents whose ``machine`` label matches.
     """
     from ..runtimes.screen import ScreenManager
+    from ..runtimes.tmux import TmuxManager
+
+    def _detect_multiplexer(session_name: str) -> str | None:
+        """Detect which multiplexer hosts a session. Tmux preferred."""
+        if not session_name or session_name == "?":
+            return None
+        try:
+            if TmuxManager.exists(session_name):
+                return "tmux"
+        except Exception:
+            pass
+        try:
+            if ScreenManager.exists(session_name):
+                return "screen"
+        except Exception:
+            pass
+        return None
 
     entries = registry.list_all()
     results: list[dict] = []
@@ -101,10 +118,15 @@ def get_agent_list_data(
             if capability not in caps:
                 continue
 
+        multiplexer: str | None = None
+        if not (cfg and cfg.remote.is_remote):
+            multiplexer = _detect_multiplexer(screen_name)
+
         row: dict = {
             "name": name,
             "status": "running" if is_running else "stopped",
             "screen": screen_name,
+            "multiplexer": multiplexer,
             "started_at": started,
         }
         if remote_host:
