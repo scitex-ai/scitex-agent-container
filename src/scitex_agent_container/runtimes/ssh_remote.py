@@ -221,7 +221,13 @@ class SSHRemote:
         """
         import yaml as _yaml
 
-        remote_path = f"/tmp/{config.name}.yaml"
+        # Per-agent namespaced remote dir to prevent src_CLAUDE.md /
+        # src_mcp.json from leaking between agents that share /tmp/.
+        # Without namespacing, the most-recent agent's src_* files
+        # would be picked up by the next agent's deploy, injecting the
+        # wrong identity into its workspace CLAUDE.md (todo#221).
+        remote_dir = f"/tmp/scitex-agent-container/{config.name}"
+        remote_path = f"{remote_dir}/{config.name}.yaml"
         local_path = config.config_path
         if not local_path:
             raise RuntimeError(
@@ -240,6 +246,10 @@ class SSHRemote:
             if isinstance(raw, dict) and "spec" in raw and "remote" in raw["spec"]:
                 del raw["spec"]["remote"]
             content = _yaml.dump(raw, default_flow_style=False, sort_keys=False)
+            mkdir_cmd = SSHRemote._ssh_base(config) + [
+                f"mkdir -p {remote_dir} && rm -f {remote_dir}/src_CLAUDE.md {remote_dir}/src_mcp.json"
+            ]
+            subprocess.run(mkdir_cmd, capture_output=True, text=True, timeout=30)
             ssh_cmd = SSHRemote._ssh_base(config) + [f"cat > {remote_path}"]
             result = subprocess.run(
                 ssh_cmd, input=content, capture_output=True, text=True, timeout=30
