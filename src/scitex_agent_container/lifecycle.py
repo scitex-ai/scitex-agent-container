@@ -250,6 +250,33 @@ def agent_status(name: str, registry: Registry | None = None) -> dict:
     }
     if config and config.remote.is_remote:
         result["remote"] = config.remote.host
+
+    # Enrich with claude-hud-style metadata. Canonical source for the
+    # Agents-tab dashboard; the MCP sidecar heartbeat shells out to this
+    # command rather than duplicating the logic in TypeScript.
+    try:
+        from .agent_meta import collect_rich
+
+        workdir = (
+            config.expanded_workdir
+            if config
+            else str(Path.home() / ".scitex" / "orochi" / "workspaces" / name)
+        )
+        session = entry.get("screen", "") or (config.screen_name if config else name)
+        rich = collect_rich(name=name, workdir=workdir, session=session)
+        # Prefer transcript-derived started_at only if the registry
+        # doesn't have one.
+        if not result.get("started_at") and rich.get("started_at_transcript"):
+            result["started_at"] = rich["started_at_transcript"]
+        rich.pop("started_at_transcript", None)
+        rich.pop("model_transcript", None)
+        # Never let rich overwrite the canonical registry/config fields.
+        for k, v in rich.items():
+            result.setdefault(k, v)
+    except Exception:
+        # Never let metadata collection break status.
+        pass
+
     return result
 
 
