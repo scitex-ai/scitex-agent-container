@@ -119,10 +119,35 @@ def deploy_src_claude_md(config: AgentConfig, workdir: str) -> None:
     section_body = re.sub(
         r"<!--.*?scitex-agent-container.*?-->\n?", "", section_content
     ).strip()
-    new_content = f"{start_tag}\n{section_body}\n{END_MARKER}\n"
+    guide_comment = (
+        "<!-- ↓ Your custom content below is preserved across restarts. "
+        "Do NOT delete or edit between the markers above. -->"
+    )
+    new_content = (
+        f"{start_tag}\n{section_body}\n{END_MARKER}\n{guide_comment}\n"
+    )
+
+    # Validate: existing workspace must have at most one Start marker
+    existing_text = dest.read_text() if dest.exists() else ""
+    start_count = len(
+        re.findall(
+            r"<!-- Start of scitex-agent-container generated section", existing_text
+        )
+    )
+    if start_count > 1:
+        raise RuntimeError(
+            f"Multiple scitex-agent-container section markers found in "
+            f"{dest} ({start_count} start tags). "
+            f"Each CLAUDE.md must have exactly one generated section."
+        )
 
     # Preserve anything the agent/user wrote past END_MARKER in the existing file.
     user_tail = _extract_user_tail(dest, END_MARKER)
+    # Also strip old guide comment from user_tail so we don't duplicate it
+    if user_tail:
+        user_tail = re.sub(
+            r"\n?<!-- ↓ Your custom content.*?-->\n?", "\n", user_tail, count=1
+        )
 
     if END_MARKER not in new_content:
         logger.warning(
