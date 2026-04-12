@@ -12,6 +12,37 @@ from ..config import AgentConfig
 
 logger = logging.getLogger(__name__)
 
+# Preserve protocol for workspace CLAUDE.md:
+#   <!-- Start of scitex-agent-container generated section (<ts>) -->
+#   ... managed by scitex-agent-container, regenerated on every deploy ...
+#   <!-- End of scitex-agent-container generated section -->
+#   ... user-editable tail, preserved across restarts ...
+#
+# deploy_src_claude_md re-reads any tail past END_MARKER from the existing
+# workspace CLAUDE.md and re-appends it after writing the freshly generated
+# section. .mcp.json is NOT subject to this protocol — it is a full overwrite
+# because MCP server config is structural, not user-edited.
+END_MARKER = "<!-- End of scitex-agent-container generated section -->"
+
+
+def _extract_user_tail(workspace_path: Path, end_marker: str = END_MARKER) -> str:
+    """Return the substring of workspace_path after the last end_marker.
+
+    Returns empty string if the file does not exist or the marker is absent.
+    The returned string preserves whatever whitespace/content followed the
+    marker verbatim (leading newline included).
+    """
+    if not workspace_path.exists():
+        return ""
+    try:
+        existing = workspace_path.read_text()
+    except OSError:
+        return ""
+    idx = existing.rfind(end_marker)
+    if idx == -1:
+        return ""
+    return existing[idx + len(end_marker) :]
+
 
 def _definition_dir(config: AgentConfig) -> Path | None:
     """Return the directory containing the agent YAML, or None."""
@@ -45,10 +76,19 @@ def _interpolate_metadata(text: str, config: AgentConfig) -> str:
 
 
 def deploy_src_claude_md(config: AgentConfig, workdir: str) -> None:
-    """Inject src_CLAUDE.md content into {workdir}/CLAUDE.md.
+    """Write src_CLAUDE.md into {workdir}/CLAUDE.md, preserving the user tail.
 
-    Uses section tags to merge without destroying agent-written content.
-    If src_CLAUDE.md does not exist, does nothing.
+    Protocol: everything up to and including END_MARKER is regenerated from
+    the agent template on every deploy. Anything in the existing workspace
+    CLAUDE.md that appears *after* END_MARKER is preserved verbatim and
+    re-appended. This is how per-host notes, custom skills, and agent
+    scratch content survive container restarts.
+
+    If the existing workspace file has no END_MARKER (legacy/contaminated),
+    the entire existing content is discarded and the source is written as-is.
+    If the freshly generated section itself has no END_MARKER (template not
+    yet updated to the new convention), a warning is logged and the source
+    is written with no tail preservation.
     """
     defdir = _definition_dir(config)
     if defdir is None:
@@ -66,7 +106,6 @@ def deploy_src_claude_md(config: AgentConfig, workdir: str) -> None:
     section_content = _interpolate_metadata(section_content, config)
 
     dest = Path(workdir) / "CLAUDE.md"
-    existing = dest.read_text() if dest.exists() else ""
 
     from datetime import datetime
 
@@ -74,33 +113,40 @@ def deploy_src_claude_md(config: AgentConfig, workdir: str) -> None:
     start_tag = (
         f"<!-- Start of scitex-agent-container generated section ({timestamp}) -->"
     )
-    end_tag = "<!-- End of scitex-agent-container generated section -->"
 
-    # Strip existing tags from src content if present (any format)
-    section_content = re.sub(
+    # Strip any pre-existing scitex-agent-container tags from the source body
+    # so we can re-wrap with a fresh timestamped start tag + canonical end tag.
+    section_body = re.sub(
         r"<!--.*?scitex-agent-container.*?-->\n?", "", section_content
     ).strip()
-    section_content = f"{start_tag}\n{section_content}\n{end_tag}"
+    new_content = f"{start_tag}\n{section_body}\n{END_MARKER}\n"
 
-    # Match any variant of the start/end tags for replacement
-    pattern = (
-        r"<!-- Start of scitex-agent-container generated section.*?-->.*?"
-        r"<!-- End of scitex-agent-container generated section -->"
-    )
+    # Preserve anything the agent/user wrote past END_MARKER in the existing file.
+    user_tail = _extract_user_tail(dest, END_MARKER)
 
-    if re.search(pattern, existing, re.DOTALL):
-        updated = re.sub(pattern, section_content, existing, flags=re.DOTALL)
-    else:
-        separator = (
-            "\n\n"
-            if existing and not existing.endswith("\n\n")
-            else ("\n" if existing and not existing.endswith("\n") else "")
+    if END_MARKER not in new_content:
+        logger.warning(
+            "src_CLAUDE.md for %s has no End marker after wrapping; "
+            "writing source only, user tail not preserved",
+            config.name,
         )
-        updated = existing + separator + section_content + "\n"
+        updated = new_content
+    elif user_tail:
+        # user_tail already includes any leading newline that followed the marker
+        updated = new_content.rstrip("\n") + user_tail
+        if not updated.endswith("\n"):
+            updated += "\n"
+    else:
+        updated = new_content
 
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(updated)
-    logger.info("Deployed src_CLAUDE.md for %s to %s", config.name, dest)
+    logger.info(
+        "Deployed src_CLAUDE.md for %s to %s (preserved user tail: %s)",
+        config.name,
+        dest,
+        "yes" if user_tail else "no",
+    )
 
 
 def cleanup_src_claude_md(config: AgentConfig, workdir: str) -> None:
