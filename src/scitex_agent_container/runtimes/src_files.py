@@ -185,6 +185,7 @@ def cleanup_src_claude_md(config: AgentConfig, workdir: str) -> None:
     pattern = (
         r"\n*<!-- Start of scitex-agent-container generated section.*?-->.*?"
         r"<!-- End of scitex-agent-container generated section -->\n?"
+        r"(<!-- ↓ Your custom content.*?-->\n?)?"
     )
     updated = re.sub(pattern, "", existing, flags=re.DOTALL)
 

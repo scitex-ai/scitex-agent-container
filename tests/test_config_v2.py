@@ -211,16 +211,21 @@ class TestSrcFiles:
             assert "head" in content
             assert "Start of scitex-agent-container generated section" in content
 
-    def test_deploy_preserves_existing_content(self):
+    def test_deploy_preserves_user_tail(self):
         from scitex_agent_container.runtimes.src_files import deploy_src_claude_md
 
         with (
             tempfile.TemporaryDirectory() as defdir,
             tempfile.TemporaryDirectory() as workdir,
         ):
-            # Pre-existing CLAUDE.md with agent content
+            # Pre-existing CLAUDE.md with markers + user tail after End
             dest = Path(workdir) / "CLAUDE.md"
-            dest.write_text("# My notes\nAgent wrote this.\n")
+            dest.write_text(
+                "<!-- Start of scitex-agent-container generated section (old) -->\n"
+                "## Old managed\n"
+                "<!-- End of scitex-agent-container generated section -->\n"
+                "# My notes\nAgent wrote this.\n"
+            )
 
             src = Path(defdir) / "src_CLAUDE.md"
             src.write_text("## Managed section\n")
@@ -235,6 +240,7 @@ class TestSrcFiles:
             assert "My notes" in content
             assert "Agent wrote this." in content
             assert "Managed section" in content
+            assert "Old managed" not in content
 
     def test_deploy_src_mcp_json(self):
         import os
@@ -297,17 +303,20 @@ class TestSrcFiles:
                 name="my-agent",
                 config_path=str(Path(defdir) / "agent.yaml"),
             )
-            # Pre-existing content + deploy
+            # Deploy first (creates markers), then add user content after End
             dest = Path(workdir) / "CLAUDE.md"
-            dest.write_text("# User content\n")
             deploy_src_claude_md(config, workdir)
+            # Append user content after the guide comment
+            content = dest.read_text()
+            dest.write_text(content + "# User content\n")
             assert "Managed" in dest.read_text()
 
-            # Cleanup removes managed section, keeps user content
+            # Cleanup removes managed section + guide, keeps user content
             cleanup_src_claude_md(config, workdir)
             content = dest.read_text()
             assert "User content" in content
             assert "Managed" not in content
+            assert "guide" not in content.lower() or "custom content" not in content
 
 
 class TestMultiplexerConfig:
