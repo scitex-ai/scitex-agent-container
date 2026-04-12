@@ -156,6 +156,9 @@ def collect_rich(
     # ---- transcript-derived fields ----------------------------------
     context_pct = 0.0
     current_tool = ""
+    current_tool_input = ""
+    current_task = ""
+    last_user_msg = ""
     last_activity = ""
     model = ""
     started_at = ""
@@ -196,6 +199,9 @@ def collect_rich(
                 context_pct = round((total / 1_000_000) * 100, 1)
                 break
 
+        # Find the most recent tool_use AND its input preview, so the
+        # dashboard can show "Bash: docker compose build" instead of just
+        # "Bash". Per ywatanabe complaint msg 5481.
         for line in reversed(lines):
             try:
                 obj = json.loads(line)
@@ -206,9 +212,67 @@ def collect_rich(
                 for c in content:
                     if c.get("type") == "tool_use":
                         current_tool = c.get("name", "")
+                        tool_input = c.get("input", {}) or {}
+                        # Heuristic preview by tool kind:
+                        if current_tool == "Bash":
+                            preview = tool_input.get("description") \
+                                or tool_input.get("command", "")
+                        elif current_tool in ("Edit", "Write", "Read"):
+                            preview = tool_input.get("file_path", "")
+                        elif current_tool == "Grep":
+                            preview = tool_input.get("pattern", "")
+                        elif current_tool == "Glob":
+                            preview = tool_input.get("pattern", "")
+                        elif current_tool == "Agent":
+                            preview = tool_input.get("description", "") \
+                                or tool_input.get("subagent_type", "")
+                        elif current_tool.startswith("mcp__"):
+                            preview = tool_input.get("text", "") \
+                                or tool_input.get("chat_id", "") \
+                                or tool_input.get("query", "")
+                        else:
+                            preview = ""
+                        if isinstance(preview, str):
+                            current_tool_input = preview[:120].strip()
                         break
                 if current_tool:
                     break
+
+        # Find the most recent USER message — gives the dashboard a
+        # "what was this agent last asked to do" snippet which is more
+        # meaningful than the tool name alone.
+        for line in reversed(lines):
+            try:
+                obj = json.loads(line)
+            except Exception:
+                continue
+            if obj.get("type") == "user" and "message" in obj:
+                msg = obj["message"]
+                content = msg.get("content")
+                if isinstance(content, str):
+                    last_user_msg = content[:200].strip()
+                elif isinstance(content, list):
+                    parts = []
+                    for c in content:
+                        if isinstance(c, dict):
+                            if c.get("type") == "text":
+                                parts.append(c.get("text", ""))
+                            elif c.get("type") == "tool_result":
+                                # Skip tool results — they're noise here
+                                pass
+                    last_user_msg = " ".join(parts)[:200].strip()
+                if last_user_msg:
+                    break
+
+    # current_task is the high-level "what is this agent doing": prefer
+    # the tool preview, then the last user message snippet, then the bare
+    # tool name. Never empty if the agent is alive.
+    if current_tool and current_tool_input:
+        current_task = f"{current_tool}: {current_tool_input}"
+    elif current_tool:
+        current_task = current_tool
+    elif last_user_msg:
+        current_task = last_user_msg
 
     # ---- process / session / skills ---------------------------------
     subagent_count = _subagent_count_from_pane(session, multiplexer)
@@ -224,7 +288,9 @@ def collect_rich(
         "subagents": subagent_count,  # legacy alias
         "context_pct": context_pct,
         "current_tool": current_tool,
-        "current_task": current_tool,  # legacy alias
+        "current_tool_input": current_tool_input,
+        "current_task": current_task,
+        "last_user_msg": last_user_msg,
         "last_activity": last_activity,
         "skills_loaded": skills_loaded,
         "machine": machine,
