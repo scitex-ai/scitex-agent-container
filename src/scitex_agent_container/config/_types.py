@@ -18,7 +18,11 @@ class ContainerSpec:
 class ClaudeSpec:
     channels: list[str] = field(default_factory=list)
     flags: list[str] = field(default_factory=list)
-    session: str = "new"
+    # Session restart strategy. One of:
+    #   continue-or-new  try --continue, fall back to a fresh launch if no prior session (default)
+    #   continue         always pass --continue (fails if no prior session exists)
+    #   new              never pass --continue
+    session: str = "continue-or-new"
     auto_accept: bool = True
 
 

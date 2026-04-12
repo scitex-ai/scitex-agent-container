@@ -31,6 +31,41 @@ _setup_claude_md = setup_claude_md
 _cleanup_claude_md = cleanup_claude_md
 
 
+def _encode_workdir_for_claude_projects(workdir: str) -> str:
+    """Encode a workdir path the way Claude Code names its projects dir.
+
+    Claude Code stores per-project session history under
+    ``~/.claude/projects/<encoded>/`` where ``<encoded>`` is the absolute
+    workdir with every ``/`` replaced by ``-`` (the leading slash becomes a
+    leading ``-``; dot-prefixed path segments like ``.dotfiles`` produce a
+    double-dash, which is expected).
+    """
+    abs_path = str(Path(workdir).expanduser().resolve() if Path(workdir).expanduser().exists() else Path(workdir).expanduser())
+    return abs_path.replace("/", "-")
+
+
+def _session_resumable(workdir: str, user_home: str | None = None) -> bool:
+    """Return True iff Claude Code has a resumable session for ``workdir``.
+
+    A session is considered resumable when
+    ``~/.claude/projects/<encoded>/`` exists and contains at least one
+    non-empty ``*.jsonl`` transcript. Used by the ``continue-or-new``
+    session mode to decide whether ``--continue`` is safe to pass.
+    """
+    home = Path(user_home) if user_home else Path.home()
+    encoded = _encode_workdir_for_claude_projects(workdir)
+    proj_dir = home / ".claude" / "projects" / encoded
+    if not proj_dir.is_dir():
+        return False
+    for entry in proj_dir.glob("*.jsonl"):
+        try:
+            if entry.is_file() and entry.stat().st_size > 0:
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def _has_src_files(config: AgentConfig) -> bool:
     """Check if src_CLAUDE.md or src_mcp.json exist next to the YAML."""
     if not config.config_path:
@@ -43,15 +78,39 @@ class ClaudeCodeRuntime(RuntimeBase):
     """Runtime for launching Claude Code agents in screen sessions."""
 
     def _build_command(self, config: AgentConfig) -> str:
-        """Build the claude CLI command from config."""
+        """Build the claude CLI command from config.
+
+        Session modes:
+          - ``continue-or-new`` (default): pass ``--continue`` only when a
+            prior session exists for the workdir; otherwise launch fresh.
+            Graceful fallback is silent (logged at info level) so rolling
+            restarts preserve /compact history without risking hard failure.
+          - ``continue``: always pass ``--continue`` (may fail if no prior
+            session — explicit opt-in for callers that want strict resume).
+          - ``new``: never pass ``--continue``.
+        """
         parts = ["claude"]
         parts.append(f"--model '{config.model}'")
 
         for flag in config.claude.flags:
             parts.append(flag)
 
-        if config.claude.session == "continue":
+        mode = config.claude.session
+        if mode == "continue":
             parts.append("--continue")
+        elif mode == "continue-or-new":
+            if _session_resumable(config.expanded_workdir):
+                parts.append("--continue")
+                logger.info(
+                    "session=continue-or-new: resumable session found for %s, passing --continue",
+                    config.expanded_workdir,
+                )
+            else:
+                logger.info(
+                    "session=continue-or-new: no resumable session for %s, launching fresh",
+                    config.expanded_workdir,
+                )
+        # mode == "new" (or any other): no --continue flag
 
         return " ".join(parts)
 

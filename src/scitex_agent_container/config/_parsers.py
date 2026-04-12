@@ -31,10 +31,16 @@ def parse_container(spec: dict) -> ContainerSpec:
 
 def parse_claude(spec: dict) -> ClaudeSpec:
     raw = spec.get("claude", {}) or {}
+    # Top-level `session:` takes precedence over `claude.session` for
+    # ergonomics (it's the primary knob agents care about). Falls back to
+    # the nested field for backward compat, then the default.
+    session = spec.get("session")
+    if session is None:
+        session = raw.get("session", "continue-or-new")
     return ClaudeSpec(
         channels=raw.get("channels", []) or [],
         flags=raw.get("flags", []) or [],
-        session=raw.get("session", "new"),
+        session=session,
         auto_accept=raw.get("auto_accept", True),
     )
 
