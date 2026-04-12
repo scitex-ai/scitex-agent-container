@@ -37,10 +37,18 @@ def parse_claude(spec: dict) -> ClaudeSpec:
     session = spec.get("session")
     if session is None:
         session = raw.get("session", "continue-or-new")
+    continue_max_age = raw.get("continue_max_age_minutes")
+    if continue_max_age is not None:
+        try:
+            continue_max_age = int(continue_max_age)
+        except (TypeError, ValueError):
+            continue_max_age = None
     return ClaudeSpec(
         channels=raw.get("channels", []) or [],
         flags=raw.get("flags", []) or [],
         session=session,
+        continue_max_age_minutes=continue_max_age,
+        resume_id=str(raw.get("resume_id", "") or ""),
         auto_accept=raw.get("auto_accept", True),
     )
 

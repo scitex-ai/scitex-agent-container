@@ -44,26 +44,50 @@ def _encode_workdir_for_claude_projects(workdir: str) -> str:
     return abs_path.replace("/", "-")
 
 
-def _session_resumable(workdir: str, user_home: str | None = None) -> bool:
+def _session_resumable(
+    workdir: str,
+    user_home: str | None = None,
+    max_age_minutes: int | None = None,
+) -> bool:
     """Return True iff Claude Code has a resumable session for ``workdir``.
 
     A session is considered resumable when
     ``~/.claude/projects/<encoded>/`` exists and contains at least one
     non-empty ``*.jsonl`` transcript. Used by the ``continue-or-new``
     session mode to decide whether ``--continue`` is safe to pass.
+
+    If ``max_age_minutes`` is set, the most-recently-modified jsonl must be
+    newer than that many minutes; otherwise returns False (treat as stale).
     """
+    import time as _time
+
     home = Path(user_home) if user_home else Path.home()
     encoded = _encode_workdir_for_claude_projects(workdir)
     proj_dir = home / ".claude" / "projects" / encoded
     if not proj_dir.is_dir():
         return False
+    candidates = []
     for entry in proj_dir.glob("*.jsonl"):
         try:
-            if entry.is_file() and entry.stat().st_size > 0:
-                return True
+            st = entry.stat()
+            if entry.is_file() and st.st_size > 0:
+                candidates.append((st.st_mtime, entry))
         except OSError:
             continue
-    return False
+    if not candidates:
+        return False
+    if max_age_minutes is not None:
+        newest_mtime = max(mtime for mtime, _ in candidates)
+        age_minutes = (_time.time() - newest_mtime) / 60
+        if age_minutes > max_age_minutes:
+            logger.info(
+                "session age %.1f min > max_age_minutes=%d for %s, treating as stale",
+                age_minutes,
+                max_age_minutes,
+                workdir,
+            )
+            return False
+    return True
 
 
 def _has_src_files(config: AgentConfig) -> bool:
@@ -96,10 +120,18 @@ class ClaudeCodeRuntime(RuntimeBase):
             parts.append(flag)
 
         mode = config.claude.session
+        max_age = config.claude.continue_max_age_minutes
         if mode == "continue":
-            parts.append("--continue")
+            if max_age is not None and not _session_resumable(config.expanded_workdir, max_age_minutes=max_age):
+                logger.warning(
+                    "session=continue: session too stale (max_age=%d min) for %s, launching fresh",
+                    max_age,
+                    config.expanded_workdir,
+                )
+            else:
+                parts.append("--continue")
         elif mode == "continue-or-new":
-            if _session_resumable(config.expanded_workdir):
+            if _session_resumable(config.expanded_workdir, max_age_minutes=max_age):
                 parts.append("--continue")
                 logger.info(
                     "session=continue-or-new: resumable session found for %s, passing --continue",
@@ -110,6 +142,22 @@ class ClaudeCodeRuntime(RuntimeBase):
                     "session=continue-or-new: no resumable session for %s, launching fresh",
                     config.expanded_workdir,
                 )
+        elif mode == "resume":
+            resume_id = config.claude.resume_id.strip()
+            if resume_id:
+                parts.append(f"--resume '{resume_id}'")
+                logger.info(
+                    "session=resume: passing --resume %s for %s",
+                    resume_id,
+                    config.expanded_workdir,
+                )
+            else:
+                # No explicit ID — fall back to --continue (most recent session)
+                logger.warning(
+                    "session=resume: no resume_id set for %s, falling back to --continue",
+                    config.expanded_workdir,
+                )
+                parts.append("--continue")
         # mode == "new" (or any other): no --continue flag
 
         return " ".join(parts)

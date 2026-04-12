@@ -22,7 +22,13 @@ class ClaudeSpec:
     #   continue-or-new  try --continue, fall back to a fresh launch if no prior session (default)
     #   continue         always pass --continue (fails if no prior session exists)
     #   new              never pass --continue
+    #   resume           pass --resume <resume_id> (explicit session ID)
     session: str = "continue-or-new"
+    # Only resume if the most recent session jsonl is newer than this many minutes.
+    # None = no age check (always resume if session exists).
+    continue_max_age_minutes: int | None = None
+    # Explicit session ID to pass to --resume. Only used when session="resume".
+    resume_id: str = ""
     auto_accept: bool = True
 
 
