@@ -17,6 +17,8 @@ def _isolated_cache(tmp_path, monkeypatch):
     monkeypatch.setenv("SCITEX_AGENT_CACHE_DIR", str(tmp_path))
     # Reset the sidecar registry between tests so state doesn't leak.
     snap_mod._SIDECARS.clear()
+    # Stub out the agent_meta shell-out; tests that need it override.
+    monkeypatch.setattr(snap_mod, "fetch_agent_meta", lambda *a, **k: None)
     yield
     snap_mod._SIDECARS.clear()
 
@@ -183,6 +185,51 @@ def test_snapshot_env_override_cache_dir(tmp_path, monkeypatch):
     )
     snap_mod.take_snapshot("envy")
     assert (alt / "envy.latest.json").exists()
+
+
+def test_snapshot_includes_agent_meta_when_available(monkeypatch):
+    """A live ContextManager with last_meta exposes it in gather_snapshot."""
+    from scitex_agent_container import context_manager as cm_mod
+    from scitex_agent_container.config import ContextManagementConfig
+
+    sample_meta = {
+        "agent": "live1",
+        "alive": True,
+        "subagents": 2,
+        "context_pct": 57.5,
+        "current_tool": "Bash",
+        "last_activity": "2026-04-13T05:12:00.665Z",
+        "model": "claude-opus-4-6",
+        "extra_field_ignored": "yes",
+    }
+    fake = cm_mod.ContextManager(
+        agent_name="live1",
+        session_name="live1",
+        config=ContextManagementConfig(),
+        dispatcher=lambda *a, **k: None,
+        capture=lambda _s: "",
+    )
+    fake.last_meta = sample_meta
+    fake.last_percent = 57.5
+    monkeypatch.setitem(cm_mod._SENSORS, "live1", fake)
+    try:
+        snap = snap_mod.gather_snapshot("live1", session="live1")
+    finally:
+        cm_mod._SENSORS.pop("live1", None)
+
+    assert snap["agent_meta"] is not None
+    assert snap["agent_meta"]["context_pct"] == 57.5
+    assert snap["agent_meta"]["current_tool"] == "Bash"
+    assert snap["agent_meta"]["model"] == "claude-opus-4-6"
+    # Projected down to known keys (no extras)
+    assert "extra_field_ignored" not in snap["agent_meta"]
+    assert snap["context_percent"] == 57.5
+
+
+def test_snapshot_agent_meta_null_when_unavailable():
+    """No sensor + fetch_agent_meta returning None → agent_meta is None."""
+    snap = snap_mod.gather_snapshot("ghost", session="ghost")
+    assert snap["agent_meta"] is None
 
 
 def test_tmux_names_is_array(monkeypatch):

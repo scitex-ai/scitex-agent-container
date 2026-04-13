@@ -25,7 +25,23 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .context_manager import get_sensor
+from .context_manager import fetch_agent_meta, get_sensor
+
+# Keys from agent_meta.py we surface in snapshots / status --json.
+_AGENT_META_KEYS = (
+    "alive",
+    "subagents",
+    "context_pct",
+    "current_tool",
+    "last_activity",
+    "model",
+)
+
+
+def _project_agent_meta(meta: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not meta:
+        return None
+    return {k: meta.get(k) for k in _AGENT_META_KEYS if k in meta}
 
 logger = logging.getLogger(__name__)
 
@@ -297,6 +313,21 @@ def gather_snapshot(agent: str, *, session: str | None = None) -> dict[str, Any]
     sensor = get_sensor(agent)
     context_percent = sensor.last_percent if sensor is not None else None
 
+    # Prefer a live sensor's cached meta to avoid an extra shell-out per
+    # tick. Fall back to a direct fetch when no sensor is running.
+    meta_full: dict[str, Any] | None = None
+    if sensor is not None and sensor.last_meta is not None:
+        meta_full = sensor.last_meta
+    else:
+        meta_full = fetch_agent_meta(agent)
+    agent_meta_block = _project_agent_meta(meta_full)
+    if (
+        context_percent is None
+        and agent_meta_block is not None
+        and isinstance(agent_meta_block.get("context_pct"), (int, float))
+    ):
+        context_percent = float(agent_meta_block["context_pct"])
+
     tmux_pids = _probe_tmux_pids(session or agent)
 
     claude_pid: int | None = None
@@ -322,6 +353,7 @@ def gather_snapshot(agent: str, *, session: str | None = None) -> dict[str, Any]
         "nproc_max": nproc_max,
         "fork_pressure_pct": fork_pct,
         "context_percent": context_percent,
+        "agent_meta": agent_meta_block,
         "pids": {
             "agent": os.getpid(),
             "claude_code": claude_pid,
