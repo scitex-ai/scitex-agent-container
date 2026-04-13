@@ -61,6 +61,7 @@ docs = [
 
 [project.scripts]
 scitex-agent-container = "scitex_agent_container.cli:main"
+sac = "scitex_agent_container.cli:main"
 
 [project.entry-points."scitex_dev.docs"]
 scitex-agent-container = "scitex_agent_container"

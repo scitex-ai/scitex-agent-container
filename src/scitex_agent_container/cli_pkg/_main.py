@@ -10,6 +10,7 @@ from __future__ import annotations
 import click
 
 from ._helpers import HelpRecursiveGroup
+from .account_cmds import account, quota_watch
 from .build_cmds import build, check, validate
 from .info_cmds import attach, find, list_python_apis, logs
 from .lifecycle_cmds import cleanup, restart, start, stop
@@ -68,6 +69,10 @@ main.add_command(list_python_apis)  # registered as 'list-python-apis'
 main.add_command(check)
 main.add_command(validate)
 main.add_command(build)
+
+# Account management and quota monitoring
+main.add_command(account)
+main.add_command(quota_watch)
 
 
 if __name__ == "__main__":
