@@ -9,10 +9,63 @@ import click
 from rich.table import Table
 
 from ..config import load_config
+from ..credentials import read_credentials_metadata
 from ..health import health_check
 from ..lifecycle import agent_status
 from ..registry import Registry
 from ._helpers import _json_flag, console, print_agent_list, print_agent_list_json
+
+
+def _format_claude_account_block(meta: dict) -> list[str]:
+    """Render the ``Claude Code account`` section as a list of text lines.
+
+    Missing values render as ``-``. Returns ``[]`` if no fields are set
+    (i.e. every value is ``None``) so the section is omitted entirely.
+    """
+    if not any(v is not None for v in meta.values()):
+        return []
+
+    def _fmt(value):
+        return "-" if value is None else str(value)
+
+    email = _fmt(meta.get("email_address"))
+    org = _fmt(meta.get("organization_name"))
+    display = _fmt(meta.get("display_name"))
+    billing = _fmt(meta.get("billing_type"))
+    sub_type = meta.get("subscription_type")
+    tier = meta.get("rate_limit_tier")
+    if sub_type is None and tier is None:
+        sub_line = "-"
+    else:
+        sub_line = f"{_fmt(sub_type)}  (tier: {_fmt(tier)})"
+    avail = meta.get("has_available_subscription")
+    if avail is None:
+        avail_line = "-"
+    else:
+        avail_line = "yes" if avail else "no"
+    extra_enabled = meta.get("has_extra_usage_enabled")
+    extra_reason = meta.get("cached_extra_usage_disabled_reason")
+    if extra_enabled is None and extra_reason is None:
+        extra_line = "-"
+    elif extra_enabled:
+        extra_line = "enabled"
+    else:
+        extra_line = "disabled"
+        if extra_reason:
+            extra_line += f" (reason: {extra_reason})"
+    since = _fmt(meta.get("subscription_created_at"))
+
+    return [
+        "Claude Code account",
+        f"  Email:          {email}",
+        f"  Organization:   {org}",
+        f"  Display name:   {display}",
+        f"  Billing type:   {billing}",
+        f"  Subscription:   {sub_line}",
+        f"  Available:      {avail_line}",
+        f"  Extra usage:    {extra_line}",
+        f"  Since:          {since}",
+    ]
 
 
 @click.command()
@@ -53,10 +106,26 @@ def status(ctx: click.Context, name: str | None, as_json: bool) -> None:
             table.add_row(key, str(value), style=style)
         console.print(table)
     else:
+        try:
+            claude_account = read_credentials_metadata()
+        except Exception:
+            claude_account = {}
+
         if use_json:
-            print_agent_list_json(registry)
+            from ._helpers import get_agent_list_data
+
+            payload = {
+                "agents": get_agent_list_data(registry),
+                "claude_account": claude_account,
+            }
+            click.echo(json_mod.dumps(payload, indent=2))
         else:
             print_agent_list(registry)
+            lines = _format_claude_account_block(claude_account)
+            if lines:
+                console.print("")
+                for line in lines:
+                    console.print(line)
 
 
 @click.command(name="list")
