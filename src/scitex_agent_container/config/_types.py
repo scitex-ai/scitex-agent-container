@@ -97,6 +97,25 @@ class RemoteSpec:
 
 
 @dataclass
+class ContextManagementConfig:
+    """Context-lifecycle policy for an agent.
+
+    Defaults mirror ``strategy="noop"`` so absence of the ``context_management``
+    block preserves existing behavior (sensor disabled).
+    """
+
+    trigger_at_percent: float = 70.0
+    strategy: str = "noop"  # "compact" | "restart" | "noop"
+    warn_before_n_checks: int = 0
+    check_interval_seconds: int = 300
+    state_file: str = "~/.scitex/agent-container/state/<agent>.json"
+
+    @property
+    def enabled(self) -> bool:
+        return self.strategy != "noop"
+
+
+@dataclass
 class SkillsSpec:
     required: list[str] = field(default_factory=list)  # Auto-loaded at startup
     available: list[str] = field(default_factory=list)  # Available but not auto-loaded
@@ -130,6 +149,9 @@ class AgentConfig:
     orochi: OrochiSpec = field(default_factory=OrochiSpec)
     remote: RemoteSpec = field(default_factory=RemoteSpec)
     skills: SkillsSpec = field(default_factory=SkillsSpec)
+    context_management: ContextManagementConfig = field(
+        default_factory=ContextManagementConfig
+    )
     startup_commands: list[StartupCommand] = field(default_factory=list)
     mcp_servers: dict[str, dict] = field(default_factory=dict)
     multiplexer: str = "tmux"  # "tmux" (default) or "screen"
