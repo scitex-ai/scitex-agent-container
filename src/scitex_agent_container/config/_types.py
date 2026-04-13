@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, Dict
 
 
 @dataclass
@@ -122,6 +123,53 @@ class SkillsSpec:
 
 
 @dataclass
+class ListenPort:
+    """Declaration of a port/socket an external tool binds on behalf of an agent.
+
+    The container NEVER binds these — it just validates the shape and
+    echoes them in ``status --json`` so orchestrators can see what
+    sidecars are expected to exist. ``owner`` is free-form (e.g.
+    ``"orochi"``) to identify the plugin that actually listens.
+    """
+
+    port: int = 0
+    proto: str = "tcp"  # tcp | udp | unix
+    path: str = ""  # unix-socket path (when proto == "unix")
+    name: str = ""
+    owner: str = ""
+
+
+@dataclass
+class HookSpec:
+    """All hook points supported by the container.
+
+    Each entry is a list of opaque commands — shell strings or http(s)
+    URLs. The container executes them fire-and-forget; errors are
+    logged but never raised to the caller. Absent keys default to
+    empty lists (feature disabled).
+    """
+
+    pre_start: list[str] = field(default_factory=list)
+    post_start: list[str] = field(default_factory=list)
+    pre_stop: list[str] = field(default_factory=list)
+    post_stop: list[str] = field(default_factory=list)
+    on_compact: list[str] = field(default_factory=list)
+    on_restart: list[str] = field(default_factory=list)
+    on_diff: list[str] = field(default_factory=list)
+
+    def counts(self) -> dict[str, int]:
+        return {
+            "pre_start": len(self.pre_start),
+            "post_start": len(self.post_start),
+            "pre_stop": len(self.pre_stop),
+            "post_stop": len(self.post_stop),
+            "on_compact": len(self.on_compact),
+            "on_restart": len(self.on_restart),
+            "on_diff": len(self.on_diff),
+        }
+
+
+@dataclass
 class StartupCommand:
     delay: int = 0  # seconds after startup
     command: str = ""
@@ -145,6 +193,8 @@ class AgentConfig:
     watchdog: WatchdogSpec = field(default_factory=WatchdogSpec)
     restart: RestartSpec = field(default_factory=RestartSpec)
     hooks: dict[str, list[str]] = field(default_factory=dict)
+    listen: list[ListenPort] = field(default_factory=list)
+    extensions: Dict[str, Any] = field(default_factory=dict)
     telegram: TelegramSpec = field(default_factory=TelegramSpec)
     orochi: OrochiSpec = field(default_factory=OrochiSpec)
     remote: RemoteSpec = field(default_factory=RemoteSpec)

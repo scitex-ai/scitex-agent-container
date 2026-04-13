@@ -237,12 +237,40 @@ def run_forever(cm: ContextManager) -> None:
         try:
             from .snapshot import snapshot_tick
 
-            snapshot_tick(cm.agent_name, session=cm.session_name)
+            snapshot_tick(
+                cm.agent_name,
+                session=cm.session_name,
+                agent_config=cm.agent_config,
+            )
         except Exception:  # pragma: no cover — defensive
             logger.exception("snapshot[%s]: piggyback tick failed", cm.agent_name)
         # Use Event.wait so stop() breaks us out promptly.
         if cm._stop.wait(interval):
             break
+
+
+def _last_percent_for(agent_name: str) -> float | None:
+    cm = _SENSORS.get(agent_name)
+    return cm.last_percent if cm is not None else None
+
+
+def _fire_hook(
+    agent_config: AgentConfig,
+    hook_name: str,
+    context: dict[str, Any] | None = None,
+) -> None:
+    """Non-blocking fire of an ``on_*`` hook. Swallows all errors."""
+    try:
+        from .hooks import run_hook
+
+        commands = (agent_config.hooks or {}).get(hook_name, []) or []
+        run_hook(agent_config.name, hook_name, commands, context=context)
+    except Exception:  # pragma: no cover — defensive
+        logger.exception(
+            "context_manager[%s]: %s hook dispatch failed",
+            agent_config.name,
+            hook_name,
+        )
 
 
 def default_dispatcher(strategy: str, agent_config: AgentConfig | None) -> None:
@@ -260,11 +288,27 @@ def default_dispatcher(strategy: str, agent_config: AgentConfig | None) -> None:
         time.sleep(0.2)
         TmuxManager.send_keys(session, "/compact", "Enter")
         logger.info("context_manager[%s]: sent /compact", agent_config.name)
+        _fire_hook(
+            agent_config,
+            "on_compact",
+            context={
+                "percent": _last_percent_for(agent_config.name),
+                "strategy": "compact",
+            },
+        )
         return
 
     if strategy == "restart":
         from .lifecycle import agent_restart
 
+        _fire_hook(
+            agent_config,
+            "on_restart",
+            context={
+                "percent": _last_percent_for(agent_config.name),
+                "strategy": "restart",
+            },
+        )
         try:
             agent_restart(agent_config.name)
         except Exception:

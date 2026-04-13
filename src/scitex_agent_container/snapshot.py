@@ -526,9 +526,38 @@ def read_latest(agent: str) -> dict[str, Any] | None:
         return None
 
 
-def snapshot_tick(agent: str, *, session: str | None = None) -> None:
-    """Daemon helper: take a snapshot, swallow errors."""
+def snapshot_tick(
+    agent: str,
+    *,
+    session: str | None = None,
+    agent_config: Any = None,
+) -> None:
+    """Daemon helper: take a snapshot, swallow errors.
+
+    When ``agent_config`` is supplied and the fresh snapshot has
+    ``has_diff``, the configured ``hooks.on_diff`` commands are fired
+    via the non-blocking hook pool (todo#286 Phase 4).
+    """
     try:
-        take_snapshot(agent, session=session)
+        snap = take_snapshot(agent, session=session)
     except Exception:  # pragma: no cover — defensive
         logger.exception("snapshot[%s]: tick failed", agent)
+        return
+    if agent_config is not None and snap.get("has_diff"):
+        try:
+            from .hooks import run_hook
+
+            commands = (getattr(agent_config, "hooks", {}) or {}).get(
+                "on_diff", []
+            ) or []
+            run_hook(
+                agent,
+                "on_diff",
+                commands,
+                context={
+                    "diff_fields": snap.get("diff_fields", []),
+                    "timestamp": snap.get("timestamp"),
+                },
+            )
+        except Exception:  # pragma: no cover — defensive
+            logger.exception("snapshot[%s]: on_diff hook failed", agent)
