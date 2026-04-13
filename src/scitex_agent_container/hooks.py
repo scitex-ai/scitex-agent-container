@@ -10,6 +10,14 @@ All invocations are fire-and-forget via a module-level thread pool;
 logged and swallowed. This lets scitex-agent-container stay agnostic
 of orochi / telegram / any specific fleet comms: external tools plug
 in via YAML and the container runs them opaquely.
+
+Trust boundary: entries in a spec.hooks.* list execute arbitrary shell
+commands or POST to arbitrary URLs with container-scoped privileges.
+Treat agent YAML files as an RCE-equivalent trust boundary: never load a
+YAML you don't control, and never inherit hooks from an untrusted source.
+The container does not sandbox hook execution — that is by design so that
+operators can wire in system-level integrations (systemctl, cloudflared,
+notify-send, etc.).
 """
 
 from __future__ import annotations
