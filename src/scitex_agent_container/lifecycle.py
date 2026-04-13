@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .config import AgentConfig, load_config, resolve_config
 from .health import health_monitor
+from .hooks import run_hook
 from .registry import Registry
 from .runtimes.claude_code import ClaudeCodeRuntime
 
@@ -19,6 +20,31 @@ def _get_runtime(config: AgentConfig):
     if config.runtime == "claude-code":
         return ClaudeCodeRuntime()
     raise ValueError(f"Unsupported runtime: {config.runtime}")
+
+
+def _fire_forget_hook(
+    agent_name: str,
+    hook_name: str,
+    commands: list[str],
+    context: dict | None = None,
+) -> None:
+    """Invoke ``run_hook`` (non-blocking, handles URL + shell entries).
+
+    Called alongside the legacy synchronous ``_run_hooks`` path so
+    existing YAML pipes/redirects keep working unchanged while
+    external tools (orochi etc.) can additionally plug in via
+    ``http(s)://`` URLs. The legacy path filters out URL entries to
+    avoid double-dispatch of the same side-effect.
+    """
+    try:
+        run_hook(agent_name, hook_name, list(commands or []), context=context)
+    except Exception:  # pragma: no cover — defensive
+        import sys
+
+        print(
+            f"[WARN] run_hook {hook_name} dispatch failed for {agent_name}",
+            file=sys.stderr,
+        )
 
 
 def _run_hooks(hooks: list[str], extra_env: dict[str, str] | None = None) -> None:
@@ -34,6 +60,11 @@ def _run_hooks(hooks: list[str], extra_env: dict[str, str] | None = None) -> Non
     env = {**os.environ, **(extra_env or {})}
     for hook in hooks:
         if not hook:
+            continue
+        # URL entries are handled by the new fire-and-forget path
+        # (see _fire_forget_hook / hooks.run_hook). Skip them here to
+        # avoid trying to ``sh -c "https://..."``.
+        if isinstance(hook, str) and hook.startswith(("http://", "https://")):
             continue
         result = subprocess.run(
             hook, shell=True, capture_output=True, text=True, env=env
@@ -91,6 +122,7 @@ def agent_start(
 
     # Pre-start hooks
     _run_hooks(config.hooks.get("pre_start", []), extra_env=hook_env)
+    _fire_forget_hook(config.name, "pre_start", config.hooks.get("pre_start", []))
 
     # Start — pass ``force`` through so remote dispatchers (SSHRemote)
     # can relay ``--force`` to the remote CLI and skip its own
@@ -111,6 +143,7 @@ def agent_start(
 
     # Post-start hooks
     _run_hooks(config.hooks.get("post_start", []), extra_env=hook_env)
+    _fire_forget_hook(config.name, "post_start", config.hooks.get("post_start", []))
 
     # Start context-management sensor in background if enabled
     if config.context_management.enabled:
@@ -183,6 +216,7 @@ def agent_stop(
     except Exception:
         if not force:
             raise
+    _fire_forget_hook(config.name, "pre_stop", config.hooks.get("pre_stop", []))
 
     try:
         runtime.stop(config)
@@ -196,6 +230,7 @@ def agent_stop(
     except Exception:
         if not force:
             raise
+    _fire_forget_hook(config.name, "post_stop", config.hooks.get("post_stop", []))
 
     registry.remove(name)
     return True
@@ -265,6 +300,41 @@ def agent_status(name: str, registry: Registry | None = None) -> dict:
     }
     if config and config.remote.is_remote:
         result["remote"] = config.remote.host
+
+    # Hook-points / listen / extensions plumbing (todo#286 Phase 4).
+    # Counts are exposed so consumers can see what's wired up; command
+    # bodies are intentionally NOT echoed to avoid leaking URLs or
+    # secrets through status --json.
+    if config is not None:
+        hooks = config.hooks or {}
+        result["hooks_configured"] = {
+            key: len(hooks.get(key, []) or [])
+            for key in (
+                "pre_start",
+                "post_start",
+                "pre_stop",
+                "post_stop",
+                "on_compact",
+                "on_restart",
+                "on_diff",
+            )
+        }
+        result["listen"] = [
+            {
+                "port": lp.port,
+                "proto": lp.proto,
+                "path": lp.path,
+                "name": lp.name,
+                "owner": lp.owner,
+            }
+            for lp in (config.listen or [])
+        ]
+        # Opaque pass-through — echoed verbatim.
+        result["extensions"] = dict(config.extensions or {})
+    else:
+        result["hooks_configured"] = {}
+        result["listen"] = []
+        result["extensions"] = {}
 
     # Surface context-management state for fleet_watch.sh / NAS orchestrator
     # (todo#285). ``None`` when the feature is unconfigured or noop so
