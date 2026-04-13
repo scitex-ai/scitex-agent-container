@@ -10,6 +10,7 @@ from ._types import (
     ContainerSpec,
     ContextManagementConfig,
     HealthSpec,
+    ListenPort,
     OrochiSpec,
     RemoteSpec,
     RestartSpec,
@@ -17,6 +18,17 @@ from ._types import (
     StartupCommand,
     TelegramSpec,
     WatchdogSpec,
+)
+
+# All known hook keys. Unknown keys in the YAML are ignored (forward-compat).
+HOOK_KEYS = (
+    "pre_start",
+    "post_start",
+    "pre_stop",
+    "post_stop",
+    "on_compact",
+    "on_restart",
+    "on_diff",
 )
 
 
@@ -164,10 +176,49 @@ def parse_remote(spec: dict) -> RemoteSpec:
 
 def parse_hooks(spec: dict) -> dict[str, list[str]]:
     raw = spec.get("hooks", {}) or {}
-    return {
-        key: raw.get(key, []) or []
-        for key in ("pre_start", "post_start", "pre_stop", "post_stop")
-    }
+    return {key: list(raw.get(key, []) or []) for key in HOOK_KEYS}
+
+
+def parse_listen(spec: dict) -> list[ListenPort]:
+    """Parse ``spec.listen`` port/socket declarations.
+
+    Container does NOT bind these — declarations only. Entries that
+    fail validation (missing port for tcp/udp, missing path for unix)
+    are silently dropped so a malformed side-entry can't break startup.
+    """
+    raw = spec.get("listen", []) or []
+    out: list[ListenPort] = []
+    if not isinstance(raw, list):
+        return out
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        proto = str(item.get("proto", "tcp") or "tcp")
+        try:
+            port = int(item.get("port", 0) or 0)
+        except (TypeError, ValueError):
+            port = 0
+        path = str(item.get("path", "") or "")
+        if proto in ("tcp", "udp") and port <= 0:
+            continue
+        if proto == "unix" and not path:
+            continue
+        out.append(
+            ListenPort(
+                port=port,
+                proto=proto,
+                path=path,
+                name=str(item.get("name", "") or ""),
+                owner=str(item.get("owner", "") or ""),
+            )
+        )
+    return out
+
+
+def parse_extensions(spec: dict) -> dict:
+    """Return ``spec.extensions`` verbatim (opaque pass-through)."""
+    raw = spec.get("extensions", {}) or {}
+    return dict(raw) if isinstance(raw, dict) else {}
 
 
 def parse_startup_commands(spec: dict) -> list[StartupCommand]:
