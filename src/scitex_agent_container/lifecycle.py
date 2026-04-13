@@ -281,6 +281,34 @@ def agent_status(name: str, registry: Registry | None = None) -> dict:
     else:
         result["context_management"] = None
 
+    # Expose the full agent_meta dict from the live sensor if present
+    # (todo#285 Phase 2b). This is the transcript-derived source of
+    # truth used by the dashboard when it's available.
+    try:
+        from .context_manager import get_sensor as _gs
+
+        _live = _gs(name)
+        if _live is not None and _live.last_meta is not None:
+            result["agent_meta"] = _live.last_meta
+    except Exception:
+        pass
+
+    # Snapshot block — cheap read from cache (todo#286). Never re-gathers.
+    try:
+        from .snapshot import read_latest
+
+        latest = read_latest(name)
+        if latest is not None:
+            result["snapshot"] = {
+                "timestamp": latest.get("timestamp"),
+                "has_diff": latest.get("has_diff", False),
+                "diff_fields": latest.get("diff_fields", []),
+            }
+        else:
+            result["snapshot"] = None
+    except Exception:
+        result["snapshot"] = None
+
     # Enrich with claude-hud-style metadata. Canonical source for the
     # Agents-tab dashboard; the MCP sidecar heartbeat shells out to this
     # command rather than duplicating the logic in TypeScript.

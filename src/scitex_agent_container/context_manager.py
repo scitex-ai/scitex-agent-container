@@ -7,11 +7,15 @@ the configured threshold. See todo#284 / todo#285.
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import re
+import subprocess
 import threading
 import time
-from typing import Callable
+from pathlib import Path
+from typing import Any, Callable
 
 from .config import AgentConfig, ContextManagementConfig
 
@@ -41,6 +45,49 @@ def parse_context_percent(pane_text: str) -> float | None:
             if 0.0 <= value <= 100.0:
                 return value
     return None
+
+
+_DEFAULT_AGENT_META_SCRIPT = "~/.scitex/orochi/scripts/agent_meta.py"
+
+
+def fetch_agent_meta(
+    agent_name: str, script_path: str | None = None
+) -> dict[str, Any] | None:
+    """Shell out to ``agent_meta.py <agent>`` and return its JSON dict.
+
+    Returns ``None`` on ANY failure (missing script, bad JSON, non-zero
+    exit, timeout). Never raises. The resolved script path can be
+    overridden via the ``SCITEX_AGENT_META_SCRIPT`` env var or the
+    ``script_path`` argument (argument wins).
+    """
+    path = (
+        script_path
+        or os.environ.get("SCITEX_AGENT_META_SCRIPT")
+        or _DEFAULT_AGENT_META_SCRIPT
+    )
+    resolved = str(Path(path).expanduser())
+    try:
+        r = subprocess.run(
+            [resolved, agent_name],
+            timeout=5,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (
+        FileNotFoundError,
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+        OSError,
+    ):
+        return None
+    try:
+        data = json.loads(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else None
+    except (json.JSONDecodeError, IndexError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return data
 
 
 # Default pane-capture fn. Injectable for tests; production uses tmux.
@@ -87,6 +134,7 @@ class ContextManager:
         self._fired = False  # latch — don't re-dispatch until we observe a drop
         self._ticks_near_threshold = 0
         self.last_percent: float | None = None
+        self.last_meta: dict[str, Any] | None = None
 
     def stop(self) -> None:
         self._stop.set()
@@ -96,12 +144,25 @@ class ContextManager:
         return self._stop.is_set()
 
     def tick(self) -> float | None:
-        """One sensor probe. Returns the observed percent, or None."""
-        pane = self.capture(self.session_name)
-        percent = parse_context_percent(pane)
+        """One sensor probe. Returns the observed percent, or None.
+
+        Preferred source is the Orochi ``agent_meta.py`` helper which
+        reads Claude's live transcript; falls back to scraping the tmux
+        pane for a claude-hud statusline when the helper is unavailable.
+        """
+        percent: float | None = None
+        meta = fetch_agent_meta(self.agent_name)
+        if meta is not None:
+            self.last_meta = meta
+            raw = meta.get("context_pct")
+            if isinstance(raw, (int, float)):
+                percent = float(raw)
+        if percent is None:
+            pane = self.capture(self.session_name)
+            percent = parse_context_percent(pane)
         if percent is None:
             logger.debug(
-                "context_manager[%s]: no percent found in pane", self.agent_name
+                "context_manager[%s]: no percent from meta or pane", self.agent_name
             )
             return None
         self.last_percent = percent
@@ -162,13 +223,23 @@ class ContextManager:
 
 
 def run_forever(cm: ContextManager) -> None:
-    """Sensor loop. Cooperatively cancellable via ``cm.stop()``."""
+    """Sensor loop. Cooperatively cancellable via ``cm.stop()``.
+
+    Piggybacks a self-snapshot tick after each context-manager tick so
+    both daemons share a single thread (todo#286).
+    """
     interval = max(1, int(cm.config.check_interval_seconds))
     while not cm.stopped:
         try:
             cm.tick()
         except Exception:  # pragma: no cover — defensive
             logger.exception("context_manager[%s]: tick failed", cm.agent_name)
+        try:
+            from .snapshot import snapshot_tick
+
+            snapshot_tick(cm.agent_name, session=cm.session_name)
+        except Exception:  # pragma: no cover — defensive
+            logger.exception("snapshot[%s]: piggyback tick failed", cm.agent_name)
         # Use Event.wait so stop() breaks us out promptly.
         if cm._stop.wait(interval):
             break
@@ -231,6 +302,26 @@ def start_sensor(agent_config: AgentConfig) -> ContextManager | None:
     )
     _SENSORS[agent_config.name] = cm
     thread.start()
+    try:
+        from .snapshot import register_sidecar
+
+        register_sidecar(
+            agent_config.name,
+            kind="thread",
+            name="context_manager",
+            thread=thread,
+        )
+        register_sidecar(
+            agent_config.name,
+            kind="thread",
+            name="snapshot",
+            thread=thread,
+        )
+    except Exception:  # pragma: no cover — defensive
+        logger.exception(
+            "context_manager[%s]: sidecar registration failed",
+            agent_config.name,
+        )
     logger.info(
         "context_manager[%s]: sensor started (strategy=%s, threshold=%.1f%%, interval=%ss)",
         agent_config.name,
