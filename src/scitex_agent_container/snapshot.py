@@ -18,6 +18,7 @@ import logging
 import os
 import platform
 import re
+import shutil
 import socket
 import subprocess
 import threading
@@ -170,14 +171,63 @@ def _probe_tmux() -> tuple[int | None, list[str]]:
 
 
 def _probe_screen_count() -> int | None:
-    out = _run(["screen", "-ls"])
-    if not out:
-        return 0 if _run(["which", "screen"]) == "" else None
+    """Return the number of live GNU screen sessions.
+
+    Contract:
+    - ``None`` iff the ``screen`` binary is not installed at all.
+    - ``0`` if ``screen`` is installed but no sessions are live (``screen -ls``
+      prints ``No Sockets found ...`` and exits non-zero — that is NOT an
+      error, it means zero sessions).
+    - A positive int when one or more sessions are listed.
+    """
+    if shutil.which("screen") is None:
+        return None
+    try:
+        r = subprocess.run(
+            ["screen", "-ls"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError):
+        # Binary vanished between which() and run(); treat as not installed.
+        return None
+    combined = (r.stdout or "") + (r.stderr or "")
+    if "No Sockets found" in combined:
+        return 0
     n = 0
-    for ln in out.splitlines():
+    for ln in (r.stdout or "").splitlines():
         if re.match(r"\s*\d+\.", ln):
             n += 1
     return n
+
+
+def _probe_claude_pid() -> int | None:
+    """Return the PID of the live ``claude`` CLI child, or ``None``.
+
+    The naive ``pgrep -f claude`` matches ANY process whose full command
+    line contains the substring ``claude`` — including the
+    ``scitex-agent-container`` python wrapper itself (whose argv often
+    mentions claude-code, claude_code, or a claude agent name). We must
+    exclude that wrapper and only pick the real ``claude`` CLI child that
+    ``runtimes/claude_code.py`` execs (command basename == ``claude``).
+
+    Strategy: prefer ``pgrep -n -x claude`` (exact command-name match).
+    """
+    try:
+        r = subprocess.run(
+            ["pgrep", "-n", "-x", "claude"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return None
+    first = (r.stdout or "").strip().splitlines()
+    if not first:
+        return None
+    token = first[0].strip()
+    return int(token) if token.isdigit() else None
 
 
 def _proc_count(pattern: str) -> int | None:
@@ -330,10 +380,7 @@ def gather_snapshot(agent: str, *, session: str | None = None) -> dict[str, Any]
 
     tmux_pids = _probe_tmux_pids(session or agent)
 
-    claude_pid: int | None = None
-    out = _run(["pgrep", "-n", "-f", "claude"])
-    if out.strip().isdigit():
-        claude_pid = int(out.strip().splitlines()[0])
+    claude_pid = _probe_claude_pid()
 
     return {
         "agent": agent,

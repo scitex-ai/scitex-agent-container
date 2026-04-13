@@ -232,6 +232,83 @@ def test_snapshot_agent_meta_null_when_unavailable():
     assert snap["agent_meta"] is None
 
 
+class _FakeCompleted:
+    def __init__(self, stdout="", stderr="", returncode=0):
+        self.stdout = stdout
+        self.stderr = stderr
+        self.returncode = returncode
+
+
+def test_screen_count_zero_when_installed_no_sessions(monkeypatch):
+    """screen installed + no live sockets → 0 (not None)."""
+    monkeypatch.setattr(
+        snap_mod.shutil, "which", lambda name: "/usr/bin/screen" if name == "screen" else None
+    )
+
+    def fake_run(cmd, *a, **kw):
+        assert cmd[0] == "screen"
+        return _FakeCompleted(
+            stdout="No Sockets found in /var/run/screen/S-user.\n",
+            stderr="",
+            returncode=1,
+        )
+
+    monkeypatch.setattr(snap_mod.subprocess, "run", fake_run)
+    result = snap_mod._probe_screen_count()
+    assert result == 0
+    assert result is not None
+
+
+def test_screen_count_none_when_not_installed(monkeypatch):
+    monkeypatch.setattr(snap_mod.shutil, "which", lambda name: None)
+    assert snap_mod._probe_screen_count() is None
+
+
+def test_screen_count_positive_when_sessions_listed(monkeypatch):
+    monkeypatch.setattr(
+        snap_mod.shutil, "which", lambda name: "/usr/bin/screen"
+    )
+    listing = (
+        "There are screens on:\n"
+        "\t12345.head-mba\t(Detached)\n"
+        "\t12346.worker-1\t(Attached)\n"
+        "2 Sockets in /var/run/screen/S-user.\n"
+    )
+    monkeypatch.setattr(
+        snap_mod.subprocess,
+        "run",
+        lambda *a, **k: _FakeCompleted(stdout=listing, returncode=0),
+    )
+    assert snap_mod._probe_screen_count() == 2
+
+
+def test_claude_pid_does_not_match_container_python(monkeypatch):
+    """pgrep -x claude must not match the container python wrapper."""
+    captured = {}
+
+    def fake_run(cmd, *a, **kw):
+        captured["cmd"] = cmd
+        # pgrep -x claude only returns PIDs whose comm == "claude",
+        # so the python container wrapper (comm == "python3") is excluded.
+        assert cmd == ["pgrep", "-n", "-x", "claude"]
+        return _FakeCompleted(stdout="12345\n", returncode=0)
+
+    monkeypatch.setattr(snap_mod.subprocess, "run", fake_run)
+    assert snap_mod._probe_claude_pid() == 12345
+    # Sanity: the query we issued is command-name exact (-x), not full -f.
+    assert "-x" in captured["cmd"]
+    assert "-f" not in captured["cmd"]
+
+
+def test_claude_pid_none_when_no_match(monkeypatch):
+    monkeypatch.setattr(
+        snap_mod.subprocess,
+        "run",
+        lambda *a, **k: _FakeCompleted(stdout="", returncode=1),
+    )
+    assert snap_mod._probe_claude_pid() is None
+
+
 def test_tmux_names_is_array(monkeypatch):
     # Regression guard: tmux_names must remain a JSON array, not joined.
     monkeypatch.setattr(
