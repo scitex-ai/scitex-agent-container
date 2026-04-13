@@ -281,6 +281,22 @@ def agent_status(name: str, registry: Registry | None = None) -> dict:
     else:
         result["context_management"] = None
 
+    # Snapshot block — cheap read from cache (todo#286). Never re-gathers.
+    try:
+        from .snapshot import read_latest
+
+        latest = read_latest(name)
+        if latest is not None:
+            result["snapshot"] = {
+                "timestamp": latest.get("timestamp"),
+                "has_diff": latest.get("has_diff", False),
+                "diff_fields": latest.get("diff_fields", []),
+            }
+        else:
+            result["snapshot"] = None
+    except Exception:
+        result["snapshot"] = None
+
     # Enrich with claude-hud-style metadata. Canonical source for the
     # Agents-tab dashboard; the MCP sidecar heartbeat shells out to this
     # command rather than duplicating the logic in TypeScript.
