@@ -266,6 +266,21 @@ def agent_status(name: str, registry: Registry | None = None) -> dict:
     if config and config.remote.is_remote:
         result["remote"] = config.remote.host
 
+    # Surface context-management state for fleet_watch.sh / NAS orchestrator
+    # (todo#285). ``None`` when the feature is unconfigured or noop so
+    # consumers can distinguish "disabled" from "0%".
+    if config and config.context_management.enabled:
+        from .context_manager import get_sensor
+
+        sensor = get_sensor(name)
+        result["context_management"] = {
+            "percent": sensor.last_percent if sensor is not None else None,
+            "strategy": config.context_management.strategy,
+            "trigger_at_percent": config.context_management.trigger_at_percent,
+        }
+    else:
+        result["context_management"] = None
+
     # Enrich with claude-hud-style metadata. Canonical source for the
     # Agents-tab dashboard; the MCP sidecar heartbeat shells out to this
     # command rather than duplicating the logic in TypeScript.

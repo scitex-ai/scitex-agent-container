@@ -54,6 +54,17 @@ Dispatcher = Callable[[str, AgentConfig], None]
 Capturer = Callable[[str], str]
 
 
+# Module-level registry of live sensors keyed by agent name. Mirrors the
+# pattern used by health_monitor; consumers (e.g. ``agent_status``) read
+# this to surface the most recent context-usage percent in status --json.
+_SENSORS: dict[str, "ContextManager"] = {}
+
+
+def get_sensor(agent_name: str) -> "ContextManager | None":
+    """Return the live sensor for ``agent_name`` if one is running."""
+    return _SENSORS.get(agent_name)
+
+
 class ContextManager:
     """Sensor + strategy dispatcher for a single agent."""
 
@@ -75,6 +86,7 @@ class ContextManager:
         self._stop = threading.Event()
         self._fired = False  # latch — don't re-dispatch until we observe a drop
         self._ticks_near_threshold = 0
+        self.last_percent: float | None = None
 
     def stop(self) -> None:
         self._stop.set()
@@ -92,6 +104,7 @@ class ContextManager:
                 "context_manager[%s]: no percent found in pane", self.agent_name
             )
             return None
+        self.last_percent = percent
 
         threshold = self.config.trigger_at_percent
         logger.debug(
@@ -216,6 +229,7 @@ def start_sensor(agent_config: AgentConfig) -> ContextManager | None:
         daemon=True,
         name=f"context-manager[{agent_config.name}]",
     )
+    _SENSORS[agent_config.name] = cm
     thread.start()
     logger.info(
         "context_manager[%s]: sensor started (strategy=%s, threshold=%.1f%%, interval=%ss)",
