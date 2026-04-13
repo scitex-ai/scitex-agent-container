@@ -285,7 +285,16 @@ def _probe_mem_darwin() -> tuple[int | None, int | None, int | None]:
         m = re.match(r"(.+?):\s+(\d+)", ln)
         if m:
             pages[m.group(1).strip()] = int(m.group(2))
-    free_pages = pages.get("Pages free", 0) + pages.get("Pages speculative", 0)
+    # Darwin gotcha: "Pages free" alone is always tiny (~100MB) because
+    # macOS aggressively uses inactive + speculative pages as cache and
+    # reclaims them on demand. Counting only "free" produces false-positive
+    # mem-CRITICAL alerts (msg#8603 / todo#310). The true "available"
+    # memory is Pages free + Pages inactive + Pages speculative.
+    free_pages = (
+        pages.get("Pages free", 0)
+        + pages.get("Pages inactive", 0)
+        + pages.get("Pages speculative", 0)
+    )
     free_bytes = free_pages * page_size
     used_bytes = (total - free_bytes) if total is not None else None
     return total, used_bytes, free_bytes

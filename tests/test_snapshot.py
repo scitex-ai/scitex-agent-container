@@ -282,6 +282,53 @@ def test_screen_count_positive_when_sessions_listed(monkeypatch):
     assert snap_mod._probe_screen_count() == 2
 
 
+def test_probe_mem_darwin_counts_inactive_and_speculative(monkeypatch):
+    """Darwin mem must count free + inactive + speculative as available.
+
+    Regression for msg#8603 / todo#310: the previous implementation only
+    summed free + speculative, which fired false-positive mem-CRITICAL
+    alerts on MBA where ~6GB lived in inactive+speculative cache while
+    free was a typical ~100MB.
+    """
+    monkeypatch.setattr(snap_mod.platform, "system", lambda: "Darwin")
+
+    page_size = 4096
+    # 16 GB total, only 25600 pages (100 MB) "free", 1.5M pages (6 GB)
+    # inactive, 50k pages (200 MB) speculative — typical macOS at idle.
+    free_pgs = 25_600
+    inactive_pgs = 1_572_864
+    speculative_pgs = 51_200
+    total_bytes = 16 * 1024 ** 3
+    expected_free_bytes = (free_pgs + inactive_pgs + speculative_pgs) * page_size
+
+    vm_stat_output = (
+        "Mach Virtual Memory Statistics: (page size of 4096 bytes)\n"
+        f"Pages free:                              {free_pgs}.\n"
+        f"Pages active:                            500000.\n"
+        f"Pages inactive:                          {inactive_pgs}.\n"
+        f"Pages speculative:                       {speculative_pgs}.\n"
+        f"Pages wired down:                        200000.\n"
+    )
+
+    def fake_run(cmd, *a, **kw):
+        if cmd[:2] == ["/usr/sbin/sysctl", "-n"] and cmd[2] == "hw.memsize":
+            return _FakeCompleted(stdout=f"{total_bytes}\n", returncode=0)
+        if cmd[0] == "vm_stat":
+            return _FakeCompleted(stdout=vm_stat_output, returncode=0)
+        return _FakeCompleted(stdout="", returncode=0)
+
+    monkeypatch.setattr(snap_mod.subprocess, "run", fake_run)
+
+    total, used, free = snap_mod._probe_mem_darwin()
+    assert total == total_bytes
+    assert free == expected_free_bytes
+    # Used must reflect the realistic (~9.7 GB) figure, not the broken
+    # ~15.9 GB that the old "free + speculative only" math produced.
+    assert used == total_bytes - expected_free_bytes
+    # Sanity: free should be measured in GBs, not MBs.
+    assert free > 1024 ** 3, f"free={free} suggests inactive pages were dropped"
+
+
 def test_claude_pid_does_not_match_container_python(monkeypatch):
     """pgrep -x claude must not match the container python wrapper."""
     captured = {}
