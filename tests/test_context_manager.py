@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import subprocess
+from unittest.mock import patch
 
 import pytest
 
 from scitex_agent_container.config import ContextManagementConfig
 from scitex_agent_container.context_manager import (
     ContextManager,
+    fetch_agent_meta,
     parse_context_percent,
 )
 
@@ -31,6 +35,16 @@ def test_parse_context_percent_none_when_missing():
 
 def test_parse_context_percent_empty():
     assert parse_context_percent("") is None
+
+
+@pytest.fixture(autouse=True)
+def _no_agent_meta_shellout(monkeypatch):
+    """By default, stub fetch_agent_meta to None so tests exercise the
+    pane-parser fallback. Tests that need meta override it explicitly."""
+    monkeypatch.setattr(
+        "scitex_agent_container.context_manager.fetch_agent_meta",
+        lambda *a, **k: None,
+    )
 
 
 def _make_cm(percent_text: str, **cfg_overrides) -> tuple[ContextManager, list]:
@@ -115,6 +129,103 @@ def test_tick_updates_last_percent():
     assert cm.last_percent is None
     cm.tick()
     assert cm.last_percent == 42.0
+
+
+_SAMPLE_META = {
+    "agent": "head-nas",
+    "alive": True,
+    "multiplexer": "tmux",
+    "subagents": 0,
+    "context_pct": 23.1,
+    "current_tool": "Bash",
+    "last_activity": "2026-04-13T05:12:00.665Z",
+    "model": "claude-opus-4-6",
+}
+
+
+def _fake_completed(stdout: str) -> subprocess.CompletedProcess:
+    return subprocess.CompletedProcess(args=["x"], returncode=0, stdout=stdout, stderr="")
+
+
+def test_fetch_agent_meta_success():
+    with patch(
+        "scitex_agent_container.context_manager.subprocess.run",
+        return_value=_fake_completed(json.dumps(_SAMPLE_META) + "\n"),
+    ):
+        got = fetch_agent_meta("head-nas")
+    assert got == _SAMPLE_META
+
+
+def test_fetch_agent_meta_missing_script():
+    with patch(
+        "scitex_agent_container.context_manager.subprocess.run",
+        side_effect=FileNotFoundError(),
+    ):
+        assert fetch_agent_meta("x") is None
+
+
+def test_fetch_agent_meta_bad_json():
+    with patch(
+        "scitex_agent_container.context_manager.subprocess.run",
+        return_value=_fake_completed("not-json-at-all"),
+    ):
+        assert fetch_agent_meta("x") is None
+
+
+def test_fetch_agent_meta_timeout():
+    with patch(
+        "scitex_agent_container.context_manager.subprocess.run",
+        side_effect=subprocess.TimeoutExpired(cmd="x", timeout=5),
+    ):
+        assert fetch_agent_meta("x") is None
+
+
+def test_fetch_agent_meta_called_process_error():
+    with patch(
+        "scitex_agent_container.context_manager.subprocess.run",
+        side_effect=subprocess.CalledProcessError(1, "x"),
+    ):
+        assert fetch_agent_meta("x") is None
+
+
+def test_fetch_agent_meta_env_override(monkeypatch):
+    monkeypatch.setenv("SCITEX_AGENT_META_SCRIPT", "/tmp/does-not-exist-xyz.py")
+    captured: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return _fake_completed(json.dumps(_SAMPLE_META))
+
+    with patch("scitex_agent_container.context_manager.subprocess.run", side_effect=fake_run):
+        got = fetch_agent_meta("head-nas")
+    assert got == _SAMPLE_META
+    assert captured["cmd"][0] == "/tmp/does-not-exist-xyz.py"
+    assert captured["cmd"][1] == "head-nas"
+
+
+def test_context_manager_uses_agent_meta_when_available():
+    cm, calls = _make_cm("no percent at all\n")  # pane parse would fail
+    with patch(
+        "scitex_agent_container.context_manager.fetch_agent_meta",
+        return_value={**_SAMPLE_META, "context_pct": 85.0},
+    ):
+        percent = cm.tick()
+    assert percent == 85.0
+    assert cm.last_meta is not None
+    assert cm.last_meta["context_pct"] == 85.0
+    assert len(calls) == 1  # dispatched compact
+
+
+def test_context_manager_falls_back_to_pane_parser_when_meta_none():
+    cm, calls = _make_cm("[model] ctx 42% | foo\n")
+    with patch(
+        "scitex_agent_container.context_manager.fetch_agent_meta",
+        return_value=None,
+    ):
+        percent = cm.tick()
+    assert percent == 42.0
+    assert cm.last_meta is None
+    assert calls == []
 
 
 def test_agent_status_includes_context_management(monkeypatch, tmp_path):
