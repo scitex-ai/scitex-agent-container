@@ -31,6 +31,13 @@ from typing import Any, Iterator
 from .context_manager import fetch_agent_meta, get_sensor
 
 # Keys from agent_meta.py we surface in snapshots / status --json.
+# `pane_tail` and `pane_tail_block` carry the last N lines of the agent's
+# tmux pane (todo#269 / todo#270): consumers (mamba-healer-*, the Agents
+# dashboard card #311, fleet_watch.sh diff_one) use them as the cheapest
+# liveness signal and to render a live preview of what the agent is doing.
+# `recent_actions` is an array of {ts, preview} tool-use snippets from the
+# session jsonl, useful for identifying stuck-vs-busy states without a full
+# pane capture.
 _AGENT_META_KEYS = (
     "alive",
     "subagents",
@@ -38,6 +45,9 @@ _AGENT_META_KEYS = (
     "current_tool",
     "last_activity",
     "model",
+    "pane_tail",
+    "pane_tail_block",
+    "recent_actions",
 )
 
 
