@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 from ..config import AgentConfig
+from ..host_identity import is_local_host
 from .base import RuntimeBase
 from .claude_md import cleanup_claude_md, setup_claude_md
 from .mcp_config import cleanup_mcp_config, setup_mcp_config
@@ -29,6 +30,24 @@ _SSHRemote = SSHRemote
 # Backward-compatible aliases for extracted functions
 _setup_claude_md = setup_claude_md
 _cleanup_claude_md = cleanup_claude_md
+
+
+def _should_dispatch_remote(config: AgentConfig) -> bool:
+    """True iff the config is remote AND the remote host is not ourselves.
+
+    If ``remote.host`` matches a local identity (hostname / alias / env /
+    YAML / fleet default), log an INFO message and return False so callers
+    fall back to the local in-process runtime instead of self-SSH.
+    """
+    if not config.remote.is_remote:
+        return False
+    if is_local_host(config.remote.host):
+        logger.info(
+            "remote.host=%r matches local identity -> falling back to LocalRuntime",
+            config.remote.host,
+        )
+        return False
+    return True
 
 
 def _encode_workdir_for_claude_projects(workdir: str) -> str:
@@ -391,7 +410,7 @@ class ClaudeCodeRuntime(RuntimeBase):
         ``scitex-agent-container start`` call receives ``--force`` and
         stops any existing instance before relaunching.
         """
-        if config.remote.is_remote:
+        if _should_dispatch_remote(config):
             return SSHRemote.start(config, no_preflight=no_preflight, force=force)
 
         if config.container.runtime != "none":
@@ -446,7 +465,7 @@ class ClaudeCodeRuntime(RuntimeBase):
 
     def stop(self, config: AgentConfig) -> bool:
         """Stop a Claude Code agent."""
-        if config.remote.is_remote:
+        if _should_dispatch_remote(config):
             return SSHRemote.stop(config)
 
         if config.container.runtime != "none":
@@ -471,7 +490,7 @@ class ClaudeCodeRuntime(RuntimeBase):
 
     def is_running(self, config: AgentConfig) -> bool:
         """Check if the Claude Code agent is running."""
-        if config.remote.is_remote:
+        if _should_dispatch_remote(config):
             return SSHRemote.is_running(config)
 
         if config.container.runtime == "docker":
@@ -487,7 +506,7 @@ class ClaudeCodeRuntime(RuntimeBase):
 
     def logs(self, config: AgentConfig, lines: int = 50) -> str:
         """Get logs from the Claude Code agent."""
-        if config.remote.is_remote:
+        if _should_dispatch_remote(config):
             return SSHRemote.logs(config, lines)
 
         if config.container.runtime == "docker":
