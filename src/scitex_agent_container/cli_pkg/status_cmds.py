@@ -108,8 +108,10 @@ def status(ctx: click.Context, name: str | None, as_json: bool) -> None:
     else:
         try:
             claude_account = read_credentials_metadata()
-        except Exception:
+        except (OSError, json_mod.JSONDecodeError):
             claude_account = {}
+        # RuntimeError from _check_no_secrets() is a load-bearing alarm
+        # that a token just leaked; intentionally propagate.
 
         if use_json:
             from ._helpers import get_agent_list_data
