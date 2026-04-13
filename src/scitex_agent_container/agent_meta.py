@@ -24,6 +24,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .claude_usage import fetch_usage
+
 
 def detect_multiplexer(session: str) -> str:
     """Return 'tmux', 'screen', or '' if neither reports the session."""
@@ -280,6 +282,24 @@ def collect_rich(
     skills_loaded = _parse_skills(workdir)
     machine = socket.gethostname().split(".")[0]
 
+    # ---- Claude quota fields ----------------------------------------
+    quota_5h_used_pct: float | None = None
+    quota_7d_used_pct: float | None = None
+    quota_5h_reset_at: str | None = None
+    quota_7d_reset_at: str | None = None
+    quota_from_cache: bool = False
+    quota_error: str | None = None
+    try:
+        usage = fetch_usage()
+        quota_5h_used_pct = usage.get("used_pct_5h")
+        quota_7d_used_pct = usage.get("used_pct_7d")
+        quota_5h_reset_at = usage.get("reset_at_5h")
+        quota_7d_reset_at = usage.get("reset_at_7d")
+        quota_from_cache = bool(usage.get("from_cache", False))
+        quota_error = usage.get("error")
+    except Exception as exc:
+        quota_error = f"fetch_usage raised: {exc}"
+
     return {
         "multiplexer": multiplexer,
         "pid": pid,
@@ -303,4 +323,11 @@ def collect_rich(
         # the agent is actually running under a different model alias.
         "model_transcript": model,
         "version": os.environ.get("SCITEX_OROCHI_AGENT_META_VERSION", "0.2"),
+        # ---- Claude quota fields ----------------------------------------
+        "quota_5h_used_pct": quota_5h_used_pct,
+        "quota_7d_used_pct": quota_7d_used_pct,
+        "quota_5h_reset_at": quota_5h_reset_at,
+        "quota_7d_reset_at": quota_7d_reset_at,
+        "quota_from_cache": quota_from_cache,
+        "quota_error": quota_error,
     }
