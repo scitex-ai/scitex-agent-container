@@ -26,11 +26,15 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 DEFAULT_HOST_ALIASES: dict[str, list[str]] = {
-    "mba": ["mba", "head-mba", "Yusukes-MacBook-Air.local", "localhost"],
+    "mba": ["mba", "head-mba", "Yusukes-MacBook-Air.local"],
     "nas": ["nas", "ugreen", "DXP480TPLUS-994", "nas.local"],
     "spartan": ["spartan", "spartan-login1.hpc.unimelb.edu.au"],
     "ywata-note-win": ["ywata-note-win"],
 }
+
+# Loopback names exist on every host; never use them as evidence of
+# canonical-fleet identity (would leak cross-host aliases).
+_UNIVERSAL_LOOPBACK: set[str] = {"localhost", "127.0.0.1", "::1"}
 
 _CACHE: set[str] | None = None
 
@@ -105,10 +109,14 @@ def get_local_identities() -> set[str]:
 
     # Auto-detect canonical fleet name: if any built-in alias list already
     # contains one of our names, pull in the rest of that list.
+    # Loopback names (localhost / 127.0.0.1 / ::1) are excluded from the
+    # intersection because they exist on every host and would otherwise
+    # cause cross-host alias leakage.
     lowered = {n.lower() for n in names}
     for canonical, aliases in DEFAULT_HOST_ALIASES.items():
         alias_lower = {a.lower() for a in aliases}
-        if lowered & alias_lower or canonical.lower() in lowered:
+        overlap = (lowered & alias_lower) - _UNIVERSAL_LOOPBACK
+        if overlap or canonical.lower() in lowered:
             names.update(aliases)
             names.add(canonical)
 

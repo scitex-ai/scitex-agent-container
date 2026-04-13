@@ -39,6 +39,33 @@ def test_is_local_host_accepts_none_and_empty(monkeypatch):
     assert is_local_host("   ") is True
 
 
+def test_local_does_not_leak_other_canonical_via_localhost(monkeypatch):
+    """Regression: loopback names must not pull in foreign alias lists.
+
+    NAS's 'localhost' / '127.0.0.1' / '::1' are universally present and
+    previously caused is_local_host('mba') to return True on the NAS,
+    because DEFAULT_HOST_ALIASES['mba'] happened to include 'localhost'.
+    """
+    import os as _os
+
+    _reset_cache_for_tests()
+    monkeypatch.setattr("socket.gethostname", lambda: "DXP480TPLUS-994")
+    monkeypatch.setattr("socket.getfqdn", lambda: "DXP480TPLUS-994")
+
+    # os.uname().nodename on the test host could otherwise leak a real
+    # hostname (e.g. "Yusukes-MacBook-Air.local") that happens to match
+    # another canonical alias list.
+    _fake_uname = _os.uname_result(
+        ("Linux", "DXP480TPLUS-994", "6.1.27", "", "x86_64")
+    )
+    monkeypatch.setattr("os.uname", lambda: _fake_uname)
+    monkeypatch.delenv("SCITEX_AGENT_LOCAL_HOSTS", raising=False)
+    assert is_local_host("nas") is True     # legitimate auto-detect
+    assert is_local_host("mba") is False    # must not leak via loopback
+    assert is_local_host("spartan") is False
+    assert is_local_host("ywata-note-win") is False
+
+
 def test_is_local_host_matches_hostname(monkeypatch):
     _patch_basics(monkeypatch, hostname="mba", fqdn="mba")
     assert is_local_host("mba") is True
