@@ -366,9 +366,95 @@ class ClaudeCodeRuntime(RuntimeBase):
         flog.warning(msg)
         return False
 
+    def _wait_for_ready_state(self, config: AgentConfig) -> bool:
+        """Gate startup commands behind a Claude Code ready-state probe.
+
+        Returns True if the caller should proceed to dispatch commands,
+        False if it should abort (strict on_timeout=capture_and_fail).
+        Legacy configs without ``spec.startup.ready_patterns`` always
+        return True immediately (fire-and-hope preserved).
+        """
+        from ..ready_state import wait_for_ready
+
+        startup = getattr(config, "startup", None)
+        patterns = [p.regex for p in getattr(startup, "ready_patterns", []) or []]
+        if not patterns:
+            return True
+
+        pane = config.screen_name
+        mux = self._get_mux(config)
+
+        def _capture(target: str) -> str:
+            return mux.capture_content(target)
+
+        log_dir = Path(
+            f"~/.scitex/agent-container/logs/{config.name}"
+        ).expanduser()
+        log_dir.mkdir(parents=True, exist_ok=True)
+
+        def _on_timeout(tail_text: str) -> None:
+            ts = time.strftime("%Y%m%dT%H%M%S")
+            path = log_dir / f"boot-capture-{ts}.txt"
+            try:
+                path.write_text(tail_text or "")
+                logger.warning(
+                    "ready_state timeout for %s; wrote boot capture to %s",
+                    config.name,
+                    path,
+                )
+            except OSError:
+                logger.exception(
+                    "Failed to write boot capture for %s to %s",
+                    config.name,
+                    path,
+                )
+
+        logger.info(
+            "waiting for Claude Code ready state on pane %s (timeout=%.0fs)",
+            pane,
+            startup.ready_timeout_seconds,
+        )
+        ready = wait_for_ready(
+            agent_name=config.name,
+            pane_target=pane,
+            patterns=patterns,
+            idle_ticks=startup.ready_idle_ticks,
+            poll_interval=startup.ready_poll_interval_seconds,
+            timeout=startup.ready_timeout_seconds,
+            capture_callback=_on_timeout,
+            capture_fn=_capture,
+        )
+
+        if ready:
+            logger.info("ready detected, sending startup commands to %s", pane)
+            return True
+
+        if startup.on_timeout == "capture_and_fail":
+            logger.error(
+                "ready_state timeout for %s with on_timeout=capture_and_fail; "
+                "skipping startup commands",
+                config.name,
+            )
+            return False
+
+        logger.warning(
+            "ready_state timeout for %s with on_timeout=capture_and_proceed; "
+            "sending startup commands anyway (legacy fire-and-hope)",
+            config.name,
+        )
+        return True
+
     def _run_startup_commands(self, config: AgentConfig) -> None:
         """Send startup commands to the screen session with delays."""
-        for sc in config.startup_commands:
+        if not self._wait_for_ready_state(config):
+            return
+        startup_spec = getattr(config, "startup", None)
+        commands = (
+            list(startup_spec.commands)
+            if startup_spec and startup_spec.commands
+            else list(config.startup_commands)
+        )
+        for sc in commands:
             if sc.delay > 0:
                 time.sleep(sc.delay)
             try:

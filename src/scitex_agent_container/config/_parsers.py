@@ -12,10 +12,12 @@ from ._types import (
     HealthSpec,
     ListenPort,
     OrochiSpec,
+    ReadyPattern,
     RemoteSpec,
     RestartSpec,
     SkillsSpec,
     StartupCommand,
+    StartupSpec,
     TelegramSpec,
     WatchdogSpec,
 )
@@ -231,6 +233,73 @@ def parse_startup_commands(spec: dict) -> list[StartupCommand]:
         for item in raw
         if isinstance(item, dict) and item.get("command")
     ]
+
+
+def _parse_command_list(raw: Any) -> list[StartupCommand]:
+    out: list[StartupCommand] = []
+    for item in raw or []:
+        if isinstance(item, str):
+            if item:
+                out.append(StartupCommand(delay=0, command=item))
+        elif isinstance(item, dict) and item.get("command"):
+            try:
+                delay = int(item.get("delay", 0))
+            except (TypeError, ValueError):
+                delay = 0
+            out.append(StartupCommand(delay=delay, command=str(item["command"])))
+    return out
+
+
+def parse_startup(spec: dict) -> StartupSpec:
+    """Parse the opt-in ``spec.startup`` block (todo#291).
+
+    Missing or malformed → empty ``StartupSpec`` (legacy behavior). When
+    ``spec.startup.commands`` is absent we shadow the legacy top-level
+    ``spec.startup_commands`` so an operator can add a ready gate without
+    moving their existing command list.
+    """
+    raw = spec.get("startup")
+    if not isinstance(raw, dict):
+        legacy = parse_startup_commands(spec)
+        return StartupSpec(commands=legacy)
+
+    patterns_raw = raw.get("ready_patterns", []) or []
+    patterns: list[ReadyPattern] = []
+    for item in patterns_raw:
+        if isinstance(item, str):
+            patterns.append(ReadyPattern(regex=item))
+        elif isinstance(item, dict) and item.get("regex"):
+            patterns.append(ReadyPattern(regex=str(item["regex"])))
+
+    try:
+        idle_ticks = max(1, int(raw.get("ready_idle_ticks", 3)))
+    except (TypeError, ValueError):
+        idle_ticks = 3
+    try:
+        poll_interval = max(0.05, float(raw.get("ready_poll_interval_seconds", 0.5)))
+    except (TypeError, ValueError):
+        poll_interval = 0.5
+    try:
+        timeout = max(1.0, float(raw.get("ready_timeout_seconds", 60.0)))
+    except (TypeError, ValueError):
+        timeout = 60.0
+
+    on_timeout = str(raw.get("on_timeout", "capture_and_proceed") or "capture_and_proceed")
+    if on_timeout not in ("capture_and_fail", "capture_and_proceed"):
+        on_timeout = "capture_and_proceed"
+
+    commands = _parse_command_list(raw.get("commands"))
+    if not commands:
+        commands = parse_startup_commands(spec)
+
+    return StartupSpec(
+        ready_patterns=patterns,
+        ready_idle_ticks=idle_ticks,
+        ready_poll_interval_seconds=poll_interval,
+        ready_timeout_seconds=timeout,
+        on_timeout=on_timeout,
+        commands=commands,
+    )
 
 
 def get_nested(data: dict, key: str, default: Any = None) -> Any:
