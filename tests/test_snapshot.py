@@ -282,6 +282,44 @@ def test_screen_count_positive_when_sessions_listed(monkeypatch):
     assert snap_mod._probe_screen_count() == 2
 
 
+def test_agent_meta_projection_includes_pane_tail_and_recent_actions(monkeypatch):
+    """Snapshot must surface the new last_pane_lines fields (todo#269/#270).
+
+    Consumers (mamba-healer-*, fleet_watch.sh diff_one, the Agents dashboard
+    card #311) rely on `pane_tail` / `pane_tail_block` / `recent_actions` as
+    the cheapest liveness + activity signal. Regression: an earlier projection
+    only exposed alive/subagents/context_pct/current_tool/last_activity/model
+    and silently dropped the pane fields even when agent_meta.py emitted them.
+    """
+    full_meta = {
+        "alive": True,
+        "subagents": 0,
+        "context_pct": 42.0,
+        "current_tool": "Bash",
+        "last_activity": "2026-04-13T08:00:00Z",
+        "model": "claude-opus-4-6",
+        "pane_tail": "❯ ",
+        "pane_tail_block": "✻ Mulling… (12s · ↓ 6 tokens)\n← #agent: ...",
+        "recent_actions": [
+            {"ts": "2026-04-13T07:59:00Z", "preview": "TaskUpdate: ..."},
+            {"ts": "2026-04-13T07:59:30Z", "preview": "Bash: tmux ls"},
+        ],
+        "irrelevant_extra_field": "should be dropped",
+    }
+    projected = snap_mod._project_agent_meta(full_meta)
+    assert projected is not None
+    # New fields must be present.
+    assert projected["pane_tail"] == "❯ "
+    assert "✻ Mulling…" in projected["pane_tail_block"]
+    assert isinstance(projected["recent_actions"], list)
+    assert len(projected["recent_actions"]) == 2
+    # Existing fields preserved.
+    assert projected["context_pct"] == 42.0
+    assert projected["model"] == "claude-opus-4-6"
+    # Whitelist enforcement: extra fields are dropped.
+    assert "irrelevant_extra_field" not in projected
+
+
 def test_probe_mem_darwin_counts_inactive_and_speculative(monkeypatch):
     """Darwin mem must count free + inactive + speculative as available.
 
