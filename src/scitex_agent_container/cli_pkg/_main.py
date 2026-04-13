@@ -13,6 +13,7 @@ from ._helpers import HelpRecursiveGroup
 from .build_cmds import build, check, validate
 from .info_cmds import attach, find, list_python_apis, logs
 from .lifecycle_cmds import cleanup, restart, start, stop
+from .snapshot_cmds import snapshot
 from .status_cmds import check_agent, health, list_agents, status
 
 
@@ -55,6 +56,7 @@ main.add_command(status)
 main.add_command(list_agents)  # registered as 'list'
 main.add_command(health)
 main.add_command(check_agent)  # registered as 'inspect'
+main.add_command(snapshot)
 
 # Info / introspection
 main.add_command(find)

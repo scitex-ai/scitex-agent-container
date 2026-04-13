@@ -162,13 +162,23 @@ class ContextManager:
 
 
 def run_forever(cm: ContextManager) -> None:
-    """Sensor loop. Cooperatively cancellable via ``cm.stop()``."""
+    """Sensor loop. Cooperatively cancellable via ``cm.stop()``.
+
+    Piggybacks a self-snapshot tick after each context-manager tick so
+    both daemons share a single thread (todo#286).
+    """
     interval = max(1, int(cm.config.check_interval_seconds))
     while not cm.stopped:
         try:
             cm.tick()
         except Exception:  # pragma: no cover — defensive
             logger.exception("context_manager[%s]: tick failed", cm.agent_name)
+        try:
+            from .snapshot import snapshot_tick
+
+            snapshot_tick(cm.agent_name, session=cm.session_name)
+        except Exception:  # pragma: no cover — defensive
+            logger.exception("snapshot[%s]: piggyback tick failed", cm.agent_name)
         # Use Event.wait so stop() breaks us out promptly.
         if cm._stop.wait(interval):
             break
@@ -231,6 +241,26 @@ def start_sensor(agent_config: AgentConfig) -> ContextManager | None:
     )
     _SENSORS[agent_config.name] = cm
     thread.start()
+    try:
+        from .snapshot import register_sidecar
+
+        register_sidecar(
+            agent_config.name,
+            kind="thread",
+            name="context_manager",
+            thread=thread,
+        )
+        register_sidecar(
+            agent_config.name,
+            kind="thread",
+            name="snapshot",
+            thread=thread,
+        )
+    except Exception:  # pragma: no cover — defensive
+        logger.exception(
+            "context_manager[%s]: sidecar registration failed",
+            agent_config.name,
+        )
     logger.info(
         "context_manager[%s]: sensor started (strategy=%s, threshold=%.1f%%, interval=%ss)",
         agent_config.name,
