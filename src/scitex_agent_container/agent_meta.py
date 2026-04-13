@@ -280,7 +280,17 @@ def collect_rich(
     subagent_count = _subagent_count_from_pane(session, multiplexer)
     pid, ppid = _pids_from_session(session, multiplexer)
     skills_loaded = _parse_skills(workdir)
-    machine = socket.gethostname().split(".")[0]
+    # Use canonical fleet name (e.g. "nas" instead of "DXP480TPLUS-994")
+    _raw_hostname = socket.gethostname().split(".")[0]
+    try:
+        from .host_identity import DEFAULT_HOST_ALIASES
+        machine = next(
+            (fleet_name for fleet_name, aliases in DEFAULT_HOST_ALIASES.items()
+             if _raw_hostname in aliases or _raw_hostname.lower() in [a.lower() for a in aliases]),
+            _raw_hostname,
+        )
+    except Exception:
+        machine = _raw_hostname
 
     # ---- Claude quota fields ----------------------------------------
     quota_5h_used_pct: float | None = None
