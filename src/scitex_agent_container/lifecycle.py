@@ -112,6 +112,21 @@ def agent_start(
     # Post-start hooks
     _run_hooks(config.hooks.get("post_start", []), extra_env=hook_env)
 
+    # Start context-management sensor in background if enabled
+    if config.context_management.enabled:
+        try:
+            from .context_manager import start_sensor
+
+            start_sensor(config)
+        except Exception:
+            import sys
+
+            print(
+                f"[WARN] context_manager failed to start for {config.name}",
+                file=sys.stderr,
+            )
+            traceback.print_exc()
+
     # Start health monitor in background if enabled
     if config.health.enabled:
         thread = threading.Thread(

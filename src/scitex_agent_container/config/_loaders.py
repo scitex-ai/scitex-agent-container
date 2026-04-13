@@ -9,6 +9,7 @@ from ._parsers import (
     interpolate_mcp_servers,
     parse_claude,
     parse_container,
+    parse_context_management,
     parse_health,
     parse_hooks,
     parse_orochi,
@@ -50,6 +51,7 @@ def load_v1(raw: dict, path: Path) -> AgentConfig:
         remote=parse_remote(spec),
         skills=parse_skills(spec),
         startup_commands=parse_startup_commands(spec),
+        context_management=parse_context_management(spec),
         multiplexer=spec.get("multiplexer", "screen"),
         config_path=str(path),
     )
@@ -113,6 +115,7 @@ def load_v2(raw: dict, path: Path) -> AgentConfig:
         remote=parse_remote(spec),
         skills=parse_skills(spec),
         startup_commands=parse_startup_commands(spec),
+        context_management=parse_context_management(spec),
         mcp_servers=mcp_servers,
         multiplexer=spec.get("multiplexer", "screen"),
         config_path=str(path),
