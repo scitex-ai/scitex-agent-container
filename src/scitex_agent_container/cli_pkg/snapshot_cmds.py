@@ -30,11 +30,29 @@ from ..snapshot import take_snapshot
     default=None,
     help="Multiplexer session name (defaults to agent name).",
 )
-def snapshot(agent: str, as_json: bool, with_diff: bool, session: str | None) -> None:
+@click.option(
+    "--terse",
+    "terse",
+    is_flag=True,
+    default=False,
+    help="Project JSON output onto the fleet_watch whitelist (todo#300). "
+    "Reduces per-agent payload size dramatically.",
+)
+def snapshot(
+    agent: str,
+    as_json: bool,
+    with_diff: bool,
+    session: str | None,
+    terse: bool,
+) -> None:
     """Take a self-snapshot for AGENT and print it as JSON."""
     try:
         snap = take_snapshot(agent, session=session, with_diff=with_diff)
     except Exception as exc:  # pragma: no cover — defensive
         click.echo(json_mod.dumps({"error": str(exc)}))
         sys.exit(1)
+    if terse:
+        from ..terse import TERSE_SNAPSHOT_FIELDS, project_terse
+
+        snap = project_terse(snap, TERSE_SNAPSHOT_FIELDS)
     click.echo(json_mod.dumps(snap, indent=2))

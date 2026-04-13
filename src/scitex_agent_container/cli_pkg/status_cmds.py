@@ -77,11 +77,29 @@ def _format_claude_account_block(meta: dict) -> list[str]:
     default=False,
     help="Output as JSON.",
 )
+@click.option(
+    "--terse",
+    "terse",
+    is_flag=True,
+    default=False,
+    help="Project JSON output onto the fleet_watch whitelist (todo#300). "
+    "Implies --json. Reduces per-agent payload ~18x.",
+)
 @click.pass_context
-def status(ctx: click.Context, name: str | None, as_json: bool) -> None:
+def status(
+    ctx: click.Context, name: str | None, as_json: bool, terse: bool
+) -> None:
     """Show agent status (one agent or all)."""
-    use_json = _json_flag(ctx, as_json)
+    use_json = _json_flag(ctx, as_json) or terse
     registry = Registry()
+
+    if terse and not name:
+        click.echo(
+            json_mod.dumps(
+                {"error": "--terse requires an agent NAME (per-agent mode only)"}
+            )
+        )
+        sys.exit(2)
 
     if name:
         try:
@@ -94,6 +112,10 @@ def status(ctx: click.Context, name: str | None, as_json: bool) -> None:
             sys.exit(1)
 
         if use_json:
+            if terse:
+                from ..terse import TERSE_STATUS_FIELDS, project_terse
+
+                info = project_terse(info, TERSE_STATUS_FIELDS)
             click.echo(json_mod.dumps(info, indent=2))
             return
 

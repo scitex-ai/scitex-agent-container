@@ -490,3 +490,113 @@ def test_tmux_names_is_array(monkeypatch):
     latest = Path(snap_mod._latest_path("arrayguard"))
     data = json.loads(latest.read_text())
     assert isinstance(data["tmux_names"], list)
+
+
+# ---------------------------------------------------------------------------
+# --terse projection (todo#300)
+# ---------------------------------------------------------------------------
+
+
+def test_snapshot_terse_emits_only_whitelisted_fields() -> None:
+    from scitex_agent_container.terse import TERSE_SNAPSHOT_FIELDS, project_terse
+
+    full = _fake_snap("t1")
+    full["has_diff"] = False
+    full["diff_fields"] = []
+    full["tmux_names"] = ["a", "b"]  # bulky array — must not leak
+    full["agent_meta"] = {"context_pct": 12.3, "current_tool": "Bash"}
+
+    terse = project_terse(full, TERSE_SNAPSHOT_FIELDS)
+    assert set(terse.keys()) == set(TERSE_SNAPSHOT_FIELDS)
+    assert terse["agent"] == "t1"
+    assert terse["tmux_count"] == 2
+    assert terse["pids.claude_code"] == 2
+    assert terse["pids.container_daemon"] == 1
+    assert terse["has_diff"] is False
+    # Bulky fields must not appear
+    assert "tmux_names" not in terse
+    assert "agent_meta" not in terse
+    assert "diff_fields" not in terse
+
+
+def test_snapshot_terse_absent_fields_emit_null() -> None:
+    from scitex_agent_container.terse import TERSE_SNAPSHOT_FIELDS, project_terse
+
+    full = {"agent": "bare"}
+    terse = project_terse(full, TERSE_SNAPSHOT_FIELDS)
+    assert terse["host"] is None
+    assert terse["tmux_count"] is None
+    assert terse["pids.claude_code"] is None
+    assert terse["pids.container_daemon"] is None
+    assert set(terse.keys()) == set(TERSE_SNAPSHOT_FIELDS)
+
+
+def test_snapshot_terse_byte_size_is_smaller() -> None:
+    """Terse payload must be dramatically smaller than full on a realistic fixture."""
+    from scitex_agent_container.terse import TERSE_SNAPSHOT_FIELDS, project_terse
+
+    full = _fake_snap("real")
+    # Bulk the snapshot up to match reality post-#286.
+    full["has_diff"] = True
+    full["diff_fields"] = ["tmux_count", "claude_procs", "mem_used_bytes"]
+    full["tmux_names"] = [f"session-{i}" for i in range(40)]
+    full["agent_meta"] = {
+        "context_pct": 57.5,
+        "current_tool": "Bash",
+        "current_task": "x" * 500,
+        "last_activity": "2026-04-13T00:00:00Z",
+        "subagents": [{"id": i, "name": f"sub-{i}"} for i in range(10)],
+        "skills_loaded": [f"skill-{i}" for i in range(20)],
+        "model": "claude-opus-4-6",
+        "big_blob": "z" * 4000,
+    }
+    full["pids"]["sidecars"] = {
+        f"side-{i}": {"kind": "thread", "pid": i, "alive": True}
+        for i in range(10)
+    }
+
+    full_bytes = len(json.dumps(full))
+    terse_bytes = len(json.dumps(project_terse(full, TERSE_SNAPSHOT_FIELDS)))
+    ratio = full_bytes / max(terse_bytes, 1)
+    assert ratio >= 5, f"terse only {ratio:.1f}x smaller ({full_bytes}B -> {terse_bytes}B)"
+
+
+def test_status_terse_byte_size_is_smaller() -> None:
+    from scitex_agent_container.terse import TERSE_STATUS_FIELDS, project_terse
+
+    # Simulate a real status --json payload post-#286.
+    full = {
+        "name": "real",
+        "agent": "real",
+        "state": "running",
+        "timestamp": "2026-04-13T00:00:00Z",
+        "tmux_alive": True,
+        "last_post_ts": "2026-04-13T00:00:00Z",
+        "config": "/very/long/path/to/config.yaml",
+        "screen": "real",
+        "started_at": "2026-04-13T00:00:00Z",
+        "status": "running",
+        "model": "claude-opus-4-6",
+        "runtime": "local",
+        "hooks_configured": {f"hook{i}": i for i in range(7)},
+        "listen": [{"port": 8000 + i, "proto": "http"} for i in range(5)],
+        "extensions": {"big": "y" * 3000},
+        "context_management": {
+            "percent": 42.0,
+            "strategy": "compact",
+            "trigger_at_percent": 85,
+        },
+        "agent_meta": {"big": "z" * 5000, "skills_loaded": list(range(30))},
+        "skills_loaded": [f"skill-{i}" for i in range(20)],
+        "pids": {"claude_code": 1, "container_daemon": 2, "sidecars": {"s": {}}},
+        "health": {"ok": True, "details": "x" * 500},
+        "snapshot": {
+            "timestamp": "2026-04-13T00:00:00Z",
+            "has_diff": True,
+            "diff_fields": ["tmux_count", "claude_procs"],
+        },
+    }
+    full_bytes = len(json.dumps(full))
+    terse_bytes = len(json.dumps(project_terse(full, TERSE_STATUS_FIELDS)))
+    ratio = full_bytes / max(terse_bytes, 1)
+    assert ratio >= 5, f"terse only {ratio:.1f}x smaller ({full_bytes}B -> {terse_bytes}B)"
