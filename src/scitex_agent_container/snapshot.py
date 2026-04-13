@@ -13,6 +13,8 @@ Kept deliberately stdlib-only: no psutil, no yaml, no new deps.
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
 import logging
 import os
@@ -24,7 +26,7 @@ import subprocess
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from .context_manager import fetch_agent_meta, get_sensor
 
@@ -138,6 +140,28 @@ def _prev_path(agent: str) -> Path:
 
 def _diff_path(agent: str) -> Path:
     return cache_dir() / f"{agent}.diff.json"
+
+
+def _lock_path(agent: str) -> Path:
+    return cache_dir() / f"{agent}.lock"
+
+
+@contextlib.contextmanager
+def _snapshot_lock(agent: str) -> Iterator[None]:
+    """Per-agent advisory lock around the latest->prev roll + write.
+
+    POSIX fcntl advisory lock; not supported on Windows but container
+    targets unix. The lock file persists between calls (reusable); the
+    advisory lock is released when the fd is closed via the ``with`` block.
+    """
+    lock_p = _lock_path(agent)
+    with open(lock_p, "w") as fd:
+        fcntl.flock(fd.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            # Released implicitly on close(), but be explicit for clarity.
+            fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
 
 
 # ---------------------------------------------------------------------------
@@ -393,16 +417,16 @@ def gather_snapshot(agent: str, *, session: str | None = None) -> dict[str, Any]
         "bun_procs": _proc_count("bun"),
         "node_procs": _proc_count("node"),
         "load1": _probe_load1(),
-        "mem_total": mem_total,
-        "mem_used": mem_used,
-        "mem_free": mem_free,
+        "mem_total_bytes": mem_total,
+        "mem_used_bytes": mem_used,
+        "mem_free_bytes": mem_free,
         "nproc_cur": nproc_cur,
         "nproc_max": nproc_max,
         "fork_pressure_pct": fork_pct,
         "context_percent": context_percent,
         "agent_meta": agent_meta_block,
         "pids": {
-            "agent": os.getpid(),
+            "container_daemon": os.getpid(),
             "claude_code": claude_pid,
             "tmux": tmux_pids,
             "sidecars": _sidecars_payload(agent),
@@ -452,41 +476,42 @@ def take_snapshot(agent: str, *, session: str | None = None, with_diff: bool = T
     latest_p = _latest_path(agent)
     prev_p = _prev_path(agent)
 
-    # Read previous (before rolling).
-    prev_data: dict[str, Any] | None = None
-    if latest_p.exists():
-        try:
-            prev_data = json.loads(latest_p.read_text())
-        except (OSError, json.JSONDecodeError):
-            prev_data = None
-
     snap = gather_snapshot(agent, session=session)
 
-    if with_diff:
-        diff_fields = compute_diff_fields(prev_data, snap)
-    else:
-        diff_fields = []
-    snap["has_diff"] = bool(diff_fields)
-    snap["diff_fields"] = diff_fields
+    with _snapshot_lock(agent):
+        # Read previous (before rolling).
+        prev_data: dict[str, Any] | None = None
+        if latest_p.exists():
+            try:
+                prev_data = json.loads(latest_p.read_text())
+            except (OSError, json.JSONDecodeError):
+                prev_data = None
 
-    # Roll latest -> prev BEFORE overwriting latest.
-    if latest_p.exists():
-        try:
-            os.replace(latest_p, prev_p)
-        except OSError:
-            logger.exception("snapshot[%s]: failed rolling latest to prev", agent)
+        if with_diff:
+            diff_fields = compute_diff_fields(prev_data, snap)
+        else:
+            diff_fields = []
+        snap["has_diff"] = bool(diff_fields)
+        snap["diff_fields"] = diff_fields
 
-    _atomic_write_json(latest_p, snap)
+        # Roll latest -> prev BEFORE overwriting latest.
+        if latest_p.exists():
+            try:
+                os.replace(latest_p, prev_p)
+            except OSError:
+                logger.exception("snapshot[%s]: failed rolling latest to prev", agent)
 
-    if snap["has_diff"]:
-        _atomic_write_json(
-            _diff_path(agent),
-            {
-                "agent": agent,
-                "timestamp": snap["timestamp"],
-                "diff_fields": diff_fields,
-            },
-        )
+        _atomic_write_json(latest_p, snap)
+
+        if snap["has_diff"]:
+            _atomic_write_json(
+                _diff_path(agent),
+                {
+                    "agent": agent,
+                    "timestamp": snap["timestamp"],
+                    "diff_fields": diff_fields,
+                },
+            )
 
     return snap
 

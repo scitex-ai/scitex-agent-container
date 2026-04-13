@@ -35,15 +35,15 @@ def _fake_snap(agent: str, **overrides):
         "bun_procs": 0,
         "node_procs": 0,
         "load1": 0.5,
-        "mem_total": 1024,
-        "mem_used": 512,
-        "mem_free": 512,
+        "mem_total_bytes": 1024,
+        "mem_used_bytes": 512,
+        "mem_free_bytes": 512,
         "nproc_cur": 100,
         "nproc_max": 1000,
         "fork_pressure_pct": 10.0,
         "context_percent": None,
         "pids": {
-            "agent": 1,
+            "container_daemon": 1,
             "claude_code": 2,
             "tmux": {"server": 3, "pane": 4},
             "sidecars": {},
@@ -307,6 +307,91 @@ def test_claude_pid_none_when_no_match(monkeypatch):
         lambda *a, **k: _FakeCompleted(stdout="", returncode=1),
     )
     assert snap_mod._probe_claude_pid() is None
+
+
+def test_take_snapshot_concurrent_write_is_serialized(tmp_path, monkeypatch):
+    """10 threads racing on the same agent must leave a consistent state."""
+    monkeypatch.setattr(
+        snap_mod, "gather_snapshot", lambda a, session=None: _fake_snap(a, tmux_count=1)
+    )
+
+    # First seed so prev will be written too.
+    snap_mod.take_snapshot("concur")
+
+    # Now race: each thread bumps tmux_count to a unique value so diffs fire.
+    N = 10
+    barrier = threading.Barrier(N)
+    errors: list[BaseException] = []
+
+    def worker(i: int) -> None:
+        try:
+            monkey_snap = _fake_snap("concur", tmux_count=100 + i)
+            # Local override of gather — but we must be careful: monkeypatch
+            # is not thread-safe. Instead, patch once with an id-varying fn.
+            barrier.wait()
+            snap_mod.take_snapshot("concur")
+        except BaseException as e:  # pragma: no cover
+            errors.append(e)
+
+    # Use a single thread-safe gather that cycles values via a counter.
+    counter = {"n": 100}
+    counter_lock = threading.Lock()
+
+    def racy_gather(a, session=None):
+        with counter_lock:
+            counter["n"] += 1
+            val = counter["n"]
+        return _fake_snap(a, tmux_count=val)
+
+    monkeypatch.setattr(snap_mod, "gather_snapshot", racy_gather)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(N)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+    assert not errors, f"worker exceptions: {errors}"
+
+    latest = tmp_path / "concur.latest.json"
+    prev = tmp_path / "concur.prev.json"
+    lock = tmp_path / "concur.lock"
+
+    assert latest.exists()
+    assert prev.exists()
+    # Both files must parse as valid JSON (no torn writes).
+    json.loads(latest.read_text())
+    json.loads(prev.read_text())
+
+    # No .tmp stragglers left behind.
+    stragglers = [p.name for p in tmp_path.iterdir() if p.name.endswith(".tmp")]
+    assert stragglers == [], f"unexpected tmp files: {stragglers}"
+
+    # Expected file set only.
+    names = sorted(p.name for p in tmp_path.iterdir())
+    # diff.json may or may not be present depending on timing, but all names
+    # must belong to the expected set.
+    allowed = {
+        "concur.latest.json",
+        "concur.prev.json",
+        "concur.lock",
+        "concur.diff.json",
+    }
+    assert set(names).issubset(allowed), f"unexpected files: {set(names) - allowed}"
+    assert lock.exists()
+
+
+def test_take_snapshot_lock_file_is_reusable(tmp_path, monkeypatch):
+    """Advisory lock is released on fd close; subsequent calls succeed."""
+    monkeypatch.setattr(
+        snap_mod, "gather_snapshot", lambda a, session=None: _fake_snap(a)
+    )
+    snap_mod.take_snapshot("reuse")
+    lock = tmp_path / "reuse.lock"
+    assert lock.exists()
+    # A second call must not hang and must succeed (lock was released).
+    snap_mod.take_snapshot("reuse")
+    assert (tmp_path / "reuse.latest.json").exists()
+    assert (tmp_path / "reuse.prev.json").exists()
 
 
 def test_tmux_names_is_array(monkeypatch):
