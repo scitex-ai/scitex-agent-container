@@ -300,6 +300,29 @@ def collect_rich(
     except Exception as exc:
         quota_error = f"fetch_usage raised: {exc}"
 
+    # ---- Machine resource metrics (psutil, optional) -----------------------
+    try:
+        import psutil as _psutil
+        _cpu_pct = _psutil.cpu_percent(interval=None)
+        _vm = _psutil.virtual_memory()
+        _disk = _psutil.disk_usage("/")
+        _load = _psutil.getloadavg()
+        _cpu_count = _psutil.cpu_count(logical=True) or 0
+        _metrics = {
+            "cpu_count": _cpu_count,
+            "cpu_model": "",
+            "cpu_used_percent": round(_cpu_pct, 1),
+            "load_avg_1m": round(_load[0], 2),
+            "load_avg_5m": round(_load[1], 2),
+            "load_avg_15m": round(_load[2], 2),
+            "mem_used_percent": round(_vm.percent, 1),
+            "mem_total_mb": round(_vm.total / 1024 / 1024, 1),
+            "mem_free_mb": round(_vm.available / 1024 / 1024, 1),
+            "disk_used_percent": round(_disk.percent, 1),
+        }
+    except Exception:
+        _metrics = {}
+
     return {
         "multiplexer": multiplexer,
         "pid": pid,
@@ -330,4 +353,6 @@ def collect_rich(
         "quota_7d_reset_at": quota_7d_reset_at,
         "quota_from_cache": quota_from_cache,
         "quota_error": quota_error,
+        # ---- Machine resource metrics (for hub /api/resources/) -------------
+        "metrics": _metrics,
     }
