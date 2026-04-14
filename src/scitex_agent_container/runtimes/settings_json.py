@@ -17,13 +17,20 @@ Settings written:
     Explicitly whitelists the MCP servers defined in .mcp.json.
 
 The file is merged (not overwritten) so user-added settings survive.
-Cleanup removes only the keys this module manages.
+Cleanup removes only the keys this module managed.
+
+Global seed (ensure_global_settings_json):
+- Also ensures ~/.claude/settings.json exists and is not a broken symlink.
+- If missing or broken, drops a minimal seed from
+  ~/.scitex/orochi/templates/claude-code-seed.json (or a built-in default).
+- Idempotent: no-op when the global file already resolves correctly.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 
 from ..config import AgentConfig
@@ -73,6 +80,74 @@ def _needs_dev_channels(config: AgentConfig) -> bool:
     return any(
         "--dangerously-load-development-channels" in f
         for f in config.claude.flags
+    )
+
+
+_SEED_DEFAULTS: dict = {
+    "skipDangerousModePermissionPrompt": True,
+    "promptSuggestionEnabled": False,
+    "permissions": {
+        "allow": [
+            "Bash(*)",
+            "Read(*)",
+            "Write(*)",
+            "Edit(*)",
+            "Glob(*)",
+            "Grep(*)",
+            "Agent(*)",
+            "mcp__scitex-orochi__*",
+            "mcp__scitex__*",
+            "mcp__filesystem__*",
+        ]
+    },
+}
+
+_SEED_TEMPLATE = (
+    Path.home() / ".scitex" / "orochi" / "templates" / "claude-code-seed.json"
+)
+
+
+def ensure_global_settings_json() -> None:
+    """Ensure ~/.claude/settings.json exists and is not a broken symlink.
+
+    If the file is missing or the symlink target does not exist, writes a
+    minimal seed so Claude Code suppresses all interactive onboarding and
+    permission prompts on the next launch.  Existing valid files are left
+    unchanged (idempotent).
+    """
+    global_path = Path.home() / ".claude" / "settings.json"
+
+    # Resolve: if symlink, check the *target* exists.
+    is_broken = global_path.is_symlink() and not global_path.exists()
+    is_missing = not global_path.exists() and not global_path.is_symlink()
+
+    if not (is_broken or is_missing):
+        return  # already healthy — nothing to do
+
+    seed: dict
+    if _SEED_TEMPLATE.exists():
+        try:
+            seed = json.loads(_SEED_TEMPLATE.read_text())
+            seed.pop("_comment", None)
+        except (json.JSONDecodeError, OSError):
+            seed = _SEED_DEFAULTS.copy()
+    else:
+        seed = _SEED_DEFAULTS.copy()
+
+    if is_broken:
+        # Remove the broken symlink so we can write a real file.
+        try:
+            os.unlink(global_path)
+        except OSError as exc:
+            logger.warning("Could not remove broken symlink %s: %s", global_path, exc)
+            return
+
+    global_path.parent.mkdir(parents=True, exist_ok=True)
+    global_path.write_text(json.dumps(seed, indent=2) + "\n")
+    logger.info(
+        "Seeded %s (was %s)",
+        global_path,
+        "broken symlink" if is_broken else "missing",
     )
 
 
