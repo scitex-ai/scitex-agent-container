@@ -127,12 +127,57 @@ def account_switch(name: str) -> None:
 )
 @click.option("--dry-run", is_flag=True, help="Check but do not actually rotate.")
 @click.option("--once", is_flag=True, help="Run once instead of looping.")
-def quota_watch(threshold: float, interval: int, dry_run: bool, once: bool) -> None:
-    """Monitor quota and auto-rotate credentials when threshold exceeded."""
-    from ..quota_watch import check_and_rotate, run_loop
+@click.option(
+    "--daemon",
+    is_flag=True,
+    help="Double-fork into background (UNIX only). Logs to --log-file.",
+)
+@click.option(
+    "--log-file",
+    default=None,
+    show_default=False,
+    help="Log file path when running as daemon (default: ~/.scitex/logs/quota-watch.log).",
+)
+def quota_watch(
+    threshold: float,
+    interval: int,
+    dry_run: bool,
+    once: bool,
+    daemon: bool,
+    log_file: str | None,
+) -> None:
+    """Monitor quota and auto-rotate credentials when threshold exceeded.
+
+    \b
+    Examples:
+      # single check
+      scitex-agent-container quota-watch --once
+      # foreground loop every 5 min
+      scitex-agent-container quota-watch
+      # background daemon
+      scitex-agent-container quota-watch --daemon
+    """
+    from pathlib import Path
+    from ..quota_watch import check_and_rotate, run_loop, survival_mode_check
 
     if once or dry_run:
         result = check_and_rotate(threshold=threshold, dry_run=dry_run)
         click.echo(f"[{result['action']}] {result['message']}")
+        # Also report survival mode in single-check mode
+        sv = survival_mode_check()
+        if sv["survival_mode"]:
+            click.echo(f"[SURVIVAL] {sv['message']}", err=True)
         return
-    run_loop(threshold=threshold, interval=interval)
+
+    log_path = Path(log_file) if log_file else None
+    if daemon:
+        click.echo(
+            f"Forking quota-watch daemon (interval={interval}s, threshold={threshold}%). "
+            f"Log: {log_path or '~/.scitex/logs/quota-watch.log'}"
+        )
+    run_loop(
+        threshold=threshold,
+        interval=interval,
+        daemon=daemon,
+        log_path=log_path,
+    )
