@@ -16,7 +16,7 @@ from .base import RuntimeBase
 from .claude_md import cleanup_claude_md, setup_claude_md
 from .mcp_config import cleanup_mcp_config, setup_mcp_config
 from .onboarding import ensure_project_onboarding
-from .settings_json import cleanup_settings_json, setup_settings_json
+from .settings_json import cleanup_settings_json, ensure_global_settings_json, setup_settings_json
 from .src_files import (  # noqa: F401
     cleanup_src_claude_md,
     cleanup_src_env,
@@ -603,6 +603,7 @@ class ClaudeCodeRuntime(RuntimeBase):
         else:
             _setup_claude_md(config, workdir)
         setup_mcp_config(config, workdir)
+        ensure_global_settings_json()
         setup_settings_json(config, workdir)
 
         if dry_run:
