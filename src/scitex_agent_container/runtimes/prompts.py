@@ -220,6 +220,7 @@ def _detect_compose_pending_unsent(content: str) -> bool:
     return bool(re.search(r"❯[ \t]+\S", content))
 
 
+
 def _detect_done(content: str) -> bool:
     """Check if claude is at the main input prompt (all TUI prompts done).
 
