@@ -86,6 +86,50 @@ def _detect_skip_permissions_yn(content: str) -> bool:
     )
 
 
+def _detect_mcp_json_edit(content: str) -> bool:
+    """Permission prompt when Claude tries to edit .mcp.json (runtime).
+
+    Matches "1. Yes" / "1. Proceed" / "1. Allow" + ".mcp.json" + "Enter to confirm".
+    """
+    return (
+        ".mcp.json" in content
+        and "Enter to confirm" in content
+        and ("1. Yes" in content or "1. Proceed" in content or "1. Allow" in content)
+    )
+
+
+def _detect_press_enter_continue(content: str) -> bool:
+    """Generic 'Press Enter to continue' runtime pause (context-window warning, etc).
+
+    Uses a strict last-5-lines window to avoid scrollback false positives
+    (per pane-state-patterns.md: classify against last 5 visible lines only).
+    Excluded: active tool calls and numbered radio selectors.
+    """
+    lines = [l for l in content.splitlines() if l.strip()]
+    last = "\n".join(lines[-5:]) if lines else ""
+    has_enter_cue = (
+        "Press Enter to continue" in last
+        or "press Enter" in last
+        or "Hit Enter" in last
+    )
+    is_active = "Working\u2026" in last or "Ruminating\u2026" in last
+    has_radio = "Enter to confirm" in last or "1. " in last
+    return has_enter_cue and not is_active and not has_radio
+
+
+def _detect_file_trust(content: str) -> bool:
+    """'Do you trust the files in this folder?' prompt (first-run or new cwd).
+
+    May appear when --dangerously-skip-permissions was not propagated to a subshell.
+    """
+    return (
+        "trust" in content.lower()
+        and "folder" in content.lower()
+        and ("y/n" in content.lower() or "yes" in content.lower())
+        and "Enter to confirm" not in content
+    )
+
+
 def _detect_done(content: str) -> bool:
     """Check if claude is at the main input prompt (all TUI prompts done).
 
@@ -117,10 +161,28 @@ PROMPT_HANDLERS: list[PromptHandler] = [
         priority=3,
     ),
     PromptHandler(
+        name="mcp-json-edit",
+        detect=_detect_mcp_json_edit,
+        keys=["1", "Enter"],  # "1. Yes, proceed" — .mcp.json edit dialog
+        priority=4,
+    ),
+    PromptHandler(
         name="skip-permissions-yn",
         detect=_detect_skip_permissions_yn,
         keys=["y", "Enter"],  # Legacy y/n text prompt
         priority=5,
+    ),
+    PromptHandler(
+        name="press-enter-continue",
+        detect=_detect_press_enter_continue,
+        keys=["Enter"],  # Dismiss informational banners / context-window warnings
+        priority=6,
+    ),
+    PromptHandler(
+        name="file-trust",
+        detect=_detect_file_trust,
+        keys=["y", "Enter"],  # "Do you trust the files in this folder?"
+        priority=7,
     ),
 ]
 
