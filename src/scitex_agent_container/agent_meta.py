@@ -310,6 +310,15 @@ def collect_rich(
     except Exception as exc:
         quota_error = f"fetch_usage raised: {exc}"
 
+    # ---- Account / credential identity ------------------------------------
+    account_email: str | None = None
+    try:
+        from .credentials import read_credentials_metadata
+        _cred = read_credentials_metadata()
+        account_email = _cred.get("email_address")
+    except Exception:
+        pass
+
     # ---- Machine resource metrics (psutil, optional) -----------------------
     try:
         import psutil as _psutil
@@ -363,6 +372,8 @@ def collect_rich(
         "quota_7d_reset_at": quota_7d_reset_at,
         "quota_from_cache": quota_from_cache,
         "quota_error": quota_error,
+        # ---- Account identity (which Claude account this agent is using) ----
+        "account_email": account_email,
         # ---- Machine resource metrics (for hub /api/resources/) -------------
         "metrics": _metrics,
     }
