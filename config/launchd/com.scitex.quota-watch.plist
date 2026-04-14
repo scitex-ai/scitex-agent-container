@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd plist: com.scitex.quota-watch
+  Runs scitex-agent-container quota-watch every 5 minutes on MBA.
+
+  Install:
+    cp config/launchd/com.scitex.quota-watch.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.scitex.quota-watch.plist
+
+  Uninstall:
+    launchctl unload ~/Library/LaunchAgents/com.scitex.quota-watch.plist
+    rm ~/Library/LaunchAgents/com.scitex.quota-watch.plist
+
+  Logs:
+    ~/.scitex/logs/quota-watch.log
+    ~/.scitex/logs/quota-watch.err
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.scitex.quota-watch</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <!-- Adjust path if scitex-agent-container is installed in a venv -->
+        <string>/usr/local/bin/scitex-agent-container</string>
+        <string>quota-watch</string>
+        <string>--once</string>
+    </array>
+
+    <!-- Run every 300 seconds (5 minutes) -->
+    <key>StartInterval</key>
+    <integer>300</integer>
+
+    <!-- Start on load and after reboots -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/ywatanabe/.scitex/logs/quota-watch.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/ywatanabe/.scitex/logs/quota-watch.err</string>
+
+    <!-- Keep alive on crash -->
+    <key>KeepAlive</key>
+    <false/>
+
+    <!-- Environment: ensure PATH includes the venv where SAC is installed -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+        <key>HOME</key>
+        <string>/Users/ywatanabe</string>
+    </dict>
+</dict>
+</plist>
