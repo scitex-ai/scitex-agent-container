@@ -113,7 +113,9 @@ def get_local_identities() -> set[str]:
         alias_lower = {a.lower() for a in aliases}
         overlap = (lowered & alias_lower) - _UNIVERSAL_LOOPBACK
         if overlap or canonical.lower() in lowered:
-            names.update(aliases)
+            for a in aliases:
+                names.add(a)
+                names.add(_short(a))
             names.add(canonical)
 
     _CACHE = {n.lower() for n in names if n}
