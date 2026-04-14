@@ -138,6 +138,10 @@ class ClaudeCodeRuntime(RuntimeBase):
         for flag in config.claude.flags:
             parts.append(flag)
 
+        workdir = config.expanded_workdir
+        if not any(workdir in f for f in config.claude.flags):
+            parts.append(f"--add-dir '{workdir}'")
+
         mode = config.claude.session
         max_age = config.claude.continue_max_age_minutes
         if mode == "continue":
