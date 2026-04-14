@@ -81,13 +81,9 @@ def get_local_identities() -> set[str]:
             names.add(_short(hn))
     except Exception:
         hn = ""
-    try:
-        fqdn = socket.getfqdn()
-        if fqdn:
-            names.add(fqdn)
-            names.add(_short(fqdn))
-    except Exception:
-        pass
+    # socket.getfqdn() can block for 30+ seconds on misconfigured DNS;
+    # gethostname() + uname().nodename already cover the same identity.
+    # Removed: do NOT add socket.getfqdn() back without a timeout wrapper.
     try:
         nn = os.uname().nodename
         if nn:
