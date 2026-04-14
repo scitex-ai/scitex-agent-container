@@ -15,6 +15,7 @@ from .a2a_sidecar import stop_sidecar as _a2a_stop_sidecar
 from .base import RuntimeBase
 from .claude_md import cleanup_claude_md, setup_claude_md
 from .mcp_config import cleanup_mcp_config, setup_mcp_config
+from .onboarding import ensure_project_onboarding
 from .settings_json import cleanup_settings_json, setup_settings_json
 from .src_files import (  # noqa: F401
     cleanup_src_claude_md,
@@ -561,6 +562,10 @@ class ClaudeCodeRuntime(RuntimeBase):
         cmd = self._build_command(config)
         env_exports = self._build_env_exports(config)
         workdir = config.expanded_workdir
+
+        # Pre-populate ~/.claude.json projects entry so the agent skips
+        # interactive onboarding (theme / login-method / dev-channels prompts).
+        ensure_project_onboarding(workdir)
 
         # v2: deploy src files from definition directory
         # v1: generate from config (legacy)
