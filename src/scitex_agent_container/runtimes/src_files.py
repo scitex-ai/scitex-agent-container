@@ -213,19 +213,57 @@ def deploy_src_claude_md(config: AgentConfig, workdir: str) -> None:
 
 
 def cleanup_src_claude_md(config: AgentConfig, workdir: str) -> None:
-    """Remove the agent-container section from {workdir}/CLAUDE.md."""
+    """Remove the agent-container section from {workdir}/CLAUDE.md.
+
+    Strips the Start...End managed block AND the guide comment that
+    ``deploy_src_claude_md`` appends directly after the End marker. The
+    guide comment pattern matches the current ``====`` framed
+    "CUSTOM CONTENT — edit freely below this line" block as well as any
+    legacy ``↓ Your custom content`` variant, because both forms are in
+    the wild on already-deployed workspaces.
+
+    If after stripping the remaining file is whitespace-only, the file
+    is removed so the next ``deploy_src_claude_md`` sees "no existing
+    file" rather than a non-empty file with zero markers (which the
+    validator would hard-reject via ``WorkspaceCLAUDEMarkerError``,
+    breaking every ``stop`` → ``start`` restart cycle).
+    """
     dest = Path(workdir) / "CLAUDE.md"
     if not dest.exists():
         return
 
     existing = dest.read_text()
 
-    pattern = (
+    # 1. Strip the managed block (Start marker → End marker).
+    managed_block = (
         r"\n*<!-- Start of scitex-agent-container generated section.*?-->.*?"
         r"<!-- End of scitex-agent-container generated section -->\n?"
-        r"(<!-- ↓ Your custom content.*?-->\n?)?"
+    )
+    # 2. Strip the guide comment that deploy_src_claude_md emits right
+    #    after the End marker. Matches both the current ``====`` form and
+    #    the legacy ``↓ Your custom content`` form.
+    guide_comment_current = (
+        r"<!--\s*=+\s*\n"
+        r".*?CUSTOM CONTENT.*?edit freely.*?"
+        r"=+\s*-->\n?"
+    )
+    guide_comment_legacy = r"<!--\s*↓\s*Your custom content.*?-->\n?"
+
+    pattern = (
+        f"{managed_block}"
+        f"(?:{guide_comment_current}|{guide_comment_legacy})?"
     )
     updated = re.sub(pattern, "", existing, flags=re.DOTALL)
+
+    if not updated.strip():
+        dest.unlink()
+        logger.info(
+            "Cleaned up CLAUDE.md for %s at %s (file removed: only "
+            "managed section + guide comment present)",
+            config.name,
+            dest,
+        )
+        return
 
     if updated != existing:
         dest.write_text(updated)

@@ -12,6 +12,7 @@ import pytest
 from scitex_agent_container.runtimes.src_files import (
     END_MARKER,
     _extract_user_tail,
+    cleanup_src_claude_md,
     deploy_src_claude_md,
 )
 
@@ -122,3 +123,74 @@ class TestDeploySrcClaudeMd:
         workdir = str(tmp_path / "ws")
         deploy_src_claude_md(cfg, workdir)
         assert not (Path(workdir) / "CLAUDE.md").exists()
+
+
+class TestCleanupStopStartRoundTrip:
+    """Regression tests for the stop -> start race that bricked 9 mamba
+    agents on MBA on 2026-04-15 (head-mba msg#12607, msg#12615).
+
+    The earlier cleanup regex looked for a legacy ``↓ Your custom content``
+    guide comment, but deploy_src_claude_md now emits a ``====`` framed
+    "CUSTOM CONTENT — edit freely" guide comment. On stop, the regex
+    failed to strip the guide comment, leaving an orphan ~7-line block
+    in the workspace CLAUDE.md. On the next start, the marker validator
+    saw a non-empty file with zero Start/End markers and hard-aborted
+    with WorkspaceCLAUDEMarkerError — breaking every restart.
+    """
+
+    def test_cleanup_then_deploy_does_not_raise(self, tmp_path):
+        cfg = _make_config(str(tmp_path), SRC_BODY)
+        workdir = str(tmp_path / "workspace")
+        deploy_src_claude_md(cfg, workdir)
+        cleanup_src_claude_md(cfg, workdir)
+        # Must not raise WorkspaceCLAUDEMarkerError on the subsequent deploy
+        deploy_src_claude_md(cfg, workdir)
+        dest = Path(workdir) / "CLAUDE.md"
+        assert dest.exists()
+        content = dest.read_text()
+        assert START_MARKER_RE.search(content)
+        assert END_MARKER in content
+
+    def test_cleanup_removes_file_when_only_managed_section(self, tmp_path):
+        cfg = _make_config(str(tmp_path), SRC_BODY)
+        workdir = str(tmp_path / "workspace")
+        deploy_src_claude_md(cfg, workdir)
+        cleanup_src_claude_md(cfg, workdir)
+        # Nothing was written below the End marker, so cleanup should
+        # remove the file entirely rather than leave an orphan guide
+        # comment that the next deploy's validator would reject.
+        assert not (Path(workdir) / "CLAUDE.md").exists()
+
+    def test_cleanup_preserves_user_tail(self, tmp_path):
+        cfg = _make_config(str(tmp_path), SRC_BODY)
+        workdir = str(tmp_path / "workspace")
+        deploy_src_claude_md(cfg, workdir)
+        dest = Path(workdir) / "CLAUDE.md"
+        dest.write_text(dest.read_text() + "\n### My Notes\nremember this\n")
+        cleanup_src_claude_md(cfg, workdir)
+        # File should still exist with the user tail, minus the managed
+        # block and its guide comment.
+        assert dest.exists()
+        remaining = dest.read_text()
+        assert "remember this" in remaining
+        assert "Start of scitex-agent-container" not in remaining
+        assert "CUSTOM CONTENT" not in remaining
+
+    def test_cleanup_strips_legacy_guide_comment(self, tmp_path):
+        """Legacy workspaces may still carry the old ``↓ Your custom
+        content`` guide comment from earlier versions. Cleanup must
+        strip it along with the managed block.
+        """
+        workdir = Path(tmp_path / "workspace")
+        workdir.mkdir(parents=True, exist_ok=True)
+        legacy = (
+            "<!-- Start of scitex-agent-container generated section (old) -->\n"
+            "body\n"
+            f"{END_MARKER}\n"
+            "<!-- ↓ Your custom content goes here -->\n"
+        )
+        (workdir / "CLAUDE.md").write_text(legacy)
+        cfg = _make_config(str(tmp_path), SRC_BODY)
+        cleanup_src_claude_md(cfg, str(workdir))
+        # Nothing survives the strip, so the file is removed.
+        assert not (workdir / "CLAUDE.md").exists()
