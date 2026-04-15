@@ -92,3 +92,85 @@ tmux send-keys -t <name> 1 Enter     # Select option 1
 `screen -X hardcopy` returns empty on macOS. Additionally, SSH-started screens use `/var/folders/...` while local terminals use `~/.screen`.
 
 **Fix:** Use `multiplexer: tmux` (default since v0.7).
+
+## Workspace CLAUDE.md marker abort (`WorkspaceCLAUDEMarkerError`)
+
+`scitex-agent-container start` refuses to deploy when the existing
+`~/.scitex/orochi/workspaces/<agent>/CLAUDE.md` is non-empty but does not
+contain the canonical marker pair:
+
+```
+<!-- Start of scitex-agent-container generated section (<ts>) -->
+...managed block, overwritten on every deploy...
+<!-- End of scitex-agent-container generated section -->
+...user tail, preserved across restarts...
+```
+
+Hard-fail contract (see `runtimes/src_files.py::_validate_marker_invariants`,
+per ywatanabe spec msg 5250–5260):
+
+- exactly **one** Start marker
+- exactly **one** End marker
+- Start before End
+
+Any violation aborts the deploy rather than guessing, because the tail past
+the End marker is user-editable content and silent overwrite would destroy
+work.
+
+### Symptom
+
+```
+WorkspaceCLAUDEMarkerError: /Users/.../workspaces/<agent>/CLAUDE.md:
+expected exactly 1 Start marker and 1 End marker, found Start=0 End=0.
+Refusing to deploy to avoid data loss.
+```
+
+Agents that hit this stay down (session fails to start, no tmux pane).
+
+### Root cause (observed 2026-04-15, head-mba restart batch)
+
+Legacy workspace CLAUDE.md files from older agent-container versions were
+~7-line placeholders with zero custom content and no markers at all. The
+validator does not distinguish placeholder from contaminated, so any
+markerless non-empty file blocks the deploy.
+
+### Recovery procedure
+
+1. **Inspect first.** Check whether there is any content worth keeping:
+   ```bash
+   cat ~/.scitex/orochi/workspaces/<agent>/CLAUDE.md
+   ```
+   Typical placeholder is 5–10 lines of boilerplate; if so, nothing to save.
+2. **Back up custom tail** (if any real content exists):
+   ```bash
+   cp ~/.scitex/orochi/workspaces/<agent>/CLAUDE.md \
+      ~/.scitex/orochi/workspaces/<agent>/CLAUDE.md.bak
+   ```
+3. **Remove the unmarked file:**
+   ```bash
+   rm ~/.scitex/orochi/workspaces/<agent>/CLAUDE.md
+   ```
+4. **Re-run start.** Deploy will now treat the workspace as empty and
+   write a fresh managed section with both markers:
+   ```bash
+   scitex-agent-container start ~/.scitex/orochi/agents/<agent>/<agent>.yaml
+   ```
+5. **Re-append custom tail** (if you backed up real content) **below** the
+   End marker in the newly written file, not above it.
+
+### Never do
+
+- Do not delete workspace CLAUDE.md files in bulk without inspecting — a
+  real custom tail looks just like a placeholder in a directory listing.
+- Do not hand-patch the start marker onto a placeholder. A start marker
+  without the matching canonical end marker is still a hard-fail, and
+  hand-rolled timestamps drift from the generated ones.
+- Do not edit anything between the markers. That block is regenerated on
+  every restart and changes are lost.
+
+### Prevention
+
+Agents that need persistent per-workspace notes should write them strictly
+**below** the End marker. The guide comment immediately after the End
+marker spells this out — if you see an agent editing above it, flag the
+error and move the content down.
