@@ -9,10 +9,63 @@ import click
 from rich.table import Table
 
 from ..config import load_config
+from ..credentials import read_credentials_metadata
 from ..health import health_check
 from ..lifecycle import agent_status
 from ..registry import Registry
-from ._helpers import console, print_agent_list, print_agent_list_json
+from ._helpers import _json_flag, console, print_agent_list, print_agent_list_json
+
+
+def _format_claude_account_block(meta: dict) -> list[str]:
+    """Render the ``Claude Code account`` section as a list of text lines.
+
+    Missing values render as ``-``. Returns ``[]`` if no fields are set
+    (i.e. every value is ``None``) so the section is omitted entirely.
+    """
+    if not any(v is not None for v in meta.values()):
+        return []
+
+    def _fmt(value):
+        return "-" if value is None else str(value)
+
+    email = _fmt(meta.get("email_address"))
+    org = _fmt(meta.get("organization_name"))
+    display = _fmt(meta.get("display_name"))
+    billing = _fmt(meta.get("billing_type"))
+    sub_type = meta.get("subscription_type")
+    tier = meta.get("rate_limit_tier")
+    if sub_type is None and tier is None:
+        sub_line = "-"
+    else:
+        sub_line = f"{_fmt(sub_type)}  (tier: {_fmt(tier)})"
+    avail = meta.get("has_available_subscription")
+    if avail is None:
+        avail_line = "-"
+    else:
+        avail_line = "yes" if avail else "no"
+    extra_enabled = meta.get("has_extra_usage_enabled")
+    extra_reason = meta.get("cached_extra_usage_disabled_reason")
+    if extra_enabled is None and extra_reason is None:
+        extra_line = "-"
+    elif extra_enabled:
+        extra_line = "enabled"
+    else:
+        extra_line = "disabled"
+        if extra_reason:
+            extra_line += f" (reason: {extra_reason})"
+    since = _fmt(meta.get("subscription_created_at"))
+
+    return [
+        "Claude Code account",
+        f"  Email:          {email}",
+        f"  Organization:   {org}",
+        f"  Display name:   {display}",
+        f"  Billing type:   {billing}",
+        f"  Subscription:   {sub_line}",
+        f"  Available:      {avail_line}",
+        f"  Extra usage:    {extra_line}",
+        f"  Since:          {since}",
+    ]
 
 
 @click.command()
@@ -24,21 +77,45 @@ from ._helpers import console, print_agent_list, print_agent_list_json
     default=False,
     help="Output as JSON.",
 )
-def status(name: str | None, as_json: bool) -> None:
+@click.option(
+    "--terse",
+    "terse",
+    is_flag=True,
+    default=False,
+    help="Project JSON output onto the fleet_watch whitelist (todo#300). "
+    "Implies --json. Reduces per-agent payload ~18x.",
+)
+@click.pass_context
+def status(
+    ctx: click.Context, name: str | None, as_json: bool, terse: bool
+) -> None:
     """Show agent status (one agent or all)."""
+    use_json = _json_flag(ctx, as_json) or terse
     registry = Registry()
+
+    if terse and not name:
+        click.echo(
+            json_mod.dumps(
+                {"error": "--terse requires an agent NAME (per-agent mode only)"}
+            )
+        )
+        sys.exit(2)
 
     if name:
         try:
             info = agent_status(name)
         except Exception as exc:
-            if as_json:
+            if use_json:
                 click.echo(json_mod.dumps({"error": str(exc)}))
             else:
                 console.print(f"[red]Error: {exc}[/red]")
             sys.exit(1)
 
-        if as_json:
+        if use_json:
+            if terse:
+                from ..terse import TERSE_STATUS_FIELDS, project_terse
+
+                info = project_terse(info, TERSE_STATUS_FIELDS)
             click.echo(json_mod.dumps(info, indent=2))
             return
 
@@ -51,10 +128,28 @@ def status(name: str | None, as_json: bool) -> None:
             table.add_row(key, str(value), style=style)
         console.print(table)
     else:
-        if as_json:
-            print_agent_list_json(registry)
+        try:
+            claude_account = read_credentials_metadata()
+        except (OSError, json_mod.JSONDecodeError):
+            claude_account = {}
+        # RuntimeError from _check_no_secrets() is a load-bearing alarm
+        # that a token just leaked; intentionally propagate.
+
+        if use_json:
+            from ._helpers import get_agent_list_data
+
+            payload = {
+                "agents": get_agent_list_data(registry),
+                "claude_account": claude_account,
+            }
+            click.echo(json_mod.dumps(payload, indent=2))
         else:
             print_agent_list(registry)
+            lines = _format_claude_account_block(claude_account)
+            if lines:
+                console.print("")
+                for line in lines:
+                    console.print(line)
 
 
 @click.command(name="list")
@@ -77,10 +172,17 @@ def status(name: str | None, as_json: bool) -> None:
     default=None,
     help="Filter by machine label.",
 )
-def list_agents(as_json: bool, capability: str | None, machine: str | None) -> None:
+@click.pass_context
+def list_agents(
+    ctx: click.Context,
+    as_json: bool,
+    capability: str | None,
+    machine: str | None,
+) -> None:
     """List all registered agents."""
+    use_json = _json_flag(ctx, as_json)
     registry = Registry()
-    if as_json:
+    if use_json:
         print_agent_list_json(registry, capability=capability, machine=machine)
     else:
         print_agent_list(registry, capability=capability, machine=machine)
@@ -95,12 +197,14 @@ def list_agents(as_json: bool, capability: str | None, machine: str | None) -> N
     default=False,
     help="Output as JSON.",
 )
-def health(name: str, as_json: bool) -> None:
+@click.pass_context
+def health(ctx: click.Context, name: str, as_json: bool) -> None:
     """Run a health check on an agent."""
+    use_json = _json_flag(ctx, as_json)
     registry = Registry()
     entry = registry.get(name)
     if entry is None:
-        if as_json:
+        if use_json:
             click.echo(json_mod.dumps({"error": f"Agent '{name}' not found"}))
         else:
             console.print(f"[red]Agent '{name}' not found in registry[/red]")
@@ -109,7 +213,7 @@ def health(name: str, as_json: bool) -> None:
     try:
         config = load_config(entry["config"])
     except Exception as exc:
-        if as_json:
+        if use_json:
             click.echo(json_mod.dumps({"error": str(exc)}))
         else:
             console.print(f"[red]Error loading config: {exc}[/red]")
@@ -117,7 +221,7 @@ def health(name: str, as_json: bool) -> None:
 
     is_healthy, message = health_check(config)
 
-    if as_json:
+    if use_json:
         click.echo(
             json_mod.dumps(
                 {"name": name, "healthy": is_healthy, "message": message},
@@ -163,12 +267,14 @@ def _detect_agent_state(content: str) -> str:
     default=False,
     help="Output as JSON.",
 )
-def check_agent(name: str, as_json: bool) -> None:
+@click.pass_context
+def check_agent(ctx: click.Context, name: str, as_json: bool) -> None:
     """Check live state of an agent by capturing pane content."""
+    use_json = _json_flag(ctx, as_json)
     registry = Registry()
     entry = registry.get(name)
     if entry is None:
-        if as_json:
+        if use_json:
             click.echo(json_mod.dumps({"error": f"Agent '{name}' not found"}))
         else:
             console.print(f"[red]Agent '{name}' not found in registry[/red]")
@@ -177,7 +283,7 @@ def check_agent(name: str, as_json: bool) -> None:
     try:
         config = load_config(entry["config"])
     except Exception as exc:
-        if as_json:
+        if use_json:
             click.echo(json_mod.dumps({"error": str(exc)}))
         else:
             console.print(f"[red]Error loading config: {exc}[/red]")
@@ -199,7 +305,7 @@ def check_agent(name: str, as_json: bool) -> None:
         "state": state,
     }
 
-    if as_json:
+    if use_json:
         click.echo(json_mod.dumps(result, indent=2))
     else:
         status_color = "green" if alive else "red"

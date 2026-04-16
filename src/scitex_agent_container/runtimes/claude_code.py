@@ -8,9 +8,11 @@ import time
 from pathlib import Path
 
 from ..config import AgentConfig
+from ..host_identity import is_local_host
 from .base import RuntimeBase
 from .claude_md import cleanup_claude_md, setup_claude_md
 from .mcp_config import cleanup_mcp_config, setup_mcp_config
+from .settings_json import cleanup_settings_json, setup_settings_json
 from .src_files import (  # noqa: F401
     cleanup_src_claude_md,
     cleanup_src_mcp_json,
@@ -30,6 +32,83 @@ _setup_claude_md = setup_claude_md
 _cleanup_claude_md = cleanup_claude_md
 
 
+def _should_dispatch_remote(config: AgentConfig) -> bool:
+    """True iff the config is remote AND the remote host is not ourselves.
+
+    If ``remote.host`` matches a local identity (hostname / alias / env /
+    YAML / fleet default), log an INFO message and return False so callers
+    fall back to the local in-process runtime instead of self-SSH.
+    """
+    if not config.remote.is_remote:
+        return False
+    if is_local_host(config.remote.host):
+        logger.info(
+            "remote.host=%r matches local identity -> falling back to LocalRuntime",
+            config.remote.host,
+        )
+        return False
+    return True
+
+
+def _encode_workdir_for_claude_projects(workdir: str) -> str:
+    """Encode a workdir path the way Claude Code names its projects dir.
+
+    Claude Code stores per-project session history under
+    ``~/.claude/projects/<encoded>/`` where ``<encoded>`` is the absolute
+    workdir with every ``/`` replaced by ``-`` (the leading slash becomes a
+    leading ``-``; dot-prefixed path segments like ``.dotfiles`` produce a
+    double-dash, which is expected).
+    """
+    abs_path = str(Path(workdir).expanduser().resolve() if Path(workdir).expanduser().exists() else Path(workdir).expanduser())
+    return abs_path.replace("/", "-")
+
+
+def _session_resumable(
+    workdir: str,
+    user_home: str | None = None,
+    max_age_minutes: int | None = None,
+) -> bool:
+    """Return True iff Claude Code has a resumable session for ``workdir``.
+
+    A session is considered resumable when
+    ``~/.claude/projects/<encoded>/`` exists and contains at least one
+    non-empty ``*.jsonl`` transcript. Used by the ``continue-or-new``
+    session mode to decide whether ``--continue`` is safe to pass.
+
+    If ``max_age_minutes`` is set, the most-recently-modified jsonl must be
+    newer than that many minutes; otherwise returns False (treat as stale).
+    """
+    import time as _time
+
+    home = Path(user_home) if user_home else Path.home()
+    encoded = _encode_workdir_for_claude_projects(workdir)
+    proj_dir = home / ".claude" / "projects" / encoded
+    if not proj_dir.is_dir():
+        return False
+    candidates = []
+    for entry in proj_dir.glob("*.jsonl"):
+        try:
+            st = entry.stat()
+            if entry.is_file() and st.st_size > 0:
+                candidates.append((st.st_mtime, entry))
+        except OSError:
+            continue
+    if not candidates:
+        return False
+    if max_age_minutes is not None:
+        newest_mtime = max(mtime for mtime, _ in candidates)
+        age_minutes = (_time.time() - newest_mtime) / 60
+        if age_minutes > max_age_minutes:
+            logger.info(
+                "session age %.1f min > max_age_minutes=%d for %s, treating as stale",
+                age_minutes,
+                max_age_minutes,
+                workdir,
+            )
+            return False
+    return True
+
+
 def _has_src_files(config: AgentConfig) -> bool:
     """Check if src_CLAUDE.md or src_mcp.json exist next to the YAML."""
     if not config.config_path:
@@ -42,15 +121,67 @@ class ClaudeCodeRuntime(RuntimeBase):
     """Runtime for launching Claude Code agents in screen sessions."""
 
     def _build_command(self, config: AgentConfig) -> str:
-        """Build the claude CLI command from config."""
+        """Build the claude CLI command from config.
+
+        Session modes:
+          - ``continue-or-new`` (default): pass ``--continue`` only when a
+            prior session exists for the workdir; otherwise launch fresh.
+            Graceful fallback is silent (logged at info level) so rolling
+            restarts preserve /compact history without risking hard failure.
+          - ``continue``: always pass ``--continue`` (may fail if no prior
+            session — explicit opt-in for callers that want strict resume).
+          - ``new``: never pass ``--continue``.
+        """
         parts = ["claude"]
         parts.append(f"--model '{config.model}'")
 
         for flag in config.claude.flags:
             parts.append(flag)
 
-        if config.claude.session == "continue":
-            parts.append("--continue")
+        workdir = config.expanded_workdir
+        if not any(workdir in f for f in config.claude.flags):
+            parts.append(f"--add-dir '{workdir}'")
+
+        mode = config.claude.session
+        max_age = config.claude.continue_max_age_minutes
+        if mode == "continue":
+            if max_age is not None and not _session_resumable(config.expanded_workdir, max_age_minutes=max_age):
+                logger.warning(
+                    "session=continue: session too stale (max_age=%d min) for %s, launching fresh",
+                    max_age,
+                    config.expanded_workdir,
+                )
+            else:
+                parts.append("--continue")
+        elif mode == "continue-or-new":
+            if _session_resumable(config.expanded_workdir, max_age_minutes=max_age):
+                parts.append("--continue")
+                logger.info(
+                    "session=continue-or-new: resumable session found for %s, passing --continue",
+                    config.expanded_workdir,
+                )
+            else:
+                logger.info(
+                    "session=continue-or-new: no resumable session for %s, launching fresh",
+                    config.expanded_workdir,
+                )
+        elif mode == "resume":
+            resume_id = config.claude.resume_id.strip()
+            if resume_id:
+                parts.append(f"--resume '{resume_id}'")
+                logger.info(
+                    "session=resume: passing --resume %s for %s",
+                    resume_id,
+                    config.expanded_workdir,
+                )
+            else:
+                # No explicit ID — fall back to --continue (most recent session)
+                logger.warning(
+                    "session=resume: no resume_id set for %s, falling back to --continue",
+                    config.expanded_workdir,
+                )
+                parts.append("--continue")
+        # mode == "new" (or any other): no --continue flag
 
         return " ".join(parts)
 
@@ -239,9 +370,95 @@ class ClaudeCodeRuntime(RuntimeBase):
         flog.warning(msg)
         return False
 
+    def _wait_for_ready_state(self, config: AgentConfig) -> bool:
+        """Gate startup commands behind a Claude Code ready-state probe.
+
+        Returns True if the caller should proceed to dispatch commands,
+        False if it should abort (strict on_timeout=capture_and_fail).
+        Legacy configs without ``spec.startup.ready_patterns`` always
+        return True immediately (fire-and-hope preserved).
+        """
+        from ..ready_state import wait_for_ready
+
+        startup = getattr(config, "startup", None)
+        patterns = [p.regex for p in getattr(startup, "ready_patterns", []) or []]
+        if not patterns:
+            return True
+
+        pane = config.screen_name
+        mux = self._get_mux(config)
+
+        def _capture(target: str) -> str:
+            return mux.capture_content(target)
+
+        log_dir = Path(
+            f"~/.scitex/agent-container/logs/{config.name}"
+        ).expanduser()
+        log_dir.mkdir(parents=True, exist_ok=True)
+
+        def _on_timeout(tail_text: str) -> None:
+            ts = time.strftime("%Y%m%dT%H%M%S")
+            path = log_dir / f"boot-capture-{ts}.txt"
+            try:
+                path.write_text(tail_text or "")
+                logger.warning(
+                    "ready_state timeout for %s; wrote boot capture to %s",
+                    config.name,
+                    path,
+                )
+            except OSError:
+                logger.exception(
+                    "Failed to write boot capture for %s to %s",
+                    config.name,
+                    path,
+                )
+
+        logger.info(
+            "waiting for Claude Code ready state on pane %s (timeout=%.0fs)",
+            pane,
+            startup.ready_timeout_seconds,
+        )
+        ready = wait_for_ready(
+            agent_name=config.name,
+            pane_target=pane,
+            patterns=patterns,
+            idle_ticks=startup.ready_idle_ticks,
+            poll_interval=startup.ready_poll_interval_seconds,
+            timeout=startup.ready_timeout_seconds,
+            capture_callback=_on_timeout,
+            capture_fn=_capture,
+        )
+
+        if ready:
+            logger.info("ready detected, sending startup commands to %s", pane)
+            return True
+
+        if startup.on_timeout == "capture_and_fail":
+            logger.error(
+                "ready_state timeout for %s with on_timeout=capture_and_fail; "
+                "skipping startup commands",
+                config.name,
+            )
+            return False
+
+        logger.warning(
+            "ready_state timeout for %s with on_timeout=capture_and_proceed; "
+            "sending startup commands anyway (legacy fire-and-hope)",
+            config.name,
+        )
+        return True
+
     def _run_startup_commands(self, config: AgentConfig) -> None:
         """Send startup commands to the screen session with delays."""
-        for sc in config.startup_commands:
+        if not self._wait_for_ready_state(config):
+            return
+        startup_spec = getattr(config, "startup", None)
+        commands = (
+            list(startup_spec.commands)
+            if startup_spec and startup_spec.commands
+            else list(config.startup_commands)
+        )
+        for sc in commands:
             if sc.delay > 0:
                 time.sleep(sc.delay)
             try:
@@ -283,7 +500,7 @@ class ClaudeCodeRuntime(RuntimeBase):
         ``scitex-agent-container start`` call receives ``--force`` and
         stops any existing instance before relaunching.
         """
-        if config.remote.is_remote:
+        if _should_dispatch_remote(config):
             return SSHRemote.start(config, no_preflight=no_preflight, force=force)
 
         if config.container.runtime != "none":
@@ -308,6 +525,7 @@ class ClaudeCodeRuntime(RuntimeBase):
         else:
             _setup_claude_md(config, workdir)
         setup_mcp_config(config, workdir)
+        setup_settings_json(config, workdir)
 
         mux = self._get_mux(config)
         started = mux.start(
@@ -337,7 +555,7 @@ class ClaudeCodeRuntime(RuntimeBase):
 
     def stop(self, config: AgentConfig) -> bool:
         """Stop a Claude Code agent."""
-        if config.remote.is_remote:
+        if _should_dispatch_remote(config):
             return SSHRemote.stop(config)
 
         if config.container.runtime != "none":
@@ -356,12 +574,13 @@ class ClaudeCodeRuntime(RuntimeBase):
         else:
             _cleanup_claude_md(config, config.expanded_workdir)
         cleanup_mcp_config(config, config.expanded_workdir)
+        cleanup_settings_json(config, config.expanded_workdir)
 
         return self._get_mux(config).stop(config.screen_name)
 
     def is_running(self, config: AgentConfig) -> bool:
         """Check if the Claude Code agent is running."""
-        if config.remote.is_remote:
+        if _should_dispatch_remote(config):
             return SSHRemote.is_running(config)
 
         if config.container.runtime == "docker":
@@ -377,7 +596,7 @@ class ClaudeCodeRuntime(RuntimeBase):
 
     def logs(self, config: AgentConfig, lines: int = 50) -> str:
         """Get logs from the Claude Code agent."""
-        if config.remote.is_remote:
+        if _should_dispatch_remote(config):
             return SSHRemote.logs(config, lines)
 
         if config.container.runtime == "docker":

@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .config import AgentConfig, load_config, resolve_config
 from .health import health_monitor
+from .hooks import run_hook
 from .registry import Registry
 from .runtimes.claude_code import ClaudeCodeRuntime
 
@@ -19,6 +20,31 @@ def _get_runtime(config: AgentConfig):
     if config.runtime == "claude-code":
         return ClaudeCodeRuntime()
     raise ValueError(f"Unsupported runtime: {config.runtime}")
+
+
+def _fire_forget_hook(
+    agent_name: str,
+    hook_name: str,
+    commands: list[str],
+    context: dict | None = None,
+) -> None:
+    """Invoke ``run_hook`` (non-blocking, handles URL + shell entries).
+
+    Called alongside the legacy synchronous ``_run_hooks`` path so
+    existing YAML pipes/redirects keep working unchanged while
+    external tools (orochi etc.) can additionally plug in via
+    ``http(s)://`` URLs. The legacy path filters out URL entries to
+    avoid double-dispatch of the same side-effect.
+    """
+    try:
+        run_hook(agent_name, hook_name, list(commands or []), context=context)
+    except Exception:  # pragma: no cover — defensive
+        import sys
+
+        print(
+            f"[WARN] run_hook {hook_name} dispatch failed for {agent_name}",
+            file=sys.stderr,
+        )
 
 
 def _run_hooks(hooks: list[str], extra_env: dict[str, str] | None = None) -> None:
@@ -34,6 +60,11 @@ def _run_hooks(hooks: list[str], extra_env: dict[str, str] | None = None) -> Non
     env = {**os.environ, **(extra_env or {})}
     for hook in hooks:
         if not hook:
+            continue
+        # URL entries are handled by the new fire-and-forget path
+        # (see _fire_forget_hook / hooks.run_hook). Skip them here to
+        # avoid trying to ``sh -c "https://..."``.
+        if isinstance(hook, str) and hook.startswith(("http://", "https://")):
             continue
         result = subprocess.run(
             hook, shell=True, capture_output=True, text=True, env=env
@@ -91,6 +122,7 @@ def agent_start(
 
     # Pre-start hooks
     _run_hooks(config.hooks.get("pre_start", []), extra_env=hook_env)
+    _fire_forget_hook(config.name, "pre_start", config.hooks.get("pre_start", []))
 
     # Start — pass ``force`` through so remote dispatchers (SSHRemote)
     # can relay ``--force`` to the remote CLI and skip its own
@@ -111,6 +143,22 @@ def agent_start(
 
     # Post-start hooks
     _run_hooks(config.hooks.get("post_start", []), extra_env=hook_env)
+    _fire_forget_hook(config.name, "post_start", config.hooks.get("post_start", []))
+
+    # Start context-management sensor in background if enabled
+    if config.context_management.enabled:
+        try:
+            from .context_manager import start_sensor
+
+            start_sensor(config)
+        except Exception:
+            import sys
+
+            print(
+                f"[WARN] context_manager failed to start for {config.name}",
+                file=sys.stderr,
+            )
+            traceback.print_exc()
 
     # Start health monitor in background if enabled
     if config.health.enabled:
@@ -168,6 +216,7 @@ def agent_stop(
     except Exception:
         if not force:
             raise
+    _fire_forget_hook(config.name, "pre_stop", config.hooks.get("pre_stop", []))
 
     try:
         runtime.stop(config)
@@ -181,6 +230,7 @@ def agent_stop(
     except Exception:
         if not force:
             raise
+    _fire_forget_hook(config.name, "post_stop", config.hooks.get("post_stop", []))
 
     registry.remove(name)
     return True
@@ -250,6 +300,111 @@ def agent_status(name: str, registry: Registry | None = None) -> dict:
     }
     if config and config.remote.is_remote:
         result["remote"] = config.remote.host
+
+    # Hook-points / listen / extensions plumbing (todo#286 Phase 4).
+    # Counts are exposed so consumers can see what's wired up; command
+    # bodies are intentionally NOT echoed to avoid leaking URLs or
+    # secrets through status --json.
+    if config is not None:
+        hooks = config.hooks or {}
+        result["hooks_configured"] = {
+            key: len(hooks.get(key, []) or [])
+            for key in (
+                "pre_start",
+                "post_start",
+                "pre_stop",
+                "post_stop",
+                "on_compact",
+                "on_restart",
+                "on_diff",
+            )
+        }
+        result["listen"] = [
+            {
+                "port": lp.port,
+                "proto": lp.proto,
+                "path": lp.path,
+                "name": lp.name,
+                "owner": lp.owner,
+            }
+            for lp in (config.listen or [])
+        ]
+        # Opaque pass-through — echoed verbatim.
+        result["extensions"] = dict(config.extensions or {})
+    else:
+        result["hooks_configured"] = {}
+        result["listen"] = []
+        result["extensions"] = {}
+
+    # Surface context-management state for fleet_watch.sh / NAS orchestrator
+    # (todo#285). ``None`` when the feature is unconfigured or noop so
+    # consumers can distinguish "disabled" from "0%".
+    if config and config.context_management.enabled:
+        from .context_manager import get_sensor
+
+        sensor = get_sensor(name)
+        result["context_management"] = {
+            "percent": sensor.last_percent if sensor is not None else None,
+            "strategy": config.context_management.strategy,
+            "trigger_at_percent": config.context_management.trigger_at_percent,
+        }
+    else:
+        result["context_management"] = None
+
+    # Expose the full agent_meta dict from the live sensor if present
+    # (todo#285 Phase 2b). This is the transcript-derived source of
+    # truth used by the dashboard when it's available.
+    try:
+        from .context_manager import get_sensor as _gs
+
+        _live = _gs(name)
+        if _live is not None and _live.last_meta is not None:
+            result["agent_meta"] = _live.last_meta
+    except Exception:
+        pass
+
+    # Snapshot block — cheap read from cache (todo#286). Never re-gathers.
+    try:
+        from .snapshot import read_latest
+
+        latest = read_latest(name)
+        if latest is not None:
+            result["snapshot"] = {
+                "timestamp": latest.get("timestamp"),
+                "has_diff": latest.get("has_diff", False),
+                "diff_fields": latest.get("diff_fields", []),
+            }
+        else:
+            result["snapshot"] = None
+    except Exception:
+        result["snapshot"] = None
+
+    # Enrich with claude-hud-style metadata. Canonical source for the
+    # Agents-tab dashboard; the MCP sidecar heartbeat shells out to this
+    # command rather than duplicating the logic in TypeScript.
+    try:
+        from .agent_meta import collect_rich
+
+        workdir = (
+            config.expanded_workdir
+            if config
+            else str(Path.home() / ".scitex" / "orochi" / "workspaces" / name)
+        )
+        session = entry.get("screen", "") or (config.screen_name if config else name)
+        rich = collect_rich(name=name, workdir=workdir, session=session)
+        # Prefer transcript-derived started_at only if the registry
+        # doesn't have one.
+        if not result.get("started_at") and rich.get("started_at_transcript"):
+            result["started_at"] = rich["started_at_transcript"]
+        rich.pop("started_at_transcript", None)
+        rich.pop("model_transcript", None)
+        # Never let rich overwrite the canonical registry/config fields.
+        for k, v in rich.items():
+            result.setdefault(k, v)
+    except Exception:
+        # Never let metadata collection break status.
+        pass
+
     return result
 
 

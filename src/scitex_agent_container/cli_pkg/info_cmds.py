@@ -15,7 +15,7 @@ from ..config import load_config
 from ..lifecycle import agent_logs
 from ..registry import Registry
 from ._api_tree import get_api_tree
-from ._helpers import console
+from ._helpers import _json_flag, console
 
 
 @click.command()
@@ -34,7 +34,8 @@ from ._helpers import console
     default=False,
     help="Output as JSON.",
 )
-def find(capability: str, search_dir: str | None, as_json: bool) -> None:
+@click.pass_context
+def find(ctx: click.Context, capability: str, search_dir: str | None, as_json: bool) -> None:
     """Find agents with a specific capability label from YAML configs.
 
     Searches agent definition files for those whose ``capabilities`` label
@@ -65,7 +66,7 @@ def find(capability: str, search_dir: str | None, as_json: bool) -> None:
                 }
             )
 
-    if as_json:
+    if _json_flag(ctx, as_json):
         click.echo(json_mod.dumps(matches, indent=2))
         return
 
@@ -158,12 +159,13 @@ def attach(name: str) -> None:
     default=False,
     help="Output as JSON.",
 )
-def list_python_apis(verbose: int, max_depth: int, as_json: bool) -> None:
+@click.pass_context
+def list_python_apis(ctx: click.Context, verbose: int, max_depth: int, as_json: bool) -> None:
     """List all public Python APIs of scitex-agent-container."""
     module = importlib.import_module("scitex_agent_container")
     tree = get_api_tree(module, max_depth=max_depth, docstring=(verbose >= 1))
 
-    if as_json:
+    if _json_flag(ctx, as_json):
         click.echo(json_mod.dumps(tree, indent=2))
         return
 

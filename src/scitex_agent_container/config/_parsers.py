@@ -8,14 +8,29 @@ from typing import Any
 from ._types import (
     ClaudeSpec,
     ContainerSpec,
+    ContextManagementConfig,
     HealthSpec,
+    ListenPort,
     OrochiSpec,
+    ReadyPattern,
     RemoteSpec,
     RestartSpec,
     SkillsSpec,
     StartupCommand,
+    StartupSpec,
     TelegramSpec,
     WatchdogSpec,
+)
+
+# All known hook keys. Unknown keys in the YAML are ignored (forward-compat).
+HOOK_KEYS = (
+    "pre_start",
+    "post_start",
+    "pre_stop",
+    "post_stop",
+    "on_compact",
+    "on_restart",
+    "on_diff",
 )
 
 
@@ -31,10 +46,24 @@ def parse_container(spec: dict) -> ContainerSpec:
 
 def parse_claude(spec: dict) -> ClaudeSpec:
     raw = spec.get("claude", {}) or {}
+    # Top-level `session:` takes precedence over `claude.session` for
+    # ergonomics (it's the primary knob agents care about). Falls back to
+    # the nested field for backward compat, then the default.
+    session = spec.get("session")
+    if session is None:
+        session = raw.get("session", "continue-or-new")
+    continue_max_age = raw.get("continue_max_age_minutes")
+    if continue_max_age is not None:
+        try:
+            continue_max_age = int(continue_max_age)
+        except (TypeError, ValueError):
+            continue_max_age = None
     return ClaudeSpec(
         channels=raw.get("channels", []) or [],
         flags=raw.get("flags", []) or [],
-        session=raw.get("session", "new"),
+        session=session,
+        continue_max_age_minutes=continue_max_age,
+        resume_id=str(raw.get("resume_id", "") or ""),
         auto_accept=raw.get("auto_accept", True),
     )
 
@@ -106,6 +135,35 @@ def parse_skills(spec: dict) -> SkillsSpec:
     )
 
 
+def parse_context_management(spec: dict) -> ContextManagementConfig:
+    raw = spec.get("context_management", {}) or {}
+    try:
+        trigger = float(raw.get("trigger_at_percent", 70.0))
+    except (TypeError, ValueError):
+        trigger = 70.0
+    strategy = str(raw.get("strategy", "noop") or "noop")
+    if strategy not in ("compact", "restart", "noop"):
+        strategy = "noop"
+    try:
+        warn_n = int(raw.get("warn_before_n_checks", 0))
+    except (TypeError, ValueError):
+        warn_n = 0
+    try:
+        interval = int(raw.get("check_interval_seconds", 300))
+    except (TypeError, ValueError):
+        interval = 300
+    state_file = str(
+        raw.get("state_file", "~/.scitex/agent-container/state/<agent>.json")
+    )
+    return ContextManagementConfig(
+        trigger_at_percent=trigger,
+        strategy=strategy,
+        warn_before_n_checks=max(0, warn_n),
+        check_interval_seconds=max(1, interval),
+        state_file=state_file,
+    )
+
+
 def parse_remote(spec: dict) -> RemoteSpec:
     raw = spec.get("remote", {}) or {}
     return RemoteSpec(
@@ -120,10 +178,49 @@ def parse_remote(spec: dict) -> RemoteSpec:
 
 def parse_hooks(spec: dict) -> dict[str, list[str]]:
     raw = spec.get("hooks", {}) or {}
-    return {
-        key: raw.get(key, []) or []
-        for key in ("pre_start", "post_start", "pre_stop", "post_stop")
-    }
+    return {key: list(raw.get(key, []) or []) for key in HOOK_KEYS}
+
+
+def parse_listen(spec: dict) -> list[ListenPort]:
+    """Parse ``spec.listen`` port/socket declarations.
+
+    Container does NOT bind these — declarations only. Entries that
+    fail validation (missing port for tcp/udp, missing path for unix)
+    are silently dropped so a malformed side-entry can't break startup.
+    """
+    raw = spec.get("listen", []) or []
+    out: list[ListenPort] = []
+    if not isinstance(raw, list):
+        return out
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        proto = str(item.get("proto", "tcp") or "tcp")
+        try:
+            port = int(item.get("port", 0) or 0)
+        except (TypeError, ValueError):
+            port = 0
+        path = str(item.get("path", "") or "")
+        if proto in ("tcp", "udp") and port <= 0:
+            continue
+        if proto == "unix" and not path:
+            continue
+        out.append(
+            ListenPort(
+                port=port,
+                proto=proto,
+                path=path,
+                name=str(item.get("name", "") or ""),
+                owner=str(item.get("owner", "") or ""),
+            )
+        )
+    return out
+
+
+def parse_extensions(spec: dict) -> dict:
+    """Return ``spec.extensions`` verbatim (opaque pass-through)."""
+    raw = spec.get("extensions", {}) or {}
+    return dict(raw) if isinstance(raw, dict) else {}
 
 
 def parse_startup_commands(spec: dict) -> list[StartupCommand]:
@@ -136,6 +233,73 @@ def parse_startup_commands(spec: dict) -> list[StartupCommand]:
         for item in raw
         if isinstance(item, dict) and item.get("command")
     ]
+
+
+def _parse_command_list(raw: Any) -> list[StartupCommand]:
+    out: list[StartupCommand] = []
+    for item in raw or []:
+        if isinstance(item, str):
+            if item:
+                out.append(StartupCommand(delay=0, command=item))
+        elif isinstance(item, dict) and item.get("command"):
+            try:
+                delay = int(item.get("delay", 0))
+            except (TypeError, ValueError):
+                delay = 0
+            out.append(StartupCommand(delay=delay, command=str(item["command"])))
+    return out
+
+
+def parse_startup(spec: dict) -> StartupSpec:
+    """Parse the opt-in ``spec.startup`` block (todo#291).
+
+    Missing or malformed → empty ``StartupSpec`` (legacy behavior). When
+    ``spec.startup.commands`` is absent we shadow the legacy top-level
+    ``spec.startup_commands`` so an operator can add a ready gate without
+    moving their existing command list.
+    """
+    raw = spec.get("startup")
+    if not isinstance(raw, dict):
+        legacy = parse_startup_commands(spec)
+        return StartupSpec(commands=legacy)
+
+    patterns_raw = raw.get("ready_patterns", []) or []
+    patterns: list[ReadyPattern] = []
+    for item in patterns_raw:
+        if isinstance(item, str):
+            patterns.append(ReadyPattern(regex=item))
+        elif isinstance(item, dict) and item.get("regex"):
+            patterns.append(ReadyPattern(regex=str(item["regex"])))
+
+    try:
+        idle_ticks = max(1, int(raw.get("ready_idle_ticks", 3)))
+    except (TypeError, ValueError):
+        idle_ticks = 3
+    try:
+        poll_interval = max(0.05, float(raw.get("ready_poll_interval_seconds", 0.5)))
+    except (TypeError, ValueError):
+        poll_interval = 0.5
+    try:
+        timeout = max(1.0, float(raw.get("ready_timeout_seconds", 60.0)))
+    except (TypeError, ValueError):
+        timeout = 60.0
+
+    on_timeout = str(raw.get("on_timeout", "capture_and_proceed") or "capture_and_proceed")
+    if on_timeout not in ("capture_and_fail", "capture_and_proceed"):
+        on_timeout = "capture_and_proceed"
+
+    commands = _parse_command_list(raw.get("commands"))
+    if not commands:
+        commands = parse_startup_commands(spec)
+
+    return StartupSpec(
+        ready_patterns=patterns,
+        ready_idle_ticks=idle_ticks,
+        ready_poll_interval_seconds=poll_interval,
+        ready_timeout_seconds=timeout,
+        on_timeout=on_timeout,
+        commands=commands,
+    )
 
 
 def get_nested(data: dict, key: str, default: Any = None) -> Any:

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "scitex-agent-container"
-version = "0.7.1"
+version = "0.7.2"
 description = "Declarative YAML-based framework for defining, managing, and orchestrating AI coding agent instances"
 readme = "README.md"
 license = "AGPL-3.0"
@@ -61,6 +61,7 @@ docs = [
 
 [project.scripts]
 scitex-agent-container = "scitex_agent_container.cli:main"
+sac = "scitex_agent_container.cli:main"
 
 [project.entry-points."scitex_dev.docs"]
 scitex-agent-container = "scitex_agent_container"

@@ -80,7 +80,13 @@ spec:
   claude:
     flags:
       - --dangerously-skip-permissions
-    session: new
+    # session: continue-or-new (default) | continue | new
+    # continue-or-new: pass --continue iff a prior session exists for the
+    #   workdir, else launch fresh. Preserves /compact history across
+    #   rolling restarts without risking a hard failure.
+    # continue: always pass --continue (fails if no prior session)
+    # new:      never pass --continue
+    session: continue-or-new
 
   skills:
     required:
@@ -198,7 +204,7 @@ scitex-agent-container cleanup
 | `spec.model` | `sonnet`, `opus[1m]` | Model selection |
 | `spec.multiplexer` | `tmux` (default), `screen` | Terminal multiplexer |
 | `spec.remote` | `host`, `user`, `timeout` | SSH remote deployment |
-| `spec.claude` | `flags[]`, `session`, `auto_accept` | Claude Code options |
+| `spec.claude` | `flags[]`, `session`, `auto_accept` | Claude Code options. `session` values: `continue-or-new` (default, try `--continue` with graceful fallback), `continue` (strict resume), `new` (always fresh). Top-level `spec.session:` also accepted and takes precedence. |
 | `spec.health` | `enabled`, `interval`, `method` | Health monitoring |
 | `spec.restart` | `policy`, `max_retries`, `backoff` | Auto-restart |
 | `spec.skills` | `required[]`, `available[]` | Skill injection |
