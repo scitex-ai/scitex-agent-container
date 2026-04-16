@@ -234,3 +234,149 @@ class TestCLI:
             result = runner.invoke(main, ["find", "gpu", "--dir", tmpdir])
             assert result.exit_code == 0
             assert "No agents found" in result.output
+
+
+# ----------------------------------------------------------------------------
+# Regression tests for todo#254 — list --json must not block when SSH
+# fan-out hits a timeout. Per-probe timeout + parallel fan-out keeps the
+# whole list command bounded instead of 5s-timeout-blocking per-agent.
+# ----------------------------------------------------------------------------
+
+
+class TestListJsonTimeoutBudget:
+    """todo#254 regression suite.
+
+    Pre-fix: a hung SSH probe for one remote agent would block the entire
+    `scitex-agent-container list --json` command past its 5s smoke-test
+    budget, because ClaudeCodeRuntime().is_running(cfg) was called serially
+    per agent in get_agent_list_data.
+
+    Post-fix: each remote probe has a per-probe timeout (default 2s) and
+    is run in a ThreadPoolExecutor. Probes that time out produce
+    status="unknown" + liveness_unknown=True in the output row.
+    """
+
+    def test_timeout_bound_with_hanging_remote(self, monkeypatch, tmp_path):
+        """A hanging remote probe must not exceed the per-probe timeout."""
+        import time
+
+        from scitex_agent_container.cli_pkg import _helpers
+        from scitex_agent_container.config._types import AgentConfig, RemoteSpec
+        from scitex_agent_container.registry import Registry
+
+        # Build two fake registry entries: one remote + one local.
+        remote_cfg_path = tmp_path / "remote.yaml"
+        remote_cfg_path.write_text(
+            """apiVersion: cld-agent/v1
+kind: Agent
+metadata:
+  name: test-remote
+spec:
+  runtime: claude-code
+  remote:
+    host: fake-remote-host
+    user: ywatanabe
+"""
+        )
+        local_cfg_path = tmp_path / "local.yaml"
+        local_cfg_path.write_text(
+            """apiVersion: cld-agent/v1
+kind: Agent
+metadata:
+  name: test-local
+spec:
+  runtime: claude-code
+"""
+        )
+
+        class _FakeRegistry:
+            def list_all(self):
+                return [
+                    {
+                        "name": "test-remote",
+                        "screen": "test-remote",
+                        "config": str(remote_cfg_path),
+                        "started_at": "?",
+                    },
+                    {
+                        "name": "test-local",
+                        "screen": "test-local",
+                        "config": str(local_cfg_path),
+                        "started_at": "?",
+                    },
+                ]
+
+        # Patch ClaudeCodeRuntime to simulate a hang on the remote agent.
+        class _HangingRuntime:
+            def is_running(self, cfg):
+                time.sleep(10)  # longer than our probe timeout
+                return True
+
+        monkeypatch.setattr(
+            _helpers,
+            "_probe_remote",
+            lambda cfg: _HangingRuntime().is_running(cfg),
+            raising=False,
+        )
+
+        # Patch ScreenManager for the local agent path.
+        from scitex_agent_container.runtimes import screen as _screen
+        monkeypatch.setattr(_screen.ScreenManager, "exists", lambda n: False)
+
+        t0 = time.monotonic()
+        # Module-level function reference — the monkeypatch above replaced
+        # ``_probe_remote`` within _helpers so any call through that module
+        # picks up the hanging mock.
+        rows = _helpers.get_agent_list_data(
+            _FakeRegistry(), remote_probe_timeout_s=1.0
+        )
+        elapsed = time.monotonic() - t0
+
+        # Bound: the 10s hang must be cut short by the 1s timeout. Even
+        # with ThreadPool overhead, elapsed should be < 3s (generous).
+        assert elapsed < 3.0, (
+            f"get_agent_list_data blocked for {elapsed:.1f}s despite 1s "
+            "probe timeout — todo#254 regression re-introduced"
+        )
+        # And the remote row must be marked liveness_unknown, not "stopped"
+        remote_row = next(r for r in rows if r["name"] == "test-remote")
+        assert remote_row["status"] == "unknown"
+        assert remote_row.get("liveness_unknown") is True
+
+    def test_fast_remote_probe_not_marked_unknown(self, monkeypatch, tmp_path):
+        """A fast remote probe must NOT be marked liveness_unknown."""
+        from scitex_agent_container.cli_pkg import _helpers
+
+        cfg_path = tmp_path / "fast-remote.yaml"
+        cfg_path.write_text(
+            """apiVersion: cld-agent/v1
+kind: Agent
+metadata:
+  name: test-fast
+spec:
+  runtime: claude-code
+  remote:
+    host: fake-fast-host
+    user: ywatanabe
+"""
+        )
+
+        class _FakeRegistry:
+            def list_all(self):
+                return [{
+                    "name": "test-fast",
+                    "screen": "test-fast",
+                    "config": str(cfg_path),
+                    "started_at": "?",
+                }]
+
+        monkeypatch.setattr(
+            _helpers, "_probe_remote", lambda cfg: True, raising=False
+        )
+
+        rows = _helpers.get_agent_list_data(
+            _FakeRegistry(), remote_probe_timeout_s=5.0
+        )
+        row = rows[0]
+        assert row["status"] == "running"
+        assert row.get("liveness_unknown") is not True
