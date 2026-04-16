@@ -51,10 +51,26 @@ class HelpRecursiveGroup(click.Group):
         return "\n".join(lines)
 
 
+def _probe_remote(cfg) -> bool | None:
+    """Probe a remote agent's liveness. Returns None on exception/timeout.
+
+    Extracted to module level so tests can monkeypatch it (todo#254
+    regression suite needs to simulate hung + fast probes without
+    real SSH).
+    """
+    try:
+        from ..runtimes.claude_code import ClaudeCodeRuntime
+        return ClaudeCodeRuntime().is_running(cfg)
+    except Exception:
+        return None
+
+
 def get_agent_list_data(
     registry: Registry,
     capability: str | None = None,
     machine: str | None = None,
+    remote_probe_timeout_s: float = 2.0,
+    max_parallel_probes: int = 8,
 ) -> list[dict]:
     """Get agent list as plain dicts for JSON or table output.
 
@@ -63,7 +79,22 @@ def get_agent_list_data(
         capability: If set, only include agents whose ``capabilities`` label
             contains this value (comma-separated matching).
         machine: If set, only include agents whose ``machine`` label matches.
+        remote_probe_timeout_s: Per-agent SSH probe timeout for the
+            ``is_running`` check. Short by default (2s) so the list
+            command doesn't block indefinitely when the remote host is
+            unreachable or the local ulimit wall throttles SSH fan-out
+            (todo#254 regression). Exceeding this returns
+            ``is_running=None`` (liveness unknown) instead of blocking.
+        max_parallel_probes: How many remote probes to run concurrently.
+            Kept small to stay under the macOS ``kern.maxproc`` wall
+            that today's SSH fan-out regression exposed.
+
+    Rows with a remote probe that timed out have ``status="unknown"``
+    and ``liveness_unknown=True`` so JSON consumers can surface a
+    soft-warning rather than treating unreachable remotes as offline.
     """
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FuturesTimeout
+
     from ..runtimes.screen import ScreenManager
     from ..runtimes.tmux import TmuxManager
 
@@ -84,8 +115,11 @@ def get_agent_list_data(
         return None
 
     entries = registry.list_all()
-    results: list[dict] = []
-    for entry in entries:
+
+    # First pass: resolve configs + filter + identify remote probes to run.
+    prepared: list[dict] = []
+    remote_probes: dict[int, object] = {}
+    for idx, entry in enumerate(entries):
         name = entry.get("name", "?")
         screen_name = entry.get("screen", "?")
         started = entry.get("started_at", "?")
@@ -102,16 +136,6 @@ def get_agent_list_data(
             except Exception:
                 pass
 
-        try:
-            if cfg and cfg.remote.is_remote:
-                from ..runtimes.claude_code import ClaudeCodeRuntime
-
-                is_running = ClaudeCodeRuntime().is_running(cfg)
-            else:
-                is_running = ScreenManager.exists(screen_name)
-        except Exception:
-            is_running = False  # Graceful degradation on SSH timeout etc.
-
         if machine and labels.get("machine") != machine:
             continue
         if capability:
@@ -123,17 +147,91 @@ def get_agent_list_data(
             if capability not in caps:
                 continue
 
+        prep = {
+            "idx": idx,
+            "name": name,
+            "screen_name": screen_name,
+            "started": started,
+            "labels": labels,
+            "remote_host": remote_host,
+            "cfg": cfg,
+        }
+        prepared.append(prep)
+        if cfg and cfg.remote.is_remote:
+            remote_probes[prep["idx"]] = cfg
+
+    # Second pass: parallel remote probes with per-probe timeout.
+    # NOTE: Use explicit shutdown(wait=False) instead of `with ... as pool:`
+    # because the context manager's __exit__ joins all worker threads, which
+    # negates the per-probe timeout when a worker hangs on a wedged SSH
+    # socket (todo#254 regression: the `--json` call still blocks for the
+    # full hung-probe duration even though `future.result(timeout=…)` raised).
+    probe_results: dict[int, bool | None] = {}
+    if remote_probes:
+        pool = ThreadPoolExecutor(max_workers=max_parallel_probes)
+        try:
+            future_to_idx = {
+                pool.submit(_probe_remote, cfg): idx
+                for idx, cfg in remote_probes.items()
+            }
+            for future in list(future_to_idx):
+                idx = future_to_idx[future]
+                try:
+                    probe_results[idx] = future.result(
+                        timeout=remote_probe_timeout_s
+                    )
+                except _FuturesTimeout:
+                    probe_results[idx] = None
+                    future.cancel()
+                except Exception:
+                    probe_results[idx] = None
+        finally:
+            pool.shutdown(wait=False)
+
+    # Third pass: build result rows.
+    results: list[dict] = []
+    for prep in prepared:
+        name = prep["name"]
+        screen_name = prep["screen_name"]
+        started = prep["started"]
+        labels = prep["labels"]
+        remote_host = prep["remote_host"]
+        cfg = prep["cfg"]
+
+        liveness_unknown = False
+        try:
+            if cfg and cfg.remote.is_remote:
+                probe = probe_results.get(prep["idx"])
+                if probe is None:
+                    is_running = False
+                    liveness_unknown = True
+                else:
+                    is_running = bool(probe)
+            else:
+                is_running = ScreenManager.exists(screen_name)
+        except Exception:
+            is_running = False
+            liveness_unknown = True
+
         multiplexer: str | None = None
         if not (cfg and cfg.remote.is_remote):
             multiplexer = _detect_multiplexer(screen_name)
 
+        status_val: str
+        if liveness_unknown:
+            status_val = "unknown"
+        else:
+            status_val = "running" if is_running else "stopped"
+
         row: dict = {
             "name": name,
-            "status": "running" if is_running else "stopped",
+            "status": status_val,
             "screen": screen_name,
             "multiplexer": multiplexer,
             "started_at": started,
         }
+        if liveness_unknown:
+            row["liveness_unknown"] = True
         if remote_host:
             row["remote"] = remote_host
         if labels:
