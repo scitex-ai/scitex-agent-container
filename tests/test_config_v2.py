@@ -365,3 +365,123 @@ class TestMultiplexerConfig:
 
         config = AgentConfig(name="test", multiplexer="tmux")
         assert get_multiplexer(config) is TmuxManager
+
+
+class TestVenvAutoResolution:
+    """Tests for `venv: auto` host-aware fallback (scitex-agent-container#40).
+
+    Regression: fleet-lead.yaml had `venv: auto` which scitex-agent-container
+    treated as literal path `~/auto/bin/activate`, causing `source ~/auto/...
+    || exit 1` to fail in tmux startup, killing the session within 4s
+    (head-nas msg#12877, head-mba msg#12879 root cause).
+    """
+
+    def test_concrete_venv_path_unchanged(self):
+        from scitex_agent_container.config._loaders import _resolve_venv
+
+        assert _resolve_venv("~/.venv-3.11") == "~/.venv-3.11"
+        assert _resolve_venv("~/.venv") == "~/.venv"
+        assert _resolve_venv("/opt/myvenv") == "/opt/myvenv"
+
+    def test_empty_venv_unchanged(self):
+        from scitex_agent_container.config._loaders import _resolve_venv
+
+        assert _resolve_venv("") == ""
+
+    def test_non_string_unchanged(self):
+        from scitex_agent_container.config._loaders import _resolve_venv
+
+        # Not strictly required by yaml schema, but defensive
+        assert _resolve_venv(None) is None  # type: ignore[arg-type]
+
+    def test_auto_resolves_to_existing_or_empty(self, tmp_path, monkeypatch):
+        from scitex_agent_container.config import _loaders
+
+        # Mock fallback chain to two candidates under tmp_path; create only
+        # the second one to verify "first existing wins" logic.
+        first = tmp_path / "first-venv"
+        second = tmp_path / "second-venv"
+        (second / "bin").mkdir(parents=True)
+        (second / "bin" / "activate").write_text("# fake activate")
+
+        monkeypatch.setattr(
+            _loaders,
+            "_VENV_AUTO_FALLBACK_CHAIN",
+            (str(first), str(second)),
+        )
+
+        result = _loaders._resolve_venv("auto")
+        assert result == str(second)
+
+    def test_auto_first_existing_wins(self, tmp_path, monkeypatch):
+        from scitex_agent_container.config import _loaders
+
+        first = tmp_path / "first-venv"
+        (first / "bin").mkdir(parents=True)
+        (first / "bin" / "activate").write_text("# fake activate")
+        second = tmp_path / "second-venv"
+        (second / "bin").mkdir(parents=True)
+        (second / "bin" / "activate").write_text("# fake activate")
+
+        monkeypatch.setattr(
+            _loaders,
+            "_VENV_AUTO_FALLBACK_CHAIN",
+            (str(first), str(second)),
+        )
+
+        result = _loaders._resolve_venv("auto")
+        assert result == str(first)
+
+    def test_auto_no_match_returns_empty(self, tmp_path, monkeypatch):
+        from scitex_agent_container.config import _loaders
+
+        # No candidate path exists
+        monkeypatch.setattr(
+            _loaders,
+            "_VENV_AUTO_FALLBACK_CHAIN",
+            (str(tmp_path / "nonexistent-a"), str(tmp_path / "nonexistent-b")),
+        )
+
+        result = _loaders._resolve_venv("auto")
+        assert result == ""
+
+    def test_auto_case_insensitive(self, tmp_path, monkeypatch):
+        from scitex_agent_container.config import _loaders
+
+        v = tmp_path / "v"
+        (v / "bin").mkdir(parents=True)
+        (v / "bin" / "activate").write_text("# fake")
+        monkeypatch.setattr(
+            _loaders, "_VENV_AUTO_FALLBACK_CHAIN", (str(v),)
+        )
+
+        assert _loaders._resolve_venv("auto") == str(v)
+        assert _loaders._resolve_venv("AUTO") == str(v)
+        assert _loaders._resolve_venv("Auto") == str(v)
+        assert _loaders._resolve_venv(" auto ") == str(v)
+
+    def test_auto_via_v2_config_load(self, tmp_path, monkeypatch):
+        """End-to-end: yaml with `venv: auto` produces a resolved AgentConfig."""
+        from scitex_agent_container.config import _loaders, load_config
+
+        v = tmp_path / "venv-target"
+        (v / "bin").mkdir(parents=True)
+        (v / "bin" / "activate").write_text("# fake")
+        monkeypatch.setattr(
+            _loaders, "_VENV_AUTO_FALLBACK_CHAIN", (str(v),)
+        )
+
+        data = {
+            "apiVersion": "scitex-agent-container/v2",
+            "kind": "Agent",
+            "metadata": {"name": "fleet-lead-regression"},
+            "spec": {"runtime": "claude-code", "venv": "auto"},
+        }
+        path = _write_config(data)
+        try:
+            config = load_config(path)
+            assert config.venv == str(v), (
+                f"venv: auto should resolve to {v}, got {config.venv!r}"
+            )
+        finally:
+            Path(path).unlink()
