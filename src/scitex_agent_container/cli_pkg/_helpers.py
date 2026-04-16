@@ -108,7 +108,8 @@ def get_agent_list_data(
 
                 is_running = ClaudeCodeRuntime().is_running(cfg)
             else:
-                is_running = ScreenManager.exists(screen_name)
+                # Check tmux first (MBA fleet runs tmux), then screen (todo#454)
+                is_running = TmuxManager.exists(screen_name) or ScreenManager.exists(screen_name)
         except Exception:
             is_running = False  # Graceful degradation on SSH timeout etc.
 
