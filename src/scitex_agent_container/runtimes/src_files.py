@@ -270,17 +270,61 @@ def cleanup_src_claude_md(config: AgentConfig, workdir: str) -> None:
         logger.info("Cleaned up CLAUDE.md for %s at %s", config.name, dest)
 
 
+_TEMPLATE_DIR = Path(__file__).parent.parent / "_agent_templates"
+
+
+def _generate_src_mcp_from_template(config: AgentConfig) -> None:
+    """Write src_mcp.json into the agent definition dir from the canonical template.
+
+    Called when src_mcp.json is absent but metadata.labels.channels is set.
+    This implements the Option (a) lifecycle policy from todo#35: src_mcp.json
+    is treated as a generated artifact, regenerated from the upstream template
+    on every startup, so it never needs to be committed to git.
+    """
+    defdir = _definition_dir(config)
+    if defdir is None:
+        return
+    channels = config.labels.get("channels", "")
+    if not channels:
+        return
+    template = _TEMPLATE_DIR / "src_mcp.json"
+    if not template.exists():
+        logger.warning(
+            "Canonical src_mcp.json template missing at %s — cannot auto-generate for %s",
+            template,
+            config.name,
+        )
+        return
+    dest = defdir / "src_mcp.json"
+    text = template.read_text()
+    # Inject channels label so the template placeholder resolves correctly
+    os.environ.setdefault("SCITEX_OROCHI_URL", "wss://scitex-orochi.com")
+    text = _interpolate_metadata(text, config)
+    text = _interpolate_env(text)
+    dest.write_text(text)
+    logger.info(
+        "Auto-generated src_mcp.json for %s at %s (channels=%s)",
+        config.name,
+        dest,
+        channels,
+    )
+
+
 def deploy_src_mcp_json(config: AgentConfig, workdir: str) -> None:
     """Copy src_mcp.json to {workdir}/.mcp.json with interpolation.
 
     Resolves ${metadata.*} and ${ENV_VAR} references.
-    If src_mcp.json does not exist, does nothing.
+    If src_mcp.json does not exist in the definition dir but
+    metadata.labels.channels is set, auto-generates it from the canonical
+    template (Option (a) lifecycle policy, todo#35).
     """
     defdir = _definition_dir(config)
     if defdir is None:
         return
 
     src = defdir / "src_mcp.json"
+    if not src.exists():
+        _generate_src_mcp_from_template(config)
     if not src.exists():
         return
 
