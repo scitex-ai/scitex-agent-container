@@ -30,10 +30,13 @@ from .claude_usage import fetch_usage
 def detect_multiplexer(session: str) -> str:
     """Return 'tmux', 'screen', or '' if neither reports the session."""
     try:
-        if subprocess.run(
-            ["tmux", "has-session", "-t", session],
-            capture_output=True,
-        ).returncode == 0:
+        if (
+            subprocess.run(
+                ["tmux", "has-session", "-t", session],
+                capture_output=True,
+            ).returncode
+            == 0
+        ):
             return "tmux"
     except FileNotFoundError:
         pass
@@ -111,24 +114,148 @@ def _subagent_count_from_pane(session: str, multiplexer: str) -> int:
     return int(m.group(1)) if m else 0
 
 
+def _capture_pane(session: str, multiplexer: str, max_chars: int = 10000) -> str:
+    """Return the current tmux pane contents, truncated. Empty on error."""
+    if multiplexer != "tmux":
+        return ""
+    try:
+        out = (
+            subprocess.run(
+                ["tmux", "capture-pane", "-t", session, "-p", "-J"],
+                capture_output=True,
+                text=True,
+            ).stdout
+            or ""
+        )
+    except Exception:
+        return ""
+    if len(out) > max_chars:
+        out = out[-max_chars:]
+    return out
+
+
+_SECRET_PATTERNS = [
+    re.compile(r"(sk-ant-[A-Za-z0-9_-]+)"),
+    re.compile(r"(wks_[A-Za-z0-9]+)"),
+    re.compile(
+        r"((?:token|secret|api[_-]?key|password|bearer)\s*[=:]\s*)(\S+)",
+        re.IGNORECASE,
+    ),
+]
+
+
+def _redact_secrets(text: str) -> str:
+    if not text:
+        return ""
+    s = text
+    for pat in _SECRET_PATTERNS:
+        if pat.groups == 2:
+            s = pat.sub(lambda m: m.group(1) + "***REDACTED***", s)
+        else:
+            s = pat.sub("***REDACTED***", s)
+    return s
+
+
+def _classify_pane_state(pane_text: str) -> tuple[str, str]:
+    """Heuristic pane-state classifier. Returns (state, stuck_prompt_text).
+
+    States:
+      - "running": agent is actively working (prompt >_ present, no stuck marker)
+      - "idle_prompt": prompt visible, no recent activity
+      - "y_n_prompt": y/n prompt blocking
+      - "auth_error": credential error shown
+      - "compose_pending_unsent": user text typed but not yet submitted
+      - "limit_reached": Anthropic rate limit warning visible
+      - "unknown": nothing matched
+    """
+    if not pane_text:
+        return "unknown", ""
+    tail = pane_text[-2000:]
+    lower = tail.lower()
+    if "invalid api key" in lower or "please re-run /login" in lower:
+        return "auth_error", tail.strip().splitlines()[-1][:200]
+    if "limit reached" in lower or "resets in" in lower:
+        return "limit_reached", ""
+    if re.search(r"\(y/n\)|\[y/n\]|\(yes/no\)|\[yes/no\]", lower):
+        return "y_n_prompt", tail.strip().splitlines()[-1][:200]
+    # compose_pending: presence of a non-empty ❯ prompt with user text below
+    if re.search(r"❯\s+\S", tail):
+        return "compose_pending_unsent", ""
+    if "❯" in tail or ">" in tail:
+        return "running", ""
+    return "unknown", ""
+
+
+def _read_claude_md(workdir: str, max_chars: int = 20000) -> str:
+    try:
+        p = Path(workdir) / "CLAUDE.md"
+        if not p.is_file():
+            return ""
+        text = p.read_text(errors="replace")
+        return text[:max_chars]
+    except Exception:
+        return ""
+
+
+def _read_mcp_json(workdir: str, max_chars: int = 10000) -> str:
+    try:
+        p = Path(workdir) / ".mcp.json"
+        if not p.is_file():
+            return ""
+        raw = p.read_text(errors="replace")
+        try:
+            doc = json.loads(raw)
+
+            def _r(obj):
+                if isinstance(obj, dict):
+                    out = {}
+                    for k, v in obj.items():
+                        if isinstance(v, str) and any(
+                            t in k.upper()
+                            for t in ("TOKEN", "SECRET", "KEY", "PASSWORD")
+                        ):
+                            out[k] = "***REDACTED***"
+                        else:
+                            out[k] = _r(v)
+                    return out
+                if isinstance(obj, list):
+                    return [_r(x) for x in obj]
+                return obj
+
+            pretty = json.dumps(_r(doc), indent=2)
+            return pretty[:max_chars]
+        except Exception:
+            return _redact_secrets(raw[:max_chars])
+    except Exception:
+        return ""
+
+
 def _pids_from_session(session: str, multiplexer: str) -> tuple[int, int]:
     pid = 0
     ppid = 0
     if multiplexer != "tmux":
         return pid, ppid
     try:
-        out = subprocess.run(
-            ["tmux", "list-panes", "-t", session, "-F", "#{pane_pid}"],
-            capture_output=True,
-            text=True,
-        ).stdout.strip().splitlines()
-        if out:
-            ppid = int(out[0])
-            ps = subprocess.run(
-                ["pgrep", "-P", str(ppid), "-f", "claude"],
+        out = (
+            subprocess.run(
+                ["tmux", "list-panes", "-t", session, "-F", "#{pane_pid}"],
                 capture_output=True,
                 text=True,
-            ).stdout.strip().splitlines()
+            )
+            .stdout.strip()
+            .splitlines()
+        )
+        if out:
+            ppid = int(out[0])
+            ps = (
+                subprocess.run(
+                    ["pgrep", "-P", str(ppid), "-f", "claude"],
+                    capture_output=True,
+                    text=True,
+                )
+                .stdout.strip()
+                .splitlines()
+            )
             pid = int(ps[0]) if ps else ppid
     except Exception:
         pass
@@ -217,8 +344,9 @@ def collect_rich(
                         tool_input = c.get("input", {}) or {}
                         # Heuristic preview by tool kind:
                         if current_tool == "Bash":
-                            preview = tool_input.get("description") \
-                                or tool_input.get("command", "")
+                            preview = tool_input.get("description") or tool_input.get(
+                                "command", ""
+                            )
                         elif current_tool in ("Edit", "Write", "Read"):
                             preview = tool_input.get("file_path", "")
                         elif current_tool == "Grep":
@@ -226,12 +354,15 @@ def collect_rich(
                         elif current_tool == "Glob":
                             preview = tool_input.get("pattern", "")
                         elif current_tool == "Agent":
-                            preview = tool_input.get("description", "") \
-                                or tool_input.get("subagent_type", "")
+                            preview = tool_input.get(
+                                "description", ""
+                            ) or tool_input.get("subagent_type", "")
                         elif current_tool.startswith("mcp__"):
-                            preview = tool_input.get("text", "") \
-                                or tool_input.get("chat_id", "") \
+                            preview = (
+                                tool_input.get("text", "")
+                                or tool_input.get("chat_id", "")
                                 or tool_input.get("query", "")
+                            )
                         else:
                             preview = ""
                         if isinstance(preview, str):
@@ -280,13 +411,30 @@ def collect_rich(
     subagent_count = _subagent_count_from_pane(session, multiplexer)
     pid, ppid = _pids_from_session(session, multiplexer)
     skills_loaded = _parse_skills(workdir)
+
+    # ---- terminal pane + classified state ---------------------------
+    # All of these are deterministic (no LLM). tmux capture-pane is the
+    # only I/O beyond file reads; redaction strips tokens before any
+    # downstream consumer sees the data.
+    raw_pane = _capture_pane(session, multiplexer)
+    pane_text = _redact_secrets(raw_pane)
+    pane_state, stuck_prompt_text = _classify_pane_state(pane_text)
+
+    # ---- workspace file snapshots -----------------------------------
+    claude_md = _read_claude_md(workdir)
+    mcp_json = _read_mcp_json(workdir)
     # Use canonical fleet name (e.g. "nas" instead of "DXP480TPLUS-994")
     _raw_hostname = socket.gethostname().split(".")[0]
     try:
         from .host_identity import DEFAULT_HOST_ALIASES
+
         machine = next(
-            (fleet_name for fleet_name, aliases in DEFAULT_HOST_ALIASES.items()
-             if _raw_hostname in aliases or _raw_hostname.lower() in [a.lower() for a in aliases]),
+            (
+                fleet_name
+                for fleet_name, aliases in DEFAULT_HOST_ALIASES.items()
+                if _raw_hostname in aliases
+                or _raw_hostname.lower() in [a.lower() for a in aliases]
+            ),
             _raw_hostname,
         )
     except Exception:
@@ -314,6 +462,7 @@ def collect_rich(
     account_email: str | None = None
     try:
         from .credentials import read_credentials_metadata
+
         _cred = read_credentials_metadata()
         account_email = _cred.get("email_address")
     except Exception:
@@ -322,6 +471,7 @@ def collect_rich(
     # ---- Machine resource metrics (psutil, optional) -----------------------
     try:
         import psutil as _psutil
+
         _cpu_pct = _psutil.cpu_percent(interval=None)
         _vm = _psutil.virtual_memory()
         _disk = _psutil.disk_usage("/")
@@ -375,5 +525,20 @@ def collect_rich(
         # ---- Account identity (which Claude account this agent is using) ----
         "account_email": account_email,
         # ---- Machine resource metrics (for hub /api/resources/) -------------
+        # NOTE: metrics are host-level, not agent-level. When multiple agents
+        # run on the same host they all report identical values; the hub is
+        # expected to dedupe under ``machine`` rather than store N copies.
         "metrics": _metrics,
+        # ---- Live terminal pane + classified state -------------------------
+        # Deterministic, non-agentic: tmux capture-pane + regex classifier.
+        # Secrets are redacted in-place before inclusion.
+        "pane_text": pane_text,
+        "pane_state": pane_state,
+        "stuck_prompt_text": stuck_prompt_text,
+        # ---- Workspace file snapshots --------------------------------------
+        # Full CLAUDE.md (truncated) so downstream consumers do not need
+        # per-host filesystem access. .mcp.json has token-style keys
+        # redacted.
+        "claude_md": claude_md,
+        "mcp_json": mcp_json,
     }
