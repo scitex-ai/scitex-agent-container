@@ -4,6 +4,36 @@ from __future__ import annotations
 
 from pathlib import Path
 
+# Host-aware fallback chain for `venv: auto` resolution.
+# Tried in order; first existing path wins. Empty string means no venv
+# activation (raw shell). The chain is intentionally short and biased
+# toward the conventions actually in use across the fleet (NAS/WSL =
+# ~/.venv-3.11, MBA = ~/.venv). Adding a new host with a different
+# convention requires extending this list.
+#
+# Filed via scitex-agent-container#40 (head-mba 2026-04-16) after the
+# fleet-lead.yaml `venv: auto` shell-source-fail incident on NAS
+# (head-nas msg#12877; head-mba msg#12879 root cause).
+_VENV_AUTO_FALLBACK_CHAIN = ("~/.venv-3.11", "~/.venv")
+
+
+def _resolve_venv(venv: str) -> str:
+    """Resolve `venv: auto` to the first existing virtualenv on this host.
+
+    Returns the original value unchanged unless it equals "auto" (case
+    insensitive). For "auto", probes ~/.venv-3.11 then ~/.venv and
+    returns the first one whose `bin/activate` exists. If none exist,
+    returns empty string (runtime treats as "no venv activation"), which
+    is still safer than letting the shell try to source a missing path.
+    """
+    if not isinstance(venv, str) or venv.strip().lower() != "auto":
+        return venv
+    for candidate in _VENV_AUTO_FALLBACK_CHAIN:
+        if (Path(candidate).expanduser() / "bin" / "activate").exists():
+            return candidate
+    return ""
+
+
 from ._parsers import (
     MODEL_DISPLAY_NAMES,
     interpolate_mcp_servers,
@@ -39,7 +69,7 @@ def load_v1(raw: dict, path: Path) -> AgentConfig:
         runtime=spec.get("runtime", "claude-code"),
         model=spec.get("model", "sonnet"),
         workdir=spec.get("workdir", "~/proj"),
-        venv=spec.get("venv", ""),
+        venv=_resolve_venv(spec.get("venv", "")),
         env=spec.get("env", {}) or {},
         screen_name=screen_name,
         labels=metadata.get("labels", {}) or {},
@@ -106,7 +136,7 @@ def load_v2(raw: dict, path: Path) -> AgentConfig:
         runtime=spec.get("runtime", "claude-code"),
         model=model,
         workdir=workdir,
-        venv=spec.get("venv", ""),
+        venv=_resolve_venv(spec.get("venv", "")),
         env=merged_env,
         screen_name=screen_name,
         labels=labels,
