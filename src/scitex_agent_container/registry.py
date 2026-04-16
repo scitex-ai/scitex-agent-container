@@ -76,26 +76,44 @@ class Registry:
         return self._path(name).exists()
 
     def cleanup_stale(self) -> int:
-        """Remove entries whose screen sessions no longer exist. Returns count removed."""
+        """Remove entries whose multiplexer sessions no longer exist.
+
+        Probes tmux first (tmux has-session), then screen (-ls).  An entry is
+        removed only when the session is absent from *both* multiplexers.  This
+        makes cleanup safe on mixed fleets where agents may run under either
+        tmux or GNU screen.
+
+        Returns count removed.
+        """
         import subprocess
 
         if not self.dir.exists():
             return 0
+
+        def _tmux_alive(session: str) -> bool:
+            r = subprocess.run(
+                ["tmux", "has-session", "-t", session],
+                capture_output=True,
+            )
+            return r.returncode == 0
+
+        def _screen_alive(session: str) -> bool:
+            r = subprocess.run(
+                ["screen", "-ls", session],
+                capture_output=True,
+                text=True,
+            )
+            return session in r.stdout
 
         cleaned = 0
         for path in list(self.dir.glob("*.json")):
             try:
                 with open(path) as f:
                     data = json.load(f)
-                screen_name = data.get("screen", "")
-                if not screen_name:
+                session_name = data.get("screen", "")
+                if not session_name:
                     continue
-                result = subprocess.run(
-                    ["screen", "-ls", screen_name],
-                    capture_output=True,
-                    text=True,
-                )
-                if screen_name not in result.stdout:
+                if not _tmux_alive(session_name) and not _screen_alive(session_name):
                     path.unlink()
                     cleaned += 1
             except (json.JSONDecodeError, OSError):
