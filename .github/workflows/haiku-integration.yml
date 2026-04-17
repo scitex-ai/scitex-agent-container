@@ -1,24 +1,23 @@
 name: Haiku integration tests
 
 # End-to-end tests that spawn a real Claude Code agent backed by
-# haiku and run the nonce-probe + compact paths against it. They
-# require an Anthropic API key and are intentionally off the hot
-# path:
+# haiku and run the nonce-probe + compact paths against it.
 #
-#   * manual only (workflow_dispatch), plus a nightly cron so
-#     regressions surface within 24h without PR friction.
-#   * secret not exposed to fork PRs (GitHub default), so
-#     external contributors can't accidentally drain quota or
-#     attempt to exfiltrate the key.
+# STATUS: manual-only. Claude Code 2.1.x's first-run flow on a clean
+# HOME requires browser-based OAuth even when ANTHROPIC_API_KEY is
+# set in env, so a fresh GH runner can't complete auth. Until we
+# pre-seed ~/.claude/.credentials.json on the runner, the nightly
+# cron would just burn budget on skipped runs.
 #
-# Cost budget: 2 turns per run × 1 run per night × haiku pricing
-# ≈ a few cents per month.
+# Run these tests locally (where the dev's ~/.claude/.credentials.json
+# is already populated by `claude /login`):
+#
+#     pytest tests/test_haiku_integration.py -v -m integration
+#
+# Re-enable the nightly cron once the CI auth path is sorted.
 
 on:
   workflow_dispatch:
-  schedule:
-    # 03:00 UTC nightly; adjust if this collides with other usage.
-    - cron: "0 3 * * *"
 
 permissions:
   contents: read
