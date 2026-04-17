@@ -148,7 +148,9 @@ def _hook_source(path: str, phase: str, agent_id: str, logs_dir: str) -> str:
 def _sbatch_directives(cfg: AgentConfig) -> list[str]:
     slurm = cfg.slurm
     job_name = slurm.job_name or cfg.name
-    logs_dir = slurm.logs_dir
+    # Expand ~ here: bash does NOT expand ~ inside double-quoted strings,
+    # and every path in the emitted script is double-quoted for safety.
+    logs_dir = str(Path(slurm.logs_dir).expanduser())
 
     directives = [f"#SBATCH --job-name={job_name}"]
     if slurm.partition:
@@ -180,8 +182,15 @@ def render_sbatch_script(cfg: AgentConfig) -> str:
     """
     slurm = cfg.slurm
     agent_id = cfg.name
-    workdir = cfg.workdir or f"~/.scitex/agent-container/workspaces/{agent_id}"
-    logs_dir = slurm.logs_dir
+    # Expand ~ at render time — bash does not expand ~ inside the
+    # double-quoted strings we emit into the wrapper (cd "$workdir", exec
+    # > "$logs_dir/...", hook SAC_* env).
+    workdir = str(
+        Path(
+            cfg.workdir or f"~/.scitex/agent-container/workspaces/{agent_id}"
+        ).expanduser()
+    )
+    logs_dir = str(Path(slurm.logs_dir).expanduser())
     tmux_session = cfg.screen_name or agent_id
     claude_cmd = _build_claude_command(cfg)
 
@@ -239,6 +248,7 @@ trap {REQUIRED_USR1_TRAP_MARKER} USR1
 
 export SAC_AGENT_ID="{agent_id}"
 export SAC_WORKDIR="{workdir}"
+mkdir -p "{workdir}"
 cd "{workdir}"
 
 # pre_agent hook mutates env (module load, LD_LIBRARY_PATH, consumer-

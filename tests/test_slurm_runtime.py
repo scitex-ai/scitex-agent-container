@@ -89,7 +89,35 @@ class TestHardeners:
 
     def test_log_redirect_present(self):
         script = render_sbatch_script(_cfg())
-        assert 'exec > "~/slurm_logs/${SLURM_JOB_ID:-nojob}.out" 2>&1' in script
+        # ~ is expanded at render time because bash doesn't expand ~ inside
+        # double-quoted strings (observed live on spartan job 24061388).
+        from pathlib import Path
+
+        expanded = Path("~/slurm_logs").expanduser()
+        assert f'exec > "{expanded}/${{SLURM_JOB_ID:-nojob}}.out" 2>&1' in script
+
+    def test_logs_dir_tilde_expanded(self):
+        """Regression for spartan: literal ~ in double-quoted paths caused
+        the wrapper to write to /home/user/~/slurm_logs/ and cd into a
+        literal ~ directory, failing the job in 2 seconds (todo#425-b)."""
+        from pathlib import Path
+
+        script = render_sbatch_script(_cfg())
+        assert "~/slurm_logs" not in script
+        assert str(Path("~/slurm_logs").expanduser()) in script
+
+    def test_workdir_tilde_expanded_and_mkdir(self):
+        """Regression: workdir must be expanded + mkdir'd before cd."""
+        from pathlib import Path
+
+        script = render_sbatch_script(
+            _cfg(workdir="~/.scitex/agent-container/workspaces/head-spartan")
+        )
+        expanded = Path(
+            "~/.scitex/agent-container/workspaces/head-spartan"
+        ).expanduser()
+        assert f'mkdir -p "{expanded}"' in script
+        assert f'cd "{expanded}"' in script
 
     def test_exit_trap_present(self):
         """Drop-through from the hold must be surfaced, not silently reaped."""
