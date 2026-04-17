@@ -214,6 +214,8 @@ entry with fields from `agent_meta.collect_rich()` and
 | `recent_tools`, `recent_prompts` | Last N tool uses / user prompts from the hook ring-buffer |
 | `agent_calls`, `background_tasks` | Subagent launches and `Bash run_in_background=true` starts |
 | `tool_counts` | `{tool_name: count}` over the window |
+| `last_tool_at`, `last_tool_name` | ISO timestamp and name of the newest `pretool` event (any tool) -- functional heartbeat, distinguishes "process alive" from "LLM actually producing tool calls" |
+| `last_mcp_tool_at`, `last_mcp_tool_name` | Same, restricted to tools whose name starts with `mcp__` -- MCP sidecar health probe |
 | `context_pct`, `current_tool`, `current_task`, `last_user_msg`, `model_transcript` | Derived from the active Claude Code transcript JSONL |
 | `quota_5h_used_pct`, `quota_7d_used_pct`, `quota_*_reset_at` | Claude usage (best-effort, cached) |
 | `metrics` | Host-level CPU / memory / load / disk (psutil) |

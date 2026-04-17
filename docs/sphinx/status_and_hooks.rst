@@ -48,9 +48,18 @@ Selected fields:
 ``tool_counts``
     ``{tool_name: count}`` over the window.
 
-``context_pct``, ``current_tool``, ``current_task``, ``last_user_msg``,
-``model_transcript``
-    Derived from the active Claude Code transcript JSONL.
+``last_tool_at`` / ``last_tool_name``
+    ISO timestamp and tool name of the newest ``pretool`` event in the
+    ring buffer (any tool, e.g. ``Edit``, ``Bash``,
+    ``mcp__orochi__send_message``). Acts as a *functional heartbeat*:
+    lets orchestrators distinguish "process alive" from "LLM actually
+    producing tool calls" without any extra collection -- the values
+    are derived from the existing hook buffer.
+
+``last_mcp_tool_at`` / ``last_mcp_tool_name``
+    Same as above, restricted to the newest ``pretool`` event whose
+    tool name starts with ``mcp__``. Serves as an MCP sidecar health
+    probe -- confirms the MCP route is flowing, not just local tools.
 
 ``quota_5h_used_pct``, ``quota_7d_used_pct``, ``quota_*_reset_at``
     Claude usage (best-effort; cached between calls).

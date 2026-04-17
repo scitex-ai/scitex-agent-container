@@ -24,8 +24,9 @@ Key Features
 
 - **YAML Definitions**: Declarative agent configuration via YAML files
 - **Lifecycle Management**: Create, start, stop, and destroy agent instances
-- **Rich Status**: ``status --json`` emits pane state, workspace files, and
-  hook-captured tool history for dashboards
+- **Rich Status**: ``status --json`` emits pane state, workspace files,
+  hook-captured tool history, and ``last_tool_at`` /
+  ``last_mcp_tool_at`` functional-heartbeat shortcuts for dashboards
 - **Claude Code Hook Integration**: ``hook-event`` ingests Claude Code
   ``PreToolUse`` / ``PostToolUse`` / ``UserPromptSubmit`` / ``Stop``
   events into a per-agent ring buffer
