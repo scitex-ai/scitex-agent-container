@@ -150,6 +150,24 @@ def _detect_file_trust_radio(content: str) -> bool:
     )
 
 
+def _detect_login_method(content: str) -> bool:
+    """First-run login-method picker on a fresh HOME.
+
+    Appears when Claude Code can't find OAuth credentials at
+    ``~/.claude/.credentials.json``. Even with ``ANTHROPIC_API_KEY``
+    set in env, the 2.1.x CLI still asks which auth mode to use
+    before it checks the env var. Blocks startup until dismissed.
+
+    Matches the exact option strings to avoid false positives on any
+    user message that happens to say "login method".
+    """
+    return (
+        "Select login method:" in content
+        and "Claude account with subscription" in content
+        and "Anthropic Console account" in content
+    )
+
+
 def _detect_theme_selection(content: str) -> bool:
     """First-run theme selection prompt.
 
@@ -229,6 +247,12 @@ PROMPT_HANDLERS: list[PromptHandler] = [
         detect=_detect_theme_selection,
         keys=["1", "Enter"],  # "1. Auto (match terminal)"
         priority=9,
+    ),
+    PromptHandler(
+        name="login-method",
+        detect=_detect_login_method,
+        keys=["2", "Enter"],  # "2. Anthropic Console account · API usage billing"
+        priority=10,
     ),
 ]
 

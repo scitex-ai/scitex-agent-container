@@ -113,6 +113,29 @@ def test_theme_selection_match():
     assert _detect_theme_selection(content) is True
 
 
+def test_login_method_match():
+    """Fresh-HOME login picker: present before ANTHROPIC_API_KEY is
+    honored even when set in env. Option 2 (Anthropic Console) is the
+    right choice for the API-key auth path."""
+    from scitex_agent_container.runtimes.prompts import _detect_login_method
+
+    content = (
+        "Claude Code can be used with your Claude subscription or billed\n"
+        "Select login method:\n"
+        "1. Claude account with subscription\n"
+        "2. Anthropic Console account · API usage billing\n"
+        "3. 3rd-party platform\n"
+    )
+    assert _detect_login_method(content) is True
+
+
+def test_login_method_no_match_on_plain_text():
+    """Don't fire on a user message that just mentions 'login method'."""
+    from scitex_agent_container.runtimes.prompts import _detect_login_method
+
+    assert _detect_login_method("How do I change my login method?") is False
+
+
 def test_theme_selection_no_match_on_theme_command_output():
     """Firing on `/theme` command output would re-select the theme
     mid-session. Require the "Let's get started"-adjacent wording."""
