@@ -27,7 +27,7 @@ def _legacy(home: Path) -> Path:
 
 
 def _dotfiles(home: Path) -> Path:
-    return home / ".dotfiles" / "src" / ".scitex" / "orochi" / "agents"
+    return home / ".dotfiles" / "src" / ".scitex" / "orochi" / "shared" / "agents"
 
 
 def test_resolve_config_prefers_legacy_path_over_dotfiles(fake_home):
@@ -54,15 +54,11 @@ def test_resolve_config_env_var_colon_separated(fake_home, monkeypatch):
     d2 = fake_home / "d2"
     d1.mkdir()
     expected = _write(d2 / "foo.yaml", "d2")
-    monkeypatch.setenv(
-        "SCITEX_AGENT_CONTAINER_YAML_DIRS", f"{d1}:{d2}"
-    )
+    monkeypatch.setenv("SCITEX_AGENT_CONTAINER_YAML_DIRS", f"{d1}:{d2}")
     assert resolve_config("foo") == str(expected)
 
 
-def test_resolve_config_not_found_lists_all_searched_paths(
-    fake_home, monkeypatch
-):
+def test_resolve_config_not_found_lists_all_searched_paths(fake_home, monkeypatch):
     monkeypatch.setenv(
         "SCITEX_AGENT_CONTAINER_YAML_DIRS", f"{fake_home}/a:{fake_home}/b"
     )
@@ -73,7 +69,7 @@ def test_resolve_config_not_found_lists_all_searched_paths(
     assert "SCITEX_AGENT_CONTAINER_YAML_DIRS" in msg
     assert f"{fake_home}/a" in msg
     assert f"{fake_home}/b" in msg
-    assert ".dotfiles/src/.scitex/orochi/agents" in msg
+    assert ".dotfiles/src/.scitex/orochi/shared/agents" in msg
     assert "missing" in msg
 
 

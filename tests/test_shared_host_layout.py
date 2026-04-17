@@ -1,7 +1,7 @@
 """Tests for the shared-host fleet layout (feat/orochi-shared-host-layout).
 
 Covers:
-  * Agent discovery (host override > shared > legacy flat).
+  * Agent discovery (host override > shared).
   * ``${HOSTNAME}`` / ``${SCITEX_OROCHI_HOSTNAME}`` substitution.
   * Effective-id composition for ``per-host`` vs ``singleton`` scheduling.
   * Singleton launch-skip decision on non-preferred hosts.
@@ -77,19 +77,6 @@ class TestDiscovery:
         assert len(hits) == 1
         assert hits[0].endswith("shared/agents/head/head.yaml")
 
-    def test_discovery_finds_legacy_flat_agents(self, fake_home):
-        """Legacy flat ~/.scitex/orochi/agents/<name>/<name>.yaml still works."""
-        from scitex_agent_container.cli_pkg.lifecycle_cmds import (
-            _discover_all_agents,
-        )
-
-        legacy = fake_home / ".scitex" / "orochi" / "agents"
-        _write_agent_yaml(legacy, "healer")
-
-        hits = _discover_all_agents()
-        assert len(hits) == 1
-        assert hits[0].endswith("orochi/agents/healer/healer.yaml")
-
     def test_discovery_host_override_wins_over_shared(self, fake_home):
         """Host-specific dir wins over shared for the same agent name."""
         from scitex_agent_container.cli_pkg.lifecycle_cmds import (
@@ -106,36 +93,21 @@ class TestDiscovery:
         # Host override wins.
         assert "ywata-note-win/agents/head/head.yaml" in hits[0]
 
-    def test_discovery_shared_wins_over_legacy(self, fake_home):
-        """Shared dir shadows the old flat legacy agents/ location."""
-        from scitex_agent_container.cli_pkg.lifecycle_cmds import (
-            _discover_all_agents,
-        )
-
-        shared = fake_home / ".scitex" / "orochi" / "shared" / "agents"
-        legacy = fake_home / ".scitex" / "orochi" / "agents"
-        _write_agent_yaml(shared, "head")
-        _write_agent_yaml(legacy, "head")
-
-        hits = _discover_all_agents()
-        assert len(hits) == 1
-        assert "shared/agents/head/head.yaml" in hits[0]
-
     def test_discovery_merges_when_names_differ(self, fake_home):
-        """Different names across layers all surface; same name is shadowed."""
+        """Different names across host + shared all surface."""
         from scitex_agent_container.cli_pkg.lifecycle_cmds import (
             _discover_all_agents,
         )
 
         shared = fake_home / ".scitex" / "orochi" / "shared" / "agents"
-        legacy = fake_home / ".scitex" / "orochi" / "agents"
+        host_dir = fake_home / ".scitex" / "orochi" / "ywata-note-win" / "agents"
         _write_agent_yaml(shared, "head")
-        _write_agent_yaml(legacy, "mamba-old-agent")
+        _write_agent_yaml(host_dir, "caduceus")
 
         hits = _discover_all_agents()
         assert len(hits) == 2
         names = {Path(h).parent.name for h in hits}
-        assert names == {"head", "mamba-old-agent"}
+        assert names == {"head", "caduceus"}
 
     def test_discovery_skips_hidden_and_reserved(self, fake_home):
         """Dirs starting with . / _ and reserved names are ignored."""
@@ -144,17 +116,18 @@ class TestDiscovery:
         )
 
         root = fake_home / ".scitex" / "orochi"
-        legacy = root / "agents"
+        shared = root / "shared" / "agents"
         for skip_name in (".hidden", "_private", "legacy-agents", "GITIGNORED"):
-            _write_agent_yaml(legacy, skip_name)
-        _write_agent_yaml(legacy, "real")
-        # shared-level reserved names are skipped at top-level scan too
-        _write_agent_yaml(root / "shared" / "agents", "shared-real")
+            _write_agent_yaml(shared, skip_name)
+        _write_agent_yaml(shared, "shared-real")
+        host_dir = root / "ywata-note-win" / "agents"
+        for skip_name in (".hidden", "_private"):
+            _write_agent_yaml(host_dir, skip_name)
+        _write_agent_yaml(host_dir, "host-real")
 
         hits = _discover_all_agents()
-        # Only "real" and "shared-real" show up.
         names = {Path(h).parent.name for h in hits}
-        assert names == {"real", "shared-real"}
+        assert names == {"shared-real", "host-real"}
 
 
 # ---------------------------------------------------------------------------

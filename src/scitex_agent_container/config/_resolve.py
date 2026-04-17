@@ -27,8 +27,8 @@ def _search_dirs() -> Tuple[Path, List[Path], List[Path]]:
     """Return (legacy_dir, env_dirs, fleet_dirs) with ~ expansion.
 
     ``fleet_dirs`` is the ordered list of fleet locations searched after
-    env overrides. Order = host-specific first, then shared, then
-    legacy-flat (both under ~/.scitex/orochi and ~/.dotfiles/src/.scitex/orochi).
+    env overrides. Order = host-specific first, then shared (both under
+    ~/.scitex/orochi and ~/.dotfiles/src/.scitex/orochi).
     """
     home = Path(os.path.expanduser("~"))
     legacy = home / ".scitex" / "agent-container" / "agents"
@@ -45,7 +45,6 @@ def _search_dirs() -> Tuple[Path, List[Path], List[Path]]:
         if host:
             fleet_dirs.append(root / host / "agents")
         fleet_dirs.append(root / "shared" / "agents")
-        fleet_dirs.append(root / "agents")
     return legacy, env_dirs, fleet_dirs
 
 
@@ -71,7 +70,6 @@ def resolve_config(name_or_path: str) -> str:
          (~/.scitex/orochi, ~/.dotfiles/src/.scitex/orochi):
              a. ``<root>/<HOST>/agents/<name>/<name>.yaml`` (host override)
              b. ``<root>/shared/agents/<name>/<name>.yaml`` (shared default)
-             c. ``<root>/agents/<name>/<name>.yaml`` (legacy flat layout)
 
     Absolute paths and explicit .yaml/.yml paths are returned as-is if they
     exist (unchanged behavior).

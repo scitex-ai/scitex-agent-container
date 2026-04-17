@@ -77,13 +77,11 @@ def _iter_agent_yamls(agents_dir: "Path") -> "list[tuple[str, str]]":
 def _discover_all_agents() -> list[str]:
     """Find all agent YAML files in the shared-host layout.
 
-    Search locations (host override > shared > legacy flat):
+    Search locations (host override > shared):
       1. ``~/.scitex/orochi/<HOST>/agents/<name>/<name>.yaml``
          (host-specific, wins if the same name exists elsewhere).
       2. ``~/.scitex/orochi/shared/agents/<name>/<name>.yaml``
          (fleet-shared).
-      3. ``~/.scitex/orochi/agents/<name>/<name>.yaml``
-         (legacy flat layout — still supported during migration).
 
     ``<HOST> = ${SCITEX_OROCHI_HOSTNAME:-$(hostname -s)}``. Names present in
     an earlier location shadow the same name in a later location, so a
@@ -103,9 +101,8 @@ def _discover_all_agents() -> list[str]:
 
     host_dir = root / host / "agents" if host else None
     shared_dir = root / "shared" / "agents"
-    legacy_dir = root / "agents"
 
-    for src_dir in (host_dir, shared_dir, legacy_dir):
+    for src_dir in (host_dir, shared_dir):
         if src_dir is None:
             continue
         for name, yaml_path in _iter_agent_yamls(src_dir):
@@ -122,7 +119,7 @@ def _discover_all_agents() -> list[str]:
     "start_all",
     is_flag=True,
     default=False,
-    help="Start all agents in ~/.scitex/orochi/agents/.",
+    help="Start all agents in ~/.scitex/orochi/<HOST>/agents/ and shared/agents/.",
 )
 @click.option(
     "--no-preflight",
@@ -144,7 +141,10 @@ def start(
     if start_all:
         yamls = _discover_all_agents()
         if not yamls:
-            console.print("[dim]No agents found in ~/.scitex/orochi/agents/[/dim]")
+            console.print(
+                "[dim]No agents found in "
+                "~/.scitex/orochi/<HOST>/agents/ or shared/agents/[/dim]"
+            )
             return
         try:
             current_host = resolve_hostname()
