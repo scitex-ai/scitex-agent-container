@@ -192,6 +192,60 @@ class TestHostnameSubstitution:
         with pytest.raises(RuntimeError):
             resolve_hostname()
 
+    def test_alias_map_translates_short_hostname(self, monkeypatch, tmp_path):
+        """shared/config.yaml::hostname_aliases maps raw -> fleet label."""
+        import scitex_agent_container.config._host as host_mod
+
+        monkeypatch.delenv("SCITEX_OROCHI_HOSTNAME", raising=False)
+        monkeypatch.setattr("socket.gethostname", lambda: "Yusukes-MacBook-Air")
+        config_dir = tmp_path / ".scitex" / "orochi" / "shared"
+        config_dir.mkdir(parents=True)
+        (config_dir / "config.yaml").write_text(
+            "spec:\n"
+            "  hostname_aliases:\n"
+            "    Yusukes-MacBook-Air: mba\n"
+            "    DXP480TPLUS-994: nas\n"
+        )
+        monkeypatch.setattr(host_mod, "_CONFIG_PATH", config_dir / "config.yaml")
+        assert host_mod.resolve_hostname() == "mba"
+
+    def test_env_var_beats_alias_map(self, monkeypatch, tmp_path):
+        """$SCITEX_OROCHI_HOSTNAME overrides the alias map."""
+        import scitex_agent_container.config._host as host_mod
+
+        monkeypatch.setenv("SCITEX_OROCHI_HOSTNAME", "manual-override")
+        monkeypatch.setattr("socket.gethostname", lambda: "Yusukes-MacBook-Air")
+        config_dir = tmp_path / ".scitex" / "orochi" / "shared"
+        config_dir.mkdir(parents=True)
+        (config_dir / "config.yaml").write_text(
+            "spec:\n  hostname_aliases:\n    Yusukes-MacBook-Air: mba\n"
+        )
+        monkeypatch.setattr(host_mod, "_CONFIG_PATH", config_dir / "config.yaml")
+        assert host_mod.resolve_hostname() == "manual-override"
+
+    def test_unmapped_host_falls_through_to_identity(self, monkeypatch, tmp_path):
+        """hostname -s with no alias entry returns unchanged."""
+        import scitex_agent_container.config._host as host_mod
+
+        monkeypatch.delenv("SCITEX_OROCHI_HOSTNAME", raising=False)
+        monkeypatch.setattr("socket.gethostname", lambda: "ywata-note-win")
+        config_dir = tmp_path / ".scitex" / "orochi" / "shared"
+        config_dir.mkdir(parents=True)
+        (config_dir / "config.yaml").write_text(
+            "spec:\n  hostname_aliases:\n    Yusukes-MacBook-Air: mba\n"
+        )
+        monkeypatch.setattr(host_mod, "_CONFIG_PATH", config_dir / "config.yaml")
+        assert host_mod.resolve_hostname() == "ywata-note-win"
+
+    def test_missing_config_file_is_not_an_error(self, monkeypatch, tmp_path):
+        """Hostname resolves without a config file — identity fallback only."""
+        import scitex_agent_container.config._host as host_mod
+
+        monkeypatch.delenv("SCITEX_OROCHI_HOSTNAME", raising=False)
+        monkeypatch.setattr("socket.gethostname", lambda: "bare-host")
+        monkeypatch.setattr(host_mod, "_CONFIG_PATH", tmp_path / "no-such.yaml")
+        assert host_mod.resolve_hostname() == "bare-host"
+
 
 # ---------------------------------------------------------------------------
 # 3. Effective-id composition

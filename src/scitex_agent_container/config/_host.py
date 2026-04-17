@@ -21,6 +21,7 @@ from __future__ import annotations
 import os
 import re
 import socket
+from pathlib import Path
 from typing import Any
 
 _HOSTNAME_TOKENS = ("HOSTNAME", "SCITEX_OROCHI_HOSTNAME")
@@ -28,16 +29,43 @@ _HOSTNAME_TOKENS = ("HOSTNAME", "SCITEX_OROCHI_HOSTNAME")
 # ourselves via resolve_hostname()).
 _PLACEHOLDER_RE = re.compile(r"\$\{(" + "|".join(_HOSTNAME_TOKENS) + r")\}")
 
+# Declarative fleet identity map lives in dotfiles-shipped config.yaml.
+_CONFIG_PATH = Path.home() / ".scitex" / "orochi" / "shared" / "config.yaml"
+
+
+def _load_hostname_aliases() -> dict[str, str]:
+    """Read ``spec.hostname_aliases`` from ``shared/config.yaml``.
+
+    Returns an empty dict if the file is missing, unparseable, lacks the
+    section, or the map isn't a dict. Never raises — hostname resolution
+    must still succeed via the identity fallback on a bare host.
+    """
+    if not _CONFIG_PATH.exists():
+        return {}
+    try:
+        import yaml  # PyYAML ships with the container; same import sac uses.
+    except ImportError:
+        return {}
+    try:
+        data = yaml.safe_load(_CONFIG_PATH.read_text()) or {}
+    except Exception:
+        return {}
+    aliases = (data.get("spec") or {}).get("hostname_aliases") or {}
+    if not isinstance(aliases, dict):
+        return {}
+    return {str(k): str(v) for k, v in aliases.items()}
+
 
 def resolve_hostname() -> str:
-    """Return the canonical hostname for this host.
+    """Return the canonical fleet label for this host.
 
     Resolution order (first non-empty wins):
-      1. ``SCITEX_OROCHI_HOSTNAME`` env var.
-      2. ``socket.gethostname()`` short form (first dot-separated component).
+      1. ``SCITEX_OROCHI_HOSTNAME`` env var (manual override).
+      2. ``hostname_aliases[short hostname]`` from ``shared/config.yaml``.
+      3. ``socket.gethostname()`` short form (identity fallback).
 
     Raises:
-        RuntimeError: If neither source produces a non-empty value. This
+        RuntimeError: If none of the three produces a non-empty value. This
             should be practically impossible (``gethostname()`` returns
             something on any configured box) but is handled loudly rather
             than returning the empty string.
@@ -46,11 +74,15 @@ def resolve_hostname() -> str:
     if env:
         return env
     hn = socket.gethostname()
-    if hn:
-        return hn.split(".", 1)[0]
+    short = hn.split(".", 1)[0] if hn else ""
+    aliases = _load_hostname_aliases()
+    if short and short in aliases:
+        return aliases[short]
+    if short:
+        return short
     raise RuntimeError(
-        "Cannot resolve hostname: SCITEX_OROCHI_HOSTNAME unset and "
-        "socket.gethostname() returned empty."
+        "Cannot resolve hostname: SCITEX_OROCHI_HOSTNAME unset, "
+        "socket.gethostname() empty, no config.yaml alias applicable."
     )
 
 
