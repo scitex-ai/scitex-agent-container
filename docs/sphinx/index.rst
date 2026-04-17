@@ -11,6 +11,7 @@ scitex-agent-container - Declarative AI Agent Lifecycle Management
 
    installation
    quickstart
+   status_and_hooks
 
 .. toctree::
    :maxdepth: 2
@@ -23,9 +24,14 @@ Key Features
 
 - **YAML Definitions**: Declarative agent configuration via YAML files
 - **Lifecycle Management**: Create, start, stop, and destroy agent instances
-- **Orchestration**: Multi-agent coordination and communication
-- **Claude Code Integration**: Native support for Claude Code agents
-- **Telegram Integration**: Optional Telegram channel support
+- **Rich Status**: ``status --json`` emits pane state, workspace files, and
+  hook-captured tool history for dashboards
+- **Claude Code Hook Integration**: ``hook-event`` ingests Claude Code
+  ``PreToolUse`` / ``PostToolUse`` / ``UserPromptSubmit`` / ``Stop``
+  events into a per-agent ring buffer
+- **Zero Coupling**: No knowledge of any downstream orchestrator;
+  consumers (e.g. scitex-orochi) wrap ``status --json`` to post to
+  their own hubs
 
 Quick Example
 -------------
@@ -33,10 +39,13 @@ Quick Example
 .. code-block:: bash
 
     # Create and launch an agent from YAML definition
-    scitex-agent-container launch my-agent.yaml
+    scitex-agent-container start my-agent.yaml
 
     # List running agents
     scitex-agent-container list
+
+    # Inspect live pane state / rich status
+    scitex-agent-container status my-agent --json
 
     # Stop an agent
     scitex-agent-container stop my-agent

@@ -180,11 +180,14 @@ scitex-agent-container restart <name|yaml>
 
 # Inspection
 scitex-agent-container inspect <name> [--json]   # Live pane state detection
-scitex-agent-container status [name] [--json]
+scitex-agent-container status [name] [--json]   # Rich status dict (see below)
 scitex-agent-container list [--json] [--capability X] [--machine Y]
 scitex-agent-container logs <name> [-n LINES]
 scitex-agent-container health <name> [--json]
 scitex-agent-container attach <name>
+
+# Hook event ingestor (wired from Claude Code hooks, see below)
+scitex-agent-container hook-event <pretool|posttool|prompt|stop|other>
 
 # Configuration
 scitex-agent-container validate <config.yaml>
@@ -193,6 +196,80 @@ scitex-agent-container check <config.yaml>
 # Maintenance
 scitex-agent-container cleanup
 ```
+
+## Rich Status (`status <name> --json`)
+
+`status <name> --json` returns a non-agentic snapshot of the agent suitable
+for dashboards or fleet monitors. The payload merges the base registry
+entry with fields from `agent_meta.collect_rich()` and
+`event_log.summarize()`:
+
+| Field | Description |
+|---|---|
+| `pane_text` | Recent tmux `capture-pane` output, secrets redacted |
+| `pane_state` | Classified: `running` / `idle_prompt` / `y_n_prompt` / `auth_error` / `compose_pending_unsent` / `limit_reached` / `unknown` |
+| `stuck_prompt_text` | Last line when `pane_state` indicates a blocking prompt |
+| `claude_md` | Workspace `CLAUDE.md` contents (truncated) |
+| `mcp_json` | Workspace `.mcp.json` with token-like values redacted |
+| `recent_tools`, `recent_prompts` | Last N tool uses / user prompts from the hook ring-buffer |
+| `agent_calls`, `background_tasks` | Subagent launches and `Bash run_in_background=true` starts |
+| `tool_counts` | `{tool_name: count}` over the window |
+| `context_pct`, `current_tool`, `current_task`, `last_user_msg`, `model_transcript` | Derived from the active Claude Code transcript JSONL |
+| `quota_5h_used_pct`, `quota_7d_used_pct`, `quota_*_reset_at` | Claude usage (best-effort, cached) |
+| `metrics` | Host-level CPU / memory / load / disk (psutil) |
+
+Every field is best-effort: failures leave the default value (`""`,
+`0`, `[]`) rather than raising.
+
+```bash
+scitex-agent-container status my-agent --json | jq '.pane_state, .recent_tools[-3:]'
+```
+
+## Claude Code Hook Integration
+
+`hook-event` is the non-agentic counterpart to the status command: Claude
+Code invokes it on every tool call / prompt / stop, and the handler
+appends a compact JSON record to a per-agent ring-buffer at
+`$XDG_DATA_HOME/.scitex/agent-container/events/<agent>.jsonl` (capped at
+500 lines). `status --json` reads that buffer to populate
+`recent_tools`, `recent_prompts`, `agent_calls`, `background_tasks`, and
+`tool_counts`.
+
+Wire it in the agent workspace's `.claude/settings.local.json`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse":       [{"matcher": "", "hooks": [
+      {"type": "command", "command": "scitex-agent-container hook-event pretool"}
+    ]}],
+    "PostToolUse":      [{"matcher": "", "hooks": [
+      {"type": "command", "command": "scitex-agent-container hook-event posttool"}
+    ]}],
+    "UserPromptSubmit": [{"matcher": "", "hooks": [
+      {"type": "command", "command": "scitex-agent-container hook-event prompt"}
+    ]}],
+    "Stop":             [{"matcher": "", "hooks": [
+      {"type": "command", "command": "scitex-agent-container hook-event stop"}
+    ]}]
+  }
+}
+```
+
+Agent name resolution order: `--agent <name>` flag >
+`SCITEX_OROCHI_AGENT` env var > `CLAUDE_AGENT_ID` env var > basename of
+the current working directory. The handler swallows all errors so a
+broken log can never block a tool call.
+
+## Zero Coupling to Downstream Orchestrators
+
+scitex-agent-container is a generic library. It knows nothing about
+scitex-orochi, the hub, or any particular dashboard. `status --json`
+emits a self-describing dict; downstream consumers (e.g. orochi's
+`heartbeat-push` command) wrap it -- calling `status --json`, reshaping
+the payload, and POSTing to whatever endpoint they own. Keeping the
+two sides decoupled lets you swap the orchestrator, the transport, or
+the schema without touching this package.
 
 ## YAML Spec Reference
 
