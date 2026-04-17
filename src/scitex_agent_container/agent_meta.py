@@ -600,7 +600,7 @@ def _collect_action_summary_fields(agent_name: str) -> dict[str, Any]:
         summary = action_store.summarize(agent_name)
         return {
             "last_action_at": summary.get("last_action_at", ""),
-            "last_action": summary.get("last_action", ""),
+            "last_action_name": summary.get("last_action_name", ""),
             "last_action_outcome": summary.get("last_action_outcome", ""),
             "last_action_elapsed_s": summary.get("last_action_elapsed_s"),
             "action_counts": summary.get("counts", {}),
@@ -609,7 +609,7 @@ def _collect_action_summary_fields(agent_name: str) -> dict[str, Any]:
     except Exception:
         return {
             "last_action_at": "",
-            "last_action": "",
+            "last_action_name": "",
             "last_action_outcome": "",
             "last_action_elapsed_s": None,
             "action_counts": {},

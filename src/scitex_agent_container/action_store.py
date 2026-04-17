@@ -365,7 +365,11 @@ def summarize(
 
         {
           "last_action_at":      ISO ts or ""
-          "last_action":         action name or ""
+          "last_action_name":    action name or ""  (renamed from
+                                                     "last_action" to avoid
+                                                     collision with the
+                                                     pre-existing orochi
+                                                     liveness timestamp field)
           "last_action_outcome": outcome string or ""
           "last_action_elapsed_s": float or None
           "counts":              {"<action>:<outcome>": n}
@@ -376,7 +380,7 @@ def summarize(
     if not rows:
         return {
             "last_action_at": "",
-            "last_action": "",
+            "last_action_name": "",
             "last_action_outcome": "",
             "last_action_elapsed_s": None,
             "counts": {},
@@ -401,7 +405,7 @@ def summarize(
         p95[name] = float(ordered[idx])
     return {
         "last_action_at": str(last.get("ts") or ""),
-        "last_action": str(last.get("action") or ""),
+        "last_action_name": str(last.get("action") or ""),
         "last_action_outcome": str(last.get("outcome") or ""),
         "last_action_elapsed_s": _safe_float(last.get("elapsed_s")),
         "counts": counts,

@@ -313,7 +313,7 @@ class TestSummarize:
     def test_empty_returns_zero_shape(self, root):
         out = summarize("ghost", root=root)
         assert out["last_action_at"] == ""
-        assert out["last_action"] == ""
+        assert out["last_action_name"] == ""
         assert out["counts"] == {}
         assert out["p95_elapsed_s_by_action"] == {}
 
@@ -325,7 +325,7 @@ class TestSummarize:
             root=root,
         )
         out = summarize("alpha", root=root)
-        assert out["last_action"] == "nonce-probe"
+        assert out["last_action_name"] == "nonce-probe"
         assert out["last_action_outcome"] == "completion_timeout"
         assert out["counts"]["nonce-probe:success"] == 2
         assert out["counts"]["nonce-probe:completion_timeout"] == 1
