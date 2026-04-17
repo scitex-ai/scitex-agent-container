@@ -569,4 +569,12 @@ def collect_rich(
         "agent_calls": _event_summary.get("agent_calls") or [],
         "background_tasks": _event_summary.get("background_tasks") or [],
         "tool_counts": _event_summary.get("counts") or {},
+        # Functional-heartbeat shortcuts — top-level so consumers don't
+        # have to walk recent_tools. last_tool_at updates on every tool
+        # use (LLM-level liveness); last_mcp_tool_at only updates on
+        # mcp__* tool calls (proves the MCP sidecar route is live).
+        "last_tool_at": _event_summary.get("last_tool_at") or "",
+        "last_tool_name": _event_summary.get("last_tool_name") or "",
+        "last_mcp_tool_at": _event_summary.get("last_mcp_tool_at") or "",
+        "last_mcp_tool_name": _event_summary.get("last_mcp_tool_name") or "",
     }

@@ -180,11 +180,15 @@ def summarize(
     Keys returned::
 
         {
-          "recent_tools":      [{ts, tool, input_preview, ...}, ...] last ``limit``
-          "recent_prompts":    [{ts, prompt_preview}, ...]            last 5
-          "agent_calls":       [{ts, input_preview}, ...]             last 20 Agent invocations
-          "background_tasks":  [{ts, input_preview}, ...]             unresolved Bash run_in_background starts
-          "counts": {tool_name: count_in_window}
+          "recent_tools":       [{ts, tool, input_preview, ...}, ...] last ``limit``
+          "recent_prompts":     [{ts, prompt_preview}, ...]            last 5
+          "agent_calls":        [{ts, input_preview}, ...]             last 20 Agent invocations
+          "background_tasks":   [{ts, input_preview}, ...]             unresolved Bash run_in_background starts
+          "counts":             {tool_name: count_in_window}
+          "last_tool_at":       ISO ts of newest tool (pretool kind) — "functional" heartbeat
+          "last_tool_name":     tool name for last_tool_at
+          "last_mcp_tool_at":   ISO ts of newest mcp__* tool — confirms MCP sidecar route
+          "last_mcp_tool_name": tool name for last_mcp_tool_at
         }
     """
     events = read_recent(agent, limit=limit, root=root)
@@ -193,6 +197,10 @@ def summarize(
     agent_calls: list[dict[str, Any]] = []
     background_tasks: list[dict[str, Any]] = []
     counts: dict[str, int] = {}
+    last_tool_at: str = ""
+    last_tool_name: str = ""
+    last_mcp_tool_at: str = ""
+    last_mcp_tool_name: str = ""
     for ev in events:
         kind = ev.get("kind")
         if kind in ("pretool", "posttool"):
@@ -208,19 +216,27 @@ def summarize(
             )
             if kind == "pretool":
                 t = ev.get("tool", "")
+                ts = ev.get("ts", "")
                 if t:
                     counts[t] = counts.get(t, 0) + 1
+                    # Track newest tool-use timestamp (events are
+                    # oldest-first, so plain assignment wins the last).
+                    last_tool_at = ts
+                    last_tool_name = t
+                    if t.startswith("mcp__"):
+                        last_mcp_tool_at = ts
+                        last_mcp_tool_name = t
                 if t == "Agent":
                     agent_calls.append(
                         {
-                            "ts": ev.get("ts", ""),
+                            "ts": ts,
                             "input_preview": ev.get("input_preview", ""),
                         }
                     )
                 if t == "Bash" and ev.get("run_in_background"):
                     background_tasks.append(
                         {
-                            "ts": ev.get("ts", ""),
+                            "ts": ts,
                             "input_preview": ev.get("input_preview", ""),
                         }
                     )
@@ -237,4 +253,8 @@ def summarize(
         "agent_calls": agent_calls[-20:],
         "background_tasks": background_tasks[-20:],
         "counts": counts,
+        "last_tool_at": last_tool_at,
+        "last_tool_name": last_tool_name,
+        "last_mcp_tool_at": last_mcp_tool_at,
+        "last_mcp_tool_name": last_mcp_tool_name,
     }

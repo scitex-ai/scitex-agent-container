@@ -231,7 +231,41 @@ class TestSummarize:
             "agent_calls": [],
             "background_tasks": [],
             "counts": {},
+            "last_tool_at": "",
+            "last_tool_name": "",
+            "last_mcp_tool_at": "",
+            "last_mcp_tool_name": "",
         }
+
+    def test_last_tool_shortcuts_track_newest(self, tmp_root: Path):
+        """last_tool_at/name reflect newest pretool; mcp__* updates
+        last_mcp_tool_*. Non-mcp entries after an mcp entry leave the
+        mcp shortcut unchanged."""
+        append_event(
+            "agent-lt",
+            "pretool",
+            {"tool_name": "Read", "tool_input": {"file_path": "/a"}},
+            root=tmp_root,
+        )
+        append_event(
+            "agent-lt",
+            "pretool",
+            {"tool_name": "mcp__orochi__send_message", "tool_input": {"text": "hi"}},
+            root=tmp_root,
+        )
+        append_event(
+            "agent-lt",
+            "pretool",
+            {"tool_name": "Edit", "tool_input": {"file_path": "/b"}},
+            root=tmp_root,
+        )
+        out = summarize("agent-lt", root=tmp_root)
+        assert out["last_tool_name"] == "Edit"
+        assert out["last_tool_at"] != ""
+        assert out["last_mcp_tool_name"] == "mcp__orochi__send_message"
+        assert out["last_mcp_tool_at"] != ""
+        # last_tool_at is >= last_mcp_tool_at (newer event wins)
+        assert out["last_tool_at"] >= out["last_mcp_tool_at"]
 
     def test_counts_and_lists_populated(self, tmp_root: Path):
         for tool, inp in [
