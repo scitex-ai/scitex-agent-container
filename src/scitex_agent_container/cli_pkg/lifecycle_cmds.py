@@ -102,6 +102,10 @@ def _discover_all_agents() -> list[str]:
       4. ``~/.scitex/orochi/shared/agents/`` (fleet-shared)
       5. ``~/.scitex/orochi/agents/`` (legacy flat layout)
 
+    Note: per-agent runtime state (CLAUDE.md / .mcp.json / .claude/) lives at
+    ``~/.scitex/orochi/runtime/workspaces/<effective-id>/`` (see the 2026-04-17
+    layout). ``<HOST> = ${SCITEX_OROCHI_HOSTNAME:-$(hostname -s)}``.
+
     Returned paths are sorted by effective agent name for stable ordering.
     """
     from pathlib import Path
