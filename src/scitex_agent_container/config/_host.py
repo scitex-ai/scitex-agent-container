@@ -26,8 +26,11 @@ from typing import Any
 _HOSTNAME_TOKENS = ("HOSTNAME", "SCITEX_OROCHI_HOSTNAME")
 _PLACEHOLDER_RE = re.compile(r"\$\{(" + "|".join(_HOSTNAME_TOKENS) + r")\}")
 
-# Declarative host identity map lives at ~/.scitex/agent-container/config.yaml.
-_CONFIG_PATH = Path.home() / ".scitex" / "agent-container" / "config.yaml"
+# Declarative host identity map. Check shared/config.yaml first (fleet layout),
+# then fall back to agent-container/config.yaml (sac install root).
+_CONFIG_PATH_FLEET = Path.home() / ".scitex" / "orochi" / "shared" / "config.yaml"
+_CONFIG_PATH_SAC = Path.home() / ".scitex" / "agent-container" / "config.yaml"
+_CONFIG_PATH = _CONFIG_PATH_FLEET if _CONFIG_PATH_FLEET.exists() else _CONFIG_PATH_SAC
 
 
 def _load_hostname_aliases() -> dict[str, str]:
@@ -61,7 +64,7 @@ def resolve_hostname() -> str:
       1. ``SCITEX_AGENT_CONTAINER_HOSTNAME`` env var (manual override).
       2. ``SCITEX_OROCHI_HOSTNAME`` env var.
       3. ``hostname_aliases[short hostname]`` from
-         ``~/.scitex/agent-container/config.yaml``.
+         ``shared/config.yaml`` or ``~/.scitex/agent-container/config.yaml``.
       4. ``socket.gethostname()`` short form (identity fallback).
 
     Raises:
