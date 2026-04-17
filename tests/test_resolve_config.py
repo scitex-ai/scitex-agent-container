@@ -1,4 +1,8 @@
-"""Tests for resolve_config search order (todo#295)."""
+"""Tests for resolve_config search order.
+
+sac searches only its own state root plus the plugin-port env var — no
+fallbacks to orochi or any other external orchestrator's paths.
+"""
 
 from __future__ import annotations
 
@@ -22,29 +26,31 @@ def fake_home(monkeypatch, tmp_path):
     return tmp_path
 
 
-def _legacy(home: Path) -> Path:
+def _primary(home: Path) -> Path:
     return home / ".scitex" / "agent-container" / "agents"
 
 
-def _dotfiles(home: Path) -> Path:
-    return home / ".dotfiles" / "src" / ".scitex" / "orochi" / "agents"
+def test_resolve_config_uses_primary_root(fake_home):
+    hit = _write(_primary(fake_home) / "foo.yaml", "foo")
+    assert resolve_config("foo") == str(hit)
 
 
-def test_resolve_config_prefers_legacy_path_over_dotfiles(fake_home):
-    legacy = _write(_legacy(fake_home) / "foo.yaml", "legacy")
-    _write(_dotfiles(fake_home) / "foo" / "foo.yaml", "dotfiles")
-    assert resolve_config("foo") == str(legacy)
+def test_resolve_config_supports_nested_name_dir(fake_home):
+    hit = _write(_primary(fake_home) / "foo" / "foo.yaml", "foo")
+    assert resolve_config("foo") == str(hit)
 
 
-def test_resolve_config_falls_back_to_dotfiles(fake_home):
-    expected = _write(_dotfiles(fake_home) / "foo" / "foo.yaml", "dotfiles")
-    assert resolve_config("foo") == str(expected)
+def test_resolve_config_primary_preferred_over_env_var(fake_home, monkeypatch):
+    primary_hit = _write(_primary(fake_home) / "foo.yaml", "primary")
+    envdir = fake_home / "envdir"
+    _write(envdir / "foo.yaml", "env")
+    monkeypatch.setenv("SCITEX_AGENT_CONTAINER_YAML_DIRS", str(envdir))
+    assert resolve_config("foo") == str(primary_hit)
 
 
-def test_resolve_config_env_var_takes_middle_priority(fake_home, monkeypatch):
+def test_resolve_config_env_var_plugin_port(fake_home, monkeypatch):
     envdir = fake_home / "envdir"
     envhit = _write(envdir / "foo.yaml", "env")
-    _write(_dotfiles(fake_home) / "foo" / "foo.yaml", "dotfiles")
     monkeypatch.setenv("SCITEX_AGENT_CONTAINER_YAML_DIRS", str(envdir))
     assert resolve_config("foo") == str(envhit)
 
@@ -54,15 +60,11 @@ def test_resolve_config_env_var_colon_separated(fake_home, monkeypatch):
     d2 = fake_home / "d2"
     d1.mkdir()
     expected = _write(d2 / "foo.yaml", "d2")
-    monkeypatch.setenv(
-        "SCITEX_AGENT_CONTAINER_YAML_DIRS", f"{d1}:{d2}"
-    )
+    monkeypatch.setenv("SCITEX_AGENT_CONTAINER_YAML_DIRS", f"{d1}:{d2}")
     assert resolve_config("foo") == str(expected)
 
 
-def test_resolve_config_not_found_lists_all_searched_paths(
-    fake_home, monkeypatch
-):
+def test_resolve_config_not_found_lists_searched_paths(fake_home, monkeypatch):
     monkeypatch.setenv(
         "SCITEX_AGENT_CONTAINER_YAML_DIRS", f"{fake_home}/a:{fake_home}/b"
     )
@@ -73,8 +75,18 @@ def test_resolve_config_not_found_lists_all_searched_paths(
     assert "SCITEX_AGENT_CONTAINER_YAML_DIRS" in msg
     assert f"{fake_home}/a" in msg
     assert f"{fake_home}/b" in msg
-    assert ".dotfiles/src/.scitex/orochi/agents" in msg
     assert "missing" in msg
+
+
+def test_resolve_config_no_orochi_fallback(fake_home):
+    """sac must not search ~/.scitex/orochi/ or ~/.dotfiles/...; consumers
+    that want that extension set SCITEX_AGENT_CONTAINER_YAML_DIRS."""
+    orochi_path = (
+        fake_home / ".dotfiles" / "src" / ".scitex" / "orochi" / "shared" / "agents"
+    )
+    _write(orochi_path / "foo" / "foo.yaml", "orochi")
+    with pytest.raises(FileNotFoundError):
+        resolve_config("foo")
 
 
 def test_resolve_config_absolute_path_unchanged(fake_home, tmp_path):

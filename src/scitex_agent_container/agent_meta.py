@@ -1,12 +1,9 @@
 """Rich agent metadata collection (claude-hud-style).
 
-Canonical source of truth for the metadata payload that is:
-  1. Emitted by ``scitex-agent-container status <name> --json``.
-  2. POSTed by the MCP sidecar heartbeat to ``/api/agents/register/``.
-
-Ported 2026-04-12 from
-``~/.scitex/orochi/agents/mamba-healer-mba/scripts/agent_meta.py``
-so collection logic lives in one place.
+Canonical source of truth for the metadata payload emitted by
+``scitex-agent-container status <name> --json``. External consumers
+(fleet heartbeat pushers, dashboards) shell out to this module via
+``sac status --json`` so the collection logic stays in one place.
 
 Every field is best-effort: any failure leaves the field as its default
 (``""``, ``0``, ``0.0``, ``[]``) and never raises. The caller merges this
@@ -531,7 +528,7 @@ def collect_rich(
         # model from transcript is more accurate than config.model when
         # the agent is actually running under a different model alias.
         "model_transcript": model,
-        "version": os.environ.get("SCITEX_OROCHI_AGENT_META_VERSION", "0.2"),
+        "version": os.environ.get("SCITEX_AGENT_CONTAINER_META_VERSION", "0.2"),
         # ---- Claude quota fields ----------------------------------------
         "quota_5h_used_pct": quota_5h_used_pct,
         "quota_7d_used_pct": quota_7d_used_pct,

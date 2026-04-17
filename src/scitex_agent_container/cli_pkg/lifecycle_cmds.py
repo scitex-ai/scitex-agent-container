@@ -5,12 +5,14 @@ Includes the new ``--all`` / ``--force`` flags for bulk-safe operations.
 
 from __future__ import annotations
 
+import os
 import sys
 import traceback
 
 import click
 
-from ..config import load_config, resolve_config
+from ..config import AgentConfig, load_config, resolve_config
+from ..config._host import resolve_hostname
 from ..lifecycle import (
     agent_restart,
     agent_start,
@@ -20,24 +22,91 @@ from ..lifecycle import (
 from ..registry import Registry
 from ._helpers import console
 
+_SKIP_DIR_NAMES = {"legacy-agents", "shared", "GITIGNORED"}
 
-def _discover_all_agents() -> list[str]:
-    """Find all agent YAML files in ~/.scitex/orochi/agents/."""
-    from pathlib import Path
 
-    agents_dir = Path.home() / ".scitex" / "orochi" / "agents"
+def _singleton_skip_reason(config: AgentConfig, hostname: str) -> str | None:
+    """Return a human-readable skip reason if ``config`` is a singleton on
+    the wrong host, else None.
+
+    per-host mode never skips. Singleton without a preferred-host is a no-op
+    (launches anywhere). Singleton with preferred-host skips when the
+    current host doesn't match.
+    """
+    sched = config.scheduling
+    if sched.mode != "singleton":
+        return None
+    if not sched.preferred_host:
+        return None
+    if sched.preferred_host == hostname:
+        return None
+    fallback = (
+        f" (fallback-hosts: {', '.join(sched.fallback_hosts)})"
+        if sched.fallback_hosts
+        else ""
+    )
+    return (
+        f"singleton pinned to '{sched.preferred_host}', "
+        f"current host is '{hostname}'{fallback}"
+    )
+
+
+def _iter_agent_yamls(agents_dir: "Path") -> "list[tuple[str, str]]":
+    """Yield ``(name, yaml_path)`` for each agent subdir in ``agents_dir``.
+
+    Skips hidden dirs (``.`` / ``_``) and reserved names. Uses the
+    ``<agent>/<agent>.yaml`` convention; ``.yml`` is also accepted.
+    """
+    results: list[tuple[str, str]] = []
     if not agents_dir.exists():
-        return []
-    yamls = []
+        return results
     for d in sorted(agents_dir.iterdir()):
-        if not d.is_dir() or d.name.startswith((".", "legacy", "_")):
+        if not d.is_dir():
+            continue
+        if d.name.startswith((".", "_")):
+            continue
+        if d.name in _SKIP_DIR_NAMES:
             continue
         for ext in (".yaml", ".yml"):
             candidate = d / f"{d.name}{ext}"
             if candidate.exists():
-                yamls.append(str(candidate))
+                results.append((d.name, str(candidate)))
                 break
-    return yamls
+    return results
+
+
+def _discover_all_agents() -> list[str]:
+    """Find all agent YAML files under sac's own root and the plugin-port dirs.
+
+    Search locations (earlier wins on name collision):
+      1. ``~/.scitex/agent-container/agents/<name>/<name>.yaml``
+         and ``~/.scitex/agent-container/agents/<name>.yaml``.
+      2. Each colon-separated dir in ``$SCITEX_AGENT_CONTAINER_YAML_DIRS``.
+         External orchestrators (orochi, etc.) set this to hand sac their
+         own agent-definition roots without sac knowing about them.
+
+    Returned paths are sorted by effective agent name for stable ordering.
+    """
+    from pathlib import Path
+
+    # name -> yaml path; later writes are ignored (earlier = higher priority).
+    found: dict[str, str] = {}
+
+    primary = Path.home() / ".scitex" / "agent-container" / "agents"
+    search_dirs: list[Path] = [primary]
+
+    env_raw = os.environ.get("SCITEX_AGENT_CONTAINER_YAML_DIRS", "")
+    for p in env_raw.split(":"):
+        p = p.strip()
+        if p:
+            search_dirs.append(Path(p).expanduser())
+
+    for src_dir in search_dirs:
+        for name, yaml_path in _iter_agent_yamls(src_dir):
+            if name not in found:
+                found[name] = yaml_path
+
+    return [found[name] for name in sorted(found)]
 
 
 @click.command()
@@ -47,7 +116,7 @@ def _discover_all_agents() -> list[str]:
     "start_all",
     is_flag=True,
     default=False,
-    help="Start all agents in ~/.scitex/orochi/agents/.",
+    help="Start all agents in ~/.scitex/agent-container/agents/ (+ $SCITEX_AGENT_CONTAINER_YAML_DIRS).",
 )
 @click.option(
     "--no-preflight",
@@ -69,12 +138,23 @@ def start(
     if start_all:
         yamls = _discover_all_agents()
         if not yamls:
-            console.print("[dim]No agents found in ~/.scitex/orochi/agents/[/dim]")
+            console.print(
+                "[dim]No agents found in "
+                "~/.scitex/agent-container/agents/ or $SCITEX_AGENT_CONTAINER_YAML_DIRS[/dim]"
+            )
             return
+        try:
+            current_host = resolve_hostname()
+        except RuntimeError:
+            current_host = ""
         console.print(f"[blue]Starting {len(yamls)} agents...[/blue]")
         for yaml_path in yamls:
             try:
                 config = load_config(yaml_path)
+                skip = _singleton_skip_reason(config, current_host)
+                if skip:
+                    console.print(f"  [yellow]SKIP[/yellow] {config.name}: {skip}")
+                    continue
                 location = (
                     f"REMOTE: {config.remote.host}"
                     if config.remote.is_remote
@@ -102,6 +182,14 @@ def start(
     try:
         config_path = resolve_config(config_path)
         config = load_config(config_path)
+        try:
+            current_host = resolve_hostname()
+        except RuntimeError:
+            current_host = ""
+        skip = _singleton_skip_reason(config, current_host)
+        if skip:
+            console.print(f"[yellow]Skipping '{config.name}': {skip}[/yellow]")
+            return
         location = (
             f"REMOTE: {config.remote.host}" if config.remote.is_remote else "LOCAL"
         )

@@ -13,13 +13,24 @@ from .health import health_monitor
 from .hooks import run_hook
 from .registry import Registry
 from .runtimes.claude_code import ClaudeCodeRuntime
+from .runtimes.slurm import SlurmRuntime
 
 
 def _get_runtime(config: AgentConfig):
     """Return the appropriate runtime for the config."""
     if config.runtime == "claude-code":
         return ClaudeCodeRuntime()
+    if config.runtime == "slurm":
+        return SlurmRuntime()
     raise ValueError(f"Unsupported runtime: {config.runtime}")
+
+
+def _fallback_workdir(name: str) -> str:
+    """Return the workdir path used when the agent's YAML can't be loaded.
+
+    Canonical sac layout: ``~/.scitex/agent-container/workspaces/<id>/``.
+    """
+    return str(Path.home() / ".scitex" / "agent-container" / "workspaces" / name)
 
 
 def _fire_forget_hook(
@@ -385,11 +396,7 @@ def agent_status(name: str, registry: Registry | None = None) -> dict:
     try:
         from .agent_meta import collect_rich
 
-        workdir = (
-            config.expanded_workdir
-            if config
-            else str(Path.home() / ".scitex" / "orochi" / "workspaces" / name)
-        )
+        workdir = config.expanded_workdir if config else _fallback_workdir(name)
         session = entry.get("screen", "") or (config.screen_name if config else name)
         rich = collect_rich(name=name, workdir=workdir, session=session)
         # Prefer transcript-derived started_at only if the registry

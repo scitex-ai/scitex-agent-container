@@ -72,13 +72,45 @@ class TelegramSpec:
 
 
 @dataclass
-class OrochiSpec:
-    enabled: bool = False
-    hosts: list[str] = field(default_factory=list)
-    port: int = 8559
-    token_env: str = "SCITEX_OROCHI_TOKEN"
-    channels: list[str] = field(default_factory=list)
-    heartbeat_interval: int = 60
+class SlurmHooks:
+    """Plugin hook paths for the SLURM runtime.
+
+    Each field is a path to a shell fragment that is *sourced* (not exec'd)
+    by the sbatch wrapper. Hooks can export env vars that persist into the
+    agent process — this is exactly what e.g. Lmod module loads need.
+
+    Hook env vars (set by the wrapper before sourcing):
+        SAC_AGENT_ID, SAC_JOB_ID, SAC_WORKDIR, SAC_LOG_FILE, SAC_PHASE.
+
+    sac ships no default hooks; external orchestrators (orochi, etc.)
+    provide their own scripts and reference them from agent YAML.
+    """
+
+    pre_submit: str = ""
+    pre_agent: str = ""
+    walltime_signal: str = ""
+    post_agent: str = ""
+    attach: str = ""
+
+
+@dataclass
+class SlurmSpec:
+    """SLURM runtime configuration parsed from agent YAML's ``spec.slurm``."""
+
+    partition: str = ""
+    time_limit: str = "1-00:00:00"
+    cpus_per_task: int = 1
+    mem: str = "4G"
+    nodes: int = 1
+    ntasks: int = 1
+    gres: str = ""
+    job_name: str = ""
+    signal: str = "B:USR1@3600"
+    auto_resubmit: bool = True
+    hold: str = "tail -f /dev/null"
+    logs_dir: str = "~/slurm_logs"
+    hooks: SlurmHooks = field(default_factory=SlurmHooks)
+    extra_directives: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -120,6 +152,27 @@ class ContextManagementConfig:
 class SkillsSpec:
     required: list[str] = field(default_factory=list)  # Auto-loaded at startup
     available: list[str] = field(default_factory=list)  # Available but not auto-loaded
+
+
+@dataclass
+class SchedulingSpec:
+    """Fleet-wide scheduling policy for an agent (shared-host layout).
+
+    ``mode`` controls effective-id composition and launch-skip behavior:
+      * ``per-host`` (default): agent is started on every host that runs
+        ``sac start <name>``; the effective id is ``<metadata.name>-<HOST>``
+        unless the name already ends with ``-<HOST>``.
+      * ``singleton``: exactly one instance fleet-wide. The effective id
+        stays as the bare ``<metadata.name>``. Only launched on
+        ``preferred-host``; on other hosts the launch is a no-op.
+
+    ``fallback-hosts`` is recorded for observability but not acted on
+    automatically — manual failover today.
+    """
+
+    mode: str = "per-host"
+    preferred_host: str = ""
+    fallback_hosts: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -223,7 +276,6 @@ class AgentConfig:
     listen: list[ListenPort] = field(default_factory=list)
     extensions: Dict[str, Any] = field(default_factory=dict)
     telegram: TelegramSpec = field(default_factory=TelegramSpec)
-    orochi: OrochiSpec = field(default_factory=OrochiSpec)
     remote: RemoteSpec = field(default_factory=RemoteSpec)
     skills: SkillsSpec = field(default_factory=SkillsSpec)
     context_management: ContextManagementConfig = field(
@@ -233,6 +285,8 @@ class AgentConfig:
     startup: "StartupSpec" = field(default_factory=lambda: StartupSpec())
     mcp_servers: dict[str, dict] = field(default_factory=dict)
     multiplexer: str = "tmux"  # "tmux" (default) or "screen"
+    scheduling: SchedulingSpec = field(default_factory=SchedulingSpec)
+    slurm: SlurmSpec = field(default_factory=SlurmSpec)
     config_path: str = ""
 
     def __post_init__(self) -> None:

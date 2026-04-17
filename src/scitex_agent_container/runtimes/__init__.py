@@ -1,15 +1,17 @@
 """Runtime adapters for agent execution."""
 
+from .apptainer import ApptainerRuntime
 from .base import RuntimeBase
 from .claude_code import ClaudeCodeRuntime
-from .screen import ScreenManager
 from .docker import DockerRuntime
-from .apptainer import ApptainerRuntime
+from .screen import ScreenManager
+from .slurm import SlurmRuntime
 
 __all__ = [
-    "RuntimeBase",
-    "ClaudeCodeRuntime",
-    "ScreenManager",
-    "DockerRuntime",
     "ApptainerRuntime",
+    "ClaudeCodeRuntime",
+    "DockerRuntime",
+    "RuntimeBase",
+    "ScreenManager",
+    "SlurmRuntime",
 ]

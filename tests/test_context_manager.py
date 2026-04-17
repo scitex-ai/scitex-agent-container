@@ -16,7 +16,6 @@ from scitex_agent_container.context_manager import (
     parse_context_percent,
 )
 
-
 SAMPLE_STATUSLINE = """\
 some prior output line
 another line
@@ -109,13 +108,15 @@ def test_warn_window_emits_warning(caplog):
         "[model] ctx 65% | foo\n",
         warn_before_n_checks=2,
     )
-    with caplog.at_level(logging.WARNING, logger="scitex_agent_container.context_manager"):
+    with caplog.at_level(
+        logging.WARNING, logger="scitex_agent_container.context_manager"
+    ):
         cm.tick()
     # Below threshold, inside the 10% headroom window → warn, no dispatch
     assert calls == []
-    assert any(
-        "approaching threshold" in rec.message for rec in caplog.records
-    ), f"expected warn log, got: {[r.message for r in caplog.records]}"
+    assert any("approaching threshold" in rec.message for rec in caplog.records), (
+        f"expected warn log, got: {[r.message for r in caplog.records]}"
+    )
 
 
 def test_tick_no_percent_returns_none():
@@ -144,7 +145,12 @@ _SAMPLE_META = {
 
 
 def _fake_completed(stdout: str) -> subprocess.CompletedProcess:
-    return subprocess.CompletedProcess(args=["x"], returncode=0, stdout=stdout, stderr="")
+    return subprocess.CompletedProcess(
+        args=["x"], returncode=0, stdout=stdout, stderr=""
+    )
+
+
+_STUB_SCRIPT = "/tmp/stub-meta.py"
 
 
 def test_fetch_agent_meta_success():
@@ -152,7 +158,7 @@ def test_fetch_agent_meta_success():
         "scitex_agent_container.context_manager.subprocess.run",
         return_value=_fake_completed(json.dumps(_SAMPLE_META) + "\n"),
     ):
-        got = fetch_agent_meta("head-nas")
+        got = fetch_agent_meta("head-nas", script_path=_STUB_SCRIPT)
     assert got == _SAMPLE_META
 
 
@@ -161,7 +167,7 @@ def test_fetch_agent_meta_missing_script():
         "scitex_agent_container.context_manager.subprocess.run",
         side_effect=FileNotFoundError(),
     ):
-        assert fetch_agent_meta("x") is None
+        assert fetch_agent_meta("x", script_path=_STUB_SCRIPT) is None
 
 
 def test_fetch_agent_meta_bad_json():
@@ -169,7 +175,7 @@ def test_fetch_agent_meta_bad_json():
         "scitex_agent_container.context_manager.subprocess.run",
         return_value=_fake_completed("not-json-at-all"),
     ):
-        assert fetch_agent_meta("x") is None
+        assert fetch_agent_meta("x", script_path=_STUB_SCRIPT) is None
 
 
 def test_fetch_agent_meta_timeout():
@@ -177,7 +183,7 @@ def test_fetch_agent_meta_timeout():
         "scitex_agent_container.context_manager.subprocess.run",
         side_effect=subprocess.TimeoutExpired(cmd="x", timeout=5),
     ):
-        assert fetch_agent_meta("x") is None
+        assert fetch_agent_meta("x", script_path=_STUB_SCRIPT) is None
 
 
 def test_fetch_agent_meta_called_process_error():
@@ -185,18 +191,32 @@ def test_fetch_agent_meta_called_process_error():
         "scitex_agent_container.context_manager.subprocess.run",
         side_effect=subprocess.CalledProcessError(1, "x"),
     ):
-        assert fetch_agent_meta("x") is None
+        assert fetch_agent_meta("x", script_path=_STUB_SCRIPT) is None
+
+
+def test_fetch_agent_meta_no_script_returns_none(monkeypatch):
+    """If neither the env var nor script_path is set, fetch returns None
+    without invoking subprocess — sac ships no default script path."""
+    monkeypatch.delenv("SCITEX_AGENT_CONTAINER_AGENT_META_SCRIPT", raising=False)
+    with patch("scitex_agent_container.context_manager.subprocess.run") as mock_run:
+        got = fetch_agent_meta("head-nas")
+    assert got is None
+    mock_run.assert_not_called()
 
 
 def test_fetch_agent_meta_env_override(monkeypatch):
-    monkeypatch.setenv("SCITEX_AGENT_META_SCRIPT", "/tmp/does-not-exist-xyz.py")
+    monkeypatch.setenv(
+        "SCITEX_AGENT_CONTAINER_AGENT_META_SCRIPT", "/tmp/does-not-exist-xyz.py"
+    )
     captured: dict = {}
 
     def fake_run(cmd, **kwargs):
         captured["cmd"] = cmd
         return _fake_completed(json.dumps(_SAMPLE_META))
 
-    with patch("scitex_agent_container.context_manager.subprocess.run", side_effect=fake_run):
+    with patch(
+        "scitex_agent_container.context_manager.subprocess.run", side_effect=fake_run
+    ):
         got = fetch_agent_meta("head-nas")
     assert got == _SAMPLE_META
     assert captured["cmd"][0] == "/tmp/does-not-exist-xyz.py"

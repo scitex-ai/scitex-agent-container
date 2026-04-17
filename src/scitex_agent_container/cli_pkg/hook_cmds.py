@@ -16,7 +16,7 @@ wired in the agent's ``.claude/settings.local.json``::
 The agent name is resolved in this order:
 
   1. ``--agent`` CLI flag
-  2. ``SCITEX_OROCHI_AGENT`` env var
+  2. ``SCITEX_AGENT_CONTAINER_AGENT`` env var
   3. ``CLAUDE_AGENT_ID`` env var
   4. basename of the current working directory
 
@@ -39,7 +39,7 @@ from ..event_log import append_event
 def _resolve_agent(flag: str) -> str:
     if flag:
         return flag
-    for key in ("SCITEX_OROCHI_AGENT", "CLAUDE_AGENT_ID"):
+    for key in ("SCITEX_AGENT_CONTAINER_AGENT", "CLAUDE_AGENT_ID"):
         val = os.environ.get(key)
         if val:
             return val

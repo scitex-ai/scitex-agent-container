@@ -16,6 +16,7 @@ from .build_cmds import build, check, validate
 from .hook_cmds import hook_event
 from .info_cmds import attach, find, list_python_apis, logs
 from .lifecycle_cmds import cleanup, restart, start, stop
+from .render_cmds import render_attach, render_sbatch
 from .snapshot_cmds import snapshot
 from .status_cmds import check_agent, health, list_agents, status
 
@@ -81,6 +82,10 @@ main.add_command(hook_event)
 
 # Action subsystem: run PaneActions, query attempts, aggregate stats.
 main.add_command(actions_cli)
+
+# Render ports: emit sbatch/attach text for external consumers.
+main.add_command(render_sbatch)
+main.add_command(render_attach)
 
 
 if __name__ == "__main__":

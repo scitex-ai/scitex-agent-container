@@ -34,7 +34,7 @@ spec:
 
 | Field | Derived as |
 |-------|-----------|
-| `workdir` | `~/.scitex/orochi/workspaces/{name}` |
+| `workdir` | `~/.scitex/orochi/runtime/workspaces/{name}` (legacy flat `~/.scitex/orochi/workspaces/{name}` / `~/.scitex/orochi/agents/{name}` kept if already present) |
 | `screen_name` | `{name}` |
 | `env.CLAUDE_AGENT_ID` | `{name}` |
 | `env.CLAUDE_AGENT_ROLE` | `{labels.role}` |
