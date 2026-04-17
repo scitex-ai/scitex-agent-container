@@ -133,9 +133,8 @@ def _discover_all_agents() -> list[str]:
 
     host_dir = root / host / "agents" if host else None
     shared_dir = root / "shared" / "agents"
-    legacy_dir = root / "agents"
 
-    for src_dir in (host_dir, shared_dir, legacy_dir):
+    for src_dir in (host_dir, shared_dir):
         if src_dir is None:
             continue
         for name, yaml_path in _iter_agent_yamls(src_dir):

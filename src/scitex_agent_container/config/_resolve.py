@@ -80,7 +80,6 @@ def resolve_config(name_or_path: str) -> str:
          (~/.scitex/orochi, ~/.dotfiles/src/.scitex/orochi):
              a. ``<root>/<HOST>/agents/<name>/<name>.yaml`` (host override)
              b. ``<root>/shared/agents/<name>/<name>.yaml`` (shared default)
-             c. ``<root>/agents/<name>/<name>.yaml`` (legacy flat layout)
 
     Pass an explicit path (with / or .yaml/.yml) to bypass the search entirely.
     """
