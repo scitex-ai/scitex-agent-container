@@ -49,6 +49,14 @@ jobs:
           echo "secret present (len=${#SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY})"
 
       - uses: actions/checkout@v4
+        with:
+          # Features (tests + source for PaneAction / nonce-probe /
+          # file-trust-radio) land on develop first; main only at
+          # release-merge time. The workflow file itself must live on
+          # the default branch for workflow_dispatch + schedule to
+          # register, but the code under test is pinned to develop so
+          # CI reflects the active feature line.
+          ref: develop
 
       - name: Install system deps (tmux)
         run: |
