@@ -341,6 +341,59 @@ def _read_mcp_json(workdir: str, max_chars: int = 10000) -> str:
     return ""
 
 
+def _parse_mcp_servers(workdir: str) -> list[dict[str, Any]]:
+    """Return a structured summary of MCP servers configured for this agent.
+
+    Parses ``<workdir>/.mcp.json`` into a flat list of
+    ``{name, transport, url_host, command}`` entries so the dashboard
+    can render a setup-audit table alongside installed plugins. URL
+    hosts (not full URLs) and commands (not args) are surfaced because
+    that is enough to verify the server is pointing at the right
+    endpoint without exposing query-string secrets.
+
+    Returns [] if the file is missing or malformed — callers never get
+    ``None``.
+    """
+    try:
+        p = Path(workdir) / ".mcp.json"
+        if not p.is_file():
+            return []
+        doc = json.loads(p.read_text(errors="replace"))
+    except Exception:
+        return []
+    if not isinstance(doc, dict):
+        return []
+    servers = doc.get("mcpServers")
+    if not isinstance(servers, dict):
+        return []
+    out: list[dict[str, Any]] = []
+    for sname, sconf in servers.items():
+        if not isinstance(sconf, dict):
+            continue
+        transport = sconf.get("type") or sconf.get("transport")
+        url_host: str | None = None
+        url_val = sconf.get("url")
+        if isinstance(url_val, str):
+            try:
+                from urllib.parse import urlparse
+
+                url_host = urlparse(url_val).hostname or None
+            except Exception:
+                url_host = None
+        command = sconf.get("command")
+        if not isinstance(command, str):
+            command = None
+        out.append(
+            {
+                "name": sname,
+                "transport": transport if isinstance(transport, str) else None,
+                "url_host": url_host,
+                "command": command,
+            }
+        )
+    return out
+
+
 def _pids_from_session(session: str, multiplexer: str) -> tuple[int, int]:
     pid = 0
     ppid = 0
@@ -575,6 +628,7 @@ def collect_rich(
     # ---- workspace file snapshots -----------------------------------
     claude_md = _read_claude_md(workdir)
     mcp_json = _read_mcp_json(workdir)
+    mcp_servers = _parse_mcp_servers(workdir)
 
     # ---- hook-captured tool / prompt log ----------------------------
     # Populated by `scitex-agent-container hook-event` entries wired into
@@ -642,7 +696,21 @@ def collect_rich(
             quota_error = f"fetch_usage raised: {exc}"
 
     # ---- Account / credential identity ------------------------------------
+    # Pull the full non-secret credentials view so downstream consumers
+    # can render plan, plugins, statusline command, and auth-rotation
+    # state without re-scanning ~/.claude/. The dashboard previously
+    # showed billing_type ("stripe_subscription") as the plan, which is
+    # wrong — the real plan comes from rateLimitTier in credentials.json
+    # and is normalized to plan_label here.
     account_email: str | None = None
+    account_plan_label: str | None = None
+    account_subscription_type: str | None = None
+    account_rate_limit_tier: str | None = None
+    account_organization_name: str | None = None
+    account_uuid: str | None = None
+    oauth_expires_at: int | None = None
+    installed_plugins: list = []
+    status_line_command: str | None = None
     # stx-allow: fallback (reason: credentials file absent on freshly
     # provisioned agents — account_email stays None until auth completes)
     try:
@@ -650,8 +718,62 @@ def collect_rich(
 
         _cred = read_credentials_metadata()
         account_email = _cred.get("email_address")
+        account_plan_label = _cred.get("plan_label")
+        account_subscription_type = _cred.get("subscription_type")
+        account_rate_limit_tier = _cred.get("rate_limit_tier")
+        account_organization_name = _cred.get("organization_name")
+        account_uuid = _cred.get("account_uuid")
+        _expires = _cred.get("oauth_expires_at")
+        if isinstance(_expires, int):
+            oauth_expires_at = _expires
+        _plugins = _cred.get("installed_plugins")
+        if isinstance(_plugins, list):
+            installed_plugins = _plugins
+        _slc = _cred.get("status_line_command")
+        if isinstance(_slc, str):
+            status_line_command = _slc
     except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         pass
+
+    # ---- Auth-rotation tracking -------------------------------------------
+    # When Claude Code rotates the OAuth token the expiresAt timestamp
+    # jumps. We append one NDJSON line per observed change, keyed on the
+    # email so the dashboard can show "this email has rotated N times,
+    # last at T". The log is local-only (not pushed as a bulk field)
+    # because the hub should dedupe rotations on its side from the
+    # per-heartbeat oauth_expires_at field.
+    if account_email and isinstance(oauth_expires_at, int):
+        try:
+            rot_dir = Path.home() / ".scitex" / "agent-container" / "auth-rotations"
+            rot_dir.mkdir(parents=True, exist_ok=True)
+            rot_file = rot_dir / f"{account_email}.ndjson"
+            last_expires: int | None = None
+            if rot_file.is_file():
+                try:
+                    for line in reversed(rot_file.read_text().splitlines()):
+                        line = line.strip()
+                        if not line:
+                            continue
+                        obj = json.loads(line)
+                        if isinstance(obj, dict) and isinstance(
+                            obj.get("oauth_expires_at"), int
+                        ):
+                            last_expires = obj["oauth_expires_at"]
+                            break
+                except Exception:
+                    last_expires = None
+            if last_expires != oauth_expires_at:
+                entry = {
+                    "ts": datetime.now(tz=timezone.utc).isoformat(),
+                    "email": account_email,
+                    "account_uuid": account_uuid,
+                    "oauth_expires_at": oauth_expires_at,
+                    "plan_label": account_plan_label,
+                }
+                with rot_file.open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(entry) + "\n")
+        except Exception:
+            pass
 
     # ---- Machine resource metrics (psutil, optional) -----------------------
     # stx-allow: fallback (reason: psutil is an optional dependency; absent
@@ -714,7 +836,27 @@ def collect_rich(
         "quota_from_cache": quota_from_cache,
         "quota_error": quota_error,
         # ---- Account identity (which Claude account this agent is using) ----
+        # `account_email` stays as the stable id consumers group on.
+        # `account_plan_label` is the human-readable plan ("Max 20x" etc.)
+        # derived from rateLimitTier — dashboards should prefer this over
+        # billing_type, which only reports payment method.
+        # `oauth_expires_at` is the unix-ms token expiry; a change across
+        # heartbeats indicates the OAuth token was rotated.
         "account_email": account_email,
+        "account_plan_label": account_plan_label,
+        "account_subscription_type": account_subscription_type,
+        "account_rate_limit_tier": account_rate_limit_tier,
+        "account_organization_name": account_organization_name,
+        "account_uuid": account_uuid,
+        "oauth_expires_at": oauth_expires_at,
+        # ---- Claude Code setup audit (for web-UI setup check) ---------------
+        # `installed_plugins` lists what is installed via /plugin install.
+        # `status_line_command` exposes whatever claude-hud / custom
+        # statusline the user wired up — the hub uses it as a "setup-ok"
+        # signal (is claude-hud wired in? is the sac-statusline wrapper
+        # in place?).
+        "installed_plugins": installed_plugins,
+        "status_line_command": status_line_command,
         # ---- Machine resource metrics (for hub /api/resources/) -------------
         # NOTE: metrics are host-level, not agent-level. When multiple agents
         # run on the same host they all report identical values; the hub is
@@ -729,9 +871,11 @@ def collect_rich(
         # ---- Workspace file snapshots --------------------------------------
         # Full CLAUDE.md (truncated) so downstream consumers do not need
         # per-host filesystem access. .mcp.json has token-style keys
-        # redacted.
+        # redacted. mcp_servers is the structured view for setup audit
+        # (name + transport + host/command, nothing sensitive).
         "claude_md": claude_md,
         "mcp_json": mcp_json,
+        "mcp_servers": mcp_servers,
         # ---- Claude Code hook-captured events ------------------------------
         # Structured view of the last N events the agent fired through
         # .claude/settings.local.json hooks. Surfaces full tool inputs

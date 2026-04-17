@@ -8,9 +8,10 @@ Design rules:
 1. **Whitelist only.** This module never blacklists. Only the fields
    explicitly listed below are copied out of the source files.
 2. **Token material is forbidden.** The file ``~/.claude/.credentials.json``
-   contains OAuth tokens. Only the two non-secret strings
-   ``subscriptionType`` and ``rateLimitTier`` are ever read from it.
-   No other field is parsed.
+   contains OAuth tokens. Only three non-secret fields are ever read
+   from it: ``subscriptionType``, ``rateLimitTier``, and ``expiresAt``
+   (a unix-ms integer deadline, used to detect token rotations).
+   ``accessToken``, ``refreshToken``, and ``scopes`` are never parsed.
 3. **Post-extraction guard.** After extraction, the result dict is
    scanned for any key or stringified value containing a secret-looking
    substring. A match raises ``RuntimeError``.
@@ -48,11 +49,32 @@ _TOP_LEVEL_FIELDS = {
     "hasCompletedOnboarding": "has_completed_onboarding",
 }
 
-# Only these two fields are read from ~/.claude/.credentials.json.
-# Nothing else from that file is ever touched.
+# Fields read from ~/.claude/.credentials.json.
+# Whitelist only. accessToken/refreshToken/scopes are NEVER read.
+# ``expiresAt`` is a unix-ms integer (token rotation deadline); it is
+# not a secret and is required for the auth-rotation tracker
+# (`oauth_expires_at` changes → token has rotated → emit one NDJSON
+# line keyed on email so the dashboard can show "rotated N times").
 _CREDENTIALS_SAFE_FIELDS = {
     "subscriptionType": "subscription_type",
     "rateLimitTier": "rate_limit_tier",
+    "expiresAt": "oauth_expires_at",
+}
+
+# Human-friendly label derived from rateLimitTier (fallback to
+# subscriptionType). Dashboard should prefer ``plan_label``; raw
+# values stay exposed so future tiers surface as ``plan_label=None``
+# rather than silently being bucketed wrong.
+_PLAN_LABELS = {
+    "default_claude_max_20x": "Max 20x",
+    "default_claude_max_5x": "Max 5x",
+    "default_claude_pro": "Pro",
+    "default_claude_free": "Free",
+}
+_SUBSCRIPTION_FALLBACK_LABELS = {
+    "max": "Max",
+    "pro": "Pro",
+    "free": "Free",
 }
 
 # Fields read from ~/.claude/settings.json
@@ -60,6 +82,13 @@ _SETTINGS_FIELDS = {
     "statusLine": "status_line_command",
     "enabledPlugins": "enabled_plugins",
 }
+
+# Derived (not read directly from any file). Always present in the
+# output dict so callers have a stable schema.
+_DERIVED_FIELDS = (
+    "plan_label",
+    "installed_plugins",
+)
 
 # Substrings that MUST NOT appear in any returned key or stringified value.
 _FORBIDDEN_SUBSTRINGS = (
@@ -80,7 +109,61 @@ def _all_safe_keys() -> list[str]:
     keys.extend(_TOP_LEVEL_FIELDS.values())
     keys.extend(_CREDENTIALS_SAFE_FIELDS.values())
     keys.extend(_SETTINGS_FIELDS.values())
+    keys.extend(_DERIVED_FIELDS)
     return keys
+
+
+def _derive_plan_label(
+    rate_limit_tier: str | None,
+    subscription_type: str | None,
+) -> str | None:
+    """Map raw tier/subscription strings to a human plan label.
+
+    Returns ``None`` if neither input yields a known tier — the
+    dashboard should surface the raw values as a fallback so unknown
+    plans don't get silently bucketed under "Free".
+    """
+    if rate_limit_tier and rate_limit_tier in _PLAN_LABELS:
+        return _PLAN_LABELS[rate_limit_tier]
+    if subscription_type and subscription_type in _SUBSCRIPTION_FALLBACK_LABELS:
+        return _SUBSCRIPTION_FALLBACK_LABELS[subscription_type]
+    return None
+
+
+def _read_installed_plugins(home: Path) -> list[dict[str, Any]]:
+    """Return a flat list of installed Claude Code plugins.
+
+    Parses ``~/.claude/plugins/installed_plugins.json`` which Claude
+    Code writes when plugins are installed via ``/plugin install``.
+    One entry per (plugin, scope) tuple — the same plugin can appear
+    twice (user-scope + local-scope). Empty list if the file does not
+    exist or is malformed.
+    """
+    path = home / ".claude" / "plugins" / "installed_plugins.json"
+    data = _load_json(path)
+    if data is None:
+        return []
+    plugins_raw = data.get("plugins")
+    if not isinstance(plugins_raw, dict):
+        return []
+    out: list[dict[str, Any]] = []
+    for pname, entries in plugins_raw.items():
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            out.append(
+                {
+                    "name": pname,
+                    "version": entry.get("version"),
+                    "scope": entry.get("scope"),
+                    "installed_at": entry.get("installedAt"),
+                    "last_updated": entry.get("lastUpdated"),
+                    "project_path": entry.get("projectPath"),
+                }
+            )
+    return out
 
 
 def _load_json(path: Path) -> dict[str, Any] | None:
@@ -112,8 +195,7 @@ def _check_no_secrets(result: dict[str, Any]) -> None:
         for needle in _FORBIDDEN_SUBSTRINGS:
             if needle in val_l:
                 raise RuntimeError(
-                    f"credentials extractor leaked forbidden value "
-                    f"under key {key!r}"
+                    f"credentials extractor leaked forbidden value under key {key!r}"
                 )
 
 
@@ -187,6 +269,21 @@ def read_credentials_metadata(home: Path | None = None) -> dict[str, Any]:
         enabled = settings_json.get("enabledPlugins")
         if isinstance(enabled, (list, dict)):
             result["enabled_plugins"] = enabled
+
+    # --- Derived fields ----------------------------------------------------
+    result["plan_label"] = _derive_plan_label(
+        rate_limit_tier=(
+            result["rate_limit_tier"]
+            if isinstance(result["rate_limit_tier"], str)
+            else None
+        ),
+        subscription_type=(
+            result["subscription_type"]
+            if isinstance(result["subscription_type"], str)
+            else None
+        ),
+    )
+    result["installed_plugins"] = _read_installed_plugins(home)
 
     # Post-extraction guard: must not contain any secret-looking material.
     _check_no_secrets(result)
