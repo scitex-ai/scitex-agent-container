@@ -189,6 +189,12 @@ scitex-agent-container attach <name>
 # Hook event ingestor (wired from Claude Code hooks, see below)
 scitex-agent-container hook-event <pretool|posttool|prompt|stop|other>
 
+# Pane actions (see "Pane Actions" below)
+scitex-agent-container actions run <nonce-probe|compact> <agent> [--json]
+scitex-agent-container actions query [--agent X] [--action Y] [--since 2h]
+scitex-agent-container actions stats [--agent X] [--since 7d]
+scitex-agent-container actions purge [--days N]
+
 # Configuration
 scitex-agent-container validate <config.yaml>
 scitex-agent-container check <config.yaml>
@@ -216,6 +222,10 @@ entry with fields from `agent_meta.collect_rich()` and
 | `tool_counts` | `{tool_name: count}` over the window |
 | `last_tool_at`, `last_tool_name` | ISO timestamp and name of the newest `pretool` event (any tool) -- functional heartbeat, distinguishes "process alive" from "LLM actually producing tool calls" |
 | `last_mcp_tool_at`, `last_mcp_tool_name` | Same, restricted to tools whose name starts with `mcp__` -- MCP sidecar health probe |
+| `last_action_at`, `last_action_name` | ISO timestamp and name of the most recent `PaneAction` attempt. `last_action_name` (renamed from `last_action`) avoids a column collision with orochi's hub schema. |
+| `last_action_outcome`, `last_action_elapsed_s` | Outcome (`success`, `precondition_fail`, `send_error`, `completion_timeout`, `skipped_by_policy`) and wall-clock duration of that attempt |
+| `action_counts` | `{action_name: count}` rollup from `action_store.summarize()` |
+| `p95_elapsed_s_by_action` | `{action_name: p95_seconds}` per-action latency headline |
 | `context_pct`, `current_tool`, `current_task`, `last_user_msg`, `model_transcript` | Derived from the active Claude Code transcript JSONL |
 | `quota_5h_used_pct`, `quota_7d_used_pct`, `quota_*_reset_at` | Claude usage (best-effort, cached) |
 | `metrics` | Host-level CPU / memory / load / disk (psutil) |
@@ -262,6 +272,53 @@ Agent name resolution order: `--agent <name>` flag >
 `SCITEX_OROCHI_AGENT` env var > `CLAUDE_AGENT_ID` env var > basename of
 the current working directory. The handler swallows all errors so a
 broken log can never block a tool call.
+
+## Pane Actions
+
+A typed, logged vocabulary for pane-mediated agent actions. Each
+action is a `PaneAction` subclass implementing four methods
+(`snapshot` / `precheck` / `send` / `is_complete`); the `run_action`
+engine classifies every attempt as `success`, `precondition_fail`,
+`send_error`, `completion_timeout`, or `skipped_by_policy`, and
+writes it to a host-wide SQLite log at
+`~/.scitex/agent-container/actions.db` (`agent` is a column, not a
+path). Two concrete actions ship today:
+
+- `NonceProbeAction` -- sends `Repeat <nonce>` and confirms the model
+  echoes it back (true functional liveness, not just "process alive").
+- `CompactAction` -- sends `/compact` and confirms by watching
+  `context_pct` drop by at least `--min-drop-pct` (default 20).
+
+```bash
+# Run an attempt (non-zero exit on any non-SUCCESS / non-SKIPPED).
+scitex-agent-container actions run nonce-probe <agent>
+scitex-agent-container actions run compact <agent> \
+    --min-drop-pct 30 --timeout 60 --json
+
+# Query / aggregate / purge the attempt log.
+scitex-agent-container actions query \
+    --agent <agent> --action compact --since 2h --limit 20
+scitex-agent-container actions stats --agent <agent> --since 7d
+scitex-agent-container actions purge --days 14
+```
+
+The latest attempt is folded into `status --json` via
+`agent_meta.collect_rich()` as `last_action_at` / `last_action_name` /
+`last_action_outcome` / `last_action_elapsed_s`, with rollups
+`action_counts` and `p95_elapsed_s_by_action`.
+
+Reliable `send_keys` into a running pane needs an inter-key delay and
+a settle window before `Enter`. Both are configurable via env vars
+(read once at import time by `runtimes/tmux.py` and `runtimes/screen.py`):
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `SCITEX_AGENT_KEY_DELAY_S` | `0.1` | Delay between individual keys |
+| `SCITEX_AGENT_SUBMIT_SETTLE_S` | `0.3` | Settle after text, before `Enter` |
+| `SCITEX_AGENT_ACTION_RETENTION_DAYS` | `30` | Default `actions purge --days` horizon |
+
+A `send_text_and_submit(session, text)` helper wraps the "type then
+submit" pattern used by every action's `send`.
 
 ## Zero Coupling to Downstream Orchestrators
 

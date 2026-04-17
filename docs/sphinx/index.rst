@@ -12,6 +12,7 @@ scitex-agent-container - Declarative AI Agent Lifecycle Management
    installation
    quickstart
    status_and_hooks
+   actions
 
 .. toctree::
    :maxdepth: 2
@@ -30,6 +31,10 @@ Key Features
 - **Claude Code Hook Integration**: ``hook-event`` ingests Claude Code
   ``PreToolUse`` / ``PostToolUse`` / ``UserPromptSubmit`` / ``Stop``
   events into a per-agent ring buffer
+- **Pane Actions**: ``PaneAction`` ABC + ``actions run|query|stats|purge``
+  CLI for typed, logged pane interactions (nonce-probe liveness,
+  ``/compact`` on context drop) backed by a host-wide SQLite attempt
+  log -- see :doc:`actions`
 - **Zero Coupling**: No knowledge of any downstream orchestrator;
   consumers (e.g. scitex-orochi) wrap ``status --json`` to post to
   their own hubs

@@ -49,3 +49,18 @@ Quickstart
    recent tool calls, prompts, and sub-agent launches. See
    :doc:`status_and_hooks` for the full ``.claude/settings.local.json``
    snippet.
+
+5. Run your first pane action. The nonce probe types
+   ``Repeat <nonce>`` into the pane and confirms the model echoes it
+   back -- a true functional-liveness check, not just "process alive":
+
+.. code-block:: bash
+
+    scitex-agent-container actions run nonce-probe my-agent
+    scitex-agent-container actions query --agent my-agent --limit 5
+    scitex-agent-container actions stats --agent my-agent --since 1h
+
+   Every attempt is recorded in ``~/.scitex/agent-container/actions.db``
+   and the most recent one is reflected in ``status --json`` under
+   ``last_action_at`` / ``last_action_name`` / ``last_action_outcome``.
+   See :doc:`actions` for the full subsystem.

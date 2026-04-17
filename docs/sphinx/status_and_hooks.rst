@@ -61,6 +61,26 @@ Selected fields:
     tool name starts with ``mcp__``. Serves as an MCP sidecar health
     probe -- confirms the MCP route is flowing, not just local tools.
 
+``last_action_at`` / ``last_action_name``
+    ISO timestamp and name of the most recent recorded ``PaneAction``
+    attempt (e.g. ``nonce-probe``, ``compact``). ``last_action_name``
+    is renamed from the original ``last_action`` so it does not
+    collide with the orochi hub's own ``last_action`` column.
+
+``last_action_outcome`` / ``last_action_elapsed_s``
+    Outcome string (``success``, ``precondition_fail``,
+    ``send_error``, ``completion_timeout``, ``skipped_by_policy``)
+    and wall-clock duration of that last attempt. ``None`` / ``""``
+    when no attempt exists.
+
+``action_counts``
+    ``{action_name: count}`` rollup over the configured window from
+    ``action_store.summarize()``.
+
+``p95_elapsed_s_by_action``
+    ``{action_name: p95_seconds}`` latency headline per action,
+    suitable for dashboards.
+
 ``quota_5h_used_pct``, ``quota_7d_used_pct``, ``quota_*_reset_at``
     Claude usage (best-effort; cached between calls).
 
