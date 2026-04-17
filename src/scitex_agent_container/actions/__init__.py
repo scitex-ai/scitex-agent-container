@@ -8,4 +8,5 @@ disable auto-response simply never instantiate anything here —
 the observers remain importable on their own.
 """
 
+from .compact import CompactAction  # noqa: F401
 from .nonce_probe import NonceProbeAction  # noqa: F401
