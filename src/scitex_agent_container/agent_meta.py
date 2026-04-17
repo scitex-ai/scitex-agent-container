@@ -423,6 +423,23 @@ def collect_rich(
     # ---- workspace file snapshots -----------------------------------
     claude_md = _read_claude_md(workdir)
     mcp_json = _read_mcp_json(workdir)
+
+    # ---- hook-captured tool / prompt log ----------------------------
+    # Populated by `scitex-agent-container hook-event` entries wired into
+    # the agent's .claude/settings.local.json. Non-agentic: pure ring-
+    # buffer read.
+    try:
+        from .event_log import summarize as _summarize_events
+
+        _event_summary = _summarize_events(name, limit=50)
+    except Exception:
+        _event_summary = {
+            "recent_tools": [],
+            "recent_prompts": [],
+            "agent_calls": [],
+            "background_tasks": [],
+            "counts": {},
+        }
     # Use canonical fleet name (e.g. "nas" instead of "DXP480TPLUS-994")
     _raw_hostname = socket.gethostname().split(".")[0]
     try:
@@ -541,4 +558,15 @@ def collect_rich(
         # redacted.
         "claude_md": claude_md,
         "mcp_json": mcp_json,
+        # ---- Claude Code hook-captured events ------------------------------
+        # Structured view of the last N events the agent fired through
+        # .claude/settings.local.json hooks. Surfaces full tool inputs
+        # (including Agent prompts and Bash run_in_background starts) so
+        # the dashboard and fleet lead can see what the agent is doing
+        # without relying on tmux scraping.
+        "recent_tools": _event_summary.get("recent_tools") or [],
+        "recent_prompts": _event_summary.get("recent_prompts") or [],
+        "agent_calls": _event_summary.get("agent_calls") or [],
+        "background_tasks": _event_summary.get("background_tasks") or [],
+        "tool_counts": _event_summary.get("counts") or {},
     }

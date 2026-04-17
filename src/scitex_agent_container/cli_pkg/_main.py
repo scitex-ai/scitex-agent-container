@@ -12,6 +12,7 @@ import click
 from ._helpers import HelpRecursiveGroup
 from .account_cmds import account, quota_watch
 from .build_cmds import build, check, validate
+from .hook_cmds import hook_event
 from .info_cmds import attach, find, list_python_apis, logs
 from .lifecycle_cmds import cleanup, restart, start, stop
 from .snapshot_cmds import snapshot
@@ -73,6 +74,9 @@ main.add_command(build)
 # Account management and quota monitoring
 main.add_command(account)
 main.add_command(quota_watch)
+
+# Claude Code hook event ingestor
+main.add_command(hook_event)
 
 
 if __name__ == "__main__":
