@@ -150,6 +150,20 @@ def _detect_file_trust_radio(content: str) -> bool:
     )
 
 
+def _detect_theme_selection(content: str) -> bool:
+    """First-run theme selection prompt.
+
+    Appears only on a fresh HOME (no ``~/.claude/`` saved theme). On
+    dev machines it never shows, but in CI (a clean ubuntu VM) this is
+    the first thing Claude Code asks. Blocks every downstream startup
+    prompt until acknowledged.
+
+    Matches the radio variant: "Choose the text style..." + numbered
+    options starting with "1. Auto (match terminal)".
+    """
+    return "Choose the text style" in content and "1. Auto (match terminal)" in content
+
+
 def _detect_done(content: str) -> bool:
     """Check if claude is at the main input prompt (all TUI prompts done).
 
@@ -209,6 +223,12 @@ PROMPT_HANDLERS: list[PromptHandler] = [
         detect=_detect_file_trust_radio,
         keys=["1", "Enter"],  # "1. Yes, I trust this folder"
         priority=8,
+    ),
+    PromptHandler(
+        name="theme-selection",
+        detect=_detect_theme_selection,
+        keys=["1", "Enter"],  # "1. Auto (match terminal)"
+        priority=9,
     ),
 ]
 

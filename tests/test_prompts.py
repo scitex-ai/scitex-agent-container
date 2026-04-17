@@ -98,6 +98,29 @@ def test_file_trust_radio_no_match_without_both_options():
     assert _detect_file_trust_radio(content) is False
 
 
+def test_theme_selection_match():
+    """First-run theme prompt on a fresh HOME (e.g. CI). Must match the
+    exact strings Claude Code emits so we don't fire on unrelated text."""
+    from scitex_agent_container.runtimes.prompts import _detect_theme_selection
+
+    content = (
+        "Let's get started.\n"
+        "Choose the text style that looks best with your terminal\n"
+        "1. Auto (match terminal)\n"
+        "2. Dark mode\n"
+        "3. Light mode\n"
+    )
+    assert _detect_theme_selection(content) is True
+
+
+def test_theme_selection_no_match_on_theme_command_output():
+    """Firing on `/theme` command output would re-select the theme
+    mid-session. Require the "Let's get started"-adjacent wording."""
+    from scitex_agent_container.runtimes.prompts import _detect_theme_selection
+
+    assert _detect_theme_selection("1. Auto (match terminal)\n") is False
+
+
 def test_file_trust_match():
     content = "Do you trust the files in this folder? yes/no"
     assert _detect_file_trust(content) is True
