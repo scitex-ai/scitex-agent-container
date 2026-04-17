@@ -17,7 +17,7 @@ from ._contributor_spec_validator import (
     validate_contributor_spec_raw,
 )
 from ._host import resolve_hostname, substitute_hostnames
-from ._loaders import compose_effective_name, load_v3
+from ._loaders import compose_effective_name, load_v2, load_v3
 from ._resolve import resolve_config
 from ._types import (
     AgentConfig,
@@ -28,9 +28,11 @@ from ._types import (
     HookSpec,
     HostsSpec,
     ListenPort,
+    OrochiSpec,
     ReadyPattern,
     RemoteSpec,
     RestartSpec,
+    SchedulingSpec,
     SkillsSpec,
     SlurmHeartbeatSpec,
     SlurmHooks,
@@ -51,9 +53,11 @@ __all__ = [
     "HookSpec",
     "HostsSpec",
     "ListenPort",
+    "OrochiSpec",
     "ReadyPattern",
     "RemoteSpec",
     "RestartSpec",
+    "SchedulingSpec",
     "SkillsSpec",
     "SlurmHeartbeatSpec",
     "SlurmHooks",

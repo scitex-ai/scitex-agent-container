@@ -2,17 +2,17 @@
 
 Uses ``${SCITEX_AGENT_CONTAINER_HOSTNAME:-$(hostname -s)}`` as the canonical
 hostname (env var wins, short hostname is the fallback). Shared agent
-definitions may reference ``${HOSTNAME}`` so the same YAML can be launched
-on every host without drift.
+definitions may reference ``${HOSTNAME}`` or ``${SCITEX_OROCHI_HOSTNAME}``
+so the same YAML can be launched on every host without drift.
 
 Design constraints:
 * Missing vars are a loud error (no silent empty string).
 * Substitution happens after YAML parse, before dataclass construction, so
   every string field is covered (metadata labels, env values, hook command
   strings, scheduling.preferred-host, etc.).
-* Only ``${HOSTNAME}`` is substituted by this module — other ``${...}``
-  placeholders are left alone for downstream processors (e.g. MCP
-  interpolation, consumer-defined env resolution) to handle.
+* Only ``${HOSTNAME}`` and ``${SCITEX_OROCHI_HOSTNAME}`` are substituted by
+  this module — other ``${...}`` placeholders are left alone for downstream
+  processors (e.g. MCP interpolation, consumer-defined env resolution) to handle.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ import socket
 from pathlib import Path
 from typing import Any
 
-_HOSTNAME_TOKENS = ("HOSTNAME",)
+_HOSTNAME_TOKENS = ("HOSTNAME", "SCITEX_OROCHI_HOSTNAME")
 _PLACEHOLDER_RE = re.compile(r"\$\{(" + "|".join(_HOSTNAME_TOKENS) + r")\}")
 
 # Declarative host identity map lives at ~/.scitex/agent-container/config.yaml.
@@ -59,17 +59,21 @@ def resolve_hostname() -> str:
 
     Resolution order (first non-empty wins):
       1. ``SCITEX_AGENT_CONTAINER_HOSTNAME`` env var (manual override).
-      2. ``hostname_aliases[short hostname]`` from
+      2. ``SCITEX_OROCHI_HOSTNAME`` env var.
+      3. ``hostname_aliases[short hostname]`` from
          ``~/.scitex/agent-container/config.yaml``.
-      3. ``socket.gethostname()`` short form (identity fallback).
+      4. ``socket.gethostname()`` short form (identity fallback).
 
     Raises:
-        RuntimeError: If none of the three produces a non-empty value. This
+        RuntimeError: If none of the sources produces a non-empty value. This
             should be practically impossible (``gethostname()`` returns
             something on any configured box) but is handled loudly rather
             than returning the empty string.
     """
     env = os.environ.get("SCITEX_AGENT_CONTAINER_HOSTNAME", "").strip()
+    if env:
+        return env
+    env = os.environ.get("SCITEX_OROCHI_HOSTNAME", "").strip()
     if env:
         return env
     hn = socket.gethostname()
@@ -80,13 +84,14 @@ def resolve_hostname() -> str:
     if short:
         return short
     raise RuntimeError(
-        "Cannot resolve hostname: SCITEX_AGENT_CONTAINER_HOSTNAME unset, "
-        "socket.gethostname() empty, no config.yaml alias applicable."
+        "Cannot resolve hostname: SCITEX_AGENT_CONTAINER_HOSTNAME and "
+        "SCITEX_OROCHI_HOSTNAME unset, socket.gethostname() empty, "
+        "no config.yaml alias applicable."
     )
 
 
 def _substitute_string(value: str, hostname: str) -> str:
-    """Replace ``${HOSTNAME}`` occurrences in a string.
+    """Replace ${HOSTNAME} / ${SCITEX_OROCHI_HOSTNAME} occurrences in a string.
 
     Other ``${...}`` placeholders are preserved as-is so downstream code
     (e.g. mcp interpolation) keeps working.

@@ -30,26 +30,42 @@ def _singleton_skip_reason(config: AgentConfig, hostname: str) -> str | None:
     """Return a human-readable skip reason if ``config`` is a singleton on
     the wrong host, else None.
 
-    Multi-instance (``hosts:`` set) never skips. Singleton with no host
-    preference (empty ``host:``) launches anywhere. Singleton with
-    ``host:`` set skips when the current host isn't the preferred (head
-    of the list) and isn't a fallback either.
+    Multi-instance (``hosts:`` set or per-host scheduling) never skips.
+    Singleton with no host preference launches anywhere. Singleton with
+    ``host:``/``preferred-host`` set skips when the current host doesn't match.
     """
+    # v3 config: use hosts_spec
     spec = config.hosts_spec
     if spec.hosts:  # multi-instance
         return None
     host = spec.host
-    if not host:  # local singleton — never skip
+    if host:
+        chain = [host] if isinstance(host, str) else list(host)
+        if not chain or hostname == chain[0]:
+            return None
+        if hostname in chain[1:]:
+            return None
+        fallback_str = (
+            f" (fallback-hosts: {', '.join(chain[1:])})" if len(chain) > 1 else ""
+        )
+        return f"singleton prefers '{chain[0]}', current host is '{hostname}'{fallback_str}"
+    # v2 config: use scheduling spec
+    sched = config.scheduling
+    if sched.mode != "singleton":
         return None
-    chain = [host] if isinstance(host, str) else list(host)
-    if not chain or hostname == chain[0]:
+    if not sched.preferred_host:
         return None
-    if hostname in chain[1:]:
-        return None  # we're a fallback for this singleton — let it run
-    fallback_str = (
-        f" (fallback-hosts: {', '.join(chain[1:])})" if len(chain) > 1 else ""
+    if sched.preferred_host == hostname:
+        return None
+    fallback = (
+        f" (fallback-hosts: {', '.join(sched.fallback_hosts)})"
+        if sched.fallback_hosts
+        else ""
     )
-    return f"singleton prefers '{chain[0]}', current host is '{hostname}'{fallback_str}"
+    return (
+        f"singleton pinned to '{sched.preferred_host}', "
+        f"current host is '{hostname}'{fallback}"
+    )
 
 
 def _iter_agent_yamls(agents_dir: "Path") -> "list[tuple[str, str]]":
@@ -77,25 +93,24 @@ def _iter_agent_yamls(agents_dir: "Path") -> "list[tuple[str, str]]":
 
 
 def _discover_all_agents() -> list[str]:
-    """Find all agent YAML files under sac's own root and the plugin-port dirs.
+    """Find all agent YAML files in the sac install root and shared-host layout.
 
     Search locations (earlier wins on name collision):
-      1. ``~/.scitex/agent-container/agents/<name>/<name>.yaml``
-         and ``~/.scitex/agent-container/agents/<name>.yaml``.
-      2. Each colon-separated dir in ``$SCITEX_AGENT_CONTAINER_YAML_DIRS``.
-         External orchestrators (orochi, etc.) set this to hand sac their
-         own agent-definition roots without sac knowing about them.
+      1. ``~/.scitex/agent-container/agents/<name>/<name>.yaml`` (sac root)
+      2. ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` (plugin-port colon-separated dirs)
+      3. ``~/.scitex/orochi/<HOST>/agents/`` (host-specific override)
+      4. ``~/.scitex/orochi/shared/agents/`` (fleet-shared)
+      5. ``~/.scitex/orochi/agents/`` (legacy flat layout)
 
     Returned paths are sorted by effective agent name for stable ordering.
     """
     from pathlib import Path
 
-    from scitex_config._ecosystem import local_state
-
     # name -> yaml path; later writes are ignored (earlier = higher priority).
     found: dict[str, str] = {}
 
-    primary = local_state.path("agent-container", "agents")
+    home = Path.home()
+    primary = home / ".scitex" / "agent-container" / "agents"
     search_dirs: list[Path] = [primary]
 
     env_raw = os.environ.get("SCITEX_AGENT_CONTAINER_YAML_DIRS", "")
@@ -105,6 +120,24 @@ def _discover_all_agents() -> list[str]:
             search_dirs.append(Path(p).expanduser())
 
     for src_dir in search_dirs:
+        for name, yaml_path in _iter_agent_yamls(src_dir):
+            if name not in found:
+                found[name] = yaml_path
+
+    # Fleet layout search
+    root = home / ".scitex" / "orochi"
+    try:
+        host = resolve_hostname()
+    except RuntimeError:
+        host = ""
+
+    host_dir = root / host / "agents" if host else None
+    shared_dir = root / "shared" / "agents"
+    legacy_dir = root / "agents"
+
+    for src_dir in (host_dir, shared_dir, legacy_dir):
+        if src_dir is None:
+            continue
         for name, yaml_path in _iter_agent_yamls(src_dir):
             if name not in found:
                 found[name] = yaml_path
