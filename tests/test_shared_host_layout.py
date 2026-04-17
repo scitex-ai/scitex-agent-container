@@ -298,6 +298,10 @@ class TestEffectiveId:
         from scitex_agent_container.config import load_config
 
         monkeypatch.setenv("SCITEX_OROCHI_HOSTNAME", "ywata-note-win")
+        # Isolate HOME so the legacy-workdir fallback probe doesn't hit the
+        # dev machine's real ~/.scitex/orochi/workspaces/ and return the
+        # pre-runtime/ path.
+        monkeypatch.setenv("HOME", str(tmp_path))
 
         head_yaml = tmp_path / "head.yaml"
         head_yaml.write_text(
@@ -321,7 +325,7 @@ class TestEffectiveId:
         assert cfg.name == "head-ywata-note-win"
         assert cfg.labels["machine"] == "ywata-note-win"
         assert cfg.scheduling.mode == "per-host"
-        assert cfg.workdir == "~/.scitex/orochi/workspaces/head-ywata-note-win"
+        assert cfg.workdir == "~/.scitex/orochi/runtime/workspaces/head-ywata-note-win"
 
     def test_load_v2_fleet_lead_on_wsl_keeps_bare_id(self, tmp_path, monkeypatch):
         """Singleton fleet-lead on preferred host keeps bare ``fleet-lead`` id."""

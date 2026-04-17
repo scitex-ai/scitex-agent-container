@@ -39,6 +39,12 @@ from ._types import AgentConfig, SchedulingSpec
 # (head-nas msg#12877; head-mba msg#12879 root cause).
 _VENV_AUTO_FALLBACK_CHAIN = ("~/.venv-3.11", "~/.venv")
 
+# Default workdir layout (2026-04-17 runtime/ restructure). Definitions ship
+# under ``shared/agents/<name>/`` or ``<host>/agents/<name>/``; per-agent
+# runtime state (CLAUDE.md, .mcp.json, .claude/) lives at
+# ``runtime/workspaces/<effective-id>/``.
+_DEFAULT_WORKDIR_RUNTIME = "~/.scitex/orochi/runtime/workspaces/{name}"
+
 
 def _resolve_venv(venv: str) -> str:
     """Resolve `venv: auto` to the first existing virtualenv on this host.
@@ -148,8 +154,11 @@ def load_v2(raw: dict, path: Path) -> AgentConfig:
     else:
         name = raw_name
 
-    # Auto-derive workdir (user can override)
-    workdir = spec.get("workdir", f"~/.scitex/orochi/workspaces/{name}")
+    # Auto-derive workdir (user can override).
+    # Default lives under runtime/workspaces/ (2026-04-17 layout).
+    workdir = spec.get("workdir")
+    if workdir is None:
+        workdir = _DEFAULT_WORKDIR_RUNTIME.format(name=name)
 
     # Auto-derive screen_name: {name} (not cld-{name})
     screen_raw = spec.get("screen", {}) or {}

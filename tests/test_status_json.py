@@ -10,7 +10,6 @@ import pytest
 
 from scitex_agent_container import agent_meta
 
-
 # ---------------------------------------------------------------------------
 # collect_rich — unit tests with fake workspace, no live tmux required
 # ---------------------------------------------------------------------------
@@ -83,9 +82,12 @@ def test_collect_rich_shape(fake_workspace: Path) -> None:
 
 def test_encode_claude_project() -> None:
     # hidden-dir: /.scitex becomes --scitex (not ---scitex)
-    assert agent_meta._encode_claude_project(
-        "/Users/ywatanabe/.dotfiles/src/.scitex/orochi/workspaces/head-mba"
-    ) == "-Users-ywatanabe--dotfiles-src--scitex-orochi-workspaces-head-mba"
+    assert (
+        agent_meta._encode_claude_project(
+            "/Users/ywatanabe/.dotfiles/src/.scitex/orochi/workspaces/head-mba"
+        )
+        == "-Users-ywatanabe--dotfiles-src--scitex-orochi-workspaces-head-mba"
+    )
 
 
 def test_collect_rich_with_fake_transcript(
@@ -140,6 +142,24 @@ def test_collect_rich_with_fake_transcript(
 
 
 # ---------------------------------------------------------------------------
+# _fallback_workdir — runtime/ layout probe (2026-04-17 restructure)
+# ---------------------------------------------------------------------------
+
+
+def test_fallback_workdir_uses_runtime_layout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Returns the canonical runtime/workspaces/<id> path."""
+    from scitex_agent_container.lifecycle import _fallback_workdir
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    result = _fallback_workdir("some-agent")
+    assert result == str(
+        tmp_path / ".scitex" / "orochi" / "runtime" / "workspaces" / "some-agent"
+    )
+
+
+# ---------------------------------------------------------------------------
 # agent_status — integration: rich fields merged into base result
 # ---------------------------------------------------------------------------
 
@@ -166,10 +186,13 @@ def test_agent_status_includes_rich_fields(
     # sets config=None. That path still calls collect_rich via the
     # fallback workspace dir, so point HOME at the fake workspace parent.
     monkeypatch.setattr(Path, "home", lambda: fake_workspace.parent.parent)
-    # The fallback workdir lifecycle computes:
-    #   ~/.scitex/orochi/workspaces/<name>
-    # so mirror that:
-    target = fake_workspace.parent.parent / ".scitex" / "orochi" / "workspaces"
+    # The fallback workdir lifecycle computes (2026-04-17 runtime/ layout):
+    #   ~/.scitex/orochi/runtime/workspaces/<name>
+    # so mirror that. Legacy fallback probes ~/.scitex/orochi/workspaces/
+    # first — leave that dir absent so the new path wins.
+    target = (
+        fake_workspace.parent.parent / ".scitex" / "orochi" / "runtime" / "workspaces"
+    )
     target.mkdir(parents=True, exist_ok=True)
     link = target / "fake-agent"
     if not link.exists():
@@ -282,7 +305,9 @@ def test_status_full_unaffected_by_terse_flag_absence(
             return entry
 
     monkeypatch.setattr(Path, "home", lambda: fake_workspace.parent.parent)
-    target = fake_workspace.parent.parent / ".scitex" / "orochi" / "workspaces"
+    target = (
+        fake_workspace.parent.parent / ".scitex" / "orochi" / "runtime" / "workspaces"
+    )
     target.mkdir(parents=True, exist_ok=True)
     link = target / "fake-agent"
     if not link.exists():

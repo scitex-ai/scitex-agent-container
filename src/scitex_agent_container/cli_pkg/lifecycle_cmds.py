@@ -77,11 +77,16 @@ def _iter_agent_yamls(agents_dir: "Path") -> "list[tuple[str, str]]":
 def _discover_all_agents() -> list[str]:
     """Find all agent YAML files in the shared-host layout.
 
-    Search locations (host override > shared):
+    Search locations for agent **definitions** (host override > shared):
       1. ``~/.scitex/orochi/<HOST>/agents/<name>/<name>.yaml``
          (host-specific, wins if the same name exists elsewhere).
       2. ``~/.scitex/orochi/shared/agents/<name>/<name>.yaml``
          (fleet-shared).
+
+    Note: per-agent runtime state (CLAUDE.md / .mcp.json / .claude/) lives at
+    ``~/.scitex/orochi/runtime/workspaces/<effective-id>/`` (see the 2026-04-17
+    layout). Only the definition search is host-aware; effective id composition
+    happens in ``config.compose_effective_name``.
 
     ``<HOST> = ${SCITEX_OROCHI_HOSTNAME:-$(hostname -s)}``. Names present in
     an earlier location shadow the same name in a later location, so a

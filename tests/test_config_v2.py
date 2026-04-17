@@ -66,10 +66,11 @@ V2_WITH_MCP = {
 
 
 class TestV2Config:
-    def test_v2_auto_derived_workdir(self):
+    def test_v2_auto_derived_workdir(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("HOME", str(tmp_path))
         path = _write_config(MINIMAL_V2_CONFIG)
         config = load_config(path)
-        assert config.workdir == "~/.scitex/orochi/workspaces/head-test"
+        assert config.workdir == "~/.scitex/orochi/runtime/workspaces/head-test"
         Path(path).unlink()
 
     def test_v2_screen_name(self):
@@ -451,9 +452,7 @@ class TestVenvAutoResolution:
         v = tmp_path / "v"
         (v / "bin").mkdir(parents=True)
         (v / "bin" / "activate").write_text("# fake")
-        monkeypatch.setattr(
-            _loaders, "_VENV_AUTO_FALLBACK_CHAIN", (str(v),)
-        )
+        monkeypatch.setattr(_loaders, "_VENV_AUTO_FALLBACK_CHAIN", (str(v),))
 
         assert _loaders._resolve_venv("auto") == str(v)
         assert _loaders._resolve_venv("AUTO") == str(v)
@@ -467,9 +466,7 @@ class TestVenvAutoResolution:
         v = tmp_path / "venv-target"
         (v / "bin").mkdir(parents=True)
         (v / "bin" / "activate").write_text("# fake")
-        monkeypatch.setattr(
-            _loaders, "_VENV_AUTO_FALLBACK_CHAIN", (str(v),)
-        )
+        monkeypatch.setattr(_loaders, "_VENV_AUTO_FALLBACK_CHAIN", (str(v),))
 
         data = {
             "apiVersion": "scitex-agent-container/v2",

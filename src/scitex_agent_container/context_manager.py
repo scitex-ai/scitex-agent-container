@@ -47,7 +47,8 @@ def parse_context_percent(pane_text: str) -> float | None:
     return None
 
 
-_DEFAULT_AGENT_META_SCRIPT = "~/.scitex/orochi/scripts/agent_meta.py"
+# 2026-04-17 runtime/ layout: client scripts live under shared/scripts/.
+_DEFAULT_AGENT_META_SCRIPT = "~/.scitex/orochi/shared/scripts/agent_meta.py"
 
 
 def fetch_agent_meta(
@@ -60,11 +61,8 @@ def fetch_agent_meta(
     overridden via the ``SCITEX_AGENT_META_SCRIPT`` env var or the
     ``script_path`` argument (argument wins).
     """
-    path = (
-        script_path
-        or os.environ.get("SCITEX_AGENT_META_SCRIPT")
-        or _DEFAULT_AGENT_META_SCRIPT
-    )
+    explicit = script_path or os.environ.get("SCITEX_AGENT_META_SCRIPT")
+    path = explicit if explicit else _DEFAULT_AGENT_META_SCRIPT
     resolved = str(Path(path).expanduser())
     try:
         r = subprocess.run(
@@ -82,7 +80,9 @@ def fetch_agent_meta(
     ):
         return None
     try:
-        data = json.loads(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else None
+        data = (
+            json.loads(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else None
+        )
     except (json.JSONDecodeError, IndexError):
         return None
     if not isinstance(data, dict):
@@ -312,9 +312,7 @@ def default_dispatcher(strategy: str, agent_config: AgentConfig | None) -> None:
         try:
             agent_restart(agent_config.name)
         except Exception:
-            logger.exception(
-                "context_manager[%s]: restart failed", agent_config.name
-            )
+            logger.exception("context_manager[%s]: restart failed", agent_config.name)
         return
 
     # "noop" or unknown — nothing to do.
