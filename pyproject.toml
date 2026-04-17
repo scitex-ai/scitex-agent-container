@@ -79,7 +79,10 @@ packages = ["src/scitex_agent_container"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-v --tb=short"
+addopts = "-v --tb=short -m 'not integration'"
+markers = [
+    "integration: slow end-to-end tests that spawn a real Claude Code agent (require claude CLI + tmux + ANTHROPIC_API_KEY or SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY). Opt in with '-m integration'.",
+]
 
 [tool.ruff]
 line-length = 88

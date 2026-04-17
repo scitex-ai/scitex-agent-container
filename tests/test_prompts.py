@@ -1,6 +1,5 @@
 """Tests for prompts.py — TUI prompt detection handlers."""
 
-
 from scitex_agent_container.runtimes.prompts import (
     PROMPT_HANDLERS,
     _detect_bypass_permissions,
@@ -74,6 +73,29 @@ def test_press_enter_continue_only_checks_tail():
     old = "Press Enter to continue\n" * 50
     current = old + "Some output\nMore output\nAnd more\nAnd even more\n\u276f "
     assert _detect_press_enter_continue(current) is False
+
+
+def test_file_trust_radio_match():
+    """New-style radio variant of the trust prompt (Claude Code >= 2.1.x)."""
+    from scitex_agent_container.runtimes.prompts import _detect_file_trust_radio
+
+    content = (
+        "Is this a project you created or one you trust?\n"
+        "1. Yes, I trust this folder\n"
+        "2. No, exit\n"
+        "Enter to confirm - Esc to cancel"
+    )
+    assert _detect_file_trust_radio(content) is True
+
+
+def test_file_trust_radio_no_match_without_both_options():
+    """Must not fire on the bypass-permissions dialog (which also says
+    'Enter to confirm' and has '2. Yes, I accept' but not the trust
+    option strings)."""
+    from scitex_agent_container.runtimes.prompts import _detect_file_trust_radio
+
+    content = "Bypass Permissions\n1. No, exit\n2. Yes, I accept\nEnter to confirm"
+    assert _detect_file_trust_radio(content) is False
 
 
 def test_file_trust_match():

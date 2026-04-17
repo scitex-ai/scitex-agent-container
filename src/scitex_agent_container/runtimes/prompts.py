@@ -121,12 +121,32 @@ def _detect_file_trust(content: str) -> bool:
     """'Do you trust the files in this folder?' prompt (first-run or new cwd).
 
     May appear when --dangerously-skip-permissions was not propagated to a subshell.
+    Matches the LEGACY y/n text variant; the new radio-selector variant
+    is handled by :func:`_detect_file_trust_radio`.
     """
     return (
         "trust" in content.lower()
         and "folder" in content.lower()
         and ("y/n" in content.lower() or "yes" in content.lower())
         and "Enter to confirm" not in content
+    )
+
+
+def _detect_file_trust_radio(content: str) -> bool:
+    """Radio-selector variant of the file-trust prompt.
+
+    Claude Code (>= ~2.1.x) asks "Is this a project you created or one
+    you trust?" with numbered options instead of the legacy y/n text
+    prompt. Appears on the first launch in any un-trusted workdir —
+    including every throwaway tempdir the Haiku integration test uses.
+
+    Matches the exact option strings to avoid firing on the
+    bypass-permissions dialog (which also says "Enter to confirm").
+    """
+    return (
+        "1. Yes, I trust this folder" in content
+        and "2. No, exit" in content
+        and "Enter to confirm" in content
     )
 
 
@@ -183,6 +203,12 @@ PROMPT_HANDLERS: list[PromptHandler] = [
         detect=_detect_file_trust,
         keys=["y", "Enter"],  # "Do you trust the files in this folder?"
         priority=7,
+    ),
+    PromptHandler(
+        name="file-trust-radio",
+        detect=_detect_file_trust_radio,
+        keys=["1", "Enter"],  # "1. Yes, I trust this folder"
+        priority=8,
     ),
 ]
 
