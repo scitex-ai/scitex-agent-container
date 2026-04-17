@@ -36,6 +36,9 @@ class MultiplexerProtocol(Protocol):
     def send_keys(session_name: str, *keys: str) -> None: ...
 
     @staticmethod
+    def send_text_and_submit(session_name: str, text: str) -> None: ...
+
+    @staticmethod
     def attach(session_name: str) -> None: ...
 
 

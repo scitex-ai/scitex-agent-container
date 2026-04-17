@@ -59,7 +59,11 @@ def _encode_workdir_for_claude_projects(workdir: str) -> str:
     leading ``-``; dot-prefixed path segments like ``.dotfiles`` produce a
     double-dash, which is expected).
     """
-    abs_path = str(Path(workdir).expanduser().resolve() if Path(workdir).expanduser().exists() else Path(workdir).expanduser())
+    abs_path = str(
+        Path(workdir).expanduser().resolve()
+        if Path(workdir).expanduser().exists()
+        else Path(workdir).expanduser()
+    )
     return abs_path.replace("/", "-")
 
 
@@ -145,7 +149,9 @@ class ClaudeCodeRuntime(RuntimeBase):
         mode = config.claude.session
         max_age = config.claude.continue_max_age_minutes
         if mode == "continue":
-            if max_age is not None and not _session_resumable(config.expanded_workdir, max_age_minutes=max_age):
+            if max_age is not None and not _session_resumable(
+                config.expanded_workdir, max_age_minutes=max_age
+            ):
                 logger.warning(
                     "session=continue: session too stale (max_age=%d min) for %s, launching fresh",
                     max_age,
@@ -391,9 +397,7 @@ class ClaudeCodeRuntime(RuntimeBase):
         def _capture(target: str) -> str:
             return mux.capture_content(target)
 
-        log_dir = Path(
-            f"~/.scitex/agent-container/logs/{config.name}"
-        ).expanduser()
+        log_dir = Path(f"~/.scitex/agent-container/logs/{config.name}").expanduser()
         log_dir.mkdir(parents=True, exist_ok=True)
 
         def _on_timeout(tail_text: str) -> None:
@@ -449,7 +453,16 @@ class ClaudeCodeRuntime(RuntimeBase):
         return True
 
     def _run_startup_commands(self, config: AgentConfig) -> None:
-        """Send startup commands to the screen session with delays."""
+        """Send startup commands to the screen session with delays.
+
+        Uses the multiplexer's ``send_text_and_submit`` so the Enter
+        keystroke lands as a separate call after the text has settled.
+        Previously we appended ``\\r`` to the command and sent both as
+        one ``send_keys`` call; on a busy TUI that occasionally caused
+        the text to arrive but the submit to be dropped (the
+        "intended prompt sent but Enter failed" symptom the user
+        reported).
+        """
         if not self._wait_for_ready_state(config):
             return
         startup_spec = getattr(config, "startup", None)
@@ -458,11 +471,12 @@ class ClaudeCodeRuntime(RuntimeBase):
             if startup_spec and startup_spec.commands
             else list(config.startup_commands)
         )
+        mux = self._get_mux(config)
         for sc in commands:
             if sc.delay > 0:
                 time.sleep(sc.delay)
             try:
-                self._send_keys(config, f"{sc.command}\r")
+                mux.send_text_and_submit(config.screen_name, sc.command)
                 logger.info(
                     "Sent startup command to %s (delay=%ds): %s",
                     config.screen_name,

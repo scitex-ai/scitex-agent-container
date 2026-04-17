@@ -6,6 +6,18 @@ import os
 import subprocess
 import time
 from pathlib import Path
+from typing import Callable
+
+# Inter-keystroke delay inside send_keys() and settle delay before
+# Enter inside send_text_and_submit(). These defeat the race where
+# Claude Code's TUI (Ink / React) hasn't finished rendering the
+# previous key before the next one arrives — the symptom the user
+# reported as "text lands but the Enter submit fails".
+#
+# Both values are overridable per-host via env vars so a slow HPC
+# login shell (Spartan) can raise them without a code change.
+_DEFAULT_INTER_KEY_DELAY_S = float(os.environ.get("SCITEX_AGENT_KEY_DELAY_S", "0.1"))
+_DEFAULT_SUBMIT_SETTLE_S = float(os.environ.get("SCITEX_AGENT_SUBMIT_SETTLE_S", "0.3"))
 
 
 class TmuxManager:
@@ -122,14 +134,94 @@ class TmuxManager:
         return ""
 
     @staticmethod
-    def send_keys(session_name: str, *keys: str) -> None:
-        """Send keys to a tmux session."""
-        for key in keys:
+    def send_keys(
+        session_name: str,
+        *keys: str,
+        inter_key_delay_s: float | None = None,
+        sleep_fn: Callable[[float], None] = time.sleep,
+    ) -> None:
+        """Send keys to a tmux session, one ``send-keys`` call per key.
+
+        A small delay between keys defeats the race where the TUI has
+        not yet rendered the previous keystroke before the next one
+        arrives. Symptom without the delay: sending ``["2", "Enter"]``
+        to a radio selector lands "2" but loses Enter when the
+        selector's re-render is still in flight.
+
+        Parameters
+        ----------
+        session_name:
+            tmux target passed verbatim to ``-t``.
+        keys:
+            One or more keystrokes / tmux keyword names (``"Enter"``,
+            ``"C-c"``, etc.) or raw text arguments.
+        inter_key_delay_s:
+            Seconds to sleep between keystrokes. ``None`` (default)
+            uses ``_DEFAULT_INTER_KEY_DELAY_S`` which is read from
+            ``SCITEX_AGENT_KEY_DELAY_S`` at import time. No sleep after
+            the last key.
+        sleep_fn:
+            Injected sleep — tests pass a stub to avoid real waits.
+        """
+        delay = (
+            _DEFAULT_INTER_KEY_DELAY_S
+            if inter_key_delay_s is None
+            else inter_key_delay_s
+        )
+        key_list = list(keys)
+        for i, key in enumerate(key_list):
             subprocess.run(
                 ["tmux", "send-keys", "-t", session_name, key],
                 check=False,
                 capture_output=True,
             )
+            if delay > 0 and i < len(key_list) - 1:
+                sleep_fn(delay)
+
+    @staticmethod
+    def send_text_and_submit(
+        session_name: str,
+        text: str,
+        *,
+        settle_s: float | None = None,
+        sleep_fn: Callable[[float], None] = time.sleep,
+    ) -> None:
+        """Send message text, let the TUI settle, then press Enter.
+
+        Preferred over ``send_keys(session, text + "\\r")`` because
+        tmux treats the trailing ``\\r`` as raw input rather than the
+        ``Enter`` keyword, and Claude Code's TUI occasionally drops it
+        during an active re-render (what the user sees as "text
+        arrived but submit never fired"). This helper sends the text
+        first, waits for the TUI to finish debouncing, then issues a
+        separate ``Enter`` keystroke.
+
+        Parameters
+        ----------
+        session_name:
+            tmux target.
+        text:
+            Message text to type. Do NOT append ``\\r`` / ``\\n``.
+        settle_s:
+            Seconds to wait between the text and the Enter keystroke.
+            ``None`` uses ``_DEFAULT_SUBMIT_SETTLE_S`` (env-overridable
+            via ``SCITEX_AGENT_SUBMIT_SETTLE_S``).
+        sleep_fn:
+            Injected sleep — tests pass a stub to avoid real waits.
+        """
+        settle = _DEFAULT_SUBMIT_SETTLE_S if settle_s is None else settle_s
+        subprocess.run(
+            ["tmux", "send-keys", "-t", session_name, text],
+            check=False,
+            capture_output=True,
+        )
+        if settle > 0:
+            sleep_fn(settle)
+        subprocess.run(
+            ["tmux", "send-keys", "-t", session_name, "Enter"],
+            check=False,
+            capture_output=True,
+        )
 
     @staticmethod
     def attach(session_name: str) -> None:

@@ -175,15 +175,86 @@ class ScreenManager:
             Path(tmp_path).unlink(missing_ok=True)
 
     @staticmethod
-    def send_keys(session_name: str, *keys: str) -> None:
-        """Send keys to a screen session via stuff command."""
-        for key in keys:
+    def send_keys(
+        session_name: str,
+        *keys: str,
+        inter_key_delay_s: float | None = None,
+        sleep_fn=None,
+    ) -> None:
+        """Send keys to a screen session via ``stuff`` command.
+
+        ``screen -X stuff`` inserts raw bytes. Unlike tmux, ``Enter`` is
+        not a keyword here — the caller must pass the literal ``\\r``
+        (or ``\\n``) character when submit is intended. The
+        inter-keystroke delay still matters for the same TUI-redraw
+        race described in :mod:`tmux`.
+
+        Parameters
+        ----------
+        session_name:
+            screen session name passed verbatim to ``-S``.
+        keys:
+            Raw strings to stuff. Each is one ``screen -X stuff`` call.
+        inter_key_delay_s:
+            Seconds between stuff calls. ``None`` uses
+            ``_DEFAULT_INTER_KEY_DELAY_S``. No sleep after the last.
+        sleep_fn:
+            Injected sleep for tests. Defaults to ``time.sleep``.
+        """
+        import time as _time
+
+        from .tmux import _DEFAULT_INTER_KEY_DELAY_S  # shared default
+
+        delay = (
+            _DEFAULT_INTER_KEY_DELAY_S
+            if inter_key_delay_s is None
+            else inter_key_delay_s
+        )
+        sleep = sleep_fn or _time.sleep
+        key_list = list(keys)
+        for i, key in enumerate(key_list):
             subprocess.run(
                 ["screen", "-S", session_name, "-X", "stuff", key],
                 check=False,
                 capture_output=True,
                 env=_screen_env(),
             )
+            if delay > 0 and i < len(key_list) - 1:
+                sleep(delay)
+
+    @staticmethod
+    def send_text_and_submit(
+        session_name: str,
+        text: str,
+        *,
+        settle_s: float | None = None,
+        sleep_fn=None,
+    ) -> None:
+        """Send text, let the TUI settle, then stuff a carriage return.
+
+        Complement of :meth:`TmuxManager.send_text_and_submit`. Uses
+        ``\\r`` (screen has no ``Enter`` keyword) as the submit byte.
+        """
+        import time as _time
+
+        from .tmux import _DEFAULT_SUBMIT_SETTLE_S
+
+        settle = _DEFAULT_SUBMIT_SETTLE_S if settle_s is None else settle_s
+        sleep = sleep_fn or _time.sleep
+        subprocess.run(
+            ["screen", "-S", session_name, "-X", "stuff", text],
+            check=False,
+            capture_output=True,
+            env=_screen_env(),
+        )
+        if settle > 0:
+            sleep(settle)
+        subprocess.run(
+            ["screen", "-S", session_name, "-X", "stuff", "\r"],
+            check=False,
+            capture_output=True,
+            env=_screen_env(),
+        )
 
     @staticmethod
     def attach(session_name: str) -> None:
