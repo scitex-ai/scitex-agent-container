@@ -123,6 +123,27 @@ class SkillsSpec:
 
 
 @dataclass
+class SchedulingSpec:
+    """Fleet-wide scheduling policy for an agent (shared-host layout).
+
+    ``mode`` controls effective-id composition and launch-skip behavior:
+      * ``per-host`` (default): agent is started on every host that runs
+        ``sac start <name>``; the effective id is ``<metadata.name>-<HOST>``
+        unless the name already ends with ``-<HOST>``.
+      * ``singleton``: exactly one instance fleet-wide. The effective id
+        stays as the bare ``<metadata.name>``. Only launched on
+        ``preferred-host``; on other hosts the launch is a no-op.
+
+    ``fallback-hosts`` is recorded for observability but not acted on
+    automatically — manual failover today.
+    """
+
+    mode: str = "per-host"
+    preferred_host: str = ""
+    fallback_hosts: list[str] = field(default_factory=list)
+
+
+@dataclass
 class ListenPort:
     """Declaration of a port/socket an external tool binds on behalf of an agent.
 
@@ -233,6 +254,7 @@ class AgentConfig:
     startup: "StartupSpec" = field(default_factory=lambda: StartupSpec())
     mcp_servers: dict[str, dict] = field(default_factory=dict)
     multiplexer: str = "tmux"  # "tmux" (default) or "screen"
+    scheduling: SchedulingSpec = field(default_factory=SchedulingSpec)
     config_path: str = ""
 
     def __post_init__(self) -> None:

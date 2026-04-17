@@ -12,7 +12,8 @@ from pathlib import Path
 
 import yaml
 
-from ._loaders import load_v1, load_v2
+from ._host import resolve_hostname, substitute_hostnames
+from ._loaders import compose_effective_name, load_v1, load_v2
 from ._resolve import resolve_config
 from ._types import (
     AgentConfig,
@@ -23,9 +24,10 @@ from ._types import (
     HookSpec,
     ListenPort,
     OrochiSpec,
-    RemoteSpec,
     ReadyPattern,
+    RemoteSpec,
     RestartSpec,
+    SchedulingSpec,
     SkillsSpec,
     StartupCommand,
     StartupSpec,
@@ -43,16 +45,20 @@ __all__ = [
     "HookSpec",
     "ListenPort",
     "OrochiSpec",
+    "ReadyPattern",
     "RemoteSpec",
     "RestartSpec",
-    "ReadyPattern",
+    "SchedulingSpec",
     "SkillsSpec",
     "StartupCommand",
     "StartupSpec",
     "TelegramSpec",
     "WatchdogSpec",
+    "compose_effective_name",
     "load_config",
     "resolve_config",
+    "resolve_hostname",
+    "substitute_hostnames",
     "validate_config",
 ]
 

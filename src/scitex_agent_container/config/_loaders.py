@@ -4,6 +4,29 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ._host import resolve_hostname, substitute_hostnames
+from ._parsers import (
+    MODEL_DISPLAY_NAMES,
+    interpolate_mcp_servers,
+    parse_claude,
+    parse_container,
+    parse_context_management,
+    parse_extensions,
+    parse_health,
+    parse_hooks,
+    parse_listen,
+    parse_orochi,
+    parse_remote,
+    parse_restart,
+    parse_scheduling,
+    parse_skills,
+    parse_startup,
+    parse_startup_commands,
+    parse_telegram,
+    parse_watchdog,
+)
+from ._types import AgentConfig, SchedulingSpec
+
 # Host-aware fallback chain for `venv: auto` resolution.
 # Tried in order; first existing path wins. Empty string means no venv
 # activation (raw shell). The chain is intentionally short and biased
@@ -34,26 +57,25 @@ def _resolve_venv(venv: str) -> str:
     return ""
 
 
-from ._parsers import (
-    MODEL_DISPLAY_NAMES,
-    interpolate_mcp_servers,
-    parse_claude,
-    parse_container,
-    parse_context_management,
-    parse_extensions,
-    parse_health,
-    parse_hooks,
-    parse_listen,
-    parse_orochi,
-    parse_remote,
-    parse_restart,
-    parse_skills,
-    parse_startup,
-    parse_startup_commands,
-    parse_telegram,
-    parse_watchdog,
-)
-from ._types import AgentConfig
+def compose_effective_name(
+    raw_name: str, scheduling: SchedulingSpec | None, hostname: str
+) -> str:
+    """Return the effective agent id given metadata.name + scheduling + host.
+
+    Rules:
+      * ``singleton`` mode: the bare ``raw_name`` (host-pin is enforced at
+        launch time, not encoded in the id).
+      * ``per-host`` mode (default): append ``-<hostname>`` unless the name
+        already ends with ``-<hostname>`` (idempotent — protects legacy
+        flat-layout names like ``head-ywata-note-win`` which are already
+        host-suffixed).
+    """
+    if scheduling is not None and scheduling.mode == "singleton":
+        return raw_name
+    suffix = f"-{hostname}"
+    if raw_name.endswith(suffix) or raw_name == hostname:
+        return raw_name
+    return f"{raw_name}{suffix}"
 
 
 def load_v1(raw: dict, path: Path) -> AgentConfig:
@@ -94,11 +116,37 @@ def load_v1(raw: dict, path: Path) -> AgentConfig:
 
 
 def load_v2(raw: dict, path: Path) -> AgentConfig:
-    """Load a scitex-agent-container/v2 config with auto-derived defaults."""
+    """Load a scitex-agent-container/v2 config with auto-derived defaults.
+
+    Substitutes ``${HOSTNAME}`` / ``${SCITEX_OROCHI_HOSTNAME}`` in every
+    string field before dataclass construction, and composes the effective
+    agent id from ``metadata.name`` + ``spec.scheduling`` so the v2 shared
+    layout can keep one canonical YAML per role across the fleet.
+    """
+    # Only walk-and-substitute hostname placeholders when the YAML opts in
+    # via an explicit ``spec.scheduling`` block. Legacy v2 YAMLs without
+    # scheduling keep the pre-change code path (no substitution, no
+    # effective-id composition, no host resolution required).
+    scheduling, explicit_scheduling = parse_scheduling(raw.get("spec", {}) or {})
+
+    if explicit_scheduling:
+        hostname = resolve_hostname()
+        raw = substitute_hostnames(raw, hostname)
+    else:
+        hostname = ""
+
     metadata = raw.get("metadata", {})
     spec = raw.get("spec", {})
-    name = metadata["name"]
+    raw_name = metadata["name"]
     labels = metadata.get("labels", {}) or {}
+
+    # Compose the effective id used everywhere downstream (systemd, screen/
+    # tmux, workdir, registry keys). Only when scheduling is explicit —
+    # otherwise keep the raw metadata.name as-is for backward compatibility.
+    if explicit_scheduling:
+        name = compose_effective_name(raw_name, scheduling, hostname)
+    else:
+        name = raw_name
 
     # Auto-derive workdir (user can override)
     workdir = spec.get("workdir", f"~/.scitex/orochi/workspaces/{name}")
@@ -128,8 +176,9 @@ def load_v2(raw: dict, path: Path) -> AgentConfig:
     if mkdir_cmd not in hooks.get("pre_start", []):
         hooks.setdefault("pre_start", []).insert(0, mkdir_cmd)
 
-    # Parse mcp_servers with metadata interpolation
-    mcp_servers = interpolate_mcp_servers(spec.get("mcp_servers", {}), metadata)
+    # Parse mcp_servers with metadata interpolation (uses effective name)
+    mcp_metadata = {**metadata, "name": name}
+    mcp_servers = interpolate_mcp_servers(spec.get("mcp_servers", {}), mcp_metadata)
 
     return AgentConfig(
         name=name,
@@ -157,5 +206,6 @@ def load_v2(raw: dict, path: Path) -> AgentConfig:
         extensions=parse_extensions(spec),
         mcp_servers=mcp_servers,
         multiplexer=spec.get("multiplexer", "screen"),
+        scheduling=scheduling,
         config_path=str(path),
     )

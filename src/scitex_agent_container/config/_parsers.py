@@ -15,12 +15,50 @@ from ._types import (
     ReadyPattern,
     RemoteSpec,
     RestartSpec,
+    SchedulingSpec,
     SkillsSpec,
     StartupCommand,
     StartupSpec,
     TelegramSpec,
     WatchdogSpec,
 )
+
+_VALID_SCHEDULING_MODES = ("per-host", "singleton")
+
+
+def parse_scheduling(spec: dict) -> tuple[SchedulingSpec, bool]:
+    """Parse ``spec.scheduling`` block (new shared-host layout).
+
+    Returns a ``(scheduling, explicit)`` tuple. ``explicit`` is True iff
+    the YAML declared a ``spec.scheduling`` key — this gates effective-id
+    composition so legacy v2 YAMLs (no scheduling block, ``metadata.name``
+    already baked with host) remain byte-identical to pre-change behavior.
+    """
+    if "scheduling" not in spec:
+        return SchedulingSpec(), False
+    raw = spec.get("scheduling") or {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"spec.scheduling must be a mapping, got {type(raw).__name__}")
+    mode = raw.get("mode", "per-host") or "per-host"
+    if mode not in _VALID_SCHEDULING_MODES:
+        raise ValueError(
+            f"spec.scheduling.mode must be one of {_VALID_SCHEDULING_MODES}, "
+            f"got {mode!r}"
+        )
+    preferred = raw.get("preferred-host", raw.get("preferred_host", "")) or ""
+    fallback_raw = raw.get("fallback-hosts", raw.get("fallback_hosts", [])) or []
+    if isinstance(fallback_raw, str):
+        fallback_raw = [fallback_raw]
+    fallback = [str(h) for h in fallback_raw]
+    return (
+        SchedulingSpec(
+            mode=mode,
+            preferred_host=str(preferred),
+            fallback_hosts=fallback,
+        ),
+        True,
+    )
+
 
 # All known hook keys. Unknown keys in the YAML are ignored (forward-compat).
 HOOK_KEYS = (
@@ -284,7 +322,9 @@ def parse_startup(spec: dict) -> StartupSpec:
     except (TypeError, ValueError):
         timeout = 60.0
 
-    on_timeout = str(raw.get("on_timeout", "capture_and_proceed") or "capture_and_proceed")
+    on_timeout = str(
+        raw.get("on_timeout", "capture_and_proceed") or "capture_and_proceed"
+    )
     if on_timeout not in ("capture_and_fail", "capture_and_proceed"):
         on_timeout = "capture_and_proceed"
 
