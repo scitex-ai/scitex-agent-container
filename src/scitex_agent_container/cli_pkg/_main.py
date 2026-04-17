@@ -11,6 +11,7 @@ import click
 
 from ._helpers import HelpRecursiveGroup
 from .account_cmds import account, quota_watch
+from .action_cmds import actions_cli
 from .build_cmds import build, check, validate
 from .hook_cmds import hook_event
 from .info_cmds import attach, find, list_python_apis, logs
@@ -77,6 +78,9 @@ main.add_command(quota_watch)
 
 # Claude Code hook event ingestor
 main.add_command(hook_event)
+
+# Action subsystem: run PaneActions, query attempts, aggregate stats.
+main.add_command(actions_cli)
 
 
 if __name__ == "__main__":
