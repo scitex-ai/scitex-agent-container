@@ -15,11 +15,11 @@ from ._parsers import (
     parse_health,
     parse_hooks,
     parse_listen,
-    parse_orochi,
     parse_remote,
     parse_restart,
     parse_scheduling,
     parse_skills,
+    parse_slurm,
     parse_startup,
     parse_startup_commands,
     parse_telegram,
@@ -39,11 +39,11 @@ from ._types import AgentConfig, SchedulingSpec
 # (head-nas msg#12877; head-mba msg#12879 root cause).
 _VENV_AUTO_FALLBACK_CHAIN = ("~/.venv-3.11", "~/.venv")
 
-# Default workdir layout (2026-04-17 runtime/ restructure). Definitions ship
-# under ``shared/agents/<name>/`` or ``<host>/agents/<name>/``; per-agent
-# runtime state (CLAUDE.md, .mcp.json, .claude/) lives at
-# ``runtime/workspaces/<effective-id>/``.
-_DEFAULT_WORKDIR_RUNTIME = "~/.scitex/orochi/runtime/workspaces/{name}"
+# Default workdir layout: sac's own state root. Per-agent runtime state
+# (CLAUDE.md, .mcp.json, .claude/) lives at
+# ``~/.scitex/agent-container/workspaces/<effective-id>/``. External
+# orchestrators that want a different layout can override via ``spec.workdir``.
+_DEFAULT_WORKDIR_RUNTIME = "~/.scitex/agent-container/workspaces/{name}"
 
 
 def _resolve_venv(venv: str) -> str:
@@ -108,7 +108,6 @@ def load_v1(raw: dict, path: Path) -> AgentConfig:
         restart=parse_restart(spec),
         hooks=parse_hooks(spec),
         telegram=parse_telegram(spec),
-        orochi=parse_orochi(spec),
         remote=parse_remote(spec),
         skills=parse_skills(spec),
         startup_commands=parse_startup_commands(spec),
@@ -117,6 +116,7 @@ def load_v1(raw: dict, path: Path) -> AgentConfig:
         listen=parse_listen(spec),
         extensions=parse_extensions(spec),
         multiplexer=spec.get("multiplexer", "screen"),
+        slurm=parse_slurm(spec),
         config_path=str(path),
     )
 
@@ -124,10 +124,10 @@ def load_v1(raw: dict, path: Path) -> AgentConfig:
 def load_v2(raw: dict, path: Path) -> AgentConfig:
     """Load a scitex-agent-container/v2 config with auto-derived defaults.
 
-    Substitutes ``${HOSTNAME}`` / ``${SCITEX_OROCHI_HOSTNAME}`` in every
-    string field before dataclass construction, and composes the effective
-    agent id from ``metadata.name`` + ``spec.scheduling`` so the v2 shared
-    layout can keep one canonical YAML per role across the fleet.
+    Substitutes ``${HOSTNAME}`` in every string field before dataclass
+    construction, and composes the effective agent id from ``metadata.name``
+    + ``spec.scheduling`` so one canonical YAML per role can be shared
+    across hosts.
     """
     # Only walk-and-substitute hostname placeholders when the YAML opts in
     # via an explicit ``spec.scheduling`` block. Legacy v2 YAMLs without
@@ -164,16 +164,19 @@ def load_v2(raw: dict, path: Path) -> AgentConfig:
     screen_raw = spec.get("screen", {}) or {}
     screen_name = screen_raw.get("name", name)
 
-    # Auto-derive env: user values override auto-derived
+    # Auto-derive env: user values override auto-derived.
+    # Only sac's own namespace is injected. External consumers (orochi etc.)
+    # declare their own env vars explicitly in agent YAML's ``spec.env`` if
+    # they want them set.
     auto_env: dict[str, str] = {
         "CLAUDE_AGENT_ID": name,
-        "SCITEX_OROCHI_AGENT": name,
+        "SCITEX_AGENT_CONTAINER_AGENT": name,
     }
     if labels.get("role"):
         auto_env["CLAUDE_AGENT_ROLE"] = labels["role"]
     model = str(spec.get("model", "sonnet") or "sonnet")
     display_model = MODEL_DISPLAY_NAMES.get(model, model)
-    auto_env["SCITEX_OROCHI_MODEL"] = display_model
+    auto_env["SCITEX_AGENT_CONTAINER_MODEL"] = display_model
 
     user_env = spec.get("env", {}) or {}
     merged_env = {**auto_env, **user_env}
@@ -205,8 +208,8 @@ def load_v2(raw: dict, path: Path) -> AgentConfig:
         restart=parse_restart(spec),
         hooks=hooks,
         telegram=parse_telegram(spec),
-        orochi=parse_orochi(spec),
         remote=parse_remote(spec),
+        slurm=parse_slurm(spec),
         skills=parse_skills(spec),
         startup_commands=parse_startup_commands(spec),
         startup=parse_startup(spec),

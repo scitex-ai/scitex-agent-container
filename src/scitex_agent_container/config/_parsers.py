@@ -11,12 +11,13 @@ from ._types import (
     ContextManagementConfig,
     HealthSpec,
     ListenPort,
-    OrochiSpec,
     ReadyPattern,
     RemoteSpec,
     RestartSpec,
     SchedulingSpec,
     SkillsSpec,
+    SlurmHooks,
+    SlurmSpec,
     StartupCommand,
     StartupSpec,
     TelegramSpec,
@@ -152,16 +153,37 @@ def parse_telegram(spec: dict) -> TelegramSpec:
     )
 
 
-def parse_orochi(spec: dict) -> OrochiSpec:
-    raw = spec.get("orochi", {}) or {}
-    hosts = raw.get("hosts", []) or []
-    return OrochiSpec(
-        enabled=raw.get("enabled", bool(hosts)),
-        hosts=hosts,
-        port=int(raw.get("port", 8559)),
-        token_env=raw.get("token_env", "SCITEX_OROCHI_TOKEN"),
-        channels=raw.get("channels", []) or [],
-        heartbeat_interval=int(raw.get("heartbeat_interval", 60)),
+def parse_slurm(spec: dict) -> SlurmSpec:
+    """Parse ``spec.slurm`` block for the SLURM runtime.
+
+    Returns a default ``SlurmSpec`` if the block is absent — the spec is
+    still required at runtime when ``spec.runtime == 'slurm'``, but an
+    empty block is legal YAML and just means "use all defaults".
+    """
+    raw = spec.get("slurm", {}) or {}
+    hooks_raw = raw.get("hooks", {}) or {}
+    hooks = SlurmHooks(
+        pre_submit=str(hooks_raw.get("pre_submit", "") or ""),
+        pre_agent=str(hooks_raw.get("pre_agent", "") or ""),
+        walltime_signal=str(hooks_raw.get("walltime_signal", "") or ""),
+        post_agent=str(hooks_raw.get("post_agent", "") or ""),
+        attach=str(hooks_raw.get("attach", "") or ""),
+    )
+    return SlurmSpec(
+        partition=str(raw.get("partition", "") or ""),
+        time_limit=str(raw.get("time_limit", "1-00:00:00") or "1-00:00:00"),
+        cpus_per_task=int(raw.get("cpus_per_task", 1) or 1),
+        mem=str(raw.get("mem", "4G") or "4G"),
+        nodes=int(raw.get("nodes", 1) or 1),
+        ntasks=int(raw.get("ntasks", 1) or 1),
+        gres=str(raw.get("gres", "") or ""),
+        job_name=str(raw.get("job_name", "") or ""),
+        signal=str(raw.get("signal", "B:USR1@3600") or "B:USR1@3600"),
+        auto_resubmit=bool(raw.get("auto_resubmit", True)),
+        hold=str(raw.get("hold", "tail -f /dev/null") or "tail -f /dev/null"),
+        logs_dir=str(raw.get("logs_dir", "~/slurm_logs") or "~/slurm_logs"),
+        hooks=hooks,
+        extra_directives=[str(d) for d in (raw.get("extra_directives") or [])],
     )
 
 
@@ -353,7 +375,7 @@ def get_nested(data: dict, key: str, default: Any = None) -> Any:
     return current
 
 
-# Model name mapping for auto-derived SCITEX_OROCHI_MODEL env var
+# Model name mapping for auto-derived SCITEX_AGENT_CONTAINER_MODEL env var
 MODEL_DISPLAY_NAMES: dict[str, str] = {
     "opus": "Claude Opus",
     "opus[1m]": "Claude Opus (1M)",

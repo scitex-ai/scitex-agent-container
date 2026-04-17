@@ -5,6 +5,7 @@ Includes the new ``--all`` / ``--force`` flags for bulk-safe operations.
 
 from __future__ import annotations
 
+import os
 import sys
 import traceback
 
@@ -75,41 +76,32 @@ def _iter_agent_yamls(agents_dir: "Path") -> "list[tuple[str, str]]":
 
 
 def _discover_all_agents() -> list[str]:
-    """Find all agent YAML files in the shared-host layout.
+    """Find all agent YAML files under sac's own root and the plugin-port dirs.
 
-    Search locations for agent **definitions** (host override > shared):
-      1. ``~/.scitex/orochi/<HOST>/agents/<name>/<name>.yaml``
-         (host-specific, wins if the same name exists elsewhere).
-      2. ``~/.scitex/orochi/shared/agents/<name>/<name>.yaml``
-         (fleet-shared).
+    Search locations (earlier wins on name collision):
+      1. ``~/.scitex/agent-container/agents/<name>/<name>.yaml``
+         and ``~/.scitex/agent-container/agents/<name>.yaml``.
+      2. Each colon-separated dir in ``$SCITEX_AGENT_CONTAINER_YAML_DIRS``.
+         External orchestrators (orochi, etc.) set this to hand sac their
+         own agent-definition roots without sac knowing about them.
 
-    Note: per-agent runtime state (CLAUDE.md / .mcp.json / .claude/) lives at
-    ``~/.scitex/orochi/runtime/workspaces/<effective-id>/`` (see the 2026-04-17
-    layout). Only the definition search is host-aware; effective id composition
-    happens in ``config.compose_effective_name``.
-
-    ``<HOST> = ${SCITEX_OROCHI_HOSTNAME:-$(hostname -s)}``. Names present in
-    an earlier location shadow the same name in a later location, so a
-    host-specific override of ``head`` beats the shared default. Returned
-    paths are sorted by effective agent name for stable ordering.
+    Returned paths are sorted by effective agent name for stable ordering.
     """
     from pathlib import Path
-
-    root = Path.home() / ".scitex" / "orochi"
-    try:
-        host = resolve_hostname()
-    except RuntimeError:
-        host = ""
 
     # name -> yaml path; later writes are ignored (earlier = higher priority).
     found: dict[str, str] = {}
 
-    host_dir = root / host / "agents" if host else None
-    shared_dir = root / "shared" / "agents"
+    primary = Path.home() / ".scitex" / "agent-container" / "agents"
+    search_dirs: list[Path] = [primary]
 
-    for src_dir in (host_dir, shared_dir):
-        if src_dir is None:
-            continue
+    env_raw = os.environ.get("SCITEX_AGENT_CONTAINER_YAML_DIRS", "")
+    for p in env_raw.split(":"):
+        p = p.strip()
+        if p:
+            search_dirs.append(Path(p).expanduser())
+
+    for src_dir in search_dirs:
         for name, yaml_path in _iter_agent_yamls(src_dir):
             if name not in found:
                 found[name] = yaml_path
@@ -124,7 +116,7 @@ def _discover_all_agents() -> list[str]:
     "start_all",
     is_flag=True,
     default=False,
-    help="Start all agents in ~/.scitex/orochi/<HOST>/agents/ and shared/agents/.",
+    help="Start all agents in ~/.scitex/agent-container/agents/ (+ $SCITEX_AGENT_CONTAINER_YAML_DIRS).",
 )
 @click.option(
     "--no-preflight",
@@ -148,7 +140,7 @@ def start(
         if not yamls:
             console.print(
                 "[dim]No agents found in "
-                "~/.scitex/orochi/<HOST>/agents/ or shared/agents/[/dim]"
+                "~/.scitex/agent-container/agents/ or $SCITEX_AGENT_CONTAINER_YAML_DIRS[/dim]"
             )
             return
         try:

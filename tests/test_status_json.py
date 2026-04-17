@@ -142,20 +142,20 @@ def test_collect_rich_with_fake_transcript(
 
 
 # ---------------------------------------------------------------------------
-# _fallback_workdir — runtime/ layout probe (2026-04-17 restructure)
+# _fallback_workdir — sac's own workspace root
 # ---------------------------------------------------------------------------
 
 
-def test_fallback_workdir_uses_runtime_layout(
+def test_fallback_workdir_uses_sac_workspace_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Returns the canonical runtime/workspaces/<id> path."""
+    """Returns ~/.scitex/agent-container/workspaces/<id>."""
     from scitex_agent_container.lifecycle import _fallback_workdir
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     result = _fallback_workdir("some-agent")
     assert result == str(
-        tmp_path / ".scitex" / "orochi" / "runtime" / "workspaces" / "some-agent"
+        tmp_path / ".scitex" / "agent-container" / "workspaces" / "some-agent"
     )
 
 
@@ -186,13 +186,9 @@ def test_agent_status_includes_rich_fields(
     # sets config=None. That path still calls collect_rich via the
     # fallback workspace dir, so point HOME at the fake workspace parent.
     monkeypatch.setattr(Path, "home", lambda: fake_workspace.parent.parent)
-    # The fallback workdir lifecycle computes (2026-04-17 runtime/ layout):
-    #   ~/.scitex/orochi/runtime/workspaces/<name>
-    # so mirror that. Legacy fallback probes ~/.scitex/orochi/workspaces/
-    # first — leave that dir absent so the new path wins.
-    target = (
-        fake_workspace.parent.parent / ".scitex" / "orochi" / "runtime" / "workspaces"
-    )
+    # The fallback workdir lifecycle computes:
+    #   ~/.scitex/agent-container/workspaces/<name>
+    target = fake_workspace.parent.parent / ".scitex" / "agent-container" / "workspaces"
     target.mkdir(parents=True, exist_ok=True)
     link = target / "fake-agent"
     if not link.exists():

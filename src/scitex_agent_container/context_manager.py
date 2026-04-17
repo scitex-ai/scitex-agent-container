@@ -47,23 +47,28 @@ def parse_context_percent(pane_text: str) -> float | None:
     return None
 
 
-# 2026-04-17 runtime/ layout: client scripts live under shared/scripts/.
-_DEFAULT_AGENT_META_SCRIPT = "~/.scitex/orochi/shared/scripts/agent_meta.py"
+# Agent-meta script is an external plugin. sac ships no default — if the
+# env var is unset, fetch_agent_meta returns None. External orchestrators
+# (orochi etc.) set SCITEX_AGENT_CONTAINER_AGENT_META_SCRIPT to point at
+# their own script.
+_AGENT_META_ENV = "SCITEX_AGENT_CONTAINER_AGENT_META_SCRIPT"
 
 
 def fetch_agent_meta(
     agent_name: str, script_path: str | None = None
 ) -> dict[str, Any] | None:
-    """Shell out to ``agent_meta.py <agent>`` and return its JSON dict.
+    """Shell out to an external agent-meta script and return its JSON dict.
 
     Returns ``None`` on ANY failure (missing script, bad JSON, non-zero
     exit, timeout). Never raises. The resolved script path can be
-    overridden via the ``SCITEX_AGENT_META_SCRIPT`` env var or the
-    ``script_path`` argument (argument wins).
+    overridden via ``SCITEX_AGENT_CONTAINER_AGENT_META_SCRIPT`` env var or
+    the ``script_path`` argument (argument wins). If neither is set,
+    returns None without invoking anything.
     """
-    explicit = script_path or os.environ.get("SCITEX_AGENT_META_SCRIPT")
-    path = explicit if explicit else _DEFAULT_AGENT_META_SCRIPT
-    resolved = str(Path(path).expanduser())
+    explicit = script_path or os.environ.get(_AGENT_META_ENV)
+    if not explicit:
+        return None
+    resolved = str(Path(explicit).expanduser())
     try:
         r = subprocess.run(
             [resolved, agent_name],

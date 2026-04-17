@@ -9,43 +9,20 @@ from typing import List, Tuple
 _ENV_VAR = "SCITEX_AGENT_CONTAINER_YAML_DIRS"
 
 
-def _resolve_host() -> str:
-    """Return ${SCITEX_OROCHI_HOSTNAME:-$(hostname -s)} (empty on failure)."""
-    env = os.environ.get("SCITEX_OROCHI_HOSTNAME", "").strip()
-    if env:
-        return env
-    try:
-        import socket
+def _search_dirs() -> Tuple[Path, List[Path]]:
+    """Return (primary_dir, env_dirs) with ~ expansion.
 
-        hn = socket.gethostname()
-        return hn.split(".", 1)[0] if hn else ""
-    except Exception:
-        return ""
-
-
-def _search_dirs() -> Tuple[Path, List[Path], List[Path]]:
-    """Return (legacy_dir, env_dirs, fleet_dirs) with ~ expansion.
-
-    ``fleet_dirs`` is the ordered list of fleet locations searched after
-    env overrides. Order = host-specific first, then shared (both under
-    ~/.scitex/orochi and ~/.dotfiles/src/.scitex/orochi).
+    ``primary_dir`` is ``~/.scitex/agent-container/agents/`` (sac's own root).
+    ``env_dirs`` is the colon-separated list from
+    ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` — the plugin port that external
+    orchestrators (orochi, etc.) use to extend sac's search scope without
+    sac knowing about them.
     """
     home = Path(os.path.expanduser("~"))
-    legacy = home / ".scitex" / "agent-container" / "agents"
+    primary = home / ".scitex" / "agent-container" / "agents"
     env_raw = os.environ.get(_ENV_VAR, "")
     env_dirs = [Path(os.path.expanduser(p)) for p in env_raw.split(":") if p.strip()]
-
-    host = _resolve_host()
-    fleet_roots = [
-        home / ".scitex" / "orochi",
-        home / ".dotfiles" / "src" / ".scitex" / "orochi",
-    ]
-    fleet_dirs: list[Path] = []
-    for root in fleet_roots:
-        if host:
-            fleet_dirs.append(root / host / "agents")
-        fleet_dirs.append(root / "shared" / "agents")
-    return legacy, env_dirs, fleet_dirs
+    return primary, env_dirs
 
 
 def _try_dir(base: Path, name: str) -> str | None:
@@ -64,15 +41,13 @@ def resolve_config(name_or_path: str) -> str:
     """Resolve agent name or path to a config file path.
 
     Search order for short names (no slash, no .yaml/.yml suffix):
-      1. ~/.scitex/agent-container/agents/<name>.yaml  (operator override)
-      2. $SCITEX_AGENT_CONTAINER_YAML_DIRS (colon-separated extra dirs)
-      3. Fleet layout — for each root in
-         (~/.scitex/orochi, ~/.dotfiles/src/.scitex/orochi):
-             a. ``<root>/<HOST>/agents/<name>/<name>.yaml`` (host override)
-             b. ``<root>/shared/agents/<name>/<name>.yaml`` (shared default)
+      1. ~/.scitex/agent-container/agents/<name>.yaml
+         or ~/.scitex/agent-container/agents/<name>/<name>.yaml
+      2. Each dir in $SCITEX_AGENT_CONTAINER_YAML_DIRS (colon-separated).
+         Plugin port for external orchestrators to extend the search scope.
 
     Absolute paths and explicit .yaml/.yml paths are returned as-is if they
-    exist (unchanged behavior).
+    exist.
     """
     p = Path(name_or_path)
     if "/" in name_or_path or name_or_path.endswith((".yaml", ".yml")):
@@ -80,16 +55,12 @@ def resolve_config(name_or_path: str) -> str:
             return str(p)
         raise FileNotFoundError(f"Config file not found: {name_or_path}")
 
-    legacy, env_dirs, fleet_dirs = _search_dirs()
+    primary, env_dirs = _search_dirs()
 
-    hit = _try_dir(legacy, name_or_path)
+    hit = _try_dir(primary, name_or_path)
     if hit:
         return hit
     for d in env_dirs:
-        hit = _try_dir(d, name_or_path)
-        if hit:
-            return hit
-    for d in fleet_dirs:
         hit = _try_dir(d, name_or_path)
         if hit:
             return hit
@@ -98,12 +69,9 @@ def resolve_config(name_or_path: str) -> str:
         f"  (env ${_ENV_VAR}: "
         f"{', '.join(str(d) for d in env_dirs) if env_dirs else '<unset>'})"
     )
-    fleet_lines = "\n".join(
-        f"  {d}/{name_or_path}/{name_or_path}.yaml" for d in fleet_dirs
-    )
     raise FileNotFoundError(
         f"Agent '{name_or_path}' not found. Searched:\n"
-        f"  {legacy}/{name_or_path}.yaml\n"
-        f"{env_line}\n"
-        f"{fleet_lines}"
+        f"  {primary}/{name_or_path}.yaml\n"
+        f"  {primary}/{name_or_path}/{name_or_path}.yaml\n"
+        f"{env_line}"
     )

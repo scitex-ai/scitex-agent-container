@@ -70,7 +70,7 @@ class TestV2Config:
         monkeypatch.setenv("HOME", str(tmp_path))
         path = _write_config(MINIMAL_V2_CONFIG)
         config = load_config(path)
-        assert config.workdir == "~/.scitex/orochi/runtime/workspaces/head-test"
+        assert config.workdir == "~/.scitex/agent-container/workspaces/head-test"
         Path(path).unlink()
 
     def test_v2_screen_name(self):
@@ -85,8 +85,11 @@ class TestV2Config:
         config = load_config(path)
         assert config.env["CLAUDE_AGENT_ID"] == "head-test"
         assert config.env["CLAUDE_AGENT_ROLE"] == "head"
-        assert config.env["SCITEX_OROCHI_AGENT"] == "head-test"
-        assert config.env["SCITEX_OROCHI_MODEL"] == "Claude Opus (1M)"
+        assert config.env["SCITEX_AGENT_CONTAINER_AGENT"] == "head-test"
+        assert config.env["SCITEX_AGENT_CONTAINER_MODEL"] == "Claude Opus (1M)"
+        # sac MUST NOT auto-inject external-consumer (orochi etc.) env vars.
+        assert "SCITEX_OROCHI_AGENT" not in config.env
+        assert "SCITEX_OROCHI_MODEL" not in config.env
         Path(path).unlink()
 
     def test_v2_auto_mkdir_hook(self):
@@ -112,7 +115,7 @@ class TestV2Config:
         assert config.screen_name == "custom-screen"
         assert config.env["CLAUDE_AGENT_ID"] == "custom-id"
         # Auto-derived values still present where not overridden
-        assert config.env["SCITEX_OROCHI_AGENT"] == "head-test"
+        assert config.env["SCITEX_AGENT_CONTAINER_AGENT"] == "head-test"
         Path(path).unlink()
 
     def test_v2_mcp_servers_interpolation(self):

@@ -1,9 +1,9 @@
 """YAML config loading and validation for agent definitions.
 
-Public API (backward-compatible with the old single-file config module):
+Public API:
     AgentConfig, load_config, validate_config, resolve_config
     ContainerSpec, ClaudeSpec, HealthSpec, WatchdogSpec, RestartSpec,
-    TelegramSpec, OrochiSpec, RemoteSpec, SkillsSpec, StartupCommand
+    TelegramSpec, RemoteSpec, SkillsSpec, StartupCommand
 """
 
 from __future__ import annotations
@@ -23,12 +23,13 @@ from ._types import (
     HealthSpec,
     HookSpec,
     ListenPort,
-    OrochiSpec,
     ReadyPattern,
     RemoteSpec,
     RestartSpec,
     SchedulingSpec,
     SkillsSpec,
+    SlurmHooks,
+    SlurmSpec,
     StartupCommand,
     StartupSpec,
     TelegramSpec,
@@ -44,12 +45,13 @@ __all__ = [
     "HealthSpec",
     "HookSpec",
     "ListenPort",
-    "OrochiSpec",
     "ReadyPattern",
     "RemoteSpec",
     "RestartSpec",
     "SchedulingSpec",
     "SkillsSpec",
+    "SlurmHooks",
+    "SlurmSpec",
     "StartupCommand",
     "StartupSpec",
     "TelegramSpec",
