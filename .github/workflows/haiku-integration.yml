@@ -1,0 +1,81 @@
+name: Haiku integration tests
+
+# End-to-end tests that spawn a real Claude Code agent backed by
+# haiku and run the nonce-probe + compact paths against it. They
+# require an Anthropic API key and are intentionally off the hot
+# path:
+#
+#   * manual only (workflow_dispatch), plus a nightly cron so
+#     regressions surface within 24h without PR friction.
+#   * secret not exposed to fork PRs (GitHub default), so
+#     external contributors can't accidentally drain quota or
+#     attempt to exfiltrate the key.
+#
+# Cost budget: 2 turns per run × 1 run per night × haiku pricing
+# ≈ a few cents per month.
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 03:00 UTC nightly; adjust if this collides with other usage.
+    - cron: "0 3 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  haiku-integration:
+    # Skip on PRs (forks can't read the secret anyway, but be
+    # explicit so internal PRs also skip unless manually dispatched).
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      # Project-scoped CI key. The Haiku integration test's
+      # _auth_available() reads this first and re-exports it as
+      # ANTHROPIC_API_KEY so the `claude` CLI picks it up.
+      SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY: ${{ secrets.SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY }}
+
+    steps:
+      - name: Fail early if the secret is missing
+        run: |
+          if [ -z "${SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY}" ]; then
+            echo "::error::secret SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY is not set."
+            echo "Set it via:"
+            echo "  gh secret set SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY --repo <owner>/<repo>"
+            exit 1
+          fi
+          echo "secret present (len=${#SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY})"
+
+      - uses: actions/checkout@v4
+
+      - name: Install system deps (tmux)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends tmux
+          tmux -V
+
+      - name: Install Node + Claude Code CLI
+        run: |
+          sudo apt-get install -y --no-install-recommends nodejs npm
+          node --version
+          npm --version
+          npm install -g @anthropic-ai/claude-code@latest
+          claude --version
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install the package (with test extras if available)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[test]' || python -m pip install -e .
+          python -m pip install pytest pytest-timeout
+
+      - name: Run Haiku integration tests
+        run: |
+          python -m pytest tests/test_haiku_integration.py \
+              -v -m integration --timeout=240
