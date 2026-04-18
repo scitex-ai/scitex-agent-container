@@ -36,8 +36,62 @@ _MANAGED_KEYS = frozenset(
         "skipDangerousModePermissionPrompt",
         "enableAllProjectMcpServers",
         "enabledMcpjsonServers",
+        "hooks",
     }
 )
+
+# Hook config pushed into every spawned agent's settings.local.json so
+# PreToolUse / PostToolUse / UserPromptSubmit / Stop events flow into
+# the per-agent event ring-buffer (~/.scitex/agent-container/events/
+# <agent>.jsonl). Consumed by event_log.summarize() which feeds the
+# Orochi dashboard's Last tool / Last MCP / Last action rows. Without
+# this wiring those rows render as dashes (scitex-orochi todo#59).
+_HOOKS_CONFIG = {
+    "PreToolUse": [
+        {
+            "matcher": "",
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": "scitex-agent-container hook-event pretool",
+                }
+            ],
+        }
+    ],
+    "PostToolUse": [
+        {
+            "matcher": "",
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": "scitex-agent-container hook-event posttool",
+                }
+            ],
+        }
+    ],
+    "UserPromptSubmit": [
+        {
+            "matcher": "",
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": "scitex-agent-container hook-event prompt",
+                }
+            ],
+        }
+    ],
+    "Stop": [
+        {
+            "matcher": "",
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": "scitex-agent-container hook-event stop",
+                }
+            ],
+        }
+    ],
+}
 
 
 def _mcp_server_names(config: AgentConfig, workdir: str) -> list[str]:
@@ -63,16 +117,13 @@ def _mcp_server_names(config: AgentConfig, workdir: str) -> list[str]:
 
 def _needs_skip_permissions(config: AgentConfig) -> bool:
     """Check if config uses --dangerously-skip-permissions."""
-    return any(
-        "--dangerously-skip-permissions" in f for f in config.claude.flags
-    )
+    return any("--dangerously-skip-permissions" in f for f in config.claude.flags)
 
 
 def _needs_dev_channels(config: AgentConfig) -> bool:
     """Check if config uses --dangerously-load-development-channels."""
     return any(
-        "--dangerously-load-development-channels" in f
-        for f in config.claude.flags
+        "--dangerously-load-development-channels" in f for f in config.claude.flags
     )
 
 
@@ -92,6 +143,11 @@ def setup_settings_json(config: AgentConfig, workdir: str) -> None:
         server_names = _mcp_server_names(config, workdir)
         if server_names:
             settings["enabledMcpjsonServers"] = server_names
+
+    # Always inject hook wiring — even if skip-permissions / dev-channels
+    # aren't active we still want Last tool / Last MCP / Last action rows
+    # to populate on the dashboard (scitex-orochi todo#59).
+    settings["hooks"] = _HOOKS_CONFIG
 
     if not settings:
         return
@@ -156,9 +212,7 @@ def cleanup_settings_json(config: AgentConfig, workdir: str) -> None:
 
     if not data:
         settings_path.unlink(missing_ok=True)
-        logger.info(
-            "Removed empty .claude/settings.local.json at %s", settings_path
-        )
+        logger.info("Removed empty .claude/settings.local.json at %s", settings_path)
     else:
         settings_path.write_text(json.dumps(data, indent=2) + "\n")
         logger.info(
