@@ -108,7 +108,10 @@ def haiku_agent():
     if _SKIP_REASON:
         pytest.skip(_SKIP_REASON)
 
-    session = f"scitex-haiku-int-{uuid.uuid4().hex[:8]}"
+    # Readable session + workdir prefix so the leaked-fixture signature
+    # on the dashboard is self-explanatory ("scitex-haiku-integration-*"
+    # instead of the cryptic "int" abbreviation).
+    session = f"scitex-haiku-integration-{uuid.uuid4().hex[:8]}"
     # Claude Code's TUI respects ``--dangerously-skip-permissions`` so
     # it doesn't prompt for tool-use consent. ``--model`` pins haiku
     # for cheap, fast replies.
@@ -117,7 +120,7 @@ def haiku_agent():
     # ask the agent to touch the filesystem.
     import tempfile
 
-    workdir = tempfile.mkdtemp(prefix="scitex-haiku-int-")
+    workdir = tempfile.mkdtemp(prefix="scitex-haiku-integration-")
 
     cmd = f"cd {workdir} && claude --model {model} --dangerously-skip-permissions"
     # Start the tmux session running ``bash -lc`` so env is set up.
@@ -151,19 +154,37 @@ def haiku_agent():
         def _send(s: str, *keys: str) -> None:
             TmuxManager.send_keys(s, *keys)
 
-        accepted: set[str] = set()
-        deadline = time.time() + 90.0
+        # Previously a one-shot `accepted: set[str]` set permanently marked
+        # each prompt as done after the first keystroke. In practice the
+        # first send can silently no-op (tmux send-keys races with the TUI
+        # startup before claude-code has grabbed stdin) and the handler
+        # would then be skipped for the rest of the 90s deadline, causing
+        # the fixture to time out with the prompt still visible and leak
+        # the tmux session (msg#13170, scitex-haiku-int-48f9c296 incident).
+        #
+        # Track per-handler "last-fired-at" instead, with a 5s cool-down.
+        # If the prompt is still visible after the cool-down, we fire
+        # again — this recovers from a silently-lost initial keystroke
+        # without spamming the main input (the detector only fires while
+        # the prompt text is literally present in the pane).
+        last_fired: dict[str, float] = {}
+        FIRE_COOLDOWN_S = 5.0
+        deadline = time.time() + 180.0
         ready = False
         while time.time() < deadline:
             content = TmuxManager.capture_content(session) or ""
             if is_ready(content):
                 ready = True
                 break
+            now = time.time()
+            # Build a view of "handlers that fired too recently" so
+            # detect_and_respond skips them on this iteration only.
+            cooling = {k for k, t in last_fired.items() if now - t < FIRE_COOLDOWN_S}
             matched = detect_and_respond(
-                content, accepted, lambda *keys: _send(session, *keys)
+                content, cooling, lambda *keys: _send(session, *keys)
             )
             if matched:
-                accepted.add(matched)
+                last_fired[matched] = time.time()
                 time.sleep(2.0)
                 continue
             time.sleep(1.5)
@@ -171,8 +192,8 @@ def haiku_agent():
         if not ready:
             tail = (TmuxManager.capture_content(session) or "")[-1500:]
             pytest.skip(
-                "haiku agent did not reach ready state in 90s. "
-                f"accepted prompts: {accepted or 'none'}. "
+                "haiku agent did not reach ready state in 180s. "
+                f"fired prompts: {sorted(last_fired) or 'none'}. "
                 f"Last pane:\n{tail}"
             )
 
