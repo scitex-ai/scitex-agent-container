@@ -183,48 +183,91 @@ def _classify_pane_state(pane_text: str) -> tuple[str, str]:
     return "unknown", ""
 
 
+def _config_candidates(workdir: str, filename: str) -> list[Path]:
+    """Return a prioritised list of candidate locations for ``filename``.
+
+    Historically only ``<workdir>/<filename>`` was probed, which meant
+    agents whose workspace wasn't provisioned with that file pushed an
+    empty ``claude_md`` / ``mcp_json`` to the hub. Walk a wider set of
+    plausible locations so every agent gets populated content:
+
+    1. ``<workdir>/<filename>``
+    2. ``<workdir>/.claude/<filename>``   (nested config style)
+    3. Legacy sibling ``<workdir-parent>/mamba-<name>/<filename>``
+    4. Nearest enclosing git-root ``<filename>``
+    5. ``~/.claude/<filename>``           (user-global fallback)
+    6. ``~/<filename>``
+    """
+    home = Path.home()
+    cands: list[Path] = []
+    if workdir:
+        p = Path(workdir)
+        cands += [p / filename, p / ".claude" / filename]
+        if p.parent.name == "workspaces":
+            cands.append(p.parent / f"mamba-{p.name}" / filename)
+        try:
+            git_root = p
+            while git_root != git_root.parent and not (git_root / ".git").exists():
+                git_root = git_root.parent
+            if (git_root / ".git").exists():
+                cands.append(git_root / filename)
+        except Exception:
+            pass
+    cands += [home / ".claude" / filename, home / filename]
+    # Dedup preserving order.
+    seen: set[str] = set()
+    uniq: list[Path] = []
+    for c in cands:
+        k = str(c)
+        if k in seen:
+            continue
+        seen.add(k)
+        uniq.append(c)
+    return uniq
+
+
 def _read_claude_md(workdir: str, max_chars: int = 20000) -> str:
-    try:
-        p = Path(workdir) / "CLAUDE.md"
-        if not p.is_file():
-            return ""
-        text = p.read_text(errors="replace")
-        return text[:max_chars]
-    except Exception:
-        return ""
+    for p in _config_candidates(workdir, "CLAUDE.md"):
+        try:
+            if not p.is_file():
+                continue
+            return p.read_text(errors="replace")[:max_chars]
+        except Exception:
+            continue
+    return ""
+
+
+def _redact_mcp_tree(obj):
+    if isinstance(obj, dict):
+        out = {}
+        for k, v in obj.items():
+            if isinstance(v, str) and any(
+                t in k.upper() for t in ("TOKEN", "SECRET", "KEY", "PASSWORD")
+            ):
+                out[k] = "***REDACTED***"
+            else:
+                out[k] = _redact_mcp_tree(v)
+        return out
+    if isinstance(obj, list):
+        return [_redact_mcp_tree(x) for x in obj]
+    return obj
 
 
 def _read_mcp_json(workdir: str, max_chars: int = 10000) -> str:
-    try:
-        p = Path(workdir) / ".mcp.json"
-        if not p.is_file():
-            return ""
-        raw = p.read_text(errors="replace")
+    for p in _config_candidates(workdir, ".mcp.json"):
+        try:
+            if not p.is_file():
+                continue
+            raw = p.read_text(errors="replace")
+        except Exception:
+            continue
         try:
             doc = json.loads(raw)
-
-            def _r(obj):
-                if isinstance(obj, dict):
-                    out = {}
-                    for k, v in obj.items():
-                        if isinstance(v, str) and any(
-                            t in k.upper()
-                            for t in ("TOKEN", "SECRET", "KEY", "PASSWORD")
-                        ):
-                            out[k] = "***REDACTED***"
-                        else:
-                            out[k] = _r(v)
-                    return out
-                if isinstance(obj, list):
-                    return [_r(x) for x in obj]
-                return obj
-
-            pretty = json.dumps(_r(doc), indent=2)
+            pretty = json.dumps(_redact_mcp_tree(doc), indent=2)
             return pretty[:max_chars]
         except Exception:
             return _redact_secrets(raw[:max_chars])
-    except Exception:
-        return ""
+    return ""
 
 
 def _pids_from_session(session: str, multiplexer: str) -> tuple[int, int]:
