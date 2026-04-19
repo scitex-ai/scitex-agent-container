@@ -45,7 +45,7 @@ spec:
     enabled: boolean               # Optional. Enable health monitoring (default: false)
     interval: integer              # Optional. Check interval in seconds (default: 30)
     timeout: integer               # Optional. Check timeout in seconds (default: 5)
-    method: string                 # Optional. One of: screen-alive (default: screen-alive)
+    method: string                 # Optional. One of: multiplexer-alive (default: multiplexer-alive)
 
   # Restart policy
   restart:

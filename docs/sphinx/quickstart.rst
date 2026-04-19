@@ -30,7 +30,7 @@ Quickstart
       health:
         enabled: true
         interval: 60
-        method: screen-alive
+        method: multiplexer-alive
       restart:
         policy: on-failure
         max_retries: 3

@@ -14,7 +14,7 @@ def health_check(config: AgentConfig) -> tuple[bool, str]:
     """Run a single health check. Returns (is_healthy, message)."""
     method = config.health.method
 
-    if method == "screen-alive":
+    if method == "multiplexer-alive":
         if config.remote.is_remote:
             return _check_session_alive_remote(config)
         return _check_session_alive(config)

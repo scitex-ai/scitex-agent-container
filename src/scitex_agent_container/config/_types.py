@@ -38,7 +38,7 @@ class HealthSpec:
     enabled: bool = False
     interval: int = 30
     timeout: int = 5
-    method: str = "screen-alive"
+    method: str = "multiplexer-alive"
 
 
 # Parsed for backward compat but not interpreted by runtime.

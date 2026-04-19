@@ -51,7 +51,7 @@ FULL_CONFIG = {
             "enabled": True,
             "interval": 45,
             "timeout": 10,
-            "method": "screen-alive",
+            "method": "multiplexer-alive",
         },
         "restart": {
             "policy": "on-failure",

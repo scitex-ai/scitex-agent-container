@@ -79,8 +79,8 @@ def validate_raw(raw: dict, path: str) -> list[str]:
         # health.method
         health = spec.get("health", {}) or {}
         method = health.get("method")
-        if method and method not in ("screen-alive",):
-            errors.append(f"spec.health.method must be 'screen-alive', got '{method}'")
+        if method and method not in ("multiplexer-alive",):
+            errors.append(f"spec.health.method must be 'multiplexer-alive', got '{method}'")
 
     return errors
 
