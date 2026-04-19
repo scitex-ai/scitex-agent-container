@@ -69,11 +69,27 @@ FULL_CONFIG = {
 
 
 def _write_config(data: dict) -> str:
-    """Write a config dict to a temp file and return its path."""
-    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
-    yaml.safe_dump(data, tmp)
-    tmp.close()
-    return tmp.name
+    """Write a config dict to ``<tmp>/<name>/<name>.yaml`` and return its path.
+
+    Dir-as-SSoT: the loader derives the agent name from the parent dir.
+    The helper picks the dir name from ``data["metadata"]["name"]`` (a
+    test-only convenience) and then **strips** that field before writing
+    so the validator (which now rejects metadata.name) doesn't complain.
+    """
+    import copy
+
+    data = copy.deepcopy(data)
+    metadata = data.get("metadata") or {}
+    name = metadata.pop("name", None) or "test-agent"
+    if metadata:
+        data["metadata"] = metadata
+    elif "metadata" in data:
+        del data["metadata"]
+    tmp_dir = Path(tempfile.mkdtemp()) / name
+    tmp_dir.mkdir(parents=True)
+    path = tmp_dir / f"{name}.yaml"
+    path.write_text(yaml.safe_dump(data))
+    return str(path)
 
 
 class TestLoadConfig:
@@ -122,17 +138,24 @@ class TestLoadConfig:
             load_config(path)
         Path(path).unlink()
 
-    def test_missing_name(self):
-        data = {
-            "apiVersion": "cld-agent/v1",
-            "kind": "Agent",
-            "metadata": {},
-            "spec": {"runtime": "claude-code"},
-        }
-        path = _write_config(data)
-        with pytest.raises(ValueError, match="name"):
-            load_config(path)
-        Path(path).unlink()
+    def test_metadata_name_rejected(self):
+        """Dir-as-SSoT: metadata.name in YAML is no longer accepted."""
+        # Bypass _write_config (which strips metadata.name) — write raw.
+        tmp_dir = Path(tempfile.mkdtemp()) / "rejected-agent"
+        tmp_dir.mkdir(parents=True)
+        path = tmp_dir / "rejected-agent.yaml"
+        path.write_text(
+            yaml.safe_dump(
+                {
+                    "apiVersion": "cld-agent/v1",
+                    "kind": "Agent",
+                    "metadata": {"name": "rejected-agent"},
+                    "spec": {"runtime": "claude-code"},
+                }
+            )
+        )
+        with pytest.raises(ValueError, match="metadata.name is no longer accepted"):
+            load_config(str(path))
 
     def test_invalid_runtime(self):
         data = {

@@ -28,12 +28,18 @@ def validate_raw(raw: dict, path: str) -> list[str]:
     if kind != "Agent":
         errors.append(f"kind must be 'Agent', got '{kind}'")
 
-    # metadata.name
+    # metadata (optional dict — agent name comes from parent dir, not from
+    # metadata.name; the field is no longer accepted)
     metadata = raw.get("metadata")
-    if not isinstance(metadata, dict):
-        errors.append("metadata is required and must be a mapping")
-    elif not metadata.get("name"):
-        errors.append("metadata.name is required")
+    if metadata is not None and not isinstance(metadata, dict):
+        errors.append("metadata, if present, must be a mapping")
+    elif isinstance(metadata, dict) and "name" in metadata:
+        errors.append(
+            "metadata.name is no longer accepted; the agent name is "
+            "derived from the parent directory (dir-as-SSoT). Remove "
+            "the metadata.name field and ensure the YAML lives at "
+            "<name>/<name>.yaml."
+        )
 
     # spec
     spec = raw.get("spec")
@@ -80,7 +86,9 @@ def validate_raw(raw: dict, path: str) -> list[str]:
         health = spec.get("health", {}) or {}
         method = health.get("method")
         if method and method not in ("multiplexer-alive",):
-            errors.append(f"spec.health.method must be 'multiplexer-alive', got '{method}'")
+            errors.append(
+                f"spec.health.method must be 'multiplexer-alive', got '{method}'"
+            )
 
     return errors
 

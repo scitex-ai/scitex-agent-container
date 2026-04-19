@@ -263,7 +263,7 @@ class AgentConfig:
     runtime: str = "claude-code"
     model: str = "sonnet"
     workdir: str = "~/proj"
-    venv: str = ""  # path to virtualenv (e.g. ~/.venv); activates before claude
+    python_venv: str = ""  # resolved venv path (post _resolve_python_venv)
     env: dict[str, str] = field(default_factory=dict)
     screen_name: str = ""
     labels: dict[str, str] = field(default_factory=dict)

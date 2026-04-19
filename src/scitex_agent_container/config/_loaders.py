@@ -27,18 +27,6 @@ from ._parsers import (
 )
 from ._types import AgentConfig, SchedulingSpec
 
-# Host-aware fallback chain for `venv: auto` resolution.
-# Tried in order; first existing path wins. Empty string means no venv
-# activation (raw shell). The chain is intentionally short and biased
-# toward the conventions actually in use across the fleet (NAS/WSL =
-# ~/.venv-3.11, MBA = ~/.venv). Adding a new host with a different
-# convention requires extending this list.
-#
-# Filed via scitex-agent-container#40 (head-mba 2026-04-16) after the
-# fleet-lead.yaml `venv: auto` shell-source-fail incident on NAS
-# (head-nas msg#12877; head-mba msg#12879 root cause).
-_VENV_AUTO_FALLBACK_CHAIN = ("~/.venv-3.11", "~/.venv")
-
 # Default workdir layout: sac's own state root. Per-agent runtime state
 # (CLAUDE.md, .mcp.json, .claude/) lives at
 # ``~/.scitex/agent-container/workspaces/<effective-id>/``. External
@@ -46,21 +34,55 @@ _VENV_AUTO_FALLBACK_CHAIN = ("~/.venv-3.11", "~/.venv")
 _DEFAULT_WORKDIR_RUNTIME = "~/.scitex/agent-container/workspaces/{name}"
 
 
-def _resolve_venv(venv: str) -> str:
-    """Resolve `venv: auto` to the first existing virtualenv on this host.
+def _name_from_path(path: Path | str) -> str:
+    """Derive the agent name from the YAML path.
 
-    Returns the original value unchanged unless it equals "auto" (case
-    insensitive). For "auto", probes ~/.venv-3.11 then ~/.venv and
-    returns the first one whose `bin/activate` exists. If none exist,
-    returns empty string (runtime treats as "no venv activation"), which
-    is still safer than letting the shell try to source a missing path.
+    Convention: each agent lives in its own directory ``<name>/<name>.yaml``.
+    The directory name IS the agent identifier — single source of truth.
+    YAMLs do not carry a redundant ``metadata.name`` field.
     """
-    if not isinstance(venv, str) or venv.strip().lower() != "auto":
-        return venv
-    for candidate in _VENV_AUTO_FALLBACK_CHAIN:
-        if (Path(candidate).expanduser() / "bin" / "activate").exists():
-            return candidate
-    return ""
+    return Path(path).parent.name
+
+
+def _resolve_python_venv(venv: str | list[str] | None) -> str:
+    """Resolve ``spec.python-venv`` to a single venv path on this host.
+
+    Accepts:
+      * empty/None: no venv activation (returns "").
+      * single string: literal path; must exist or RuntimeError.
+      * list of strings: explicit fallback chain — first existing path
+        wins. If none exist, raises RuntimeError (no silent fallback).
+
+    The fallback chain is intentionally per-agent (in the YAML), not a
+    sac-internal default — different agents may want different chains,
+    and putting it in the YAML keeps the precedence visible to readers.
+    """
+    if venv is None or venv == "" or venv == []:
+        return ""
+
+    if isinstance(venv, str):
+        if (Path(venv).expanduser() / "bin" / "activate").exists():
+            return venv
+        raise RuntimeError(
+            f"python-venv {venv!r} has no bin/activate on this host. "
+            "Set an existing path or use a list for a fallback chain."
+        )
+
+    if isinstance(venv, list):
+        if not all(isinstance(p, str) for p in venv):
+            raise RuntimeError(f"python-venv list must contain strings, got: {venv!r}")
+        for candidate in venv:
+            if (Path(candidate).expanduser() / "bin" / "activate").exists():
+                return candidate
+        raise RuntimeError(
+            f"python-venv chain {venv!r} matched no existing venv on this "
+            "host. Create one of these paths or extend the chain."
+        )
+
+    raise RuntimeError(
+        f"python-venv must be a string or list of strings, got "
+        f"{type(venv).__name__}: {venv!r}"
+    )
 
 
 def compose_effective_name(
@@ -93,11 +115,11 @@ def load_v1(raw: dict, path: Path) -> AgentConfig:
     screen_name = screen_raw.get("name", "")
 
     return AgentConfig(
-        name=metadata["name"],
+        name=_name_from_path(path),
         runtime=spec.get("runtime", "claude-code"),
         model=spec.get("model", "sonnet"),
         workdir=spec.get("workdir", "~/proj"),
-        venv=_resolve_venv(spec.get("venv", "")),
+        python_venv=_resolve_python_venv(spec.get("python-venv", "")),
         env=spec.get("env", {}) or {},
         screen_name=screen_name,
         labels=metadata.get("labels", {}) or {},
@@ -143,7 +165,7 @@ def load_v2(raw: dict, path: Path) -> AgentConfig:
 
     metadata = raw.get("metadata", {})
     spec = raw.get("spec", {})
-    raw_name = metadata["name"]
+    raw_name = _name_from_path(path)
     labels = metadata.get("labels", {}) or {}
 
     # Compose the effective id used everywhere downstream (systemd, screen/
@@ -197,7 +219,7 @@ def load_v2(raw: dict, path: Path) -> AgentConfig:
         runtime=spec.get("runtime", "claude-code"),
         model=model,
         workdir=workdir,
-        venv=_resolve_venv(spec.get("venv", "")),
+        python_venv=_resolve_python_venv(spec.get("python-venv", "")),
         env=merged_env,
         screen_name=screen_name,
         labels=labels,
