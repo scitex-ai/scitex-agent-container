@@ -14,12 +14,11 @@ import json
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from scitex_agent_container import hooks
-
 
 # ---------------------------------------------------------------------------
 # run_hook — unit tests (patch the pool to run synchronously)
@@ -212,9 +211,7 @@ def test_compact_dispatcher_invokes_on_compact(monkeypatch):
     import sys
 
     fake_mod = SimpleNamespace(TmuxManager=fake_tmux)
-    monkeypatch.setitem(
-        sys.modules, "scitex_agent_container.runtimes.tmux", fake_mod
-    )
+    monkeypatch.setitem(sys.modules, "scitex_agent_container.runtimes.tmux", fake_mod)
 
     agent_cfg = SimpleNamespace(
         name="a2",
@@ -270,16 +267,16 @@ def test_snapshot_on_diff_invoked_when_has_diff(monkeypatch, tmp_path):
 
 
 def _write_v2_config(tmp_path: Path, extra: str = "") -> Path:
-    p = tmp_path / "agent.yaml"
+    """v3: dir-as-SSoT — YAML lives at <name>/<name>.yaml, no metadata.name."""
+    d = tmp_path / "statustest"
+    d.mkdir(exist_ok=True)
+    p = d / "statustest.yaml"
     p.write_text(
-        "apiVersion: scitex-agent-container/v2\n"
+        "apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
-        "metadata:\n"
-        "  name: statustest\n"
         "spec:\n"
         "  runtime: claude-code\n"
-        "  model: sonnet\n"
-        + extra
+        "  model: sonnet\n" + extra
     )
     return p
 
@@ -312,17 +309,9 @@ def _status_for(monkeypatch, tmp_path, extra):
 
 
 def test_extensions_passthrough_in_status(monkeypatch, tmp_path):
-    extra = (
-        "  extensions:\n"
-        "    orochi:\n"
-        "      foo: bar\n"
-        "      nested:\n"
-        "        a: 1\n"
-    )
+    extra = "  extensions:\n    orochi:\n      foo: bar\n      nested:\n        a: 1\n"
     result = _status_for(monkeypatch, tmp_path, extra)
-    assert result["extensions"] == {
-        "orochi": {"foo": "bar", "nested": {"a": 1}}
-    }
+    assert result["extensions"] == {"orochi": {"foo": "bar", "nested": {"a": 1}}}
 
 
 def test_listen_declarations_in_status(monkeypatch, tmp_path):

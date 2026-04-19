@@ -481,21 +481,12 @@ def collect_rich(
             "counts": {},
         }
     # Use canonical fleet name (e.g. "nas" instead of "DXP480TPLUS-994")
-    _raw_hostname = socket.gethostname().split(".")[0]
     try:
-        from .host_identity import DEFAULT_HOST_ALIASES
+        from .config._host import resolve_hostname
 
-        machine = next(
-            (
-                fleet_name
-                for fleet_name, aliases in DEFAULT_HOST_ALIASES.items()
-                if _raw_hostname in aliases
-                or _raw_hostname.lower() in [a.lower() for a in aliases]
-            ),
-            _raw_hostname,
-        )
+        machine = resolve_hostname()
     except Exception:
-        machine = _raw_hostname
+        machine = socket.gethostname().split(".")[0]
 
     # ---- Claude quota fields ----------------------------------------
     quota_5h_used_pct: float | None = None
@@ -563,6 +554,10 @@ def collect_rich(
         "last_activity": last_activity,
         "skills_loaded": skills_loaded,
         "machine": machine,
+        # scitex-orochi todo#55: canonical FQDN for display next to the
+        # short machine label ("spartan (spartan.hpc.unimelb.edu.au)").
+        # Falls back to the short name on hosts with no reverse DNS.
+        "hostname_canonical": (socket.getfqdn() or "").strip(),
         "workdir": workdir,
         "project": name,
         # Only override started_at if we found one; caller can decide

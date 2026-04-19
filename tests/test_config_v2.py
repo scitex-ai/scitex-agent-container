@@ -6,28 +6,45 @@ import json
 import tempfile
 from pathlib import Path
 
+import pytest
 import yaml
 
 from scitex_agent_container.config import AgentConfig, load_config, validate_config
 
 
 def _write_config(data: dict) -> str:
-    """Write a config dict to a temp file and return its path."""
-    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
-    yaml.safe_dump(data, tmp)
-    tmp.close()
-    return tmp.name
+    """Write a config dict to ``<tmp>/<name>/<name>.yaml`` and return its path.
+
+    Dir-as-SSoT: the loader derives the agent name from the parent dir.
+    The helper picks the dir name from ``data["metadata"]["name"]`` (a
+    test-only convenience) and **strips** that field before writing so
+    the validator (which now rejects metadata.name) doesn't complain.
+    """
+    import copy
+
+    data = copy.deepcopy(data)
+    metadata = data.get("metadata") or {}
+    name = metadata.pop("name", None) or "test-agent"
+    if metadata:
+        data["metadata"] = metadata
+    elif "metadata" in data:
+        del data["metadata"]
+    tmp_dir = Path(tempfile.mkdtemp()) / name
+    tmp_dir.mkdir(parents=True)
+    path = tmp_dir / f"{name}.yaml"
+    path.write_text(yaml.safe_dump(data))
+    return str(path)
 
 
 MINIMAL_V1_CONFIG = {
-    "apiVersion": "cld-agent/v1",
+    "apiVersion": "scitex-agent-container/v3",
     "kind": "Agent",
     "metadata": {"name": "test-agent"},
     "spec": {"runtime": "claude-code"},
 }
 
 MINIMAL_V2_CONFIG = {
-    "apiVersion": "scitex-agent-container/v2",
+    "apiVersion": "scitex-agent-container/v3",
     "kind": "Agent",
     "metadata": {
         "name": "head-test",
@@ -40,7 +57,7 @@ MINIMAL_V2_CONFIG = {
 }
 
 V2_WITH_MCP = {
-    "apiVersion": "scitex-agent-container/v2",
+    "apiVersion": "scitex-agent-container/v3",
     "kind": "Agent",
     "metadata": {
         "name": "head-test",
@@ -133,12 +150,12 @@ class TestV2Config:
         assert errors == []
         Path(path).unlink()
 
-    def test_v1_still_works(self):
-        """Ensure v1 configs are unaffected by v2 changes."""
+    def test_minimal_v3_uses_runtime_workspace(self):
+        """v3 minimal config places workspace under sac's runtime root."""
         path = _write_config(MINIMAL_V1_CONFIG)
         config = load_config(path)
-        assert config.screen_name == "cld-test-agent"
-        assert config.workdir == "~/proj"
+        assert config.screen_name == "test-agent"
+        assert config.workdir == "~/.scitex/agent-container/workspaces/test-agent"
         assert config.mcp_servers == {}
         Path(path).unlink()
 
@@ -327,7 +344,7 @@ class TestMultiplexerConfig:
     def test_default_multiplexer(self):
         path = _write_config(MINIMAL_V1_CONFIG)
         config = load_config(path)
-        assert config.multiplexer == "screen"
+        assert config.multiplexer == "tmux"  # v3 default
         Path(path).unlink()
 
     def test_tmux_multiplexer(self):
@@ -371,117 +388,94 @@ class TestMultiplexerConfig:
         assert get_multiplexer(config) is TmuxManager
 
 
-class TestVenvAutoResolution:
-    """Tests for `venv: auto` host-aware fallback (scitex-agent-container#40).
-
-    Regression: fleet-lead.yaml had `venv: auto` which scitex-agent-container
-    treated as literal path `~/auto/bin/activate`, causing `source ~/auto/...
-    || exit 1` to fail in tmux startup, killing the session within 4s
-    (head-nas msg#12877, head-mba msg#12879 root cause).
+class TestPythonVenvResolution:
+    """Tests for ``spec.python-venv`` resolution (replaces the old
+    ``venv: auto`` magic). The chain is now declared per-agent in the
+    YAML as a list; first existing path wins; loud failure when none
+    exists.
     """
 
-    def test_concrete_venv_path_unchanged(self):
-        from scitex_agent_container.config._loaders import _resolve_venv
+    @staticmethod
+    def _make_venv(path):
+        (path / "bin").mkdir(parents=True)
+        (path / "bin" / "activate").write_text("# fake activate")
 
-        assert _resolve_venv("~/.venv-3.11") == "~/.venv-3.11"
-        assert _resolve_venv("~/.venv") == "~/.venv"
-        assert _resolve_venv("/opt/myvenv") == "/opt/myvenv"
+    def test_empty_returns_empty(self):
+        from scitex_agent_container.config._loaders import _resolve_python_venv
 
-    def test_empty_venv_unchanged(self):
-        from scitex_agent_container.config._loaders import _resolve_venv
+        assert _resolve_python_venv("") == ""
+        assert _resolve_python_venv([]) == ""
+        assert _resolve_python_venv(None) == ""
 
-        assert _resolve_venv("") == ""
-
-    def test_non_string_unchanged(self):
-        from scitex_agent_container.config._loaders import _resolve_venv
-
-        # Not strictly required by yaml schema, but defensive
-        assert _resolve_venv(None) is None  # type: ignore[arg-type]
-
-    def test_auto_resolves_to_existing_or_empty(self, tmp_path, monkeypatch):
-        from scitex_agent_container.config import _loaders
-
-        # Mock fallback chain to two candidates under tmp_path; create only
-        # the second one to verify "first existing wins" logic.
-        first = tmp_path / "first-venv"
-        second = tmp_path / "second-venv"
-        (second / "bin").mkdir(parents=True)
-        (second / "bin" / "activate").write_text("# fake activate")
-
-        monkeypatch.setattr(
-            _loaders,
-            "_VENV_AUTO_FALLBACK_CHAIN",
-            (str(first), str(second)),
-        )
-
-        result = _loaders._resolve_venv("auto")
-        assert result == str(second)
-
-    def test_auto_first_existing_wins(self, tmp_path, monkeypatch):
-        from scitex_agent_container.config import _loaders
-
-        first = tmp_path / "first-venv"
-        (first / "bin").mkdir(parents=True)
-        (first / "bin" / "activate").write_text("# fake activate")
-        second = tmp_path / "second-venv"
-        (second / "bin").mkdir(parents=True)
-        (second / "bin" / "activate").write_text("# fake activate")
-
-        monkeypatch.setattr(
-            _loaders,
-            "_VENV_AUTO_FALLBACK_CHAIN",
-            (str(first), str(second)),
-        )
-
-        result = _loaders._resolve_venv("auto")
-        assert result == str(first)
-
-    def test_auto_no_match_returns_empty(self, tmp_path, monkeypatch):
-        from scitex_agent_container.config import _loaders
-
-        # No candidate path exists
-        monkeypatch.setattr(
-            _loaders,
-            "_VENV_AUTO_FALLBACK_CHAIN",
-            (str(tmp_path / "nonexistent-a"), str(tmp_path / "nonexistent-b")),
-        )
-
-        result = _loaders._resolve_venv("auto")
-        assert result == ""
-
-    def test_auto_case_insensitive(self, tmp_path, monkeypatch):
-        from scitex_agent_container.config import _loaders
+    def test_string_existing_returns_path(self, tmp_path):
+        from scitex_agent_container.config._loaders import _resolve_python_venv
 
         v = tmp_path / "v"
-        (v / "bin").mkdir(parents=True)
-        (v / "bin" / "activate").write_text("# fake")
-        monkeypatch.setattr(_loaders, "_VENV_AUTO_FALLBACK_CHAIN", (str(v),))
+        self._make_venv(v)
+        assert _resolve_python_venv(str(v)) == str(v)
 
-        assert _loaders._resolve_venv("auto") == str(v)
-        assert _loaders._resolve_venv("AUTO") == str(v)
-        assert _loaders._resolve_venv("Auto") == str(v)
-        assert _loaders._resolve_venv(" auto ") == str(v)
+    def test_string_missing_raises(self, tmp_path):
+        from scitex_agent_container.config._loaders import _resolve_python_venv
 
-    def test_auto_via_v2_config_load(self, tmp_path, monkeypatch):
-        """End-to-end: yaml with `venv: auto` produces a resolved AgentConfig."""
-        from scitex_agent_container.config import _loaders, load_config
+        with pytest.raises(RuntimeError, match="no bin/activate"):
+            _resolve_python_venv(str(tmp_path / "nope"))
 
-        v = tmp_path / "venv-target"
-        (v / "bin").mkdir(parents=True)
-        (v / "bin" / "activate").write_text("# fake")
-        monkeypatch.setattr(_loaders, "_VENV_AUTO_FALLBACK_CHAIN", (str(v),))
+    def test_list_first_existing_wins(self, tmp_path):
+        from scitex_agent_container.config._loaders import _resolve_python_venv
+
+        first = tmp_path / "first"
+        second = tmp_path / "second"
+        self._make_venv(first)
+        self._make_venv(second)
+        assert _resolve_python_venv([str(first), str(second)]) == str(first)
+
+    def test_list_skips_missing_picks_existing(self, tmp_path):
+        from scitex_agent_container.config._loaders import _resolve_python_venv
+
+        missing = tmp_path / "missing"
+        present = tmp_path / "present"
+        self._make_venv(present)
+        assert _resolve_python_venv([str(missing), str(present)]) == str(present)
+
+    def test_list_none_match_raises(self, tmp_path):
+        from scitex_agent_container.config._loaders import _resolve_python_venv
+
+        a = tmp_path / "a"
+        b = tmp_path / "b"
+        with pytest.raises(RuntimeError, match="matched no existing venv"):
+            _resolve_python_venv([str(a), str(b)])
+
+    def test_list_non_string_raises(self):
+        from scitex_agent_container.config._loaders import _resolve_python_venv
+
+        with pytest.raises(RuntimeError, match="must contain strings"):
+            _resolve_python_venv(["~/.venv", 123])  # type: ignore[list-item]
+
+    def test_invalid_type_raises(self):
+        from scitex_agent_container.config._loaders import _resolve_python_venv
+
+        with pytest.raises(RuntimeError, match="must be a string or list"):
+            _resolve_python_venv({"unexpected": "dict"})  # type: ignore[arg-type]
+
+    def test_via_v2_config_load(self, tmp_path):
+        """End-to-end: YAML with ``python-venv`` list produces resolved config."""
+        from scitex_agent_container.config import load_config
+
+        v = tmp_path / "v"
+        self._make_venv(v)
 
         data = {
-            "apiVersion": "scitex-agent-container/v2",
+            "apiVersion": "scitex-agent-container/v3",
             "kind": "Agent",
-            "metadata": {"name": "fleet-lead-regression"},
-            "spec": {"runtime": "claude-code", "venv": "auto"},
+            "metadata": {"name": "regression"},
+            "spec": {
+                "runtime": "claude-code",
+                "python-venv": [str(tmp_path / "missing"), str(v)],
+            },
         }
         path = _write_config(data)
         try:
             config = load_config(path)
-            assert config.venv == str(v), (
-                f"venv: auto should resolve to {v}, got {config.venv!r}"
-            )
+            assert config.python_venv == str(v)
         finally:
             Path(path).unlink()

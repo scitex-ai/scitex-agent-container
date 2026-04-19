@@ -26,14 +26,15 @@ spec:
       env:
         SCITEX_OROCHI_URL: "wss://scitex-orochi.com"
         SCITEX_OROCHI_AGENT: "${metadata.name}"
-        SCITEX_OROCHI_CHANNELS: "#general"
         SCITEX_OROCHI_TOKEN: "${SCITEX_OROCHI_TOKEN}"
+        # Channel subscriptions are hub-DB authoritative — manage via
+        # the web UI or MCP `subscribe` tool, not via env vars.
 
   health:
     enabled: true
     interval: 60
     timeout: 5
-    method: screen-alive
+    method: multiplexer-alive
 
   restart:
     policy: never

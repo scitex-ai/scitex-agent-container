@@ -215,9 +215,9 @@ class ClaudeCodeRuntime(RuntimeBase):
         lines = []
         for key, value in config.env.items():
             lines.append(f'export {key}="{_resolve(str(value))}"')
-        # Channels are passed via the agent YAML env block (e.g.,
-        # SCITEX_OROCHI_CHANNELS) and exported above with the rest of
-        # config.env.  Do NOT hard-code cross-package vars here.
+        # Cross-package env vars (e.g., orochi-side channel/auth config)
+        # are caller's concern: declare them in the agent YAML's env
+        # block and they are exported above with the rest of config.env.
         return "\n".join(lines)
 
     # Telegram access.json is not managed by agent-container.
@@ -547,7 +547,7 @@ class ClaudeCodeRuntime(RuntimeBase):
             command=cmd,
             workdir=workdir,
             env_exports=env_exports,
-            venv=config.venv,
+            venv=config.python_venv,
         )
 
         if started:

@@ -1,137 +1,89 @@
-"""Tests for host_identity and runtime-selection local fallback (todo#294)."""
+"""Tests for host_identity (local-vs-remote resolver)."""
 
 from __future__ import annotations
 
-import logging
-from pathlib import Path
-from unittest.mock import patch
+import os as _os
 
 import pytest
+import yaml
 
-from scitex_agent_container import host_identity
+from scitex_agent_container import host_identity as hi
 from scitex_agent_container.config import AgentConfig
 from scitex_agent_container.config._types import RemoteSpec
-from scitex_agent_container.host_identity import (
-    get_local_identities,
-    is_local_host,
-    _reset_cache_for_tests,
-)
 
 
 @pytest.fixture(autouse=True)
-def _reset_cache(monkeypatch):
-    _reset_cache_for_tests()
-    # Isolate from real env + real HOME by default
-    monkeypatch.delenv("SCITEX_AGENT_LOCAL_HOSTS", raising=False)
-    yield
-    _reset_cache_for_tests()
+def _isolate(tmp_path, monkeypatch):
+    path = tmp_path / "host-identity.yaml"
+    monkeypatch.setattr(hi, "HOST_IDENTITY_PATH", path)
+    hi._reset_cache_for_tests()
+    yield path
+    hi._reset_cache_for_tests()
 
 
-def _patch_basics(monkeypatch, hostname="testhost", fqdn="testhost.local"):
+def _patch_basics(monkeypatch, hostname="testhost"):
     monkeypatch.setattr("socket.gethostname", lambda: hostname)
-    monkeypatch.setattr("socket.getfqdn", lambda: fqdn)
+    fake_uname = _os.uname_result(("Linux", hostname, "1.0", "", "x86_64"))
+    monkeypatch.setattr("os.uname", lambda: fake_uname)
 
 
 def test_is_local_host_accepts_none_and_empty(monkeypatch):
     _patch_basics(monkeypatch)
-    assert is_local_host(None) is True
-    assert is_local_host("") is True
-    assert is_local_host("   ") is True
+    assert hi.is_local_host(None) is True
+    assert hi.is_local_host("") is True
+    assert hi.is_local_host("   ") is True
 
 
-def test_local_does_not_leak_other_canonical_via_localhost(monkeypatch):
-    """Regression: loopback names must not pull in foreign alias lists.
-
-    NAS's 'localhost' / '127.0.0.1' / '::1' are universally present and
-    previously caused is_local_host('mba') to return True on the NAS,
-    because DEFAULT_HOST_ALIASES['mba'] happened to include 'localhost'.
-    """
-    import os as _os
-
-    _reset_cache_for_tests()
-    monkeypatch.setattr("socket.gethostname", lambda: "DXP480TPLUS-994")
-    monkeypatch.setattr("socket.getfqdn", lambda: "DXP480TPLUS-994")
-
-    # os.uname().nodename on the test host could otherwise leak a real
-    # hostname (e.g. "Yusukes-MacBook-Air.local") that happens to match
-    # another canonical alias list.
-    _fake_uname = _os.uname_result(
-        ("Linux", "DXP480TPLUS-994", "6.1.27", "", "x86_64")
-    )
-    monkeypatch.setattr("os.uname", lambda: _fake_uname)
-    monkeypatch.delenv("SCITEX_AGENT_LOCAL_HOSTS", raising=False)
-    assert is_local_host("nas") is True     # legitimate auto-detect
-    assert is_local_host("mba") is False    # must not leak via loopback
-    assert is_local_host("spartan") is False
-    assert is_local_host("ywata-note-win") is False
+def test_loopback_does_not_leak_other_canonical(_isolate, monkeypatch):
+    """Regression: loopback names must not pull in foreign alias lists."""
+    _patch_basics(monkeypatch, hostname="DXP480TPLUS-994")
+    _isolate.write_text(yaml.safe_dump({"aliases": ["nas", "DXP480TPLUS-994"]}))
+    hi._reset_cache_for_tests()
+    assert hi.is_local_host("nas") is True
+    assert hi.is_local_host("mba") is False
+    assert hi.is_local_host("spartan") is False
 
 
 def test_is_local_host_matches_hostname(monkeypatch):
-    _patch_basics(monkeypatch, hostname="mba", fqdn="mba")
-    assert is_local_host("mba") is True
-    _reset_cache_for_tests()
-    _patch_basics(monkeypatch, hostname="mba", fqdn="mba")
-    assert is_local_host("nas") is False
-
-
-def test_is_local_host_matches_fqdn(monkeypatch):
-    _patch_basics(monkeypatch, hostname="mba", fqdn="Yusukes-MacBook-Air.local")
-    assert is_local_host("Yusukes-MacBook-Air.local") is True
-    assert is_local_host("Yusukes-MacBook-Air") is True
-    assert is_local_host("mba") is True
+    _patch_basics(monkeypatch, hostname="mba")
+    assert hi.is_local_host("mba") is True
+    assert hi.is_local_host("nas") is False
 
 
 def test_is_local_host_case_insensitive(monkeypatch):
-    _patch_basics(monkeypatch, hostname="nas", fqdn="nas")
-    assert is_local_host("NAS") is True
-    assert is_local_host("Nas") is True
+    _patch_basics(monkeypatch, hostname="nas")
+    assert hi.is_local_host("NAS") is True
+    assert hi.is_local_host("Nas") is True
 
 
-def test_env_var_adds_aliases(monkeypatch):
-    _patch_basics(monkeypatch)
-    monkeypatch.setenv("SCITEX_AGENT_LOCAL_HOSTS", "foo,bar, baz ")
-    assert is_local_host("foo") is True
-    assert is_local_host("bar") is True
-    assert is_local_host("baz") is True
+def test_yaml_file_aliases(_isolate, monkeypatch):
+    _patch_basics(monkeypatch, hostname="DXP480TPLUS-994")
+    _isolate.write_text(yaml.safe_dump({"aliases": ["nas", "ugreen"]}))
+    hi._reset_cache_for_tests()
+    assert hi.is_local_host("nas") is True
+    assert hi.is_local_host("ugreen") is True
+    assert hi.is_local_host("DXP480TPLUS-994") is True
 
 
-def test_env_var_overrides_empty(monkeypatch):
-    _patch_basics(monkeypatch, hostname="uniquehost", fqdn="uniquehost")
-    monkeypatch.delenv("SCITEX_AGENT_LOCAL_HOSTS", raising=False)
-    assert is_local_host("foo") is False
-    assert is_local_host("uniquehost") is True
+def test_yaml_file_malformed_raises(_isolate, monkeypatch):
+    _isolate.write_text("aliases: [unterminated")
+    hi._reset_cache_for_tests()
+    with pytest.raises(RuntimeError, match="Invalid YAML"):
+        hi.get_local_identities()
 
 
-def test_yaml_file_aliases(monkeypatch, tmp_path):
-    home = tmp_path / "home"
-    (home / ".scitex" / "agent-container").mkdir(parents=True)
-    (home / ".scitex" / "agent-container" / "host_aliases.yaml").write_text(
-        "local:\n  - alpha\n  - beta\n"
-    )
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
-    _patch_basics(monkeypatch)
-    assert is_local_host("alpha") is True
-    assert is_local_host("beta") is True
+def test_yaml_file_non_mapping_raises(_isolate, monkeypatch):
+    _isolate.write_text("- just\n- a\n- list\n")
+    hi._reset_cache_for_tests()
+    with pytest.raises(RuntimeError, match="must be a YAML mapping"):
+        hi.get_local_identities()
 
 
-def test_yaml_file_malformed_fallback(monkeypatch, tmp_path, caplog):
-    home = tmp_path / "home"
-    (home / ".scitex" / "agent-container").mkdir(parents=True)
-    (home / ".scitex" / "agent-container" / "host_aliases.yaml").write_text(
-        "not: valid: yaml: ::\n  - [unclosed\n"
-    )
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
-    _patch_basics(monkeypatch, hostname="somehost", fqdn="somehost")
-    with caplog.at_level(logging.WARNING, logger="scitex_agent_container.host_identity"):
-        ids = get_local_identities()
-    assert "somehost" in ids
-    assert any("host_aliases.yaml" in r.message for r in caplog.records)
-
-
-def test_default_auto_detect_by_seed_match(monkeypatch):
-    _patch_basics(monkeypatch, hostname="DXP480TPLUS-994", fqdn="DXP480TPLUS-994")
-    assert is_local_host("nas") is True
-    assert is_local_host("ugreen") is True
+def test_yaml_file_aliases_not_list_raises(_isolate, monkeypatch):
+    _isolate.write_text(yaml.safe_dump({"aliases": "not-a-list"}))
+    hi._reset_cache_for_tests()
+    with pytest.raises(RuntimeError, match="must be a list"):
+        hi.get_local_identities()
 
 
 def test_runtime_selection_falls_back_to_local(monkeypatch):
@@ -153,10 +105,9 @@ def test_runtime_selection_stays_remote_when_not_local(monkeypatch):
 
 
 def test_cache_reset_for_tests(monkeypatch):
-    _patch_basics(monkeypatch, hostname="hostA", fqdn="hostA")
-    assert is_local_host("hostA") is True
-    assert is_local_host("hostB") is False
-    _reset_cache_for_tests()
-    _patch_basics(monkeypatch, hostname="hostB", fqdn="hostB")
-    monkeypatch.setenv("SCITEX_AGENT_LOCAL_HOSTS", "hostB")
-    assert is_local_host("hostB") is True
+    _patch_basics(monkeypatch, hostname="hostA")
+    assert hi.is_local_host("hostA") is True
+    assert hi.is_local_host("hostB") is False
+    hi._reset_cache_for_tests()
+    _patch_basics(monkeypatch, hostname="hostB")
+    assert hi.is_local_host("hostB") is True

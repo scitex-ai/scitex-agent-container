@@ -13,7 +13,7 @@ from pathlib import Path
 import yaml
 
 from ._host import resolve_hostname, substitute_hostnames
-from ._loaders import compose_effective_name, load_v1, load_v2
+from ._loaders import compose_effective_name, load_v3
 from ._resolve import resolve_config
 from ._types import (
     AgentConfig,
@@ -22,11 +22,11 @@ from ._types import (
     ContextManagementConfig,
     HealthSpec,
     HookSpec,
+    HostsSpec,
     ListenPort,
     ReadyPattern,
     RemoteSpec,
     RestartSpec,
-    SchedulingSpec,
     SkillsSpec,
     SlurmHooks,
     SlurmSpec,
@@ -44,11 +44,11 @@ __all__ = [
     "ContextManagementConfig",
     "HealthSpec",
     "HookSpec",
+    "HostsSpec",
     "ListenPort",
     "ReadyPattern",
     "RemoteSpec",
     "RestartSpec",
-    "SchedulingSpec",
     "SkillsSpec",
     "SlurmHooks",
     "SlurmSpec",
@@ -66,7 +66,11 @@ __all__ = [
 
 
 def load_config(path: str | Path) -> AgentConfig:
-    """Load and validate a YAML config, returning an AgentConfig."""
+    """Load and validate a YAML config, returning an AgentConfig.
+
+    Only ``scitex-agent-container/v3`` is accepted. Older apiVersions
+    (v1, v2) raise loud validation errors — no backward compatibility.
+    """
     path = Path(path).resolve()
     with open(path) as f:
         raw = yaml.safe_load(f)
@@ -78,7 +82,4 @@ def load_config(path: str | Path) -> AgentConfig:
             + "\n".join(f"  - {e}" for e in errors)
         )
 
-    api_version = raw.get("apiVersion")
-    if api_version == "scitex-agent-container/v2":
-        return load_v2(raw, path)
-    return load_v1(raw, path)
+    return load_v3(raw, path)

@@ -12,18 +12,28 @@ from click.testing import CliRunner
 from scitex_agent_container.cli import main
 
 VALID_CONFIG = {
-    "apiVersion": "cld-agent/v1",
+    "apiVersion": "scitex-agent-container/v3",
     "kind": "Agent",
-    "metadata": {"name": "cli-test"},
     "spec": {"runtime": "claude-code", "model": "sonnet"},
 }
 
 
-def _write_config(data: dict) -> str:
-    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
-    yaml.safe_dump(data, tmp)
-    tmp.close()
-    return tmp.name
+def _write_config(data: dict, name: str = "cli-test") -> str:
+    """Write config under <tmp>/<name>/<name>.yaml (dir-as-SSoT)."""
+    import copy
+
+    data = copy.deepcopy(data)
+    metadata = data.get("metadata") or {}
+    metadata.pop("name", None)
+    if metadata:
+        data["metadata"] = metadata
+    elif "metadata" in data:
+        del data["metadata"]
+    tmp_dir = Path(tempfile.mkdtemp()) / name
+    tmp_dir.mkdir(parents=True)
+    path = tmp_dir / f"{name}.yaml"
+    path.write_text(yaml.safe_dump(data))
+    return str(path)
 
 
 class TestCLI:
@@ -145,13 +155,11 @@ class TestCLI:
         assert result.exit_code == 0
 
     def test_find_in_directory(self):
-        """find command should search YAML configs in a directory."""
-        # Create a temp dir with a valid agent YAML that has capabilities
+        """find command should search YAML configs in <name>/<name>.yaml dirs."""
         config_with_caps = {
-            "apiVersion": "cld-agent/v1",
+            "apiVersion": "scitex-agent-container/v3",
             "kind": "Agent",
             "metadata": {
-                "name": "test-gpu-agent",
                 "labels": {
                     "role": "head",
                     "machine": "spartan",
@@ -163,7 +171,9 @@ class TestCLI:
         import tempfile
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "gpu-agent.yaml"
+            agent_dir = Path(tmpdir) / "test-gpu-agent"
+            agent_dir.mkdir()
+            path = agent_dir / "test-gpu-agent.yaml"
             with open(path, "w") as f:
                 yaml.safe_dump(config_with_caps, f)
 
@@ -217,7 +227,7 @@ class TestCLI:
         import tempfile
 
         config_no_match = {
-            "apiVersion": "cld-agent/v1",
+            "apiVersion": "scitex-agent-container/v3",
             "kind": "Agent",
             "metadata": {
                 "name": "basic-agent",
@@ -261,16 +271,14 @@ class TestListJsonTimeoutBudget:
         import time
 
         from scitex_agent_container.cli_pkg import _helpers
-        from scitex_agent_container.config._types import AgentConfig, RemoteSpec
-        from scitex_agent_container.registry import Registry
 
-        # Build two fake registry entries: one remote + one local.
-        remote_cfg_path = tmp_path / "remote.yaml"
+        # v3 dir-as-SSoT: name comes from parent dir.
+        rd = tmp_path / "test-remote"
+        rd.mkdir()
+        remote_cfg_path = rd / "test-remote.yaml"
         remote_cfg_path.write_text(
-            """apiVersion: cld-agent/v1
+            """apiVersion: scitex-agent-container/v3
 kind: Agent
-metadata:
-  name: test-remote
 spec:
   runtime: claude-code
   remote:
@@ -278,12 +286,12 @@ spec:
     user: ywatanabe
 """
         )
-        local_cfg_path = tmp_path / "local.yaml"
+        ld = tmp_path / "test-local"
+        ld.mkdir()
+        local_cfg_path = ld / "test-local.yaml"
         local_cfg_path.write_text(
-            """apiVersion: cld-agent/v1
+            """apiVersion: scitex-agent-container/v3
 kind: Agent
-metadata:
-  name: test-local
 spec:
   runtime: claude-code
 """
@@ -321,15 +329,14 @@ spec:
 
         # Patch ScreenManager for the local agent path.
         from scitex_agent_container.runtimes import screen as _screen
+
         monkeypatch.setattr(_screen.ScreenManager, "exists", lambda n: False)
 
         t0 = time.monotonic()
         # Module-level function reference — the monkeypatch above replaced
         # ``_probe_remote`` within _helpers so any call through that module
         # picks up the hanging mock.
-        rows = _helpers.get_agent_list_data(
-            _FakeRegistry(), remote_probe_timeout_s=1.0
-        )
+        rows = _helpers.get_agent_list_data(_FakeRegistry(), remote_probe_timeout_s=1.0)
         elapsed = time.monotonic() - t0
 
         # Bound: the 10s hang must be cut short by the 1s timeout. Even
@@ -347,12 +354,12 @@ spec:
         """A fast remote probe must NOT be marked liveness_unknown."""
         from scitex_agent_container.cli_pkg import _helpers
 
-        cfg_path = tmp_path / "fast-remote.yaml"
+        d = tmp_path / "test-fast"
+        d.mkdir()
+        cfg_path = d / "test-fast.yaml"
         cfg_path.write_text(
-            """apiVersion: cld-agent/v1
+            """apiVersion: scitex-agent-container/v3
 kind: Agent
-metadata:
-  name: test-fast
 spec:
   runtime: claude-code
   remote:
@@ -363,20 +370,18 @@ spec:
 
         class _FakeRegistry:
             def list_all(self):
-                return [{
-                    "name": "test-fast",
-                    "screen": "test-fast",
-                    "config": str(cfg_path),
-                    "started_at": "?",
-                }]
+                return [
+                    {
+                        "name": "test-fast",
+                        "screen": "test-fast",
+                        "config": str(cfg_path),
+                        "started_at": "?",
+                    }
+                ]
 
-        monkeypatch.setattr(
-            _helpers, "_probe_remote", lambda cfg: True, raising=False
-        )
+        monkeypatch.setattr(_helpers, "_probe_remote", lambda cfg: True, raising=False)
 
-        rows = _helpers.get_agent_list_data(
-            _FakeRegistry(), remote_probe_timeout_s=5.0
-        )
+        rows = _helpers.get_agent_list_data(_FakeRegistry(), remote_probe_timeout_s=5.0)
         row = rows[0]
         assert row["status"] == "running"
         assert row.get("liveness_unknown") is not True

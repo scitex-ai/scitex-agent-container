@@ -17,14 +17,14 @@ from scitex_agent_container.config import (
 )
 
 MINIMAL_CONFIG = {
-    "apiVersion": "cld-agent/v1",
+    "apiVersion": "scitex-agent-container/v3",
     "kind": "Agent",
     "metadata": {"name": "test-agent"},
     "spec": {"runtime": "claude-code"},
 }
 
 FULL_CONFIG = {
-    "apiVersion": "cld-agent/v1",
+    "apiVersion": "scitex-agent-container/v3",
     "kind": "Agent",
     "metadata": {
         "name": "full-agent",
@@ -40,7 +40,7 @@ FULL_CONFIG = {
             "session": "continue",
         },
         "env": {"MY_VAR": "my_value"},
-        "screen": {"name": "cld-full"},
+        "screen": {"name": "full-agent"},
         "container": {
             "runtime": "docker",
             "image": "my-image:latest",
@@ -51,7 +51,7 @@ FULL_CONFIG = {
             "enabled": True,
             "interval": 45,
             "timeout": 10,
-            "method": "screen-alive",
+            "method": "multiplexer-alive",
         },
         "restart": {
             "policy": "on-failure",
@@ -69,11 +69,27 @@ FULL_CONFIG = {
 
 
 def _write_config(data: dict) -> str:
-    """Write a config dict to a temp file and return its path."""
-    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
-    yaml.safe_dump(data, tmp)
-    tmp.close()
-    return tmp.name
+    """Write a config dict to ``<tmp>/<name>/<name>.yaml`` and return its path.
+
+    Dir-as-SSoT: the loader derives the agent name from the parent dir.
+    The helper picks the dir name from ``data["metadata"]["name"]`` (a
+    test-only convenience) and then **strips** that field before writing
+    so the validator (which now rejects metadata.name) doesn't complain.
+    """
+    import copy
+
+    data = copy.deepcopy(data)
+    metadata = data.get("metadata") or {}
+    name = metadata.pop("name", None) or "test-agent"
+    if metadata:
+        data["metadata"] = metadata
+    elif "metadata" in data:
+        del data["metadata"]
+    tmp_dir = Path(tempfile.mkdtemp()) / name
+    tmp_dir.mkdir(parents=True)
+    path = tmp_dir / f"{name}.yaml"
+    path.write_text(yaml.safe_dump(data))
+    return str(path)
 
 
 class TestLoadConfig:
@@ -83,7 +99,7 @@ class TestLoadConfig:
         assert config.name == "test-agent"
         assert config.runtime == "claude-code"
         assert config.model == "sonnet"  # default
-        assert config.screen_name == "cld-test-agent"  # auto-generated
+        assert config.screen_name == "test-agent"  # auto-generated
         Path(path).unlink()
 
     def test_full_config(self):
@@ -103,9 +119,13 @@ class TestLoadConfig:
         assert config.restart.max_retries == 5
         assert config.restart.backoff_initial == 15
         assert config.restart.backoff_multiplier == 3
-        assert config.screen_name == "cld-full"
-        assert config.env == {"MY_VAR": "my_value"}
-        assert config.hooks["pre_start"] == ["echo pre"]
+        assert config.screen_name == "full-agent"
+        # v3 auto-derives sac env vars on top of user env
+        assert config.env["MY_VAR"] == "my_value"
+        assert config.env["CLAUDE_AGENT_ID"] == "full-agent"
+        # v3 auto-prepends mkdir -p {workdir}/.claude
+        assert "echo pre" in config.hooks["pre_start"]
+        assert any("mkdir -p" in h for h in config.hooks["pre_start"])
         Path(path).unlink()
 
     def test_expanded_workdir(self):
@@ -122,21 +142,28 @@ class TestLoadConfig:
             load_config(path)
         Path(path).unlink()
 
-    def test_missing_name(self):
-        data = {
-            "apiVersion": "cld-agent/v1",
-            "kind": "Agent",
-            "metadata": {},
-            "spec": {"runtime": "claude-code"},
-        }
-        path = _write_config(data)
-        with pytest.raises(ValueError, match="name"):
-            load_config(path)
-        Path(path).unlink()
+    def test_metadata_name_rejected(self):
+        """Dir-as-SSoT: metadata.name in YAML is no longer accepted."""
+        # Bypass _write_config (which strips metadata.name) — write raw.
+        tmp_dir = Path(tempfile.mkdtemp()) / "rejected-agent"
+        tmp_dir.mkdir(parents=True)
+        path = tmp_dir / "rejected-agent.yaml"
+        path.write_text(
+            yaml.safe_dump(
+                {
+                    "apiVersion": "scitex-agent-container/v3",
+                    "kind": "Agent",
+                    "metadata": {"name": "rejected-agent"},
+                    "spec": {"runtime": "claude-code"},
+                }
+            )
+        )
+        with pytest.raises(ValueError, match="metadata.name is no longer accepted"):
+            load_config(str(path))
 
     def test_invalid_runtime(self):
         data = {
-            "apiVersion": "cld-agent/v1",
+            "apiVersion": "scitex-agent-container/v3",
             "kind": "Agent",
             "metadata": {"name": "test"},
             "spec": {"runtime": "invalid-runtime"},
@@ -168,7 +195,7 @@ class TestValidateConfig:
 
     def test_invalid_container_runtime(self):
         data = {
-            "apiVersion": "cld-agent/v1",
+            "apiVersion": "scitex-agent-container/v3",
             "kind": "Agent",
             "metadata": {"name": "test"},
             "spec": {
@@ -183,7 +210,7 @@ class TestValidateConfig:
 
     def test_invalid_restart_policy(self):
         data = {
-            "apiVersion": "cld-agent/v1",
+            "apiVersion": "scitex-agent-container/v3",
             "kind": "Agent",
             "metadata": {"name": "test"},
             "spec": {
@@ -207,7 +234,7 @@ class TestSkillsSpec:
 
     def test_skills_from_yaml(self):
         data = {
-            "apiVersion": "cld-agent/v1",
+            "apiVersion": "scitex-agent-container/v3",
             "kind": "Agent",
             "metadata": {"name": "skills-agent"},
             "spec": {
@@ -226,7 +253,7 @@ class TestSkillsSpec:
 
     def test_skills_partial(self):
         data = {
-            "apiVersion": "cld-agent/v1",
+            "apiVersion": "scitex-agent-container/v3",
             "kind": "Agent",
             "metadata": {"name": "partial-skills"},
             "spec": {
@@ -359,7 +386,7 @@ class TestRemoteSpec:
     def test_remote_from_yaml(self):
         """Remote spec parsed from YAML config."""
         data = {
-            "apiVersion": "cld-agent/v1",
+            "apiVersion": "scitex-agent-container/v3",
             "kind": "Agent",
             "metadata": {"name": "remote-agent"},
             "spec": {
@@ -382,7 +409,7 @@ class TestRemoteSpec:
     def test_remote_full_spec(self):
         """Remote spec with all fields specified."""
         data = {
-            "apiVersion": "cld-agent/v1",
+            "apiVersion": "scitex-agent-container/v3",
             "kind": "Agent",
             "metadata": {"name": "remote-full"},
             "spec": {
@@ -431,7 +458,7 @@ class TestRemoteSpec:
     def test_login_shell_from_yaml(self):
         """login_shell can be set to False in YAML."""
         data = {
-            "apiVersion": "cld-agent/v1",
+            "apiVersion": "scitex-agent-container/v3",
             "kind": "Agent",
             "metadata": {"name": "test-login-shell"},
             "spec": {

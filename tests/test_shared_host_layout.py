@@ -31,24 +31,22 @@ def _write_agent_yaml(
     base: Path,
     name: str,
     *,
-    metadata_name: str | None = None,
-    scheduling: dict | None = None,
+    host: str | list[str] | None = None,
+    hosts: str | list[str] | None = None,
     extra_labels: dict | None = None,
 ) -> Path:
+    """Write a v3 YAML at <base>/<name>/<name>.yaml. Dir-as-SSoT."""
+    spec: dict = {"runtime": "claude-code", "model": "sonnet"}
+    if host is not None:
+        spec["host"] = host
+    if hosts is not None:
+        spec["hosts"] = hosts
     data: dict = {
-        "apiVersion": "scitex-agent-container/v2",
+        "apiVersion": "scitex-agent-container/v3",
         "kind": "Agent",
-        "metadata": {
-            "name": metadata_name if metadata_name is not None else name,
-            "labels": {"role": "head", **(extra_labels or {})},
-        },
-        "spec": {
-            "runtime": "claude-code",
-            "model": "sonnet",
-        },
+        "metadata": {"labels": {"role": "head", **(extra_labels or {})}},
+        "spec": spec,
     }
-    if scheduling is not None:
-        data["spec"]["scheduling"] = scheduling
     dest = base / name / f"{name}.yaml"
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(yaml.safe_dump(data))
@@ -270,123 +268,106 @@ class TestHostnameSubstitution:
 
 
 class TestEffectiveId:
-    def test_per_host_appends_suffix(self):
-        from scitex_agent_container.config import SchedulingSpec
+    """compose_effective_name: dir name + HostsSpec + hostname → effective id."""
+
+    def test_hosts_set_appends_suffix(self):
+        from scitex_agent_container.config import HostsSpec
         from scitex_agent_container.config._loaders import compose_effective_name
 
         assert (
-            compose_effective_name(
-                "head", SchedulingSpec(mode="per-host"), "ywata-note-win"
-            )
+            compose_effective_name("head", HostsSpec(hosts="all"), "ywata-note-win")
             == "head-ywata-note-win"
         )
 
-    def test_per_host_idempotent_when_name_already_suffixed(self):
-        from scitex_agent_container.config import SchedulingSpec
+    def test_hosts_set_idempotent_when_name_already_suffixed(self):
+        from scitex_agent_container.config import HostsSpec
         from scitex_agent_container.config._loaders import compose_effective_name
 
         assert (
             compose_effective_name(
                 "head-ywata-note-win",
-                SchedulingSpec(mode="per-host"),
+                HostsSpec(hosts="all"),
                 "ywata-note-win",
             )
             == "head-ywata-note-win"
         )
 
-    def test_singleton_keeps_bare_name(self):
-        from scitex_agent_container.config import SchedulingSpec
+    def test_host_singleton_keeps_bare_name(self):
+        from scitex_agent_container.config import HostsSpec
         from scitex_agent_container.config._loaders import compose_effective_name
 
-        sched = SchedulingSpec(mode="singleton", preferred_host="ywata-note-win")
-        assert (
-            compose_effective_name("fleet-lead", sched, "ywata-note-win")
-            == "fleet-lead"
-        )
-        assert compose_effective_name("fleet-lead", sched, "mba") == "fleet-lead"
+        spec = HostsSpec(host=["ywata-note-win", "mba"])
+        assert compose_effective_name("lead", spec, "ywata-note-win") == "lead"
+        assert compose_effective_name("lead", spec, "mba") == "lead"
 
-    def test_load_v2_yields_host_suffixed_id(self, tmp_path, monkeypatch):
-        """End-to-end: shared YAML on a specific host -> host-suffixed id + workdir."""
+    def test_local_singleton_keeps_bare_name(self):
+        """Both host and hosts empty → local singleton."""
+        from scitex_agent_container.config import HostsSpec
+        from scitex_agent_container.config._loaders import compose_effective_name
+
+        assert compose_effective_name("lead", HostsSpec(), "anywhere") == "lead"
+
+    def test_load_yields_host_suffixed_id_for_multi(self, tmp_path, monkeypatch):
+        """Dir-as-SSoT + hosts: all → <dir>-<HOST> id and hostname-substituted labels."""
         from scitex_agent_container.config import load_config
 
         monkeypatch.setenv("SCITEX_AGENT_CONTAINER_HOSTNAME", "ywata-note-win")
         monkeypatch.setenv("HOME", str(tmp_path))
 
-        head_yaml = tmp_path / "head.yaml"
-        head_yaml.write_text(
+        head_dir = tmp_path / "head"
+        head_dir.mkdir()
+        (head_dir / "head.yaml").write_text(
             dedent(
                 """\
-                apiVersion: scitex-agent-container/v2
+                apiVersion: scitex-agent-container/v3
                 kind: Agent
                 metadata:
-                  name: head
                   labels:
                     role: head
                     machine: ${HOSTNAME}
                 spec:
                   runtime: claude-code
-                  scheduling:
-                    mode: per-host
+                  hosts: all
                 """
             )
         )
-        cfg = load_config(str(head_yaml))
+        cfg = load_config(str(head_dir / "head.yaml"))
         assert cfg.name == "head-ywata-note-win"
         assert cfg.labels["machine"] == "ywata-note-win"
-        assert cfg.scheduling.mode == "per-host"
-        assert cfg.workdir == "~/.scitex/agent-container/workspaces/head-ywata-note-win"
+        assert cfg.hosts_spec.hosts == "all"
+        assert cfg.workdir == (
+            "~/.scitex/agent-container/workspaces/head-ywata-note-win"
+        )
 
-    def test_load_v2_singleton_keeps_bare_id(self, tmp_path, monkeypatch):
+    def test_load_singleton_keeps_bare_id(self, tmp_path, monkeypatch):
         from scitex_agent_container.config import load_config
 
         monkeypatch.setenv("SCITEX_AGENT_CONTAINER_HOSTNAME", "ywata-note-win")
 
-        yaml_path = tmp_path / "fleet-lead.yaml"
-        yaml_path.write_text(
+        d = tmp_path / "lead"
+        d.mkdir()
+        (d / "lead.yaml").write_text(
             dedent(
                 """\
-                apiVersion: scitex-agent-container/v2
+                apiVersion: scitex-agent-container/v3
                 kind: Agent
                 metadata:
-                  name: fleet-lead
                   labels:
                     role: lead
                 spec:
                   runtime: claude-code
-                  scheduling:
-                    mode: singleton
-                    preferred-host: ywata-note-win
-                    fallback-hosts: [mba, nas, spartan]
+                  host:
+                    - ywata-note-win
+                    - mba
+                    - nas
+                    - spartan
                 """
             )
         )
-        cfg = load_config(str(yaml_path))
-        assert cfg.name == "fleet-lead"
-        assert cfg.scheduling.mode == "singleton"
-        assert cfg.scheduling.preferred_host == "ywata-note-win"
-        assert cfg.scheduling.fallback_hosts == ["mba", "nas", "spartan"]
-
-    def test_load_v2_without_scheduling_preserves_name(self, tmp_path):
-        """Legacy v2 YAML without spec.scheduling keeps metadata.name unchanged."""
-        from scitex_agent_container.config import load_config
-
-        yaml_path = tmp_path / "legacy.yaml"
-        yaml_path.write_text(
-            dedent(
-                """\
-                apiVersion: scitex-agent-container/v2
-                kind: Agent
-                metadata:
-                  name: head-test
-                  labels:
-                    role: head
-                spec:
-                  runtime: claude-code
-                """
-            )
-        )
-        cfg = load_config(str(yaml_path))
-        assert cfg.name == "head-test"
+        cfg = load_config(str(d / "lead.yaml"))
+        assert cfg.name == "lead"
+        assert cfg.hosts_spec.host == ["ywata-note-win", "mba", "nas", "spartan"]
+        assert cfg.hosts_spec.hosts == ""
 
 
 # ---------------------------------------------------------------------------
@@ -395,86 +376,134 @@ class TestEffectiveId:
 
 
 class TestSingletonEnforcement:
-    def test_singleton_match_returns_no_skip(self):
+    def _cfg(self, host=None, hosts=None):
+        from scitex_agent_container.config import AgentConfig, HostsSpec
+
+        spec = HostsSpec()
+        if host is not None:
+            spec.host = host
+        if hosts is not None:
+            spec.hosts = hosts
+        return AgentConfig(name="lead", hosts_spec=spec)
+
+    def test_preferred_host_match_returns_no_skip(self):
         from scitex_agent_container.cli_pkg.lifecycle_cmds import (
             _singleton_skip_reason,
         )
-        from scitex_agent_container.config import AgentConfig, SchedulingSpec
 
-        cfg = AgentConfig(
-            name="fleet-lead",
-            scheduling=SchedulingSpec(
-                mode="singleton",
-                preferred_host="ywata-note-win",
-                fallback_hosts=["mba", "nas"],
-            ),
-        )
+        cfg = self._cfg(host=["ywata-note-win", "mba", "nas"])
         assert _singleton_skip_reason(cfg, "ywata-note-win") is None
 
-    def test_singleton_mismatch_returns_skip_reason(self):
+    def test_fallback_host_returns_no_skip(self):
+        """Fallback hosts in the chain may run as backup."""
         from scitex_agent_container.cli_pkg.lifecycle_cmds import (
             _singleton_skip_reason,
         )
-        from scitex_agent_container.config import AgentConfig, SchedulingSpec
 
-        cfg = AgentConfig(
-            name="fleet-lead",
-            scheduling=SchedulingSpec(
-                mode="singleton",
-                preferred_host="ywata-note-win",
-                fallback_hosts=["mba", "nas"],
-            ),
+        cfg = self._cfg(host=["ywata-note-win", "mba", "nas"])
+        assert _singleton_skip_reason(cfg, "mba") is None  # fallback
+        assert _singleton_skip_reason(cfg, "nas") is None  # fallback
+
+    def test_offlist_host_returns_skip_reason(self):
+        from scitex_agent_container.cli_pkg.lifecycle_cmds import (
+            _singleton_skip_reason,
         )
-        reason = _singleton_skip_reason(cfg, "mba")
+
+        cfg = self._cfg(host=["ywata-note-win", "mba", "nas"])
+        reason = _singleton_skip_reason(cfg, "spartan")
         assert reason is not None
         assert "ywata-note-win" in reason
-        assert "mba" in reason
+        assert "spartan" in reason
         assert "fallback-hosts" in reason
 
-    def test_per_host_never_skips(self):
+    def test_multi_instance_never_skips(self):
         from scitex_agent_container.cli_pkg.lifecycle_cmds import (
             _singleton_skip_reason,
         )
-        from scitex_agent_container.config import AgentConfig, SchedulingSpec
 
-        cfg = AgentConfig(name="head-mba", scheduling=SchedulingSpec(mode="per-host"))
+        cfg = self._cfg(hosts="all")
         assert _singleton_skip_reason(cfg, "mba") is None
         assert _singleton_skip_reason(cfg, "ywata-note-win") is None
 
-    def test_singleton_without_preferred_host_never_skips(self):
+    def test_local_singleton_never_skips(self):
+        """No host preference (empty) → run wherever sac is invoked."""
         from scitex_agent_container.cli_pkg.lifecycle_cmds import (
             _singleton_skip_reason,
         )
-        from scitex_agent_container.config import AgentConfig, SchedulingSpec
 
-        cfg = AgentConfig(
-            name="fleet-lead",
-            scheduling=SchedulingSpec(mode="singleton", preferred_host=""),
-        )
+        cfg = self._cfg()
         assert _singleton_skip_reason(cfg, "any-host") is None
 
 
 # ---------------------------------------------------------------------------
-# 5. Scheduling parser error handling
+# 5. Hosts-spec parser
 # ---------------------------------------------------------------------------
 
 
-class TestSchedulingParser:
-    def test_invalid_mode_raises(self):
-        from scitex_agent_container.config._parsers import parse_scheduling
+class TestHostsSpecParser:
+    def test_absent_returns_empty(self):
+        from scitex_agent_container.config._parsers import parse_hosts_spec
 
-        with pytest.raises(ValueError):
-            parse_scheduling({"scheduling": {"mode": "bogus"}})
+        spec = parse_hosts_spec({})
+        assert spec.host == ""
+        assert spec.hosts == ""
 
-    def test_non_mapping_raises(self):
-        from scitex_agent_container.config._parsers import parse_scheduling
+    def test_host_string(self):
+        from scitex_agent_container.config._parsers import parse_hosts_spec
 
-        with pytest.raises(ValueError):
-            parse_scheduling({"scheduling": "not-a-dict"})
+        spec = parse_hosts_spec({"host": "spartan"})
+        assert spec.host == "spartan"
+        assert spec.hosts == ""
 
-    def test_absent_returns_not_explicit(self):
-        from scitex_agent_container.config._parsers import parse_scheduling
+    def test_host_list(self):
+        from scitex_agent_container.config._parsers import parse_hosts_spec
 
-        sched, explicit = parse_scheduling({})
-        assert explicit is False
-        assert sched.mode == "per-host"
+        spec = parse_hosts_spec({"host": ["a", "b", "c"]})
+        assert spec.host == ["a", "b", "c"]
+        assert spec.hosts == ""
+
+    def test_hosts_all_sentinel(self):
+        from scitex_agent_container.config._parsers import parse_hosts_spec
+
+        spec = parse_hosts_spec({"hosts": "all"})
+        assert spec.host == ""
+        assert spec.hosts == "all"
+
+    def test_hosts_list(self):
+        from scitex_agent_container.config._parsers import parse_hosts_spec
+
+        spec = parse_hosts_spec({"hosts": ["mba", "nas"]})
+        assert spec.host == ""
+        assert spec.hosts == ["mba", "nas"]
+
+
+class TestHostsSpecValidation:
+    """Mutually-exclusive + type checks happen in _validation, not the parser."""
+
+    def _validate(self, spec_extra: dict) -> list[str]:
+        from scitex_agent_container.config._validation import validate_raw
+
+        return validate_raw(
+            {
+                "apiVersion": "scitex-agent-container/v3",
+                "kind": "Agent",
+                "spec": {"runtime": "claude-code", **spec_extra},
+            },
+            "test.yaml",
+        )
+
+    def test_both_host_and_hosts_rejected(self):
+        errors = self._validate({"host": "a", "hosts": "all"})
+        assert any("mutually exclusive" in e for e in errors)
+
+    def test_old_scheduling_block_rejected(self):
+        errors = self._validate({"scheduling": {"mode": "per-host"}})
+        assert any("scheduling block is no longer accepted" in e for e in errors)
+
+    def test_hosts_invalid_string_rejected(self):
+        errors = self._validate({"hosts": "everything"})
+        assert any("'all'" in e for e in errors)
+
+    def test_host_invalid_type_rejected(self):
+        errors = self._validate({"host": 123})
+        assert any("must be a string, list of strings, or empty" in e for e in errors)

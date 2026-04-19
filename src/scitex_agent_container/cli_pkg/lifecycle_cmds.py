@@ -29,26 +29,26 @@ def _singleton_skip_reason(config: AgentConfig, hostname: str) -> str | None:
     """Return a human-readable skip reason if ``config`` is a singleton on
     the wrong host, else None.
 
-    per-host mode never skips. Singleton without a preferred-host is a no-op
-    (launches anywhere). Singleton with preferred-host skips when the
-    current host doesn't match.
+    Multi-instance (``hosts:`` set) never skips. Singleton with no host
+    preference (empty ``host:``) launches anywhere. Singleton with
+    ``host:`` set skips when the current host isn't the preferred (head
+    of the list) and isn't a fallback either.
     """
-    sched = config.scheduling
-    if sched.mode != "singleton":
+    spec = config.hosts_spec
+    if spec.hosts:  # multi-instance
         return None
-    if not sched.preferred_host:
+    host = spec.host
+    if not host:  # local singleton — never skip
         return None
-    if sched.preferred_host == hostname:
+    chain = [host] if isinstance(host, str) else list(host)
+    if not chain or hostname == chain[0]:
         return None
-    fallback = (
-        f" (fallback-hosts: {', '.join(sched.fallback_hosts)})"
-        if sched.fallback_hosts
-        else ""
+    if hostname in chain[1:]:
+        return None  # we're a fallback for this singleton — let it run
+    fallback_str = (
+        f" (fallback-hosts: {', '.join(chain[1:])})" if len(chain) > 1 else ""
     )
-    return (
-        f"singleton pinned to '{sched.preferred_host}', "
-        f"current host is '{hostname}'{fallback}"
-    )
+    return f"singleton prefers '{chain[0]}', current host is '{hostname}'{fallback_str}"
 
 
 def _iter_agent_yamls(agents_dir: "Path") -> "list[tuple[str, str]]":
