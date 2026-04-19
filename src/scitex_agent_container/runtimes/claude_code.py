@@ -215,6 +215,23 @@ class ClaudeCodeRuntime(RuntimeBase):
         lines = []
         for key, value in config.env.items():
             lines.append(f'export {key}="{_resolve(str(value))}"')
+        # Always export the canonical fleet hostname so downstream consumers
+        # (orochi MCP sidecar, telegram, etc.) register with "mba" rather
+        # than the OS-reported FQDN ("Yusukes-MacBook-Air.local"). The
+        # sidecar already prefers SCITEX_OROCHI_MACHINE over Node's
+        # hostname() — this just hands it the canonical value.
+        try:
+            from ..config._host import resolve_hostname
+
+            _canonical = resolve_hostname()
+            if _canonical:
+                lines.append(f'export SCITEX_OROCHI_MACHINE="{_canonical}"')
+                lines.append(f'export SCITEX_AGENT_CONTAINER_HOSTNAME="{_canonical}"')
+        except Exception:
+            # resolve_hostname falls through to socket.gethostname() short
+            # form on misconfig; if even that raises, leave the env unset
+            # and let the sidecar fall back to its own hostname() call.
+            pass
         # Cross-package env vars (e.g., orochi-side channel/auth config)
         # are caller's concern: declare them in the agent YAML's env
         # block and they are exported above with the rest of config.env.
