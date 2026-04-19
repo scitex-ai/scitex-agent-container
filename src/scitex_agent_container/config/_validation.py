@@ -6,7 +6,7 @@ from pathlib import Path
 
 import yaml
 
-_VALID_API_VERSIONS = ("cld-agent/v1", "scitex-agent-container/v2")
+_VALID_API_VERSIONS = ("scitex-agent-container/v3",)
 
 
 def validate_raw(raw: dict, path: str) -> list[str]:
@@ -88,6 +88,52 @@ def validate_raw(raw: dict, path: str) -> list[str]:
         if method and method not in ("multiplexer-alive",):
             errors.append(
                 f"spec.health.method must be 'multiplexer-alive', got '{method}'"
+            )
+
+        # host / hosts (mutually exclusive)
+        has_host = "host" in spec
+        has_hosts = "hosts" in spec
+        if has_host and has_hosts:
+            errors.append(
+                "spec.host and spec.hosts are mutually exclusive — set "
+                "exactly one (host: singleton, hosts: multi-instance)"
+            )
+        if has_host:
+            host_val = spec.get("host")
+            if host_val is not None and not isinstance(host_val, (str, list)):
+                errors.append(
+                    f"spec.host must be a string, list of strings, or empty; "
+                    f"got {type(host_val).__name__}"
+                )
+            elif isinstance(host_val, list) and not all(
+                isinstance(h, str) for h in host_val
+            ):
+                errors.append("spec.host list must contain only strings")
+        if has_hosts:
+            hosts_val = spec.get("hosts")
+            if hosts_val is None:
+                errors.append(
+                    "spec.hosts cannot be empty — use 'all' (every fleet "
+                    "host) or a list of host names"
+                )
+            elif isinstance(hosts_val, str) and hosts_val != "all":
+                errors.append(f"spec.hosts string must be 'all', got '{hosts_val}'")
+            elif isinstance(hosts_val, list) and not all(
+                isinstance(h, str) for h in hosts_val
+            ):
+                errors.append("spec.hosts list must contain only strings")
+            elif not isinstance(hosts_val, (str, list)):
+                errors.append(
+                    f"spec.hosts must be 'all' or a list of strings; "
+                    f"got {type(hosts_val).__name__}"
+                )
+
+        # Reject the old `scheduling:` block — replaced by host/hosts.
+        if "scheduling" in spec:
+            errors.append(
+                "spec.scheduling block is no longer accepted. Use spec.host "
+                "(singleton, optionally with fallback list) or spec.hosts "
+                "(multi-instance, 'all' or list)."
             )
 
     return errors

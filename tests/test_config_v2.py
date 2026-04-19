@@ -37,14 +37,14 @@ def _write_config(data: dict) -> str:
 
 
 MINIMAL_V1_CONFIG = {
-    "apiVersion": "cld-agent/v1",
+    "apiVersion": "scitex-agent-container/v3",
     "kind": "Agent",
     "metadata": {"name": "test-agent"},
     "spec": {"runtime": "claude-code"},
 }
 
 MINIMAL_V2_CONFIG = {
-    "apiVersion": "scitex-agent-container/v2",
+    "apiVersion": "scitex-agent-container/v3",
     "kind": "Agent",
     "metadata": {
         "name": "head-test",
@@ -57,7 +57,7 @@ MINIMAL_V2_CONFIG = {
 }
 
 V2_WITH_MCP = {
-    "apiVersion": "scitex-agent-container/v2",
+    "apiVersion": "scitex-agent-container/v3",
     "kind": "Agent",
     "metadata": {
         "name": "head-test",
@@ -150,12 +150,12 @@ class TestV2Config:
         assert errors == []
         Path(path).unlink()
 
-    def test_v1_still_works(self):
-        """Ensure v1 configs are unaffected by v2 changes."""
+    def test_minimal_v3_uses_runtime_workspace(self):
+        """v3 minimal config places workspace under sac's runtime root."""
         path = _write_config(MINIMAL_V1_CONFIG)
         config = load_config(path)
-        assert config.screen_name == "cld-test-agent"
-        assert config.workdir == "~/proj"
+        assert config.screen_name == "test-agent"
+        assert config.workdir == "~/.scitex/agent-container/workspaces/test-agent"
         assert config.mcp_servers == {}
         Path(path).unlink()
 
@@ -344,7 +344,7 @@ class TestMultiplexerConfig:
     def test_default_multiplexer(self):
         path = _write_config(MINIMAL_V1_CONFIG)
         config = load_config(path)
-        assert config.multiplexer == "screen"
+        assert config.multiplexer == "tmux"  # v3 default
         Path(path).unlink()
 
     def test_tmux_multiplexer(self):
@@ -465,7 +465,7 @@ class TestPythonVenvResolution:
         self._make_venv(v)
 
         data = {
-            "apiVersion": "scitex-agent-container/v2",
+            "apiVersion": "scitex-agent-container/v3",
             "kind": "Agent",
             "metadata": {"name": "regression"},
             "spec": {

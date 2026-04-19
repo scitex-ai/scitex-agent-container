@@ -155,24 +155,26 @@ class SkillsSpec:
 
 
 @dataclass
-class SchedulingSpec:
-    """Fleet-wide scheduling policy for an agent (shared-host layout).
+class HostsSpec:
+    """Where an agent should run, in either singleton or multi-instance form.
 
-    ``mode`` controls effective-id composition and launch-skip behavior:
-      * ``per-host`` (default): agent is started on every host that runs
-        ``sac start <name>``; the effective id is ``<metadata.name>-<HOST>``
-        unless the name already ends with ``-<HOST>``.
-      * ``singleton``: exactly one instance fleet-wide. The effective id
-        stays as the bare ``<metadata.name>``. Only launched on
-        ``preferred-host``; on other hosts the launch is a no-op.
+    Mutually exclusive — exactly one of ``host`` or ``hosts`` may be set:
 
-    ``fallback-hosts`` is recorded for observability but not acted on
-    automatically — manual failover today.
+    * ``host`` (singular) — exactly one instance runs:
+        - empty / absent: local singleton (runs wherever sac is invoked)
+        - string: pinned to that host
+        - list: priority order; first available host wins (fallback chain)
+    * ``hosts`` (plural) — multiple instances run, one per host:
+        - "all": one per fleet host (replaces the old per-host mode)
+        - list of host names: one per listed host (subset)
+
+    Validator (in ``_validation.py``) enforces mutual exclusion + types.
+    Loader composes effective ids: ``hosts`` triggers the
+    ``<name>-<HOST>`` suffix; ``host`` keeps the bare name.
     """
 
-    mode: str = "per-host"
-    preferred_host: str = ""
-    fallback_hosts: list[str] = field(default_factory=list)
+    host: str | list[str] = ""
+    hosts: str | list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -285,7 +287,7 @@ class AgentConfig:
     startup: "StartupSpec" = field(default_factory=lambda: StartupSpec())
     mcp_servers: dict[str, dict] = field(default_factory=dict)
     multiplexer: str = "tmux"  # "tmux" (default) or "screen"
-    scheduling: SchedulingSpec = field(default_factory=SchedulingSpec)
+    hosts_spec: HostsSpec = field(default_factory=HostsSpec)
     slurm: SlurmSpec = field(default_factory=SlurmSpec)
     config_path: str = ""
 

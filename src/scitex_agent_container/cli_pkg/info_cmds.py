@@ -35,7 +35,9 @@ from ._helpers import _json_flag, console
     help="Output as JSON.",
 )
 @click.pass_context
-def find(ctx: click.Context, capability: str, search_dir: str | None, as_json: bool) -> None:
+def find(
+    ctx: click.Context, capability: str, search_dir: str | None, as_json: bool
+) -> None:
     """Find agents with a specific capability label from YAML configs.
 
     Searches agent definition files for those whose ``capabilities`` label
@@ -46,7 +48,18 @@ def find(ctx: click.Context, capability: str, search_dir: str | None, as_json: b
     search_path = Path(search_dir).expanduser().resolve()
 
     matches: list[dict] = []
-    for yaml_path in sorted(search_path.glob("*.yaml")):
+    # Dir-as-SSoT: agents live at <name>/<name>.yaml. Walk one level deep
+    # and match the convention. Bare top-level *.yaml files are also
+    # accepted for legacy / scratch use.
+    candidates: list[Path] = []
+    for sub in sorted(search_path.iterdir()) if search_path.is_dir() else []:
+        if sub.is_dir():
+            yaml_in = sub / f"{sub.name}.yaml"
+            if yaml_in.exists():
+                candidates.append(yaml_in)
+        elif sub.suffix == ".yaml":
+            candidates.append(sub)
+    for yaml_path in candidates:
         try:
             cfg = load_config(yaml_path)
         except Exception:
@@ -160,7 +173,9 @@ def attach(name: str) -> None:
     help="Output as JSON.",
 )
 @click.pass_context
-def list_python_apis(ctx: click.Context, verbose: int, max_depth: int, as_json: bool) -> None:
+def list_python_apis(
+    ctx: click.Context, verbose: int, max_depth: int, as_json: bool
+) -> None:
     """List all public Python APIs of scitex-agent-container."""
     module = importlib.import_module("scitex_agent_container")
     tree = get_api_tree(module, max_depth=max_depth, docstring=(verbose >= 1))

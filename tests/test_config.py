@@ -17,14 +17,14 @@ from scitex_agent_container.config import (
 )
 
 MINIMAL_CONFIG = {
-    "apiVersion": "cld-agent/v1",
+    "apiVersion": "scitex-agent-container/v3",
     "kind": "Agent",
     "metadata": {"name": "test-agent"},
     "spec": {"runtime": "claude-code"},
 }
 
 FULL_CONFIG = {
-    "apiVersion": "cld-agent/v1",
+    "apiVersion": "scitex-agent-container/v3",
     "kind": "Agent",
     "metadata": {
         "name": "full-agent",
@@ -40,7 +40,7 @@ FULL_CONFIG = {
             "session": "continue",
         },
         "env": {"MY_VAR": "my_value"},
-        "screen": {"name": "cld-full"},
+        "screen": {"name": "full-agent"},
         "container": {
             "runtime": "docker",
             "image": "my-image:latest",
@@ -99,7 +99,7 @@ class TestLoadConfig:
         assert config.name == "test-agent"
         assert config.runtime == "claude-code"
         assert config.model == "sonnet"  # default
-        assert config.screen_name == "cld-test-agent"  # auto-generated
+        assert config.screen_name == "test-agent"  # auto-generated
         Path(path).unlink()
 
     def test_full_config(self):
@@ -119,9 +119,13 @@ class TestLoadConfig:
         assert config.restart.max_retries == 5
         assert config.restart.backoff_initial == 15
         assert config.restart.backoff_multiplier == 3
-        assert config.screen_name == "cld-full"
-        assert config.env == {"MY_VAR": "my_value"}
-        assert config.hooks["pre_start"] == ["echo pre"]
+        assert config.screen_name == "full-agent"
+        # v3 auto-derives sac env vars on top of user env
+        assert config.env["MY_VAR"] == "my_value"
+        assert config.env["CLAUDE_AGENT_ID"] == "full-agent"
+        # v3 auto-prepends mkdir -p {workdir}/.claude
+        assert "echo pre" in config.hooks["pre_start"]
+        assert any("mkdir -p" in h for h in config.hooks["pre_start"])
         Path(path).unlink()
 
     def test_expanded_workdir(self):
@@ -147,7 +151,7 @@ class TestLoadConfig:
         path.write_text(
             yaml.safe_dump(
                 {
-                    "apiVersion": "cld-agent/v1",
+                    "apiVersion": "scitex-agent-container/v3",
                     "kind": "Agent",
                     "metadata": {"name": "rejected-agent"},
                     "spec": {"runtime": "claude-code"},
@@ -159,7 +163,7 @@ class TestLoadConfig:
 
     def test_invalid_runtime(self):
         data = {
-            "apiVersion": "cld-agent/v1",
+            "apiVersion": "scitex-agent-container/v3",
             "kind": "Agent",
             "metadata": {"name": "test"},
             "spec": {"runtime": "invalid-runtime"},
@@ -191,7 +195,7 @@ class TestValidateConfig:
 
     def test_invalid_container_runtime(self):
         data = {
-            "apiVersion": "cld-agent/v1",
+            "apiVersion": "scitex-agent-container/v3",
             "kind": "Agent",
             "metadata": {"name": "test"},
             "spec": {
@@ -206,7 +210,7 @@ class TestValidateConfig:
 
     def test_invalid_restart_policy(self):
         data = {
-            "apiVersion": "cld-agent/v1",
+            "apiVersion": "scitex-agent-container/v3",
             "kind": "Agent",
             "metadata": {"name": "test"},
             "spec": {
@@ -230,7 +234,7 @@ class TestSkillsSpec:
 
     def test_skills_from_yaml(self):
         data = {
-            "apiVersion": "cld-agent/v1",
+            "apiVersion": "scitex-agent-container/v3",
             "kind": "Agent",
             "metadata": {"name": "skills-agent"},
             "spec": {
@@ -249,7 +253,7 @@ class TestSkillsSpec:
 
     def test_skills_partial(self):
         data = {
-            "apiVersion": "cld-agent/v1",
+            "apiVersion": "scitex-agent-container/v3",
             "kind": "Agent",
             "metadata": {"name": "partial-skills"},
             "spec": {
@@ -382,7 +386,7 @@ class TestRemoteSpec:
     def test_remote_from_yaml(self):
         """Remote spec parsed from YAML config."""
         data = {
-            "apiVersion": "cld-agent/v1",
+            "apiVersion": "scitex-agent-container/v3",
             "kind": "Agent",
             "metadata": {"name": "remote-agent"},
             "spec": {
@@ -405,7 +409,7 @@ class TestRemoteSpec:
     def test_remote_full_spec(self):
         """Remote spec with all fields specified."""
         data = {
-            "apiVersion": "cld-agent/v1",
+            "apiVersion": "scitex-agent-container/v3",
             "kind": "Agent",
             "metadata": {"name": "remote-full"},
             "spec": {
@@ -454,7 +458,7 @@ class TestRemoteSpec:
     def test_login_shell_from_yaml(self):
         """login_shell can be set to False in YAML."""
         data = {
-            "apiVersion": "cld-agent/v1",
+            "apiVersion": "scitex-agent-container/v3",
             "kind": "Agent",
             "metadata": {"name": "test-login-shell"},
             "spec": {

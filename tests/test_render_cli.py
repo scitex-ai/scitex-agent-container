@@ -13,10 +13,9 @@ from scitex_agent_container.cli_pkg._main import main
 
 _SLURM_YAML = dedent(
     """\
-    apiVersion: scitex-agent-container/v2
+    apiVersion: scitex-agent-container/v3
     kind: Agent
     metadata:
-      name: head-spartan
       labels:
         role: head
     spec:
@@ -35,10 +34,9 @@ _SLURM_YAML = dedent(
 
 _CLAUDE_YAML = dedent(
     """\
-    apiVersion: scitex-agent-container/v2
+    apiVersion: scitex-agent-container/v3
     kind: Agent
     metadata:
-      name: head-local
       labels:
         role: head
     spec:
@@ -50,14 +48,19 @@ _CLAUDE_YAML = dedent(
 
 @pytest.fixture
 def slurm_yaml(tmp_path: Path) -> Path:
-    p = tmp_path / "head-spartan.yaml"
+    """v3: dir-as-SSoT — agent name from parent dir."""
+    d = tmp_path / "head-spartan"
+    d.mkdir()
+    p = d / "head-spartan.yaml"
     p.write_text(_SLURM_YAML)
     return p
 
 
 @pytest.fixture
 def claude_yaml(tmp_path: Path) -> Path:
-    p = tmp_path / "head-local.yaml"
+    d = tmp_path / "head-local"
+    d.mkdir()
+    p = d / "head-local.yaml"
     p.write_text(_CLAUDE_YAML)
     return p
 

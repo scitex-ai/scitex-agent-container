@@ -14,10 +14,10 @@ from ._parsers import (
     parse_extensions,
     parse_health,
     parse_hooks,
+    parse_hosts_spec,
     parse_listen,
     parse_remote,
     parse_restart,
-    parse_scheduling,
     parse_skills,
     parse_slurm,
     parse_startup,
@@ -25,7 +25,7 @@ from ._parsers import (
     parse_telegram,
     parse_watchdog,
 )
-from ._types import AgentConfig, SchedulingSpec
+from ._types import AgentConfig, HostsSpec
 
 # Default workdir layout: sac's own state root. Per-agent runtime state
 # (CLAUDE.md, .mcp.json, .claude/) lives at
@@ -86,19 +86,21 @@ def _resolve_python_venv(venv: str | list[str] | None) -> str:
 
 
 def compose_effective_name(
-    raw_name: str, scheduling: SchedulingSpec | None, hostname: str
+    raw_name: str, hosts_spec: HostsSpec | None, hostname: str
 ) -> str:
-    """Return the effective agent id given metadata.name + scheduling + host.
+    """Return the effective agent id given dir-derived name + host/hosts + host.
 
     Rules:
-      * ``singleton`` mode: the bare ``raw_name`` (host-pin is enforced at
-        launch time, not encoded in the id).
-      * ``per-host`` mode (default): append ``-<hostname>`` unless the name
-        already ends with ``-<hostname>`` (idempotent — protects legacy
-        flat-layout names like ``head-ywata-note-win`` which are already
-        host-suffixed).
+      * If ``hosts:`` is set (multi-instance), append ``-<hostname>`` so
+        each host's instance has a unique id. Idempotent — names that
+        already end with ``-<hostname>`` are not double-suffixed.
+      * Otherwise (``host:`` set, or both empty = local singleton): keep
+        the bare ``raw_name``. Singleton id stays stable across hosts.
     """
-    if scheduling is not None and scheduling.mode == "singleton":
+    is_multi = (
+        hosts_spec is not None and hosts_spec.hosts != "" and hosts_spec.hosts != []
+    )
+    if not is_multi:
         return raw_name
     suffix = f"-{hostname}"
     if raw_name.endswith(suffix) or raw_name == hostname:
@@ -106,75 +108,35 @@ def compose_effective_name(
     return f"{raw_name}{suffix}"
 
 
-def load_v1(raw: dict, path: Path) -> AgentConfig:
-    """Load a cld-agent/v1 config."""
-    metadata = raw.get("metadata", {})
-    spec = raw.get("spec", {})
+def load_v3(raw: dict, path: Path) -> AgentConfig:
+    """Load a scitex-agent-container/v3 config with auto-derived defaults.
 
-    screen_raw = spec.get("screen", {}) or {}
-    screen_name = screen_raw.get("name", "")
+    v3 changes from v2:
+      * ``metadata.name`` rejected (dir-as-SSoT — name from parent dir)
+      * ``spec.scheduling`` block dropped; ``spec.host`` / ``spec.hosts``
+        used directly
+      * ``spec.python-venv`` (was ``spec.venv``); takes string or list
+      * ``spec.health.method: multiplexer-alive`` (was ``screen-alive``)
 
-    return AgentConfig(
-        name=_name_from_path(path),
-        runtime=spec.get("runtime", "claude-code"),
-        model=spec.get("model", "sonnet"),
-        workdir=spec.get("workdir", "~/proj"),
-        python_venv=_resolve_python_venv(spec.get("python-venv", "")),
-        env=spec.get("env", {}) or {},
-        screen_name=screen_name,
-        labels=metadata.get("labels", {}) or {},
-        container=parse_container(spec),
-        claude=parse_claude(spec),
-        health=parse_health(spec),
-        watchdog=parse_watchdog(spec),
-        restart=parse_restart(spec),
-        hooks=parse_hooks(spec),
-        telegram=parse_telegram(spec),
-        remote=parse_remote(spec),
-        skills=parse_skills(spec),
-        startup_commands=parse_startup_commands(spec),
-        startup=parse_startup(spec),
-        context_management=parse_context_management(spec),
-        listen=parse_listen(spec),
-        extensions=parse_extensions(spec),
-        multiplexer=spec.get("multiplexer", "screen"),
-        slurm=parse_slurm(spec),
-        config_path=str(path),
-    )
-
-
-def load_v2(raw: dict, path: Path) -> AgentConfig:
-    """Load a scitex-agent-container/v2 config with auto-derived defaults.
-
-    Substitutes ``${HOSTNAME}`` in every string field before dataclass
-    construction, and composes the effective agent id from ``metadata.name``
-    + ``spec.scheduling`` so one canonical YAML per role can be shared
-    across hosts.
+    No backward compatibility — old apiVersions raise loud validation
+    errors at config-load time.
     """
-    # Only walk-and-substitute hostname placeholders when the YAML opts in
-    # via an explicit ``spec.scheduling`` block. Legacy v2 YAMLs without
-    # scheduling keep the pre-change code path (no substitution, no
-    # effective-id composition, no host resolution required).
-    scheduling, explicit_scheduling = parse_scheduling(raw.get("spec", {}) or {})
+    spec = raw.get("spec", {}) or {}
+    hosts_spec = parse_hosts_spec(spec)
 
-    if explicit_scheduling:
-        hostname = resolve_hostname()
+    # ${HOSTNAME} substitution only meaningful when this is a multi-host
+    # template (``hosts:`` set). Singletons run on the canonical host name.
+    is_multi = hosts_spec.hosts != "" and hosts_spec.hosts != []
+    hostname = resolve_hostname() if is_multi else ""
+    if is_multi:
         raw = substitute_hostnames(raw, hostname)
-    else:
-        hostname = ""
+        spec = raw.get("spec", {}) or {}
 
-    metadata = raw.get("metadata", {})
-    spec = raw.get("spec", {})
+    metadata = raw.get("metadata", {}) or {}
     raw_name = _name_from_path(path)
     labels = metadata.get("labels", {}) or {}
 
-    # Compose the effective id used everywhere downstream (systemd, screen/
-    # tmux, workdir, registry keys). Only when scheduling is explicit —
-    # otherwise keep the raw metadata.name as-is for backward compatibility.
-    if explicit_scheduling:
-        name = compose_effective_name(raw_name, scheduling, hostname)
-    else:
-        name = raw_name
+    name = compose_effective_name(raw_name, hosts_spec, hostname)
 
     # Auto-derive workdir (user can override).
     # Default lives under runtime/workspaces/ (2026-04-17 layout).
@@ -239,7 +201,7 @@ def load_v2(raw: dict, path: Path) -> AgentConfig:
         listen=parse_listen(spec),
         extensions=parse_extensions(spec),
         mcp_servers=mcp_servers,
-        multiplexer=spec.get("multiplexer", "screen"),
-        scheduling=scheduling,
+        multiplexer=spec.get("multiplexer", "tmux"),
+        hosts_spec=hosts_spec,
         config_path=str(path),
     )
