@@ -169,7 +169,17 @@ def _classify_pane_state(pane_text: str) -> tuple[str, str]:
         return "unknown", ""
     tail = pane_text[-2000:]
     lower = tail.lower()
-    if "invalid api key" in lower or "please re-run /login" in lower:
+    # auth_error patterns — Claude Code surfaces a few wordings depending on
+    # which auth path failed. Keep the list literal-string so adding new
+    # variants is obvious; lower-case match because the source casing varies.
+    _auth_markers = (
+        "invalid api key",
+        "invalid authentication credentials",  # Anthropic API 401 body
+        "please re-run /login",
+        "please run /login",  # Claude Code 2.1.x wording
+        "authentication_error",  # raw API error type
+    )
+    if any(m in lower for m in _auth_markers):
         return "auth_error", tail.strip().splitlines()[-1][:200]
     if "limit reached" in lower or "resets in" in lower:
         return "limit_reached", ""
@@ -178,6 +188,18 @@ def _classify_pane_state(pane_text: str) -> tuple[str, str]:
     # compose_pending: presence of a non-empty ❯ prompt with user text below
     if re.search(r"❯\s+\S", tail):
         return "compose_pending_unsent", ""
+    # Initial-waiting: freshly booted agent at the bare prompt with no
+    # context used yet. Distinguishing this from "running" / "idle" gives
+    # the dashboard a discrete "alive but never worked" signal so a
+    # never-replied agent doesn't masquerade as healthy idle. Cheap
+    # markers: 0% context bar AND empty ❯ prompt AND the channel-listen
+    # banner from a fresh boot. Any one of the latter two is too loose;
+    # require all three so a long-running idle doesn't wrongly classify.
+    has_zero_ctx = "context ░░░░░░░░░░ 0%" in lower or "context: 0%" in lower
+    has_empty_prompt = bool(re.search(r"❯\s*\n", tail) or re.search(r"❯\s*$", tail))
+    has_listen_banner = "listening for channel messages" in lower
+    if has_zero_ctx and has_empty_prompt and has_listen_banner:
+        return "waiting", ""
     if "❯" in tail or ">" in tail:
         return "running", ""
     return "unknown", ""
