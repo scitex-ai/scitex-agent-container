@@ -180,29 +180,39 @@ def _classify_pane_state(pane_text: str) -> tuple[str, str]:
         "authentication_error",  # raw API error type
     )
     if any(m in lower for m in _auth_markers):
-        return "auth_error", tail.strip().splitlines()[-1][:200]
+        # Return the line that actually contains the auth marker so the
+        # snippet is operationally useful (a human reading the dashboard
+        # sees "/login" / "401" rather than the trailing bare prompt).
+        snippet = ""
+        for ln in reversed(tail.strip().splitlines()):
+            if any(m in ln.lower() for m in _auth_markers):
+                snippet = ln.strip()[:200]
+                break
+        if not snippet:
+            snippet = tail.strip().splitlines()[-1][:200]
+        return "auth_error", snippet
     if "limit reached" in lower or "resets in" in lower:
         return "limit_reached", ""
     if re.search(r"\(y/n\)|\[y/n\]|\(yes/no\)|\[yes/no\]", lower):
         return "y_n_prompt", tail.strip().splitlines()[-1][:200]
-    # compose_pending: presence of a non-empty ❯ prompt with user text below
-    if re.search(r"❯\s+\S", tail):
+    # compose_pending: ❯ followed by non-whitespace on the SAME line.
+    # Use `[^\s\n]` (non-newline, non-whitespace) to avoid matching the
+    # decorative dashed separator that lives a line below the empty
+    # prompt — earlier `❯\s+\S` greedily crossed the newline and lit
+    # compose_pending for every freshly-booted agent.
+    if re.search(r"❯[ \t]+\S", tail):
         return "compose_pending_unsent", ""
-    # Initial-waiting: freshly booted agent at the bare prompt with no
-    # context used yet. Distinguishing this from "running" / "idle" gives
-    # the dashboard a discrete "alive but never worked" signal so a
-    # never-replied agent doesn't masquerade as healthy idle. Cheap
-    # markers: 0% context bar AND empty ❯ prompt AND the channel-listen
-    # banner from a fresh boot. Any one of the latter two is too loose;
-    # require all three so a long-running idle doesn't wrongly classify.
-    has_zero_ctx = "context ░░░░░░░░░░ 0%" in lower or "context: 0%" in lower
-    has_empty_prompt = bool(re.search(r"❯\s*\n", tail) or re.search(r"❯\s*$", tail))
-    has_listen_banner = "listening for channel messages" in lower
-    if has_zero_ctx and has_empty_prompt and has_listen_banner:
-        return "waiting", ""
     if "❯" in tail or ">" in tail:
         return "running", ""
     return "unknown", ""
+
+    # Note: "waiting" (freshly booted, never received work) is intentionally
+    # NOT detected here. The earlier draft relied on the claude-hud
+    # statusline `Context ░░░░░░░░░░ 0%` marker, but claude-hud is an
+    # external tool not present in every install. The dashboard derives
+    # "waiting" instead from the hub-side `last_tool_at` field — an agent
+    # that is connected but has never recorded a tool call is waiting,
+    # regardless of what its pane statusline looks like.
 
 
 def _config_candidates(workdir: str, filename: str) -> list[Path]:
