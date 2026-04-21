@@ -271,10 +271,35 @@ def cleanup_src_claude_md(config: AgentConfig, workdir: str) -> None:
 
 
 def deploy_src_mcp_json(config: AgentConfig, workdir: str) -> None:
-    """Copy src_mcp.json to {workdir}/.mcp.json with interpolation.
+    """Copy ``src_mcp.json`` to ``{workdir}/.mcp.json`` on EVERY invocation.
 
-    Resolves ${metadata.*} and ${ENV_VAR} references.
-    If src_mcp.json does not exist, does nothing.
+    Contract (see todo#453):
+
+    * **Unconditional refresh** — the workspace ``.mcp.json`` is always
+      rewritten from the canonical ``src_mcp.json`` when this function
+      is called. There is NO ``if dest.exists()`` fast-path. This is the
+      invariant that makes canonical config edits (e.g. adding a channel
+      to ``SCITEX_OROCHI_CHANNELS``) propagate on the next agent start
+      rather than lingering as stale workspace state for hours.
+    * **Per-server replace**, not deep-merge — every server entry
+      declared in ``src_mcp.json`` fully overwrites the same-named entry
+      in the workspace copy. This means env keys removed from the
+      canonical source are also removed from the workspace.
+    * **Other servers preserved** — servers present in the workspace
+      ``.mcp.json`` but NOT declared by this agent's ``src_mcp.json``
+      are left untouched (e.g. user-added local tools).
+    * **Idempotent** — calling this repeatedly with an unchanged source
+      produces byte-identical output.
+
+    Interpolation:
+
+    * ``${metadata.name}`` / ``${metadata.labels.*}`` → resolved from
+      the AgentConfig.
+    * ``${ENV_VAR}`` → resolved from ``os.environ`` at write time.
+    * ``~`` prefix in ``args`` entries → expanded to ``$HOME``.
+
+    If ``src_mcp.json`` does not exist next to the agent YAML, does
+    nothing (legacy-v1 / no-MCP agents).
     """
     defdir = _definition_dir(config)
     if defdir is None:
@@ -301,7 +326,8 @@ def deploy_src_mcp_json(config: AgentConfig, workdir: str) -> None:
 
     dest = Path(workdir) / ".mcp.json"
 
-    # Merge with existing .mcp.json if present
+    # Preserve any OTHER servers the workspace has that we don't declare.
+    # Our own servers are always replaced wholesale below.
     existing: dict = {}
     if dest.exists():
         try:
@@ -319,9 +345,33 @@ def deploy_src_mcp_json(config: AgentConfig, workdir: str) -> None:
                 for a in server["args"]
             ]
 
-    # Merge mcpServers
+    # Per-server replace (NOT deep merge): the src entry wholly overrides
+    # any workspace entry with the same key. This guarantees that env
+    # keys removed from src_mcp.json are also removed from the workspace
+    # copy — critical for e.g. retiring a ``SCITEX_OROCHI_CHANNELS``
+    # subscription entry cleanly.
     src_servers = data.get("mcpServers", {})
     existing.setdefault("mcpServers", {}).update(src_servers)
+
+    # Drift diagnostics: log when the workspace was older than src —
+    # the common case of "PR merged N hours ago, agent still stale"
+    # now leaves a breadcrumb in the agent-container log instead of
+    # being a silent no-op.
+    try:
+        if dest.exists():
+            src_mtime = src.stat().st_mtime
+            dest_mtime = dest.stat().st_mtime
+            if src_mtime > dest_mtime:
+                drift_minutes = (src_mtime - dest_mtime) / 60
+                logger.info(
+                    "src_mcp.json for %s is newer than workspace copy by "
+                    "%.1f min — refreshing %s",
+                    config.name,
+                    drift_minutes,
+                    dest,
+                )
+    except OSError:
+        pass
 
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(json.dumps(existing, indent=2) + "\n")
