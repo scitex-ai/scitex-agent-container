@@ -96,6 +96,28 @@ def _parse_skills(workdir: str) -> list[str]:
     return skills
 
 
+_SUBAGENT_MARKER_RE = re.compile(
+    r"(\d+)\s+local\s+agents?(?:\s+still)?\s+running",
+    re.IGNORECASE,
+)
+
+
+def parse_subagent_count_from_pane_text(pane: str) -> int:
+    """Return the subagent count advertised by Claude Code's status marker.
+
+    Claude Code emits a line of the form ``N local agent(s) running`` (or
+    ``... still running``) in the tmux pane while subagent ``Agent``
+    calls are in flight. Match that marker (anchored on the literal
+    ``running`` trailer so chat text that merely mentions "local agent"
+    can't false-positive us). Anything else (no marker, empty pane) is
+    reported as ``0``.
+    """
+    if not pane:
+        return 0
+    m = _SUBAGENT_MARKER_RE.search(pane)
+    return int(m.group(1)) if m else 0
+
+
 def _subagent_count_from_pane(session: str, multiplexer: str) -> int:
     if multiplexer != "tmux":
         return 0
@@ -107,8 +129,7 @@ def _subagent_count_from_pane(session: str, multiplexer: str) -> int:
         ).stdout
     except Exception:
         return 0
-    m = re.search(r"(\d+) local agent", pane)
-    return int(m.group(1)) if m else 0
+    return parse_subagent_count_from_pane_text(pane)
 
 
 def _capture_pane(session: str, multiplexer: str, max_chars: int = 10000) -> str:

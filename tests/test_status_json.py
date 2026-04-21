@@ -142,6 +142,35 @@ def test_collect_rich_with_fake_transcript(
 
 
 # ---------------------------------------------------------------------------
+# parse_subagent_count_from_pane_text — regex pinned across marker variants
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "pane,expected",
+    [
+        # Canonical: "N local agent(s) running"
+        ("  ✶ 1 local agent running · 2s\n❯ ", 1),
+        ("  ✶ 3 local agents running · 12s\n", 3),
+        # "still running" variant (singular + plural).
+        ("  ✢ 1 local agent still running · 1m 4s\n", 1),
+        ("  ✢ 5 local agents still running · 45s\n", 5),
+        # Explicit zero is parsed (not treated as "no marker").
+        ("  0 local agents running\n", 0),
+        # No marker → 0.
+        ("regular chat output\nnothing here\n❯ ", 0),
+        # Empty / None → 0 (None guarded by the caller via ``or ""``).
+        ("", 0),
+        # Chat prose that merely mentions "local agent" must NOT
+        # false-positive — the regex anchors on the ``running`` trailer.
+        ("reviewing 2 local agent names that were stale last cycle\n", 0),
+    ],
+)
+def test_parse_subagent_count_from_pane_text(pane: str, expected: int) -> None:
+    assert agent_meta.parse_subagent_count_from_pane_text(pane) == expected
+
+
+# ---------------------------------------------------------------------------
 # _fallback_workdir — sac's own workspace root
 # ---------------------------------------------------------------------------
 
