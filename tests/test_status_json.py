@@ -310,6 +310,69 @@ def test_status_terse_context_management_null_when_disabled() -> None:
     assert terse["context_management.strategy"] is None
 
 
+def test_terse_status_is_heartbeat_safe() -> None:
+    """lead msg#16005 contract: scitex-orochi's heartbeat pusher shells
+    out to ``scitex-agent-container status <name> --terse --json`` and
+    forwards the parsed dict verbatim as ``sac_status`` on
+    ``POST /api/agents/register/``.
+
+    Pin the three invariants that pivot relies on:
+
+    1. ``--terse`` output is a *flat* dict — all keys are strings,
+       values are JSON-primitives (str / int / float / bool / None).
+       A nested-dict leak would explode the hub registry's storage
+       shape and break the forward-new-fields-automatically promise.
+
+    2. Every whitelisted key is present (``None`` for missing source
+       fields) — consumers can read any ``TERSE_STATUS_FIELDS``
+       entry without an ``in`` check.
+
+    3. The payload is small (< 4 KB) — heartbeats run every 30 s
+       across the fleet, so the ~18x reduction vs full ``--json``
+       is load-bearing.
+    """
+    from scitex_agent_container.terse import TERSE_STATUS_FIELDS, project_terse
+
+    # Simulate what ``agent_status`` hands to ``project_terse`` with a
+    # realistic full payload (context_management nested, pids nested,
+    # snapshot block present, plus noise fields).
+    realistic = {
+        "agent": "worker-mba",
+        "state": "running",
+        "timestamp": "2026-04-20T01:23:45Z",
+        "tmux_alive": True,
+        "last_post_ts": "2026-04-20T01:23:30Z",
+        "context_management": {
+            "percent": 37.5,
+            "strategy": "compact",
+            "trigger_at_percent": 85,
+        },
+        "pids": {"claude_code": 12345, "container_daemon": 23456},
+        "health": {"ok": True, "details": "fresh"},
+        "snapshot": {
+            "timestamp": "2026-04-20T01:23:30Z",
+            "has_diff": False,
+            "diff_fields": [],  # must NOT leak — diff_fields is noisy
+        },
+        "agent_meta": {"context_pct": 37.5},  # noise — must NOT leak
+        "pane_text": "x" * 10000,  # noise — must NOT leak
+    }
+    terse = project_terse(realistic, TERSE_STATUS_FIELDS)
+
+    # (1) Flat dict, JSON-primitive leaves only.
+    for k, v in terse.items():
+        assert isinstance(k, str), f"non-string key {k!r}"
+        assert v is None or isinstance(
+            v, (str, int, float, bool)
+        ), f"non-primitive value for {k}: {type(v).__name__}"
+
+    # (2) Every whitelist key present.
+    assert set(terse.keys()) == set(TERSE_STATUS_FIELDS)
+
+    # (3) Small payload — round-trips under 4 KB.
+    assert len(json.dumps(terse)) < 4096
+
+
 def test_status_full_unaffected_by_terse_flag_absence(
     fake_workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
