@@ -7,6 +7,14 @@ internet connectivity. The fleet sees this as "SSH dead" (banner-
 exchange timeout, then connection-refused), which is indistinguish-
 able from "host asleep" unless the WSL side leaves a local trail.
 
+## Baseline
+
+**Wired LAN + mirrored mode** (as of 2026-04-21, ywatanabe
+msg#15405). The host has been moved off Wi-Fi onto a stable wired
+Ethernet link; SSID-roam and 2.4 vs 5 GHz hand-off are no longer
+in scope. Remaining live failure modes are NIC-level power-save
+and DHCP lease churn.
+
 ## What the evidence shows (from this host)
 
 One-shot diagnostics on 2026-04-21:
@@ -15,7 +23,9 @@ One-shot diagnostics on 2026-04-21:
   the WSL NAT `172.x.x.x` range). This proves
   **`networkingMode=mirrored` is already active** — the
   `.wslconfig` at `/mnt/c/Users/wyusu/.wslconfig` contains
-  `[wsl2] networkingMode=mirrored`.
+  `[wsl2] networkingMode=mirrored`. Under mirrored mode WSL's
+  `eth0` reflects whichever Windows NIC is carrying traffic —
+  currently the wired Ethernet adapter.
 - `/sbin/ip route` → default via `192.168.11.1` (the home router)
   on `eth0`. No separate WSL-bridge hop.
 - `/etc/resolv.conf` → `nameserver 8.8.8.8 / 8.8.4.4` (Google DNS,
@@ -34,31 +44,30 @@ One-shot diagnostics on 2026-04-21:
 | # | Hypothesis | Status |
 |---|---|---|
 | 1 | WSL2 NAT bridge instability | **Eliminated.** Mirrored mode removes the NAT bridge. |
-| 2 | Hyper-V vswitch desync on NIC change | **Partly eliminated.** Mirrored mode uses the host's NIC directly. |
+| 2 | Hyper-V vswitch desync on NIC change | **Partly eliminated.** Mirrored mode uses the host's NIC directly; wired LAN means no Wi-Fi-driven NIC swaps. |
 | 3 | cloudflared tunnel uplink expiry | **N/A for this host.** No cloudflared service runs here. Belongs to head-nas. |
-| 4 | Windows NIC power-save | **Still live.** Mirrored mode means WSL's eth0 IS the Windows NIC — if Windows powers it down, WSL loses connectivity immediately. |
-| 5 | Wi-Fi roam / DHCP lease | **Amplified by mirrored mode.** Lease expiry on the host re-IPs WSL's `eth0` directly; any TCP connection across the transition breaks. |
+| 4 | Windows NIC power-save | **Still live.** Applies equally to the wired Ethernet adapter — if Windows powers it down (selective-suspend / "allow the computer to turn off this device to save power"), WSL loses connectivity immediately. |
+| 5 | DHCP lease churn | **Still live, reduced scope.** With the host on a single wired link (no Wi-Fi roam), only lease-renewal on the Ethernet adapter remains. A static reservation removes this entirely. |
 
 ## Mitigations that require ywatanabe-side Windows action
 
 These cannot be done from inside WSL. They are the actual root-
 cause fixes; everything below the line is WSL-side visibility.
 
-1. **Disable Windows NIC power-save.** In PowerShell (admin):
+1. **Disable Windows NIC power-save on the wired Ethernet adapter.**
+   In PowerShell (admin):
    ```powershell
    Get-NetAdapter | Where-Object {$_.Status -eq "Up"} |
      Set-NetAdapterPowerManagement -AllowComputerToTurnOffDevice Disabled
    ```
-   One-shot, survives reboots.
-2. **Consider static DHCP reservation** on the router for this
-   host. With mirrored mode, every DHCP re-negotiation hits WSL.
-   A static reservation eliminates lease-expiry churn.
-3. **For Wi-Fi specifically,** consider preferring the 5 GHz SSID
-   over the 2.4 GHz one (disable "connect to this network
-   automatically" on the weaker of the two) — roaming between
-   them retriggers the network-change event that mirrored mode
-   propagates into WSL.
-4. **Leave `networkingMode=mirrored` as-is.** The alternative
+   One-shot, survives reboots. Targets all "Up" adapters, which on
+   a wired-only host is just the Ethernet NIC.
+2. **Static DHCP reservation on the router for this host's wired
+   MAC.** With mirrored mode, every DHCP renegotiation on the
+   Ethernet adapter re-IPs WSL's `eth0` directly and breaks any
+   TCP session crossing the transition. A static reservation
+   eliminates lease-expiry churn.
+3. **Leave `networkingMode=mirrored` as-is.** The alternative
    (NAT bridge) is the *previous* failure mode the fleet was
    hitting before this setting was applied.
 
@@ -95,9 +104,9 @@ layer that actually broke:
 
 | First failure | Diagnosis |
 |---|---|
-| `dns` | resolver unreachable — `/etc/resolv.conf` nameserver (8.8.8.8) is blocked or Wi-Fi is actually down |
+| `dns` | resolver unreachable — `/etc/resolv.conf` nameserver (8.8.8.8) is blocked or the wired link is actually down |
 | `gateway` (but `dns` ok) | rare — DNS is cached / UDP-only while LAN routing died |
-| `gateway` AND `dns` | Wi-Fi roam or NIC power-save just kicked in |
+| `gateway` AND `dns` | Ethernet NIC power-save just kicked in, or DHCP lease renegotiation re-IP'd eth0 |
 | `tcp` (but `dns` + `gateway` ok) | hub unreachable: firewall / Cloudflare regional |
 | `https` only | TLS handshake or captive-portal interposing |
 
@@ -141,7 +150,8 @@ When the fleet reports `ssh ywata-note-win` timing out, the fleet
 cannot tell whether:
 
 - the laptop lid is closed (Windows asleep),
-- the laptop is awake but WSL lost Wi-Fi,
+- the laptop is awake but WSL lost its wired link (NIC power-save
+  or DHCP renegotiation),
 - the laptop is awake and WSL has internet but the SSH service
   restarted,
 - or Claude Code TUI crashed while the rest of the host is fine.
