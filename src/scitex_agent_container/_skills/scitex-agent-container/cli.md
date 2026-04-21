@@ -1,7 +1,13 @@
 ---
 name: agent-container-cli
-description: CLI commands and Python API for scitex-agent-container.
+description: CLI commands and Python API for scitex-agent-container (and its short alias `sac`). Specialization of scitex-cli-convention.
 ---
+
+> **This skill is a specialization of `scitex-cli-convention`.**
+> See: `~/.dotfiles/src/.scitex/orochi/shared/skills/scitex-cli-convention/SKILL.md`
+> for the canonical rules (noun-verb, universal flags, `(Available Now)`,
+> deprecation redirect, env vars, NDJSON, audit checklist). This file only
+> lists scitex-agent-container-specific subcommands and the Python API.
 
 # CLI Commands
 
