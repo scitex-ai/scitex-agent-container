@@ -22,6 +22,18 @@ from typing import Any, Iterable
 # Whitelist used by ``scitex-agent-container status --json --terse``.
 # Superset of what ``scripts/fleet-watch/probe_remote.sh`` extracts via
 # ``jq -r``. Do not remove entries without coordinating with head-nas.
+#
+# The list below is split into two tranches:
+#
+#   1. The original 13 fields (todo#300) — the fleet_watch.sh
+#      probe_remote.sh whitelist.
+#   2. The todo#300 follow-up extension — high-value heartbeat fields
+#      promoted from ``collect_rich`` so the MCP sidecar's heartbeat
+#      path (PR #66 pivot) can carry them without pulling the ~28 KB
+#      full payload. PII / bulky fields are deliberately excluded
+#      (``pane_text``, ``claude_md``, ``mcp_json``, ``last_user_msg``,
+#      ``stuck_prompt_text``, ``recent_prompts``, ``current_tool_input``,
+#      ``recent_tools``) — those remain available in full mode only.
 TERSE_STATUS_FIELDS: tuple[str, ...] = (
     # identity
     "agent",
@@ -42,6 +54,37 @@ TERSE_STATUS_FIELDS: tuple[str, ...] = (
     # snapshot summary (NOT diff_fields, NOT the full snapshot)
     "snapshot.timestamp",
     "snapshot.has_diff",
+    # --- todo#300 follow-up: heartbeat-grade activity/quota fields ----
+    # subagent load (both the canonical name and the legacy alias so
+    # consumers of either spelling keep working)
+    "subagent_count",
+    "subagents",
+    # context-window usage derived from the transcript (complements the
+    # config-side ``context_management.percent`` above)
+    "context_pct",
+    # Anthropic quota usage + reset timestamps
+    "quota_5h_used_pct",
+    "quota_7d_used_pct",
+    "quota_5h_reset_at",
+    "quota_7d_reset_at",
+    # classified pane state + last recorded PaneAction
+    "pane_state",
+    "last_action_at",
+    "last_action_name",
+    "last_action_outcome",
+    # hook-captured tool liveness (LLM-level heartbeat)
+    "last_tool_at",
+    "last_tool_name",
+    # high-level "what is this agent doing" + tool name only
+    # (``current_tool_input`` is intentionally excluded — may carry
+    # prompt / path fragments that count as PII)
+    "current_task",
+    "current_tool",
+    # identity / machine affinity
+    "account_email",
+    "skills_loaded",
+    "hostname_canonical",
+    "machine",
 )
 
 # Whitelist used by ``scitex-agent-container snapshot --json --terse``.
