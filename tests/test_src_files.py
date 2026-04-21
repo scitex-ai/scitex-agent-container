@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import os
 import re
 import tempfile
 from pathlib import Path
@@ -14,6 +16,7 @@ from scitex_agent_container.runtimes.src_files import (
     _extract_user_tail,
     cleanup_src_claude_md,
     deploy_src_claude_md,
+    deploy_src_mcp_json,
 )
 
 START_MARKER_RE = re.compile(
@@ -194,3 +197,213 @@ class TestCleanupStopStartRoundTrip:
         cleanup_src_claude_md(cfg, str(workdir))
         # Nothing survives the strip, so the file is removed.
         assert not (workdir / "CLAUDE.md").exists()
+
+
+def _make_mcp_config(defdir: Path, servers: dict) -> MagicMock:
+    """Create a mock AgentConfig pointing at a tmp dir with src_mcp.json."""
+    defdir.mkdir(parents=True, exist_ok=True)
+    (defdir / "src_mcp.json").write_text(json.dumps({"mcpServers": servers}))
+    cfg = MagicMock()
+    cfg.name = "test-agent"
+    cfg.labels = {}
+    cfg.config_path = str(defdir / "test-agent.yaml")
+    return cfg
+
+
+class TestDeploySrcMcpJsonRefresh:
+    """Regression tests for todo#453 — workspace .mcp.json must refresh
+    from canonical src_mcp.json on EVERY deploy, not just first launch.
+
+    The 2026-04-15 fleet-lead incident: canonical ``src_mcp.json`` was
+    updated (PR #49 added ``#lead`` and ``#agent`` to the channel
+    subscription), but because the workspace ``.mcp.json`` had been
+    copied on first launch 2 hours prior, the running agent kept
+    reading the stale two-channel subscription. Every agent restart
+    must re-read src_mcp.json and propagate canonical changes.
+    """
+
+    def _server_entry(self, channels: str) -> dict:
+        return {
+            "scitex-orochi": {
+                "type": "stdio",
+                "command": "bun",
+                "args": ["run", "~/proj/scitex-orochi/ts/mcp_channel.ts"],
+                "env": {
+                    "SCITEX_OROCHI_AGENT": "${metadata.name}",
+                    "SCITEX_OROCHI_CHANNELS": channels,
+                },
+            }
+        }
+
+    def test_fresh_deploy_writes_workspace_copy(self, tmp_path):
+        defdir = tmp_path / "def"
+        workdir = str(tmp_path / "workspace")
+        cfg = _make_mcp_config(defdir, self._server_entry("#ywatanabe,#heads"))
+
+        deploy_src_mcp_json(cfg, workdir)
+
+        dest = Path(workdir) / ".mcp.json"
+        assert dest.exists()
+        data = json.loads(dest.read_text())
+        assert data["mcpServers"]["scitex-orochi"]["env"][
+            "SCITEX_OROCHI_CHANNELS"
+        ] == "#ywatanabe,#heads"
+
+    def test_env_change_propagates_on_redeploy(self, tmp_path):
+        """The todo#453 scenario exactly: canonical src_mcp.json gets a
+        new channel added after first launch; the next deploy must
+        overwrite the stale workspace env.
+        """
+        defdir = tmp_path / "def"
+        workdir = str(tmp_path / "workspace")
+        cfg = _make_mcp_config(defdir, self._server_entry("#ywatanabe,#heads"))
+
+        # First launch: workspace gets old subscription
+        deploy_src_mcp_json(cfg, workdir)
+        dest = Path(workdir) / ".mcp.json"
+        assert json.loads(dest.read_text())["mcpServers"]["scitex-orochi"][
+            "env"
+        ]["SCITEX_OROCHI_CHANNELS"] == "#ywatanabe,#heads"
+
+        # Canonical PR lands: new channels appear in src_mcp.json
+        (defdir / "src_mcp.json").write_text(
+            json.dumps(
+                {"mcpServers": self._server_entry(
+                    "#ywatanabe,#heads,#lead,#agent"
+                )}
+            )
+        )
+
+        # Restart: deploy re-runs, workspace MUST reflect canonical
+        deploy_src_mcp_json(cfg, workdir)
+
+        refreshed = json.loads(dest.read_text())
+        assert refreshed["mcpServers"]["scitex-orochi"]["env"][
+            "SCITEX_OROCHI_CHANNELS"
+        ] == "#ywatanabe,#heads,#lead,#agent"
+
+    def test_removed_env_key_is_dropped_on_redeploy(self, tmp_path):
+        """Per-server replace semantics: if src drops an env key, the
+        workspace copy must also drop it. This guards against the
+        inverse stale-state bug (a retired env var lingering).
+        """
+        defdir = tmp_path / "def"
+        workdir = str(tmp_path / "workspace")
+
+        server_with_extra = {
+            "scitex-orochi": {
+                "type": "stdio",
+                "command": "bun",
+                "env": {
+                    "SCITEX_OROCHI_AGENT": "${metadata.name}",
+                    "LEGACY_KEY": "should-be-dropped",
+                },
+            }
+        }
+        (defdir).mkdir(parents=True, exist_ok=True)
+        (defdir / "src_mcp.json").write_text(
+            json.dumps({"mcpServers": server_with_extra})
+        )
+        cfg = MagicMock()
+        cfg.name = "test-agent"
+        cfg.labels = {}
+        cfg.config_path = str(defdir / "test-agent.yaml")
+
+        deploy_src_mcp_json(cfg, workdir)
+        dest = Path(workdir) / ".mcp.json"
+        assert "LEGACY_KEY" in json.loads(dest.read_text())[
+            "mcpServers"
+        ]["scitex-orochi"]["env"]
+
+        # Canonical drops the key
+        server_no_extra = {
+            "scitex-orochi": {
+                "type": "stdio",
+                "command": "bun",
+                "env": {"SCITEX_OROCHI_AGENT": "${metadata.name}"},
+            }
+        }
+        (defdir / "src_mcp.json").write_text(
+            json.dumps({"mcpServers": server_no_extra})
+        )
+
+        deploy_src_mcp_json(cfg, workdir)
+
+        env = json.loads(dest.read_text())["mcpServers"]["scitex-orochi"]["env"]
+        assert "LEGACY_KEY" not in env
+        assert env["SCITEX_OROCHI_AGENT"] == "test-agent"
+
+    def test_other_servers_preserved(self, tmp_path):
+        """Servers present in workspace .mcp.json but NOT declared by this
+        agent's src_mcp.json are preserved (user-added local tools etc.).
+        """
+        defdir = tmp_path / "def"
+        workdir = Path(tmp_path / "workspace")
+        workdir.mkdir(parents=True, exist_ok=True)
+        cfg = _make_mcp_config(defdir, self._server_entry("#a,#b"))
+
+        # Pre-seed workspace with a foreign server
+        (workdir / ".mcp.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "local-tool": {
+                            "type": "stdio",
+                            "command": "my-local-mcp",
+                        }
+                    }
+                }
+            )
+        )
+
+        deploy_src_mcp_json(cfg, str(workdir))
+
+        data = json.loads((workdir / ".mcp.json").read_text())
+        assert "local-tool" in data["mcpServers"]
+        assert "scitex-orochi" in data["mcpServers"]
+
+    def test_unconditional_refresh_even_when_src_older(self, tmp_path):
+        """The invariant is unconditional: we refresh even if the src
+        mtime is older than the workspace copy. This protects against
+        clock-skew or filesystem-copy edge cases where the canonical
+        file's mtime might be artificially earlier than the workspace.
+
+        Without this guarantee, a naive ``if src.mtime > dest.mtime``
+        fast-path would silently skip legitimate updates.
+        """
+        defdir = tmp_path / "def"
+        workdir = str(tmp_path / "workspace")
+        cfg = _make_mcp_config(defdir, self._server_entry("#v2"))
+
+        deploy_src_mcp_json(cfg, workdir)
+        dest = Path(workdir) / ".mcp.json"
+
+        # Rewrite src with new content, but backdate its mtime so it
+        # appears OLDER than the workspace copy.
+        (defdir / "src_mcp.json").write_text(
+            json.dumps({"mcpServers": self._server_entry("#v3")})
+        )
+        ancient = dest.stat().st_mtime - 3600  # 1 hour older
+        os.utime(defdir / "src_mcp.json", (ancient, ancient))
+
+        deploy_src_mcp_json(cfg, workdir)
+
+        env = json.loads(dest.read_text())["mcpServers"]["scitex-orochi"][
+            "env"
+        ]
+        assert env["SCITEX_OROCHI_CHANNELS"] == "#v3"
+
+    def test_idempotent_when_src_unchanged(self, tmp_path):
+        """Repeated deploys with no src change produce byte-identical
+        output."""
+        defdir = tmp_path / "def"
+        workdir = str(tmp_path / "workspace")
+        cfg = _make_mcp_config(defdir, self._server_entry("#stable"))
+
+        deploy_src_mcp_json(cfg, workdir)
+        first = (Path(workdir) / ".mcp.json").read_text()
+
+        deploy_src_mcp_json(cfg, workdir)
+        second = (Path(workdir) / ".mcp.json").read_text()
+
+        assert first == second
