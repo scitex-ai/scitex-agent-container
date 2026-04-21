@@ -16,6 +16,7 @@ from ._types import (
     RemoteSpec,
     RestartSpec,
     SkillsSpec,
+    SlurmHeartbeatSpec,
     SlurmHooks,
     SlurmSpec,
     StartupCommand,
@@ -166,6 +167,12 @@ def parse_slurm(spec: dict) -> SlurmSpec:
         post_agent=str(hooks_raw.get("post_agent", "") or ""),
         attach=str(hooks_raw.get("attach", "") or ""),
     )
+    hb_raw = raw.get("heartbeat", {}) or {}
+    heartbeat = SlurmHeartbeatSpec(
+        command=str(hb_raw.get("command", "") or ""),
+        interval_s=int(hb_raw.get("interval_s", 30) or 30),
+        log_file=str(hb_raw.get("log_file", "") or ""),
+    )
     return SlurmSpec(
         partition=str(raw.get("partition", "") or ""),
         time_limit=str(raw.get("time_limit", "1-00:00:00") or "1-00:00:00"),
@@ -180,6 +187,7 @@ def parse_slurm(spec: dict) -> SlurmSpec:
         hold=str(raw.get("hold", "tail -f /dev/null") or "tail -f /dev/null"),
         logs_dir=str(raw.get("logs_dir", "~/slurm_logs") or "~/slurm_logs"),
         hooks=hooks,
+        heartbeat=heartbeat,
         extra_directives=[str(d) for d in (raw.get("extra_directives") or [])],
     )
 

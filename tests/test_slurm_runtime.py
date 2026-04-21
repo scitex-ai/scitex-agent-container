@@ -25,11 +25,14 @@ import pytest
 from scitex_agent_container.config import (
     AgentConfig,
     ClaudeSpec,
+    SlurmHeartbeatSpec,
     SlurmHooks,
     SlurmSpec,
 )
 from scitex_agent_container.runtimes import slurm as slurm_mod
 from scitex_agent_container.runtimes.slurm import (
+    HEARTBEAT_LOOP_MARKER,
+    HEARTBEAT_START_MARKER,
     REQUIRED_EXIT_TRAP_MARKER,
     REQUIRED_HOLD_DEFAULT,
     REQUIRED_SHEBANG,
@@ -275,6 +278,188 @@ class TestHooks:
             "SAC_PHASE",
         ):
             assert var in script
+
+
+# ---------------------------------------------------------------------------
+# Heartbeat daemon (compute-node push loop)
+# ---------------------------------------------------------------------------
+
+
+class TestHeartbeat:
+    """Regression for the head-spartan stale-heartbeat bug (lead msg#15654).
+
+    Root cause: host-level heartbeat pushers (systemd/launchd) run on the
+    login node and cannot see tmux sessions on the compute node the sbatch
+    job landed on. Fix: spawn a compute-node-local push loop from the
+    sbatch wrapper itself. This surface asserts the loop is emitted, is
+    backgrounded, is interval-correct, and is cleaned up on wrapper exit.
+    """
+
+    def test_no_heartbeat_block_by_default(self):
+        """Default (empty command) emits no heartbeat block — opt-in only.
+
+        Non-HPC slurm users shouldn't pay for this; the hub registration
+        path for them is whatever mechanism they've already set up.
+        """
+        script = render_sbatch_script(_cfg())
+        assert HEARTBEAT_LOOP_MARKER not in script
+        assert HEARTBEAT_START_MARKER not in script
+
+    def test_heartbeat_block_emitted_when_command_set(self):
+        script = render_sbatch_script(
+            _cfg(
+                slurm=SlurmSpec(
+                    heartbeat=SlurmHeartbeatSpec(
+                        command="python3 /path/to/agent_meta.py --push",
+                        interval_s=30,
+                    )
+                )
+            )
+        )
+        assert HEARTBEAT_LOOP_MARKER in script
+        assert HEARTBEAT_START_MARKER in script
+        assert "python3 /path/to/agent_meta.py --push" in script
+
+    def test_heartbeat_respects_custom_interval(self):
+        script = render_sbatch_script(
+            _cfg(
+                slurm=SlurmSpec(
+                    heartbeat=SlurmHeartbeatSpec(
+                        command="true",
+                        interval_s=15,
+                    )
+                )
+            )
+        )
+        # Interval appears in both the function body and the echo marker.
+        assert "sleep 15" in script
+        assert "interval=15s" in script
+
+    def test_heartbeat_runs_in_background(self):
+        """The loop must be backgrounded — otherwise it blocks claude-code
+        from ever reaching the persistent hold and SLURM instantly
+        reaps the job. Assert the ``&`` backgrounding marker."""
+        script = render_sbatch_script(
+            _cfg(
+                slurm=SlurmSpec(
+                    heartbeat=SlurmHeartbeatSpec(
+                        command="true",
+                        interval_s=30,
+                    )
+                )
+            )
+        )
+        # Either the setsid branch or the fallback branch backgrounds.
+        assert ">> " in script
+        assert "SAC_HEARTBEAT_PID=$!" in script
+
+    def test_heartbeat_cleanup_on_exit_trap(self):
+        """The EXIT trap must kill SAC_HEARTBEAT_PID so the loop never
+        outlives the wrapper. Otherwise walltime-auto-resubmit doubles
+        up pushers every resubmission cycle."""
+        script = render_sbatch_script(
+            _cfg(
+                slurm=SlurmSpec(
+                    heartbeat=SlurmHeartbeatSpec(
+                        command="true",
+                    )
+                )
+            )
+        )
+        # The enhanced EXIT trap must reference SAC_HEARTBEAT_PID.
+        assert 'kill "${SAC_HEARTBEAT_PID:-0}"' in script
+
+    def test_heartbeat_log_file_default_under_logs_dir(self):
+        """Default log file lives next to the job log under logs_dir so
+        operators can diagnose push failures without extra plumbing."""
+        script = render_sbatch_script(
+            _cfg(
+                slurm=SlurmSpec(
+                    heartbeat=SlurmHeartbeatSpec(command="true"),
+                )
+            )
+        )
+        from pathlib import Path
+
+        expanded = Path("~/slurm_logs").expanduser()
+        assert f"{expanded}/${{SLURM_JOB_ID:-nojob}}.heartbeat.log" in script
+
+    def test_heartbeat_log_file_override_is_expanded(self):
+        script = render_sbatch_script(
+            _cfg(
+                slurm=SlurmSpec(
+                    heartbeat=SlurmHeartbeatSpec(
+                        command="true",
+                        log_file="~/my-hb.log",
+                    )
+                )
+            )
+        )
+        from pathlib import Path
+
+        expanded = Path("~/my-hb.log").expanduser()
+        # ~ must be expanded — bash does not expand ~ inside double-quoted
+        # strings (same class of bug as todo#425-b for logs_dir).
+        assert "~/my-hb.log" not in script
+        assert str(expanded) in script
+
+    def test_heartbeat_emitted_after_tmux_session(self):
+        """The loop must be spawned *after* tmux new-session so the local
+        agent is visible to the push command on its first tick. Otherwise
+        the first push reports alive=false and the hub flaps."""
+        script = render_sbatch_script(
+            _cfg(
+                slurm=SlurmSpec(
+                    heartbeat=SlurmHeartbeatSpec(command="true"),
+                )
+            )
+        )
+        tmux_idx = script.index("tmux new-session")
+        hb_idx = script.index(HEARTBEAT_START_MARKER)
+        assert tmux_idx < hb_idx
+
+    def test_heartbeat_emitted_after_pre_agent_hook(self):
+        """pre_agent hook exports fleet identity env vars
+        (SCITEX_OROCHI_AGENT / SCITEX_OROCHI_TOKEN / HOSTNAME) that the
+        push command needs in its environment. Must be sourced *before*
+        the heartbeat loop spawns, else heartbeats push with the wrong
+        (or empty) identity and the hub rejects them."""
+        script = render_sbatch_script(
+            _cfg(
+                slurm=SlurmSpec(
+                    hooks=SlurmHooks(pre_agent="/path/pre.sh"),
+                    heartbeat=SlurmHeartbeatSpec(command="true"),
+                )
+            )
+        )
+        pre_agent_idx = script.index("# Hook: pre_agent")
+        hb_idx = script.index(HEARTBEAT_START_MARKER)
+        assert pre_agent_idx < hb_idx
+
+    def test_heartbeat_rendered_bash_syntax_is_valid(self, tmp_path):
+        """Regression: the rendered script must pass ``bash -n``. Bash
+        syntax errors in the heartbeat block would silently kill the job
+        before claude-code ever spawns."""
+        import subprocess
+
+        script = render_sbatch_script(
+            _cfg(
+                slurm=SlurmSpec(
+                    heartbeat=SlurmHeartbeatSpec(
+                        command="python3 /tmp/fake_pusher.py --push",
+                        interval_s=30,
+                    ),
+                )
+            )
+        )
+        p = tmp_path / "wrapper.sh"
+        p.write_text(script)
+        proc = subprocess.run(
+            ["bash", "-n", str(p)],
+            capture_output=True,
+            text=True,
+        )
+        assert proc.returncode == 0, f"bash -n failed:\n{proc.stderr}"
 
 
 # ---------------------------------------------------------------------------
