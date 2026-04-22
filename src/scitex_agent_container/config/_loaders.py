@@ -149,12 +149,16 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     screen_name = screen_raw.get("name", name)
 
     # Auto-derive env: user values override auto-derived.
-    # Only sac's own namespace is injected. External consumers (orochi etc.)
-    # declare their own env vars explicitly in agent YAML's ``spec.env`` if
-    # they want them set.
+    # sac owns identity injection — ``SCITEX_OROCHI_AGENT`` is stamped here
+    # so the orochi startup-protocol identity check is authoritative against
+    # the agent YAML, not whatever value leaked from the parent shell (see
+    # scitex-orochi fleet DM 2026-04-22, ywatanabe-approved). Other orochi
+    # config (tokens, model labels, channels) remains the caller's concern
+    # and is declared explicitly in agent YAML's ``spec.env``.
     auto_env: dict[str, str] = {
         "CLAUDE_AGENT_ID": name,
         "SCITEX_AGENT_CONTAINER_AGENT": name,
+        "SCITEX_OROCHI_AGENT": name,
     }
     if labels.get("role"):
         auto_env["CLAUDE_AGENT_ROLE"] = labels["role"]

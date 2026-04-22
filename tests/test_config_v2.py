@@ -104,8 +104,12 @@ class TestV2Config:
         assert config.env["CLAUDE_AGENT_ROLE"] == "head"
         assert config.env["SCITEX_AGENT_CONTAINER_AGENT"] == "head-test"
         assert config.env["SCITEX_AGENT_CONTAINER_MODEL"] == "Claude Opus (1M)"
-        # sac MUST NOT auto-inject external-consumer (orochi etc.) env vars.
-        assert "SCITEX_OROCHI_AGENT" not in config.env
+        # sac owns identity injection — SCITEX_OROCHI_AGENT must be stamped
+        # so the orochi startup-protocol identity check is authoritative
+        # and parent-shell leaks cannot bleed through (see fleet DM
+        # 2026-04-22, ywatanabe-approved). Other orochi config (model,
+        # tokens) remains the caller's concern.
+        assert config.env["SCITEX_OROCHI_AGENT"] == "head-test"
         assert "SCITEX_OROCHI_MODEL" not in config.env
         Path(path).unlink()
 
