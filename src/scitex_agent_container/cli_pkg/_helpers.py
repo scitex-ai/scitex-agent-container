@@ -198,6 +198,10 @@ def get_agent_list_data(
         remote_host = prep["remote_host"]
         cfg = prep["cfg"]
 
+        multiplexer: str | None = None
+        if not (cfg and cfg.remote.is_remote):
+            multiplexer = _detect_multiplexer(screen_name)
+
         liveness_unknown = False
         try:
             if cfg and cfg.remote.is_remote:
@@ -208,14 +212,15 @@ def get_agent_list_data(
                 else:
                     is_running = bool(probe)
             else:
-                is_running = ScreenManager.exists(screen_name)
+                # _detect_multiplexer returned non-None iff either the tmux
+                # OR screen backend sees this session live — use it as the
+                # authoritative liveness signal. Previously this path
+                # hardcoded ScreenManager.exists(), which always returned
+                # False for tmux agents and reported them as stopped.
+                is_running = multiplexer is not None
         except Exception:
             is_running = False
             liveness_unknown = True
-
-        multiplexer: str | None = None
-        if not (cfg and cfg.remote.is_remote):
-            multiplexer = _detect_multiplexer(screen_name)
 
         status_val: str
         if liveness_unknown:
