@@ -1,0 +1,78 @@
+# newbie-docker — naive first-time-user simulation (Docker runtime)
+#
+# Hawthorne-effect-free design (ported from mamba-newbie-mba, 2026-04-12):
+# This agent has NO skills, NO CLAUDE.md, NO fleet identity, and NO memory
+# of past sessions. The operator observes strictly from outside the
+# container (docker logs / tmux capture-pane). The agent is not told it is
+# being watched and must remain unaware.
+#
+# HARD RULE: do NOT add any "newbie" / "sandbox" / "experimental" / "test"
+# wording to any prompt the agent sees. That would contaminate the
+# experiment. The 2026-04-12 contamination incident (run 20260412-092325)
+# happened because dev-channel access leaked fleet identity — we keep
+# zero Orochi access here for the same reason.
+#
+# Disposable: restart.policy: never. Rebuild manually after each run.
+#
+# ~/.claude auto-mount (resolved 2026-04-23):
+# DockerRuntime no longer auto-mounts ``$HOME/.claude`` by default — the
+# mount is now opt-in via ``spec.container.mount_host_claude: true``.
+# This template leaves it off (default False), so the container really
+# is a clean slate. The sandboxed-HOME workaround
+# (``HOME=/tmp/newbie-home scitex-agent-container start ...``) still
+# works for belt-and-suspenders isolation but is no longer required.
+#
+# TEMPLATE NOTE — dir-as-SSoT:
+# The v3 loader derives the agent name from the parent directory
+# (``<name>/<name>.yaml``). This file ships as a flat template; to
+# instantiate, copy to ``<somewhere>/newbie-docker/newbie-docker.yaml``.
+
+apiVersion: scitex-agent-container/v3
+kind: Agent
+
+metadata:
+  labels:
+    role: naive-user
+    disposable: "true"
+    observability: external-only
+
+spec:
+  runtime: claude-code
+  model: "claude-haiku-4-5-20251001"   # cheap-first (user decision 2026-04-23)
+  multiplexer: tmux                    # tmux inside container for capture-pane
+
+  claude:
+    flags:
+      - --dangerously-skip-permissions
+      # NOTE: no dev-channel, no fleet access. Intentionally absent —
+      # removed 2026-04-12 after contamination of run 20260412-092325.
+    session: continue-or-new
+
+  skills:
+    required: []                        # zero skills — clean slate
+
+  container:
+    runtime: docker
+    image: scitex-agent-container:latest
+    network: bridge                     # API calls need internet; isolation is
+                                        # via empty HOME + mount_host_claude=false,
+                                        # not via network blocking. Using "none"
+                                        # caused ~3min/call (claude CLI retries
+                                        # blocked DNS); measured 2026-04-23.
+    volumes: []                         # minimal; NO host ~/.claude mount
+    mount_host_claude: false            # clean-slate: do not leak host identity
+
+  restart:
+    policy: never                       # disposable
+
+  health:
+    enabled: true
+    interval: 60
+    timeout: 5
+    method: multiplexer-alive           # v3 renamed screen-alive -> multiplexer-alive
+
+  startup_commands:
+    - delay: 5
+      command: "You are Claude Code. The user will give you tasks."
+
+# EOF

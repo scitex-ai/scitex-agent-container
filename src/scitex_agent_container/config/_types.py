@@ -13,6 +13,13 @@ class ContainerSpec:
     image: str = "scitex-agent-container:latest"
     volumes: list[str] = field(default_factory=list)
     network: str = "host"
+    # Opt-in auto-mount of the host's ``~/.claude`` directory at
+    # ``/home/agent/.claude:ro`` inside the container. Default False: the
+    # container is the isolation boundary, and auto-mounting leaks host
+    # identity/skills/MCP/memory into every agent — surprising default.
+    # Set ``mount_host_claude: true`` in the YAML only when the agent
+    # actually needs host-agent identity/memory/skills from ``~/.claude``.
+    mount_host_claude: bool = False
 
 
 @dataclass

@@ -29,10 +29,14 @@ class DockerRuntime(RuntimeBase):
         workdir = config.expanded_workdir
         args.extend(["-v", f"{workdir}:/workspace"])
 
-        # Mount claude config if it exists
-        claude_dir = Path.home() / ".claude"
-        if claude_dir.is_dir():
-            args.extend(["-v", f"{claude_dir}:/home/agent/.claude:ro"])
+        # Mount host's ~/.claude (opt-in, default False). Unconditional
+        # mount would leak host identity/skills/MCP/memory into every
+        # container — the container is the isolation boundary. Enable
+        # per-agent via ``spec.container.mount_host_claude: true``.
+        if config.container.mount_host_claude:
+            claude_dir = Path.home() / ".claude"
+            if claude_dir.is_dir():
+                args.extend(["-v", f"{claude_dir}:/home/agent/.claude:ro"])
 
         # Additional volumes
         for vol in config.container.volumes:

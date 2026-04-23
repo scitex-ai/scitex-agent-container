@@ -1,12 +1,23 @@
-# scitex-agent-container/v2 template
-# Auto-derives: workdir, screen.name, env.CLAUDE_AGENT_*, hooks.pre_start mkdir
-apiVersion: scitex-agent-container/v2
+# worker-v2 — worker with scitex-orochi MCP wiring.
+#
+# Previously v2, migrated to v3 on 2026-04-23:
+#   * apiVersion scitex-agent-container/v2 -> .../v3
+#   * removed metadata.name (dir-as-SSoT; filename is the agent name).
+#     ``${metadata.name}`` in mcp_servers still resolves — the v3 loader
+#     injects the dir-derived name into the interpolation metadata.
+#   * health.method already multiplexer-alive (kept)
+#
+# Filename intentionally kept as ``worker-v2`` to preserve the name other
+# tooling references; the schema underneath is now v3.
+
+apiVersion: scitex-agent-container/v3
 kind: Agent
+
 metadata:
-  name: worker-general
   labels:
     role: worker
     team: dev
+
 spec:
   runtime: claude-code
   model: sonnet
@@ -39,3 +50,5 @@ spec:
   restart:
     policy: never
     max_retries: 0
+
+# EOF
