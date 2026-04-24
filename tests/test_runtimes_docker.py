@@ -31,6 +31,8 @@ if _HAS_DOCKER_CLI:
 else:
     _DOCKER_OK = False
 
+_CI_KEY_SET = bool(os.environ.get("SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY"))
+
 # Individual tests that need a live docker daemon are decorated
 # per-function with ``@pytest.mark.docker_smoke`` + skipif; the fast
 # unit tests at the bottom run unconditionally.
@@ -53,26 +55,64 @@ def _image_exists(ref: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Session-scoped fixture: build the test image once
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session")
+def test_image():
+    """Build ``scitex-agent-container:test`` once per session. Skip if no docker."""
+    if not _DOCKER_OK:
+        pytest.skip("docker unavailable (CLI or daemon)")
+    from scitex_agent_container.runtimes.docker import DockerRuntime
+
+    context = str(REPO_ROOT / "containers")
+    if not _image_exists(TEST_IMAGE):
+        ok = DockerRuntime.build_image(image=TEST_IMAGE, context=context)
+        if not ok or not _image_exists(TEST_IMAGE):
+            pytest.fail(f"Failed to build {TEST_IMAGE} from {context}")
+    return TEST_IMAGE
+
+
+def _run_bare_container(image: str, name: str) -> None:
+    """Run a sleep-infinity container from ``image`` with CI key forwarded.
+
+    Uses --entrypoint to override the image's default ``claude`` entrypoint,
+    so the container stays alive long enough to ``docker exec`` into it.
+    """
+    _docker("rm", "-f", name)
+    env_args: list[str] = []
+    ci_key = os.environ.get("SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY")
+    if ci_key:
+        env_args = ["-e", f"ANTHROPIC_API_KEY={ci_key}"]
+    res = _docker(
+        "run",
+        "-d",
+        "--name",
+        name,
+        "--entrypoint",
+        "sleep",
+        *env_args,
+        image,
+        "infinity",
+    )
+    if res.returncode != 0:
+        raise RuntimeError(f"docker run failed: {res.stderr}")
+
+
+# ---------------------------------------------------------------------------
 # a. Build image from containers/
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.docker_smoke
 @pytest.mark.skipif(not _DOCKER_OK, reason="docker unavailable (CLI or daemon)")
-def test_build_image_from_containers_dir(request):
-    """DockerRuntime.build_image() on containers/ must succeed and register image."""
-    from scitex_agent_container.runtimes.docker import DockerRuntime
-
-    context = str(REPO_ROOT / "containers")
-
-    def _rmi():
-        _docker("rmi", "-f", TEST_IMAGE)
-
-    request.addfinalizer(_rmi)
-
-    ok = DockerRuntime.build_image(image=TEST_IMAGE, context=context)
-    assert ok is True, "build_image returned False"
-    assert _image_exists(TEST_IMAGE), f"{TEST_IMAGE} not registered with docker"
+def test_build_image_from_containers_dir(test_image):
+    """DockerRuntime.build_image() produced an image with ``claude`` on PATH."""
+    assert _image_exists(test_image), f"{test_image} not registered with docker"
+    res = _docker("run", "--rm", "--entrypoint", "which", test_image, "claude")
+    assert res.returncode == 0, f"`which claude` failed: {res.stderr}"
+    assert res.stdout.strip(), "claude not on PATH inside image"
 
 
 # ---------------------------------------------------------------------------
@@ -80,9 +120,11 @@ def test_build_image_from_containers_dir(request):
 # ---------------------------------------------------------------------------
 
 
-def _load_newbie_config_with_override(tmp_path: Path, override_name: str):
+def _load_newbie_config_with_override(
+    tmp_path: Path, override_name: str, image: str | None = None
+):
     """Copy the template into a throwaway dir-as-SSoT layout so load_config
-    picks up ``override_name`` as the agent name.
+    picks up ``override_name`` as the agent name. Optionally override image.
     """
     from scitex_agent_container.config import load_config
 
@@ -91,21 +133,20 @@ def _load_newbie_config_with_override(tmp_path: Path, override_name: str):
     target = agent_dir / f"{override_name}.yaml"
 
     raw = yaml.safe_load(TEMPLATE.read_text())
+    if image is not None:
+        raw["spec"]["container"]["image"] = image
     target.write_text(yaml.safe_dump(raw, sort_keys=False))
     return load_config(target)
 
 
 @pytest.mark.docker_smoke
 @pytest.mark.skipif(not _DOCKER_OK, reason="docker unavailable (CLI or daemon)")
-def test_start_and_stop_newbie_docker_agent(request, tmp_path):
+def test_start_and_stop_newbie_docker_agent(request, tmp_path, test_image):
     """Start the newbie-docker agent, verify is_running, then stop it."""
     from scitex_agent_container.runtimes.docker import DockerRuntime
 
-    if not _image_exists(AGENT_IMAGE):
-        pytest.skip(f"{AGENT_IMAGE} not built on this host")
-
     agent_name = f"newbie-docker-test-{os.getpid()}"
-    config = _load_newbie_config_with_override(tmp_path, agent_name)
+    config = _load_newbie_config_with_override(tmp_path, agent_name, image=test_image)
     runtime = DockerRuntime()
     container = runtime._container_name(config)
 
@@ -132,42 +173,45 @@ def test_start_and_stop_newbie_docker_agent(request, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# c. `claude -p "hello"` inside the container
+# c. `claude -p "hello"` inside the container (real LLM call)
 # ---------------------------------------------------------------------------
 
 
+def _extract_cache_creation_tokens(envelope: dict) -> int:
+    """Pull cache_creation_input_tokens from a claude -p JSON envelope.
+
+    Checks both top-level ``usage`` and ``modelUsage``. Returns 0 if absent.
+    """
+    if "usage" in envelope and isinstance(envelope["usage"], dict):
+        v = envelope["usage"].get("cache_creation_input_tokens")
+        if v is not None:
+            return int(v)
+    if "modelUsage" in envelope and isinstance(envelope["modelUsage"], dict):
+        for _model, usage in envelope["modelUsage"].items():
+            if isinstance(usage, dict):
+                v = usage.get("cache_creation_input_tokens")
+                if v is not None:
+                    return int(v)
+    return 0
+
+
 @pytest.mark.docker_smoke
+@pytest.mark.slow
 @pytest.mark.skipif(not _DOCKER_OK, reason="docker unavailable (CLI or daemon)")
-@pytest.mark.xfail(
-    reason=(
-        "Requires claude CLI to accept non-interactive -p inside the container "
-        "image AND a configured auth source. If it fails, the Dockerfile needs "
-        "either an ANTHROPIC_API_KEY env forwarded or bundled auth — fix by "
-        "passing `-e ANTHROPIC_API_KEY` in DockerRuntime._build_docker_args "
-        "or by adjusting the image entrypoint."
-    ),
-    strict=False,
+@pytest.mark.skipif(
+    not _CI_KEY_SET,
+    reason="SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY not set",
 )
-def test_claude_p_hello_inside_container(request, tmp_path):
-    from scitex_agent_container.runtimes.docker import DockerRuntime
-
-    if not _image_exists(AGENT_IMAGE):
-        pytest.skip(f"{AGENT_IMAGE} not built on this host")
-
-    agent_name = f"newbie-docker-exec-{os.getpid()}"
-    config = _load_newbie_config_with_override(tmp_path, agent_name)
-    runtime = DockerRuntime()
-    container = runtime._container_name(config)
+def test_claude_p_hello_inside_container(request, test_image):
+    """Real LLM call inside the newbie container must return a clean result."""
+    container = f"newbie-docker-exec-{os.getpid()}"
 
     def _teardown():
         _docker("rm", "-f", container)
 
     request.addfinalizer(_teardown)
 
-    assert runtime.start(config), f"start failed: {runtime.logs(config)}"
-
-    # Give the container a moment to finish its first readiness
-    time.sleep(2)
+    _run_bare_container(test_image, container)
 
     res = _docker(
         "exec",
@@ -183,12 +227,142 @@ def test_claude_p_hello_inside_container(request, tmp_path):
     )
     assert res.returncode == 0, f"claude -p failed: {res.stderr}"
     envelope = json.loads(res.stdout)
-    assert envelope.get("type") == "result"
-    assert envelope.get("is_error") is False
+    assert envelope.get("type") == "result", f"envelope: {envelope}"
+    assert envelope.get("is_error") is False, f"envelope: {envelope}"
 
 
 # ---------------------------------------------------------------------------
-# d. Fast unit tests for opt-in ~/.claude auto-mount
+# cc. Isolation comparison: newbie should load far less context than host
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.docker_smoke
+@pytest.mark.slow
+@pytest.mark.skipif(not _DOCKER_OK, reason="docker unavailable (CLI or daemon)")
+@pytest.mark.skipif(
+    not _CI_KEY_SET,
+    reason="SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY not set",
+)
+def test_newbie_has_far_smaller_cache_than_host(request, test_image):
+    """Newbie container should cache-create <<< host (isolation evidence).
+
+    Host baseline observed earlier ~36305 tokens (loaded skills/CLAUDE.md/
+    memory). A clean container should be well under 1/3 of that.
+    """
+    host_claude = shutil.which("claude")
+    if not host_claude:
+        pytest.skip("host claude CLI not on PATH for baseline comparison")
+
+    # --- Host run (uses whatever context the host loads by default) ---
+    ci_key = os.environ["SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY"]
+    host_env = {**os.environ, "ANTHROPIC_API_KEY": ci_key}
+    host_res = subprocess.run(
+        [
+            host_claude,
+            "-p",
+            "hello",
+            "--output-format",
+            "json",
+            "--model",
+            "claude-haiku-4-5",
+        ],
+        capture_output=True,
+        text=True,
+        env=host_env,
+        timeout=120,
+    )
+    assert host_res.returncode == 0, f"host claude failed: {host_res.stderr}"
+    host_env_json = json.loads(host_res.stdout)
+    host_cache = _extract_cache_creation_tokens(host_env_json)
+
+    # --- Container run ---
+    container = f"newbie-cache-cmp-{os.getpid()}"
+
+    def _teardown():
+        _docker("rm", "-f", container)
+
+    request.addfinalizer(_teardown)
+    _run_bare_container(test_image, container)
+
+    c_res = _docker(
+        "exec",
+        container,
+        "claude",
+        "-p",
+        "hello",
+        "--output-format",
+        "json",
+        "--model",
+        "claude-haiku-4-5",
+        timeout=60,
+    )
+    assert c_res.returncode == 0, f"container claude failed: {c_res.stderr}"
+    newbie_env_json = json.loads(c_res.stdout)
+    newbie_cache = _extract_cache_creation_tokens(newbie_env_json)
+
+    print(
+        f"\n[isolation] host cache_creation_input_tokens={host_cache} "
+        f"newbie={newbie_cache}"
+    )
+
+    # Threshold: newbie <= host / 3. Host baseline ~36305 observed earlier;
+    # a fresh container has no skills/CLAUDE.md/memory so cache creation
+    # should be a tiny fraction of the host's.
+    assert newbie_cache <= max(host_cache // 3, 1), (
+        f"expected newbie_cache ({newbie_cache}) <= host_cache/3 "
+        f"({host_cache // 3}); host={host_cache}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# d. Filesystem isolation: no host claude files in container
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.docker_smoke
+@pytest.mark.skipif(not _DOCKER_OK, reason="docker unavailable (CLI or daemon)")
+def test_newbie_container_has_no_host_claude_files(request, test_image):
+    """Container must not carry host .claude skills/MCP/memory.
+
+    Fast (no LLM call). Checks that /home/agent/.claude and /root/.claude
+    either do not exist or are empty, and /workspace does not contain host
+    skill files.
+    """
+    container = f"newbie-fs-iso-{os.getpid()}"
+
+    def _teardown():
+        _docker("rm", "-f", container)
+
+    request.addfinalizer(_teardown)
+    _run_bare_container(test_image, container)
+
+    for p in ("/home/agent/.claude", "/root/.claude"):
+        res = _docker("exec", container, "sh", "-c", f"ls -A {p} 2>/dev/null || true")
+        # Either the dir doesn't exist (empty stdout) or it's empty.
+        leftover = res.stdout.strip()
+        assert not leftover, (
+            f"{p} contains host-like contents inside container:\n{leftover}"
+        )
+
+    # /workspace should be empty or at least not have any skill markers.
+    res = _docker(
+        "exec",
+        container,
+        "sh",
+        "-c",
+        "ls -A /workspace 2>/dev/null || true",
+    )
+    ws = res.stdout.strip().splitlines()
+    bad = [
+        entry
+        for entry in ws
+        if entry.lower() in {"skills", "claude.md", "mcp.json", "memory"}
+    ]
+    assert not bad, f"/workspace leaks host skill files: {bad}"
+
+
+# ---------------------------------------------------------------------------
+# e. Fast unit tests for opt-in ~/.claude auto-mount
 #    (no container start — inspect _build_docker_args() output)
 # ---------------------------------------------------------------------------
 

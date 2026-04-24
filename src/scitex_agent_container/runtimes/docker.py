@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -47,6 +48,12 @@ class DockerRuntime(RuntimeBase):
         for key, value in config.env.items():
             args.extend(["-e", f"{key}={value}"])
         args.extend(["-e", "CLAUDE_DISABLE_AUTO_UPDATE=1"])
+
+        # Forward API key if available in host env (CI / tests).
+        # The container-side Claude CLI expects ANTHROPIC_API_KEY.
+        ci_key = os.environ.get("SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY")
+        if ci_key:
+            args.extend(["-e", f"ANTHROPIC_API_KEY={ci_key}"])
 
         # Working directory inside container
         args.extend(["-w", "/workspace"])
