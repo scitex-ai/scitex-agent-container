@@ -1,9 +1,25 @@
-apiVersion: cld-agent/v1
+# worker-docker — generic worker role on the docker runtime
+#
+# Migrated to v3 on 2026-04-23:
+#   * apiVersion v1 -> scitex-agent-container/v3
+#   * removed metadata.name (dir-as-SSoT; filename is the agent name)
+#   * health.method field not set here, loader default is multiplexer-alive
+#   * screen.name dropped (auto-derived from agent name in v3 loader)
+#
+# NOTE on ~/.claude auto-mount (2026-04-23):
+# DockerRuntime no longer auto-mounts ``~/.claude`` — it's now opt-in via
+# ``spec.container.mount_host_claude: true``. This template leaves it
+# off (default False) because a generic worker doesn't need host-agent
+# identity. If your worker does need host skills/memory/MCP, add the
+# flag explicitly.
+
+apiVersion: scitex-agent-container/v3
 kind: Agent
+
 metadata:
-  name: worker-docker
   labels:
     role: worker
+
 spec:
   runtime: claude-code
   model: sonnet
@@ -15,6 +31,7 @@ spec:
     volumes:
       - ~/proj:/workspace
     network: host            # host | bridge | none
+    # mount_host_claude: false  # default; uncomment & set true to opt in
 
   claude:
     flags:
@@ -25,5 +42,4 @@ spec:
     SCITEX_AGENT_CONTAINER_ROLE: worker
     SCITEX_AGENT_CONTAINER_ID: worker-docker
 
-  screen:
-    name: cld-worker-docker
+# EOF

@@ -78,6 +78,7 @@ def parse_container(spec: dict) -> ContainerSpec:
         image=raw.get("image", "scitex-agent-container:latest"),
         volumes=raw.get("volumes", []) or [],
         network=raw.get("network", "host"),
+        mount_host_claude=bool(raw.get("mount_host_claude", False)),
     )
 
 

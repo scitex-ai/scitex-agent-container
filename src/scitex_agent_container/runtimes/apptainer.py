@@ -35,9 +35,12 @@ class ApptainerRuntime(RuntimeBase):
         # Bind mounts
         parts.extend(["--bind", f"{workdir}:/workspace"])
 
-        claude_dir = Path.home() / ".claude"
-        if claude_dir.is_dir():
-            parts.extend(["--bind", f"{claude_dir}:/home/agent/.claude:ro"])
+        # Opt-in: mount host ~/.claude read-only. Default False so the
+        # container stays a clean isolation boundary (matches DockerRuntime).
+        if config.container.mount_host_claude:
+            claude_dir = Path.home() / ".claude"
+            if claude_dir.is_dir():
+                parts.extend(["--bind", f"{claude_dir}:/home/agent/.claude:ro"])
 
         for vol in config.container.volumes:
             expanded = vol.replace("~", str(Path.home()))

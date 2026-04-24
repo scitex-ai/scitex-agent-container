@@ -1,10 +1,19 @@
-apiVersion: cld-agent/v1
+# worker-general — generic fallback worker role (no container)
+#
+# Migrated to v3 on 2026-04-23:
+#   * apiVersion v1 -> scitex-agent-container/v3
+#   * removed metadata.name (dir-as-SSoT; filename is the agent name)
+#   * health.method already multiplexer-alive
+#   * screen.name dropped (auto-derived from agent name in v3 loader)
+
+apiVersion: scitex-agent-container/v3
 kind: Agent
+
 metadata:
-  name: worker-general
   labels:
     role: worker
     team: dev
+
 spec:
   runtime: claude-code
   model: sonnet
@@ -18,9 +27,6 @@ spec:
   env:
     SCITEX_AGENT_CONTAINER_ROLE: worker
     SCITEX_AGENT_CONTAINER_ID: worker-general
-
-  screen:
-    name: cld-worker
 
   health:
     enabled: true
@@ -37,3 +43,5 @@ spec:
     post_start: []
     pre_stop: []
     post_stop: []
+
+# EOF

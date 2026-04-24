@@ -7,13 +7,24 @@ description: Declarative YAML-based AI agent lifecycle management with tmux/scre
 
 Declarative agent deployment. Define agents in YAML, launch them in tmux/screen sessions locally or on remote hosts via SSH.
 
-## Quick Reference
+## Sub-skills
 
-| File | Topic |
-|------|-------|
-| [config-v2.md](config-v2.md) | v2 config format, auto-derived fields, src files |
-| [multiplexer.md](multiplexer.md) | tmux vs screen, capture-pane, send-keys |
-| [auto-accept.md](auto-accept.md) | Modular prompt handlers, extending, diagnostics |
-| [remote-deploy.md](remote-deploy.md) | SSH deployment, src file copying, venv |
-| [cli.md](cli.md) | CLI commands and Python API |
-| [troubleshooting.md](troubleshooting.md) | Common issues and debugging |
+### Core
+- [01_config-v2.md](01_config-v2.md) — v2 config format, auto-derived fields, src files
+- [02_multiplexer.md](02_multiplexer.md) — tmux vs screen, capture-pane, send-keys
+- [03_auto-accept.md](03_auto-accept.md) — Modular prompt handlers, extending, diagnostics
+- [04_resource-management.md](04_resource-management.md) — Resource management
+- [05_resource-heartbeat.md](05_resource-heartbeat.md) — Resource heartbeat
+
+### Workflows
+- [10_cli.md](10_cli.md) — CLI commands and Python API
+- [11_remote-deploy.md](11_remote-deploy.md) — SSH deployment, src file copying, venv
+- [12_wsl-connectivity.md](12_wsl-connectivity.md) — WSL connectivity notes
+
+### Lessons
+- [40_troubleshooting.md](40_troubleshooting.md) — Common issues and debugging
+
+
+## Environment
+
+- [30_env-vars.md](30_env-vars.md) — SCITEX_* env vars read by scitex-agent-container at runtime

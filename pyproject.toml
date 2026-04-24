@@ -82,6 +82,8 @@ python_files = ["test_*.py"]
 addopts = "-v --tb=short -m 'not integration'"
 markers = [
     "integration: slow end-to-end tests that spawn a real Claude Code agent (require claude CLI + tmux + ANTHROPIC_API_KEY or SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY). Opt in with '-m integration'.",
+    "docker_smoke: real-Docker smoke tests for DockerRuntime (build image, start/stop newbie-docker agent, exec claude -p). Skipped unless docker daemon reachable. Opt in with '-m docker_smoke'.",
+    "slow: slow tests opted-in with '-m slow'.",
 ]
 
 [tool.ruff]

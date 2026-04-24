@@ -1,0 +1,43 @@
+# Generic image for agentic testing — stateless runtime, nothing baked.
+#
+# Design (2026-04-23):
+# - FROM scitex-agent-container:latest (Node + claude CLI).
+# - No skills baked in — mounted at runtime.
+# - No credentials baked — mounted at runtime.
+# - Optionally pip-install small SciTeX packages when a specific MCP test
+#   needs an importable library (keep this list tight; installing all of
+#   scitex takes >1 hour).
+#
+# Runtime pattern:
+#
+#   # 1. One-time: writable credentials copy (host 0600 + container uid mismatch)
+#   install -m 644 ~/.claude/.credentials.json /tmp/newbie_creds.json
+#
+#   # 2. Stage a per-run HOME with just the skills under test
+#   mkdir -p /tmp/evalrun-$$/skills
+#   cp -rf path/to/<pkg>/SKILL.md /tmp/evalrun-$$/skills/<pkg>/SKILL.md
+#
+#   # 3. Run
+#   docker run --rm \
+#     -v /tmp/evalrun-$$/skills:/home/agent/.claude/skills:ro \
+#     -v /tmp/newbie_creds.json:/home/agent/.claude/.credentials.json \
+#     scitex-agentic-test:latest \
+#     -p "<query>" --output-format json --model claude-haiku-4-5 \
+#     --dangerously-skip-permissions
+#
+# Rationale:
+# - Skills change often; rebuilding an image per edit is slow.
+# - Combinatorial image explosion avoided — one image serves every
+#   eval scope via different mounts.
+# - Production-parity: in real use, pip install places SKILL.md in a
+#   known location; mount-time injection mimics that layout.
+
+FROM scitex-agent-container:latest
+
+# (Intentional) no RUN pip install here. Add package installs in a
+# derived image only when the MCP test actually needs an importable
+# library — e.g. scitex-agentic-test-io:latest with `pip install scitex-io`.
+
+USER agent
+WORKDIR /home/agent
+ENTRYPOINT ["claude"]

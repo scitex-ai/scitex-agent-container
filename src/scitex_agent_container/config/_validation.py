@@ -62,6 +62,14 @@ def validate_raw(raw: dict, path: str) -> list[str]:
                 f"spec.container.runtime must be none|docker|apptainer, got '{cr}'"
             )
 
+        # container.mount_host_claude (opt-in; default False)
+        mhc = container.get("mount_host_claude")
+        if mhc is not None and not isinstance(mhc, bool):
+            errors.append(
+                "spec.container.mount_host_claude must be a boolean, got "
+                f"{type(mhc).__name__}"
+            )
+
         # container.network
         network = container.get("network")
         if network and network not in ("host", "bridge", "none"):
