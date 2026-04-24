@@ -23,3 +23,8 @@ Declarative agent deployment. Define agents in YAML, launch them in tmux/screen 
 
 ### Lessons
 - [40_troubleshooting.md](40_troubleshooting.md) — Common issues and debugging
+
+
+## Environment
+
+- [30_env-vars.md](30_env-vars.md) — SCITEX_* env vars read by scitex-agent-container at runtime
