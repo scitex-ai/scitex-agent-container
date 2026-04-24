@@ -22,6 +22,15 @@
 
 ---
 
+> **Interfaces:** Python ⭐⭐ · CLI ⭐⭐⭐ · MCP ⭐ · Skills ⭐⭐ · Hook — · HTTP —
+
+## Problem and Solution
+
+| # | Problem | Solution |
+|---|---------|----------|
+| 1 | **Fragile per-agent scripts** — launching Claude Code / Cursor / Aider means hand-rolling shell scripts for tmux, env vars, MCP configs, and auto-accept prompts, with no restart policy or health monitoring | **Declarative YAML manifest** — one file fully specifies runtime, model, MCP servers, env, health checks, and remote host; `sac start` brings the agent up in tmux/screen with auto-accept and a watchdog |
+| 2 | **No fleet story** — scaling from one agent to many across machines duplicates the same fragile scripts, with no SSH deploy, no presence, and no inter-agent comms | **Remote deploy + state inspection** — `sac` copies src files, installs the venv over SSH, and keeps a live view of every pane's state so the fleet behaves as one unit |
+
 ## Problem
 
 Managing AI coding agents (Claude Code, Cursor, Aider) in production requires manual script-writing, environment setup, and process monitoring for each agent instance. Scaling from one agent to a fleet across multiple machines means duplicating fragile shell scripts with no health checks, restart policies, remote deployment, or inter-agent communication.
