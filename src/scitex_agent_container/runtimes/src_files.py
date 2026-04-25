@@ -1,4 +1,4 @@
-"""Deploy src_CLAUDE.md and src_mcp.json from agent definition directory."""
+"""Deploy src_CLAUDE.md, src_mcp.json, and src_env from agent definition directory."""
 
 from __future__ import annotations
 
@@ -167,9 +167,7 @@ def deploy_src_claude_md(config: AgentConfig, workdir: str) -> None:
         "     anything between them — all changes there will be lost.\n"
         "     ================================================================ -->"
     )
-    new_content = (
-        f"{start_tag}\n{section_body}\n{END_MARKER}\n{guide_comment}\n"
-    )
+    new_content = f"{start_tag}\n{section_body}\n{END_MARKER}\n{guide_comment}\n"
 
     # Validate: if a workspace CLAUDE.md already exists, its markers must
     # be well-formed (exactly 1 Start, 1 End, Start-before-End). Refuse the
@@ -184,7 +182,11 @@ def deploy_src_claude_md(config: AgentConfig, workdir: str) -> None:
     # Strip any previous guide comment so it does not duplicate on re-deploy.
     if user_tail:
         user_tail = re.sub(
-            r"\n?<!--\s*={3,}.*?={3,}\s*-->\n?", "\n", user_tail, count=1, flags=re.DOTALL
+            r"\n?<!--\s*={3,}.*?={3,}\s*-->\n?",
+            "\n",
+            user_tail,
+            count=1,
+            flags=re.DOTALL,
         )
 
     if END_MARKER not in new_content:
@@ -249,10 +251,7 @@ def cleanup_src_claude_md(config: AgentConfig, workdir: str) -> None:
     )
     guide_comment_legacy = r"<!--\s*↓\s*Your custom content.*?-->\n?"
 
-    pattern = (
-        f"{managed_block}"
-        f"(?:{guide_comment_current}|{guide_comment_legacy})?"
-    )
+    pattern = f"{managed_block}(?:{guide_comment_current}|{guide_comment_legacy})?"
     updated = re.sub(pattern, "", existing, flags=re.DOTALL)
 
     if not updated.strip():
@@ -422,3 +421,81 @@ def cleanup_src_mcp_json(config: AgentConfig, workdir: str) -> None:
         data["mcpServers"] = servers
         dest.write_text(json.dumps(data, indent=2) + "\n")
         logger.info("Cleaned up .mcp.json at %s", dest)
+
+
+def deploy_src_env(config: AgentConfig, workdir: str) -> None:
+    """Copy ``src_env`` to ``{workdir}/.env`` with mode 0600.
+
+    Symmetric to :func:`deploy_src_mcp_json`. Source format is plain
+    dotenv (``KEY=value`` per line, ``#`` comments, blank lines allowed).
+    The whole file is interpolated for ``${VAR}`` (from ``os.environ``)
+    and ``${metadata.name}`` / ``${metadata.labels.*}`` (from
+    AgentConfig) before being written.
+
+    Contract:
+
+    * **Unconditional refresh** — ``.env`` is always rewritten from the
+      canonical source. No ``if dest.exists()`` fast-path.
+    * **Full overwrite** — unlike ``.mcp.json`` (per-server replace),
+      ``.env`` is wholly replaced. Anything the agent or user added to
+      the workspace ``.env`` is lost on next deploy. The source of truth
+      is ``src_env``.
+    * **Mode 0600** — readable only by the agent's UID, since dotenvs
+      typically carry secrets.
+    * **No shell-eval** — ``$(...)`` and backticks are NOT expanded.
+      Only ``${VAR}`` substitution from already-exported env vars is
+      supported. To inject a token, the parent shell must export the
+      value before sac launches.
+
+    If ``src_env`` does not exist next to the agent YAML, does nothing.
+    """
+    defdir = _definition_dir(config)
+    if defdir is None:
+        return
+
+    src = defdir / "src_env"
+    if not src.exists():
+        return
+
+    text = src.read_text()
+    if not text.strip():
+        return
+
+    text = _interpolate_metadata(text, config)
+    text = _interpolate_env(text)
+
+    dest = Path(workdir) / ".env"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    if not text.endswith("\n"):
+        text += "\n"
+    dest.write_text(text)
+    try:
+        os.chmod(dest, 0o600)
+    except OSError as exc:
+        logger.warning("Failed to chmod 0600 on %s: %s", dest, exc)
+
+    logger.info("Deployed src_env for %s to %s", config.name, dest)
+
+
+def cleanup_src_env(config: AgentConfig, workdir: str) -> None:
+    """Remove ``{workdir}/.env`` if it was deployed by us.
+
+    The workspace ``.env`` is fully owned by ``deploy_src_env`` (no
+    user-tail protocol like CLAUDE.md, no per-server preservation like
+    .mcp.json). On stop, simply unlink it if a ``src_env`` source
+    exists. Other projects' workspace .env files (where no ``src_env``
+    sits next to the YAML) are left untouched.
+    """
+    defdir = _definition_dir(config)
+    if defdir is None:
+        return
+
+    src = defdir / "src_env"
+    if not src.exists():
+        return
+
+    dest = Path(workdir) / ".env"
+    if dest.exists():
+        dest.unlink()
+        logger.info("Cleaned up .env for %s at %s", config.name, dest)

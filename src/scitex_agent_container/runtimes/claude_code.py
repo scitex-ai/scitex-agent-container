@@ -15,8 +15,10 @@ from .mcp_config import cleanup_mcp_config, setup_mcp_config
 from .settings_json import cleanup_settings_json, setup_settings_json
 from .src_files import (  # noqa: F401
     cleanup_src_claude_md,
+    cleanup_src_env,
     cleanup_src_mcp_json,
     deploy_src_claude_md,
+    deploy_src_env,
     deploy_src_mcp_json,
 )
 from .ssh_remote import SSHPreflightError as SSHPreflightError  # noqa: F401
@@ -118,7 +120,11 @@ def _has_src_files(config: AgentConfig) -> bool:
     if not config.config_path:
         return False
     defdir = Path(config.config_path).parent
-    return (defdir / "src_CLAUDE.md").exists() or (defdir / "src_mcp.json").exists()
+    return (
+        (defdir / "src_CLAUDE.md").exists()
+        or (defdir / "src_mcp.json").exists()
+        or (defdir / "src_env").exists()
+    )
 
 
 class ClaudeCodeRuntime(RuntimeBase):
@@ -553,6 +559,7 @@ class ClaudeCodeRuntime(RuntimeBase):
         if is_v2:
             deploy_src_claude_md(config, workdir)
             deploy_src_mcp_json(config, workdir)
+            deploy_src_env(config, workdir)
         else:
             _setup_claude_md(config, workdir)
         setup_mcp_config(config, workdir)
@@ -602,6 +609,7 @@ class ClaudeCodeRuntime(RuntimeBase):
         if is_v2:
             cleanup_src_claude_md(config, config.expanded_workdir)
             cleanup_src_mcp_json(config, config.expanded_workdir)
+            cleanup_src_env(config, config.expanded_workdir)
         else:
             _cleanup_claude_md(config, config.expanded_workdir)
         cleanup_mcp_config(config, config.expanded_workdir)
