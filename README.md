@@ -207,6 +207,10 @@ scitex-agent-container actions query [--agent X] [--action Y] [--since 2h]
 scitex-agent-container actions stats [--agent X] [--since 7d]
 scitex-agent-container actions purge [--days N]
 
+# A2A protocol — standalone agent endpoint, no fleet deps
+# (echo handler by default; --handler claude_cli runs `claude --print`)
+scitex-agent-container a2a serve <agent.yaml>... [--port 8888] [--handler echo|claude_cli|exec]
+
 # Configuration
 scitex-agent-container validate <config.yaml>
 scitex-agent-container check <config.yaml>
