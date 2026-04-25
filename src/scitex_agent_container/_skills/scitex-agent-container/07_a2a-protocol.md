@@ -15,8 +15,11 @@ Concrete value:
 ## CLI
 
 ```bash
-sac a2a serve <agent.yaml>... [--host 127.0.0.1] [--port 8888] [--handler {echo,claude_cli,exec}] [-v]
+sac a2a serve  <agent.yaml>... [--host 127.0.0.1] [--port 8888] [--handler {echo,claude_cli,exec}] [-v]
+sac a2a doctor <agent.yaml>    [--host H] [--port N] [--timeout 5.0] [--json]
 ```
+
+`a2a doctor` GETs the AgentCard endpoint declared by `spec.a2a` and reports liveness + round-trip latency. Exit codes: `0` healthy, `1` unhealthy/unreachable, `2` config error (no `spec.a2a.port`).
 
 ## Auto-launch via `spec.a2a`
 

@@ -1,27 +1,33 @@
-"""``sac a2a serve`` CLI subcommand — standalone A2A protocol surface.
+"""``sac a2a {serve,doctor}`` CLI subcommands — A2A protocol surface.
 
-Boots the stdlib HTTP A2A server defined in
-:mod:`scitex_agent_container.a2a._server` for one or more agent
-YAMLs, with a configurable JSON-RPC ``tasks/send`` handler.
+* :func:`a2a_serve` boots the stdlib HTTP A2A server for one or more
+  agent YAMLs.
+* :func:`a2a_doctor` probes an agent's AgentCard endpoint (as
+  declared by ``spec.a2a`` in its YAML) and reports liveness +
+  round-trip latency. Useful for ops or as ``spec.health.method:
+  a2a-card`` from outside the agent process.
 
 Examples::
 
-    # Echo handler (default), single agent YAML
     sac a2a serve mock-echo.yaml --port 8888
-
-    # Real Claude CLI dispatch
     sac a2a serve mock-echo.yaml --handler claude_cli --port 8888
-
-    # Multi-agent: glob-expanded YAMLs
     sac a2a serve agents/*/*.yaml --port 9000
+    sac a2a doctor mock-echo.yaml
+    sac a2a doctor mock-echo.yaml --json
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import sys
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 import click
+import yaml
 
 from scitex_agent_container.a2a import HANDLERS, serve
 
@@ -80,3 +86,123 @@ def a2a_serve(
             level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
         )
     serve(list(agent_yamls), host=host, port=port, handler=handler)
+
+
+@a2a.command("doctor")
+@click.argument(
+    "agent_yaml",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+)
+@click.option(
+    "--host",
+    default=None,
+    help="Override host from spec.a2a.host. Default: read from YAML.",
+)
+@click.option(
+    "--port",
+    type=int,
+    default=None,
+    help="Override port from spec.a2a.port. Default: read from YAML.",
+)
+@click.option(
+    "--timeout",
+    type=float,
+    default=5.0,
+    show_default=True,
+    help="HTTP timeout in seconds.",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit a JSON envelope instead of human text.",
+)
+def a2a_doctor(
+    agent_yaml: Path,
+    host: str | None,
+    port: int | None,
+    timeout: float,
+    as_json: bool,
+) -> None:
+    """Probe an agent's A2A AgentCard endpoint and report health."""
+    v3 = yaml.safe_load(agent_yaml.read_text()) or {}
+    name = (v3.get("metadata") or {}).get("name") or agent_yaml.stem
+    a2a_block = (v3.get("spec") or {}).get("a2a") or {}
+
+    eff_host = host or str(a2a_block.get("host", "127.0.0.1"))
+    eff_port = port or a2a_block.get("port")
+    if eff_port is None:
+        result = {
+            "ok": False,
+            "agent": name,
+            "error": "spec.a2a.port not set in YAML and --port not given",
+        }
+        _emit(result, as_json)
+        sys.exit(2)
+
+    url = f"http://{eff_host}:{int(eff_port)}/v1/agents/{name}/.well-known/agent.json"
+    t0 = time.time()
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            body = json.loads(resp.read())
+        elapsed_ms = int((time.time() - t0) * 1000)
+        if not isinstance(body, dict) or body.get("name") != name:
+            result = {
+                "ok": False,
+                "agent": name,
+                "url": url,
+                "elapsed_ms": elapsed_ms,
+                "error": (
+                    f"AgentCard name mismatch (expected {name!r}, "
+                    f"got {body.get('name') if isinstance(body, dict) else '?'})"
+                ),
+            }
+            _emit(result, as_json)
+            sys.exit(1)
+        result = {
+            "ok": True,
+            "agent": name,
+            "url": url,
+            "elapsed_ms": elapsed_ms,
+            "card_url": body.get("url"),
+        }
+        _emit(result, as_json)
+    except urllib.error.HTTPError as exc:
+        _emit(
+            {
+                "ok": False,
+                "agent": name,
+                "url": url,
+                "error": f"HTTP {exc.code}: {exc.reason}",
+            },
+            as_json,
+        )
+        sys.exit(1)
+    except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
+        _emit(
+            {
+                "ok": False,
+                "agent": name,
+                "url": url,
+                "error": f"{type(exc).__name__}: {exc}",
+            },
+            as_json,
+        )
+        sys.exit(1)
+
+
+def _emit(result: dict, as_json: bool) -> None:
+    if as_json:
+        click.echo(json.dumps(result, ensure_ascii=False))
+        return
+    if result.get("ok"):
+        click.echo(
+            f"[{result['agent']}] healthy ({result['elapsed_ms']} ms) "
+            f"at {result['url']}"
+        )
+    else:
+        url = result.get("url") or "(no URL)"
+        click.echo(
+            f"[{result['agent']}] unhealthy at {url}: {result['error']}",
+            err=True,
+        )
