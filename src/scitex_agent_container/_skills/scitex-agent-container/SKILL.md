@@ -15,6 +15,7 @@ Declarative agent deployment. Define agents in YAML, launch them in tmux/screen 
 - [03_auto-accept.md](03_auto-accept.md) — Modular prompt handlers, extending, diagnostics
 - [04_resource-management.md](04_resource-management.md) — Resource management
 - [05_resource-heartbeat.md](05_resource-heartbeat.md) — Resource heartbeat
+- [06_env-injection-ports.md](06_env-injection-ports.md) — Four env-injection ports (yaml.env / src_mcp.json env / src_env / hooks) with reach + decision tree
 
 ### Workflows
 - [10_cli.md](10_cli.md) — CLI commands and Python API

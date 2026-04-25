@@ -69,7 +69,10 @@ my-agent/
   my-agent.yaml     # Agent config
   src_CLAUDE.md      # -> deployed to {workdir}/CLAUDE.md
   src_mcp.json       # -> deployed to {workdir}/.mcp.json
+  src_env            # -> deployed to {workdir}/.env  (mode 0600)
 ```
+
+The `src_*` family is a generic file-deploy pipeline: a sibling file named `src_X` next to the YAML is materialized into the workspace at agent start, with `${VAR}` and `${metadata.name}` interpolation. `src_env` is the dotenv variant — sourceable by anything the agent spawns (cron jobs, ssh-launched commands, fresh shells), not just the multiplexer session. See [`_skills/scitex-agent-container/06_env-injection-ports.md`](src/scitex_agent_container/_skills/scitex-agent-container/06_env-injection-ports.md) for the four distinct env-injection ports and when to use each.
 
 2. Write a YAML manifest:
 
