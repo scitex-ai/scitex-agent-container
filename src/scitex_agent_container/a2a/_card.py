@@ -1,5 +1,12 @@
 """A2A AgentCard projection from a v3 sac YAML.
 
+**Canonical source for v3 → AgentCard projection.** The scitex-cloud
+mirror at ``apps/infra/a2a_app/_card.py`` (orochi public surface) is
+expected to layer ``x-orochi`` enrichment on top of the field set
+this module produces. Until the projection logic is extracted into a
+shared dependency, the two implementations must be kept in sync:
+canonical = THIS file; mirror = scitex-cloud `_card.py`.
+
 Pure stdlib, no fleet imports. The projection is request-aware: pass
 ``base_url`` so each card advertises the URL the client actually used.
 
