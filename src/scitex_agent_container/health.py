@@ -18,8 +18,55 @@ def health_check(config: AgentConfig) -> tuple[bool, str]:
         if config.remote.is_remote:
             return _check_session_alive_remote(config)
         return _check_session_alive(config)
+    if method == "a2a-card":
+        return _check_a2a_card(config)
 
     return False, f"Unknown health method: {method}"
+
+
+def _check_a2a_card(config: AgentConfig) -> tuple[bool, str]:
+    """Probe the agent's A2A AgentCard endpoint.
+
+    Reads ``spec.a2a.{port,host}`` from the YAML and issues a GET to
+    ``http://<host>:<port>/v1/agents/<name>/.well-known/agent.json``.
+    Healthy iff the endpoint returns 200 with ``name == config.name``.
+
+    Used when ``spec.health.method: a2a-card`` is set in v3 YAML —
+    higher-fidelity than ``multiplexer-alive`` because it confirms
+    the agent's A2A surface is actually serving, not just that the
+    multiplexer session exists.
+    """
+    import json
+    import urllib.error
+    import urllib.request
+
+    from .runtimes.a2a_sidecar import _read_a2a_block
+
+    a2a = _read_a2a_block(config)
+    if a2a is None:
+        return False, "unhealthy: spec.a2a not set in YAML"
+
+    host = str(a2a.get("host", "127.0.0.1"))
+    port = int(a2a["port"])
+    url = f"http://{host}:{port}/v1/agents/{config.name}/.well-known/agent.json"
+    t0 = time.time()
+    try:
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            data = json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        return False, f"unhealthy: AgentCard HTTP {exc.code} from {url}"
+    except (urllib.error.URLError, OSError) as exc:
+        return False, f"unhealthy: AgentCard unreachable at {url}: {exc}"
+    except (ValueError, json.JSONDecodeError) as exc:
+        return False, f"unhealthy: AgentCard malformed JSON: {exc}"
+
+    elapsed_ms = int((time.time() - t0) * 1000)
+    if not isinstance(data, dict) or data.get("name") != config.name:
+        return False, (
+            f"unhealthy: AgentCard name mismatch "
+            f"(expected {config.name!r}, got {data.get('name')!r})"
+        )
+    return True, f"healthy ({elapsed_ms} ms via {host}:{port})"
 
 
 def _check_session_alive(config: AgentConfig) -> tuple[bool, str]:
