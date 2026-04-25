@@ -18,6 +18,25 @@ Concrete value:
 sac a2a serve <agent.yaml>... [--host 127.0.0.1] [--port 8888] [--handler {echo,claude_cli,exec}] [-v]
 ```
 
+## Auto-launch via `spec.a2a`
+
+When a v3 YAML declares `spec.a2a.port`, `sac start` spawns the A2A server as a sidecar subprocess after the multiplexer is up. PID lives at `{workdir}/a2a-sidecar.pid`, output at `{workdir}/a2a-sidecar.log`; `sac stop` SIGTERMs it via the PID file.
+
+```yaml
+apiVersion: scitex-agent-container/v3
+kind: Agent
+metadata:
+  name: my-agent
+spec:
+  runtime: claude-code
+  a2a:
+    port: 8888
+    handler: echo          # echo (default) | claude_cli | exec
+    host: 127.0.0.1        # default; use 0.0.0.0 to expose externally
+```
+
+Disabled by default — the sidecar only starts when `spec.a2a` is present. Sidecar failures are logged and swallowed; agent start/stop is never blocked by A2A.
+
 | Handler | What it does | When to use |
 | --- | --- | --- |
 | `echo` (default) | canned reply with the user text | smoke-test the protocol surface; zero deps |
