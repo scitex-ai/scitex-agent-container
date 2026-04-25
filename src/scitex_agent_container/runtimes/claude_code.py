@@ -9,6 +9,8 @@ from pathlib import Path
 
 from ..config import AgentConfig
 from ..host_identity import is_local_host
+from .a2a_sidecar import start_sidecar as _a2a_start_sidecar
+from .a2a_sidecar import stop_sidecar as _a2a_stop_sidecar
 from .base import RuntimeBase
 from .claude_md import cleanup_claude_md, setup_claude_md
 from .mcp_config import cleanup_mcp_config, setup_mcp_config
@@ -575,6 +577,11 @@ class ClaudeCodeRuntime(RuntimeBase):
         )
 
         if started:
+            try:
+                _a2a_start_sidecar(config)
+            except Exception:  # noqa: BLE001 — never block agent start
+                logger.exception("a2a sidecar spawn failed for %s", config.name)
+
             has_tasks = self._needs_auto_accept(config) or config.startup_commands
             if has_tasks:
                 # Run post-start tasks in a foreground thread and wait for
@@ -604,6 +611,11 @@ class ClaudeCodeRuntime(RuntimeBase):
                 return DockerRuntime().stop(config)
             elif config.container.runtime == "apptainer":
                 return ApptainerRuntime().stop(config)
+
+        try:
+            _a2a_stop_sidecar(config)
+        except Exception:  # noqa: BLE001 — never block agent stop
+            logger.exception("a2a sidecar stop failed for %s", config.name)
 
         is_v2 = bool(config.mcp_servers) or _has_src_files(config)
         if is_v2:
