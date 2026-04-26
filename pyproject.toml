@@ -38,6 +38,11 @@ dependencies = [
     "pyyaml>=6.0",
     "rich>=13.0",
     "scitex-container>=0.1.0",
+    # A2A protocol surface — Phase 1 SDK adoption (see GITIGNORED/A2A_MIGRATION.md).
+    # `[http-server]` extras pull in starlette + sse-starlette for the
+    # JSON-RPC + SSE routes we mount in `a2a/_server.py`.
+    "a2a-sdk[http-server]>=1.0.2",
+    "uvicorn>=0.27",
 ]
 
 [project.optional-dependencies]

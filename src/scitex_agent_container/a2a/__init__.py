@@ -12,9 +12,13 @@ This package provides:
   fields; sac-internal extensions live under ``x-scitex-agent-container``
   (NOT ``x-orochi``).
 * :mod:`._handlers` — pluggable JSON-RPC ``tasks/send`` handlers
-  (``echo`` / ``claude_cli`` / ``exec``).
-* :mod:`._server` — stdlib HTTP server tying the projection and the
-  handler together.
+  (``echo`` / ``claude_cli`` / ``exec``) — used by the legacy
+  byte-compat path.
+* :mod:`.executors` — corresponding :class:`a2a.server.agent_execution.AgentExecutor`
+  subclasses driven by the official `a2a-sdk` (Phase 1).
+* :mod:`._server` — Starlette app tying the projection, the SDK
+  dispatcher (with v0.3 compat for SSE/streaming), and the legacy
+  byte-compat path together.
 
 CLI: ``sac a2a serve <agent.yaml> [--port N] [--handler ...]``.
 """
@@ -27,11 +31,24 @@ from scitex_agent_container.a2a._handlers import (
     handle_echo,
     handle_exec,
 )
-from scitex_agent_container.a2a._server import serve
+from scitex_agent_container.a2a._server import build_app, serve
+from scitex_agent_container.a2a.executors import (
+    EXECUTORS,
+    BaseSyncExecutor,
+    ClaudeCliExecutor,
+    EchoExecutor,
+    ExecExecutor,
+)
 
 __all__ = [
+    "BaseSyncExecutor",
+    "ClaudeCliExecutor",
+    "EXECUTORS",
+    "EchoExecutor",
+    "ExecExecutor",
     "HANDLERS",
     "HandlerError",
+    "build_app",
     "fleet_card",
     "handle_claude_cli",
     "handle_echo",
