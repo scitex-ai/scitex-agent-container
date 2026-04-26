@@ -63,7 +63,8 @@ def a2a() -> None:
     default="echo",
     show_default=True,
     help=(
-        "JSON-RPC tasks/send dispatcher. 'echo' = canned reply, "
+        "Default JSON-RPC dispatcher (overridden per-agent by "
+        "`spec.a2a.handler` in the yaml). 'echo' = canned reply, "
         "'claude_cli' = `claude --print`, 'exec' = $SAC_A2A_EXEC_COMMAND."
     ),
 )
