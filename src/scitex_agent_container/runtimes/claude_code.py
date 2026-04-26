@@ -532,12 +532,17 @@ class ClaudeCodeRuntime(RuntimeBase):
         config: AgentConfig,
         no_preflight: bool = False,
         force: bool = False,
+        dry_run: bool = False,
     ) -> bool:
         """Start a Claude Code agent.
 
         ``force`` is passed through to SSHRemote.start so the remote
         ``scitex-agent-container start`` call receives ``--force`` and
         stops any existing instance before relaunching.
+
+        ``dry_run``: materialize the workspace (CLAUDE.md, .mcp.json,
+        .env, settings.json) but do NOT launch the multiplexer or the
+        Claude Code process. Returns True when prep succeeds.
         """
         if _should_dispatch_remote(config):
             return SSHRemote.start(config, no_preflight=no_preflight, force=force)
@@ -566,6 +571,10 @@ class ClaudeCodeRuntime(RuntimeBase):
             _setup_claude_md(config, workdir)
         setup_mcp_config(config, workdir)
         setup_settings_json(config, workdir)
+
+        if dry_run:
+            # Workspace materialized; skip multiplexer + Claude Code launch.
+            return True
 
         mux = self._get_mux(config)
         started = mux.start(

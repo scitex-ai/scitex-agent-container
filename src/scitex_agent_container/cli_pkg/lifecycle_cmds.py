@@ -131,10 +131,36 @@ def _discover_all_agents() -> list[str]:
     default=False,
     help="If already running or stale, stop first then start fresh.",
 )
+@click.option(
+    "--dry-run",
+    "dry_run",
+    is_flag=True,
+    default=False,
+    help="Materialize the workspace files (CLAUDE.md, .mcp.json, .env, "
+    "settings.json) but skip launching the multiplexer / Claude Code. "
+    "Use to inspect the planned workspace without starting the agent.",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Emit a structured JSON report on stdout instead of human prose.",
+)
 def start(
-    config_path: str | None, start_all: bool, no_preflight: bool, force: bool
+    config_path: str | None,
+    start_all: bool,
+    no_preflight: bool,
+    force: bool,
+    dry_run: bool,
+    as_json: bool,
 ) -> None:
     """Start an agent from a YAML definition, or --all to start every agent."""
+    import json as _json
+
+    def _emit_json(payload: dict) -> None:
+        click.echo(_json.dumps(payload, ensure_ascii=False))
+
     if start_all:
         yamls = _discover_all_agents()
         if not yamls:
@@ -164,8 +190,15 @@ def start(
                     f"  [blue]{config.name}[/blue] ({location})...",
                     end=" ",
                 )
-                agent_start(yaml_path, no_preflight=no_preflight, force=force)
-                console.print("[green]OK[/green]")
+                agent_start(
+                    yaml_path,
+                    no_preflight=no_preflight,
+                    force=force,
+                    dry_run=dry_run,
+                )
+                console.print(
+                    "[green]DRY-RUN OK[/green]" if dry_run else "[green]OK[/green]"
+                )
             except Exception as exc:
                 console.print(f"[red]FAILED: {exc}[/red]")
         return
@@ -188,37 +221,86 @@ def start(
             current_host = ""
         skip = _singleton_skip_reason(config, current_host)
         if skip:
-            console.print(f"[yellow]Skipping '{config.name}': {skip}[/yellow]")
+            if as_json:
+                _emit_json(
+                    {
+                        "name": config.name,
+                        "status": "skipped",
+                        "reason": skip,
+                        "dry_run": dry_run,
+                    }
+                )
+            else:
+                console.print(f"[yellow]Skipping '{config.name}': {skip}[/yellow]")
             return
         location = (
             f"REMOTE: {config.remote.host}" if config.remote.is_remote else "LOCAL"
         )
-        console.print(
-            f"[blue]Starting agent '{config.name}' "
-            f"(runtime: {config.runtime}, {location})...[/blue]"
-        )
-        if no_preflight:
-            console.print("[dim]Preflight checks skipped (--no-preflight)[/dim]")
-        if force:
-            console.print("[dim]Force mode: stopping any existing instance first[/dim]")
-        agent_start(config_path, no_preflight=no_preflight, force=force)
-        console.print(
-            f"[green]Agent '{config.name}' started successfully [{location}][/green]"
-        )
-        if not config.claude.auto_accept and any(
-            df in f
-            for f in config.claude.flags
-            for df in (
-                "--dangerously-skip-permissions",
-                "--dangerously-load-development-channels",
-            )
-        ):
+        if not as_json:
             console.print(
-                f"[yellow]auto_accept: false — manual TUI acceptance required on {config.remote.host or 'local'}[/yellow]"
+                f"[blue]{'Dry-running' if dry_run else 'Starting'} agent "
+                f"'{config.name}' (runtime: {config.runtime}, {location})...[/blue]"
             )
+            if no_preflight:
+                console.print("[dim]Preflight checks skipped (--no-preflight)[/dim]")
+            if force:
+                console.print(
+                    "[dim]Force mode: stopping any existing instance first[/dim]"
+                )
+        agent_start(
+            config_path, no_preflight=no_preflight, force=force, dry_run=dry_run
+        )
+        if as_json:
+            _emit_json(
+                {
+                    "name": config.name,
+                    "status": "dry_run_ok" if dry_run else "started",
+                    "runtime": config.runtime,
+                    "location": location.lower(),
+                    "workdir": config.expanded_workdir,
+                    "dry_run": dry_run,
+                }
+            )
+        else:
+            verb = (
+                "dry-run prepared the workspace for"
+                if dry_run
+                else "started successfully ["
+            )
+            tail = "" if dry_run else f"[{location}]"
+            console.print(
+                f"[green]Agent '{config.name}' {verb}{tail}[/green]"
+                if dry_run
+                else f"[green]Agent '{config.name}' started successfully [{location}][/green]"
+            )
+            if (
+                not dry_run
+                and not config.claude.auto_accept
+                and any(
+                    df in f
+                    for f in config.claude.flags
+                    for df in (
+                        "--dangerously-skip-permissions",
+                        "--dangerously-load-development-channels",
+                    )
+                )
+            ):
+                console.print(
+                    f"[yellow]auto_accept: false — manual TUI acceptance required on {config.remote.host or 'local'}[/yellow]"
+                )
     except Exception as exc:
-        console.print(f"[red]Error: {exc}[/red]")
-        traceback.print_exc()
+        if as_json:
+            _emit_json(
+                {
+                    "name": config_path,
+                    "status": "error",
+                    "error": str(exc),
+                    "dry_run": dry_run,
+                }
+            )
+        else:
+            console.print(f"[red]Error: {exc}[/red]")
+            traceback.print_exc()
         sys.exit(1)
 
 
