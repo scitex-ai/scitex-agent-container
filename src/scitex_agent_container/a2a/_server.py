@@ -1,28 +1,24 @@
 """Starlette-based A2A HTTP server (sac-side).
 
-This module is a thin shim around the official `a2a-sdk` Starlette
-routes (`create_jsonrpc_routes` + `LegacyRequestHandler` with
-`enable_v0_3_compat=True`), plus a small native legacy compat layer
-that preserves byte-compatibility with sac's pre-SDK
-``tasks/send`` / ``tasks/get`` JSON shape.
+Pure ``a2a-sdk`` 1.0.x dispatch. Every JSON-RPC method (``message/send``,
+``message/stream``, ``tasks/get``, ``tasks/cancel``,
+``tasks/resubscribe``, ``tasks/pushNotificationConfig/*``) goes through
+the SDK's :class:`DefaultRequestHandler` + :func:`create_jsonrpc_routes`.
+There is no legacy compat layer — sac speaks current A2A only.
 
 Routes (mirroring the spec):
 
-* ``GET /.well-known/agent.json`` — fleet AgentCard
-* ``GET /v1/agents/`` — JSON list of agents
+* ``GET /.well-known/agent.json`` — fleet AgentCard (sac dict shape).
+* ``GET /v1/agents/`` — JSON list of agents.
 * ``GET /v1/agents/<name>/.well-known/agent.json`` — per-agent AgentCard
-* ``POST /v1/agents/<name>`` — JSON-RPC endpoint:
+  (sac dict shape; preserves the ``x-scitex-agent-container`` extension).
+* ``POST /v1/agents/<name>`` — SDK JSON-RPC dispatcher.
 
-  - ``tasks/send`` / ``tasks/get`` are handled natively (legacy sac shape).
-  - All other methods (``message/send``, ``message/stream``,
-    ``tasks/get``, ``tasks/cancel``, ``tasks/resubscribe``, push-notif
-    config, etc.) are dispatched through the SDK's JsonRpcDispatcher
-    with ``enable_v0_3_compat=True``. ``message/stream`` returns SSE.
-
-Card projection is unchanged — see :mod:`._card`. The legacy compat
-path uses sac's existing sync ``HANDLERS``; the SDK path uses the new
-``AgentExecutor`` subclasses in :mod:`.executors` (selectable per
-agent via yaml ``spec.a2a.handler``).
+Card projection: see :mod:`._card`. The HTTP ``.well-known`` route serves
+the dict projection (which keeps sac-extension fields). The SDK's
+``LegacyRequestHandler``-style ``agent/getAuthenticatedExtendedCard`` is
+served from the equivalent proto card built by
+:func:`._card.project_card_proto`.
 
 Task store is in-memory per the migration doc's recommendation for
 sac standalone use. Orochi can later override this with a DB-backed
@@ -34,91 +30,28 @@ from __future__ import annotations
 import json
 import logging
 import socket
-import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import yaml
-from google.protobuf.json_format import ParseDict
+from a2a.server.agent_execution import AgentExecutor
+from a2a.server.request_handlers import DefaultRequestHandler
+from a2a.server.routes import create_jsonrpc_routes
+from a2a.server.tasks import InMemoryTaskStore
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from a2a.server.agent_execution import AgentExecutor
-from a2a.server.request_handlers import LegacyRequestHandler
-from a2a.server.routes import create_jsonrpc_routes
-from a2a.server.tasks import InMemoryTaskStore
-from a2a.types import AgentCard
-
-from scitex_agent_container.a2a._card import fleet_card, project_card
-from scitex_agent_container.a2a._handlers import HANDLERS, HandlerError
+from scitex_agent_container.a2a._card import (
+    fleet_card,
+    project_card,
+    project_card_proto,
+)
+from scitex_agent_container.a2a._handlers import HANDLERS
 from scitex_agent_container.a2a.executors import EXECUTORS, BaseSyncExecutor
 
 log = logging.getLogger(__name__)
-
-# Legacy in-memory store for ``tasks/send`` / ``tasks/get`` byte-compat path.
-# (The SDK has its own InMemoryTaskStore; the two are independent —
-# legacy clients never see SDK tasks and vice versa.)
-_LEGACY_TASKS: dict[str, dict[str, Any]] = {}
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-# ---------------------------------------------------------------------
-# AgentCard proto adapter
-# ---------------------------------------------------------------------
-
-
-def _proto_agent_card(card_dict: dict[str, Any]) -> AgentCard:
-    """Adapt sac's dict AgentCard projection to the SDK's proto AgentCard.
-
-    The SDK's `LegacyRequestHandler` requires a proto `AgentCard` for
-    methods like `agent/getAuthenticatedExtendedCard`. Sac's projection
-    intentionally produces a dict (the canonical shape, kept stable
-    across the ecosystem). We translate the subset of fields the proto
-    schema actually accepts; sac-only extension fields like
-    ``x-scitex-agent-container`` are dropped (they're served as-is on
-    the GET ``.well-known/agent.json`` route, which uses the dict).
-    """
-    keep_keys = {
-        "name",
-        "description",
-        "version",
-        "provider",
-        "defaultInputModes",
-        "defaultOutputModes",
-    }
-    minimal: dict[str, Any] = {k: card_dict[k] for k in keep_keys if k in card_dict}
-
-    # Capabilities — only the proto-supported subset. Force ``streaming:
-    # true`` regardless of what the dict card says; sac executors enqueue
-    # task-update events to support `message/stream`. (The dict card
-    # served at GET /.well-known/agent.json reflects the historical
-    # value — preserved for byte-compat.)
-    caps_in = card_dict.get("capabilities") or {}
-    minimal["capabilities"] = {
-        "streaming": True,
-        "pushNotifications": bool(caps_in.get("pushNotifications", False)),
-    }
-
-    # Skills — strip unknown fields.
-    skills = []
-    skill_keep = {"id", "name", "description", "tags"}
-    for skill in card_dict.get("skills", []) or []:
-        skills.append({k: skill[k] for k in skill_keep if k in skill})
-    minimal["skills"] = skills
-
-    # Provider — strip unknown fields.
-    prov = card_dict.get("provider") or {}
-    minimal["provider"] = {
-        k: prov[k] for k in ("organization", "url") if k in prov
-    }
-
-    return ParseDict(minimal, AgentCard())
 
 
 # ---------------------------------------------------------------------
@@ -142,106 +75,17 @@ class _AgentDispatcher:
         self.v3 = v3
         self.executor = executor
         self.task_store = InMemoryTaskStore()
-        card_dict = project_card(name, v3, base_url)
-        proto_card = _proto_agent_card(card_dict)
-        self.request_handler = LegacyRequestHandler(
+        proto_card = project_card_proto(name, v3, base_url)
+        self.request_handler = DefaultRequestHandler(
             agent_executor=executor,
             task_store=self.task_store,
             agent_card=proto_card,
         )
-        # Build the SDK's JSON-RPC routes (with v0.3 compat enabled so
-        # external clients can use `message/send`, `message/stream`,
-        # `tasks/get`, `tasks/cancel`).
+        # SDK JSON-RPC routes — current A2A spec only, no v0.3 compat.
         self.routes: list[Route] = create_jsonrpc_routes(
             request_handler=self.request_handler,
             rpc_url=f"/_sdk/v1/agents/{name}",
-            enable_v0_3_compat=True,
         )
-
-
-# ---------------------------------------------------------------------
-# Legacy `tasks/send` / `tasks/get` byte-compat handler
-# ---------------------------------------------------------------------
-
-
-def _legacy_handle(name: str, handler_key: str, body: dict[str, Any]) -> dict[str, Any]:
-    """Implement the pre-SDK ``tasks/send`` / ``tasks/get`` JSON-RPC shape.
-
-    Returns the JSON-RPC envelope dict (``{"jsonrpc": "2.0", "id": ...,
-    "result": ...}``) so callers can wrap it in a JSONResponse.
-    """
-    rpc_id = body.get("id")
-    method = body.get("method")
-    params = body.get("params") or {}
-
-    if method == "tasks/get":
-        tid = params.get("id")
-        if not tid or tid not in _LEGACY_TASKS:
-            return {
-                "jsonrpc": "2.0",
-                "id": rpc_id,
-                "error": {"code": -32000, "message": f"task not found: {tid}"},
-            }
-        return {"jsonrpc": "2.0", "id": rpc_id, "result": _LEGACY_TASKS[tid]}
-
-    if method != "tasks/send":  # pragma: no cover — caller should filter.
-        return {
-            "jsonrpc": "2.0",
-            "id": rpc_id,
-            "error": {"code": -32601, "message": f"method not found: {method}"},
-        }
-
-    msg = params.get("message", {}) or {}
-    parts = msg.get("parts", []) or []
-    user_text = next(
-        (p.get("text", "") for p in parts if p.get("type") == "text"),
-        "",
-    )
-
-    handler_fn = HANDLERS.get(handler_key)
-    if handler_fn is None:  # pragma: no cover — selection layer guards.
-        return {
-            "jsonrpc": "2.0",
-            "id": rpc_id,
-            "error": {
-                "code": -32603,
-                "message": f"unknown handler: {handler_key!r}",
-            },
-        }
-
-    err_msg = None
-    try:
-        reply = handler_fn(name, user_text)
-        state = "completed"
-    except HandlerError as exc:
-        reply = str(exc)
-        state = "failed"
-        err_msg = {"text": str(exc)}
-    except Exception as exc:  # noqa: BLE001
-        log.exception("legacy handler crashed for %s", name)
-        reply = f"handler crashed: {exc}"
-        state = "failed"
-        err_msg = {"text": str(exc)}
-
-    task = {
-        "id": params.get("id") or f"task-{uuid.uuid4().hex[:12]}",
-        "sessionId": params.get("sessionId"),
-        "status": {"state": state, "message": err_msg, "timestamp": _now_iso()},
-        "history": [
-            msg,
-            {"role": "agent", "parts": [{"type": "text", "text": reply}]},
-        ],
-        "artifacts": [],
-        "metadata": {
-            "x-scitex-agent-container": {
-                "agent": name,
-                "served_by": "sac-a2a",
-                "generated_at": _now_iso(),
-            }
-        },
-    }
-    _LEGACY_TASKS[task["id"]] = task
-    return {"jsonrpc": "2.0", "id": rpc_id, "result": task}
 
 
 # ---------------------------------------------------------------------
@@ -255,11 +99,9 @@ class _ServerCtx:
     def __init__(
         self,
         yamls: dict[str, dict[str, Any]],
-        handler_keys: dict[str, str],
         dispatchers: dict[str, _AgentDispatcher],
     ) -> None:
         self.yamls = yamls
-        self.handler_keys = handler_keys
         self.dispatchers = dispatchers
 
 
@@ -290,21 +132,14 @@ def _build_app(ctx: _ServerCtx) -> Starlette:
             return JSONResponse({"error": f"unknown agent: {name}"}, status_code=404)
 
         try:
-            body = await request.json()
+            await request.json()
         except (ValueError, json.JSONDecodeError) as exc:
             return JSONResponse({"error": f"bad JSON: {exc}"}, status_code=400)
 
-        method = body.get("method")
-        if method in ("tasks/send", "tasks/get"):
-            handler_key = ctx.handler_keys[name]
-            return JSONResponse(_legacy_handle(name, handler_key, body))
-
-        # Forward to SDK dispatcher (handles message/send,
-        # message/stream → SSE, tasks/get, tasks/cancel,
-        # tasks/pushNotificationConfig/*, tasks/resubscribe).
+        # Forward to SDK dispatcher (handles message/send, message/stream
+        # → SSE, tasks/get, tasks/cancel, tasks/pushNotificationConfig/*,
+        # tasks/resubscribe).
         dispatcher = ctx.dispatchers[name]
-        # The SDK dispatcher only exposes one route — POST. Reuse it
-        # by calling its endpoint function directly.
         sdk_route = dispatcher.routes[0]
         return await sdk_route.endpoint(request)  # type: ignore[no-any-return]
 
@@ -386,7 +221,6 @@ def build_app(
     header.
     """
     yamls: dict[str, dict[str, Any]] = {}
-    handler_keys: dict[str, str] = {}
     dispatchers: dict[str, _AgentDispatcher] = {}
 
     for p in agent_yamls:
@@ -399,14 +233,13 @@ def build_app(
                 f"agent {name!r}: unknown a2a handler {handler_key!r}; "
                 f"pick one of {sorted(HANDLERS)}"
             )
-        handler_keys[name] = handler_key
         executor = _build_executor(name, handler_key)
         dispatchers[name] = _AgentDispatcher(name, v3, executor, base_url)
 
     if not yamls:
         raise ValueError("no agent YAMLs supplied")
 
-    ctx = _ServerCtx(yamls=yamls, handler_keys=handler_keys, dispatchers=dispatchers)
+    ctx = _ServerCtx(yamls=yamls, dispatchers=dispatchers)
     return _build_app(ctx)
 
 

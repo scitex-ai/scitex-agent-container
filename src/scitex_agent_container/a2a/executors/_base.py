@@ -22,8 +22,9 @@ from typing import Any
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
-from a2a.types import Part, Role, TaskState
-from a2a.types.a2a_pb2 import Message, Part as PbPart
+from a2a.types import Role, Task, TaskState, TaskStatus
+from a2a.types.a2a_pb2 import Message
+from a2a.types.a2a_pb2 import Part as PbPart
 
 from scitex_agent_container.a2a._handlers import HandlerError
 
@@ -68,6 +69,18 @@ class BaseSyncExecutor(AgentExecutor):
         context_id = context.context_id or ""
         user_text = context.get_user_input()
 
+        # SDK 1.0 requires the executor to enqueue an initial Task event
+        # before any TaskStatusUpdateEvent — the framework will not
+        # synthesize one. (Compare: the v0.3 LegacyRequestHandler did
+        # this implicitly.)
+        await event_queue.enqueue_event(
+            Task(
+                id=task_id,
+                context_id=context_id,
+                status=TaskStatus(state=TaskState.TASK_STATE_SUBMITTED),
+            )
+        )
+
         updater = TaskUpdater(event_queue, task_id=task_id, context_id=context_id)
 
         # Announce we're working — useful for SSE consumers.
@@ -91,9 +104,7 @@ class BaseSyncExecutor(AgentExecutor):
             return
 
         await updater.add_artifact(parts=[_text_part(reply)], name="reply")
-        await updater.complete(
-            message=_agent_text_message(reply, task_id, context_id)
-        )
+        await updater.complete(message=_agent_text_message(reply, task_id, context_id))
 
     async def cancel(  # type: ignore[override]
         self, context: RequestContext, event_queue: EventQueue

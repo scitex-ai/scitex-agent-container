@@ -7,7 +7,7 @@ this module produces. Until the projection logic is extracted into a
 shared dependency, the two implementations must be kept in sync:
 canonical = THIS file; mirror = scitex-cloud `_card.py`.
 
-Pure stdlib, no fleet imports. The projection is request-aware: pass
+No fleet imports. The projection is request-aware: pass
 ``base_url`` so each card advertises the URL the client actually used.
 
 sac-internal fields live under ``x-scitex-agent-container``; this is
@@ -19,6 +19,9 @@ agent therefore won't carry an ``x-orochi`` block — that's by design.
 from __future__ import annotations
 
 from typing import Any
+
+from a2a.types import AgentCard
+from google.protobuf.json_format import ParseDict
 
 DEFAULT_INPUT_MODES = ["text/plain", "application/json"]
 DEFAULT_OUTPUT_MODES = ["text/plain", "application/json"]
@@ -97,6 +100,46 @@ def project_card(name: str, v3: dict[str, Any], base_url: str) -> dict[str, Any]
             "required_skills": list(required_skills),
         },
     }
+
+
+def project_card_proto(name: str, v3: dict[str, Any], base_url: str) -> AgentCard:
+    """Project a single agent's v3 YAML into the SDK's protobuf ``AgentCard``.
+
+    SDK 1.0.x's :class:`AgentCard` is a protobuf message (not pydantic),
+    and only accepts a strict subset of the dict fields we serve at
+    ``/.well-known/agent.json``. This helper builds the proto card the
+    SDK's :class:`DefaultRequestHandler` requires.
+
+    sac-only extension fields (``x-scitex-agent-container``) are dropped
+    from the proto — they're served as-is on the GET ``.well-known``
+    routes via :func:`project_card`. ``capabilities.streaming`` is
+    forced to ``True`` since sac executors enqueue task-update events
+    to support ``message/stream``.
+    """
+    card_dict = project_card(name, v3, base_url)
+
+    keep_keys = {"name", "description", "version"}
+    minimal: dict[str, Any] = {k: card_dict[k] for k in keep_keys if k in card_dict}
+
+    caps_in = card_dict.get("capabilities") or {}
+    minimal["capabilities"] = {
+        "streaming": True,
+        "push_notifications": bool(caps_in.get("pushNotifications", False)),
+    }
+
+    skill_keep = {"id", "name", "description", "tags"}
+    minimal["skills"] = [
+        {k: skill[k] for k in skill_keep if k in skill}
+        for skill in (card_dict.get("skills") or [])
+    ]
+
+    prov = card_dict.get("provider") or {}
+    minimal["provider"] = {k: prov[k] for k in ("organization", "url") if k in prov}
+
+    minimal["default_input_modes"] = list(card_dict.get("defaultInputModes") or [])
+    minimal["default_output_modes"] = list(card_dict.get("defaultOutputModes") or [])
+
+    return ParseDict(minimal, AgentCard())
 
 
 def fleet_card(
