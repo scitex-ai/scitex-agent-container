@@ -52,8 +52,22 @@ The server exposes the standard A2A routes:
 | --- | --- | --- |
 | GET | `/.well-known/agent.json` | fleet AgentCard listing all agents in this server |
 | GET | `/v1/agents/` | JSON list of agents |
-| GET | `/v1/agents/<name>/.well-known/agent.json` | per-agent AgentCard |
-| POST | `/v1/agents/<name>` | JSON-RPC `tasks/send` / `tasks/get` |
+| GET | `/v1/agents/<name>/.well-known/agent.json` | per-agent AgentCard (protobuf via `_card.project_card_proto`) |
+| POST | `/v1/agents/<name>` | JSON-RPC SDK 1.x methods (see below) |
+
+### SDK 1.x methods (gRPC-style names)
+
+Pure `a2a-sdk>=1.0.2` — no v0.3 compat. Method names are gRPC-style:
+
+| Method | Purpose |
+| --- | --- |
+| `SendMessage` | unary task dispatch — synchronous reply |
+| `SendStreamingMessage` | SSE-streamed task — incremental progress + artifacts |
+| `GetTask` | poll task by id |
+| `CancelTask` | interrupt a running task |
+| `pushNotificationConfig/*` | webhook subscription |
+
+Clients MUST set `A2A-Version: 1.0` header. Params use proto **snake_case** (`message_id`, `role: "ROLE_USER"`, `parts: [{"text": ...}]`).
 
 ## Quick verification
 
@@ -64,12 +78,23 @@ sac a2a serve my-agent.yaml --port 8888 &
 # Discovery
 curl http://127.0.0.1:8888/.well-known/agent.json | jq .name
 
-# JSON-RPC tasks/send
-curl -s -X POST http://127.0.0.1:8888/v1/agents/<name> \
+# JSON-RPC SendMessage (SDK 1.x)
+curl -s -X POST http://127.0.0.1:8888/v1/agents/<name>/ \
   -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","id":"t","method":"tasks/send",
-       "params":{"message":{"role":"user","parts":[{"type":"text","text":"hello"}]}}}' \
-  | jq '.result | {state: .status.state, reply: .history[1].parts[0].text}'
+  -H 'A2A-Version: 1.0' \
+  -d '{"jsonrpc":"2.0","id":"t","method":"SendMessage",
+       "params":{"message":{"message_id":"m1","role":"ROLE_USER",
+                            "parts":[{"text":"hello"}]}}}' \
+  | jq '.result.task | {state: .status.state, reply: .status.message.parts[0].text}'
+
+# SSE streaming
+curl -N -X POST http://127.0.0.1:8888/v1/agents/<name>/ \
+  -H 'Content-Type: application/json' \
+  -H 'A2A-Version: 1.0' \
+  -H 'Accept: text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":"t","method":"SendStreamingMessage",
+       "params":{"message":{"message_id":"m1","role":"ROLE_USER",
+                            "parts":[{"text":"long-running"}]}}}'
 ```
 
 ## v3 YAML — what gets projected
@@ -100,9 +125,19 @@ sac-specific extensions live under **`x-scitex-agent-container`**, NOT `x-orochi
 | `SAC_A2A_EXEC_COMMAND` | (required) | `exec` handler — full `argv` (shell-quoted) |
 | `SAC_A2A_EXEC_TIMEOUT_S` | 25 | `exec` handler |
 
+## Implementation — `a2a-sdk` 1.x
+
+sac uses the official Python `a2a-sdk[http-server]>=1.0.2`. Handlers are `AgentExecutor` subclasses (`a2a/executors/{_echo,_claude_cli,_exec}.py`) with `async execute(context, event_queue)` that enqueues a `Task` (state `SUBMITTED`), drives status updates, and emits `TaskArtifactUpdateEvent` / `TaskStatusUpdateEvent` events. The SDK handles dispatch routing, SSE serialization, and task store wiring.
+
+### Known compatibility notes
+
+- **`protobuf<7` required**: a2a-sdk 1.0.2 reads `FieldDescriptor.label` which protobuf 7.x removed. Pinned in deps.
+- **`uvicorn ws="none"`**: A2A is HTTP+SSE only — uvicorn 0.27's WS protocol auto-loader breaks on websockets 15.x (`websockets.legacy` removed). Sac passes `ws="none"` so the sidecar boots cleanly.
+- **AgentCard is protobuf**: SDK 1.x expects a protobuf `AgentCard`, not pydantic dict. `_card.project_card_proto()` is the adapter; the dict form (`project_card()`) is still served at `/.well-known/agent.json`.
+
 ## Boundary with orochi
 
-orochi (the fleet hub) is **one consumer** of sac-served A2A endpoints. Its dispatch bridge (`https://a2a.scitex.ai/v1/agents/<n>` → `https://scitex-orochi.com/api/a2a/dispatch/...` → WebSocket-connected agent) routes through a hub that knows about workspaces, bearer auth via Gitea, and Channels groups. None of that is required for sac's A2A — those are orochi-side features layered on top.
+orochi (the fleet hub) is **one consumer** of sac-served A2A endpoints. Its dispatch bridge serves the same SDK 1.x surface at `https://scitex-orochi.com/v1/agents/<name>/` and proxies into the live agent's sidecar (Tier-3 HTTP-direct, or WS fallback). orochi adds workspace-token auth (`WorkspaceTokenContextBuilder`), agent registry resolution, and chat-room semantics on top. None of that is required for sac's A2A — those are orochi-side features layered on top.
 
 If you want a fleet, use orochi. If you want one agent on a laptop, use `sac a2a serve`.
 
