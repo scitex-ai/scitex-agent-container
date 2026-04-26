@@ -273,7 +273,10 @@ def serve(
         handler,
     )
     socket.setdefaulttimeout(60)
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    # ``ws="none"`` — A2A is HTTP/JSON-RPC + SSE only. Skipping the
+    # websockets protocol avoids the uvicorn 0.27 ↔ websockets 15
+    # incompatibility (``websockets.legacy`` removed in 14+).
+    uvicorn.run(app, host=host, port=port, log_level="info", ws="none")
 
 
 __all__ = ["build_app", "serve"]
