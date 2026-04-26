@@ -150,6 +150,27 @@ def _detect_file_trust_radio(content: str) -> bool:
     )
 
 
+def _detect_external_imports(content: str) -> bool:
+    """External CLAUDE.md file imports prompt.
+
+    Appears when ``CLAUDE.md`` (or ``.claude/CLAUDE.md``) contains
+    ``@<absolute-path>`` imports pointing OUTSIDE the agent's
+    workdir. Triggered by the at-import skill-injection mode (sac
+    PR #74) when skills live in ``~/.claude/skills/`` or the
+    package source trees rather than the workspace itself.
+
+    Matches:
+      "Allow external CLAUDE.md file imports?"
+      "1. Yes, allow external imports"
+      "Enter to confirm"
+    """
+    return (
+        "Allow external CLAUDE.md file imports" in content
+        and "1. Yes, allow external imports" in content
+        and "Enter to confirm" in content
+    )
+
+
 def _detect_login_method(content: str) -> bool:
     """First-run login-method picker on a fresh HOME.
 
@@ -276,6 +297,12 @@ PROMPT_HANDLERS: list[PromptHandler] = [
         detect=_detect_compose_pending_unsent,
         keys=["Enter"],  # submit unsent compose buffer
         priority=11,
+    ),
+    PromptHandler(
+        name="external-imports",
+        detect=_detect_external_imports,
+        keys=["1", "Enter"],  # "1. Yes, allow external imports"
+        priority=12,
     ),
 ]
 

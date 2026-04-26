@@ -9,6 +9,7 @@ import re
 from pathlib import Path
 
 from ..config import AgentConfig
+from .claude_md import build_skills_lines
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +168,17 @@ def deploy_src_claude_md(config: AgentConfig, workdir: str) -> None:
         "     anything between them — all changes there will be lost.\n"
         "     ================================================================ -->"
     )
-    new_content = f"{start_tag}\n{section_body}\n{END_MARKER}\n{guide_comment}\n"
+    # Append skills section (Required + Available, per spec.skills) inside
+    # the managed block, after the user's src_CLAUDE content but before the
+    # End marker. In at-import mode, this materializes as ``@<absolute path>``
+    # lines that Claude Code follows at session start.
+    skills_lines = build_skills_lines(config)
+    skills_block = ("\n" + "\n".join(skills_lines)).rstrip() if skills_lines else ""
+    new_content = (
+        f"{start_tag}\n{section_body}\n{skills_block}\n{END_MARKER}\n{guide_comment}\n"
+        if skills_block
+        else f"{start_tag}\n{section_body}\n{END_MARKER}\n{guide_comment}\n"
+    )
 
     # Validate: if a workspace CLAUDE.md already exists, its markers must
     # be well-formed (exactly 1 Start, 1 End, Start-before-End). Refuse the

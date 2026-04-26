@@ -101,6 +101,7 @@ def agent_start(
     force: bool = False,
     session_override: str | None = None,
     resume_id_override: str | None = None,
+    dry_run: bool = False,
 ) -> bool:
     """Start an agent from a YAML config file.
 
@@ -116,6 +117,9 @@ def agent_start(
         resume_id_override: If set, override config.claude.resume_id. Pass
             with session_override="resume" to launch ``claude --resume <id>``
             without editing the YAML.
+        dry_run: If True, materialize the workspace files but skip the
+            multiplexer / Claude Code launch and registry registration.
+            Hooks (pre_start / post_start) are also skipped.
 
     Returns True on success, False on failure.
     """
@@ -131,11 +135,18 @@ def agent_start(
     # Already running?
     if registry.exists(config.name) and runtime.is_running(config):
         if not force:
-            raise RuntimeError(f"Agent '{config.name}' is already running")
-        agent_stop(config.name, registry=registry, force=True)
-        # Small grace period so the screen is fully torn down before we
-        # try to create a new one with the same name.
-        time.sleep(1)
+            if dry_run:
+                # Allow dry-run to inspect the planned workspace even
+                # while the live agent is running — the prep does not
+                # touch the live tmux session.
+                pass
+            else:
+                raise RuntimeError(f"Agent '{config.name}' is already running")
+        else:
+            agent_stop(config.name, registry=registry, force=True)
+            # Small grace period so the screen is fully torn down before we
+            # try to create a new one with the same name.
+            time.sleep(1)
     elif force and registry.exists(config.name):
         # Registry says it exists but runtime says not running — stale entry.
         agent_stop(config.name, registry=registry, force=True)
@@ -146,6 +157,20 @@ def agent_start(
         "SCITEX_AGENT_CONTAINER_SCREEN_NAME": config.screen_name,
         "SCITEX_AGENT_CONTAINER_NAME": config.name,
     }
+
+    if dry_run:
+        # Materialize the workspace via the runtime's dry-run path; skip
+        # hooks, registry, context-manager, health monitor.
+        try:
+            return runtime.start(
+                config, no_preflight=no_preflight, force=force, dry_run=True
+            )
+        except TypeError:
+            # Older runtimes without dry_run support — fail loudly so
+            # the caller knows this runtime can't dry-run.
+            raise RuntimeError(
+                f"runtime {type(runtime).__name__} does not support --dry-run"
+            )
 
     # ZOO#12 — lead-state-handover plumbing. All three calls are
     # best-effort: missing token / 404 / network errors must NOT block
