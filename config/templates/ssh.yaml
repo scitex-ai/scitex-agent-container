@@ -1,0 +1,53 @@
+# ssh — claude-code agent deployed to a remote host via SSH.
+#
+# Pattern: cross-machine fleet member. sac copies the YAML (plus
+# ``src_CLAUDE.md`` / ``src_mcp.json`` siblings if present) to
+# ``/tmp/`` on the remote host, then drives lifecycle over SSH.
+#
+# Requirements on the remote host:
+#   * tmux installed (``apt install tmux`` / ``brew install tmux``)
+#   * ``claude`` CLI on PATH (login shell takes care of this if your
+#     dotfiles set it up — keep ``login_shell: true``)
+#   * Python venv at ``spec.venv`` if specified
+#
+# For HPC login nodes that need ``module load`` before ``python3`` is
+# visible, set ``no_preflight: true`` and use the ``ssh-slurm`` template
+# instead.
+
+apiVersion: scitex-agent-container/v3
+kind: Agent
+
+metadata:
+  labels:
+    pattern: ssh
+
+spec:
+  runtime: claude-code
+  model: sonnet
+  workdir: ~/.scitex/agent-container/workspaces/ssh
+  multiplexer: tmux
+
+  remote:
+    host: example.host             # hostname or ~/.ssh/config alias
+    user: ywatanabe
+    # key: ~/.ssh/id_ed25519       # optional; leave blank to use ssh defaults
+    port: 22
+    timeout: 60
+    login_shell: true              # bash -l -c — needed for PATH on most hosts
+    no_preflight: false            # set true for HPC hosts that need module load
+
+  claude:
+    flags:
+      - --dangerously-skip-permissions
+    session: continue-or-new
+
+  health:
+    enabled: true
+    interval: 60
+    method: multiplexer-alive
+
+  restart:
+    policy: on-failure
+    max_retries: 3
+
+# EOF
