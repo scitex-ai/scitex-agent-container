@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -50,6 +51,12 @@ class ApptainerRuntime(RuntimeBase):
         for key, value in config.env.items():
             parts.extend(["--env", f"{key}={value}"])
         parts.extend(["--env", "CLAUDE_DISABLE_AUTO_UPDATE=1"])
+
+        # Forward API key if available in host env (CI / tests).
+        # The container-side Claude CLI expects ANTHROPIC_API_KEY.
+        ci_key = os.environ.get("SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY")
+        if ci_key:
+            parts.extend(["--env", f"ANTHROPIC_API_KEY={ci_key}"])
 
         # Working directory
         parts.extend(["--pwd", "/workspace"])

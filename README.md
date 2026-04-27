@@ -60,6 +60,29 @@ Requires Python >= 3.10.
 pip install scitex-agent-container
 ```
 
+## Templates
+
+`config/templates/` ships six minimal pattern templates — copy and adapt:
+
+| Template | Pattern | When to use |
+|---|---|---|
+| `local.yaml` | claude-code on local host | Default; shares operator's env (skills, MCP, venv) |
+| `docker.yaml` | claude-code in Docker | Local isolation; `mount_host_claude` opt-in |
+| `apptainer.yaml` | claude-code in Apptainer/Singularity | HPC compute nodes / locked-down hosts |
+| `ssh.yaml` | claude-code via SSH on remote host | Cross-machine fleet member |
+| `ssh-slurm.yaml` | SLURM-submitted job (with auto-resubmit) | Long-running compute on shared cluster |
+| `mcp.yaml` | claude-code with MCP server wiring | Agent that needs MCP tool access |
+
+Concrete real-world configs live in `config/examples/` (e.g. `newbie-docker.yaml`, `researcher-opus.yaml`). Both directories are validated by `tests/test_templates_v3_valid.py` — every shipped YAML must round-trip through `load_config`, and the SLURM template must additionally render a valid sbatch script.
+
+To instantiate (dir-as-SSoT — agent name is derived from the parent directory):
+
+```bash
+mkdir -p ~/.scitex/orochi/agents/my-agent
+cp config/templates/local.yaml ~/.scitex/orochi/agents/my-agent/my-agent.yaml
+scitex-agent-container start my-agent
+```
+
 ## Quickstart (v2 config)
 
 1. Create agent definition directory:
@@ -69,7 +92,10 @@ my-agent/
   my-agent.yaml     # Agent config
   src_CLAUDE.md      # -> deployed to {workdir}/CLAUDE.md
   src_mcp.json       # -> deployed to {workdir}/.mcp.json
+  src_env            # -> deployed to {workdir}/.env  (mode 0600)
 ```
+
+The `src_*` family is a generic file-deploy pipeline: a sibling file named `src_X` next to the YAML is materialized into the workspace at agent start, with `${VAR}` and `${metadata.name}` interpolation. `src_env` is the dotenv variant — sourceable by anything the agent spawns (cron jobs, ssh-launched commands, fresh shells), not just the multiplexer session. See [`_skills/scitex-agent-container/06_env-injection-ports.md`](src/scitex_agent_container/_skills/scitex-agent-container/06_env-injection-ports.md) for the four distinct env-injection ports and when to use each.
 
 2. Write a YAML manifest:
 
@@ -203,6 +229,10 @@ scitex-agent-container actions run <nonce-probe|compact> <agent> [--json]
 scitex-agent-container actions query [--agent X] [--action Y] [--since 2h]
 scitex-agent-container actions stats [--agent X] [--since 7d]
 scitex-agent-container actions purge [--days N]
+
+# A2A protocol — standalone agent endpoint, no fleet deps
+# (echo handler by default; --handler claude_cli runs `claude --print`)
+scitex-agent-container a2a serve <agent.yaml>... [--port 8888] [--handler echo|claude_cli|exec]
 
 # Configuration
 scitex-agent-container validate <config.yaml>

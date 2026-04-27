@@ -9,14 +9,18 @@ from pathlib import Path
 
 from ..config import AgentConfig
 from ..host_identity import is_local_host
+from .a2a_sidecar import start_sidecar as _a2a_start_sidecar
+from .a2a_sidecar import stop_sidecar as _a2a_stop_sidecar
 from .base import RuntimeBase
 from .claude_md import cleanup_claude_md, setup_claude_md
 from .mcp_config import cleanup_mcp_config, setup_mcp_config
 from .settings_json import cleanup_settings_json, setup_settings_json
 from .src_files import (  # noqa: F401
     cleanup_src_claude_md,
+    cleanup_src_env,
     cleanup_src_mcp_json,
     deploy_src_claude_md,
+    deploy_src_env,
     deploy_src_mcp_json,
 )
 from .ssh_remote import SSHPreflightError as SSHPreflightError  # noqa: F401
@@ -118,7 +122,11 @@ def _has_src_files(config: AgentConfig) -> bool:
     if not config.config_path:
         return False
     defdir = Path(config.config_path).parent
-    return (defdir / "src_CLAUDE.md").exists() or (defdir / "src_mcp.json").exists()
+    return (
+        (defdir / "src_CLAUDE.md").exists()
+        or (defdir / "src_mcp.json").exists()
+        or (defdir / "src_env").exists()
+    )
 
 
 class ClaudeCodeRuntime(RuntimeBase):
@@ -553,6 +561,7 @@ class ClaudeCodeRuntime(RuntimeBase):
         if is_v2:
             deploy_src_claude_md(config, workdir)
             deploy_src_mcp_json(config, workdir)
+            deploy_src_env(config, workdir)
         else:
             _setup_claude_md(config, workdir)
         setup_mcp_config(config, workdir)
@@ -568,6 +577,11 @@ class ClaudeCodeRuntime(RuntimeBase):
         )
 
         if started:
+            try:
+                _a2a_start_sidecar(config)
+            except Exception:  # noqa: BLE001 — never block agent start
+                logger.exception("a2a sidecar spawn failed for %s", config.name)
+
             has_tasks = self._needs_auto_accept(config) or config.startup_commands
             if has_tasks:
                 # Run post-start tasks in a foreground thread and wait for
@@ -598,10 +612,16 @@ class ClaudeCodeRuntime(RuntimeBase):
             elif config.container.runtime == "apptainer":
                 return ApptainerRuntime().stop(config)
 
+        try:
+            _a2a_stop_sidecar(config)
+        except Exception:  # noqa: BLE001 — never block agent stop
+            logger.exception("a2a sidecar stop failed for %s", config.name)
+
         is_v2 = bool(config.mcp_servers) or _has_src_files(config)
         if is_v2:
             cleanup_src_claude_md(config, config.expanded_workdir)
             cleanup_src_mcp_json(config, config.expanded_workdir)
+            cleanup_src_env(config, config.expanded_workdir)
         else:
             _cleanup_claude_md(config, config.expanded_workdir)
         cleanup_mcp_config(config, config.expanded_workdir)

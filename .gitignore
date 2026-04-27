@@ -9,3 +9,13 @@ build/
 .pytest_cache/
 GITIGNORED/
 .env
+
+# cld session artifacts (mirrors of ~/.claude/to_claude/ — canonical source
+# in ~/.dotfiles/src/.claude/to_claude/).
+.claude/
+docs/to_claude/
+
+# dev artifacts
+.coverage
+.venv
+logs/
