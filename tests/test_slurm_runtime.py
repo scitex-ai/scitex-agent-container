@@ -640,3 +640,100 @@ class TestRuntimeRegistration:
 
         with pytest.raises(ValueError):
             _get_runtime(AgentConfig(name="x", runtime="bogus"))
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: dual-write to scitex-hpc Reservation lease
+# ---------------------------------------------------------------------------
+
+
+class TestHpcReservationDualWrite:
+    """Verify SlurmRuntime.start/stop dual-write to scitex-hpc lease state.
+
+    Best-effort semantics: if scitex-hpc is missing, sac still works
+    (the import is wrapped in try/except inside slurm.py).
+    """
+
+    def test_register_called_after_successful_submit(
+        self, isolated_state, monkeypatch, tmp_path
+    ):
+        """After sbatch parses jobid, _maybe_register_hpc_reservation fires."""
+        called: list[tuple] = []
+
+        def fake_register(cfg, job_id):
+            called.append((cfg.name, job_id))
+
+        monkeypatch.setattr(
+            slurm_mod, "_maybe_register_hpc_reservation", fake_register
+        )
+
+        def fake_run(cmd, **kwargs):
+            if cmd[0] == "sbatch":
+                return _mock_run(stdout="Submitted batch job 4242\n")
+            if cmd[0] == "squeue":
+                return _mock_run(stdout="")  # not running yet (force=False path)
+            return _mock_run()
+
+        monkeypatch.setattr(slurm_mod.subprocess, "run", fake_run)
+        cfg = _cfg(name="head-spartan-cpu")
+        rt = SlurmRuntime()
+        assert rt.start(cfg) is True
+
+        assert called == [("head-spartan-cpu", "4242")]
+
+    def test_clear_called_after_stop(
+        self, isolated_state, monkeypatch, tmp_path
+    ):
+        """After scancel, _maybe_clear_hpc_reservation fires with the agent name."""
+        # Pre-seed sac state so stop() has something to scancel
+        (isolated_state).mkdir(parents=True, exist_ok=True)
+        (isolated_state / "head-spartan-cpu.json").write_text(
+            json.dumps({"name": "head-spartan-cpu", "job_id": "4242"})
+        )
+
+        cleared: list[str] = []
+
+        def fake_clear(name):
+            cleared.append(name)
+
+        monkeypatch.setattr(
+            slurm_mod, "_maybe_clear_hpc_reservation", fake_clear
+        )
+        monkeypatch.setattr(
+            slurm_mod.subprocess, "run", lambda *a, **kw: _mock_run()
+        )
+
+        cfg = _cfg(name="head-spartan-cpu")
+        SlurmRuntime().stop(cfg)
+        assert cleared == ["head-spartan-cpu"]
+
+    def test_register_swallows_import_error_when_hpc_missing(
+        self, isolated_state, monkeypatch
+    ):
+        """sac must keep working if scitex-hpc isn't installed."""
+        # Force the import inside the helper to fail
+        import builtins
+
+        original_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "scitex_hpc":
+                raise ImportError("simulated: scitex-hpc not installed")
+            return original_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        # Must not raise
+        slurm_mod._maybe_register_hpc_reservation(_cfg(name="x"), "1")
+        slurm_mod._maybe_clear_hpc_reservation("x")
+
+    def test_register_swallows_unexpected_exception(self, monkeypatch):
+        """A buggy scitex-hpc must not break sac's start path."""
+        class FakeReservation:
+            @staticmethod
+            def from_jobid(**kwargs):
+                raise RuntimeError("bug in scitex-hpc")
+
+        fake_module = type("M", (), {"Reservation": FakeReservation})()
+        monkeypatch.setitem(__import__("sys").modules, "scitex_hpc", fake_module)
+        # Must not raise; warning is logged
+        slurm_mod._maybe_register_hpc_reservation(_cfg(name="x"), "1")

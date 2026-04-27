@@ -463,6 +463,12 @@ class SlurmRuntime(RuntimeBase):
                 "submitted_stdout": proc.stdout.strip(),
             },
         )
+        # Dual-write: also register a scitex-hpc Reservation lease so
+        # `scitex-hpc reservations list` sees this agent and operators
+        # can run ad-hoc commands inside the allocation via
+        # `scitex-hpc reservations exec <name> 'cmd'`. Best-effort —
+        # if scitex-hpc is missing, sac keeps working with its own state.
+        _maybe_register_hpc_reservation(config, job_id)
         logger.info("SlurmRuntime: %s -> job %s", config.name, job_id)
         return True
 
@@ -487,6 +493,10 @@ class SlurmRuntime(RuntimeBase):
             logger.warning("scancel not found; cannot stop %s", config.name)
             return False
         _clear_state(config.name)
+        # Best-effort: also clear the scitex-hpc Reservation lease (if any).
+        # The SLURM job is already gone via scancel above; just remove the
+        # state file. Avoids stale entries in `scitex-hpc reservations list`.
+        _maybe_clear_hpc_reservation(config.name)
         return True
 
     def is_running(self, config: AgentConfig) -> bool:
@@ -551,6 +561,65 @@ def _parse_sbatch_jobid(stdout: str) -> str:
     """
     m = _SBATCH_JOBID_RE.search(stdout or "")
     return m.group(1) if m else ""
+
+
+def _maybe_register_hpc_reservation(cfg: AgentConfig, job_id: str) -> None:
+    """Best-effort: write a ``scitex-hpc`` Reservation lease for this agent.
+
+    Operators with ``scitex-hpc>=0.5.0`` installed gain the
+    ``scitex-hpc reservations {list,exec,attach,refresh}`` CLI surface
+    against agents started here. Without scitex-hpc installed, sac falls
+    back to its own state file silently.
+
+    Sac runs sbatch locally on the SLURM submission host (login node), so
+    the reservation host is recorded as ``localhost`` — operators
+    invoking ``scitex-hpc`` from the same login node will find the lease.
+    """
+    try:
+        from scitex_hpc import Reservation  # type: ignore
+    except ImportError:
+        return
+    try:
+        Reservation.from_jobid(
+            host="localhost",
+            job_id=str(job_id),
+            name=cfg.name,
+            persistent=bool(cfg.slurm.auto_resubmit),
+            refresh_node=False,  # squeue probe over loopback adds no value
+        )
+    except FileExistsError:
+        # Lease already present — typical on a force-restart. Leave it
+        # alone; sac's primary state file is the source of truth.
+        pass
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning(
+            "scitex-hpc Reservation registration failed for %s: %s",
+            cfg.name,
+            exc,
+        )
+
+
+def _maybe_clear_hpc_reservation(agent_name: str) -> None:
+    """Best-effort: remove a scitex-hpc Reservation lease state file.
+
+    Mirror of :func:`_maybe_register_hpc_reservation`. The scancel itself
+    is owned by sac (already done by the caller); this just clears the
+    lease's on-disk state so it doesn't show up in `scitex-hpc
+    reservations list` after the agent stops.
+    """
+    try:
+        from scitex_hpc import Reservation  # type: ignore
+    except ImportError:
+        return
+    try:
+        res = Reservation.get(agent_name, host="localhost")
+        if res is not None:
+            # missing_ok=True so an already-cancelled job doesn't raise
+            res.release(missing_ok=True)
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning(
+            "scitex-hpc Reservation cleanup failed for %s: %s", agent_name, exc
+        )
 
 
 __all__ = [
