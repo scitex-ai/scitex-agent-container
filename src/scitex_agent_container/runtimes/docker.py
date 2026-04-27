@@ -20,7 +20,11 @@ class DockerRuntime(RuntimeBase):
     def _build_docker_args(self, config: AgentConfig) -> list[str]:
         """Build the docker run argument list."""
         container_name = self._container_name(config)
-        args = ["run", "-d", "--name", container_name]
+        # ``-t`` allocates a TTY without attaching stdin (``-i`` is intentionally
+        # omitted because we run detached). Without a TTY, the claude CLI
+        # auto-falls to ``--print`` mode and exits immediately demanding
+        # stdin/prompt — observed in CI 2026-04-27.
+        args = ["run", "-d", "-t", "--name", container_name]
 
         # Network
         if config.container.network != "none":
