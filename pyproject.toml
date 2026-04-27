@@ -7,7 +7,7 @@ name = "scitex-agent-container"
 version = "0.8.1"
 description = "Declarative YAML-based framework for defining, managing, and orchestrating AI coding agent instances"
 readme = "README.md"
-license = "AGPL-3.0"
+license = "AGPL-3.0-only"
 requires-python = ">=3.10"
 authors = [
     { name = "Yusuke Watanabe", email = "ywatanabe@scitex.ai" },
@@ -43,6 +43,10 @@ dependencies = [
     # JSON-RPC + SSE routes we mount in `a2a/_server.py`.
     "a2a-sdk[http-server]>=1.0.2",
     "uvicorn>=0.27",
+    # protobuf 6.x removed FieldDescriptor.label, which a2a-sdk 1.0.x's
+    # validate_proto_required_fields still references — pin until upstream
+    # adopts the descriptor pool API. See CI failure 2026-04-27.
+    "protobuf<6",
 ]
 
 [project.optional-dependencies]
