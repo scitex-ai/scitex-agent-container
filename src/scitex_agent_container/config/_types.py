@@ -101,6 +101,41 @@ class SlurmHooks:
 
 
 @dataclass
+class SlurmHeartbeatSpec:
+    """Compute-node heartbeat daemon for the SLURM runtime.
+
+    On HPC clusters the host-level heartbeat pusher (systemd user timer,
+    launchd plist) runs on the *login node* and cannot see tmux sessions
+    living on the compute node the sbatch job landed on. Without a
+    compute-node-local pusher, the hub marks the agent dead five minutes
+    after the job starts (symptom: ``head-spartan`` alive in squeue but
+    red on the dashboard — lead msg#15654).
+
+    Fix: the sbatch wrapper spawns a lightweight background loop that
+    invokes ``command`` every ``interval_s`` seconds on the compute node
+    itself. When ``command`` is empty the loop is skipped (opt-in).
+
+    The command is expected to be a self-contained shell invocation of a
+    heartbeat pusher (e.g. ``python3 .../agent_meta.py --push``). The
+    wrapper exports ``SCITEX_OROCHI_AGENT`` / ``SCITEX_OROCHI_HOSTNAME``
+    via the ``pre_agent`` hook so the pushed payload registers with the
+    correct fleet identity.
+
+    Fields:
+        command:   Shell command line to run each tick. Empty disables.
+        interval_s: Seconds between ticks. 30 matches the login-node
+                   systemd timer cadence.
+        log_file:  Absolute path (with ``~`` expansion) for stderr/stdout
+                   capture. Defaults to ``<logs_dir>/<jobid>.heartbeat.log``
+                   when empty.
+    """
+
+    command: str = ""
+    interval_s: int = 30
+    log_file: str = ""
+
+
+@dataclass
 class SlurmSpec:
     """SLURM runtime configuration parsed from agent YAML's ``spec.slurm``."""
 
@@ -117,6 +152,7 @@ class SlurmSpec:
     hold: str = "tail -f /dev/null"
     logs_dir: str = "~/slurm_logs"
     hooks: SlurmHooks = field(default_factory=SlurmHooks)
+    heartbeat: SlurmHeartbeatSpec = field(default_factory=SlurmHeartbeatSpec)
     extra_directives: list[str] = field(default_factory=list)
 
 

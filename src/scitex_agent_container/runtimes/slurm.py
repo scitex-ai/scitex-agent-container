@@ -54,6 +54,11 @@ REQUIRED_XTRACE = "set -x"
 REQUIRED_HOLD_DEFAULT = "tail -f /dev/null"
 REQUIRED_EXIT_TRAP_MARKER = "[sac/slurm] wrapper exiting"
 REQUIRED_USR1_TRAP_MARKER = "_sac_slurm_walltime_handler"
+# Heartbeat loop markers — asserted by tests and by operators grepping
+# job logs ("is my compute-node heartbeat even running?"). Present only
+# when ``spec.slurm.heartbeat.command`` is non-empty.
+HEARTBEAT_LOOP_MARKER = "_sac_slurm_heartbeat_loop"
+HEARTBEAT_START_MARKER = "[sac/slurm] heartbeat daemon started"
 
 
 # ---------------------------------------------------------------------------
@@ -145,6 +150,75 @@ def _hook_source(path: str, phase: str, agent_id: str, logs_dir: str) -> str:
     )
 
 
+def _heartbeat_block(cfg: AgentConfig, logs_dir: str) -> str:
+    """Emit a shell block that spawns a compute-node heartbeat daemon.
+
+    Returns an empty string when ``spec.slurm.heartbeat.command`` is empty
+    (opt-in). When enabled, the block:
+
+    * Starts a backgrounded ``while true; do ...; sleep N; done`` loop on
+      the compute node, in parallel with the tmux session that runs
+      claude-code.
+    * Redirects its stdout/stderr to a stable log file (defaults to
+      ``<logs_dir>/<jobid>.heartbeat.log``) so operators can diagnose
+      push failures without attaching to the job.
+    * Records the loop PID so the EXIT trap can clean it up — no
+      zombie pushers linger after the wrapper tears down.
+    * Uses ``setsid`` when available so the loop survives a stray
+      ``SIGHUP`` from tmux restarts.
+
+    Root cause this solves: host-level heartbeat daemons (systemd user
+    timers on Linux, launchd on macOS) installed by orochi's
+    ``bootstrap-host.sh`` run on the *login node* of HPC clusters. They
+    enumerate local tmux sessions via ``_list_local_agents()`` which
+    ``subprocess.run(["tmux", "list-sessions"])`` — invisible to the
+    compute node's tmux daemon. The hub therefore never receives a
+    heartbeat for agents launched through the SLURM runtime and marks
+    them dead after ~5 minutes (lead msg#15654, head-spartan).
+    """
+    hb = cfg.slurm.heartbeat
+    cmd = (hb.command or "").strip()
+    if not cmd:
+        return ""
+
+    log_file = hb.log_file.strip()
+    if log_file:
+        log_file = str(Path(log_file).expanduser())
+    else:
+        log_file = f"{logs_dir}/${{SLURM_JOB_ID:-nojob}}.heartbeat.log"
+
+    interval = max(1, int(hb.interval_s))
+
+    # setsid detaches the loop from the wrapper's session so SIGHUP from
+    # tmux server teardown doesn't cascade into the pusher. Fall back to
+    # plain background when setsid is missing (BusyBox, some minimal
+    # HPC images).
+    return f"""
+# ---------------------------------------------------------------------------
+# Compute-node heartbeat daemon (spec.slurm.heartbeat)
+# ---------------------------------------------------------------------------
+# Loops the configured push command every {interval}s so the hub sees the
+# agent as alive. The login-node systemd timer can't reach compute-node
+# tmux sessions, so this loop is the only live signal the hub will ever
+# receive for this job.
+{HEARTBEAT_LOOP_MARKER}() {{
+    while true; do
+        {cmd} || true
+        sleep {interval}
+    done
+}}
+mkdir -p "$(dirname "{log_file}")"
+if command -v setsid >/dev/null 2>&1; then
+    setsid bash -c '{HEARTBEAT_LOOP_MARKER}() {{ while true; do {cmd} || true; sleep {interval}; done; }}; {HEARTBEAT_LOOP_MARKER}' \\
+        >> "{log_file}" 2>&1 &
+else
+    ( {HEARTBEAT_LOOP_MARKER} ) >> "{log_file}" 2>&1 &
+fi
+export SAC_HEARTBEAT_PID=$!
+echo "{HEARTBEAT_START_MARKER} pid=${{SAC_HEARTBEAT_PID}} interval={interval}s log={log_file}"
+"""
+
+
 def _sbatch_directives(cfg: AgentConfig) -> list[str]:
     slurm = cfg.slurm
     job_name = slurm.job_name or cfg.name
@@ -202,6 +276,7 @@ def render_sbatch_script(cfg: AgentConfig) -> str:
         slurm.hooks.walltime_signal, "walltime_signal", agent_id, logs_dir
     )
     post_agent = _hook_source(slurm.hooks.post_agent, "post_agent", agent_id, logs_dir)
+    heartbeat_block = _heartbeat_block(cfg, logs_dir)
 
     resubmit_line = (
         'sbatch "$0"'
@@ -232,8 +307,9 @@ exec > "{logs_dir}/${{SLURM_JOB_ID:-nojob}}.out" 2>&1
 
 # Fail loud on drop-through: if we ever exit the hold below unexpectedly,
 # this trap surfaces the return code rather than the scheduler silently
-# reaping the job.
-trap 'rc=$?; echo "{REQUIRED_EXIT_TRAP_MARKER} rc=$rc at $(date -u +%FT%TZ)" >&2; exit "${{rc:-1}}"' EXIT
+# reaping the job. Also tears down the optional heartbeat daemon so
+# compute-node pushers never outlive the allocation.
+trap 'rc=$?; kill "${{SAC_HEARTBEAT_PID:-0}}" 2>/dev/null || true; echo "{REQUIRED_EXIT_TRAP_MARKER} rc=$rc at $(date -u +%FT%TZ)" >&2; exit "${{rc:-1}}"' EXIT
 
 # Walltime auto-resubmit: SLURM fires SIGUSR1 ``@3600`` seconds before
 # walltime (see --signal directive). The handler sources the external
@@ -267,7 +343,7 @@ sleep 1
 # the hold at the bottom of the script is what actually keeps the SLURM
 # allocation alive.
 tmux new-session -d -s "{tmux_session}" "{claude_cmd}"
-
+{heartbeat_block}
 # post_agent hook fires once the tmux session ends. The hold below keeps
 # the job alive even if the agent dies — external observers (healers)
 # can inspect and decide whether to scancel.
@@ -478,6 +554,8 @@ def _parse_sbatch_jobid(stdout: str) -> str:
 
 
 __all__ = [
+    "HEARTBEAT_LOOP_MARKER",
+    "HEARTBEAT_START_MARKER",
     "REQUIRED_SHEBANG",
     "REQUIRED_STRICT_MODE",
     "REQUIRED_XTRACE",
