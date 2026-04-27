@@ -1,0 +1,68 @@
+# SciTeX ecosystem quality audit.
+#
+# Runs weekly (Mondays 06:00 UTC) and on every push to main/develop.
+# Warn-only by default: the job surfaces violations in the Actions summary
+# but does not fail the build. Flip `continue-on-error: false` on individual
+# steps once each audit is clean and you want the gate enforced.
+#
+# Rules checked:
+#   - audit-cli          noun-verb convention for Click subcommands
+#   - audit-frontmatter  YAML frontmatter on every _skills/*.md (FM-0..FM-6)
+#   - audit-docs         drift between SKILL.md examples and real code
+#   - audit-lines        per-file line-count allowlist
+#   - audit-scope        public API covered by tests
+name: SciTeX Quality
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    - cron: "0 6 * * 1"  # Mondays 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install package + scitex-dev audit extras
+        run: |
+          pip install -e . || true
+          pip install "scitex-dev[cli-audit] @ git+https://github.com/scitex-project/scitex-dev.git@main"
+
+      - name: Detect package name
+        id: pkg
+        run: |
+          pkg=$(python -c "import tomllib,sys; d=tomllib.load(open('pyproject.toml','rb')); print(d['project']['name'])")
+          echo "name=$pkg" >> "$GITHUB_OUTPUT"
+          echo "import_name=$(echo $pkg | tr - _)" >> "$GITHUB_OUTPUT"
+
+      - name: audit-cli
+        continue-on-error: true
+        run: scitex-dev quality audit-cli ${{ steps.pkg.outputs.name }} | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: audit-frontmatter
+        continue-on-error: true
+        run: |
+          skills_dir="src/${{ steps.pkg.outputs.import_name }}/_skills"
+          [ -d "$skills_dir" ] && scitex-dev quality audit-frontmatter "$skills_dir" | tee -a "$GITHUB_STEP_SUMMARY" || echo "no _skills dir, skipping" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: audit-docs
+        continue-on-error: true
+        run: scitex-dev quality audit-docs ${{ steps.pkg.outputs.name }} | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: audit-lines
+        continue-on-error: true
+        run: scitex-dev quality audit-lines | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: audit-scope
+        continue-on-error: true
+        run: scitex-dev quality audit-scope ${{ steps.pkg.outputs.name }} | tee -a "$GITHUB_STEP_SUMMARY"
