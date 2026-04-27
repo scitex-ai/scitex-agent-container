@@ -34,9 +34,16 @@ jobs:
           python-version: "3.11"
 
       - name: Install package + scitex-dev audit extras
+        continue-on-error: true
         run: |
           pip install -e . || true
-          pip install "scitex-dev[cli-audit] @ git+https://github.com/scitex-project/scitex-dev.git@main"
+          # Prefer PyPI (public); fall back to git for unreleased audit features.
+          # Both lines are tolerant — the audit steps below are
+          # continue-on-error so a missing scitex-dev surfaces in the
+          # summary rather than blocking the build.
+          pip install "scitex-dev[cli-audit]" || \
+            pip install "scitex-dev[cli-audit] @ git+https://github.com/scitex-project/scitex-dev.git@main" || \
+            true
 
       - name: Detect package name
         id: pkg
