@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "scitex-agent-container"
-version = "0.9.0"
+version = "0.9.1"
 description = "Declarative YAML-based framework for defining, managing, and orchestrating AI coding agent instances"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -52,6 +52,12 @@ dependencies = [
 [project.optional-dependencies]
 telegram = [
     "claude-code-telegrammer>=0.1.0",
+]
+slurm = [
+    # scitex-hpc 0.5.0 ships Reservation.from_jobid which sac uses to
+    # dual-write a Reservation lease alongside its own state on start/stop.
+    # Optional: sac's SlurmRuntime works without it (best-effort import).
+    "scitex-hpc>=0.5.0",
 ]
 dev = [
     "scitex-dev",
