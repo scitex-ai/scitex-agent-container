@@ -17,6 +17,7 @@ Declarative agent deployment. Define agents in YAML, launch them in tmux/screen 
 - [05_resource-heartbeat.md](05_resource-heartbeat.md) — Resource heartbeat
 - [06_env-injection-ports.md](06_env-injection-ports.md) — Four env-injection ports (yaml.env / src_mcp.json env / src_env / hooks) with reach + decision tree
 - [07_a2a-protocol.md](07_a2a-protocol.md) — Native A2A protocol support (`sac a2a serve`); standalone orochi-free agents with echo / claude_cli / exec handlers
+- [08_templates.md](08_templates.md) — Six minimal pattern templates (local / docker / apptainer / ssh / ssh-slurm / mcp) under `config/templates/` and real-world configs under `config/examples/`
 
 ### Workflows
 - [10_cli.md](10_cli.md) — CLI commands and Python API

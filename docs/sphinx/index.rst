@@ -11,6 +11,7 @@ scitex-agent-container - Declarative AI Agent Lifecycle Management
 
    installation
    quickstart
+   templates
    status_and_hooks
    actions
 

@@ -60,6 +60,29 @@ Requires Python >= 3.10.
 pip install scitex-agent-container
 ```
 
+## Templates
+
+`config/templates/` ships six minimal pattern templates — copy and adapt:
+
+| Template | Pattern | When to use |
+|---|---|---|
+| `local.yaml` | claude-code on local host | Default; shares operator's env (skills, MCP, venv) |
+| `docker.yaml` | claude-code in Docker | Local isolation; `mount_host_claude` opt-in |
+| `apptainer.yaml` | claude-code in Apptainer/Singularity | HPC compute nodes / locked-down hosts |
+| `ssh.yaml` | claude-code via SSH on remote host | Cross-machine fleet member |
+| `ssh-slurm.yaml` | SLURM-submitted job (with auto-resubmit) | Long-running compute on shared cluster |
+| `mcp.yaml` | claude-code with MCP server wiring | Agent that needs MCP tool access |
+
+Concrete real-world configs live in `config/examples/` (e.g. `newbie-docker.yaml`, `researcher-opus.yaml`). Both directories are validated by `tests/test_templates_v3_valid.py` — every shipped YAML must round-trip through `load_config`, and the SLURM template must additionally render a valid sbatch script.
+
+To instantiate (dir-as-SSoT — agent name is derived from the parent directory):
+
+```bash
+mkdir -p ~/.scitex/orochi/agents/my-agent
+cp config/templates/local.yaml ~/.scitex/orochi/agents/my-agent/my-agent.yaml
+scitex-agent-container start my-agent
+```
+
 ## Quickstart (v2 config)
 
 1. Create agent definition directory:
