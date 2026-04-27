@@ -87,6 +87,38 @@ class _AgentDispatcher:
             rpc_url=f"/_sdk/v1/agents/{name}",
         )
 
+    async def snapshot_active_tasks(self) -> list[dict[str, Any]]:
+        """Return a JSON-serialisable snapshot of every task currently in
+        the per-agent in-memory store.
+
+        Reaches into ``InMemoryTaskStore``'s wrapped impl to enumerate
+        tasks regardless of owner (the public ``list()`` API filters by
+        the call context's resolved owner, which would scope an
+        observability route too narrowly).
+
+        Each entry: ``{"id": str, "state": str, "last_event_at": str|None}``.
+        ``state`` is the protobuf enum name (e.g. ``"TASK_STATE_WORKING"``);
+        ``last_event_at`` is the task status timestamp in ISO 8601 (or
+        ``None`` if the SDK hasn't set one yet).
+        """
+        from a2a.types import a2a_pb2
+
+        # InMemoryTaskStore -> CopyingTaskStoreAdapter -> _InMemoryTaskStoreImpl
+        impl = self.task_store._store._store  # type: ignore[attr-defined]
+        out: list[dict[str, Any]] = []
+        async with impl.lock:
+            for owner_tasks in impl.tasks.values():
+                for task_id, task in owner_tasks.items():
+                    state_enum = task.status.state if task.HasField("status") else 0
+                    state_name = a2a_pb2.TaskState.Name(state_enum)
+                    ts = None
+                    if task.HasField("status") and task.status.HasField("timestamp"):
+                        ts = task.status.timestamp.ToJsonString()
+                    out.append(
+                        {"id": task_id, "state": state_name, "last_event_at": ts}
+                    )
+        return out
+
 
 # ---------------------------------------------------------------------
 # Starlette route handlers
@@ -143,6 +175,30 @@ def _build_app(ctx: _ServerCtx) -> Starlette:
         sdk_route = dispatcher.routes[0]
         return await sdk_route.endpoint(request)  # type: ignore[no-any-return]
 
+    async def get_active_tasks(request: Request) -> Response:
+        """Sac-side observability: list every task currently in the
+        per-agent in-memory store.
+
+        Not part of the A2A spec — the spec's ``tasks/get`` requires a
+        task ID which only the original caller knows. This route lets a
+        co-located observer (e.g. a heartbeat collector) read the live
+        state without coupling to any specific consumer.
+
+        Returns ``{"tasks": [{"id", "state", "last_event_at"}, ...]}``.
+        """
+        name = request.path_params["name"]
+        dispatcher = ctx.dispatchers.get(name)
+        if dispatcher is None:
+            return JSONResponse({"error": f"unknown agent: {name}"}, status_code=404)
+        try:
+            tasks = await dispatcher.snapshot_active_tasks()
+        except Exception as exc:  # pragma: no cover — defense in depth
+            log.warning("snapshot_active_tasks(%s) failed: %s", name, exc)
+            return JSONResponse(
+                {"error": "snapshot failed", "detail": str(exc)}, status_code=500
+            )
+        return JSONResponse({"tasks": tasks})
+
     routes = [
         Route("/.well-known/agent.json", get_fleet_card, methods=["GET"]),
         Route("/v1/agents/", list_agents, methods=["GET"]),
@@ -153,6 +209,11 @@ def _build_app(ctx: _ServerCtx) -> Starlette:
         ),
         Route("/v1/agents/{name}", post_agent, methods=["POST"]),
         Route("/v1/agents/{name}/", post_agent, methods=["POST"]),
+        Route(
+            "/v1/agents/{name}/_active",
+            get_active_tasks,
+            methods=["GET"],
+        ),
     ]
 
     return Starlette(routes=routes)
