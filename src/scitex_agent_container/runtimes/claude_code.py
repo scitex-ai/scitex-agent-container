@@ -555,6 +555,13 @@ class ClaudeCodeRuntime(RuntimeBase):
         env_exports = self._build_env_exports(config)
         workdir = config.expanded_workdir
 
+        # Source workspace .env before explicit env so path-based token vars
+        # (SCITEX_OROCHI_A2A_TOKEN_PATH, etc.) reach the agent process.
+        # config.env exports follow and take precedence over .env values.
+        env_file = Path(workdir) / ".env"
+        env_source = f"if [ -f '{env_file}' ]; then set -a; source '{env_file}'; set +a; fi"
+        env_exports = env_source + ("\n" + env_exports if env_exports else "")
+
         # v2: deploy src files from definition directory
         # v1: generate from config (legacy)
         is_v2 = bool(config.mcp_servers) or _has_src_files(config)
