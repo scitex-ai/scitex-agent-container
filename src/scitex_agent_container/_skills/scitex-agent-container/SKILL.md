@@ -20,7 +20,7 @@ Declarative agent deployment. Define agents in YAML, launch them in tmux/screen 
 ## Sub-skills
 
 ### Core
-- [01_config-v2.md](01_config-v2.md) — v2 config format, auto-derived fields, src files
+- [01_config-v3.md](01_config-v3.md) — v3 config format (current), apiVersion `scitex-agent-container/v3`, dir-as-SSoT, auto-derived fields, src_* files. v2 + `metadata.name` are explicitly rejected by the loader.
 - [02_multiplexer.md](02_multiplexer.md) — tmux vs screen, capture-pane, send-keys
 - [03_auto-accept.md](03_auto-accept.md) — Modular prompt handlers, extending, diagnostics
 - [04_resource-management.md](04_resource-management.md) — Resource management
@@ -28,6 +28,7 @@ Declarative agent deployment. Define agents in YAML, launch them in tmux/screen 
 - [06_env-injection-ports.md](06_env-injection-ports.md) — Four env-injection ports (yaml.env / src_mcp.json env / src_env / hooks) with reach + decision tree
 - [07_a2a-protocol.md](07_a2a-protocol.md) — Native A2A protocol support (`sac a2a serve`); standalone orochi-free agents with echo / claude_cli / exec handlers
 - [08_templates.md](08_templates.md) — Six minimal pattern templates (local / docker / apptainer / ssh / ssh-slurm / mcp) under `config/templates/` and real-world configs under `config/examples/`
+- [09_slurm-tenant.md](09_slurm-tenant.md) — `runtime: slurm-tenant` for many agents in one allocation; pairs with `scitex-hpc reservations book --tmux-server sac`. Architecture rationale (cgroup/tmux), workflow, troubleshooting.
 
 ### Workflows
 - [10_cli.md](10_cli.md) — CLI commands and Python API
