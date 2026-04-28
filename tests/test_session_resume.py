@@ -41,10 +41,31 @@ class TestEncodeWorkdir:
         )
 
     def test_dot_prefix_segment_produces_double_dash(self):
-        # Matches observed Claude Code behavior, e.g. ``.dotfiles`` -> ``--dotfiles``.
+        # Claude Code replaces both ``/`` and ``.`` with ``-``, so
+        # ``/.dotfiles`` becomes ``--dotfiles``.
         assert (
             _encode_workdir_for_claude_projects("/Users/ywatanabe/.dotfiles")
-            == "-Users-ywatanabe-.dotfiles"
+            == "-Users-ywatanabe--dotfiles"
+        )
+
+    def test_scitex_workspace_path_matches_disk(self):
+        # Regression: the lead/proj/contributor workspaces under
+        # ~/.scitex/agent-container/workspaces/<name>/ must encode to the
+        # exact dirname Claude Code uses on disk, otherwise --continue is
+        # silently dropped on every restart.
+        assert (
+            _encode_workdir_for_claude_projects(
+                "/home/ywatanabe/.scitex/agent-container/workspaces/lead"
+            )
+            == "-home-ywatanabe--scitex-agent-container-workspaces-lead"
+        )
+
+    def test_triple_or_more_dashes_collapse_to_double(self):
+        # ``/..foo`` would naively expand to ``---foo`` (slash + two dots);
+        # Claude Code collapses runs of 3+ dashes back to ``--``.
+        assert (
+            _encode_workdir_for_claude_projects("/Users/ywatanabe/..foo")
+            == "-Users-ywatanabe--foo"
         )
 
 

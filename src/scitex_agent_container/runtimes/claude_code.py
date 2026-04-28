@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 from pathlib import Path
@@ -59,16 +60,18 @@ def _encode_workdir_for_claude_projects(workdir: str) -> str:
 
     Claude Code stores per-project session history under
     ``~/.claude/projects/<encoded>/`` where ``<encoded>`` is the absolute
-    workdir with every ``/`` replaced by ``-`` (the leading slash becomes a
-    leading ``-``; dot-prefixed path segments like ``.dotfiles`` produce a
-    double-dash, which is expected).
+    workdir with both ``/`` and ``.`` replaced by ``-``. Dot-prefixed path
+    segments like ``/.dotfiles`` therefore produce a double-dash
+    (``/`` + ``.`` → ``-`` + ``-``); runs of three or more dashes are
+    collapsed back to ``--`` to match Claude Code's own normalization.
     """
     abs_path = str(
         Path(workdir).expanduser().resolve()
         if Path(workdir).expanduser().exists()
         else Path(workdir).expanduser()
     )
-    return abs_path.replace("/", "-")
+    encoded = abs_path.replace("/", "-").replace(".", "-")
+    return re.sub(r"-{3,}", "--", encoded)
 
 
 def _session_resumable(
@@ -175,7 +178,11 @@ class ClaudeCodeRuntime(RuntimeBase):
                     config.expanded_workdir,
                 )
             else:
-                logger.info(
+                # Warning rather than info: continue-or-new is best-effort, so
+                # we still launch fresh, but a missed resume often points to
+                # an encoding/path bug (the ~/.claude/projects/<encoded>/ dir
+                # didn't match) and silent info hides that.
+                logger.warning(
                     "session=continue-or-new: no resumable session for %s, launching fresh",
                     config.expanded_workdir,
                 )
