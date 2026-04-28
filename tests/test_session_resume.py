@@ -41,10 +41,31 @@ class TestEncodeWorkdir:
         )
 
     def test_dot_prefix_segment_produces_double_dash(self):
-        # Matches observed Claude Code behavior, e.g. ``.dotfiles`` -> ``--dotfiles``.
+        # Claude Code replaces both ``/`` and ``.`` with ``-``, so
+        # ``/.dotfiles`` becomes ``--dotfiles``.
         assert (
             _encode_workdir_for_claude_projects("/Users/ywatanabe/.dotfiles")
-            == "-Users-ywatanabe-.dotfiles"
+            == "-Users-ywatanabe--dotfiles"
+        )
+
+    def test_scitex_workspace_path_matches_disk(self):
+        # Regression: the lead/proj/contributor workspaces under
+        # ~/.scitex/agent-container/workspaces/<name>/ must encode to the
+        # exact dirname Claude Code uses on disk, otherwise --continue is
+        # silently dropped on every restart.
+        assert (
+            _encode_workdir_for_claude_projects(
+                "/home/ywatanabe/.scitex/agent-container/workspaces/lead"
+            )
+            == "-home-ywatanabe--scitex-agent-container-workspaces-lead"
+        )
+
+    def test_triple_or_more_dashes_collapse_to_double(self):
+        # ``/..foo`` would naively expand to ``---foo`` (slash + two dots);
+        # Claude Code collapses runs of 3+ dashes back to ``--``.
+        assert (
+            _encode_workdir_for_claude_projects("/Users/ywatanabe/..foo")
+            == "-Users-ywatanabe--foo"
         )
 
 
@@ -124,6 +145,81 @@ class TestBuildCommand:
         ):
             cmd = ClaudeCodeRuntime()._build_command(cfg)
         assert "--continue" not in cmd
+
+    def test_resume_mode_with_id_emits_resume_flag(self):
+        cfg = AgentConfig(
+            name="test-agent",
+            workdir="/fake/workdir",
+            claude=ClaudeSpec(session="resume", resume_id="abc-123"),
+        )
+        cmd = ClaudeCodeRuntime()._build_command(cfg)
+        assert "--resume 'abc-123'" in cmd
+        assert "--continue" not in cmd
+
+
+# ---------------------------------------------------------------------------
+# agent_start CLI overrides (--resume / --session)
+# ---------------------------------------------------------------------------
+
+
+class TestAgentStartOverrides:
+    """``agent_start(session_override=..., resume_id_override=...)`` mutates
+    the loaded config before the runtime sees it, so callers can do
+    ``sac start lead.yaml --resume <id>`` without editing the YAML.
+    """
+
+    def _stub_runtime_capture(self, captured: dict):
+        """Build a fake runtime whose .start() records the config it sees."""
+
+        class _StubRuntime:
+            def is_running(self_inner, config):
+                return False
+
+            def start(self_inner, config, **kwargs):
+                captured["session"] = config.claude.session
+                captured["resume_id"] = config.claude.resume_id
+                return True
+
+        return _StubRuntime()
+
+    def test_session_override_mutates_config(self, tmp_path):
+        from scitex_agent_container import lifecycle
+        from scitex_agent_container.registry import Registry
+
+        yaml = tmp_path / "agent.yaml"
+        yaml.write_text(
+            "apiVersion: scitex-agent-container/v3\n"
+            "kind: Agent\n"
+            "metadata:\n  labels: {role: test}\n"
+            "spec:\n"
+            "  runtime: claude-code\n"
+            "  claude:\n    session: continue-or-new\n"
+        )
+        captured: dict = {}
+
+        class _StubRegistry:
+            def exists(self_inner, name):
+                return False
+
+            def add(self_inner, **kwargs):
+                # Don't write to ~/.scitex/agent-container/registry/.
+                pass
+
+        with patch.object(
+            lifecycle,
+            "_get_runtime",
+            return_value=self._stub_runtime_capture(captured),
+        ), patch.object(lifecycle, "_run_hooks"), patch.object(
+            lifecycle, "_fire_forget_hook"
+        ), patch.object(Registry, "__new__", lambda cls, *a, **kw: _StubRegistry()):
+            lifecycle.agent_start(
+                str(yaml),
+                registry=_StubRegistry(),  # type: ignore[arg-type]
+                session_override="resume",
+                resume_id_override="abc-xyz",
+            )
+        assert captured["session"] == "resume"
+        assert captured["resume_id"] == "abc-xyz"
 
 
 # ---------------------------------------------------------------------------

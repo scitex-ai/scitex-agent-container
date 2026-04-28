@@ -134,10 +134,48 @@ def _discover_all_agents() -> list[str]:
     default=False,
     help="If already running or stale, stop first then start fresh.",
 )
+@click.option(
+    "--resume",
+    "resume_id",
+    type=str,
+    default=None,
+    help="Resume a specific Claude Code session by ID (e.g. the UUID of the "
+    "*.jsonl under ~/.claude/projects/<encoded>/). Implies --session resume "
+    "and overrides the YAML's claude.session / claude.resume_id.",
+)
+@click.option(
+    "--session",
+    "session_mode",
+    type=click.Choice(
+        ["continue-or-new", "continue", "new", "resume"], case_sensitive=False
+    ),
+    default=None,
+    help="Override the YAML's claude.session for this start invocation.",
+)
 def start(
-    config_path: str | None, start_all: bool, no_preflight: bool, force: bool
+    config_path: str | None,
+    start_all: bool,
+    no_preflight: bool,
+    force: bool,
+    resume_id: str | None,
+    session_mode: str | None,
 ) -> None:
     """Start an agent from a YAML definition, or --all to start every agent."""
+    if (resume_id or session_mode) and start_all:
+        click.echo(
+            "Error: --resume / --session cannot be combined with --all "
+            "(they would apply the same value to every agent).",
+            err=True,
+        )
+        sys.exit(2)
+    if resume_id and session_mode and session_mode != "resume":
+        click.echo(
+            f"Error: --resume requires --session resume, got --session {session_mode}.",
+            err=True,
+        )
+        sys.exit(2)
+    if resume_id and session_mode is None:
+        session_mode = "resume"
     if start_all:
         yamls = _discover_all_agents()
         if not yamls:
@@ -204,7 +242,19 @@ def start(
             console.print("[dim]Preflight checks skipped (--no-preflight)[/dim]")
         if force:
             console.print("[dim]Force mode: stopping any existing instance first[/dim]")
-        agent_start(config_path, no_preflight=no_preflight, force=force)
+        if session_mode:
+            console.print(
+                f"[dim]Session override: claude.session = {session_mode}"
+                + (f", resume_id = {resume_id}" if resume_id else "")
+                + "[/dim]"
+            )
+        agent_start(
+            config_path,
+            no_preflight=no_preflight,
+            force=force,
+            session_override=session_mode,
+            resume_id_override=resume_id,
+        )
         console.print(
             f"[green]Agent '{config.name}' started successfully [{location}][/green]"
         )

@@ -98,6 +98,8 @@ def agent_start(
     registry: Registry | None = None,
     no_preflight: bool = False,
     force: bool = False,
+    session_override: str | None = None,
+    resume_id_override: str | None = None,
 ) -> bool:
     """Start an agent from a YAML config file.
 
@@ -108,12 +110,21 @@ def agent_start(
         force: If True and the agent is already running, stop it first
             and then start fresh. Also tolerates stale registry entries
             and ghost screens (via force-stop).
+        session_override: If set, override config.claude.session for this
+            start invocation (one of continue-or-new | continue | new | resume).
+        resume_id_override: If set, override config.claude.resume_id. Pass
+            with session_override="resume" to launch ``claude --resume <id>``
+            without editing the YAML.
 
     Returns True on success, False on failure.
     """
     config_path = resolve_config(config_path)
     registry = registry or Registry()
     config = load_config(config_path)
+    if session_override:
+        config.claude.session = session_override
+    if resume_id_override is not None:
+        config.claude.resume_id = resume_id_override
     runtime = _get_runtime(config)
 
     # Already running?
