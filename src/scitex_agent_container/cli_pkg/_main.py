@@ -17,6 +17,7 @@ from .hook_cmds import hook_event
 from .info_cmds import attach, find, list_python_apis, logs
 from .lifecycle_cmds import cleanup, restart, start, stop
 from .probe_cmds import probe_network
+from .recall_cmds import recall
 from .render_cmds import render_attach, render_sbatch
 from .snapshot_cmds import snapshot
 from .status_cmds import check_agent, health, list_agents, status
@@ -80,6 +81,10 @@ main.add_command(quota_watch)
 
 # Claude Code hook event ingestor
 main.add_command(hook_event)
+
+# Recall: read back a previous session's jsonl (post-crash recovery,
+# context inspection without --continue).
+main.add_command(recall)
 
 # Action subsystem: run PaneActions, query attempts, aggregate stats.
 main.add_command(actions_cli)
