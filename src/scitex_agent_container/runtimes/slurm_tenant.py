@@ -1,0 +1,211 @@
+"""SLURM tenant runtime — share one SLURM allocation across many agents.
+
+The motivation: HPC queue wait dominates iteration time. ``runtime: slurm``
+submits a fresh sbatch per agent, paying queue wait per launch. With
+``runtime: slurm-tenant`` an operator books one long-running reservation
+(via ``scitex-hpc reservations book ...``) and launches many agents
+*inside* that allocation via ``srun --jobid --overlap``.
+
+Each agent is a tmux session on the compute node, owned by the same SLURM
+job. ``stop`` only kills the tmux session, not the underlying job.
+
+Compatible with the 2026-04-26 IT Security ruling: bastion-initiated SSH
+only, no daemons or tunnels. Inherits scitex-hpc's policy compliance.
+
+Example YAML::
+
+    apiVersion: scitex-agent-container/v3
+    kind: Agent
+    spec:
+      runtime: slurm-tenant
+      slurm:
+        reservation: dev-pool       # name of the existing scitex-hpc lease
+      claude:
+        flags: [--dangerously-skip-permissions]
+
+Then ``sac start dev-helper`` runs ``claude`` in a fresh tmux session
+inside the ``dev-pool`` reservation's allocation.
+"""
+
+from __future__ import annotations
+
+import logging
+import shlex
+from typing import TYPE_CHECKING
+
+from ..config import AgentConfig
+from .base import RuntimeBase
+
+if TYPE_CHECKING:
+    from scitex_hpc import Reservation as _ResType  # noqa: F401
+
+logger = logging.getLogger(__name__)
+
+
+def _import_reservation():
+    """Late import so missing scitex-hpc gives a clear error, not import-time crash."""
+    try:
+        from scitex_hpc import Reservation  # type: ignore
+    except ImportError as exc:
+        raise RuntimeError(
+            "runtime: slurm-tenant requires scitex-hpc>=0.5.1. "
+            "Install via: pip install 'scitex-agent-container[slurm]'"
+        ) from exc
+    return Reservation
+
+
+class SlurmTenantRuntime(RuntimeBase):
+    """Run an agent as a tenant of a pre-booked scitex-hpc Reservation."""
+
+    def _tmux_session(self, cfg: AgentConfig) -> str:
+        """tmux session name on the compute node — namespaced to avoid collisions."""
+        return f"sac-{cfg.name}"
+
+    def _resolve_reservation(self, cfg: AgentConfig):
+        """Look up the Reservation; raise with a clear message if missing."""
+        Reservation = _import_reservation()
+        name = cfg.slurm.reservation
+        if not name:
+            raise RuntimeError(
+                "runtime: slurm-tenant requires spec.slurm.reservation to be set "
+                "(name of the scitex-hpc lease this agent should join)"
+            )
+        res = Reservation.get(name)
+        if res is None:
+            # Try matching by lease id directly
+            res = Reservation.get(name)
+        if res is None:
+            raise RuntimeError(
+                f"reservation {name!r} not found. "
+                f"Book one first: scitex-hpc reservations book {name} --host <h> ..."
+            )
+        if not res.job_id:
+            res.refresh()
+        if not res.job_id:
+            raise RuntimeError(
+                f"reservation {name!r} exists but has no live job_id. "
+                "Has the SLURM job exited? Check 'scitex-hpc reservations get'."
+            )
+        return res
+
+    def _build_claude_command(self, cfg: AgentConfig) -> str:
+        """Render the ``claude`` invocation as a single shell-quotable string."""
+        parts = ["claude"]
+        if cfg.model:
+            parts.extend(["--model", cfg.model])
+        for ch in cfg.claude.channels:
+            parts.extend(["--channels", ch])
+        for flag in cfg.claude.flags:
+            parts.append(flag)
+        if cfg.claude.session == "continue":
+            parts.append("--continue")
+        return shlex.join(parts)
+
+    def start(
+        self,
+        config: AgentConfig,
+        no_preflight: bool = False,
+        force: bool = False,
+    ) -> bool:
+        """Start a tmux session inside the existing reservation."""
+        res = self._resolve_reservation(config)
+        session = self._tmux_session(config)
+
+        # Force: kill any stale session with the same name first
+        if force:
+            res.exec(
+                f"tmux kill-session -t {shlex.quote(session)} 2>/dev/null || true",
+                check=False,
+                timeout=15,
+            )
+
+        # Bail if the session already exists and we're not forcing
+        if not force:
+            check = res.exec(
+                f"tmux has-session -t {shlex.quote(session)} 2>/dev/null && echo HAS || echo NONE",
+                check=False,
+                timeout=15,
+            )
+            if "HAS" in (check.stdout or ""):
+                logger.info(
+                    "SlurmTenantRuntime: %s already has a tmux session in %s",
+                    config.name,
+                    res.id,
+                )
+                return True
+
+        claude_cmd = self._build_claude_command(config)
+        # tmux new -d (detached) -s <session> '<command>'
+        # The double-shell-quote is intentional: outer wrapper for srun, inner
+        # for tmux's command argument.
+        tmux_cmd = (
+            f"tmux new-session -d -s {shlex.quote(session)} {shlex.quote(claude_cmd)}"
+        )
+        result = res.exec(tmux_cmd, check=False, timeout=30)
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"tmux new-session failed in reservation {res.id}: "
+                f"stdout={result.stdout!r} stderr={result.stderr!r}"
+            )
+        logger.info(
+            "SlurmTenantRuntime: %s started in tmux %s @ reservation %s (job %s, node %s)",
+            config.name,
+            session,
+            res.id,
+            res.job_id,
+            res.node,
+        )
+        return True
+
+    def stop(self, config: AgentConfig) -> bool:
+        """Kill the agent's tmux session. Does NOT release the reservation."""
+        try:
+            res = self._resolve_reservation(config)
+        except RuntimeError as exc:
+            logger.warning("SlurmTenantRuntime: cannot stop %s — %s", config.name, exc)
+            return False
+        session = self._tmux_session(config)
+        result = res.exec(
+            f"tmux kill-session -t {shlex.quote(session)} 2>&1 || true",
+            check=False,
+            timeout=15,
+        )
+        logger.info(
+            "SlurmTenantRuntime: stopped tmux %s @ reservation %s (rc=%s)",
+            session,
+            res.id,
+            result.returncode,
+        )
+        return True
+
+    def is_running(self, config: AgentConfig) -> bool:
+        try:
+            res = self._resolve_reservation(config)
+        except RuntimeError:
+            return False
+        session = self._tmux_session(config)
+        result = res.exec(
+            f"tmux has-session -t {shlex.quote(session)} 2>/dev/null && echo HAS || echo NONE",
+            check=False,
+            timeout=15,
+        )
+        return "HAS" in (result.stdout or "")
+
+    def logs(self, config: AgentConfig, lines: int = 50) -> str:
+        """Capture the last ``lines`` of pane content from the tmux session."""
+        try:
+            res = self._resolve_reservation(config)
+        except RuntimeError as exc:
+            return f"(reservation unavailable: {exc})"
+        session = self._tmux_session(config)
+        # tmux capture-pane writes to stdout with -p
+        result = res.exec(
+            f"tmux capture-pane -p -t {shlex.quote(session)} -S -{int(lines)} "
+            "2>/dev/null || echo '(no session)'",
+            check=False,
+            timeout=15,
+        )
+        return result.stdout or ""
+
+
+__all__ = ["SlurmTenantRuntime"]

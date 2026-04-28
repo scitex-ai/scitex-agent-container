@@ -154,6 +154,10 @@ class SlurmSpec:
     hooks: SlurmHooks = field(default_factory=SlurmHooks)
     heartbeat: SlurmHeartbeatSpec = field(default_factory=SlurmHeartbeatSpec)
     extra_directives: list[str] = field(default_factory=list)
+    # ``slurm-tenant`` runtime: name of the scitex-hpc Reservation lease
+    # this agent should join. Empty for the regular ``slurm`` runtime.
+    # Operator must `scitex-hpc reservations book <name> ...` first.
+    reservation: str = ""
 
 
 @dataclass
