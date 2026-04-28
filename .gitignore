@@ -19,3 +19,4 @@ docs/to_claude/
 .coverage
 .venv
 logs/
+.scitex/clew/
