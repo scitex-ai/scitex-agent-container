@@ -167,6 +167,68 @@ scitex-agent-container stop remote-agent.yaml     # Accepts name or YAML path
 scitex-agent-container inspect my-remote-agent    # Live state from remote
 ```
 
+## SLURM (single-agent)
+
+Submit an agent as an `sbatch` job that holds the allocation, runs claude in tmux on the compute node, and auto-resubmits before walltime via a `SIGUSR1` trap:
+
+```yaml
+spec:
+  runtime: slurm
+  slurm:
+    partition: cascade
+    cpus_per_task: 4
+    mem: "16G"
+    time_limit: "7-00:00:00"
+    auto_resubmit: true
+    hooks:
+      pre_agent: ~/path/to/module-load.sh    # `module load Python/3.11.3` etc.
+```
+
+```bash
+sac start head-spartan/head-spartan.yaml   # submits sbatch on the local SLURM submission host
+sac attach head-spartan                    # srun --pty + tmux attach on the compute node
+sac stop head-spartan                      # scancel + clear state
+```
+
+## SLURM (multi-tenant — many agents on one allocation)
+
+Requires `pip install scitex-agent-container[slurm]` (pulls `scitex-hpc>=0.6.1`).
+
+Book a reservation **once**, then launch many agents into the same allocation. Cuts queue wait from minutes per launch to one ssh round-trip per launch:
+
+```bash
+# Once: book a node for the day
+scitex-hpc reservations book dev-pool \
+    --host spartan --partition cascade \
+    --cpus 8 --mem 32G --time 7-0 \
+    --tmux-server sac --persistent
+
+# All day: launch agents into it
+sac start dev-helper.yaml         # tmux session in dev-pool's allocation
+sac start doc-builder.yaml        # second tmux session, same allocation
+sac start test-runner.yaml        # third, same allocation
+
+sac attach dev-helper             # interactive on compute node
+
+# When done with the day's pool:
+scitex-hpc reservations release dev-pool
+```
+
+Tenant agent YAML — note the new runtime kind and the `slurm.reservation` field:
+
+```yaml
+spec:
+  runtime: slurm-tenant
+  slurm:
+    reservation: dev-pool         # name of the existing scitex-hpc lease
+  claude:
+    flags: [--dangerously-skip-permissions]
+```
+
+The reservation's hold body bootstraps a long-lived tmux server as PID 1 of the sbatch script (via `--tmux-server sac`), so tenant tmux sessions survive past their setup commands. Without it, `srun --overlap` step cgroups would terminate them within seconds.
+
+**Compatible with HPC policies banning persistent daemons** — every operation is bastion-initiated SSH, no `crontab @reboot`, no autossh, no tunnel. SLURM's documented `SIGUSR1` signal handles walltime auto-resubmit.
+
 ## MCP Servers (src_mcp.json)
 
 MCP config lives alongside the YAML as `src_mcp.json` -- visible, editable, version-controlled:
