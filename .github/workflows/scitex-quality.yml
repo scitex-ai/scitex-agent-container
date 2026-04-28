@@ -42,7 +42,7 @@ jobs:
           # continue-on-error so a missing scitex-dev surfaces in the
           # summary rather than blocking the build.
           pip install "scitex-dev[cli-audit]" || \
-            pip install "scitex-dev[cli-audit] @ git+https://github.com/scitex-project/scitex-dev.git@main" || \
+            pip install "scitex-dev[cli-audit] @ git+https://github.com/ywatanabe1989/scitex-dev.git@main" || \
             true
 
       - name: Detect package name
