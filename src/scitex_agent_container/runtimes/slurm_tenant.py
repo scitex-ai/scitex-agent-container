@@ -148,6 +148,36 @@ class SlurmTenantRuntime(RuntimeBase):
             parts.append("--continue")
         return shlex.join(parts)
 
+    def _build_env_prefix(self, config: AgentConfig) -> str:
+        """Render ``KEY=value KEY2=value2 ...`` for the tmux launch line.
+
+        Each spec ``env:`` entry is forwarded to the compute-side claude
+        via inline assignment in the bash command (``FOO=bar
+        BAZ=qux exec claude ...``). Values support:
+
+        * ``~``-prefix → expanded to ``$HOME`` literal so the compute
+          shell does the expansion at exec time.
+        * ``${VAR}`` → kept as a shell ref so the compute shell
+          resolves it from its own env (lets agents inherit values
+          like ``$ANTHROPIC_API_KEY2`` that are set in the user's
+          login profile but not in the spec).
+
+        Returns an empty string when ``config.env`` is empty.
+        """
+        if not config.env:
+            return ""
+        pairs: list[str] = []
+        for k, v in config.env.items():
+            if not isinstance(v, str):
+                v = str(v)
+            if v.startswith("~"):
+                v = "$HOME" + v[1:]
+            # Quote the value so bash treats it as a single token, but
+            # leave ${VAR} refs unexpanded by the local quoting layer
+            # (they still get expanded by the remote bash).
+            pairs.append(f"{k}={shlex.quote(v)}")
+        return " ".join(pairs)
+
     def _setup_workspace(self, config: AgentConfig) -> str:
         """Provision the agent's workspace dir on disk and return its path.
 
@@ -210,12 +240,19 @@ class SlurmTenantRuntime(RuntimeBase):
         workdir = self._setup_workspace(config)
 
         claude_cmd = self._build_claude_command(config)
-        # tmux launches ``cd <workdir> && exec <claude>`` so the agent's
-        # cwd is its workspace dir (where .mcp.json, CLAUDE.md, and
-        # ~/.claude/projects/<encoded>/ live), not the user's $HOME.
-        # Without ``cd`` claude treats $HOME as the project root and the
-        # workspace's MCP servers / CLAUDE.md never get loaded.
-        cwd_cmd = f"cd {shlex.quote(workdir)} && exec {claude_cmd}"
+        env_prefix = self._build_env_prefix(config)
+        # tmux launches ``[cd <workdir> &&] [<env>] exec <claude>`` so the
+        # agent's cwd is its workspace dir (.mcp.json, CLAUDE.md,
+        # ~/.claude/projects/<encoded>/ all relative to it) and any
+        # spec-declared env vars (e.g. ANTHROPIC_API_KEY redirects,
+        # SCITEX_OROCHI_AGENT) reach the compute-side claude even if
+        # the user's login shell on the compute node doesn't set them.
+        if env_prefix:
+            cwd_cmd = (
+                f"cd {shlex.quote(workdir)} && {env_prefix} exec {claude_cmd}"
+            )
+        else:
+            cwd_cmd = f"cd {shlex.quote(workdir)} && exec {claude_cmd}"
         # tmux new -d (detached) -s <session> '<command>'
         # The double-shell-quote is intentional: outer wrapper for srun, inner
         # for tmux's command argument.
