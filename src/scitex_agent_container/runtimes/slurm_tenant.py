@@ -249,5 +249,20 @@ class SlurmTenantRuntime(RuntimeBase):
         )
         return result.stdout or ""
 
+    def attach(self, config: AgentConfig) -> int:
+        """Open an interactive tmux attach against the tenant's session.
+
+        Uses ``Reservation.attach`` (which runs ``srun --jobid --pty``)
+        to enter the compute node, then ``tmux -L <socket> attach -t
+        <session>`` to attach the operator's terminal to the running
+        agent. Detach with the standard tmux prefix (Ctrl-B D).
+        """
+        res = self._resolve_reservation(config)
+        session = self._tmux_session(config)
+        # Use the reservation's --pty channel; build the inner command as
+        # a single shell-quoted string for tmux attach.
+        attach_cmd = self._tmux(res, "attach", "-t", shlex.quote(session))
+        return res.attach(cmd=attach_cmd, pty=True)
+
 
 __all__ = ["SlurmTenantRuntime"]
