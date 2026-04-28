@@ -22,6 +22,10 @@ def _get_runtime(config: AgentConfig):
         return ClaudeCodeRuntime()
     if config.runtime == "slurm":
         return SlurmRuntime()
+    if config.runtime == "slurm-tenant":
+        from .runtimes.slurm_tenant import SlurmTenantRuntime
+
+        return SlurmTenantRuntime()
     raise ValueError(f"Unsupported runtime: {config.runtime}")
 
 

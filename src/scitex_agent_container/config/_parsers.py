@@ -190,6 +190,7 @@ def parse_slurm(spec: dict) -> SlurmSpec:
         hooks=hooks,
         heartbeat=heartbeat,
         extra_directives=[str(d) for d in (raw.get("extra_directives") or [])],
+        reservation=str(raw.get("reservation", "") or ""),
     )
 
 
