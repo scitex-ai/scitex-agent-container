@@ -612,10 +612,12 @@ class TestRuntime:
 
         monkeypatch.setattr(slurm_mod.subprocess, "run", fake_run)
         SlurmRuntime().start(_cfg())
+        # local_state.runtime_path() puts files under .scitex/<pkg>/runtime/<sub>/
         script_path = (
             tmp_path
             / ".scitex"
             / "agent-container"
+            / "runtime"
             / "slurm-scripts"
             / "head-spartan.sbatch"
         )
@@ -663,9 +665,7 @@ class TestHpcReservationDualWrite:
         def fake_register(cfg, job_id):
             called.append((cfg.name, job_id))
 
-        monkeypatch.setattr(
-            slurm_mod, "_maybe_register_hpc_reservation", fake_register
-        )
+        monkeypatch.setattr(slurm_mod, "_maybe_register_hpc_reservation", fake_register)
 
         def fake_run(cmd, **kwargs):
             if cmd[0] == "sbatch":
@@ -681,9 +681,7 @@ class TestHpcReservationDualWrite:
 
         assert called == [("head-spartan-cpu", "4242")]
 
-    def test_clear_called_after_stop(
-        self, isolated_state, monkeypatch, tmp_path
-    ):
+    def test_clear_called_after_stop(self, isolated_state, monkeypatch, tmp_path):
         """After scancel, _maybe_clear_hpc_reservation fires with the agent name."""
         # Pre-seed sac state so stop() has something to scancel
         (isolated_state).mkdir(parents=True, exist_ok=True)
@@ -696,12 +694,8 @@ class TestHpcReservationDualWrite:
         def fake_clear(name):
             cleared.append(name)
 
-        monkeypatch.setattr(
-            slurm_mod, "_maybe_clear_hpc_reservation", fake_clear
-        )
-        monkeypatch.setattr(
-            slurm_mod.subprocess, "run", lambda *a, **kw: _mock_run()
-        )
+        monkeypatch.setattr(slurm_mod, "_maybe_clear_hpc_reservation", fake_clear)
+        monkeypatch.setattr(slurm_mod.subprocess, "run", lambda *a, **kw: _mock_run())
 
         cfg = _cfg(name="head-spartan-cpu")
         SlurmRuntime().stop(cfg)
@@ -728,6 +722,7 @@ class TestHpcReservationDualWrite:
 
     def test_register_swallows_unexpected_exception(self, monkeypatch):
         """A buggy scitex-hpc must not break sac's start path."""
+
         class FakeReservation:
             @staticmethod
             def from_jobid(**kwargs):
