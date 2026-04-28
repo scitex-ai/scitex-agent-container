@@ -35,6 +35,11 @@ from typing import TYPE_CHECKING
 
 from ..config import AgentConfig
 from .base import RuntimeBase
+from .claude_code import _has_src_files
+from .claude_md import setup_claude_md
+from .mcp_config import setup_mcp_config
+from .settings_json import setup_settings_json
+from .src_files import deploy_src_claude_md, deploy_src_env, deploy_src_mcp_json
 
 if TYPE_CHECKING:
     from scitex_hpc import Reservation as _ResType  # noqa: F401
@@ -114,17 +119,55 @@ class SlurmTenantRuntime(RuntimeBase):
         return res
 
     def _build_claude_command(self, cfg: AgentConfig) -> str:
-        """Render the ``claude`` invocation as a single shell-quotable string."""
+        """Render the ``claude`` invocation as a single shell-quotable string.
+
+        Each YAML flag entry is shlex.split first, so an entry like
+        ``"--add-dir ~/proj/foo"`` is correctly forwarded as two argv
+        tokens (``--add-dir`` and ``~/proj/foo``) rather than one
+        space-bundled string that ``claude`` would reject.
+        """
         parts = ["claude"]
         if cfg.model:
             parts.extend(["--model", cfg.model])
         for ch in cfg.claude.channels:
             parts.extend(["--channels", ch])
         for flag in cfg.claude.flags:
-            parts.append(flag)
+            # Only shlex.split when the entry looks like a bundled flag
+            # (starts with ``-`` AND contains whitespace), so that a
+            # bare value entry such as ``"/path with spaces"`` is left
+            # alone rather than torn apart on its inner space.
+            if (
+                isinstance(flag, str)
+                and " " in flag
+                and flag.lstrip().startswith("-")
+            ):
+                parts.extend(shlex.split(flag))
+            else:
+                parts.append(flag)
         if cfg.claude.session == "continue":
             parts.append("--continue")
         return shlex.join(parts)
+
+    def _setup_workspace(self, config: AgentConfig) -> str:
+        """Provision the agent's workspace dir on disk and return its path.
+
+        slurm-tenant relies on the compute node sharing $HOME with the
+        login node (NFS on Spartan, etc.), so writing the workspace
+        files locally is enough for the compute-side ``claude`` to find
+        them. Mirrors the v1/v2 src-files vs. legacy fork in
+        ``ClaudeCodeRuntime.start``.
+        """
+        workdir = config.expanded_workdir
+        is_v2 = bool(config.mcp_servers) or _has_src_files(config)
+        if is_v2:
+            deploy_src_claude_md(config, workdir)
+            deploy_src_mcp_json(config, workdir)
+            deploy_src_env(config, workdir)
+        else:
+            setup_claude_md(config, workdir)
+        setup_mcp_config(config, workdir)
+        setup_settings_json(config, workdir)
+        return workdir
 
     def start(
         self,
@@ -161,7 +204,18 @@ class SlurmTenantRuntime(RuntimeBase):
                 )
                 return True
 
+        # Provision workspace files on the shared filesystem before the
+        # compute-side claude tries to read them. Compute and login nodes
+        # share $HOME on Spartan/sapphire, so writing locally is enough.
+        workdir = self._setup_workspace(config)
+
         claude_cmd = self._build_claude_command(config)
+        # tmux launches ``cd <workdir> && exec <claude>`` so the agent's
+        # cwd is its workspace dir (where .mcp.json, CLAUDE.md, and
+        # ~/.claude/projects/<encoded>/ live), not the user's $HOME.
+        # Without ``cd`` claude treats $HOME as the project root and the
+        # workspace's MCP servers / CLAUDE.md never get loaded.
+        cwd_cmd = f"cd {shlex.quote(workdir)} && exec {claude_cmd}"
         # tmux new -d (detached) -s <session> '<command>'
         # The double-shell-quote is intentional: outer wrapper for srun, inner
         # for tmux's command argument.
@@ -171,7 +225,7 @@ class SlurmTenantRuntime(RuntimeBase):
             "-d",
             "-s",
             shlex.quote(session),
-            shlex.quote(claude_cmd),
+            shlex.quote(cwd_cmd),
         )
         result = res.exec(tmux_cmd, check=False, timeout=60)
         if result.returncode != 0:

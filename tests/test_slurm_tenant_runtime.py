@@ -333,3 +333,110 @@ class TestAttach:
         assert "tmux -L sac attach -t" in cmd
         assert "sac-dev-helper" in cmd
         assert call.kwargs.get("pty") is True
+
+
+# ---------------------------------------------------------------------------
+# Flag splitting + workspace bootstrap
+# ---------------------------------------------------------------------------
+
+
+class TestBuildClaudeCommand:
+    """``_build_claude_command`` must shlex.split each flag entry so YAML
+    list items like ``"--dangerously-load-development-channels server:..."``
+    end up as two argv tokens, not one space-bundled token that claude
+    rejects on parse.
+    """
+
+    def test_space_bundled_flag_is_split(self):
+        rt = SlurmTenantRuntime()
+        cfg = _cfg(
+            flags=[
+                "--dangerously-skip-permissions",
+                "--dangerously-load-development-channels server:scitex-orochi",
+            ]
+        )
+        cmd = rt._build_claude_command(cfg)
+        # Both halves of the bundled flag should appear as separate argv
+        # tokens in the rendered command (shlex.join keeps them so).
+        assert "--dangerously-load-development-channels" in cmd
+        assert "server:scitex-orochi" in cmd
+        # The bundle should NOT appear quoted as a single token:
+        # shlex.join('a b') -> "'a b'", which is the bug we're fixing.
+        assert "'--dangerously-load-development-channels server:scitex-orochi'" not in cmd
+
+    def test_already_split_flag_pair_stays_intact(self):
+        rt = SlurmTenantRuntime()
+        cfg = _cfg(flags=["--add-dir", "/path/with spaces"])
+        cmd = rt._build_claude_command(cfg)
+        assert "--add-dir" in cmd
+        # shlex.join quotes the path with spaces — that's the desired form.
+        assert "'/path/with spaces'" in cmd
+
+
+class TestStartProvisionsWorkspace:
+    """``start`` must lay down the workspace files (.mcp.json, CLAUDE.md,
+    settings.json, src_*) before launching tmux, otherwise the
+    compute-side ``claude`` opens with cwd=$HOME and never finds the
+    workspace's MCP wiring. ZOO1 (deterministic > agentic): the
+    workspace setup is the same set of helpers ClaudeCodeRuntime uses.
+    """
+
+    def test_start_calls_workspace_setup_helpers(self, fake_scitex_hpc, monkeypatch):
+        from scitex_agent_container.runtimes import slurm_tenant as st_mod
+
+        fake_scitex_hpc.exec.side_effect = [_proc(stdout="NONE"), _proc()]
+        called: dict[str, str] = {}
+
+        def _fake_setup_mcp(cfg, workdir, *a, **kw):
+            called["mcp"] = workdir
+
+        def _fake_setup_settings(cfg, workdir, *a, **kw):
+            called["settings"] = workdir
+
+        def _fake_setup_claude_md(cfg, workdir, *a, **kw):
+            called["claude_md"] = workdir
+
+        def _fake_has_src_files(cfg):
+            # Force the legacy (non-v2) branch so setup_claude_md is the
+            # CLAUDE.md provider rather than deploy_src_claude_md.
+            return False
+
+        monkeypatch.setattr(st_mod, "setup_mcp_config", _fake_setup_mcp)
+        monkeypatch.setattr(st_mod, "setup_settings_json", _fake_setup_settings)
+        monkeypatch.setattr(st_mod, "setup_claude_md", _fake_setup_claude_md)
+        monkeypatch.setattr(st_mod, "_has_src_files", _fake_has_src_files)
+
+        cfg = _cfg(name="dev-helper")
+        SlurmTenantRuntime().start(cfg)
+
+        # All three helpers must have been called with the same workdir.
+        assert called.keys() == {"mcp", "settings", "claude_md"}
+        assert called["mcp"] == cfg.expanded_workdir
+        assert called["settings"] == cfg.expanded_workdir
+        assert called["claude_md"] == cfg.expanded_workdir
+
+    def test_start_cds_into_workspace_before_claude(
+        self, fake_scitex_hpc, monkeypatch
+    ):
+        from scitex_agent_container.runtimes import slurm_tenant as st_mod
+
+        # Stub setup helpers so the test stays in-memory.
+        for name in (
+            "setup_mcp_config",
+            "setup_settings_json",
+            "setup_claude_md",
+            "deploy_src_claude_md",
+            "deploy_src_mcp_json",
+            "deploy_src_env",
+        ):
+            monkeypatch.setattr(st_mod, name, lambda *a, **kw: None)
+        monkeypatch.setattr(st_mod, "_has_src_files", lambda cfg: False)
+
+        fake_scitex_hpc.exec.side_effect = [_proc(stdout="NONE"), _proc()]
+        cfg = _cfg(name="dev-helper")
+        SlurmTenantRuntime().start(cfg)
+
+        new_session_call = fake_scitex_hpc.exec.call_args_list[1].args[0]
+        assert "cd " in new_session_call
+        assert cfg.expanded_workdir in new_session_call
+        assert "exec claude" in new_session_call
