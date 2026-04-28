@@ -35,6 +35,9 @@ def fake_reservation():
     res.id = "spartan-dev-pool"
     res.job_id = "42"
     res.node = "spartan-bm022"
+    # Phase 4: reservation must be booked with tmux_server set so the
+    # tmux socket name is discoverable. Mirror the production shape.
+    res.extras = {"tmux_server": "sac"}
     res.exec.return_value = _proc(stdout="")
     return res
 
@@ -146,8 +149,8 @@ class TestStart:
         rt.start(_cfg(name="dev-helper"))
 
         calls = [c.args[0] for c in fake_scitex_hpc.exec.call_args_list]
-        assert "tmux has-session -t" in calls[0]
-        assert "tmux new-session -d -s" in calls[1]
+        assert "tmux -L sac has-session -t" in calls[0]
+        assert "tmux -L sac new-session -d -s" in calls[1]
         assert "sac-dev-helper" in calls[1]
         # Claude command must be embedded
         assert "claude" in calls[1]
@@ -167,7 +170,7 @@ class TestStart:
         rt.start(_cfg(), force=True)
         # First call should be the kill-session
         first = fake_scitex_hpc.exec.call_args_list[0].args[0]
-        assert "tmux kill-session" in first
+        assert "tmux -L sac kill-session" in first
 
     def test_start_propagates_model_flag(self, fake_scitex_hpc):
         fake_scitex_hpc.exec.side_effect = [
@@ -200,7 +203,7 @@ class TestStop:
         rt = SlurmTenantRuntime()
         assert rt.stop(_cfg(name="helper")) is True
         cmd = fake_scitex_hpc.exec.call_args.args[0]
-        assert "tmux kill-session" in cmd
+        assert "tmux -L sac kill-session" in cmd
         assert "sac-helper" in cmd
         # CRITICAL: must NEVER call scancel or release on the reservation
         fake_scitex_hpc.release.assert_not_called()
@@ -257,7 +260,7 @@ class TestLogs:
         out = SlurmTenantRuntime().logs(_cfg(), lines=10)
         assert out == "hello world"
         cmd = fake_scitex_hpc.exec.call_args.args[0]
-        assert "tmux capture-pane -p -t" in cmd
+        assert "tmux -L sac capture-pane -p -t" in cmd
         assert "-S -10" in cmd
 
     def test_logs_returns_message_when_reservation_unavailable(self, monkeypatch):

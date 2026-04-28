@@ -61,6 +61,31 @@ class SlurmTenantRuntime(RuntimeBase):
         """tmux session name on the compute node — namespaced to avoid collisions."""
         return f"sac-{cfg.name}"
 
+    def _tmux_socket(self, res) -> str:
+        """Return the named tmux socket the reservation was booked with.
+
+        Phase 4 architectural fix: tenant tmux sessions must connect to
+        the long-lived tmux server bootstrapped by the sbatch hold body
+        (scitex-hpc>=0.6.0 with ``Reservation.book(tmux_server=...)``).
+        Without it, ``tmux new-session`` runs in the srun step's cgroup
+        and gets killed when the step exits.
+        """
+        socket = (res.extras or {}).get("tmux_server")
+        if not socket:
+            raise RuntimeError(
+                f"reservation {res.id!r} was not booked with tmux_server set. "
+                "Re-book via: scitex-hpc reservations book <name> --host <h> "
+                "--tmux-server sac ...  (slurm-tenant runtime requires the "
+                "server bootstrap; otherwise tmux daemons get cgroup-killed "
+                "when srun --overlap steps end.)"
+            )
+        return socket
+
+    def _tmux(self, res, *args: str) -> str:
+        """Compose a ``tmux -L <socket> <args>`` command string."""
+        socket = self._tmux_socket(res)
+        return "tmux -L " + shlex.quote(socket) + " " + " ".join(args)
+
     def _resolve_reservation(self, cfg: AgentConfig):
         """Look up the Reservation; raise with a clear message if missing."""
         Reservation = _import_reservation()
@@ -114,17 +139,19 @@ class SlurmTenantRuntime(RuntimeBase):
         # Force: kill any stale session with the same name first
         if force:
             res.exec(
-                f"tmux kill-session -t {shlex.quote(session)} 2>/dev/null || true",
+                self._tmux(res, "kill-session", "-t", shlex.quote(session))
+                + " 2>/dev/null || true",
                 check=False,
-                timeout=15,
+                timeout=60,
             )
 
         # Bail if the session already exists and we're not forcing
         if not force:
             check = res.exec(
-                f"tmux has-session -t {shlex.quote(session)} 2>/dev/null && echo HAS || echo NONE",
+                self._tmux(res, "has-session", "-t", shlex.quote(session))
+                + " 2>/dev/null && echo HAS || echo NONE",
                 check=False,
-                timeout=15,
+                timeout=60,
             )
             if "HAS" in (check.stdout or ""):
                 logger.info(
@@ -138,10 +165,15 @@ class SlurmTenantRuntime(RuntimeBase):
         # tmux new -d (detached) -s <session> '<command>'
         # The double-shell-quote is intentional: outer wrapper for srun, inner
         # for tmux's command argument.
-        tmux_cmd = (
-            f"tmux new-session -d -s {shlex.quote(session)} {shlex.quote(claude_cmd)}"
+        tmux_cmd = self._tmux(
+            res,
+            "new-session",
+            "-d",
+            "-s",
+            shlex.quote(session),
+            shlex.quote(claude_cmd),
         )
-        result = res.exec(tmux_cmd, check=False, timeout=30)
+        result = res.exec(tmux_cmd, check=False, timeout=60)
         if result.returncode != 0:
             raise RuntimeError(
                 f"tmux new-session failed in reservation {res.id}: "
@@ -166,9 +198,10 @@ class SlurmTenantRuntime(RuntimeBase):
             return False
         session = self._tmux_session(config)
         result = res.exec(
-            f"tmux kill-session -t {shlex.quote(session)} 2>&1 || true",
+            self._tmux(res, "kill-session", "-t", shlex.quote(session))
+            + " 2>&1 || true",
             check=False,
-            timeout=15,
+            timeout=60,
         )
         logger.info(
             "SlurmTenantRuntime: stopped tmux %s @ reservation %s (rc=%s)",
@@ -185,9 +218,10 @@ class SlurmTenantRuntime(RuntimeBase):
             return False
         session = self._tmux_session(config)
         result = res.exec(
-            f"tmux has-session -t {shlex.quote(session)} 2>/dev/null && echo HAS || echo NONE",
+            self._tmux(res, "has-session", "-t", shlex.quote(session))
+            + " 2>/dev/null && echo HAS || echo NONE",
             check=False,
-            timeout=15,
+            timeout=60,
         )
         return "HAS" in (result.stdout or "")
 
@@ -200,10 +234,18 @@ class SlurmTenantRuntime(RuntimeBase):
         session = self._tmux_session(config)
         # tmux capture-pane writes to stdout with -p
         result = res.exec(
-            f"tmux capture-pane -p -t {shlex.quote(session)} -S -{int(lines)} "
-            "2>/dev/null || echo '(no session)'",
+            self._tmux(
+                res,
+                "capture-pane",
+                "-p",
+                "-t",
+                shlex.quote(session),
+                "-S",
+                f"-{int(lines)}",
+            )
+            + " 2>/dev/null || echo '(no session)'",
             check=False,
-            timeout=15,
+            timeout=60,
         )
         return result.stdout or ""
 
