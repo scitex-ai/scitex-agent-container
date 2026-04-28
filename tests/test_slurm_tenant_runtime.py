@@ -311,3 +311,25 @@ spec:
         cfg = load_config(agent_dir / "tenant-agent.yaml")
         assert cfg.runtime == "slurm-tenant"
         assert cfg.slurm.reservation == "dev-pool"
+
+
+# ---------------------------------------------------------------------------
+# Attach
+# ---------------------------------------------------------------------------
+
+
+class TestAttach:
+    def test_attach_invokes_reservation_attach_with_tmux_command(
+        self, fake_scitex_hpc
+    ):
+        fake_scitex_hpc.attach.return_value = 0
+        rt = SlurmTenantRuntime()
+        rc = rt.attach(_cfg(name="dev-helper"))
+        assert rc == 0
+        # Reservation.attach should have been called with cmd that includes
+        # tmux -L sac attach -t sac-dev-helper
+        call = fake_scitex_hpc.attach.call_args
+        cmd = call.kwargs.get("cmd") or (call.args[0] if call.args else "")
+        assert "tmux -L sac attach -t" in cmd
+        assert "sac-dev-helper" in cmd
+        assert call.kwargs.get("pty") is True
