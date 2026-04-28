@@ -1,9 +1,16 @@
 """Local-vs-remote host identity check.
 
-Reads ``~/.scitex/host-identity.yaml`` — a per-host file that lists every
-name this machine answers to. Both scitex-agent-container and scitex-orochi
-read the same file with the same schema (independent loaders; no
-cross-package imports).
+Canonical name + aliases come from :mod:`scitex_resource` —
+``~/.scitex/resource/config.yaml``'s ``machine.canonical_name`` /
+``machine.aliases``. See scitex-resource README and the scitex-python
+``arch-local-state-directories`` skill (§9 Cross-package SoC) for the
+ecosystem rule: one package owns each domain; this module consumes
+the public API.
+
+Legacy ``~/.scitex/host-identity.yaml`` is still read for back-compat —
+its aliases are unioned in. Migrate by moving them to
+``~/.scitex/resource/config.yaml`` under ``machine.aliases`` and
+deleting the legacy file.
 
 File schema::
 
@@ -79,12 +86,33 @@ def _load_file_aliases() -> set[str]:
     return {str(a).strip() for a in raw if a is not None and str(a).strip()}
 
 
+def _load_resource_aliases() -> set[str]:
+    """Aliases declared in scitex-resource's machine config."""
+    try:
+        from scitex_resource import get_machine_config, get_machine_name
+    except ImportError:
+        return set()
+    out: set[str] = set()
+    name = (get_machine_name() or "").strip()
+    if name:
+        out.add(name)
+    cfg = get_machine_config()
+    for a in cfg.get("aliases") or []:
+        if isinstance(a, str) and a.strip():
+            out.add(a.strip())
+    return out
+
+
 def get_local_identities() -> set[str]:
-    """Return the set of names (lower-cased) this host answers to."""
+    """Return the set of names (lower-cased) this host answers to.
+
+    Sources unioned: scitex-resource canonical/aliases, legacy
+    ``host-identity.yaml`` (for back-compat), socket-derived names.
+    """
     global _CACHE
     if _CACHE is not None:
         return _CACHE
-    names = _auto_aliases() | _load_file_aliases()
+    names = _auto_aliases() | _load_resource_aliases() | _load_file_aliases()
     _CACHE = {n.lower() for n in names if n}
     return _CACHE
 
