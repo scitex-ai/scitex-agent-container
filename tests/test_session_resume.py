@@ -184,6 +184,7 @@ class TestAgentStartOverrides:
 
     def test_session_override_mutates_config(self, tmp_path):
         from scitex_agent_container import lifecycle
+        from scitex_agent_container.registry import Registry
 
         yaml = tmp_path / "agent.yaml"
         yaml.write_text(
@@ -195,13 +196,25 @@ class TestAgentStartOverrides:
             "  claude:\n    session: continue-or-new\n"
         )
         captured: dict = {}
+
+        class _StubRegistry:
+            def exists(self_inner, name):
+                return False
+
+            def add(self_inner, **kwargs):
+                # Don't write to ~/.scitex/agent-container/registry/.
+                pass
+
         with patch.object(
-            lifecycle, "_get_runtime", return_value=self._stub_runtime_capture(captured)
+            lifecycle,
+            "_get_runtime",
+            return_value=self._stub_runtime_capture(captured),
         ), patch.object(lifecycle, "_run_hooks"), patch.object(
             lifecycle, "_fire_forget_hook"
-        ):
+        ), patch.object(Registry, "__new__", lambda cls, *a, **kw: _StubRegistry()):
             lifecycle.agent_start(
                 str(yaml),
+                registry=_StubRegistry(),  # type: ignore[arg-type]
                 session_override="resume",
                 resume_id_override="abc-xyz",
             )
