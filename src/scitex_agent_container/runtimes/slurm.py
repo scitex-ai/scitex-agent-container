@@ -69,7 +69,7 @@ _STATE_DIR_ENV = "SCITEX_AGENT_CONTAINER_SLURM_STATE_DIR"
 
 
 def _state_dir() -> Path:
-    default = Path.home() / ".scitex" / "agent-container" / "slurm-state"
+    default = Path(os.environ.get("SCITEX_DIR", str(Path.home() / ".scitex"))) / "agent-container" / "slurm-state"
     return Path(os.environ.get(_STATE_DIR_ENV, str(default)))
 
 
@@ -398,7 +398,7 @@ class SlurmRuntime(RuntimeBase):
         return Path(cfg.slurm.logs_dir).expanduser()
 
     def _sbatch_path(self, cfg: AgentConfig) -> Path:
-        root = Path.home() / ".scitex" / "agent-container" / "slurm-scripts"
+        root = Path(os.environ.get("SCITEX_DIR", str(Path.home() / ".scitex"))) / "agent-container" / "slurm-scripts"
         root.mkdir(parents=True, exist_ok=True)
         return root / f"{cfg.name}.sbatch"
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import sys
 import traceback
+from pathlib import Path
 
 import click
 
@@ -92,7 +93,11 @@ def _discover_all_agents() -> list[str]:
     # name -> yaml path; later writes are ignored (earlier = higher priority).
     found: dict[str, str] = {}
 
-    primary = Path.home() / ".scitex" / "agent-container" / "agents"
+    primary = (
+        Path(os.environ.get("SCITEX_DIR", str(Path.home() / ".scitex")))
+        / "agent-container"
+        / "agents"
+    )
     search_dirs: list[Path] = [primary]
 
     env_raw = os.environ.get("SCITEX_AGENT_CONTAINER_YAML_DIRS", "")
