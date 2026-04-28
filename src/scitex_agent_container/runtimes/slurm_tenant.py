@@ -190,6 +190,7 @@ class SlurmTenantRuntime(RuntimeBase):
             timeout=timeout,
         )
 
+
     def _setup_workspace(self, config: AgentConfig) -> str:
         """Provision the agent's workspace dir on disk and return its path.
 
