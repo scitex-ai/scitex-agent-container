@@ -90,14 +90,12 @@ def _discover_all_agents() -> list[str]:
     """
     from pathlib import Path
 
+    from scitex_config._ecosystem import local_state
+
     # name -> yaml path; later writes are ignored (earlier = higher priority).
     found: dict[str, str] = {}
 
-    primary = (
-        Path(os.environ.get("SCITEX_DIR", str(Path.home() / ".scitex")))
-        / "agent-container"
-        / "agents"
-    )
+    primary = local_state.path("agent-container", "agents")
     search_dirs: list[Path] = [primary]
 
     env_raw = os.environ.get("SCITEX_AGENT_CONTAINER_YAML_DIRS", "")

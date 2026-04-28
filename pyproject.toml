@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "scitex-agent-container"
-version = "0.10.3"
+version = "0.10.4"
 description = "Declarative YAML-based framework for defining, managing, and orchestrating AI coding agent instances"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -37,7 +37,9 @@ dependencies = [
     "click>=8.0",
     "pyyaml>=6.0",
     "rich>=13.0",
+    "scitex-config>=0.3.0",
     "scitex-container>=0.1.0",
+    "scitex-ssh>=1.0.0",
     # A2A protocol surface — Phase 1 SDK adoption (see GITIGNORED/A2A_MIGRATION.md).
     # `[http-server]` extras pull in starlette + sse-starlette for the
     # JSON-RPC + SSE routes we mount in `a2a/_server.py`.
@@ -47,6 +49,10 @@ dependencies = [
     # validate_proto_required_fields still references — pin until upstream
     # adopts the descriptor pool API. See CI failure 2026-04-27.
     "protobuf<6",
+    # Canonical local-state directory helper (project-scope override +
+    # auto runtime/ seed creation). Per scitex-python skill
+    # 01_arch_06_local-state-directories.md.
+    "scitex-config>=0.3.0",
 ]
 
 [project.optional-dependencies]
