@@ -440,3 +440,69 @@ class TestStartProvisionsWorkspace:
         assert "cd " in new_session_call
         assert cfg.expanded_workdir in new_session_call
         assert "exec claude" in new_session_call
+
+
+class TestEnvPrefix:
+    """``_build_env_prefix`` translates ``spec.env`` into inline
+    ``KEY=value KEY2=value2 ...`` assignments before ``exec claude``,
+    so spec-declared vars (ANTHROPIC_API_KEY redirects, agent name,
+    workspace token) reach the compute-side process even when the
+    compute node's login shell doesn't set them.
+    """
+
+    def test_empty_env_returns_empty_string(self):
+        cfg = _cfg()
+        cfg.env = {}
+        assert SlurmTenantRuntime()._build_env_prefix(cfg) == ""
+
+    def test_basic_env_pairs_quoted(self):
+        cfg = _cfg()
+        cfg.env = {"FOO": "bar", "BAZ": "with space"}
+        prefix = SlurmTenantRuntime()._build_env_prefix(cfg)
+        assert "FOO=bar" in prefix
+        # shlex.quote turns 'with space' into 'with space' single-quoted.
+        assert "BAZ='with space'" in prefix
+
+    def test_tilde_expanded_to_HOME_for_compute_shell(self):
+        cfg = _cfg()
+        cfg.env = {"FOO_PATH": "~/secrets/foo"}
+        prefix = SlurmTenantRuntime()._build_env_prefix(cfg)
+        # Local shlex.quote quotes the entire string with $HOME literal,
+        # so the compute-side bash will expand $HOME at exec time.
+        assert "FOO_PATH='$HOME/secrets/foo'" in prefix
+
+    def test_dollar_var_kept_for_compute_expansion(self):
+        cfg = _cfg()
+        cfg.env = {"ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY2}"}
+        prefix = SlurmTenantRuntime()._build_env_prefix(cfg)
+        assert "ANTHROPIC_API_KEY='${ANTHROPIC_API_KEY2}'" in prefix
+
+    def test_env_prefix_lands_in_tmux_command(
+        self, fake_scitex_hpc, monkeypatch
+    ):
+        from scitex_agent_container.runtimes import slurm_tenant as st_mod
+
+        for name in (
+            "setup_mcp_config",
+            "setup_settings_json",
+            "setup_claude_md",
+            "deploy_src_claude_md",
+            "deploy_src_mcp_json",
+            "deploy_src_env",
+        ):
+            monkeypatch.setattr(st_mod, name, lambda *a, **kw: None)
+        monkeypatch.setattr(st_mod, "_has_src_files", lambda cfg: False)
+
+        fake_scitex_hpc.exec.side_effect = [_proc(stdout="NONE"), _proc()]
+        cfg = _cfg()
+        cfg.env = {"ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY2}"}
+        SlurmTenantRuntime().start(cfg)
+
+        new_session_call = fake_scitex_hpc.exec.call_args_list[1].args[0]
+        # ANTHROPIC_API_KEY assignment must appear between the cd and
+        # the exec, so the env reaches the claude process.
+        assert "ANTHROPIC_API_KEY=" in new_session_call
+        cd_idx = new_session_call.find("cd ")
+        env_idx = new_session_call.find("ANTHROPIC_API_KEY=")
+        exec_idx = new_session_call.find("exec claude")
+        assert cd_idx < env_idx < exec_idx
