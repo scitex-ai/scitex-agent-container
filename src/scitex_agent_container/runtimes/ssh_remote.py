@@ -226,7 +226,7 @@ class SSHRemote:
         # Without namespacing, the most-recent agent's src_* files
         # would be picked up by the next agent's deploy, injecting the
         # wrong identity into its workspace CLAUDE.md (todo#221).
-        remote_dir = f"/tmp/scitex-agent-container/{config.name}"
+        remote_dir = f"~/.scitex/agent-container/runtime/{config.name}"
         remote_path = f"{remote_dir}/{config.name}.yaml"
         local_path = config.config_path
         if not local_path:
