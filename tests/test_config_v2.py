@@ -307,6 +307,65 @@ class TestSrcFiles:
             assert server["env"]["AGENT"] == "my-agent"
             assert server["env"]["TOKEN"] == "secret123"
 
+    def test_deploy_src_mcp_json_refreshes_on_restart(self):
+        """Regression: re-deploy after canonical src_mcp.json changes (todo#453).
+
+        Simulate the fleet-lead incident: agent launched with old channel list,
+        canonical src_mcp.json updated (PR merged), agent restarted.
+        Workspace .mcp.json must reflect the new canonical on restart.
+        """
+        from scitex_agent_container.runtimes.src_files import deploy_src_mcp_json
+
+        with (
+            tempfile.TemporaryDirectory() as defdir,
+            tempfile.TemporaryDirectory() as workdir,
+        ):
+            src = Path(defdir) / "src_mcp.json"
+            # First launch — old channel list
+            src.write_text(
+                json.dumps(
+                    {
+                        "mcpServers": {
+                            "scitex-orochi": {
+                                "type": "stdio",
+                                "env": {"SCITEX_OROCHI_CHANNELS": "#ywatanabe,#heads"},
+                            }
+                        }
+                    }
+                )
+            )
+            config = AgentConfig(
+                name="fleet-lead",
+                config_path=str(Path(defdir) / "agent.yaml"),
+            )
+            deploy_src_mcp_json(config, workdir)
+
+            dest = Path(workdir) / ".mcp.json"
+            data = json.loads(dest.read_text())
+            assert data["mcpServers"]["scitex-orochi"]["env"]["SCITEX_OROCHI_CHANNELS"] == "#ywatanabe,#heads"
+
+            # PR merged — canonical updated with extra channels
+            src.write_text(
+                json.dumps(
+                    {
+                        "mcpServers": {
+                            "scitex-orochi": {
+                                "type": "stdio",
+                                "env": {"SCITEX_OROCHI_CHANNELS": "#ywatanabe,#heads,#lead,#agent"},
+                            }
+                        }
+                    }
+                )
+            )
+            # Simulate restart (re-deploy)
+            deploy_src_mcp_json(config, workdir)
+
+            data = json.loads(dest.read_text())
+            assert (
+                data["mcpServers"]["scitex-orochi"]["env"]["SCITEX_OROCHI_CHANNELS"]
+                == "#ywatanabe,#heads,#lead,#agent"
+            ), "workspace .mcp.json must reflect updated canonical after restart"
+
     def test_cleanup_src_claude_md(self):
         from scitex_agent_container.runtimes.src_files import (
             cleanup_src_claude_md,
