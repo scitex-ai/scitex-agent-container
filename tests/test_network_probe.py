@@ -207,11 +207,52 @@ class TestProbeGateway:
         assert r.extra["gateway"] == "10.0.0.1"
 
 
+# ── probe_cloudflared ───────────────────────────────────────────────────────
+
+
+class TestProbeCloudflared:
+    def test_process_found_returns_ok(self, monkeypatch):
+        import subprocess
+        from unittest.mock import MagicMock
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "12345\n"
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: mock_result)
+        r = np.probe_cloudflared()
+        assert r.ok is True
+        assert r.name == "cloudflared"
+        assert r.extra.get("pid") == 12345
+
+    def test_process_not_found_returns_failure(self, monkeypatch):
+        import subprocess
+        from unittest.mock import MagicMock
+
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stdout = ""
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: mock_result)
+        r = np.probe_cloudflared()
+        assert r.ok is False
+        assert "not found" in r.err
+
+    def test_pgrep_missing_returns_failure(self, monkeypatch):
+        import subprocess
+
+        def raise_fnf(*a, **kw):
+            raise FileNotFoundError("pgrep")
+
+        monkeypatch.setattr(subprocess, "run", raise_fnf)
+        r = np.probe_cloudflared()
+        assert r.ok is False
+        assert "pgrep" in r.err
+
+
 # ── run_all_probes / summarise ───────────────────────────────────────────────
 
 
 class TestRunAll:
-    def test_order_is_dns_gateway_tcp_https(self, monkeypatch):
+    def test_order_is_dns_gateway_tcp_https_cloudflared(self, monkeypatch):
         calls: list[str] = []
 
         def log(name):
@@ -225,9 +266,10 @@ class TestRunAll:
         monkeypatch.setattr(np, "probe_gateway", log("gateway"))
         monkeypatch.setattr(np, "probe_tcp", log("tcp"))
         monkeypatch.setattr(np, "probe_https", log("https"))
+        monkeypatch.setattr(np, "probe_cloudflared", log("cloudflared"))
 
         np.run_all_probes()
-        assert calls == ["dns", "gateway", "tcp", "https"]
+        assert calls == ["dns", "gateway", "tcp", "https", "cloudflared"]
 
     def test_summarise_all_ok(self):
         results = [

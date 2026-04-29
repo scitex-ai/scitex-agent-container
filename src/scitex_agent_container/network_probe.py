@@ -305,6 +305,61 @@ def probe_gateway(
         )
 
 
+def probe_cloudflared() -> ProbeResult:
+    """Detect a running cloudflared tunnel daemon on this host.
+
+    Scans the process list for ``cloudflared tunnel run`` (the long-lived
+    bastion daemon). Does not probe the tunnel's remote endpoint — just
+    confirms the local process is alive. If the process is present the
+    tunnel is *likely* healthy (cloudflared auto-reconnects); absence
+    means the bastion path is definitely down.
+
+    Reports the PID of the first matching process in ``extra``.
+    Uses only stdlib ``subprocess`` so it works without psutil.
+    """
+    t0 = time.monotonic()
+    # stx-allow: fallback (reason: pgrep may be absent on some OS (Windows/
+    # minimal containers); any unexpected pgrep output is a graceful miss)
+    try:
+        import subprocess as _sp
+
+        result = _sp.run(
+            ["pgrep", "-f", "cloudflared tunnel run"],
+            capture_output=True,
+            text=True,
+        )
+        latency_ms = round((time.monotonic() - t0) * 1000, 2)
+        if result.returncode == 0:
+            pids = [p.strip() for p in result.stdout.splitlines() if p.strip()]
+            pid = int(pids[0]) if pids else 0
+            return ProbeResult(
+                name="cloudflared",
+                ok=True,
+                latency_ms=latency_ms,
+                extra={"pid": pid},
+            )
+        return ProbeResult(
+            name="cloudflared",
+            ok=False,
+            latency_ms=latency_ms,
+            err="cloudflared tunnel run process not found",
+        )
+    except FileNotFoundError:
+        return ProbeResult(
+            name="cloudflared",
+            ok=False,
+            latency_ms=round((time.monotonic() - t0) * 1000, 2),
+            err="pgrep not available on this host",
+        )
+    except Exception as exc:
+        return ProbeResult(
+            name="cloudflared",
+            ok=False,
+            latency_ms=round((time.monotonic() - t0) * 1000, 2),
+            err=str(exc),
+        )
+
+
 def run_all_probes(
     *,
     hub_host: str = DEFAULT_HUB_HOST,
@@ -312,18 +367,20 @@ def run_all_probes(
     hub_url: str = DEFAULT_HUB_URL,
     timeout: float = DEFAULT_TIMEOUT_S,
 ) -> list[ProbeResult]:
-    """Run the four probes in the order dns → gateway → tcp → https.
+    """Run probes in the order dns → gateway → tcp → https → cloudflared.
 
     DNS first because hub_host is a name; if DNS fails TCP/HTTPS will
     also fail with a confusing error. Gateway second so we can tell
     "lost Wi-Fi" from "lost DNS only". TCP before HTTPS so a TLS
-    failure is distinguishable from a routing failure.
+    failure is distinguishable from a routing failure. Cloudflared last
+    (process check — independent of the network probes).
     """
     return [
         probe_dns(hub_host, timeout=timeout),
         probe_gateway(timeout=timeout),
         probe_tcp(hub_host, hub_port, timeout=timeout),
         probe_https(hub_url, timeout=timeout),
+        probe_cloudflared(),
     ]
 
 
