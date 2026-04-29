@@ -180,6 +180,63 @@ def read_recent(
         return []
 
 
+def _compute_open_agent_calls(
+    recent_tools: list[dict[str, Any]],
+    now: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Return Agent pretool events with no matching posttool (LIFO matching).
+
+    Walks ``recent_tools`` in chronological order, maintaining a stack of
+    open Agent pretool events. Each Agent posttool pops the most-recent
+    unmatched pretool (LIFO — subagents can be nested). Entries still on
+    the stack at the end have no posttool in the observed window.
+
+    Each returned record adds ``age_seconds`` (wall-clock seconds since
+    ``ts``) so callers can threshold on stuck duration without re-parsing
+    ISO timestamps.
+
+    Caveats
+    -------
+    - The event log is a ring-buffer. A pretool that fired before the
+      window started would look "open" even if it already completed.
+      Consumers should cross-check ``subagent_count`` from the pane text
+      before declaring an open call "stuck".
+    - Nested Agent calls are matched LIFO, which is the correct order
+      when the outer agent waits for the inner one to complete.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    stack: list[dict[str, Any]] = []
+    for ev in recent_tools:
+        tool = ev.get("tool", "")
+        if tool != "Agent":
+            continue
+        if ev.get("kind") == "pretool":
+            stack.append(ev)
+        elif ev.get("kind") == "posttool" and stack:
+            stack.pop()
+
+    result: list[dict[str, Any]] = []
+    for ev in stack:
+        ts_str = ev.get("ts", "")
+        age: float | None = None
+        try:
+            started = datetime.fromisoformat(ts_str)
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
+            age = (now - started).total_seconds()
+        except Exception:
+            pass
+        result.append(
+            {
+                "ts": ts_str,
+                "input_preview": ev.get("input_preview", ""),
+                "age_seconds": age,
+            }
+        )
+    return result
+
+
 def summarize(
     agent: str,
     limit: int = 50,
@@ -194,6 +251,10 @@ def summarize(
           "recent_tools":       [{ts, tool, input_preview, ...}, ...] last ``limit``
           "recent_prompts":     [{ts, prompt_preview}, ...]            last 5
           "agent_calls":        [{ts, input_preview}, ...]             last 20 Agent invocations
+          "open_agent_calls":   [{ts, input_preview, age_seconds}, ...]
+                                  Agent pretool events with no matching posttool in the
+                                  observation window. Non-empty = subagent(s) may be stuck.
+                                  Cross-check with ``subagent_count`` before alerting.
           "background_tasks":   [{ts, input_preview}, ...]             unresolved Bash run_in_background starts
           "counts":             {tool_name: count_in_window}
           "last_tool_at":       ISO ts of newest tool (pretool kind) — "functional" heartbeat
@@ -262,6 +323,7 @@ def summarize(
         "recent_tools": recent_tools[-limit:],
         "recent_prompts": recent_prompts[-5:],
         "agent_calls": agent_calls[-20:],
+        "open_agent_calls": _compute_open_agent_calls(recent_tools),
         "background_tasks": background_tasks[-20:],
         "counts": counts,
         "last_tool_at": last_tool_at,
