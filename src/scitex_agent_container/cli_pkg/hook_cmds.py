@@ -41,20 +41,24 @@ from ..event_log import append_event
 # scanning from / or ~ (home root) which causes severe I/O load on HPC
 # systems with millions of files (Spartan admin complaint, todo#424).
 _DANGEROUS_BASH_PATTERNS: list[re.Pattern] = [
-    # find / … (scan from filesystem root)
-    re.compile(r"\bfind\s+/\s"),
-    re.compile(r"\bfind\s+/\s*$"),
+    # find / … (scan from filesystem root).
+    # Require `find` to appear at start-of-string or after a command
+    # separator (;  |  &&  ||  newline) to avoid false positives when the
+    # word "find /" appears inside a shell-quoted argument (e.g. --comment
+    # text that mentions the command). todo#424.
+    re.compile(r"(?:^|[;|&\n]\s*)\s*find\s+/\s"),
+    re.compile(r"(?:^|[;|&\n]\s*)\s*find\s+/\s*$"),
     # find ~ or $HOME (scan from home) — also match ~/... and $HOME/...
-    re.compile(r"\bfind\s+~[\s/]"),
-    re.compile(r"\bfind\s+~\s*$"),
-    re.compile(r"\bfind\s+\$HOME[\s/]"),
-    re.compile(r"\bfind\s+\$HOME\s*$"),
+    re.compile(r"(?:^|[;|&\n]\s*)\s*find\s+~[\s/]"),
+    re.compile(r"(?:^|[;|&\n]\s*)\s*find\s+~\s*$"),
+    re.compile(r"(?:^|[;|&\n]\s*)\s*find\s+\$HOME[\s/]"),
+    re.compile(r"(?:^|[;|&\n]\s*)\s*find\s+\$HOME\s*$"),
     # du -a / (disk usage from root)
-    re.compile(r"\bdu\s+.*-a\s+/\s"),
-    re.compile(r"\bdu\s+.*-a\s+/\s*$"),
+    re.compile(r"(?:^|[;|&\n]\s*)\s*du\s+.*-a\s+/\s"),
+    re.compile(r"(?:^|[;|&\n]\s*)\s*du\s+.*-a\s+/\s*$"),
     # du -a ~ (disk usage from home)
-    re.compile(r"\bdu\s+.*-a\s+~[\s/]"),
-    re.compile(r"\bdu\s+.*-a\s+~\s*$"),
+    re.compile(r"(?:^|[;|&\n]\s*)\s*du\s+.*-a\s+~[\s/]"),
+    re.compile(r"(?:^|[;|&\n]\s*)\s*du\s+.*-a\s+~\s*$"),
 ]
 
 _BLOCK_MESSAGE = (

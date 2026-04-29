@@ -55,6 +55,9 @@ class TestIsDangerousBash:
             "module avail texlive",
             "du -sh .",
             "du -h ./logs",
+            # Issue text mentioning find / inside --comment arg (false-positive guard)
+            'gh issue close 424 --comment "blocked find / in the past"',
+            'echo "do not run: find / -name foo"',
         ],
     )
     def test_safe_commands_allowed(self, cmd):
