@@ -195,13 +195,17 @@ def test_fetch_agent_meta_called_process_error():
 
 
 def test_fetch_agent_meta_no_script_returns_none(monkeypatch):
-    """If neither the env var nor script_path is set, fetch returns None
-    without invoking subprocess — sac ships no default script path."""
+    """If neither the env var nor script_path is set, fetch tries the default
+    script path; when that script is absent (FileNotFoundError), returns None."""
     monkeypatch.delenv("SCITEX_AGENT_CONTAINER_AGENT_META_SCRIPT", raising=False)
-    with patch("scitex_agent_container.context_manager.subprocess.run") as mock_run:
+    monkeypatch.delenv("SCITEX_AGENT_META_SCRIPT", raising=False)
+
+    def _missing(*args, **kwargs):
+        raise FileNotFoundError("script not found")
+
+    with patch("scitex_agent_container.context_manager.subprocess.run", side_effect=_missing):
         got = fetch_agent_meta("head-nas")
     assert got is None
-    mock_run.assert_not_called()
 
 
 def test_fetch_agent_meta_env_override(monkeypatch):

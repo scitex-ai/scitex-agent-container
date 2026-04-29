@@ -178,13 +178,13 @@ def test_parse_subagent_count_from_pane_text(pane: str, expected: int) -> None:
 def test_fallback_workdir_uses_sac_workspace_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Returns ~/.scitex/agent-container/workspaces/<id>."""
+    """Returns ~/.scitex/orochi/runtime/workspaces/<id> (orochi-runtime-layout)."""
     from scitex_agent_container.lifecycle import _fallback_workdir
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     result = _fallback_workdir("some-agent")
     assert result == str(
-        tmp_path / ".scitex" / "agent-container" / "workspaces" / "some-agent"
+        tmp_path / ".scitex" / "orochi" / "runtime" / "workspaces" / "some-agent"
     )
 
 
@@ -216,8 +216,8 @@ def test_agent_status_includes_rich_fields(
     # fallback workspace dir, so point HOME at the fake workspace parent.
     monkeypatch.setattr(Path, "home", lambda: fake_workspace.parent.parent)
     # The fallback workdir lifecycle computes:
-    #   ~/.scitex/agent-container/workspaces/<name>
-    target = fake_workspace.parent.parent / ".scitex" / "agent-container" / "workspaces"
+    #   ~/.scitex/orochi/runtime/workspaces/<name> (orochi-runtime-layout)
+    target = fake_workspace.parent.parent / ".scitex" / "orochi" / "runtime" / "workspaces"
     target.mkdir(parents=True, exist_ok=True)
     link = target / "fake-agent"
     if not link.exists():

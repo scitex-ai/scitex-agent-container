@@ -791,9 +791,15 @@ def collect_rich(
         _disk = _psutil.disk_usage("/")
         _load = _psutil.getloadavg()
         _cpu_count = _psutil.cpu_count(logical=True) or 0
+        # stx-allow: fallback (reason: cpu_freq may be None on VMs/containers)
+        try:
+            _freq = _psutil.cpu_freq()
+            _cpu_model = f"{_cpu_count}x @ {_freq.max:.0f}MHz" if _freq else ""
+        except Exception:
+            _cpu_model = ""
         _metrics = {
             "cpu_count": _cpu_count,
-            "cpu_model": "",
+            "cpu_model": _cpu_model,
             "cpu_used_percent": round(_cpu_pct, 1),
             "load_avg_1m": round(_load[0], 2),
             "load_avg_5m": round(_load[1], 2),
@@ -801,7 +807,11 @@ def collect_rich(
             "mem_used_percent": round(_vm.percent, 1),
             "mem_total_mb": round(_vm.total / 1024 / 1024, 1),
             "mem_free_mb": round(_vm.available / 1024 / 1024, 1),
+            "mem_used_mb": round((_vm.total - _vm.available) / 1024 / 1024, 1),
             "disk_used_percent": round(_disk.percent, 1),
+            "disk_total_mb": round(_disk.total / 1024 / 1024, 1),
+            "disk_used_mb": round(_disk.used / 1024 / 1024, 1),
+            "resource_source": "local",
         }
     except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         _metrics = {}

@@ -336,7 +336,7 @@ class TestEffectiveId:
         assert cfg.labels["machine"] == "ywata-note-win"
         assert cfg.hosts_spec.hosts == "all"
         assert cfg.workdir == (
-            "~/.scitex/agent-container/workspaces/head-ywata-note-win"
+            "~/.scitex/orochi/runtime/workspaces/head-ywata-note-win"
         )
 
     def test_load_singleton_keeps_bare_id(self, tmp_path, monkeypatch):
