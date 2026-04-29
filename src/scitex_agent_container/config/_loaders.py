@@ -44,14 +44,24 @@ def _name_from_path(path: Path | str) -> str:
     return Path(path).parent.name
 
 
+def _is_relative_path(p: str) -> bool:
+    """True when ``p`` is a relative path (not absolute, not ~-prefixed)."""
+    return bool(p) and not p.startswith("/") and not p.startswith("~")
+
+
 def _resolve_python_venv(venv: str | list[str] | None) -> str:
     """Resolve ``spec.python-venv`` to a single venv path on this host.
 
     Accepts:
       * empty/None: no venv activation (returns "").
       * single string: literal path; must exist or RuntimeError.
-      * list of strings: explicit fallback chain — first existing path
-        wins. If none exist, raises RuntimeError (no silent fallback).
+        Relative paths (no leading / or ~) are returned as-is and
+        resolved at start time relative to the workspace dir on the
+        target host — launcher-side existence check is skipped.
+      * list of strings: explicit fallback chain — first existing
+        absolute/home path wins; relative paths are returned at
+        first occurrence (no launcher-side check).
+        If none exist/match, raises RuntimeError.
 
     The fallback chain is intentionally per-agent (in the YAML), not a
     sac-internal default — different agents may want different chains,
@@ -61,6 +71,9 @@ def _resolve_python_venv(venv: str | list[str] | None) -> str:
         return ""
 
     if isinstance(venv, str):
+        if _is_relative_path(venv):
+            # Relative: defer existence check to target-side launch.
+            return venv
         if (Path(venv).expanduser() / "bin" / "activate").exists():
             return venv
         raise RuntimeError(
@@ -72,6 +85,9 @@ def _resolve_python_venv(venv: str | list[str] | None) -> str:
         if not all(isinstance(p, str) for p in venv):
             raise RuntimeError(f"python-venv list must contain strings, got: {venv!r}")
         for candidate in venv:
+            if _is_relative_path(candidate):
+                # First relative candidate wins immediately (resolved on target).
+                return candidate
             if (Path(candidate).expanduser() / "bin" / "activate").exists():
                 return candidate
         raise RuntimeError(
@@ -82,6 +98,28 @@ def _resolve_python_venv(venv: str | list[str] | None) -> str:
     raise RuntimeError(
         f"python-venv must be a string or list of strings, got "
         f"{type(venv).__name__}: {venv!r}"
+    )
+
+
+def _parse_env_files(spec: dict) -> list[str]:
+    """Parse ``spec.env-file`` into a normalised list of path strings.
+
+    Accepts a string (single file) or a list of strings. Paths are
+    stored verbatim; relative paths are resolved at start time relative
+    to the workspace dir on the target host.
+    """
+    raw = spec.get("env-file")
+    if not raw:
+        return []
+    if isinstance(raw, str):
+        return [raw]
+    if isinstance(raw, list):
+        if not all(isinstance(p, str) for p in raw):
+            raise RuntimeError(f"env-file list must contain strings, got: {raw!r}")
+        return list(raw)
+    raise RuntimeError(
+        f"env-file must be a string or list of strings, got "
+        f"{type(raw).__name__}: {raw!r}"
     )
 
 
@@ -183,6 +221,7 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         workdir=workdir,
         python_venv=_resolve_python_venv(spec.get("python-venv", "")),
         env=merged_env,
+        env_files=_parse_env_files(spec),
         screen_name=screen_name,
         labels=labels,
         container=parse_container(spec),
