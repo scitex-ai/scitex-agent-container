@@ -70,7 +70,7 @@ def _preview_tool_input(tool_name: str, tool_input: dict | None) -> str:
             )
         else:
             s = json.dumps(tool_input)[:PREVIEW_MAX_CHARS]
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: tool input preview best-effort — malformed payloads must not break hook events)
         s = ""
     if not isinstance(s, str):
         s = str(s)
@@ -122,10 +122,10 @@ def append_event(
             finally:
                 try:
                     fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-                except Exception:
+                except Exception:  # stx-allow: fallback (reason: file lock release best-effort — flock errors must not block agent)
                     pass
         _rotate_if_large(path)
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: fail-closed event append — hook invocations must never raise)
         # Fail-closed: never break the agent session.
         pass
 
@@ -141,7 +141,7 @@ def _rotate_if_large(path: Path, cap: int = DEFAULT_CAP_LINES) -> None:
         with open(tmp, "w", encoding="utf-8") as f:
             f.writelines(keep)
         os.replace(tmp, path)
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: log rotation is best-effort — rotation failures must not break event appends)
         pass
 
 
@@ -162,10 +162,10 @@ def read_recent(
         for ln in lines[-limit:]:
             try:
                 out.append(json.loads(ln))
-            except Exception:
+            except Exception:  # stx-allow: fallback (reason: skip corrupt log lines — partial log damage must not block reads)
                 continue
         return out
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: log read failure returns empty list — missing log file is normal on first boot)
         return []
 
 

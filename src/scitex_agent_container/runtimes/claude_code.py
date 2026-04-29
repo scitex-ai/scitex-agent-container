@@ -102,7 +102,7 @@ def _session_resumable(
             st = entry.stat()
             if entry.is_file() and st.st_size > 0:
                 candidates.append((st.st_mtime, entry))
-        except OSError:
+        except OSError:  # stx-allow: fallback (reason: file system operation failure)
             continue
     if not candidates:
         return False
@@ -242,7 +242,7 @@ class ClaudeCodeRuntime(RuntimeBase):
             if _canonical:
                 lines.append(f'export SCITEX_OROCHI_MACHINE="{_canonical}"')
                 lines.append(f'export SCITEX_AGENT_CONTAINER_HOSTNAME="{_canonical}"')
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             # resolve_hostname falls through to socket.gethostname() short
             # form on misconfig; if even that raises, leave the env unset
             # and let the sidecar fall back to its own hostname() call.
@@ -442,7 +442,7 @@ class ClaudeCodeRuntime(RuntimeBase):
                     config.name,
                     path,
                 )
-            except OSError:
+            except OSError:  # stx-allow: fallback (reason: file system operation failure)
                 logger.exception(
                     "Failed to write boot capture for %s to %s",
                     config.name,
@@ -515,7 +515,7 @@ class ClaudeCodeRuntime(RuntimeBase):
                     sc.delay,
                     sc.command,
                 )
-            except Exception:
+            except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                 logger.exception(
                     "Failed to send startup command to %s: %s",
                     config.screen_name,

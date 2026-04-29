@@ -94,7 +94,7 @@ def parse_claude(spec: dict) -> ClaudeSpec:
     if continue_max_age is not None:
         try:
             continue_max_age = int(continue_max_age)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError):  # stx-allow: fallback (reason: type coercion or format mismatch)
             continue_max_age = None
     return ClaudeSpec(
         channels=raw.get("channels", []) or [],
@@ -206,18 +206,18 @@ def parse_context_management(spec: dict) -> ContextManagementConfig:
     raw = spec.get("context_management", {}) or {}
     try:
         trigger = float(raw.get("trigger_at_percent", 70.0))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # stx-allow: fallback (reason: type coercion or format mismatch)
         trigger = 70.0
     strategy = str(raw.get("strategy", "noop") or "noop")
     if strategy not in ("compact", "restart", "noop"):
         strategy = "noop"
     try:
         warn_n = int(raw.get("warn_before_n_checks", 0))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # stx-allow: fallback (reason: type coercion or format mismatch)
         warn_n = 0
     try:
         interval = int(raw.get("check_interval_seconds", 300))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # stx-allow: fallback (reason: type coercion or format mismatch)
         interval = 300
     state_file = str(
         raw.get("state_file", "~/.scitex/agent-container/state/<agent>.json")
@@ -278,7 +278,7 @@ def parse_listen(spec: dict) -> list[ListenPort]:
         proto = str(item.get("proto", "tcp") or "tcp")
         try:
             port = int(item.get("port", 0) or 0)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError):  # stx-allow: fallback (reason: type coercion or format mismatch)
             port = 0
         path = str(item.get("path", "") or "")
         if proto in ("tcp", "udp") and port <= 0:
@@ -324,7 +324,7 @@ def _parse_command_list(raw: Any) -> list[StartupCommand]:
         elif isinstance(item, dict) and item.get("command"):
             try:
                 delay = int(item.get("delay", 0))
-            except (TypeError, ValueError):
+            except (TypeError, ValueError):  # stx-allow: fallback (reason: type coercion or format mismatch)
                 delay = 0
             out.append(StartupCommand(delay=delay, command=str(item["command"])))
     return out
@@ -353,15 +353,15 @@ def parse_startup(spec: dict) -> StartupSpec:
 
     try:
         idle_ticks = max(1, int(raw.get("ready_idle_ticks", 3)))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # stx-allow: fallback (reason: type coercion or format mismatch)
         idle_ticks = 3
     try:
         poll_interval = max(0.05, float(raw.get("ready_poll_interval_seconds", 0.5)))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # stx-allow: fallback (reason: type coercion or format mismatch)
         poll_interval = 0.5
     try:
         timeout = max(1.0, float(raw.get("ready_timeout_seconds", 60.0)))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # stx-allow: fallback (reason: type coercion or format mismatch)
         timeout = 60.0
 
     on_timeout = str(

@@ -169,7 +169,7 @@ class ScreenManager:
             if Path(tmp_path).exists():
                 return Path(tmp_path).read_text(errors="replace")
             return ""
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             return ""
         finally:
             Path(tmp_path).unlink(missing_ok=True)

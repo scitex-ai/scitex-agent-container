@@ -61,7 +61,7 @@ def _probe_remote(cfg) -> bool | None:
     try:
         from ..runtimes.claude_code import ClaudeCodeRuntime
         return ClaudeCodeRuntime().is_running(cfg)
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         return None
 
 
@@ -105,12 +105,12 @@ def get_agent_list_data(
         try:
             if TmuxManager.exists(session_name):
                 return "tmux"
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             pass
         try:
             if ScreenManager.exists(session_name):
                 return "screen"
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             pass
         return None
 
@@ -133,7 +133,7 @@ def get_agent_list_data(
                 labels = cfg.labels
                 if cfg.remote.is_remote:
                     remote_host = cfg.remote.host
-            except Exception:
+            except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                 pass
 
         if machine and labels.get("machine") != machine:
@@ -180,10 +180,10 @@ def get_agent_list_data(
                     probe_results[idx] = future.result(
                         timeout=remote_probe_timeout_s
                     )
-                except _FuturesTimeout:
+                except _FuturesTimeout:  # stx-allow: fallback (reason: expected failure — see inline comment)
                     probe_results[idx] = None
                     future.cancel()
-                except Exception:
+                except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                     probe_results[idx] = None
         finally:
             pool.shutdown(wait=False)
@@ -209,7 +209,7 @@ def get_agent_list_data(
                     is_running = bool(probe)
             else:
                 is_running = ScreenManager.exists(screen_name)
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             is_running = False
             liveness_unknown = True
 

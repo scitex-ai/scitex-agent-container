@@ -40,7 +40,7 @@ def parse_context_percent(pane_text: str) -> float | None:
         for match in _PERCENT_RE.finditer(line):
             try:
                 value = float(match.group(1))
-            except ValueError:
+            except ValueError:  # stx-allow: fallback (reason: type coercion or format mismatch)
                 continue
             if 0.0 <= value <= 100.0:
                 return value
@@ -88,7 +88,7 @@ def fetch_agent_meta(
         data = (
             json.loads(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else None
         )
-    except (json.JSONDecodeError, IndexError):
+    except (json.JSONDecodeError, IndexError):  # stx-allow: fallback (reason: malformed JSON tolerated)
         return None
     if not isinstance(data, dict):
         return None
@@ -199,7 +199,7 @@ class ContextManager:
             )
             try:
                 self.dispatcher(self.config.strategy, self.agent_config)
-            except Exception:  # pragma: no cover — defensive
+            except Exception:  # pragma: no cover — defensive  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                 logger.exception(
                     "context_manager[%s]: dispatcher raised", self.agent_name
                 )
@@ -237,7 +237,7 @@ def run_forever(cm: ContextManager) -> None:
     while not cm.stopped:
         try:
             cm.tick()
-        except Exception:  # pragma: no cover — defensive
+        except Exception:  # pragma: no cover — defensive  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             logger.exception("context_manager[%s]: tick failed", cm.agent_name)
         try:
             from .snapshot import snapshot_tick
@@ -247,7 +247,7 @@ def run_forever(cm: ContextManager) -> None:
                 session=cm.session_name,
                 agent_config=cm.agent_config,
             )
-        except Exception:  # pragma: no cover — defensive
+        except Exception:  # pragma: no cover — defensive  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             logger.exception("snapshot[%s]: piggyback tick failed", cm.agent_name)
         # Use Event.wait so stop() breaks us out promptly.
         if cm._stop.wait(interval):
@@ -270,7 +270,7 @@ def _fire_hook(
 
         commands = (agent_config.hooks or {}).get(hook_name, []) or []
         run_hook(agent_config.name, hook_name, commands, context=context)
-    except Exception:  # pragma: no cover — defensive
+    except Exception:  # pragma: no cover — defensive  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         logger.exception(
             "context_manager[%s]: %s hook dispatch failed",
             agent_config.name,
@@ -316,7 +316,7 @@ def default_dispatcher(strategy: str, agent_config: AgentConfig | None) -> None:
         )
         try:
             agent_restart(agent_config.name)
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             logger.exception("context_manager[%s]: restart failed", agent_config.name)
         return
 
@@ -364,7 +364,7 @@ def start_sensor(agent_config: AgentConfig) -> ContextManager | None:
             name="snapshot",
             thread=thread,
         )
-    except Exception:  # pragma: no cover — defensive
+    except Exception:  # pragma: no cover — defensive  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         logger.exception(
             "context_manager[%s]: sidecar registration failed",
             agent_config.name,

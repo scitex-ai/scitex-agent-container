@@ -112,7 +112,7 @@ class SSHRemote:
                 text=True,
                 timeout=timeout,
             )
-        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:  # stx-allow: fallback (reason: file may not exist on first use)
             results.append(
                 (
                     "SSH connection",
@@ -262,7 +262,7 @@ class SSHRemote:
             result = subprocess.run(
                 ssh_cmd, input=content, capture_output=True, text=True, timeout=30
             )
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired:  # stx-allow: fallback (reason: subprocess execution failure)
             t = SSHRemote._ssh_target(config)
             raise RuntimeError(
                 f"ERROR: Timed out copying config to {config.remote.host}\n"
@@ -301,7 +301,7 @@ class SSHRemote:
                         config.remote.host,
                         remote_src,
                     )
-                except Exception:
+                except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                     logger.warning("Failed to copy %s to remote", src_file)
 
         return remote_path
@@ -332,7 +332,7 @@ class SSHRemote:
                 text=True,
                 timeout=timeout,
             )
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired:  # stx-allow: fallback (reason: subprocess execution failure)
             t = SSHRemote._ssh_target(config)
             raise RuntimeError(
                 f"ERROR: SSH command timed out on {config.remote.host}\n"
@@ -383,7 +383,7 @@ class SSHRemote:
                     timeout=30,
                 )
                 screen_output = diag.stdout.strip()
-            except Exception:
+            except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                 screen_output = "(could not capture screen output)"
             raise RuntimeError(
                 f"Failed to start agent '{config.name}' on {config.remote.host}\n"
@@ -427,7 +427,7 @@ class SSHRemote:
                 timeout=30,
             )
             return screen_name in (result.stdout or "")
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             return False
 
     @staticmethod

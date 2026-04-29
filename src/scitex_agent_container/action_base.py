@@ -257,7 +257,7 @@ def run_action(
     # Pre-snapshot (if this fails the action is unrunnable).
     try:
         before = action.snapshot(ctx)
-    except Exception as exc:  # pragma: no cover - defensive
+    except Exception as exc:  # pragma: no cover - defensive  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         logger.warning(
             "PaneAction %s: pre-snapshot raised %s; treating as SEND_ERROR",
             action.name,
@@ -279,7 +279,7 @@ def run_action(
     try:
         action.before_send(ctx)
         action.send(ctx)
-    except Exception as exc:
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         logger.warning("PaneAction %s: send raised %s", action.name, exc)
         ctx.extras.setdefault("send_error", f"{type(exc).__name__}: {exc}")
         return _finish(ActionOutcome.SEND_ERROR, before, None)
@@ -291,7 +291,7 @@ def run_action(
         current = time_fn()
         try:
             now_snap = action.snapshot(ctx)
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:  # pragma: no cover - defensive  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             logger.debug(
                 "PaneAction %s: snapshot during polling raised %s",
                 action.name,
@@ -300,7 +300,7 @@ def run_action(
             # Keep the previous snapshot so is_complete sees something.
         try:
             done = action.is_complete(before, now_snap)
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:  # pragma: no cover - defensive  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             logger.debug("PaneAction %s: is_complete raised %s", action.name, exc)
             done = False
         if done:

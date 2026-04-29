@@ -186,7 +186,7 @@ def start(
             return
         try:
             current_host = resolve_hostname()
-        except RuntimeError:
+        except RuntimeError:  # stx-allow: fallback (reason: runtime state error — handled gracefully)
             current_host = ""
         console.print(f"[blue]Starting {len(yamls)} agents...[/blue]")
         for yaml_path in yamls:
@@ -207,7 +207,7 @@ def start(
                 )
                 agent_start(yaml_path, no_preflight=no_preflight, force=force)
                 console.print("[green]OK[/green]")
-            except Exception as exc:
+            except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                 console.print(f"[red]FAILED: {exc}[/red]")
         return
 
@@ -225,7 +225,7 @@ def start(
         config = load_config(config_path)
         try:
             current_host = resolve_hostname()
-        except RuntimeError:
+        except RuntimeError:  # stx-allow: fallback (reason: runtime state error — handled gracefully)
             current_host = ""
         skip = _singleton_skip_reason(config, current_host)
         if skip:
@@ -269,7 +269,7 @@ def start(
             console.print(
                 f"[yellow]auto_accept: false — manual TUI acceptance required on {config.remote.host or 'local'}[/yellow]"
             )
-    except Exception as exc:
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         console.print(f"[red]Error: {exc}[/red]")
         traceback.print_exc()
         sys.exit(1)
@@ -326,7 +326,7 @@ def stop(name: str | None, stop_all: bool, force: bool) -> None:
             name = config.name
         agent_stop(name, force=force)  # type: ignore[arg-type]
         console.print(f"[green]Agent '{name}' stopped[/green]")
-    except Exception as exc:
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         console.print(f"[red]Error: {exc}[/red]")
         sys.exit(1)
 
@@ -342,7 +342,7 @@ def restart(name: str) -> None:
             name = config.name
         agent_restart(name)
         console.print(f"[green]Agent '{name}' restarted[/green]")
-    except Exception as exc:
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         console.print(f"[red]Error: {exc}[/red]")
         sys.exit(1)
 

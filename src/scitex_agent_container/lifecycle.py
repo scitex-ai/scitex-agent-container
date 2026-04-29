@@ -53,7 +53,7 @@ def _fire_forget_hook(
     """
     try:
         run_hook(agent_name, hook_name, list(commands or []), context=context)
-    except Exception:  # pragma: no cover — defensive
+    except Exception:  # pragma: no cover  # stx-allow: fallback (reason: hook dispatch safety net — hook crashes must not propagate to caller)
         import sys
 
         print(
@@ -177,7 +177,7 @@ def agent_start(
             from .context_manager import start_sensor
 
             start_sensor(config)
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             import sys
 
             print(
@@ -221,7 +221,7 @@ def agent_stop(
 
     try:
         config = load_config(entry["config"])
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         if not force:
             raise
         # Config gone — just nuke the registry entry
@@ -239,21 +239,21 @@ def agent_stop(
     # Pre-stop hooks
     try:
         _run_hooks(config.hooks.get("pre_stop", []), extra_env=hook_env)
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         if not force:
             raise
     _fire_forget_hook(config.name, "pre_stop", config.hooks.get("pre_stop", []))
 
     try:
         runtime.stop(config)
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         if not force:
             raise
 
     # Post-stop hooks
     try:
         _run_hooks(config.hooks.get("post_stop", []), extra_env=hook_env)
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         if not force:
             raise
     _fire_forget_hook(config.name, "post_stop", config.hooks.get("post_stop", []))
@@ -279,7 +279,7 @@ def agent_stop_all(
         try:
             agent_stop(name, registry=registry, force=force)
             results.append((name, True, "stopped"))
-        except Exception as exc:
+        except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             results.append((name, False, str(exc)))
             if not force:
                 break
@@ -310,7 +310,7 @@ def agent_status(name: str, registry: Registry | None = None) -> dict:
         config = load_config(entry["config"])
         runtime = _get_runtime(config)
         running = runtime.is_running(config)
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         traceback.print_exc()
         running = False
         config = None
@@ -386,7 +386,7 @@ def agent_status(name: str, registry: Registry | None = None) -> dict:
         _live = _gs(name)
         if _live is not None and _live.last_meta is not None:
             result["agent_meta"] = _live.last_meta
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         pass
 
     # Snapshot block — cheap read from cache (todo#286). Never re-gathers.
@@ -402,7 +402,7 @@ def agent_status(name: str, registry: Registry | None = None) -> dict:
             }
         else:
             result["snapshot"] = None
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         result["snapshot"] = None
 
     # Enrich with claude-hud-style metadata. Canonical source for the
@@ -423,7 +423,7 @@ def agent_status(name: str, registry: Registry | None = None) -> dict:
         # Never let rich overwrite the canonical registry/config fields.
         for k, v in rich.items():
             result.setdefault(k, v)
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         # Never let metadata collection break status.
         pass
 

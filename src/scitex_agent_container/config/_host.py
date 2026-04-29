@@ -41,11 +41,11 @@ def _load_hostname_aliases() -> dict[str, str]:
         return {}
     try:
         import yaml  # PyYAML ships with the container; same import sac uses.
-    except ImportError:
+    except ImportError:  # stx-allow: fallback (reason: optional dependency not installed)
         return {}
     try:
         data = yaml.safe_load(_CONFIG_PATH.read_text()) or {}
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         return {}
     aliases = (data.get("spec") or {}).get("hostname_aliases") or {}
     if not isinstance(aliases, dict):

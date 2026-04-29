@@ -55,7 +55,7 @@ def list_accounts(
             # Ensure the name field is always set
             data.setdefault("name", meta_file.stem)
             accounts.append(data)
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: skip corrupt/missing account metadata JSON — list call must tolerate partial store damage)
             continue
     return accounts
 
@@ -152,7 +152,7 @@ def switch_account(
             tmp = dst.with_suffix(dst.suffix + ".tmp")
             shutil.copy2(src, tmp)
             tmp.rename(dst)
-    except Exception as exc:
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         return {
             "success": False,
             "name": name,

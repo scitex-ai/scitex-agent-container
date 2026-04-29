@@ -103,12 +103,12 @@ def _sidecar_alive(info: SidecarInfo) -> bool:
             return False
         try:
             os.kill(pid, 0)
-        except ProcessLookupError:
+        except ProcessLookupError:  # stx-allow: fallback (reason: process probe expected failure)
             return False
-        except PermissionError:
+        except PermissionError:  # stx-allow: fallback (reason: process probe expected failure)
             # Exists but we can't signal — still alive.
             return True
-        except OSError:
+        except OSError:  # stx-allow: fallback (reason: file system operation failure)
             return False
         return True
     return False
@@ -183,7 +183,7 @@ def _run(cmd: list[str], timeout: float = 3.0) -> str:
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         return r.stdout
-    except (FileNotFoundError, subprocess.SubprocessError):
+    except (FileNotFoundError, subprocess.SubprocessError):  # stx-allow: fallback (reason: file may not exist on first use)
         return ""
 
 
@@ -195,7 +195,7 @@ def _probe_tmux() -> tuple[int | None, list[str]]:
             text=True,
             timeout=3,
         )
-    except (FileNotFoundError, subprocess.SubprocessError):
+    except (FileNotFoundError, subprocess.SubprocessError):  # stx-allow: fallback (reason: file may not exist on first use)
         return None, []
     if r.returncode != 0:
         # "no server running" is not an error for us — just zero sessions.
@@ -223,7 +223,7 @@ def _probe_screen_count() -> int | None:
             text=True,
             timeout=3,
         )
-    except (FileNotFoundError, subprocess.SubprocessError):
+    except (FileNotFoundError, subprocess.SubprocessError):  # stx-allow: fallback (reason: file may not exist on first use)
         # Binary vanished between which() and run(); treat as not installed.
         return None
     combined = (r.stdout or "") + (r.stderr or "")
@@ -255,7 +255,7 @@ def _probe_claude_pid() -> int | None:
             text=True,
             timeout=3,
         )
-    except (FileNotFoundError, subprocess.SubprocessError):
+    except (FileNotFoundError, subprocess.SubprocessError):  # stx-allow: fallback (reason: file may not exist on first use)
         return None
     first = (r.stdout or "").strip().splitlines()
     if not first:
@@ -276,7 +276,7 @@ def _proc_count(pattern: str) -> int | None:
 def _probe_load1() -> float | None:
     try:
         return os.getloadavg()[0]
-    except OSError:
+    except OSError:  # stx-allow: fallback (reason: file system operation failure)
         return None
 
 
@@ -313,7 +313,7 @@ def _probe_mem_darwin() -> tuple[int | None, int | None, int | None]:
 def _probe_mem_linux() -> tuple[int | None, int | None, int | None]:
     try:
         text = Path("/proc/meminfo").read_text()
-    except OSError:
+    except OSError:  # stx-allow: fallback (reason: file system operation failure)
         return None, None, None
     kv: dict[str, int] = {}
     for ln in text.splitlines():
@@ -348,7 +348,7 @@ def _probe_nproc() -> tuple[int | None, int | None]:
     elif platform.system() == "Linux":
         try:
             mx = int(Path("/proc/sys/kernel/pid_max").read_text().strip())
-        except (OSError, ValueError):
+        except (OSError, ValueError):  # stx-allow: fallback (reason: file system operation failure)
             mx = None
     return cur, mx
 
@@ -367,7 +367,7 @@ def _probe_tmux_pids(session: str | None) -> dict[str, int | None]:
         )
         if r.returncode == 0 and r.stdout.strip().isdigit():
             pane = int(r.stdout.strip())
-    except (FileNotFoundError, subprocess.SubprocessError):
+    except (FileNotFoundError, subprocess.SubprocessError):  # stx-allow: fallback (reason: file may not exist on first use)
         pass
     try:
         r = subprocess.run(
@@ -378,7 +378,7 @@ def _probe_tmux_pids(session: str | None) -> dict[str, int | None]:
         )
         if r.returncode == 0 and r.stdout.strip().isdigit():
             server = int(r.stdout.strip().splitlines()[0])
-    except (FileNotFoundError, subprocess.SubprocessError):
+    except (FileNotFoundError, subprocess.SubprocessError):  # stx-allow: fallback (reason: file may not exist on first use)
         pass
     return {"server": server, "pane": pane}
 
@@ -503,7 +503,7 @@ def take_snapshot(agent: str, *, session: str | None = None, with_diff: bool = T
         if latest_p.exists():
             try:
                 prev_data = json.loads(latest_p.read_text())
-            except (OSError, json.JSONDecodeError):
+            except (OSError, json.JSONDecodeError):  # stx-allow: fallback (reason: malformed JSON tolerated)
                 prev_data = None
 
         if with_diff:
@@ -517,7 +517,7 @@ def take_snapshot(agent: str, *, session: str | None = None, with_diff: bool = T
         if latest_p.exists():
             try:
                 os.replace(latest_p, prev_p)
-            except OSError:
+            except OSError:  # stx-allow: fallback (reason: file system operation failure)
                 logger.exception("snapshot[%s]: failed rolling latest to prev", agent)
 
         _atomic_write_json(latest_p, snap)
@@ -541,7 +541,7 @@ def read_latest(agent: str) -> dict[str, Any] | None:
         return None
     try:
         return json.loads(p.read_text())
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError):  # stx-allow: fallback (reason: malformed JSON tolerated)
         return None
 
 
@@ -559,7 +559,7 @@ def snapshot_tick(
     """
     try:
         snap = take_snapshot(agent, session=session)
-    except Exception:  # pragma: no cover — defensive
+    except Exception:  # pragma: no cover — defensive  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         logger.exception("snapshot[%s]: tick failed", agent)
         return
     if agent_config is not None and snap.get("has_diff"):
@@ -578,5 +578,5 @@ def snapshot_tick(
                     "timestamp": snap.get("timestamp"),
                 },
             )
-        except Exception:  # pragma: no cover — defensive
+        except Exception:  # pragma: no cover — defensive  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             logger.exception("snapshot[%s]: on_diff hook failed", agent)

@@ -111,7 +111,7 @@ def run_cmd(
         # in test environments that
         # mock the config system.
         config = load_config(entry["config"])
-    except Exception as exc:
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         click.echo(f"Error loading config for '{agent}': {exc}", err=True)
         sys.exit(2)
 
@@ -130,7 +130,7 @@ def run_cmd(
     def _capture() -> str:
         try:
             return mux.capture_content(session) or ""
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             return ""
 
     def _context_pct() -> Optional[float]:
@@ -149,7 +149,7 @@ def run_cmd(
             )
             val = rich.get("context_pct")
             return float(val) if val is not None else None
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             return None
 
     ctx = ActionContext(

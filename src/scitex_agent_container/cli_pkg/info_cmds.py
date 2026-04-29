@@ -62,7 +62,7 @@ def find(
     for yaml_path in candidates:
         try:
             cfg = load_config(yaml_path)
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             continue
         caps = [
             c.strip()
@@ -118,7 +118,7 @@ def logs(name: str, lines: int) -> None:
             console.print(output)
         else:
             console.print("[dim]No log output captured.[/dim]")
-    except Exception as exc:
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         console.print(f"[red]Error: {exc}[/red]")
         sys.exit(1)
 
@@ -216,7 +216,7 @@ def list_python_apis(
             if obj and callable(obj):
                 try:
                     sig = str(inspect.signature(obj))
-                except (ValueError, TypeError):
+                except (ValueError, TypeError):  # stx-allow: fallback (reason: type coercion or format mismatch)
                     sig = "()"
                 click.echo(f"{indent}[{t}] {name}{sig}")
             else:

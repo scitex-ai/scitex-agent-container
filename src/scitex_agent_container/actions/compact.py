@@ -127,5 +127,5 @@ def _coerce_float(value: Any) -> Optional[float]:
         return None
     try:
         return float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # stx-allow: fallback (reason: type coercion or format mismatch)
         return None

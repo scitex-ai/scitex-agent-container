@@ -88,9 +88,9 @@ def _load_json(path: Path) -> dict[str, Any] | None:
     try:
         with path.open("r", encoding="utf-8") as fh:
             data = json.load(fh)
-    except FileNotFoundError:
+    except FileNotFoundError:  # stx-allow: fallback (reason: file may not exist on first use)
         return None
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError):  # stx-allow: fallback (reason: malformed JSON tolerated)
         return None
     if not isinstance(data, dict):
         return None

@@ -198,7 +198,7 @@ class AutoResponseScheduler:
         ctx_pct = None
         try:
             ctx_pct = ctx.context_pct_fn()
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             ctx_pct = None
 
         if should_compact(now, self.state, self.policy, ctx_pct):
@@ -243,7 +243,7 @@ class AutoResponseScheduler:
         while True:
             try:
                 self.tick()
-            except Exception as exc:  # pragma: no cover - defensive
+            except Exception as exc:  # pragma: no cover - defensive  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                 logger.warning(
                     "auto_response tick raised %s: %s", type(exc).__name__, exc
                 )

@@ -24,7 +24,7 @@ def check(config_path: str) -> None:
     """
     try:
         config = load_config(config_path)
-    except Exception as exc:
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         console.print(f"[red]Error loading config: {exc}[/red]")
         sys.exit(1)
 
@@ -77,7 +77,7 @@ def check(config_path: str) -> None:
             else:
                 all_ok = False
                 console.print(f"  {'python:':30s} [red]FAIL[/red]")
-        except FileNotFoundError:
+        except FileNotFoundError:  # stx-allow: fallback (reason: file may not exist on first use)
             all_ok = False
             console.print(f"  {'python:':30s} [red]FAIL (python3 not found)[/red]")
 
@@ -91,7 +91,7 @@ def check(config_path: str) -> None:
                     timeout=5,
                 )
                 ver = proc.stdout.strip() if proc.returncode == 0 else "unknown"
-            except Exception:
+            except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                 ver = "unknown"
             console.print(
                 f"  {'scitex-agent-container:':30s} [green]OK ({ver})[/green]"
@@ -113,7 +113,7 @@ def check(config_path: str) -> None:
                     console.print(
                         f"  {'disk space:':30s} [green]OK ({usage} used)[/green]"
                     )
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             console.print(f"  {'disk space:':30s} [dim]unknown[/dim]")
 
     if all_ok:

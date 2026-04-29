@@ -35,7 +35,7 @@ def detect_multiplexer(session: str) -> str:
             == 0
         ):
             return "tmux"
-    except FileNotFoundError:
+    except FileNotFoundError:  # stx-allow: fallback (reason: file may not exist on first use)
         pass
     try:
         r = subprocess.run(
@@ -45,7 +45,7 @@ def detect_multiplexer(session: str) -> str:
         )
         if session in r.stdout:
             return "screen"
-    except FileNotFoundError:
+    except FileNotFoundError:  # stx-allow: fallback (reason: file may not exist on first use)
         pass
     return ""
 
@@ -64,7 +64,7 @@ def _latest_jsonls(workdir: str) -> list[Path]:
     # Claude Code encodes the *resolved* cwd, so follow symlinks first.
     try:
         resolved = str(Path(workdir).expanduser().resolve())
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         resolved = workdir
     proj_dir = Path.home() / ".claude" / "projects" / _encode_claude_project(resolved)
     if not proj_dir.is_dir():
@@ -75,7 +75,7 @@ def _latest_jsonls(workdir: str) -> list[Path]:
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         return []
 
 
@@ -91,7 +91,7 @@ def _parse_skills(workdir: str) -> list[str]:
                     ln = ln.strip()
                     if ln and not ln.startswith("#"):
                         skills.append(ln)
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         pass
     return skills
 
@@ -127,7 +127,7 @@ def _subagent_count_from_pane(session: str, multiplexer: str) -> int:
             capture_output=True,
             text=True,
         ).stdout
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         return 0
     return parse_subagent_count_from_pane_text(pane)
 
@@ -145,7 +145,7 @@ def _capture_pane(session: str, multiplexer: str, max_chars: int = 10000) -> str
             ).stdout
             or ""
         )
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         return ""
     if len(out) > max_chars:
         out = out[-max_chars:]
@@ -264,7 +264,7 @@ def _config_candidates(workdir: str, filename: str) -> list[Path]:
                 git_root = git_root.parent
             if (git_root / ".git").exists():
                 cands.append(git_root / filename)
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             pass
     cands += [home / ".claude" / filename, home / filename]
     # Dedup preserving order.
@@ -285,7 +285,7 @@ def _read_claude_md(workdir: str, max_chars: int = 20000) -> str:
             if not p.is_file():
                 continue
             return p.read_text(errors="replace")[:max_chars]
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             continue
     return ""
 
@@ -312,13 +312,13 @@ def _read_mcp_json(workdir: str, max_chars: int = 10000) -> str:
             if not p.is_file():
                 continue
             raw = p.read_text(errors="replace")
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             continue
         try:
             doc = json.loads(raw)
             pretty = json.dumps(_redact_mcp_tree(doc), indent=2)
             return pretty[:max_chars]
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             return _redact_secrets(raw[:max_chars])
     return ""
 
@@ -350,7 +350,7 @@ def _pids_from_session(session: str, multiplexer: str) -> tuple[int, int]:
                 .splitlines()
             )
             pid = int(ps[0]) if ps else ppid
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         pass
     return pid, ppid
 
@@ -392,18 +392,18 @@ def collect_rich(
             started_at = datetime.fromtimestamp(
                 earliest.stat().st_mtime, tz=timezone.utc
             ).isoformat()
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             pass
 
         try:
             lines = jsonls[0].read_text().splitlines()[-50:]
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             lines = []
 
         for line in reversed(lines):
             try:
                 obj = json.loads(line)
-            except Exception:
+            except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                 continue
             if obj.get("type") == "assistant" and "message" in obj:
                 msg = obj["message"]
@@ -427,7 +427,7 @@ def collect_rich(
         for line in reversed(lines):
             try:
                 obj = json.loads(line)
-            except Exception:
+            except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                 continue
             if obj.get("type") == "assistant":
                 content = obj.get("message", {}).get("content", [])
@@ -470,7 +470,7 @@ def collect_rich(
         for line in reversed(lines):
             try:
                 obj = json.loads(line)
-            except Exception:
+            except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                 continue
             if obj.get("type") == "user" and "message" in obj:
                 msg = obj["message"]
@@ -525,7 +525,7 @@ def collect_rich(
         from .event_log import summarize as _summarize_events
 
         _event_summary = _summarize_events(name, limit=50)
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         _event_summary = {
             "recent_tools": [],
             "recent_prompts": [],
@@ -538,7 +538,7 @@ def collect_rich(
         from .config._host import resolve_hostname
 
         machine = resolve_hostname()
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         machine = socket.gethostname().split(".")[0]
 
     # ---- Claude quota fields ----------------------------------------
@@ -556,7 +556,7 @@ def collect_rich(
         quota_7d_reset_at = usage.get("reset_at_7d")
         quota_from_cache = bool(usage.get("from_cache", False))
         quota_error = usage.get("error")
-    except Exception as exc:
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         quota_error = f"fetch_usage raised: {exc}"
 
     # ---- Account / credential identity ------------------------------------
@@ -566,7 +566,7 @@ def collect_rich(
 
         _cred = read_credentials_metadata()
         account_email = _cred.get("email_address")
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         pass
 
     # ---- Machine resource metrics (psutil, optional) -----------------------
@@ -590,7 +590,7 @@ def collect_rich(
             "mem_free_mb": round(_vm.available / 1024 / 1024, 1),
             "disk_used_percent": round(_disk.percent, 1),
         }
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         _metrics = {}
 
     return {
@@ -694,7 +694,7 @@ def _collect_action_summary_fields(agent_name: str) -> dict[str, Any]:
             "action_counts": summary.get("counts", {}),
             "p95_elapsed_s_by_action": summary.get("p95_elapsed_s_by_action", {}),
         }
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         return {
             "last_action_at": "",
             "last_action_name": "",

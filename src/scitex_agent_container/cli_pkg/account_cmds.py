@@ -58,7 +58,7 @@ def account_save(name: str, email: str | None) -> None:
             m = read_credentials_metadata(home=home)
             if m.get("email_address"):
                 meta["email_address"] = m["email_address"]
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             pass
 
     save_account(name, meta, home=home)

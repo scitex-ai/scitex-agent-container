@@ -162,7 +162,7 @@ def health_monitor(
             if restart_fn is not None:
                 try:
                     restart_fn(config)
-                except Exception:
+                except Exception:  # stx-allow: fallback (reason: non-fatal restart failure — health monitor loop must continue regardless)
                     traceback.print_exc()
 
             retries += 1

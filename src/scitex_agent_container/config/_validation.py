@@ -188,9 +188,9 @@ def validate_config(path: str | Path) -> list[str]:
     try:
         with open(path) as f:
             raw = yaml.safe_load(f)
-    except FileNotFoundError:
+    except FileNotFoundError:  # stx-allow: fallback (reason: file may not exist on first use)
         return [f"File not found: {path}"]
-    except yaml.YAMLError as exc:
+    except yaml.YAMLError as exc:  # stx-allow: fallback (reason: expected failure — see inline comment)
         return [f"YAML parse error: {exc}"]
 
     return validate_raw(raw, str(path))

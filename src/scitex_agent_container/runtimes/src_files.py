@@ -75,7 +75,7 @@ def _extract_user_tail(workspace_path: Path, end_marker: str = END_MARKER) -> st
         return ""
     try:
         existing = workspace_path.read_text()
-    except OSError:
+    except OSError:  # stx-allow: fallback (reason: file system operation failure)
         return ""
     idx = existing.rfind(end_marker)
     if idx == -1:
@@ -319,7 +319,7 @@ def deploy_src_mcp_json(config: AgentConfig, workdir: str) -> None:
     # Validate JSON
     try:
         data = json.loads(text)
-    except json.JSONDecodeError as exc:
+    except json.JSONDecodeError as exc:  # stx-allow: fallback (reason: malformed JSON tolerated)
         logger.warning("Invalid JSON in %s: %s", src, exc)
         return
 
@@ -331,7 +331,7 @@ def deploy_src_mcp_json(config: AgentConfig, workdir: str) -> None:
     if dest.exists():
         try:
             existing = json.loads(dest.read_text())
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, OSError):  # stx-allow: fallback (reason: malformed JSON tolerated)
             pass
     if not isinstance(existing, dict):
         existing = {}
@@ -394,7 +394,7 @@ def cleanup_src_mcp_json(config: AgentConfig, workdir: str) -> None:
 
     try:
         src_data = json.loads(src.read_text())
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError):  # stx-allow: fallback (reason: malformed JSON tolerated)
         return
 
     keys_to_remove = list(src_data.get("mcpServers", {}).keys())
@@ -407,7 +407,7 @@ def cleanup_src_mcp_json(config: AgentConfig, workdir: str) -> None:
 
     try:
         data = json.loads(dest.read_text())
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError):  # stx-allow: fallback (reason: malformed JSON tolerated)
         return
 
     servers = data.get("mcpServers", {})

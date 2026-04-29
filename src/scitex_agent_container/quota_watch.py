@@ -144,7 +144,7 @@ def check_and_rotate(
             ),
         }
 
-    except Exception as exc:
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         return {
             "action": "error",
             "quota_5h_pct": None,

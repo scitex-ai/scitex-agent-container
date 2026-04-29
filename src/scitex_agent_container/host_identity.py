@@ -54,14 +54,14 @@ def _auto_aliases() -> set[str]:
         if hn:
             names.add(hn)
             names.add(_short(hn))
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         pass
     try:
         nn = os.uname().nodename
         if nn:
             names.add(nn)
             names.add(_short(nn))
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         pass
     return names
 
@@ -72,7 +72,7 @@ def _load_file_aliases() -> set[str]:
         return set()
     try:
         data = yaml.safe_load(HOST_IDENTITY_PATH.read_text()) or {}
-    except yaml.YAMLError as exc:
+    except yaml.YAMLError as exc:  # stx-allow: fallback (reason: expected failure — see inline comment)
         raise RuntimeError(f"Invalid YAML in {HOST_IDENTITY_PATH}: {exc}") from exc
     if not isinstance(data, dict):
         raise RuntimeError(

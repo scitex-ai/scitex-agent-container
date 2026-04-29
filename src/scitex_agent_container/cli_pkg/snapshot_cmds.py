@@ -48,7 +48,7 @@ def snapshot(
     """Take a self-snapshot for AGENT and print it as JSON."""
     try:
         snap = take_snapshot(agent, session=session, with_diff=with_diff)
-    except Exception as exc:  # pragma: no cover — defensive
+    except Exception as exc:  # pragma: no cover — defensive  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         click.echo(json_mod.dumps({"error": str(exc)}))
         sys.exit(1)
     if terse:

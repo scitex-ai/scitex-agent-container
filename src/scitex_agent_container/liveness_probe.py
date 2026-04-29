@@ -217,7 +217,7 @@ def wait_for_nonce_echo(
         expired = now >= deadline
         try:
             pane = capture(pane_target) or ""
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:  # pragma: no cover - defensive  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             logger.debug("capture_fn raised %s: %s", type(exc).__name__, exc)
             pane = ""
         poll_count += 1

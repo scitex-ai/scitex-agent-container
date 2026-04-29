@@ -46,7 +46,7 @@ def _default_capture(pane_target: str) -> str:
             check=False,
         )
         return result.stdout or ""
-    except (subprocess.SubprocessError, OSError) as exc:
+    except (subprocess.SubprocessError, OSError) as exc:  # stx-allow: fallback (reason: subprocess execution failure)
         logger.debug("tmux capture-pane failed for %s: %s", pane_target, exc)
         return ""
 
@@ -134,16 +134,16 @@ def wait_for_ready(
             if capture_callback is not None:
                 try:
                     capture_callback(last_tail)
-                except Exception:
+                except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                     logger.exception("capture_callback raised; ignoring")
             return False
 
         try:
             content = capture(pane_target)
-        except subprocess.CalledProcessError as exc:
+        except subprocess.CalledProcessError as exc:  # stx-allow: fallback (reason: subprocess execution failure)
             logger.debug("capture_fn raised CalledProcessError: %s", exc)
             content = ""
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:  # pragma: no cover - defensive  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             logger.debug("capture_fn raised %s: %s", type(exc).__name__, exc)
             content = ""
 

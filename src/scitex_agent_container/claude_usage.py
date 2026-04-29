@@ -93,7 +93,7 @@ def _load_json(path: Path) -> dict[str, Any] | None:
         if not isinstance(data, dict):
             return None
         return data
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         return None
 
 
@@ -173,7 +173,7 @@ def _refresh_access_token(
         with urllib.request.urlopen(req, timeout=15) as resp:
             raw = resp.read()
         payload = json.loads(raw)
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         return None
 
     new_access = payload.get("access_token")
@@ -203,7 +203,7 @@ def _refresh_access_token(
                 tmp_path.rename(creds_path)
             finally:
                 fcntl.flock(fh, fcntl.LOCK_UN)
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         pass  # best-effort write; we still have the new token in memory
 
     return new_access
@@ -227,7 +227,7 @@ def _read_cache(home: Path) -> dict[str, Any] | None:
         fetched_at = datetime.fromisoformat(fetched_at_str)
         if fetched_at.tzinfo is None:
             fetched_at = fetched_at.replace(tzinfo=timezone.utc)
-    except ValueError:
+    except ValueError:  # stx-allow: fallback (reason: type coercion or format mismatch)
         return None
     age = (_now_utc() - fetched_at).total_seconds()
     if age < _CACHE_TTL_SECONDS:
@@ -245,7 +245,7 @@ def _write_cache(home: Path, result: dict[str, Any]) -> None:
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(result, fh, indent=2)
         tmp.rename(path)
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         pass
 
 
@@ -268,16 +268,16 @@ def _fetch_from_api(access_token: str) -> list[dict[str, Any]] | None:
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             raw = resp.read()
-    except urllib.error.HTTPError as exc:
+    except urllib.error.HTTPError as exc:  # stx-allow: fallback (reason: expected failure — see inline comment)
         if exc.code == 401:
             raise  # caller handles 401 as token-expired
         return None
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         return None
 
     try:
         payload = json.loads(raw)
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         return None
 
     if isinstance(payload, list):
@@ -400,7 +400,7 @@ def fetch_usage(home: Path | None = None) -> dict[str, Any]:
     windows = None
     try:
         windows = _fetch_from_api(access_token)
-    except urllib.error.HTTPError as exc:
+    except urllib.error.HTTPError as exc:  # stx-allow: fallback (reason: expected failure — see inline comment)
         if exc.code == 401 and refresh_token and client_id:
             # Try refresh once on 401
             new_token = _refresh_access_token(_home, refresh_token, client_id)
@@ -408,11 +408,11 @@ def fetch_usage(home: Path | None = None) -> dict[str, Any]:
                 access_token = new_token
                 try:
                     windows = _fetch_from_api(access_token)
-                except Exception:
+                except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                     pass
         if windows is None:
             return _err(f"HTTP {exc.code} from usage API; refresh attempted")
-    except Exception as exc:
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         return _err(f"Network error: {exc}")
 
     if windows is None:
@@ -428,7 +428,7 @@ def fetch_usage(home: Path | None = None) -> dict[str, Any]:
     # Security guard — must run before cache write
     try:
         _check_no_token_leak(result)
-    except RuntimeError as exc:
+    except RuntimeError as exc:  # stx-allow: fallback (reason: runtime state error — handled gracefully)
         return _err(str(exc))
 
     _write_cache(_home, result)

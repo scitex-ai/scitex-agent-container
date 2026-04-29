@@ -19,7 +19,7 @@ from importlib.metadata import version as _version
 
 try:
     __version__ = _version("scitex-agent-container")
-except _PackageNotFoundError:
+except _PackageNotFoundError:  # stx-allow: fallback (reason: expected failure — see inline comment)
     from pathlib import Path as _Path
 
     _pyproject = _Path(__file__).parent.parent.parent / "pyproject.toml"

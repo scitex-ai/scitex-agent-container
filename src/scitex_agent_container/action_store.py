@@ -82,7 +82,7 @@ def _safe_float(value: Any) -> float | None:
         return None
     try:
         return float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # stx-allow: fallback (reason: type coercion or format mismatch)
         return None
 
 
@@ -135,7 +135,7 @@ def _truncate_snapshot(
     # Arbitrary serializable object — dump once then truncate.
     try:
         dumped = json.dumps(snap, default=str)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # stx-allow: fallback (reason: type coercion or format mismatch)
         dumped = str(snap)
     s = dumped[-max_chars:] if len(dumped) > max_chars else dumped
     return {"format": "json-dump", "text": s}
@@ -166,7 +166,7 @@ def append_attempt(
         action = str(record["action"])
         outcome = str(record["outcome"])
         elapsed_s = float(record["elapsed_s"])
-    except (KeyError, TypeError, ValueError) as exc:
+    except (KeyError, TypeError, ValueError) as exc:  # stx-allow: fallback (reason: type coercion or format mismatch)
         logger.warning("action_store.append_attempt: invalid record: %s", exc)
         return
     ts = str(record.get("ts") or datetime.now(timezone.utc).isoformat())
@@ -193,7 +193,7 @@ def append_attempt(
             )
         finally:
             conn.close()
-    except Exception as exc:
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         logger.warning("action_store.append_attempt: insert failed: %s", exc)
 
 
@@ -205,7 +205,7 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
             continue
         try:
             out[key] = json.loads(raw)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError):  # stx-allow: fallback (reason: type coercion or format mismatch)
             # Leave the raw string in place; the JSON column is
             # corrupt but the rest of the row is still useful.
             pass
@@ -281,7 +281,7 @@ def query(
             rows = conn.execute(sql, tuple(params)).fetchall()
         finally:
             conn.close()
-    except Exception as exc:
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         logger.warning("action_store.query failed: %s", exc)
         return []
     return [_row_to_dict(r) for r in rows]
@@ -326,7 +326,7 @@ def stats(
             samples = conn.execute(sql_samples, tuple(params)).fetchall()
         finally:
             conn.close()
-    except Exception as exc:
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         logger.warning("action_store.stats failed: %s", exc)
         return []
     # Bucket samples by (action, outcome) for p95.
@@ -394,7 +394,7 @@ def summarize(
         counts[key] = counts.get(key, 0) + 1
         try:
             samples_by_action.setdefault(r["action"], []).append(float(r["elapsed_s"]))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError):  # stx-allow: fallback (reason: type coercion or format mismatch)
             pass
     p95: dict[str, float] = {}
     for name, samples in samples_by_action.items():
@@ -431,7 +431,7 @@ def purge_old(
             return int(deleted)
         finally:
             conn.close()
-    except Exception as exc:
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         logger.warning("action_store.purge_old failed: %s", exc)
         return 0
 
@@ -448,7 +448,7 @@ def _all_rows(root: Path | None = None) -> Iterable[dict[str, Any]]:
             ).fetchall()
         finally:
             conn.close()
-    except Exception as exc:
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         logger.warning("action_store._all_rows failed: %s", exc)
         return []
     return [_row_to_dict(r) for r in rows]

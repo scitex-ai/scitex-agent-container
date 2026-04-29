@@ -30,7 +30,7 @@ def _setup_mcp_from_servers(
     if mcp_path.exists():
         try:
             existing = json.loads(mcp_path.read_text())
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, OSError):  # stx-allow: fallback (reason: malformed JSON tolerated)
             pass
 
     if not isinstance(existing, dict):
@@ -97,7 +97,7 @@ def cleanup_mcp_config(config: AgentConfig, workdir: str) -> None:
 
     try:
         data = json.loads(mcp_path.read_text())
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError):  # stx-allow: fallback (reason: malformed JSON tolerated)
         return
 
     servers = data.get("mcpServers", {})

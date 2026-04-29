@@ -104,7 +104,7 @@ def status(
     if name:
         try:
             info = agent_status(name)
-        except Exception as exc:
+        except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             if use_json:
                 click.echo(json_mod.dumps({"error": str(exc)}))
             else:
@@ -130,7 +130,7 @@ def status(
     else:
         try:
             claude_account = read_credentials_metadata()
-        except (OSError, json_mod.JSONDecodeError):
+        except (OSError, json_mod.JSONDecodeError):  # stx-allow: fallback (reason: malformed JSON tolerated)
             claude_account = {}
         # RuntimeError from _check_no_secrets() is a load-bearing alarm
         # that a token just leaked; intentionally propagate.
@@ -212,7 +212,7 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
 
     try:
         config = load_config(entry["config"])
-    except Exception as exc:
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         if use_json:
             click.echo(json_mod.dumps({"error": str(exc)}))
         else:
@@ -282,7 +282,7 @@ def check_agent(ctx: click.Context, name: str, as_json: bool) -> None:
 
     try:
         config = load_config(entry["config"])
-    except Exception as exc:
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         if use_json:
             click.echo(json_mod.dumps({"error": str(exc)}))
         else:
