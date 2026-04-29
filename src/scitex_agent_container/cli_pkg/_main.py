@@ -13,6 +13,7 @@ from ._helpers import HelpRecursiveGroup
 from .account_cmds import account, quota_watch
 from .action_cmds import actions_cli
 from .build_cmds import build, check, validate
+from .contributor_spec_cmds import contributor_spec
 from .hook_cmds import hook_event
 from .info_cmds import attach, find, list_python_apis, logs
 from .lifecycle_cmds import cleanup, restart, start, stop
@@ -92,6 +93,9 @@ main.add_command(actions_cli)
 # Render ports: emit sbatch/attach text for external consumers.
 main.add_command(render_sbatch)
 main.add_command(render_attach)
+
+# Contributor spec generation (chunk B of ZOO#01 spec-template).
+main.add_command(contributor_spec)
 
 # Connectivity probe (todo#457): fleet-facing WSL ↔ hub liveness.
 main.add_command(probe_network)
