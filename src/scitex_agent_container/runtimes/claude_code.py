@@ -228,6 +228,18 @@ class ClaudeCodeRuntime(RuntimeBase):
             )
 
         lines = []
+        # Source .env files first so explicit env: values in YAML override them.
+        # Relative paths are resolved relative to workdir on the target host.
+        # set -a / set +a auto-exports every variable sourced from the file.
+        for env_file in config.env_files:
+            if env_file.startswith("/") or env_file.startswith("~"):
+                file_path = f'"{env_file}"'
+            else:
+                # Workspace-relative: workdir is cd'd to before this runs.
+                file_path = f'"./{env_file}"'
+            lines.append(
+                f"if [ -f {file_path} ]; then set -a; . {file_path}; set +a; fi"
+            )
         for key, value in config.env.items():
             lines.append(f'export {key}="{_resolve(str(value))}"')
         # Always export the canonical fleet hostname so downstream consumers
