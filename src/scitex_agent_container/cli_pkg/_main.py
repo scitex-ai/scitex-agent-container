@@ -13,7 +13,7 @@ from ._helpers import HelpRecursiveGroup
 from .account_cmds import account, quota_watch
 from .action_cmds import actions_cli
 from .build_cmds import build, check, validate
-from .hook_cmds import hook_event
+from .hook_cmds import guard_bash, hook_event
 from .info_cmds import attach, find, list_python_apis, logs
 from .lifecycle_cmds import cleanup, restart, start, stop
 from .probe_cmds import probe_network
@@ -80,6 +80,7 @@ main.add_command(quota_watch)
 
 # Claude Code hook event ingestor
 main.add_command(hook_event)
+main.add_command(guard_bash)
 
 # Action subsystem: run PaneActions, query attempts, aggregate stats.
 main.add_command(actions_cli)
