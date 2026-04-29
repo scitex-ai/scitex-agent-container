@@ -35,6 +35,8 @@ def _persist(raw: bytes, agent: str) -> None:
     _STATE_DIR.mkdir(parents=True, exist_ok=True)
     tmp = _STATE_DIR / f"{agent}.json.tmp"
     out = _STATE_DIR / f"{agent}.json"
+    # stx-allow: fallback (reason: disk-full or permission error must not crash
+    # the Claude Code statusLine handler — missing persist is non-fatal)
     try:
         tmp.write_bytes(raw)
         tmp.rename(out)
@@ -43,6 +45,8 @@ def _persist(raw: bytes, agent: str) -> None:
 
 
 def _fallback_display(raw: bytes) -> None:
+    # stx-allow: fallback (reason: statusLine display must never raise; corrupt
+    # or unexpected payload shape silently outputs nothing rather than aborting)
     try:
         data = json.loads(raw)
         ctx_pct = (data.get("context_window") or {}).get("used_percentage", 0)
@@ -66,7 +70,9 @@ def main() -> None:
     agent = _agent_name()
     _persist(raw, agent)
 
-    # Delegate display to claude-hud if available
+    # Delegate display to claude-hud if available.
+    # stx-allow: fallback (reason: claude-hud is an optional user-scope plugin;
+    # FileNotFoundError means it is not installed — fall through to minimal echo)
     try:
         result = subprocess.run(["claude-hud"], input=raw)
         sys.exit(result.returncode)
@@ -85,6 +91,8 @@ def read_statusline_json(agent_name: str) -> dict | None:
     path = _STATE_DIR / f"{agent_name}.json"
     if not path.exists():
         return None
+    # stx-allow: fallback (reason: corrupt or truncated JSON returns None so
+    # callers fall back to the JSONL approximation — no data beats wrong data)
     try:
         return json.loads(path.read_text())
     except Exception:
