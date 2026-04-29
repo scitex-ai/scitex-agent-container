@@ -147,6 +147,25 @@ def agent_start(
         "SCITEX_AGENT_CONTAINER_NAME": config.name,
     }
 
+    # ZOO#12 — lead-state-handover plumbing. All three calls are
+    # best-effort: missing token / 404 / network errors must NOT block
+    # agent_start. ``ensure_instance_uuid`` writes
+    # ``SCITEX_AGENT_INSTANCE_UUID`` into ``config.env`` so the runtime's
+    # ``_build_env_exports`` (claude_code.py) propagates it; the runtime
+    # is supposed to read it back when wiring up the orochi WS connect
+    # (FR-E). ``hydrate_from_hub`` is pre-start so the agent's boot-time
+    # skill can pick up the snapshot before claude actually launches.
+    from . import _handover as _h
+
+    _h.ensure_instance_uuid(config)
+    try:
+        _h.hydrate_from_hub(config)
+    except Exception:
+        # Defensive: hub_client already swallows transport errors, but
+        # in case of a serialization bug here, never let agent_start
+        # die because of a snapshot fetch.
+        traceback.print_exc()
+
     # Pre-start hooks
     _run_hooks(config.hooks.get("pre_start", []), extra_env=hook_env)
     _fire_forget_hook(config.name, "pre_start", config.hooks.get("pre_start", []))
@@ -197,6 +216,15 @@ def agent_start(
         )
         thread.start()
 
+    # ZOO#12 FR-B — priority-failback poller. No-op when the spec lacks
+    # a ``priority_list``; otherwise polls the hub every 60 s and steps
+    # aside (snapshot push + SIGTERM) when a higher-priority host is
+    # healthy. Daemon thread, dies with the process.
+    try:
+        _h.start_failback_poller(config)
+    except Exception:
+        traceback.print_exc()
+
     return True
 
 
@@ -238,6 +266,18 @@ def agent_stop(
         "SCITEX_AGENT_CONTAINER_SCREEN_NAME": config.screen_name,
         "SCITEX_AGENT_CONTAINER_NAME": config.name,
     }
+
+    # ZOO#12 FR-A — push a sentinel snapshot to the hub right before
+    # the agent stops, so a future agent_start (here or on a different
+    # host) can hydrate. Best-effort: never block the stop path on a
+    # hub outage. The sentinel is a marker; the agent's own pre_stop
+    # hook is the right place for richer state (transcript, memory).
+    try:
+        from . import _handover as _h
+
+        _h.push_pre_stop_snapshot(config)
+    except Exception:
+        traceback.print_exc()
 
     # Pre-stop hooks
     # stx-allow: fallback (reason: hook commands may reference paths or env vars absent at stop time; force-stop must continue regardless)
