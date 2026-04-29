@@ -8,6 +8,24 @@ import yaml
 
 _VALID_API_VERSIONS = ("scitex-agent-container/v3",)
 
+_KNOWN_TOP_LEVEL_KEYS = frozenset({"apiVersion", "kind", "metadata", "spec"})
+
+# All spec keys read by load_v3, parsers, or a2a/_server.py.
+# Unknown keys are rejected at parse time so typos surface at boot.
+# Intentional extension data belongs under spec.extensions.
+_KNOWN_SPEC_KEYS = frozenset({
+    "runtime", "model", "workdir", "python-venv", "env",
+    "screen", "container", "claude", "health", "watchdog",
+    "restart", "hooks", "telegram", "remote", "slurm",
+    "skills", "startup_commands", "startup", "context_management",
+    "listen", "extensions", "mcp_servers", "multiplexer",
+    "host", "hosts",
+    "session",         # shortcut alias for spec.claude.session
+    "scheduling",      # rejected with a specific actionable message below
+    "a2a",             # A2A sidecar config read by a2a/_server.py
+    "orochi",          # Orochi-specific extension namespace
+})
+
 
 def validate_raw(raw: dict, path: str) -> list[str]:
     """Validate raw YAML dict. Returns list of error strings (empty means valid)."""
@@ -15,6 +33,14 @@ def validate_raw(raw: dict, path: str) -> list[str]:
 
     if not isinstance(raw, dict):
         return [f"Config file is not a YAML mapping: {path}"]
+
+    # Unknown top-level keys
+    unknown_top = set(raw.keys()) - _KNOWN_TOP_LEVEL_KEYS
+    for k in sorted(unknown_top):
+        errors.append(
+            f"Unknown top-level field '{k}'. "
+            f"Valid keys: {sorted(_KNOWN_TOP_LEVEL_KEYS)}."
+        )
 
     # apiVersion
     api_version = raw.get("apiVersion")
@@ -46,6 +72,15 @@ def validate_raw(raw: dict, path: str) -> list[str]:
     if not isinstance(spec, dict):
         errors.append("spec is required and must be a mapping")
     else:
+        # Unknown spec keys
+        unknown_spec = set(spec.keys()) - _KNOWN_SPEC_KEYS
+        for k in sorted(unknown_spec):
+            errors.append(
+                f"Unknown spec field '{k}'. "
+                f"Use spec.extensions for custom data; "
+                f"known keys: {sorted(_KNOWN_SPEC_KEYS)}."
+            )
+
         # spec.runtime
         runtime = spec.get("runtime")
         valid_runtimes = ("claude-code", "cursor", "aider", "slurm", "slurm-tenant")
