@@ -161,3 +161,124 @@ def test_cli_missing_config_exits_2(tmp_path):
         ["priority-check", str(tmp_path / "no-such.yaml"), "--current-host", "nas"],
     )
     assert result.exit_code == 2
+
+
+# ---------------------------------------------------------------------------
+# singleton-reconcile tests
+# ---------------------------------------------------------------------------
+
+
+def test_singleton_reconcile_no_registered_agents(monkeypatch):
+    """When registry is empty, reconcile exits 0 and returns empty list."""
+    from scitex_agent_container.registry import Registry
+
+    monkeypatch.setattr(Registry, "list_all", lambda self: [])
+    runner = CliRunner()
+    result = runner.invoke(main, ["singleton-reconcile", "--json"])
+    assert result.exit_code == 0
+    assert json.loads(result.output) == []
+
+
+def test_singleton_reconcile_stay_when_on_preferred(monkeypatch, tmp_path):
+    """Agent already on highest-priority host → stay, exit 0."""
+    from scitex_agent_container.registry import Registry
+
+    path = _write_agent_yaml(tmp_path, ["nas", "mba"])
+    monkeypatch.setattr(Registry, "list_all", lambda self: [
+        {"name": "test-agent", "config": path, "screen": "test-agent"},
+    ])
+    monkeypatch.setattr(
+        "scitex_agent_container.cli_pkg.priority_cmds._probe_ssh",
+        lambda h: False,
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        ["singleton-reconcile", "--current-host", "nas", "--json"],
+    )
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert len(data) == 1
+    assert data[0]["action"] == "stay"
+    assert data[0]["should_yield"] is False
+
+
+def test_singleton_reconcile_yield_recommended_dryrun(monkeypatch, tmp_path):
+    """Higher-priority host reachable → yield-recommended, exit 1 (dry-run)."""
+    from scitex_agent_container.registry import Registry
+
+    path = _write_agent_yaml(tmp_path, ["spartan", "nas"])
+    monkeypatch.setattr(Registry, "list_all", lambda self: [
+        {"name": "test-agent", "config": path, "screen": "test-agent"},
+    ])
+    monkeypatch.setattr(
+        "scitex_agent_container.cli_pkg.priority_cmds._probe_ssh",
+        lambda h: True,  # spartan reachable
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        ["singleton-reconcile", "--current-host", "nas", "--json"],
+    )
+    assert result.exit_code == 1
+    data = json.loads(result.output)
+    assert data[0]["action"] == "yield-recommended"
+    assert data[0]["preferred_host"] == "spartan"
+
+
+def test_singleton_reconcile_execute_success(monkeypatch, tmp_path):
+    """--execute: remote start succeeds and local stop called → exit 0."""
+    from scitex_agent_container.registry import Registry
+
+    path = _write_agent_yaml(tmp_path, ["spartan", "nas"])
+    monkeypatch.setattr(Registry, "list_all", lambda self: [
+        {"name": "test-agent", "config": path, "screen": "test-agent"},
+    ])
+    monkeypatch.setattr(
+        "scitex_agent_container.cli_pkg.priority_cmds._probe_ssh",
+        lambda h: True,
+    )
+    monkeypatch.setattr(
+        "scitex_agent_container.cli_pkg.priority_cmds._ssh_start_agent",
+        lambda host, name: True,
+    )
+    stopped = []
+    monkeypatch.setattr(
+        "scitex_agent_container.lifecycle.agent_stop",
+        lambda name: stopped.append(name),
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        ["singleton-reconcile", "--execute", "--current-host", "nas", "--json"],
+    )
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data[0]["action"] == "yielded"
+    assert "test-agent" in stopped
+
+
+def test_singleton_reconcile_execute_remote_fail(monkeypatch, tmp_path):
+    """--execute: remote start fails → remote-start-failed, exit non-zero."""
+    from scitex_agent_container.registry import Registry
+
+    path = _write_agent_yaml(tmp_path, ["spartan", "nas"])
+    monkeypatch.setattr(Registry, "list_all", lambda self: [
+        {"name": "test-agent", "config": path, "screen": "test-agent"},
+    ])
+    monkeypatch.setattr(
+        "scitex_agent_container.cli_pkg.priority_cmds._probe_ssh",
+        lambda h: True,
+    )
+    monkeypatch.setattr(
+        "scitex_agent_container.cli_pkg.priority_cmds._ssh_start_agent",
+        lambda host, name: False,
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        ["singleton-reconcile", "--execute", "--current-host", "nas", "--json"],
+    )
+    assert result.exit_code != 0
+    data = json.loads(result.output)
+    assert data[0]["action"] == "remote-start-failed"

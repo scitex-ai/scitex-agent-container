@@ -1,15 +1,19 @@
-"""priority-check command: report whether this host should yield to a higher-priority host.
+"""priority-check and singleton-reconcile commands.
 
-Building block for the healer-driven singleton reconciler (scitex-orochi#250).
+Building blocks for the healer-driven singleton reconciler (scitex-orochi#250).
 
 When an agent declares ``spec.host: [spartan, nas, mba]``, it should run on the
 *highest-priority reachable* host, not just wherever ``sac start`` was called.
-This command probes each higher-priority host (via a brief SSH connectivity check)
-and returns a JSON report so healer agents can decide whether to initiate handover.
+``priority-check`` probes each higher-priority host (via a brief SSH connectivity
+check) and returns a JSON report so healer agents can decide whether to initiate
+handover. ``singleton-reconcile`` sweeps all locally registered agents and
+initiates handover for any that should yield.
 
 Usage:
     sac priority-check <config-or-agent-name>
     sac priority-check proj-neurovista --current-host nas --json
+    sac singleton-reconcile
+    sac singleton-reconcile --execute  # actually trigger SSH start + local stop
 """
 
 from __future__ import annotations
@@ -231,3 +235,175 @@ def priority_check(
             )
 
     sys.exit(1 if report.get("should_yield") else 0)
+
+
+# ---------------------------------------------------------------------------
+# singleton-reconcile: sweep all locally registered agents and yield any
+# that have a higher-priority reachable host.  (scitex-orochi#250)
+# ---------------------------------------------------------------------------
+
+_SSH_START_TIMEOUT = 30  # seconds to wait for remote sac start
+
+
+def _ssh_start_agent(host: str, agent_name: str) -> bool:
+    """SSH to *host* and run ``sac start <agent_name>`` in the background.
+
+    Returns True if the remote command exited 0.
+    """
+    cmd = [
+        "ssh",
+        "-o", "ConnectTimeout=10",
+        "-o", "BatchMode=yes",
+        "-o", "StrictHostKeyChecking=no",
+        "-o", "LogLevel=ERROR",
+        host,
+        f"sac start {agent_name}",
+    ]
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            timeout=_SSH_START_TIMEOUT,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return False
+
+
+@click.command("singleton-reconcile")
+@click.option(
+    "--execute",
+    is_flag=True,
+    default=False,
+    help=(
+        "Actually trigger handover: SSH-start the agent on its preferred host, "
+        "then stop the local instance. Without this flag, runs dry-run only."
+    ),
+)
+@click.option(
+    "--current-host",
+    default="",
+    help="Override the detected hostname (default: live hostname()).",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Output machine-readable JSON.",
+)
+def singleton_reconcile(execute: bool, current_host: str, as_json: bool) -> None:
+    """Reconcile singleton agent placement across the fleet.
+
+    Sweeps all locally registered agents. For each singleton whose YAML
+    declares a ``spec.host:`` priority list, runs a priority check. If a
+    higher-priority host is reachable (via SSH probe), reports a YIELD
+    recommendation. With ``--execute``, initiates handover automatically:
+    starts the agent on the preferred host via SSH, then stops it locally.
+
+    Designed to run from a healer agent's periodic loop (every 2–5 min).
+
+    Exit codes:
+      0 — all singletons on correct hosts (or --execute succeeded)
+      1 — at least one YIELD found (dry-run) or handover failed
+      2 — config/runtime error
+    """
+    from ..config._host import resolve_hostname
+    from ..lifecycle import agent_stop
+    from ..registry import Registry
+
+    if not current_host:
+        # stx-allow: fallback (reason: resolve_hostname may fail in non-standard environments; gethostname is always available)
+        try:
+            current_host = resolve_hostname()
+        except Exception:
+            import socket
+            current_host = socket.gethostname().split(".")[0]
+
+    registry = Registry()
+    entries = registry.list_all()
+
+    results = []
+    any_yield = False
+    any_error = False
+
+    for entry in entries:
+        name = entry.get("name", "")
+        config_path = entry.get("config", "")
+        if not config_path:
+            continue
+
+        # stx-allow: fallback (reason: malformed YAML or missing config — skip agent and continue sweeping)
+        try:
+            report = _priority_report(config_path, current_host)
+        except Exception as exc:
+            results.append({
+                "agent": name,
+                "error": str(exc),
+                "action": "skip",
+            })
+            any_error = True
+            continue
+
+        should = report.get("should_yield", False)
+        preferred = report.get("reachable_higher_hosts", [])
+        preferred_host = preferred[0] if preferred else report.get("preferred_host", "")
+        action = "none"
+
+        if should and preferred_host:
+            any_yield = True
+            if execute:
+                started = _ssh_start_agent(preferred_host, name)
+                if started:
+                    # stx-allow: fallback (reason: stop failure is non-fatal; agent on preferred host is now running so the priority goal is met even if local stop fails)
+                    try:
+                        agent_stop(name)
+                        action = "yielded"
+                    except Exception:
+                        action = "remote-started-local-stop-failed"
+                        any_error = True
+                else:
+                    action = "remote-start-failed"
+                    any_error = True
+            else:
+                action = "yield-recommended"
+        else:
+            action = "stay"
+
+        results.append({
+            "agent": name,
+            "should_yield": should,
+            "preferred_host": preferred_host,
+            "current_host": current_host,
+            "reason": report.get("reason", ""),
+            "action": action,
+        })
+
+    if as_json:
+        click.echo(json.dumps(results, indent=2))
+    else:
+        for r in results:
+            if "error" in r:
+                console.print(f"[yellow]{r['agent']}[/yellow]: error — {r['error']}")
+                continue
+            agent = r["agent"]
+            action = r["action"]
+            if action in ("yielded",):
+                console.print(
+                    f"[green]{agent}[/green]: yielded → {r['preferred_host']} (local stopped)"
+                )
+            elif action == "yield-recommended":
+                console.print(
+                    f"[red]{agent}[/red]: YIELD recommended → {r['preferred_host']} "
+                    f"(run with --execute to trigger)"
+                )
+            elif action in ("remote-start-failed", "remote-started-local-stop-failed"):
+                console.print(f"[red]{agent}[/red]: handover failed ({action})")
+            elif action == "stay":
+                console.print(f"[dim]{agent}: stay ({r.get('reason', '')})[/dim]")
+
+    if any_error and not any_yield:
+        sys.exit(2)
+    if any_yield:
+        sys.exit(1 if not execute else (2 if any_error else 0))
+    sys.exit(0)

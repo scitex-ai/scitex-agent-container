@@ -27,7 +27,7 @@ from .lifecycle_cmds import (
     stop_auto_accept,
 )
 from .install_cmds import install_group, install_post_merge_cron
-from .priority_cmds import priority_check
+from .priority_cmds import priority_check, singleton_reconcile
 from .probe_cmds import probe_network
 from .recall_cmds import recall
 from .render_cmds import render_attach, render_sbatch
@@ -119,6 +119,10 @@ main.add_command(probe_network)
 # Singleton priority check: reports whether this host should yield to a
 # higher-priority reachable host (building block for healer reconciler, #250).
 main.add_command(priority_check)
+
+# Singleton reconciliation: sweep all local registered agents and yield any
+# that have a higher-priority reachable host. Closes the automation gap in #250.
+main.add_command(singleton_reconcile)
 
 # Install helpers: host bootstrap + cron installer.
 main.add_command(install_group)
