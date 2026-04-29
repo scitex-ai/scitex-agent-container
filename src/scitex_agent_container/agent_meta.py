@@ -375,6 +375,19 @@ def collect_rich(
     """
     multiplexer = detect_multiplexer(session)
 
+    # ---- statusline JSON (authoritative, written by sac-statusline) --------
+    # Prefer the persisted JSON that Claude Code's statusLine command writes
+    # each turn — it contains the exact used_percentage from /context and
+    # authoritative rate-limit resets. Falls back to JSONL approximation when
+    # the file is absent (agent not yet launched with sac-statusline wired).
+    _sl: dict = {}
+    try:
+        from .statusline import read_statusline_json
+
+        _sl = read_statusline_json(name) or {}
+    except Exception:
+        pass
+
     # ---- transcript-derived fields ----------------------------------
     context_pct = 0.0
     current_tool = ""
@@ -384,6 +397,17 @@ def collect_rich(
     last_activity = ""
     model = ""
     started_at = ""
+
+    # Seed context_pct from statusline JSON if available (overridden below
+    # by the JSONL scan only when the statusline file is absent).
+    if _sl:
+        _cw = _sl.get("context_window") or {}
+        _cw_pct = _cw.get("used_percentage")
+        if _cw_pct is not None:
+            context_pct = round(float(_cw_pct), 1)
+        _sl_model = (_sl.get("model") or {}).get("display_name", "")
+        if _sl_model:
+            model = _sl_model
 
     jsonls = _latest_jsonls(workdir)
     if jsonls:
@@ -411,14 +435,17 @@ def collect_rich(
                     model = msg.get("model", "")
                 if not last_activity:
                     last_activity = obj.get("timestamp", "")
-                u = msg.get("usage", {})
-                total = (
-                    u.get("input_tokens", 0)
-                    + u.get("cache_read_input_tokens", 0)
-                    + u.get("cache_creation_input_tokens", 0)
-                )
-                # Opus 4.6 1M context = 1,000,000 tokens
-                context_pct = round((total / 1_000_000) * 100, 1)
+                # Only fall back to the JSONL approximation when the
+                # authoritative statusline JSON didn't supply a value.
+                if not _sl:
+                    u = msg.get("usage", {})
+                    total = (
+                        u.get("input_tokens", 0)
+                        + u.get("cache_read_input_tokens", 0)
+                        + u.get("cache_creation_input_tokens", 0)
+                    )
+                    # Opus 4.6 1M context = 1,000,000 tokens
+                    context_pct = round((total / 1_000_000) * 100, 1)
                 break
 
         # Find the most recent tool_use AND its input preview, so the
@@ -548,16 +575,32 @@ def collect_rich(
     quota_7d_reset_at: str | None = None
     quota_from_cache: bool = False
     quota_error: str | None = None
-    try:
-        usage = fetch_usage()
-        quota_5h_used_pct = usage.get("used_pct_5h")
-        quota_7d_used_pct = usage.get("used_pct_7d")
-        quota_5h_reset_at = usage.get("reset_at_5h")
-        quota_7d_reset_at = usage.get("reset_at_7d")
-        quota_from_cache = bool(usage.get("from_cache", False))
-        quota_error = usage.get("error")
-    except Exception as exc:
-        quota_error = f"fetch_usage raised: {exc}"
+
+    # Prefer statusline JSON rate-limits (exact values from Claude Code)
+    # over the fetch_usage scrape when available.
+    if _sl:
+        _rl = _sl.get("rate_limits") or {}
+        _fh = _rl.get("five_hour") or {}
+        _sd = _rl.get("seven_day") or {}
+        if _fh.get("used_percentage") is not None:
+            quota_5h_used_pct = round(float(_fh["used_percentage"]), 1)
+        if _sd.get("used_percentage") is not None:
+            quota_7d_used_pct = round(float(_sd["used_percentage"]), 1)
+        quota_5h_reset_at = _fh.get("resets_at") or None
+        quota_7d_reset_at = _sd.get("resets_at") or None
+        quota_from_cache = False  # live from statusline, not cached
+
+    if quota_5h_used_pct is None:
+        try:
+            usage = fetch_usage()
+            quota_5h_used_pct = usage.get("used_pct_5h")
+            quota_7d_used_pct = usage.get("used_pct_7d")
+            quota_5h_reset_at = usage.get("reset_at_5h")
+            quota_7d_reset_at = usage.get("reset_at_7d")
+            quota_from_cache = bool(usage.get("from_cache", False))
+            quota_error = usage.get("error")
+        except Exception as exc:
+            quota_error = f"fetch_usage raised: {exc}"
 
     # ---- Account / credential identity ------------------------------------
     account_email: str | None = None
