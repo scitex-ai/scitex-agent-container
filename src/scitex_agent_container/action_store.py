@@ -173,6 +173,7 @@ def append_attempt(
     pane_before = _truncate_snapshot(record.get("pane_before"))
     pane_after = _truncate_snapshot(record.get("pane_after"))
     extras = record.get("extras") or {}
+    # stx-allow: fallback (reason: DB insert can fail due to disk full, file lock, or corrupt schema; swallowing keeps agent alive per fail-closed design)
     try:
         conn = _get_conn(_db_path(root))
         try:
@@ -275,6 +276,7 @@ def query(
         + " ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?"
     )
     params.extend([int(limit), int(offset)])
+    # stx-allow: fallback (reason: DB read can fail due to missing file, lock contention, or I/O error; empty list is a safe no-results response)
     try:
         conn = _get_conn(_db_path(root))
         try:
@@ -319,6 +321,7 @@ def stats(
         "ORDER BY action ASC, count DESC"
     )
     sql_samples = "SELECT action, outcome, elapsed_s FROM attempts" + where
+    # stx-allow: fallback (reason: DB read can fail due to missing file, lock contention, or I/O error; empty list means no stats available, which is acceptable for a best-effort summary)
     try:
         conn = _get_conn(_db_path(root))
         try:
@@ -422,6 +425,7 @@ def purge_old(
     rows deleted. Safe to call periodically from a cron / daemon."""
     d = int(days) if days is not None else DEFAULT_RETENTION_DAYS
     cutoff = (datetime.now(timezone.utc) - timedelta(days=d)).isoformat()
+    # stx-allow: fallback (reason: DB delete can fail due to disk error or lock; returning 0 is safe since purge is maintenance-only and a missed run leaves stale rows that will be retried next call)
     try:
         conn = _get_conn(_db_path(root))
         try:
@@ -438,6 +442,7 @@ def purge_old(
 
 def _all_rows(root: Path | None = None) -> Iterable[dict[str, Any]]:
     """Iterator over every row — used by tests / export tooling."""
+    # stx-allow: fallback (reason: DB read can fail due to missing file or I/O error; empty iterable is safe since _all_rows is used by tests/export tooling where no results is a valid outcome)
     try:
         conn = _get_conn(_db_path(root))
         try:

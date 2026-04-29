@@ -197,6 +197,8 @@ class ContextManager:
                 threshold,
                 self.config.strategy,
             )
+            # stx-allow: fallback (reason: dispatcher failure must not break the
+            # sensor loop — logged but sensor continues ticking)
             try:
                 self.dispatcher(self.config.strategy, self.agent_config)
             except Exception:  # pragma: no cover — defensive  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
@@ -235,10 +237,14 @@ def run_forever(cm: ContextManager) -> None:
     """
     interval = max(1, int(cm.config.check_interval_seconds))
     while not cm.stopped:
+        # stx-allow: fallback (reason: individual tick failure must not kill
+        # the sensor thread — logged and loop continues on next interval)
         try:
             cm.tick()
         except Exception:  # pragma: no cover — defensive  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             logger.exception("context_manager[%s]: tick failed", cm.agent_name)
+        # stx-allow: fallback (reason: snapshot module is optional; import or
+        # tick failure must not stop the context-manager loop)
         try:
             from .snapshot import snapshot_tick
 
@@ -265,6 +271,8 @@ def _fire_hook(
     context: dict[str, Any] | None = None,
 ) -> None:
     """Non-blocking fire of an ``on_*`` hook. Swallows all errors."""
+    # stx-allow: fallback (reason: user-configured hook commands may fail;
+    # hook dispatch is non-blocking and must never abort the dispatcher)
     try:
         from .hooks import run_hook
 
@@ -314,6 +322,8 @@ def default_dispatcher(strategy: str, agent_config: AgentConfig | None) -> None:
                 "strategy": "restart",
             },
         )
+        # stx-allow: fallback (reason: agent_restart may fail if the session
+        # already exited — logged and dispatcher returns without crashing)
         try:
             agent_restart(agent_config.name)
         except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
@@ -349,6 +359,8 @@ def start_sensor(agent_config: AgentConfig) -> ContextManager | None:
     )
     _SENSORS[agent_config.name] = cm
     thread.start()
+    # stx-allow: fallback (reason: snapshot sidecar registration is optional;
+    # failure here must not prevent the context-manager thread from running)
     try:
         from .snapshot import register_sidecar
 

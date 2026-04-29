@@ -51,6 +51,7 @@ def _fire_forget_hook(
     ``http(s)://`` URLs. The legacy path filters out URL entries to
     avoid double-dispatch of the same side-effect.
     """
+    # stx-allow: fallback (reason: hook dispatch is fire-and-forget; a URL hook failing must never crash the caller)
     try:
         run_hook(agent_name, hook_name, list(commands or []), context=context)
     except Exception:  # pragma: no cover  # stx-allow: fallback (reason: hook dispatch safety net — hook crashes must not propagate to caller)
@@ -173,6 +174,7 @@ def agent_start(
 
     # Start context-management sensor in background if enabled
     if config.context_management.enabled:
+        # stx-allow: fallback (reason: context_manager sensor spawn may fail if tmux is unavailable; agent has already started and a sensor failure must not abort it)
         try:
             from .context_manager import start_sensor
 
@@ -219,6 +221,7 @@ def agent_stop(
             return True
         raise RuntimeError(f"Agent '{name}' not found in registry")
 
+    # stx-allow: fallback (reason: YAML file may have been deleted while the agent was registered; force-stop must succeed even without a config)
     try:
         config = load_config(entry["config"])
     except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
@@ -237,6 +240,7 @@ def agent_stop(
     }
 
     # Pre-stop hooks
+    # stx-allow: fallback (reason: hook commands may reference paths or env vars absent at stop time; force-stop must continue regardless)
     try:
         _run_hooks(config.hooks.get("pre_stop", []), extra_env=hook_env)
     except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
@@ -244,6 +248,7 @@ def agent_stop(
             raise
     _fire_forget_hook(config.name, "pre_stop", config.hooks.get("pre_stop", []))
 
+    # stx-allow: fallback (reason: tmux/screen session may already be dead; force-stop should still proceed to clean up registry)
     try:
         runtime.stop(config)
     except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
@@ -251,6 +256,7 @@ def agent_stop(
             raise
 
     # Post-stop hooks
+    # stx-allow: fallback (reason: post-stop hooks are best-effort notification; a failed hook must not prevent registry cleanup)
     try:
         _run_hooks(config.hooks.get("post_stop", []), extra_env=hook_env)
     except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
@@ -276,6 +282,7 @@ def agent_stop_all(
     results: list[tuple[str, bool, str]] = []
     for entry in registry.list_all():
         name = entry.get("name", "?")
+        # stx-allow: fallback (reason: stopping one agent may fail due to a missing config or dead session; other agents in the registry should still be stopped)
         try:
             agent_stop(name, registry=registry, force=force)
             results.append((name, True, "stopped"))
@@ -306,6 +313,7 @@ def agent_status(name: str, registry: Registry | None = None) -> dict:
     if entry is None:
         raise RuntimeError(f"Agent '{name}' not found in registry")
 
+    # stx-allow: fallback (reason: YAML or runtime may be unavailable; status should degrade to stopped=False rather than raise)
     try:
         config = load_config(entry["config"])
         runtime = _get_runtime(config)
@@ -380,6 +388,7 @@ def agent_status(name: str, registry: Registry | None = None) -> dict:
     # Expose the full agent_meta dict from the live sensor if present
     # (todo#285 Phase 2b). This is the transcript-derived source of
     # truth used by the dashboard when it's available.
+    # stx-allow: fallback (reason: context_manager module may be unimported or sensor absent; agent_meta is optional enrichment and None is acceptable)
     try:
         from .context_manager import get_sensor as _gs
 
@@ -390,6 +399,7 @@ def agent_status(name: str, registry: Registry | None = None) -> dict:
         pass
 
     # Snapshot block — cheap read from cache (todo#286). Never re-gathers.
+    # stx-allow: fallback (reason: snapshot module may not yet exist or cache may be absent on first run; None snapshot is valid initial state)
     try:
         from .snapshot import read_latest
 
@@ -408,6 +418,7 @@ def agent_status(name: str, registry: Registry | None = None) -> dict:
     # Enrich with claude-hud-style metadata. Canonical source for the
     # Agents-tab dashboard; the MCP sidecar heartbeat shells out to this
     # command rather than duplicating the logic in TypeScript.
+    # stx-allow: fallback (reason: agent_meta requires psutil and an active tmux session; metadata enrichment is optional and must never break status)
     try:
         from .agent_meta import collect_rich
 

@@ -190,6 +190,7 @@ def start(
             current_host = ""
         console.print(f"[blue]Starting {len(yamls)} agents...[/blue]")
         for yaml_path in yamls:
+            # stx-allow: fallback (reason: one agent's config parse or launch failure must not abort the remaining agents in a bulk --all start; printing FAILED and continuing is the correct bulk-safe behavior)
             try:
                 config = load_config(yaml_path)
                 skip = _singleton_skip_reason(config, current_host)
@@ -220,6 +221,7 @@ def start(
         )
         sys.exit(2)
 
+    # stx-allow: fallback (reason: config resolution, YAML parse, or agent_start can raise on misconfiguration or launch failure; catching here gives a clean error message and non-zero exit rather than an unhandled traceback)
     try:
         config_path = resolve_config(config_path)
         config = load_config(config_path)
@@ -269,7 +271,8 @@ def start(
             console.print(
                 f"[yellow]auto_accept: false — manual TUI acceptance required on {config.remote.host or 'local'}[/yellow]"
             )
-    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+    # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+    except Exception as exc:
         console.print(f"[red]Error: {exc}[/red]")
         traceback.print_exc()
         sys.exit(1)
@@ -318,6 +321,7 @@ def stop(name: str | None, stop_all: bool, force: bool) -> None:
             sys.exit(1)
         return
 
+    # stx-allow: fallback (reason: config resolution or agent_stop can raise if the agent is not in the registry or the session is already gone; error message + sys.exit(1) is cleaner than an unhandled traceback)
     try:
         # Accept either agent name or YAML path
         if "/" in name or name.endswith((".yaml", ".yml")):  # type: ignore[union-attr]
@@ -335,6 +339,7 @@ def stop(name: str | None, stop_all: bool, force: bool) -> None:
 @click.argument("name")
 def restart(name: str) -> None:
     """Restart an agent."""
+    # stx-allow: fallback (reason: config resolution or agent_restart can raise if the agent is not running or the session cannot be found; error message + sys.exit(1) is cleaner than an unhandled traceback)
     try:
         if "/" in name or name.endswith((".yaml", ".yml")):
             config_path = resolve_config(name)

@@ -101,6 +101,7 @@ def probe_dns(
     """
     start = time.monotonic()
     old = socket.getdefaulttimeout()
+    # stx-allow: fallback (reason: DNS resolution can fail with timeout, NXDOMAIN, or no resolver; ProbeResult(ok=False) records the failure as diagnostic evidence without raising)
     try:
         socket.setdefaulttimeout(timeout)
         infos = socket.getaddrinfo(host, None)
@@ -137,6 +138,7 @@ def probe_tcp(
     request would pass ``probe_https`` but also passes this layer.
     """
     start = time.monotonic()
+    # stx-allow: fallback (reason: TCP connect can fail with connection refused, timeout, or no route to host; ProbeResult(ok=False) captures the failure as connectivity evidence)
     try:
         with socket.create_connection((host, port), timeout=timeout):
             pass
@@ -168,6 +170,7 @@ def probe_https(
     if they actually need a 2xx.
     """
     start = time.monotonic()
+    # stx-allow: fallback (reason: HTTPS probe can fail with SSL errors, timeout, or captive portal disruption; ProbeResult(ok=False) records the transport failure without raising)
     try:
         ctx = ssl.create_default_context()
         req = urllib.request.Request(url, method="GET")
@@ -280,6 +283,7 @@ def probe_gateway(
             latency_ms=latency_ms,
             err="no default route",
         )
+    # stx-allow: fallback (reason: gateway TCP probe to port 53 can fail if the router filters the port or Wi-Fi is lost; ProbeResult(ok=False) provides LAN reachability evidence without raising)
     try:
         with socket.create_connection((gw, 53), timeout=timeout):
             pass
@@ -352,6 +356,7 @@ def append_result(
     Does not rotate — the file is append-only and small (one line per
     run, <1 KiB); ops rotates weekly via logrotate if needed.
     """
+    # stx-allow: fallback (reason: JSONL append can fail due to disk full or permission error; returning None is safe since probe logging must never raise or disrupt the caller)
     try:
         path = _log_path(agent, root=root)
         with path.open("a", encoding="utf-8") as fh:

@@ -247,7 +247,8 @@ def _maybe_register_hpc_reservation(cfg: AgentConfig, job_id: str) -> None:
         # Lease already present — typical on a force-restart. Leave it
         # alone; sac's primary state file is the source of truth.
         pass
-    except Exception as exc:  # pragma: no cover — defensive  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+    # stx-allow: fallback (reason: optional scitex-hpc integration; registration failure must not abort job submission)
+    except Exception as exc:  # pragma: no cover — defensive
         logger.warning(
             "scitex-hpc Reservation registration failed for %s: %s",
             cfg.name,
@@ -267,6 +268,7 @@ def _maybe_clear_hpc_reservation(agent_name: str) -> None:
         from scitex_hpc import Reservation  # type: ignore
     except ImportError:  # stx-allow: fallback (reason: optional dependency not installed)
         return
+    # stx-allow: fallback (reason: optional scitex-hpc integration; lease cleanup failure must not block agent shutdown)
     try:
         res = Reservation.get(agent_name, host="localhost")
         if res is not None:

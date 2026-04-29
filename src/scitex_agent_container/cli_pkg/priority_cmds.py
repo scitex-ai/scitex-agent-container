@@ -188,6 +188,7 @@ def priority_check(
         echo "Need to hand off to higher-priority host"
       fi
     """
+    # stx-allow: fallback (reason: config path may not exist or resolve to a valid YAML; CLI exits with code 2 to signal a usage/config error to healer callers)
     try:
         resolved = resolve_config(config_path)
     except Exception as exc:
@@ -198,6 +199,7 @@ def priority_check(
         sys.exit(2)
 
     if not current_host:
+        # stx-allow: fallback (reason: resolve_hostname may fail in non-standard network environments; socket.gethostname() provides a safe alternative that is always available)
         try:
             current_host = resolve_hostname()
         except Exception:
@@ -205,6 +207,7 @@ def priority_check(
 
             current_host = socket.gethostname().split(".")[0]
 
+    # stx-allow: fallback (reason: priority report computation involves SSH probes that can raise; CLI exits with code 2 so healer scripts can distinguish errors from yield/stay decisions)
     try:
         report = _priority_report(resolved, current_host)
     except Exception as exc:

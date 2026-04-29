@@ -247,6 +247,7 @@ class ClaudeCodeRuntime(RuntimeBase):
         # than the OS-reported FQDN ("Yusukes-MacBook-Air.local"). The
         # sidecar already prefers SCITEX_OROCHI_MACHINE over Node's
         # hostname() — this just hands it the canonical value.
+        # stx-allow: fallback (reason: resolve_hostname() can fail on misconfiguration; leaving SCITEX_OROCHI_MACHINE unset is safe because the sidecar falls back to its own hostname() call)
         try:
             from ..config._host import resolve_hostname
 
@@ -519,6 +520,7 @@ class ClaudeCodeRuntime(RuntimeBase):
         for sc in commands:
             if sc.delay > 0:
                 time.sleep(sc.delay)
+            # stx-allow: fallback (reason: multiplexer send can fail if the session is temporarily unavailable; logging the error and continuing allows remaining startup commands to be attempted)
             try:
                 mux.send_text_and_submit(config.screen_name, sc.command)
                 logger.info(
@@ -603,6 +605,7 @@ class ClaudeCodeRuntime(RuntimeBase):
         )
 
         if started:
+            # stx-allow: fallback (reason: a2a sidecar is optional; a spawn failure must not prevent the agent itself from starting)
             try:
                 _a2a_start_sidecar(config)
             except Exception:  # noqa: BLE001 — never block agent start  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
@@ -638,6 +641,7 @@ class ClaudeCodeRuntime(RuntimeBase):
             elif config.container.runtime == "apptainer":
                 return ApptainerRuntime().stop(config)
 
+        # stx-allow: fallback (reason: a2a sidecar cleanup is best-effort; a stop failure must not prevent the agent session from being torn down)
         try:
             _a2a_stop_sidecar(config)
         except Exception:  # noqa: BLE001 — never block agent stop  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)

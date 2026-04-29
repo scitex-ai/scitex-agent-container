@@ -143,6 +143,7 @@ def _run_one(
     entry = (entry or "").strip()
     if not entry:
         return
+    # stx-allow: fallback (reason: hook dispatch is fire-and-forget; a crashed hook must not propagate and disrupt the calling agent)
     try:
         if entry.startswith(("http://", "https://")):
             _dispatch_http(entry, agent_name, hook_name, context)

@@ -557,12 +557,14 @@ def snapshot_tick(
     ``has_diff``, the configured ``hooks.on_diff`` commands are fired
     via the non-blocking hook pool (todo#286 Phase 4).
     """
+    # stx-allow: fallback (reason: daemon tick must not crash the loop; snapshot failures are logged and skipped)
     try:
         snap = take_snapshot(agent, session=session)
     except Exception:  # pragma: no cover — defensive  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         logger.exception("snapshot[%s]: tick failed", agent)
         return
     if agent_config is not None and snap.get("has_diff"):
+        # stx-allow: fallback (reason: hook dispatch is best-effort; failure must not disrupt the snapshot cycle)
         try:
             from .hooks import run_hook
 

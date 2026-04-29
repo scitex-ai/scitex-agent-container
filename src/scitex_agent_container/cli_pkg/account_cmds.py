@@ -52,6 +52,7 @@ def account_save(name: str, email: str | None) -> None:
         meta["email_address"] = email
     else:
         # Try to read from current credentials
+        # stx-allow: fallback (reason: reading existing email from credentials is best-effort; account save must still succeed without it)
         try:
             from ..credentials import read_credentials_metadata
 
