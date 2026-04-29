@@ -12,9 +12,11 @@ from ._types import (
     HealthSpec,
     HostsSpec,
     ListenPort,
+    OrochiSpec,
     ReadyPattern,
     RemoteSpec,
     RestartSpec,
+    SchedulingSpec,
     SkillsSpec,
     SlurmHeartbeatSpec,
     SlurmHooks,
@@ -59,6 +61,43 @@ def parse_hosts_spec(spec: dict) -> "HostsSpec":
     return HostsSpec(host=host, hosts=hosts)
 
 
+_VALID_SCHEDULING_MODES = ("per-host", "singleton")
+
+
+def parse_scheduling(spec: dict) -> tuple[SchedulingSpec, bool]:
+    """Parse ``spec.scheduling`` block (new shared-host layout).
+
+    Returns a ``(scheduling, explicit)`` tuple. ``explicit`` is True iff
+    the YAML declared a ``spec.scheduling`` key — this gates effective-id
+    composition so legacy v2 YAMLs (no scheduling block, ``metadata.name``
+    already baked with host) remain byte-identical to pre-change behavior.
+    """
+    if "scheduling" not in spec:
+        return SchedulingSpec(), False
+    raw = spec.get("scheduling") or {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"spec.scheduling must be a mapping, got {type(raw).__name__}")
+    mode = raw.get("mode", "per-host") or "per-host"
+    if mode not in _VALID_SCHEDULING_MODES:
+        raise ValueError(
+            f"spec.scheduling.mode must be one of {_VALID_SCHEDULING_MODES}, "
+            f"got {mode!r}"
+        )
+    preferred = raw.get("preferred-host", raw.get("preferred_host", "")) or ""
+    fallback_raw = raw.get("fallback-hosts", raw.get("fallback_hosts", [])) or []
+    if isinstance(fallback_raw, str):
+        fallback_raw = [fallback_raw]
+    fallback = [str(h) for h in fallback_raw]
+    return (
+        SchedulingSpec(
+            mode=mode,
+            preferred_host=str(preferred),
+            fallback_hosts=fallback,
+        ),
+        True,
+    )
+
+
 # All known hook keys. Unknown keys in the YAML are ignored (forward-compat).
 HOOK_KEYS = (
     "pre_start",
@@ -69,6 +108,19 @@ HOOK_KEYS = (
     "on_restart",
     "on_diff",
 )
+
+
+def parse_orochi(spec: dict) -> OrochiSpec:
+    raw = spec.get("orochi", {}) or {}
+    hosts = raw.get("hosts", []) or []
+    return OrochiSpec(
+        enabled=raw.get("enabled", bool(hosts)),
+        hosts=hosts,
+        port=int(raw.get("port", 8559)),
+        token_env=raw.get("token_env", "SCITEX_OROCHI_TOKEN"),
+        channels=raw.get("channels", []) or [],
+        heartbeat_interval=int(raw.get("heartbeat_interval", 60)),
+    )
 
 
 def parse_container(spec: dict) -> ContainerSpec:

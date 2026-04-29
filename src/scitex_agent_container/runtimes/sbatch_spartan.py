@@ -40,7 +40,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List
 
-
 # ---------------------------------------------------------------------------
 # Required hardeners — these strings are asserted by the regression test.
 # Changing them here without updating the test is a deliberate decision.
@@ -73,14 +72,14 @@ class SpartanSbatchConfig:
     orochi_channels: str = (
         "#neurovista,#ywatanabe,#general,#agent,#progress,#escalation"
     )
-    workdir: str = "$HOME/.scitex/orochi/workspaces/head-spartan"
+    workdir: str = "$HOME/.scitex/orochi/runtime/workspaces/head-spartan"
     claude_bin: str = "$HOME/.npm-global/bin/claude"
     claude_model: str = "opus[1m]"
     extra_add_dirs: List[str] = field(
         default_factory=lambda: [
             "$HOME/proj/scitex-agent-container/src/scitex_agent_container/_skills/",
             "$HOME/proj/scitex-orochi/src/scitex_orochi/_skills/",
-            "$HOME/.scitex/orochi/skills/",
+            "$HOME/.scitex/orochi/shared/skills/",
         ]
     )
     # Extra safety buffer: even if tail -f /dev/null somehow exits,
@@ -137,7 +136,7 @@ def render_sbatch_script(cfg: SpartanSbatchConfig | None = None) -> str:
     trap_block = ""
     if cfg.trap_on_exit:
         trap_block = (
-            '\n# Fail loud if we ever fall through the hold below.\n'
+            "\n# Fail loud if we ever fall through the hold below.\n"
             'trap \'rc=$?; echo "[todo#425] wrapper exiting with rc=$rc at $(date -u +%FT%TZ)" >&2; '
             'exit "${rc:-1}"\' EXIT\n'
         )
