@@ -591,6 +591,7 @@ def collect_rich(
             "recent_tools": [],
             "recent_prompts": [],
             "agent_calls": [],
+            "open_agent_calls": [],
             "background_tasks": [],
             "counts": {},
         }
@@ -740,6 +741,18 @@ def collect_rich(
         "recent_tools": _event_summary.get("recent_tools") or [],
         "recent_prompts": _event_summary.get("recent_prompts") or [],
         "agent_calls": _event_summary.get("agent_calls") or [],
+        "open_agent_calls": _event_summary.get("open_agent_calls") or [],
+        # Scalar summaries for terse projection and healer thresholding.
+        # open_agent_calls_count > 0 means there are Agent pretool events
+        # with no matching posttool — possible stuck subagent.
+        # oldest_open_agent_age_s gives the age of the oldest such call.
+        # Cross-check with subagent_count before alerting (ring-buffer
+        # rotation can produce false positives).
+        "open_agent_calls_count": len(_event_summary.get("open_agent_calls") or []),
+        "oldest_open_agent_age_s": max(
+            (c.get("age_seconds") or 0 for c in (_event_summary.get("open_agent_calls") or [])),
+            default=None,
+        ) or None,
         "background_tasks": _event_summary.get("background_tasks") or [],
         "tool_counts": _event_summary.get("counts") or {},
         # Functional-heartbeat shortcuts — top-level so consumers don't
