@@ -89,3 +89,29 @@ def test_cleanup_preserves_user_keys(tmp_path):
 def test_managed_keys_includes_hooks():
     """Regression guard: hooks MUST be in _MANAGED_KEYS so cleanup is in sync."""
     assert "hooks" in _MANAGED_KEYS
+
+
+def test_statusline_command_written(tmp_path):
+    """statusLine is written even without skip-permissions / dev-channels."""
+    cfg = _make_cfg()
+    setup_settings_json(cfg, str(tmp_path))
+    data = json.loads(_settings_path(tmp_path).read_text())
+    assert "statusLine" in data
+    assert data["statusLine"]["type"] == "command"
+    assert data["statusLine"]["command"] == "sac-statusline"
+
+
+def test_statusline_in_managed_keys():
+    """statusLine MUST be in _MANAGED_KEYS so cleanup removes it."""
+    assert "statusLine" in _MANAGED_KEYS
+
+
+def test_cleanup_removes_statusline(tmp_path):
+    """cleanup_settings_json drops the statusLine entry."""
+    cfg = _make_cfg()
+    setup_settings_json(cfg, str(tmp_path))
+    assert "statusLine" in json.loads(_settings_path(tmp_path).read_text())
+    cleanup_settings_json(cfg, str(tmp_path))
+    if _settings_path(tmp_path).exists():
+        remaining = json.loads(_settings_path(tmp_path).read_text())
+        assert "statusLine" not in remaining

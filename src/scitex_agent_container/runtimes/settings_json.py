@@ -37,6 +37,7 @@ _MANAGED_KEYS = frozenset(
         "enableAllProjectMcpServers",
         "enabledMcpjsonServers",
         "hooks",
+        "statusLine",
     }
 )
 
@@ -148,6 +149,13 @@ def setup_settings_json(config: AgentConfig, workdir: str) -> None:
     # aren't active we still want Last tool / Last MCP / Last action rows
     # to populate on the dashboard (scitex-orochi todo#59).
     settings["hooks"] = _HOOKS_CONFIG
+
+    # Register sac-statusline as the statusLine command so the JSON payload
+    # is persisted to ~/.scitex/agent-container/statusline/<agent>.json each
+    # turn. sac status prefers this authoritative source over the JSONL
+    # approximation (sac issue #52). No-op if claude-hud is absent — the
+    # script falls back to a minimal echo.
+    settings["statusLine"] = {"type": "command", "command": "sac-statusline"}
 
     if not settings:
         return
