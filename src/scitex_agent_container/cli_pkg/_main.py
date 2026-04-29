@@ -24,6 +24,7 @@ from .lifecycle_cmds import (
     stop,
     stop_auto_accept,
 )
+from .install_cmds import install_group, install_post_merge_cron
 from .priority_cmds import priority_check
 from .probe_cmds import probe_network
 from .recall_cmds import recall
@@ -113,6 +114,10 @@ main.add_command(probe_network)
 # Singleton priority check: reports whether this host should yield to a
 # higher-priority reachable host (building block for healer reconciler, #250).
 main.add_command(priority_check)
+
+# Install helpers: host bootstrap + cron installer.
+main.add_command(install_group)
+main.add_command(install_post_merge_cron)
 
 # A2A protocol — generic agent-to-agent surface (no fleet deps).
 from .a2a_cmds import a2a as a2a_group  # noqa: E402
