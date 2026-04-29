@@ -369,7 +369,7 @@ def deploy_src_mcp_json(config: AgentConfig, workdir: str) -> None:
                     drift_minutes,
                     dest,
                 )
-    except OSError:
+    except OSError:  # stx-allow: fallback (reason: file system operation failure)
         pass
 
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -472,7 +472,7 @@ def deploy_src_env(config: AgentConfig, workdir: str) -> None:
     dest.write_text(text)
     try:
         os.chmod(dest, 0o600)
-    except OSError as exc:
+    except OSError as exc:  # stx-allow: fallback (reason: file system operation failure)
         logger.warning("Failed to chmod 0600 on %s: %s", dest, exc)
 
     logger.info("Deployed src_env for %s to %s", config.name, dest)

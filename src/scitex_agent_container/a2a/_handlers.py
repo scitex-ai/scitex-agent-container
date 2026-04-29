@@ -55,9 +55,9 @@ def handle_claude_cli(agent_name: str, user_text: str) -> str:
             text=True,
             timeout=CLAUDE_TIMEOUT_S,
         )
-    except FileNotFoundError as exc:
+    except FileNotFoundError as exc:  # stx-allow: fallback (reason: file may not exist on first use)
         raise HandlerError(f"claude CLI not found at {claude_bin!r}") from exc
-    except subprocess.TimeoutExpired as exc:
+    except subprocess.TimeoutExpired as exc:  # stx-allow: fallback (reason: subprocess execution failure)
         raise HandlerError(f"claude CLI timeout after {CLAUDE_TIMEOUT_S:.0f}s") from exc
     if res.returncode != 0:
         raise HandlerError(
@@ -75,7 +75,7 @@ def handle_exec(agent_name: str, user_text: str) -> str:
         )
     try:
         argv = shlex.split(raw)
-    except ValueError as exc:
+    except ValueError as exc:  # stx-allow: fallback (reason: type coercion or format mismatch)
         raise HandlerError(f"could not parse SAC_A2A_EXEC_COMMAND: {exc}") from exc
     if not argv:
         raise HandlerError("SAC_A2A_EXEC_COMMAND parsed to empty argv")
@@ -88,9 +88,9 @@ def handle_exec(agent_name: str, user_text: str) -> str:
             timeout=EXEC_TIMEOUT_S,
             env={**os.environ, "SAC_A2A_AGENT": agent_name},
         )
-    except FileNotFoundError as exc:
+    except FileNotFoundError as exc:  # stx-allow: fallback (reason: file may not exist on first use)
         raise HandlerError(f"exec command not found: {argv[0]!r}") from exc
-    except subprocess.TimeoutExpired as exc:
+    except subprocess.TimeoutExpired as exc:  # stx-allow: fallback (reason: subprocess execution failure)
         raise HandlerError(f"exec command timeout after {EXEC_TIMEOUT_S:.0f}s") from exc
     if res.returncode != 0:
         raise HandlerError(

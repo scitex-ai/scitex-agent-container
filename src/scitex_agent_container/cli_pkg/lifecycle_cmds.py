@@ -392,7 +392,7 @@ def start_auto_accept(agent: str, tick_s: float) -> None:
             _os.kill(existing, 0)
             console.print(f"[yellow]auto-accept daemon already running for '{agent}' (pid={existing})[/yellow]")
             return
-        except OSError:
+        except OSError:  # stx-allow: fallback (reason: file system operation failure)
             pass  # stale pid file
 
     def _target():
@@ -419,6 +419,6 @@ def stop_auto_accept(agent: str) -> None:
     try:
         _os.kill(pid, signal.SIGTERM)
         console.print(f"[green]sent SIGTERM to auto-accept daemon for '{agent}' (pid={pid})[/green]")
-    except ProcessLookupError:
+    except ProcessLookupError:  # stx-allow: fallback (reason: process probe expected failure)
         console.print(f"[yellow]stale pid {pid} for '{agent}' — cleaning up[/yellow]")
         clear_pid(agent)

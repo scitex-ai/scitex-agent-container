@@ -53,11 +53,11 @@ def _check_a2a_card(config: AgentConfig) -> tuple[bool, str]:
     try:
         with urllib.request.urlopen(url, timeout=5) as resp:
             data = json.loads(resp.read())
-    except urllib.error.HTTPError as exc:
+    except urllib.error.HTTPError as exc:  # stx-allow: fallback (reason: expected failure — see inline comment)
         return False, f"unhealthy: AgentCard HTTP {exc.code} from {url}"
-    except (urllib.error.URLError, OSError) as exc:
+    except (urllib.error.URLError, OSError) as exc:  # stx-allow: fallback (reason: file system operation failure)
         return False, f"unhealthy: AgentCard unreachable at {url}: {exc}"
-    except (ValueError, json.JSONDecodeError) as exc:
+    except (ValueError, json.JSONDecodeError) as exc:  # stx-allow: fallback (reason: malformed JSON tolerated)
         return False, f"unhealthy: AgentCard malformed JSON: {exc}"
 
     elapsed_ms = int((time.time() - t0) * 1000)

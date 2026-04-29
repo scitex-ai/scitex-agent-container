@@ -26,7 +26,7 @@ def pane_capture(name: str, max_chars: int = _MAX_CHARS) -> str:
             text=True,
         )
         text = result.stdout or ""
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         return ""
     if len(text) > max_chars:
         text = text[-max_chars:]

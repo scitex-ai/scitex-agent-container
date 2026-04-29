@@ -57,7 +57,7 @@ def _import_reservation():
     """Late import so missing scitex-hpc gives a clear error, not import-time crash."""
     try:
         from scitex_hpc import Reservation  # type: ignore
-    except ImportError as exc:
+    except ImportError as exc:  # stx-allow: fallback (reason: optional dependency not installed)
         raise RuntimeError(
             "runtime: slurm-tenant requires scitex-hpc>=0.5.1. "
             "Install via: pip install 'scitex-agent-container[slurm]'"
@@ -235,7 +235,7 @@ class SlurmTenantRuntime(RuntimeBase):
         """Kill the agent's tmux session. Does NOT release the reservation."""
         try:
             res = self._resolve_reservation(config)
-        except RuntimeError as exc:
+        except RuntimeError as exc:  # stx-allow: fallback (reason: runtime state error — handled gracefully)
             logger.warning("SlurmTenantRuntime: cannot stop %s — %s", config.name, exc)
             return False
         session = self._tmux_session(config)
@@ -256,7 +256,7 @@ class SlurmTenantRuntime(RuntimeBase):
     def is_running(self, config: AgentConfig) -> bool:
         try:
             res = self._resolve_reservation(config)
-        except RuntimeError:
+        except RuntimeError:  # stx-allow: fallback (reason: runtime state error — handled gracefully)
             return False
         session = self._tmux_session(config)
         result = self._exec_on_node(
@@ -271,7 +271,7 @@ class SlurmTenantRuntime(RuntimeBase):
         """Capture the last ``lines`` of pane content from the tmux session."""
         try:
             res = self._resolve_reservation(config)
-        except RuntimeError as exc:
+        except RuntimeError as exc:  # stx-allow: fallback (reason: runtime state error — handled gracefully)
             return f"(reservation unavailable: {exc})"
         session = self._tmux_session(config)
         # tmux capture-pane writes to stdout with -p

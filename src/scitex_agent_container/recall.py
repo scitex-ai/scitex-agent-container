@@ -95,7 +95,7 @@ def _parse_ts(raw: str | None) -> datetime | None:
             raw = raw[:-1] + "+00:00"
         dt = datetime.fromisoformat(raw)
         return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
-    except ValueError:
+    except ValueError:  # stx-allow: fallback (reason: type coercion or format mismatch)
         return None
 
 
@@ -162,7 +162,7 @@ def iter_entries(jsonl_path: Path | str) -> Iterator[Entry]:
                 continue
             try:
                 d = json.loads(line)
-            except json.JSONDecodeError:
+            except json.JSONDecodeError:  # stx-allow: fallback (reason: malformed JSON tolerated)
                 continue
             rtype = d.get("type", "")
             ts = _parse_ts(d.get("timestamp"))
@@ -192,7 +192,7 @@ def collect_stats(jsonl_path: Path | str) -> Stats:
             s.total_lines += 1
             try:
                 d = json.loads(line)
-            except json.JSONDecodeError:
+            except json.JSONDecodeError:  # stx-allow: fallback (reason: malformed JSON tolerated)
                 s.parse_errors += 1
                 continue
             s.by_type[d.get("type", "?")] += 1

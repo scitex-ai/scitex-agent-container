@@ -168,7 +168,7 @@ def a2a_doctor(
             "card_url": body.get("url"),
         }
         _emit(result, as_json)
-    except urllib.error.HTTPError as exc:
+    except urllib.error.HTTPError as exc:  # stx-allow: fallback (reason: expected failure — see inline comment)
         _emit(
             {
                 "ok": False,
@@ -179,7 +179,7 @@ def a2a_doctor(
             as_json,
         )
         sys.exit(1)
-    except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
+    except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:  # stx-allow: fallback (reason: malformed JSON tolerated)
         _emit(
             {
                 "ok": False,

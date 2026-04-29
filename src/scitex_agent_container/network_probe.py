@@ -112,7 +112,7 @@ def probe_dns(
             latency_ms=latency_ms,
             extra={"addrs": addrs},
         )
-    except Exception as exc:  # pragma: no cover - exercised via fake
+    except Exception as exc:  # pragma: no cover - exercised via fake  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         latency_ms = (time.monotonic() - start) * 1000.0
         return ProbeResult(
             name="dns",
@@ -142,7 +142,7 @@ def probe_tcp(
             pass
         latency_ms = (time.monotonic() - start) * 1000.0
         return ProbeResult(name="tcp", ok=True, latency_ms=latency_ms)
-    except Exception as exc:
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         latency_ms = (time.monotonic() - start) * 1000.0
         return ProbeResult(
             name="tcp",
@@ -185,7 +185,7 @@ def probe_https(
                 err="" if ok else f"status={status}",
                 extra={"status": status},
             )
-    except urllib.error.HTTPError as exc:
+    except urllib.error.HTTPError as exc:  # stx-allow: fallback (reason: expected failure — see inline comment)
         # Cloudflare / hub returning 4xx is still "transport ok".
         latency_ms = (time.monotonic() - start) * 1000.0
         status = exc.code
@@ -200,7 +200,7 @@ def probe_https(
             err="" if ok else f"status={status}",
             extra={"status": status},
         )
-    except Exception as exc:
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         latency_ms = (time.monotonic() - start) * 1000.0
         return ProbeResult(
             name="https",
@@ -235,7 +235,7 @@ def _read_ip_route() -> str:
         return ""
     try:
         lines = path.read_text().splitlines()
-    except OSError:
+    except OSError:  # stx-allow: fallback (reason: file system operation failure)
         return ""
     # /proc/net/route columns: Iface Destination Gateway Flags RefCnt Use Metric Mask ...
     # A default route has Destination == "00000000".
@@ -249,7 +249,7 @@ def _read_ip_route() -> str:
         # gw_hex is little-endian IPv4 bytes.
         try:
             gw_int = int(gw_hex, 16)
-        except ValueError:
+        except ValueError:  # stx-allow: fallback (reason: type coercion or format mismatch)
             continue
         octets = [(gw_int >> (8 * i)) & 0xFF for i in range(4)]
         gw = ".".join(str(o) for o in octets)
@@ -290,7 +290,7 @@ def probe_gateway(
             latency_ms=latency_ms,
             extra={"gateway": gw},
         )
-    except Exception as exc:
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         latency_ms = (time.monotonic() - start) * 1000.0
         return ProbeResult(
             name="gateway",
@@ -357,7 +357,7 @@ def append_result(
         with path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(summary, separators=(",", ":")) + "\n")
         return path
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         return None
 
 

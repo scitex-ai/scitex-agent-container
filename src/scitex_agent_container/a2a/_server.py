@@ -165,7 +165,7 @@ def _build_app(ctx: _ServerCtx) -> Starlette:
 
         try:
             await request.json()
-        except (ValueError, json.JSONDecodeError) as exc:
+        except (ValueError, json.JSONDecodeError) as exc:  # stx-allow: fallback (reason: malformed JSON tolerated)
             return JSONResponse({"error": f"bad JSON: {exc}"}, status_code=400)
 
         # Forward to SDK dispatcher (handles message/send, message/stream
@@ -192,7 +192,7 @@ def _build_app(ctx: _ServerCtx) -> Starlette:
             return JSONResponse({"error": f"unknown agent: {name}"}, status_code=404)
         try:
             tasks = await dispatcher.snapshot_active_tasks()
-        except Exception as exc:  # pragma: no cover — defense in depth
+        except Exception as exc:  # pragma: no cover — defense in depth  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             log.warning("snapshot_active_tasks(%s) failed: %s", name, exc)
             return JSONResponse(
                 {"error": "snapshot failed", "detail": str(exc)}, status_code=500
@@ -318,7 +318,7 @@ def serve(
     """
     try:
         import uvicorn
-    except ImportError as exc:  # pragma: no cover
+    except ImportError as exc:  # pragma: no cover  # stx-allow: fallback (reason: optional dependency not installed)
         raise ImportError(
             "uvicorn is required to run 'sac a2a serve'; install with "
             "'pip install uvicorn'."

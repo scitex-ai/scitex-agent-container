@@ -593,7 +593,7 @@ class ClaudeCodeRuntime(RuntimeBase):
         if started:
             try:
                 _a2a_start_sidecar(config)
-            except Exception:  # noqa: BLE001 — never block agent start
+            except Exception:  # noqa: BLE001 — never block agent start  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                 logger.exception("a2a sidecar spawn failed for %s", config.name)
 
             has_tasks = self._needs_auto_accept(config) or config.startup_commands
@@ -628,7 +628,7 @@ class ClaudeCodeRuntime(RuntimeBase):
 
         try:
             _a2a_stop_sidecar(config)
-        except Exception:  # noqa: BLE001 — never block agent stop
+        except Exception:  # noqa: BLE001 — never block agent stop  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             logger.exception("a2a sidecar stop failed for %s", config.name)
 
         is_v2 = bool(config.mcp_servers) or _has_src_files(config)

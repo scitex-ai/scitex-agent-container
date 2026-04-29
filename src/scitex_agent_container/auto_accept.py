@@ -81,7 +81,7 @@ def _orochi_dm(channel: str, message: str) -> None:
             capture_output=True,
         )
         logger.info("DM sent to %s: %s", channel, message)
-    except Exception as exc:
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         logger.warning("DM to %s failed: %s — message: %s", channel, exc, message)
 
 

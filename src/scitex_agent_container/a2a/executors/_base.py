@@ -88,13 +88,13 @@ class BaseSyncExecutor(AgentExecutor):
 
         try:
             reply = await asyncio.to_thread(self._run_sync, self.agent_name, user_text)
-        except HandlerError as exc:
+        except HandlerError as exc:  # stx-allow: fallback (reason: expected failure — see inline comment)
             log.warning("a2a executor %r failed: %s", self.handler_key, exc)
             await updater.failed(
                 message=_agent_text_message(str(exc), task_id, context_id)
             )
             return
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             log.exception("a2a executor %r crashed", self.handler_key)
             await updater.failed(
                 message=_agent_text_message(

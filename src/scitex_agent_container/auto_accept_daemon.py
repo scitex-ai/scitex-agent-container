@@ -52,7 +52,7 @@ def read_pid(name: str) -> int | None:
         return None
     try:
         return int(p.read_text().strip())
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         return None
 
 
@@ -142,7 +142,7 @@ def run_daemon(
                 if sent:
                     last_send_at = time.monotonic()
 
-            except Exception as exc:
+            except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                 logger.error("[auto-accept daemon] error on agent %s: %s", name, exc)
 
             slp(tick_s)

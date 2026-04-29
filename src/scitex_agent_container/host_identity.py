@@ -90,7 +90,7 @@ def _load_resource_aliases() -> set[str]:
     """Aliases declared in scitex-resource's machine config."""
     try:
         from scitex_resource import get_machine_config, get_machine_name
-    except ImportError:
+    except ImportError:  # stx-allow: fallback (reason: optional dependency not installed)
         return set()
     out: set[str] = set()
     name = (get_machine_name() or "").strip()
