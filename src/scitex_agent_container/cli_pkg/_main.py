@@ -16,6 +16,7 @@ from .build_cmds import build, check, validate
 from .hook_cmds import hook_event
 from .info_cmds import attach, find, list_python_apis, logs
 from .lifecycle_cmds import cleanup, restart, start, stop
+from .priority_cmds import priority_check
 from .probe_cmds import probe_network
 from .recall_cmds import recall
 from .render_cmds import render_attach, render_sbatch
@@ -95,6 +96,10 @@ main.add_command(render_attach)
 
 # Connectivity probe (todo#457): fleet-facing WSL ↔ hub liveness.
 main.add_command(probe_network)
+
+# Singleton priority check: reports whether this host should yield to a
+# higher-priority reachable host (building block for healer reconciler, #250).
+main.add_command(priority_check)
 
 # A2A protocol — generic agent-to-agent surface (no fleet deps).
 from .a2a_cmds import a2a as a2a_group  # noqa: E402
