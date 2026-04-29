@@ -381,6 +381,8 @@ def collect_rich(
     # authoritative rate-limit resets. Falls back to JSONL approximation when
     # the file is absent (agent not yet launched with sac-statusline wired).
     _sl: dict = {}
+    # stx-allow: fallback (reason: statusline module is optional; import or
+    # read failure falls back to JSONL approximation — collect_rich is best-effort)
     try:
         from .statusline import read_statusline_json
 
