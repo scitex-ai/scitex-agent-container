@@ -88,7 +88,8 @@ def ensure_instance_uuid(config) -> str:
     has ``SCITEX_AGENT_INSTANCE_UUID`` (e.g. caller set it explicitly),
     leave it alone.
     """
-    env = config.env if isinstance(config.env, dict) else {}
+    env = getattr(config, "env", None)
+    env = env if isinstance(env, dict) else {}
     existing = env.get("SCITEX_AGENT_INSTANCE_UUID", "")
     if existing:
         return str(existing)
