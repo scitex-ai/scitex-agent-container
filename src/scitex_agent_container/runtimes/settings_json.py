@@ -18,12 +18,18 @@ Settings written:
 
 The file is merged (not overwritten) so user-added settings survive.
 Cleanup removes only the keys this module manages.
+
+Also provides seed_claude_json_project_entry() which pre-populates
+~/.claude.json::projects[<workdir>] so Claude Code skips its first-launch
+onboarding flow (trust dialog, OAuth selector) for newly-spawned agents
+(todo#396).
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 
 from ..config import AgentConfig
@@ -220,3 +226,61 @@ def cleanup_settings_json(config: AgentConfig, workdir: str) -> None:
             settings_path,
             ", ".join(removed),
         )
+
+
+# Minimal project entry that tells Claude Code this project has already
+# completed onboarding — prevents the first-launch trust dialog + OAuth
+# selector from blocking headless agents (todo#396).
+_PROJECT_SEED: dict = {
+    "allowedTools": [],
+    "mcpContextUris": [],
+    "mcpServers": {},
+    "enabledMcpjsonServers": [],
+    "disabledMcpjsonServers": [],
+    "hasTrustDialogAccepted": True,
+    "hasCompletedProjectOnboarding": True,
+    "projectOnboardingSeenCount": 1,
+    "hasClaudeMdExternalIncludesApproved": False,
+    "hasClaudeMdExternalIncludesWarningShown": False,
+    "lastGracefulShutdown": True,
+}
+
+
+def seed_claude_json_project_entry(workdir: str) -> None:
+    """Pre-populate ~/.claude.json::projects[workdir] to skip onboarding.
+
+    Idempotent: no-op when the entry already exists.  Only runs when the
+    global ~/.claude.json is a writable regular file (not a symlink to a
+    missing target), so broken-dotfiles setups do not crash the launcher.
+    """
+    claude_json_path = Path(os.path.expanduser("~")) / ".claude.json"
+    if not claude_json_path.is_file():
+        return
+
+    try:
+        data = json.loads(claude_json_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return
+
+    if not isinstance(data, dict):
+        return
+
+    projects = data.get("projects")
+    if not isinstance(projects, dict):
+        projects = {}
+        data["projects"] = projects
+
+    abs_workdir = str(Path(workdir).resolve())
+    if abs_workdir in projects:
+        return  # already seeded — leave existing entry intact
+
+    projects[abs_workdir] = _PROJECT_SEED.copy()
+
+    try:
+        claude_json_path.write_text(json.dumps(data, indent=2) + "\n")
+        logger.info(
+            "Seeded ~/.claude.json projects entry for %s (todo#396)",
+            abs_workdir,
+        )
+    except OSError as exc:
+        logger.warning("Could not seed ~/.claude.json for %s: %s", abs_workdir, exc)

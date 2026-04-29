@@ -9,6 +9,7 @@ from scitex_agent_container.runtimes.settings_json import (
     _HOOKS_CONFIG,
     _MANAGED_KEYS,
     cleanup_settings_json,
+    seed_claude_json_project_entry,
     setup_settings_json,
 )
 
@@ -89,3 +90,91 @@ def test_cleanup_preserves_user_keys(tmp_path):
 def test_managed_keys_includes_hooks():
     """Regression guard: hooks MUST be in _MANAGED_KEYS so cleanup is in sync."""
     assert "hooks" in _MANAGED_KEYS
+
+
+# ---------------------------------------------------------------------------
+# seed_claude_json_project_entry (todo#396)
+# ---------------------------------------------------------------------------
+
+
+def _write_claude_json(path: Path, data: dict) -> None:
+    path.write_text(json.dumps(data, indent=2) + "\n")
+
+
+def test_seed_adds_entry_when_missing(tmp_path, monkeypatch):
+    """New workdir path gets a project entry in ~/.claude.json."""
+    home = tmp_path / "home"
+    home.mkdir()
+    claude_json = home / ".claude.json"
+    _write_claude_json(claude_json, {"projects": {}})
+    monkeypatch.setenv("HOME", str(home))
+    # monkeypatch os.path.expanduser so Path("~") resolves to our fake home
+    import os
+    monkeypatch.setattr(os.path, "expanduser", lambda p: str(home) if p == "~" else p)
+
+    workdir = str(tmp_path / "my-agent")
+    seed_claude_json_project_entry(workdir)
+
+    data = json.loads(claude_json.read_text())
+    key = str((tmp_path / "my-agent").resolve())
+    assert key in data["projects"]
+    assert data["projects"][key]["hasTrustDialogAccepted"] is True
+    assert data["projects"][key]["hasCompletedProjectOnboarding"] is True
+
+
+def test_seed_is_idempotent(tmp_path, monkeypatch):
+    """Calling seed twice does not overwrite an existing entry."""
+    home = tmp_path / "home"
+    home.mkdir()
+    claude_json = home / ".claude.json"
+    workdir = str(tmp_path / "agent")
+    abs_workdir = str((tmp_path / "agent").resolve())
+    _write_claude_json(
+        claude_json,
+        {"projects": {abs_workdir: {"customKey": "preserved"}}},
+    )
+    import os
+    monkeypatch.setattr(os.path, "expanduser", lambda p: str(home) if p == "~" else p)
+
+    seed_claude_json_project_entry(workdir)
+
+    data = json.loads(claude_json.read_text())
+    assert data["projects"][abs_workdir]["customKey"] == "preserved"
+
+
+def test_seed_no_op_when_no_claude_json(tmp_path, monkeypatch):
+    """Missing ~/.claude.json does not raise."""
+    home = tmp_path / "home"
+    home.mkdir()
+    import os
+    monkeypatch.setattr(os.path, "expanduser", lambda p: str(home) if p == "~" else p)
+
+    seed_claude_json_project_entry(str(tmp_path / "agent"))  # must not raise
+
+
+def test_seed_no_op_when_claude_json_not_a_file(tmp_path, monkeypatch):
+    """A directory at ~/.claude.json path is silently skipped."""
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".claude.json").mkdir()  # directory, not file
+    import os
+    monkeypatch.setattr(os.path, "expanduser", lambda p: str(home) if p == "~" else p)
+
+    seed_claude_json_project_entry(str(tmp_path / "agent"))  # must not raise
+
+
+def test_seed_creates_projects_key_if_absent(tmp_path, monkeypatch):
+    """~/.claude.json without a projects key gets one added."""
+    home = tmp_path / "home"
+    home.mkdir()
+    claude_json = home / ".claude.json"
+    _write_claude_json(claude_json, {"numStartups": 1})
+    import os
+    monkeypatch.setattr(os.path, "expanduser", lambda p: str(home) if p == "~" else p)
+
+    workdir = str(tmp_path / "agent")
+    seed_claude_json_project_entry(workdir)
+
+    data = json.loads(claude_json.read_text())
+    assert "projects" in data
+    assert data["numStartups"] == 1  # original data preserved
