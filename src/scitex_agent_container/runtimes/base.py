@@ -16,12 +16,18 @@ class RuntimeBase(ABC):
         config: AgentConfig,
         no_preflight: bool = False,
         force: bool = False,
+        dry_run: bool = False,
     ) -> bool:
         """Start an agent. Returns True on success.
 
         ``force=True`` instructs the runtime to stop any existing
         instance before starting, and (for dispatchers like SSHRemote)
         to relay ``--force`` to the downstream CLI.
+
+        ``dry_run=True`` instructs the runtime to materialize the
+        workspace (CLAUDE.md, .mcp.json, .env, settings.json) but to
+        skip launching the multiplexer / agent process. Runtimes that
+        cannot meaningfully dry-run should raise ``NotImplementedError``.
         """
         ...
 

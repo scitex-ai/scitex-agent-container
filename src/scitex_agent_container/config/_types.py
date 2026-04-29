@@ -203,6 +203,29 @@ class ContextManagementConfig:
 class SkillsSpec:
     required: list[str] = field(default_factory=list)  # Auto-loaded at startup
     available: list[str] = field(default_factory=list)  # Available but not auto-loaded
+    # How sac materializes the skill list into the agent's CLAUDE.md:
+    #   "at-import" — resolve each name to file paths and emit `@<path>` lines
+    #                 so Claude Code inlines the content at session start
+    #                 (default — eager loading per Anthropic @-import).
+    #   "block"     — emit a ```skills <name>``` block (legacy lazy form).
+    injection_mode: str = "at-import"
+    # Strategies used to resolve a skill name → file paths in at-import mode.
+    # Each entry runs independently; results are unioned + deduped.
+    #   "skill-id" — Anthropic-canonical: walk skill roots, for each
+    #                ``<dir>/SKILL.md`` resolve identity as
+    #                ``frontmatter.name`` (if set) ELSE ``<dir>.name``.
+    #                Match if identity equals the requested value.
+    #                See https://docs.claude.com/en/docs/claude-code/skills.
+    #   "tag"      — files where frontmatter ``tags:`` contains the value
+    #                (orchestration extension; not in Anthropic spec but
+    #                used by ywatanabe ``tags-expand`` pattern).
+    #   "filename" — files whose basename (without ``.md``) matches
+    #                (opt-in; broader than ``skill-id``, can over-match).
+    match_by: list[str] = field(default_factory=lambda: ["skill-id", "tag"])
+    # Comparison style for ``match_by`` strategies.
+    #   "exact"   — value == candidate (default)
+    #   "partial" — value substring of candidate (case-sensitive)
+    match_style: str = "exact"
 
 
 @dataclass
