@@ -37,6 +37,14 @@ class SSHRemote:
     @staticmethod
     def _ssh_base(config: AgentConfig) -> list[str]:
         """Build the base SSH command with options."""
+        if config.remote.hops:
+            from ._ssh_chain import render_ssh_chain, skip_local_hops
+
+            remaining = skip_local_hops(config.remote.hops)
+            cmd = ["ssh"] + SSHRemote.SSH_OPTS
+            cmd.extend(render_ssh_chain(remaining))
+            return cmd
+        # Legacy dict-format path
         cmd = ["ssh"] + SSHRemote.SSH_OPTS
         if config.remote.key:
             cmd += ["-i", config.remote.key]
