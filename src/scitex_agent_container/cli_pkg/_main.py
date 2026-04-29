@@ -109,6 +109,10 @@ main.add_command(render_attach)
 # Connectivity probe (todo#457): fleet-facing WSL ↔ hub liveness.
 main.add_command(probe_network)
 
+# Install helpers: host bootstrap + cron installer.
+main.add_command(install_group)
+main.add_command(install_post_merge_cron)
+
 # A2A protocol — generic agent-to-agent surface (no fleet deps).
 from .a2a_cmds import a2a as a2a_group  # noqa: E402
 
