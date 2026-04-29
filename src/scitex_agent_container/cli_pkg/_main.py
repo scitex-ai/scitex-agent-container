@@ -15,6 +15,7 @@ from .action_cmds import actions_cli
 from .build_cmds import build, check, validate
 from .hook_cmds import hook_event
 from .info_cmds import attach, find, list_python_apis, logs
+from .install_cmds import install_group, install_post_merge_cron
 from .lifecycle_cmds import (
     cleanup,
     restart,
