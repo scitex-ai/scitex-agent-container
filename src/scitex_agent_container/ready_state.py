@@ -132,12 +132,14 @@ def wait_for_ready(
                 poll_count,
             )
             if capture_callback is not None:
+                # stx-allow: fallback (reason: capture_callback is caller-supplied and may raise; ignoring it ensures timeout handling always returns False cleanly)
                 try:
                     capture_callback(last_tail)
                 except Exception:
                     logger.exception("capture_callback raised; ignoring")
             return False
 
+        # stx-allow: fallback (reason: capture_fn wraps tmux which may not be running or the pane may have closed; empty string causes the poll loop to wait rather than crash)
         try:
             content = capture(pane_target)
         except subprocess.CalledProcessError as exc:

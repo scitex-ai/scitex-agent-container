@@ -59,6 +59,7 @@ def check_and_rotate(
 
     Never raises.
     """
+    # stx-allow: fallback (reason: quota check must never raise; caller expects a dict with action="error" on any failure)
     try:
         usage = fetch_usage(home=home)
         meta = read_credentials_metadata(home=home)
@@ -144,6 +145,7 @@ def check_and_rotate(
             ),
         }
 
+    # stx-allow: fallback (reason: quota check must never raise; caller expects a dict with action="error" on any failure)
     except Exception as exc:
         return {
             "action": "error",

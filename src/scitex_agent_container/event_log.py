@@ -48,6 +48,8 @@ def _preview_tool_input(tool_name: str, tool_input: dict | None) -> str:
     """Return a short human-readable preview for the tool input."""
     if not tool_input:
         return ""
+    # stx-allow: fallback (reason: unexpected tool_input shape must not crash
+    # the hook handler — empty string preview is acceptable)
     try:
         if tool_name == "Bash":
             s = tool_input.get("description") or tool_input.get("command") or ""
@@ -120,17 +122,23 @@ def append_event(
                 fcntl.flock(f.fileno(), fcntl.LOCK_EX)
                 f.write(line)
             finally:
+                # stx-allow: fallback (reason: unlock failure after write is
+                # non-fatal — other processes will time out and re-acquire)
                 try:
                     fcntl.flock(f.fileno(), fcntl.LOCK_UN)
                 except Exception:
                     pass
         _rotate_if_large(path)
+    # stx-allow: fallback (reason: hook handlers must never raise — any I/O
+    # or serialization failure is swallowed so the agent session continues)
     except Exception:
         # Fail-closed: never break the agent session.
         pass
 
 
 def _rotate_if_large(path: Path, cap: int = DEFAULT_CAP_LINES) -> None:
+    # stx-allow: fallback (reason: rotation is best-effort — disk full or
+    # permission error keeps the old file intact without crashing the hook)
     try:
         with open(path, "r", encoding="utf-8") as f:
             lines = f.readlines()
@@ -152,6 +160,8 @@ def read_recent(
     root: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Return the last ``limit`` event records (oldest-first)."""
+    # stx-allow: fallback (reason: log file may not exist yet for new agents;
+    # empty list is the correct initial state)
     try:
         path = _agent_log_path(agent, root)
         if not path.is_file():
@@ -160,6 +170,8 @@ def read_recent(
             lines = f.readlines()
         out: list[dict[str, Any]] = []
         for ln in lines[-limit:]:
+            # stx-allow: fallback (reason: truncated line during concurrent
+            # write — skip and continue collecting valid records)
             try:
                 out.append(json.loads(ln))
             except Exception:

@@ -190,6 +190,7 @@ def _build_app(ctx: _ServerCtx) -> Starlette:
         dispatcher = ctx.dispatchers.get(name)
         if dispatcher is None:
             return JSONResponse({"error": f"unknown agent: {name}"}, status_code=404)
+        # stx-allow: fallback (reason: observability endpoint must not crash the server; returns 500 with details instead)
         try:
             tasks = await dispatcher.snapshot_active_tasks()
         except Exception as exc:  # pragma: no cover — defense in depth

@@ -22,6 +22,7 @@ def check(config_path: str) -> None:
     available before starting the agent. Useful for debugging deployment
     failures.
     """
+    # stx-allow: fallback (reason: config file may not exist or contain invalid YAML; CLI exits with code 1 to signal preflight failure)
     try:
         config = load_config(config_path)
     except Exception as exc:
@@ -83,6 +84,7 @@ def check(config_path: str) -> None:
 
         sac_bin = shutil.which("scitex-agent-container")
         if sac_bin:
+            # stx-allow: fallback (reason: subprocess to get version may fail due to permission or env issues; "unknown" version is safe for the preflight display)
             try:
                 proc = subprocess.run(
                     ["scitex-agent-container", "--version"],
@@ -101,6 +103,7 @@ def check(config_path: str) -> None:
             console.print(f"  {'scitex-agent-container:':30s} [red]FAIL[/red]")
             console.print("    [red]  Fix: pip install scitex-agent-container[/red]")
 
+        # stx-allow: fallback (reason: df may be unavailable or timeout in restricted environments; showing "unknown" disk status is acceptable for a preflight report)
         try:
             proc = subprocess.run(
                 ["df", "-h", "/"], capture_output=True, text=True, timeout=5

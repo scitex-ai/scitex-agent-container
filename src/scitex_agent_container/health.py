@@ -160,6 +160,7 @@ def health_monitor(
             time.sleep(current_backoff)
 
             if restart_fn is not None:
+                # stx-allow: fallback (reason: restart callback failure must not abort the health-monitor loop; error is printed and monitoring continues)
                 try:
                     restart_fn(config)
                 except Exception:

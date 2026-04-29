@@ -62,6 +62,8 @@ def _encode_claude_project(workdir: str) -> str:
 
 def _latest_jsonls(workdir: str) -> list[Path]:
     # Claude Code encodes the *resolved* cwd, so follow symlinks first.
+    # stx-allow: fallback (reason: broken symlink or cross-device path can
+    # raise — raw workdir string is an acceptable fallback for encoding)
     try:
         resolved = str(Path(workdir).expanduser().resolve())
     except Exception:
@@ -69,6 +71,8 @@ def _latest_jsonls(workdir: str) -> list[Path]:
     proj_dir = Path.home() / ".claude" / "projects" / _encode_claude_project(resolved)
     if not proj_dir.is_dir():
         return []
+    # stx-allow: fallback (reason: concurrent file deletion between glob and
+    # stat() causes OSError — return empty list rather than raising)
     try:
         return sorted(
             proj_dir.glob("*.jsonl"),
@@ -82,6 +86,8 @@ def _latest_jsonls(workdir: str) -> list[Path]:
 def _parse_skills(workdir: str) -> list[str]:
     """Parse ```skills fenced code block from workspace CLAUDE.md."""
     skills: list[str] = []
+    # stx-allow: fallback (reason: CLAUDE.md may be absent or unreadable;
+    # empty skills list is an acceptable result for unconfigured agents)
     try:
         cmd = Path(workdir) / "CLAUDE.md"
         if cmd.is_file():
@@ -121,6 +127,8 @@ def parse_subagent_count_from_pane_text(pane: str) -> int:
 def _subagent_count_from_pane(session: str, multiplexer: str) -> int:
     if multiplexer != "tmux":
         return 0
+    # stx-allow: fallback (reason: session may not exist yet; 0 is the
+    # correct "unknown" sentinel — never block a heartbeat on tmux error)
     try:
         pane = subprocess.run(
             ["tmux", "capture-pane", "-t", session, "-p"],
@@ -136,6 +144,8 @@ def _capture_pane(session: str, multiplexer: str, max_chars: int = 10000) -> str
     """Return the current tmux pane contents, truncated. Empty on error."""
     if multiplexer != "tmux":
         return ""
+    # stx-allow: fallback (reason: session may have exited between the
+    # has-session check and capture-pane — empty string is safe for callers)
     try:
         out = (
             subprocess.run(
@@ -258,6 +268,8 @@ def _config_candidates(workdir: str, filename: str) -> list[Path]:
         cands += [p / filename, p / ".claude" / filename]
         if p.parent.name == "workspaces":
             cands.append(p.parent / f"mamba-{p.name}" / filename)
+        # stx-allow: fallback (reason: git root walk can fail on pathological
+        # filesystems — missing git root just skips that candidate)
         try:
             git_root = p
             while git_root != git_root.parent and not (git_root / ".git").exists():
@@ -281,6 +293,8 @@ def _config_candidates(workdir: str, filename: str) -> list[Path]:
 
 def _read_claude_md(workdir: str, max_chars: int = 20000) -> str:
     for p in _config_candidates(workdir, "CLAUDE.md"):
+        # stx-allow: fallback (reason: permission error on one candidate
+        # must not prevent trying the next — best-effort file read)
         try:
             if not p.is_file():
                 continue
@@ -308,12 +322,16 @@ def _redact_mcp_tree(obj):
 
 def _read_mcp_json(workdir: str, max_chars: int = 10000) -> str:
     for p in _config_candidates(workdir, ".mcp.json"):
+        # stx-allow: fallback (reason: permission error on one candidate
+        # must not prevent trying the next — best-effort file read)
         try:
             if not p.is_file():
                 continue
             raw = p.read_text(errors="replace")
         except Exception:
             continue
+        # stx-allow: fallback (reason: corrupt JSON falls back to raw-with-
+        # redaction rather than raising — collect_rich is best-effort)
         try:
             doc = json.loads(raw)
             pretty = json.dumps(_redact_mcp_tree(doc), indent=2)
@@ -328,6 +346,8 @@ def _pids_from_session(session: str, multiplexer: str) -> tuple[int, int]:
     ppid = 0
     if multiplexer != "tmux":
         return pid, ppid
+    # stx-allow: fallback (reason: tmux session may not exist yet or pgrep
+    # may return no results — pid/ppid of 0 is a valid "unknown" sentinel)
     try:
         out = (
             subprocess.run(
@@ -413,6 +433,8 @@ def collect_rich(
 
     jsonls = _latest_jsonls(workdir)
     if jsonls:
+        # stx-allow: fallback (reason: stat() can race with file deletion;
+        # missing started_at is acceptable — field stays empty)
         try:
             earliest = min(jsonls, key=lambda p: p.stat().st_mtime)
             started_at = datetime.fromtimestamp(
@@ -421,12 +443,16 @@ def collect_rich(
         except Exception:
             pass
 
+        # stx-allow: fallback (reason: JSONL may be unreadable mid-rotate;
+        # empty lines list means no transcript fields — non-fatal)
         try:
             lines = jsonls[0].read_text().splitlines()[-50:]
         except Exception:
             lines = []
 
         for line in reversed(lines):
+            # stx-allow: fallback (reason: individual JSONL lines may be
+            # truncated mid-write; skip invalid lines and keep scanning)
             try:
                 obj = json.loads(line)
             except Exception:
@@ -454,6 +480,8 @@ def collect_rich(
         # dashboard can show "Bash: docker compose build" instead of just
         # "Bash". Per ywatanabe complaint msg 5481.
         for line in reversed(lines):
+            # stx-allow: fallback (reason: truncated JSONL line during rotation;
+            # skip and keep scanning for last valid tool_use)
             try:
                 obj = json.loads(line)
             except Exception:
@@ -497,6 +525,8 @@ def collect_rich(
         # "what was this agent last asked to do" snippet which is more
         # meaningful than the tool name alone.
         for line in reversed(lines):
+            # stx-allow: fallback (reason: truncated JSONL line during rotation;
+            # skip and keep scanning for last valid user message)
             try:
                 obj = json.loads(line)
             except Exception:
@@ -550,6 +580,8 @@ def collect_rich(
     # Populated by `scitex-agent-container hook-event` entries wired into
     # the agent's .claude/settings.local.json. Non-agentic: pure ring-
     # buffer read.
+    # stx-allow: fallback (reason: event_log DB may not exist on agents that
+    # haven't run a hook yet — empty summary is a valid initial state)
     try:
         from .event_log import summarize as _summarize_events
 
@@ -563,6 +595,8 @@ def collect_rich(
             "counts": {},
         }
     # Use canonical fleet name (e.g. "nas" instead of "DXP480TPLUS-994")
+    # stx-allow: fallback (reason: resolve_hostname reads a YAML that may be
+    # absent on unconfigured hosts — raw gethostname is an acceptable fallback)
     try:
         from .config._host import resolve_hostname
 
@@ -593,6 +627,8 @@ def collect_rich(
         quota_from_cache = False  # live from statusline, not cached
 
     if quota_5h_used_pct is None:
+        # stx-allow: fallback (reason: fetch_usage may fail on network timeout
+        # or missing credentials; quota_error captures the reason for callers)
         try:
             usage = fetch_usage()
             quota_5h_used_pct = usage.get("used_pct_5h")
@@ -606,6 +642,8 @@ def collect_rich(
 
     # ---- Account / credential identity ------------------------------------
     account_email: str | None = None
+    # stx-allow: fallback (reason: credentials file absent on freshly
+    # provisioned agents — account_email stays None until auth completes)
     try:
         from .credentials import read_credentials_metadata
 
@@ -615,6 +653,8 @@ def collect_rich(
         pass
 
     # ---- Machine resource metrics (psutil, optional) -----------------------
+    # stx-allow: fallback (reason: psutil is an optional dependency; absent
+    # on minimal installs — metrics dict stays empty, dashboard handles it)
     try:
         import psutil as _psutil
 
@@ -727,6 +767,8 @@ def _collect_action_summary_fields(agent_name: str) -> dict[str, Any]:
     heartbeat. All keys are prefixed ``action_`` so consumers know
     which subsystem they came from.
     """
+    # stx-allow: fallback (reason: actions.db may be absent or corrupt;
+    # empty action summary never blocks a heartbeat — fail-open by design)
     try:
         from . import action_store
 

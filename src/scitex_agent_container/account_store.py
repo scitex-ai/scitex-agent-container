@@ -47,6 +47,7 @@ def list_accounts(
     if not store.is_dir():
         return accounts
     for meta_file in sorted(store.glob("*.json")):
+        # stx-allow: fallback (reason: individual account JSON may be corrupt or unreadable; skipping it keeps the rest of the list intact)
         try:
             with meta_file.open("r", encoding="utf-8") as fh:
                 data = json.load(fh)
@@ -145,6 +146,7 @@ def switch_account(
         }
 
     claude_dir = _home / ".claude"
+    # stx-allow: fallback (reason: ~/.claude/ may be on a read-only filesystem or a tmp copy may fail mid-flight; returning a failure dict is preferable to an unhandled exception)
     try:
         claude_dir.mkdir(parents=True, exist_ok=True)
         for src in cred_dir.iterdir():

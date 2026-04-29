@@ -43,6 +43,7 @@ def _resolve_agent(flag: str) -> str:
         val = os.environ.get(key)
         if val:
             return val
+    # stx-allow: fallback (reason: cwd may be inaccessible in sandboxed environments; "anonymous-agent" is a safe sentinel that still allows event logging to proceed)
     try:
         return Path.cwd().name or "anonymous-agent"
     except Exception:
@@ -65,8 +66,10 @@ def _resolve_agent(flag: str) -> str:
 )
 def hook_event(kind: str, agent_flag: str) -> None:
     """Append a Claude Code hook event to the per-agent ring-buffer."""
+    # stx-allow: fallback (reason: hook handler must never crash the host agent; any error in stdin read, JSON parse, or event append is swallowed so the tool call is not aborted)
     try:
         raw = sys.stdin.read() or "{}"
+        # stx-allow: fallback (reason: Claude Code may send malformed JSON in some hook payloads; preserving raw text up to 500 chars is better than dropping the event entirely)
         try:
             payload = json.loads(raw)
         except Exception:
