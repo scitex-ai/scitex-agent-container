@@ -18,8 +18,11 @@ from .info_cmds import attach, find, list_python_apis, logs
 from .lifecycle_cmds import (
     cleanup,
     restart,
+    send_accept,
     start,
+    start_auto_accept,
     stop,
+    stop_auto_accept,
 )
 from .probe_cmds import probe_network
 from .recall_cmds import recall
