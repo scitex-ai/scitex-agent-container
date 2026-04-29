@@ -60,6 +60,7 @@ def find(
         elif sub.suffix == ".yaml":
             candidates.append(sub)
     for yaml_path in candidates:
+        # stx-allow: fallback (reason: individual YAML files in the search directory may be invalid or unrelated; skipping bad files lets the search return partial results rather than aborting)
         try:
             cfg = load_config(yaml_path)
         except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
@@ -112,6 +113,7 @@ def find(
 )
 def logs(name: str, lines: int) -> None:
     """Show recent agent output."""
+    # stx-allow: fallback (reason: agent_logs reads from multiplexer or log files that may be absent if the agent was never started; error is reported and CLI exits with code 1)
     try:
         output = agent_logs(name, lines)
         if output:

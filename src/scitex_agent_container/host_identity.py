@@ -49,6 +49,7 @@ def _short(name: str) -> str:
 def _auto_aliases() -> set[str]:
     """Names this host always answers to, derived from the OS."""
     names: set[str] = set(_UNIVERSAL_LOOPBACK)
+    # stx-allow: fallback (reason: socket.gethostname() can fail in restricted container environments; loopback names are still returned as a safe baseline)
     try:
         hn = socket.gethostname()
         if hn:
@@ -56,6 +57,7 @@ def _auto_aliases() -> set[str]:
             names.add(_short(hn))
     except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         pass
+    # stx-allow: fallback (reason: os.uname() is unavailable on some platforms (e.g. Windows); hostname-derived names are best-effort and the loopback set is still complete)
     try:
         nn = os.uname().nodename
         if nn:

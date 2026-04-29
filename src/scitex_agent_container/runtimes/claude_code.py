@@ -228,6 +228,18 @@ class ClaudeCodeRuntime(RuntimeBase):
             )
 
         lines = []
+        # Source .env files first so explicit env: values in YAML override them.
+        # Relative paths are resolved relative to workdir on the target host.
+        # set -a / set +a auto-exports every variable sourced from the file.
+        for env_file in config.env_files:
+            if env_file.startswith("/") or env_file.startswith("~"):
+                file_path = f'"{env_file}"'
+            else:
+                # Workspace-relative: workdir is cd'd to before this runs.
+                file_path = f'"./{env_file}"'
+            lines.append(
+                f"if [ -f {file_path} ]; then set -a; . {file_path}; set +a; fi"
+            )
         for key, value in config.env.items():
             lines.append(f'export {key}="{_resolve(str(value))}"')
         # Always export the canonical fleet hostname so downstream consumers
@@ -235,6 +247,7 @@ class ClaudeCodeRuntime(RuntimeBase):
         # than the OS-reported FQDN ("Yusukes-MacBook-Air.local"). The
         # sidecar already prefers SCITEX_OROCHI_MACHINE over Node's
         # hostname() — this just hands it the canonical value.
+        # stx-allow: fallback (reason: resolve_hostname() can fail on misconfiguration; leaving SCITEX_OROCHI_MACHINE unset is safe because the sidecar falls back to its own hostname() call)
         try:
             from ..config._host import resolve_hostname
 
@@ -507,6 +520,7 @@ class ClaudeCodeRuntime(RuntimeBase):
         for sc in commands:
             if sc.delay > 0:
                 time.sleep(sc.delay)
+            # stx-allow: fallback (reason: multiplexer send can fail if the session is temporarily unavailable; logging the error and continuing allows remaining startup commands to be attempted)
             try:
                 mux.send_text_and_submit(config.screen_name, sc.command)
                 logger.info(
@@ -591,6 +605,7 @@ class ClaudeCodeRuntime(RuntimeBase):
         )
 
         if started:
+            # stx-allow: fallback (reason: a2a sidecar is optional; a spawn failure must not prevent the agent itself from starting)
             try:
                 _a2a_start_sidecar(config)
             except Exception:  # noqa: BLE001 — never block agent start  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
@@ -626,6 +641,7 @@ class ClaudeCodeRuntime(RuntimeBase):
             elif config.container.runtime == "apptainer":
                 return ApptainerRuntime().stop(config)
 
+        # stx-allow: fallback (reason: a2a sidecar cleanup is best-effort; a stop failure must not prevent the agent session from being torn down)
         try:
             _a2a_stop_sidecar(config)
         except Exception:  # noqa: BLE001 — never block agent stop  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)

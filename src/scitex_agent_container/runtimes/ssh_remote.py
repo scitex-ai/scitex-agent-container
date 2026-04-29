@@ -285,6 +285,7 @@ class SSHRemote:
             local_src = defdir / src_file
             if local_src.exists():
                 remote_src = f"{remote_dir}/{src_file}"
+                # stx-allow: fallback (reason: src_* files are optional v2 enhancements; an SSH/IO error copying them must not abort the remote deploy of the primary config)
                 try:
                     content_src = local_src.read_text()
                     ssh_cmd_src = SSHRemote._ssh_base(config) + [f"cat > {remote_src}"]
@@ -374,6 +375,7 @@ class SSHRemote:
         if result.returncode != 0:
             screen_name = config.screen_name or f"cld-{config.name}"
             screen_output = ""
+            # stx-allow: fallback (reason: diagnostic SSH call to capture screen state can fail independently of the original start failure; the RuntimeError is raised regardless with whatever output was captured)
             try:
                 diag = SSHRemote.run(
                     config,
@@ -420,6 +422,7 @@ class SSHRemote:
     def is_running(config: AgentConfig) -> bool:
         """Check if agent is running on remote machine via screen -ls."""
         screen_name = config.screen_name or f"cld-{config.name}"
+        # stx-allow: fallback (reason: SSH connectivity may be unavailable when checking status; returning False is correct because an unreachable host means the agent cannot be confirmed running)
         try:
             result = SSHRemote.run(
                 config,

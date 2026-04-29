@@ -94,7 +94,8 @@ class BaseSyncExecutor(AgentExecutor):
                 message=_agent_text_message(str(exc), task_id, context_id)
             )
             return
-        except Exception as exc:  # noqa: BLE001  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+        # stx-allow: fallback (reason: unhandled executor crash is reported as a failed task rather than propagating and breaking the event loop)
+        except Exception as exc:  # noqa: BLE001
             log.exception("a2a executor %r crashed", self.handler_key)
             await updater.failed(
                 message=_agent_text_message(

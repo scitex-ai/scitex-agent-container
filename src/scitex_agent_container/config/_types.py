@@ -318,6 +318,7 @@ class AgentConfig:
     workdir: str = "~/proj"
     python_venv: str = ""  # resolved venv path (post _resolve_python_venv)
     env: dict[str, str] = field(default_factory=dict)
+    env_files: list[str] = field(default_factory=list)  # .env file paths (workspace-relative ok)
     screen_name: str = ""
     labels: dict[str, str] = field(default_factory=dict)
     container: ContainerSpec = field(default_factory=ContainerSpec)

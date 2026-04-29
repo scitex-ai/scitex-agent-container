@@ -43,6 +43,7 @@ def _load_hostname_aliases() -> dict[str, str]:
         import yaml  # PyYAML ships with the container; same import sac uses.
     except ImportError:  # stx-allow: fallback (reason: optional dependency not installed)
         return {}
+    # stx-allow: fallback (reason: malformed YAML config must not break hostname resolution; empty aliases dict is the safe default)
     try:
         data = yaml.safe_load(_CONFIG_PATH.read_text()) or {}
     except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
