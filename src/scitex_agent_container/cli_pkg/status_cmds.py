@@ -102,6 +102,7 @@ def status(
         sys.exit(2)
 
     if name:
+        # stx-allow: fallback (reason: agent status collection may fail with user-visible error)
         try:
             info = agent_status(name)
         except Exception as exc:
@@ -128,6 +129,7 @@ def status(
             table.add_row(key, str(value), style=style)
         console.print(table)
     else:
+        # stx-allow: fallback (reason: credentials file may be missing or unreadable)
         try:
             claude_account = read_credentials_metadata()
         except (OSError, json_mod.JSONDecodeError):
@@ -210,6 +212,7 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
             console.print(f"[red]Agent '{name}' not found in registry[/red]")
         sys.exit(1)
 
+    # stx-allow: fallback (reason: config load may fail for stale or removed config files)
     try:
         config = load_config(entry["config"])
     except Exception as exc:
@@ -280,6 +283,7 @@ def check_agent(ctx: click.Context, name: str, as_json: bool) -> None:
             console.print(f"[red]Agent '{name}' not found in registry[/red]")
         sys.exit(1)
 
+    # stx-allow: fallback (reason: config load may fail for stale or removed config files)
     try:
         config = load_config(entry["config"])
     except Exception as exc:

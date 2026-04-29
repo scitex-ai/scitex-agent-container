@@ -125,6 +125,7 @@ def _coerce_float(value: Any) -> Optional[float]:
     depending on the Claude Code build, so be forgiving."""
     if value is None:
         return None
+    # stx-allow: fallback (reason: statusline parser may emit non-numeric or None values)
     try:
         return float(value)
     except (TypeError, ValueError):

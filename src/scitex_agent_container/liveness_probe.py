@@ -215,6 +215,7 @@ def wait_for_nonce_echo(
     while True:
         now = time_fn()
         expired = now >= deadline
+        # stx-allow: fallback (reason: pane capture may fail if multiplexer is unavailable)
         try:
             pane = capture(pane_target) or ""
         except Exception as exc:  # pragma: no cover - defensive

@@ -196,6 +196,7 @@ class AutoResponseScheduler:
         # agent, and compacting first keeps the subsequent probe
         # cheap.
         ctx_pct = None
+        # stx-allow: fallback (reason: context percentage probe may fail if sensor is unavailable)
         try:
             ctx_pct = ctx.context_pct_fn()
         except Exception:
@@ -241,6 +242,7 @@ class AutoResponseScheduler:
         """
         start = self._time()
         while True:
+            # stx-allow: fallback (reason: tick may raise unexpectedly; run loop must continue)
             try:
                 self.tick()
             except Exception as exc:  # pragma: no cover - defensive

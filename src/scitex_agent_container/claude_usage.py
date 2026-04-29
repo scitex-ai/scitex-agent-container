@@ -87,6 +87,7 @@ def _iso_now() -> str:
 
 def _load_json(path: Path) -> dict[str, Any] | None:
     """Load JSON file; return None on any error."""
+    # stx-allow: fallback (reason: filesystem read may fail on missing or corrupt JSON file)
     try:
         with path.open("r", encoding="utf-8") as fh:
             data = json.load(fh)
@@ -169,6 +170,7 @@ def _refresh_access_token(
         headers={"Content-Type": "application/json"},
         method="POST",
     )
+    # stx-allow: fallback (reason: token refresh HTTP request may fail due to network or auth error)
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             raw = resp.read()
@@ -183,9 +185,11 @@ def _refresh_access_token(
 
     # Atomically update the credentials file.
     creds_path = _credentials_path(home)
+    # stx-allow: fallback (reason: credentials file update may fail; token is still usable in memory)
     try:
         with open(creds_path, "r+", encoding="utf-8") as fh:
             fcntl.flock(fh, fcntl.LOCK_EX)
+            # stx-allow: fallback (reason: credentials JSON may be corrupt or file write may fail)
             try:
                 data = json.load(fh)
                 if not isinstance(data, dict):
@@ -223,6 +227,7 @@ def _read_cache(home: Path) -> dict[str, Any] | None:
     fetched_at_str = data.get("fetched_at")
     if not isinstance(fetched_at_str, str):
         return None
+    # stx-allow: fallback (reason: cached timestamp may be malformed or from an older format)
     try:
         fetched_at = datetime.fromisoformat(fetched_at_str)
         if fetched_at.tzinfo is None:
@@ -239,6 +244,7 @@ def _read_cache(home: Path) -> dict[str, Any] | None:
 def _write_cache(home: Path, result: dict[str, Any]) -> None:
     """Write result to cache file (best-effort, never raises)."""
     path = _cache_path(home)
+    # stx-allow: fallback (reason: cache write may fail on disk full or permission error)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = Path(str(path) + ".tmp")
@@ -265,6 +271,7 @@ def _fetch_from_api(access_token: str) -> list[dict[str, Any]] | None:
         headers={"Authorization": f"Bearer {access_token}"},
         method="GET",
     )
+    # stx-allow: fallback (reason: usage API request may fail due to network or auth error)
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             raw = resp.read()
@@ -275,6 +282,7 @@ def _fetch_from_api(access_token: str) -> list[dict[str, Any]] | None:
     except Exception:
         return None
 
+    # stx-allow: fallback (reason: response body may not be valid JSON)
     try:
         payload = json.loads(raw)
     except Exception:
@@ -398,6 +406,7 @@ def fetch_usage(home: Path | None = None) -> dict[str, Any]:
 
     # --- API call -----------------------------------------------------------
     windows = None
+    # stx-allow: fallback (reason: API call may fail with HTTP error or network issue)
     try:
         windows = _fetch_from_api(access_token)
     except urllib.error.HTTPError as exc:
@@ -406,6 +415,7 @@ def fetch_usage(home: Path | None = None) -> dict[str, Any]:
             new_token = _refresh_access_token(_home, refresh_token, client_id)
             if new_token:
                 access_token = new_token
+                # stx-allow: fallback (reason: retry after token refresh may also fail)
                 try:
                     windows = _fetch_from_api(access_token)
                 except Exception:
@@ -426,6 +436,7 @@ def fetch_usage(home: Path | None = None) -> dict[str, Any]:
     result["error"] = None
 
     # Security guard — must run before cache write
+    # stx-allow: fallback (reason: security check raises on token leak; return error instead of crashing)
     try:
         _check_no_token_leak(result)
     except RuntimeError as exc:

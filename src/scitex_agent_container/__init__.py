@@ -17,6 +17,7 @@ Modules:
 from importlib.metadata import PackageNotFoundError as _PackageNotFoundError
 from importlib.metadata import version as _version
 
+# stx-allow: fallback (reason: package may not be installed in editable/dev environments)
 try:
     __version__ = _version("scitex-agent-container")
 except _PackageNotFoundError:

@@ -101,6 +101,7 @@ def probe_dns(
     """
     start = time.monotonic()
     old = socket.getdefaulttimeout()
+    # stx-allow: fallback (reason: DNS resolution may fail due to network unavailability)
     try:
         socket.setdefaulttimeout(timeout)
         infos = socket.getaddrinfo(host, None)
@@ -137,6 +138,7 @@ def probe_tcp(
     request would pass ``probe_https`` but also passes this layer.
     """
     start = time.monotonic()
+    # stx-allow: fallback (reason: TCP connection may fail due to firewall or host unreachable)
     try:
         with socket.create_connection((host, port), timeout=timeout):
             pass
@@ -168,6 +170,7 @@ def probe_https(
     if they actually need a 2xx.
     """
     start = time.monotonic()
+    # stx-allow: fallback (reason: HTTPS request may fail due to network or TLS error)
     try:
         ctx = ssl.create_default_context()
         req = urllib.request.Request(url, method="GET")
@@ -233,6 +236,7 @@ def _read_ip_route() -> str:
     path = Path("/proc/net/route")
     if not path.exists():
         return ""
+    # stx-allow: fallback (reason: /proc/net/route may be unreadable on restricted systems)
     try:
         lines = path.read_text().splitlines()
     except OSError:
@@ -247,6 +251,7 @@ def _read_ip_route() -> str:
         if dest_hex != "00000000":
             continue
         # gw_hex is little-endian IPv4 bytes.
+        # stx-allow: fallback (reason: parsing hex gateway value from proc file may fail on malformed data)
         try:
             gw_int = int(gw_hex, 16)
         except ValueError:
@@ -280,6 +285,7 @@ def probe_gateway(
             latency_ms=latency_ms,
             err="no default route",
         )
+    # stx-allow: fallback (reason: TCP connection to gateway may fail if LAN is unreachable)
     try:
         with socket.create_connection((gw, 53), timeout=timeout):
             pass
@@ -352,6 +358,7 @@ def append_result(
     Does not rotate — the file is append-only and small (one line per
     run, <1 KiB); ops rotates weekly via logrotate if needed.
     """
+    # stx-allow: fallback (reason: filesystem write may fail on disk full or permission error)
     try:
         path = _log_path(agent, root=root)
         with path.open("a", encoding="utf-8") as fh:

@@ -46,6 +46,7 @@ PACKAGES = [
 
 
 def test_import(module):
+    # stx-allow: fallback (reason: optional dependency not always installed)
     try:
         importlib.import_module(module)
         return True, ""
@@ -59,6 +60,7 @@ def test_cli(entry, timeout=15):
     path = shutil.which(entry)
     if not path:
         return None, "cli not found"
+    # stx-allow: fallback (reason: subprocess may not be available or CLI may fail to run)
     try:
         r = subprocess.run([path, "--help"], capture_output=True,
                            text=True, timeout=timeout)

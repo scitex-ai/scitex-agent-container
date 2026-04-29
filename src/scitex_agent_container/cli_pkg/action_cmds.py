@@ -104,6 +104,7 @@ def run_cmd(
         click.echo(f"Agent '{agent}' not found in registry.", err=True)
         sys.exit(2)
 
+    # stx-allow: fallback (reason: config load may fail for stale or invalid config files)
     try:
         from ..config import load_config  # local import: keeps the
 
@@ -128,6 +129,7 @@ def run_cmd(
 
     # --- build the ActionContext ----------------------------------------
     def _capture() -> str:
+        # stx-allow: fallback (reason: pane capture may fail if multiplexer is unavailable)
         try:
             return mux.capture_content(session) or ""
         except Exception:
@@ -139,6 +141,7 @@ def run_cmd(
         Failures degrade to ``None`` — the action engine treats that as
         "cannot confirm" and will time out instead of crashing.
         """
+        # stx-allow: fallback (reason: agent_meta collection may fail; degrade to None gracefully)
         try:
             from .. import agent_meta
 

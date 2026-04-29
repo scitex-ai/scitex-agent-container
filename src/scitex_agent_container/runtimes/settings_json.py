@@ -106,6 +106,7 @@ def _mcp_server_names(config: AgentConfig, workdir: str) -> list[str]:
     # deploy_src_mcp_json earlier in the start flow)
     mcp_path = Path(workdir) / ".mcp.json"
     if mcp_path.exists():
+        # stx-allow: fallback (reason: .mcp.json may be corrupt or unreadable)
         try:
             data = json.loads(mcp_path.read_text())
             names.update(data.get("mcpServers", {}).keys())
@@ -157,6 +158,7 @@ def setup_settings_json(config: AgentConfig, workdir: str) -> None:
     # Merge with existing file
     existing: dict = {}
     if settings_path.exists():
+        # stx-allow: fallback (reason: settings.local.json may be corrupt or unreadable)
         try:
             existing = json.loads(settings_path.read_text())
         except (json.JSONDecodeError, OSError):
@@ -193,6 +195,7 @@ def cleanup_settings_json(config: AgentConfig, workdir: str) -> None:
     if not settings_path.exists():
         return
 
+    # stx-allow: fallback (reason: settings file may be corrupt or unreadable)
     try:
         data = json.loads(settings_path.read_text())
     except (json.JSONDecodeError, OSError):

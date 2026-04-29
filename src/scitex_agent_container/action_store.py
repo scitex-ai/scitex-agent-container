@@ -80,6 +80,7 @@ def _safe_float(value: Any) -> float | None:
     """Coerce to float, returning None for None / unparseable."""
     if value is None:
         return None
+    # stx-allow: fallback (reason: value may be a non-numeric type from DB row)
     try:
         return float(value)
     except (TypeError, ValueError):
@@ -133,6 +134,7 @@ def _truncate_snapshot(
             **({"truncated": True} if len(snap) > max_chars else {}),
         }
     # Arbitrary serializable object — dump once then truncate.
+    # stx-allow: fallback (reason: arbitrary snapshot object may not be JSON-serializable)
     try:
         dumped = json.dumps(snap, default=str)
     except (TypeError, ValueError):
@@ -161,6 +163,7 @@ def append_attempt(
     * ``pane_before`` / ``pane_after`` — snapshot dicts / strings.
     * ``extras`` — action-specific fields (dict).
     """
+    # stx-allow: fallback (reason: record may have missing or wrong-type required keys)
     try:
         agent = str(record["agent"])
         action = str(record["action"])
@@ -173,8 +176,10 @@ def append_attempt(
     pane_before = _truncate_snapshot(record.get("pane_before"))
     pane_after = _truncate_snapshot(record.get("pane_after"))
     extras = record.get("extras") or {}
+    # stx-allow: fallback (reason: SQLite insert may fail on disk full or corrupt database)
     try:
         conn = _get_conn(_db_path(root))
+        # stx-allow: fallback (reason: SQLite execute may fail; connection must be closed in finally)
         try:
             conn.execute(
                 "INSERT INTO attempts "
@@ -203,6 +208,7 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         raw = out.get(key)
         if raw is None:
             continue
+        # stx-allow: fallback (reason: JSON column may be corrupt; rest of row remains usable)
         try:
             out[key] = json.loads(raw)
         except (TypeError, ValueError):
@@ -275,8 +281,10 @@ def query(
         + " ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?"
     )
     params.extend([int(limit), int(offset)])
+    # stx-allow: fallback (reason: SQLite query may fail on missing or corrupt database)
     try:
         conn = _get_conn(_db_path(root))
+        # stx-allow: fallback (reason: SQLite execute may fail; connection must be closed in finally)
         try:
             rows = conn.execute(sql, tuple(params)).fetchall()
         finally:
@@ -319,8 +327,10 @@ def stats(
         "ORDER BY action ASC, count DESC"
     )
     sql_samples = "SELECT action, outcome, elapsed_s FROM attempts" + where
+    # stx-allow: fallback (reason: SQLite stats query may fail on missing or corrupt database)
     try:
         conn = _get_conn(_db_path(root))
+        # stx-allow: fallback (reason: SQLite execute may fail; connection must be closed in finally)
         try:
             groups = conn.execute(sql_counts, tuple(params)).fetchall()
             samples = conn.execute(sql_samples, tuple(params)).fetchall()
@@ -392,6 +402,7 @@ def summarize(
     for r in rows:
         key = f"{r['action']}:{r['outcome']}"
         counts[key] = counts.get(key, 0) + 1
+        # stx-allow: fallback (reason: elapsed_s may be NULL or non-numeric in corrupt rows)
         try:
             samples_by_action.setdefault(r["action"], []).append(float(r["elapsed_s"]))
         except (TypeError, ValueError):
@@ -422,8 +433,10 @@ def purge_old(
     rows deleted. Safe to call periodically from a cron / daemon."""
     d = int(days) if days is not None else DEFAULT_RETENTION_DAYS
     cutoff = (datetime.now(timezone.utc) - timedelta(days=d)).isoformat()
+    # stx-allow: fallback (reason: SQLite purge may fail on disk full or corrupt database)
     try:
         conn = _get_conn(_db_path(root))
+        # stx-allow: fallback (reason: SQLite execute may fail; connection must be closed in finally)
         try:
             cur = conn.execute("DELETE FROM attempts WHERE ts < ?", (cutoff,))
             deleted = cur.rowcount
@@ -438,8 +451,10 @@ def purge_old(
 
 def _all_rows(root: Path | None = None) -> Iterable[dict[str, Any]]:
     """Iterator over every row — used by tests / export tooling."""
+    # stx-allow: fallback (reason: SQLite read may fail on missing or corrupt database)
     try:
         conn = _get_conn(_db_path(root))
+        # stx-allow: fallback (reason: SQLite execute may fail; connection must be closed in finally)
         try:
             rows = conn.execute(
                 "SELECT id, ts, agent, action, outcome, elapsed_s, "

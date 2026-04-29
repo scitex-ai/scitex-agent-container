@@ -60,6 +60,7 @@ def find(
         elif sub.suffix == ".yaml":
             candidates.append(sub)
     for yaml_path in candidates:
+        # stx-allow: fallback (reason: individual config file may be invalid; skip and continue)
         try:
             cfg = load_config(yaml_path)
         except Exception:
@@ -112,6 +113,7 @@ def find(
 )
 def logs(name: str, lines: int) -> None:
     """Show recent agent output."""
+    # stx-allow: fallback (reason: log read may fail if agent session or log file is missing)
     try:
         output = agent_logs(name, lines)
         if output:
@@ -200,6 +202,7 @@ def list_python_apis(
                 if obj is None:
                     break
             if obj and callable(obj):
+                # stx-allow: fallback (reason: inspect.signature may fail on built-in or C functions)
                 try:
                     sig = str(inspect.signature(obj))
                 except (ValueError, TypeError):

@@ -42,6 +42,7 @@ def _short(name: str) -> str:
 def _auto_aliases() -> set[str]:
     """Names this host always answers to, derived from the OS."""
     names: set[str] = set(_UNIVERSAL_LOOPBACK)
+    # stx-allow: fallback (reason: socket.gethostname may fail on misconfigured systems)
     try:
         hn = socket.gethostname()
         if hn:
@@ -49,6 +50,7 @@ def _auto_aliases() -> set[str]:
             names.add(_short(hn))
     except Exception:
         pass
+    # stx-allow: fallback (reason: os.uname may fail on non-POSIX systems)
     try:
         nn = os.uname().nodename
         if nn:
@@ -63,6 +65,7 @@ def _load_file_aliases() -> set[str]:
     """Read aliases from ``~/.scitex/host-identity.yaml``."""
     if not HOST_IDENTITY_PATH.exists():
         return set()
+    # stx-allow: fallback (reason: host-identity.yaml may contain invalid YAML; re-raises for caller)
     try:
         data = yaml.safe_load(HOST_IDENTITY_PATH.read_text()) or {}
     except yaml.YAMLError as exc:

@@ -87,6 +87,7 @@ def _read_state(name: str) -> dict | None:
     p = _state_path(name)
     if not p.exists():
         return None
+    # stx-allow: fallback (reason: state file may be corrupt or unreadable)
     try:
         return json.loads(p.read_text())
     except (json.JSONDecodeError, OSError):
@@ -427,6 +428,7 @@ class SlurmRuntime(RuntimeBase):
             self.stop(config)
 
         logger.info("SlurmRuntime: submitting sbatch %s", script_path)
+        # stx-allow: fallback (reason: sbatch binary may not be on PATH on non-SLURM hosts)
         try:
             proc = subprocess.run(
                 ["sbatch", str(script_path)],
@@ -475,6 +477,7 @@ class SlurmRuntime(RuntimeBase):
         if not job_id:
             _clear_state(config.name)
             return True
+        # stx-allow: fallback (reason: scancel may not be available on non-SLURM hosts)
         try:
             subprocess.run(
                 ["scancel", job_id],
@@ -496,6 +499,7 @@ class SlurmRuntime(RuntimeBase):
         job_id = str(state.get("job_id", ""))
         if not job_id:
             return False
+        # stx-allow: fallback (reason: squeue may not be available on non-SLURM hosts)
         try:
             proc = subprocess.run(
                 ["squeue", "-j", job_id, "-h", "-o", "%T"],
@@ -523,6 +527,7 @@ class SlurmRuntime(RuntimeBase):
             log_file = logs_dir / f"{job_id}.out"
         if not log_file.exists():
             return f"[sac/slurm] log not found: {log_file}"
+        # stx-allow: fallback (reason: tail command may not be available; fallback to direct read)
         try:
             proc = subprocess.run(
                 ["tail", "-n", str(lines), str(log_file)],

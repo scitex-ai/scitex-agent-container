@@ -59,6 +59,7 @@ def check_and_rotate(
 
     Never raises.
     """
+    # stx-allow: fallback (reason: usage API or credentials read may fail on network/auth error)
     try:
         usage = fetch_usage(home=home)
         meta = read_credentials_metadata(home=home)

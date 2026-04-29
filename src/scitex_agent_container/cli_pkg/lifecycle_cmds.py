@@ -143,12 +143,14 @@ def start(
                 "~/.scitex/agent-container/agents/ or $SCITEX_AGENT_CONTAINER_YAML_DIRS[/dim]"
             )
             return
+        # stx-allow: fallback (reason: hostname resolution may fail on unconfigured hosts)
         try:
             current_host = resolve_hostname()
         except RuntimeError:
             current_host = ""
         console.print(f"[blue]Starting {len(yamls)} agents...[/blue]")
         for yaml_path in yamls:
+            # stx-allow: fallback (reason: individual agent config may be invalid; skip and continue)
             try:
                 config = load_config(yaml_path)
                 skip = _singleton_skip_reason(config, current_host)
@@ -179,9 +181,11 @@ def start(
         )
         sys.exit(2)
 
+    # stx-allow: fallback (reason: config load or agent start may fail with user-visible error)
     try:
         config_path = resolve_config(config_path)
         config = load_config(config_path)
+        # stx-allow: fallback (reason: hostname resolution may fail on unconfigured hosts)
         try:
             current_host = resolve_hostname()
         except RuntimeError:
@@ -265,6 +269,7 @@ def stop(name: str | None, stop_all: bool, force: bool) -> None:
             sys.exit(1)
         return
 
+    # stx-allow: fallback (reason: agent stop may fail with user-visible error)
     try:
         # Accept either agent name or YAML path
         if "/" in name or name.endswith((".yaml", ".yml")):  # type: ignore[union-attr]
@@ -282,6 +287,7 @@ def stop(name: str | None, stop_all: bool, force: bool) -> None:
 @click.argument("name")
 def restart(name: str) -> None:
     """Restart an agent."""
+    # stx-allow: fallback (reason: agent restart may fail with user-visible error)
     try:
         if "/" in name or name.endswith((".yaml", ".yml")):
             config_path = resolve_config(name)

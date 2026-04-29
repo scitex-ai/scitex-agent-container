@@ -101,6 +101,7 @@ def _sidecar_alive(info: SidecarInfo) -> bool:
         pid = info.get("pid")
         if pid is None:
             return False
+        # stx-allow: fallback (reason: process may have exited between registration and check)
         try:
             os.kill(pid, 0)
         except ProcessLookupError:
@@ -167,6 +168,7 @@ def _snapshot_lock(agent: str) -> Iterator[None]:
     lock_p = _lock_path(agent)
     with open(lock_p, "w") as fd:
         fcntl.flock(fd.fileno(), fcntl.LOCK_EX)
+        # stx-allow: fallback (reason: lock must be released even if the caller raises)
         try:
             yield
         finally:
@@ -180,6 +182,7 @@ def _snapshot_lock(agent: str) -> Iterator[None]:
 
 
 def _run(cmd: list[str], timeout: float = 3.0) -> str:
+    # stx-allow: fallback (reason: subprocess may not be available or command may fail)
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         return r.stdout
@@ -188,6 +191,7 @@ def _run(cmd: list[str], timeout: float = 3.0) -> str:
 
 
 def _probe_tmux() -> tuple[int | None, list[str]]:
+    # stx-allow: fallback (reason: tmux may not be installed on this host)
     try:
         r = subprocess.run(
             ["tmux", "list-sessions", "-F", "#{session_name}"],
@@ -216,6 +220,7 @@ def _probe_screen_count() -> int | None:
     """
     if shutil.which("screen") is None:
         return None
+    # stx-allow: fallback (reason: screen binary may have vanished or be unavailable)
     try:
         r = subprocess.run(
             ["screen", "-ls"],
@@ -248,6 +253,7 @@ def _probe_claude_pid() -> int | None:
 
     Strategy: prefer ``pgrep -n -x claude`` (exact command-name match).
     """
+    # stx-allow: fallback (reason: pgrep may not be installed or may return no results)
     try:
         r = subprocess.run(
             ["pgrep", "-n", "-x", "claude"],
@@ -274,6 +280,7 @@ def _proc_count(pattern: str) -> int | None:
 
 
 def _probe_load1() -> float | None:
+    # stx-allow: fallback (reason: os.getloadavg not available on all platforms)
     try:
         return os.getloadavg()[0]
     except OSError:
@@ -311,6 +318,7 @@ def _probe_mem_darwin() -> tuple[int | None, int | None, int | None]:
 
 
 def _probe_mem_linux() -> tuple[int | None, int | None, int | None]:
+    # stx-allow: fallback (reason: /proc/meminfo may not exist on all Linux systems)
     try:
         text = Path("/proc/meminfo").read_text()
     except OSError:
@@ -346,6 +354,7 @@ def _probe_nproc() -> tuple[int | None, int | None]:
         if mxs.isdigit():
             mx = int(mxs)
     elif platform.system() == "Linux":
+        # stx-allow: fallback (reason: /proc/sys/kernel/pid_max may be unreadable)
         try:
             mx = int(Path("/proc/sys/kernel/pid_max").read_text().strip())
         except (OSError, ValueError):
@@ -358,6 +367,7 @@ def _probe_tmux_pids(session: str | None) -> dict[str, int | None]:
     pane: int | None = None
     if not session:
         return {"server": None, "pane": None}
+    # stx-allow: fallback (reason: tmux may not be installed or session may not exist)
     try:
         r = subprocess.run(
             ["tmux", "display", "-p", "-t", f"{session}:0", "#{pane_pid}"],
@@ -369,6 +379,7 @@ def _probe_tmux_pids(session: str | None) -> dict[str, int | None]:
             pane = int(r.stdout.strip())
     except (FileNotFoundError, subprocess.SubprocessError):
         pass
+    # stx-allow: fallback (reason: pgrep may not be installed or tmux server may not be running)
     try:
         r = subprocess.run(
             ["pgrep", "-n", "-x", "tmux"],
@@ -501,6 +512,7 @@ def take_snapshot(agent: str, *, session: str | None = None, with_diff: bool = T
         # Read previous (before rolling).
         prev_data: dict[str, Any] | None = None
         if latest_p.exists():
+            # stx-allow: fallback (reason: previous snapshot file may be corrupt or unreadable)
             try:
                 prev_data = json.loads(latest_p.read_text())
             except (OSError, json.JSONDecodeError):
@@ -515,6 +527,7 @@ def take_snapshot(agent: str, *, session: str | None = None, with_diff: bool = T
 
         # Roll latest -> prev BEFORE overwriting latest.
         if latest_p.exists():
+            # stx-allow: fallback (reason: atomic rename may fail on filesystem errors)
             try:
                 os.replace(latest_p, prev_p)
             except OSError:
@@ -539,6 +552,7 @@ def read_latest(agent: str) -> dict[str, Any] | None:
     p = _latest_path(agent)
     if not p.exists():
         return None
+    # stx-allow: fallback (reason: filesystem read may fail on missing or corrupt snapshot file)
     try:
         return json.loads(p.read_text())
     except (OSError, json.JSONDecodeError):
@@ -557,12 +571,14 @@ def snapshot_tick(
     ``has_diff``, the configured ``hooks.on_diff`` commands are fired
     via the non-blocking hook pool (todo#286 Phase 4).
     """
+    # stx-allow: fallback (reason: snapshot gathering may fail on probe errors; daemon must continue)
     try:
         snap = take_snapshot(agent, session=session)
     except Exception:  # pragma: no cover — defensive
         logger.exception("snapshot[%s]: tick failed", agent)
         return
     if agent_config is not None and snap.get("has_diff"):
+        # stx-allow: fallback (reason: on_diff hook dispatch may fail; must not interrupt snapshot daemon)
         try:
             from .hooks import run_hook
 

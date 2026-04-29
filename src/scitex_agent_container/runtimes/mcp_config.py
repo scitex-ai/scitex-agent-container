@@ -28,6 +28,7 @@ def _setup_mcp_from_servers(
 
     existing: dict = {}
     if mcp_path.exists():
+        # stx-allow: fallback (reason: .mcp.json may be corrupt or unreadable)
         try:
             existing = json.loads(mcp_path.read_text())
         except (json.JSONDecodeError, OSError):
@@ -95,6 +96,7 @@ def cleanup_mcp_config(config: AgentConfig, workdir: str) -> None:
     if not mcp_path.exists():
         return
 
+    # stx-allow: fallback (reason: .mcp.json may be corrupt or unreadable)
     try:
         data = json.loads(mcp_path.read_text())
     except (json.JSONDecodeError, OSError):

@@ -48,6 +48,7 @@ def _preview_tool_input(tool_name: str, tool_input: dict | None) -> str:
     """Return a short human-readable preview for the tool input."""
     if not tool_input:
         return ""
+    # stx-allow: fallback (reason: tool input may be an unexpected shape or type)
     try:
         if tool_name == "Bash":
             s = tool_input.get("description") or tool_input.get("command") or ""
@@ -81,6 +82,7 @@ def append_event(
     agent: str, kind: str, payload: dict[str, Any], *, root: Path | None = None
 ) -> None:
     """Append a single hook event. Never raises."""
+    # stx-allow: fallback (reason: filesystem write may fail; must never break the agent session)
     try:
         path = _agent_log_path(agent, root)
         record: dict[str, Any] = {
@@ -116,10 +118,12 @@ def append_event(
 
         line = json.dumps(record, separators=(",", ":")) + "\n"
         with open(path, "a", encoding="utf-8") as f:
+            # stx-allow: fallback (reason: file locking ensures atomic append to event log)
             try:
                 fcntl.flock(f.fileno(), fcntl.LOCK_EX)
                 f.write(line)
             finally:
+                # stx-allow: fallback (reason: lock release must always be attempted)
                 try:
                     fcntl.flock(f.fileno(), fcntl.LOCK_UN)
                 except Exception:
@@ -131,6 +135,7 @@ def append_event(
 
 
 def _rotate_if_large(path: Path, cap: int = DEFAULT_CAP_LINES) -> None:
+    # stx-allow: fallback (reason: log rotation may fail on filesystem errors)
     try:
         with open(path, "r", encoding="utf-8") as f:
             lines = f.readlines()
@@ -152,6 +157,7 @@ def read_recent(
     root: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Return the last ``limit`` event records (oldest-first)."""
+    # stx-allow: fallback (reason: filesystem read may fail on missing or corrupt log file)
     try:
         path = _agent_log_path(agent, root)
         if not path.is_file():
@@ -160,6 +166,7 @@ def read_recent(
             lines = f.readlines()
         out: list[dict[str, Any]] = []
         for ln in lines[-limit:]:
+            # stx-allow: fallback (reason: individual log line may be malformed JSON)
             try:
                 out.append(json.loads(ln))
             except Exception:

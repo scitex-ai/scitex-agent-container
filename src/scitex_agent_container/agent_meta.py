@@ -26,6 +26,7 @@ from .claude_usage import fetch_usage
 
 def detect_multiplexer(session: str) -> str:
     """Return 'tmux', 'screen', or '' if neither reports the session."""
+    # stx-allow: fallback (reason: tmux may not be installed on this host)
     try:
         if (
             subprocess.run(
@@ -37,6 +38,7 @@ def detect_multiplexer(session: str) -> str:
             return "tmux"
     except FileNotFoundError:
         pass
+    # stx-allow: fallback (reason: screen may not be installed on this host)
     try:
         r = subprocess.run(
             ["screen", "-ls", session],
@@ -62,6 +64,7 @@ def _encode_claude_project(workdir: str) -> str:
 
 def _latest_jsonls(workdir: str) -> list[Path]:
     # Claude Code encodes the *resolved* cwd, so follow symlinks first.
+    # stx-allow: fallback (reason: workdir path may be invalid or inaccessible)
     try:
         resolved = str(Path(workdir).expanduser().resolve())
     except Exception:
@@ -69,6 +72,7 @@ def _latest_jsonls(workdir: str) -> list[Path]:
     proj_dir = Path.home() / ".claude" / "projects" / _encode_claude_project(resolved)
     if not proj_dir.is_dir():
         return []
+    # stx-allow: fallback (reason: filesystem glob or stat may fail on permission issues)
     try:
         return sorted(
             proj_dir.glob("*.jsonl"),
@@ -82,6 +86,7 @@ def _latest_jsonls(workdir: str) -> list[Path]:
 def _parse_skills(workdir: str) -> list[str]:
     """Parse ```skills fenced code block from workspace CLAUDE.md."""
     skills: list[str] = []
+    # stx-allow: fallback (reason: CLAUDE.md may be missing or unreadable)
     try:
         cmd = Path(workdir) / "CLAUDE.md"
         if cmd.is_file():
@@ -99,6 +104,7 @@ def _parse_skills(workdir: str) -> list[str]:
 def _subagent_count_from_pane(session: str, multiplexer: str) -> int:
     if multiplexer != "tmux":
         return 0
+    # stx-allow: fallback (reason: subprocess may not be available or tmux session may not exist)
     try:
         pane = subprocess.run(
             ["tmux", "capture-pane", "-t", session, "-p"],
@@ -115,6 +121,7 @@ def _capture_pane(session: str, multiplexer: str, max_chars: int = 10000) -> str
     """Return the current tmux pane contents, truncated. Empty on error."""
     if multiplexer != "tmux":
         return ""
+    # stx-allow: fallback (reason: subprocess may not be available or tmux session may not exist)
     try:
         out = (
             subprocess.run(
@@ -237,6 +244,7 @@ def _config_candidates(workdir: str, filename: str) -> list[Path]:
         cands += [p / filename, p / ".claude" / filename]
         if p.parent.name == "workspaces":
             cands.append(p.parent / f"mamba-{p.name}" / filename)
+        # stx-allow: fallback (reason: filesystem traversal may fail on permission errors)
         try:
             git_root = p
             while git_root != git_root.parent and not (git_root / ".git").exists():
@@ -260,6 +268,7 @@ def _config_candidates(workdir: str, filename: str) -> list[Path]:
 
 def _read_claude_md(workdir: str, max_chars: int = 20000) -> str:
     for p in _config_candidates(workdir, "CLAUDE.md"):
+        # stx-allow: fallback (reason: CLAUDE.md candidate may be missing or unreadable)
         try:
             if not p.is_file():
                 continue
@@ -287,12 +296,14 @@ def _redact_mcp_tree(obj):
 
 def _read_mcp_json(workdir: str, max_chars: int = 10000) -> str:
     for p in _config_candidates(workdir, ".mcp.json"):
+        # stx-allow: fallback (reason: .mcp.json candidate may be missing or unreadable)
         try:
             if not p.is_file():
                 continue
             raw = p.read_text(errors="replace")
         except Exception:
             continue
+        # stx-allow: fallback (reason: .mcp.json may contain invalid JSON)
         try:
             doc = json.loads(raw)
             pretty = json.dumps(_redact_mcp_tree(doc), indent=2)
@@ -307,6 +318,7 @@ def _pids_from_session(session: str, multiplexer: str) -> tuple[int, int]:
     ppid = 0
     if multiplexer != "tmux":
         return pid, ppid
+    # stx-allow: fallback (reason: subprocess may not be available or tmux session may not exist)
     try:
         out = (
             subprocess.run(
@@ -366,6 +378,7 @@ def collect_rich(
 
     jsonls = _latest_jsonls(workdir)
     if jsonls:
+        # stx-allow: fallback (reason: stat may fail if file was removed between glob and stat())
         try:
             earliest = min(jsonls, key=lambda p: p.stat().st_mtime)
             started_at = datetime.fromtimestamp(
@@ -374,12 +387,14 @@ def collect_rich(
         except Exception:
             pass
 
+        # stx-allow: fallback (reason: jsonl file may be deleted or unreadable between glob and read)
         try:
             lines = jsonls[0].read_text().splitlines()[-50:]
         except Exception:
             lines = []
 
         for line in reversed(lines):
+            # stx-allow: fallback (reason: jsonl line may be incomplete or malformed)
             try:
                 obj = json.loads(line)
             except Exception:
@@ -404,6 +419,7 @@ def collect_rich(
         # dashboard can show "Bash: docker compose build" instead of just
         # "Bash". Per ywatanabe complaint msg 5481.
         for line in reversed(lines):
+            # stx-allow: fallback (reason: jsonl line may be incomplete or malformed)
             try:
                 obj = json.loads(line)
             except Exception:
@@ -447,6 +463,7 @@ def collect_rich(
         # "what was this agent last asked to do" snippet which is more
         # meaningful than the tool name alone.
         for line in reversed(lines):
+            # stx-allow: fallback (reason: jsonl line may be incomplete or malformed)
             try:
                 obj = json.loads(line)
             except Exception:
@@ -500,6 +517,7 @@ def collect_rich(
     # Populated by `scitex-agent-container hook-event` entries wired into
     # the agent's .claude/settings.local.json. Non-agentic: pure ring-
     # buffer read.
+    # stx-allow: fallback (reason: event_log may be unavailable or missing log file)
     try:
         from .event_log import summarize as _summarize_events
 
@@ -513,6 +531,7 @@ def collect_rich(
             "counts": {},
         }
     # Use canonical fleet name (e.g. "nas" instead of "DXP480TPLUS-994")
+    # stx-allow: fallback (reason: hostname resolution may fail on unconfigured hosts)
     try:
         from .config._host import resolve_hostname
 
@@ -527,6 +546,7 @@ def collect_rich(
     quota_7d_reset_at: str | None = None
     quota_from_cache: bool = False
     quota_error: str | None = None
+    # stx-allow: fallback (reason: usage API may be unavailable or credentials missing)
     try:
         usage = fetch_usage()
         quota_5h_used_pct = usage.get("used_pct_5h")
@@ -540,6 +560,7 @@ def collect_rich(
 
     # ---- Account / credential identity ------------------------------------
     account_email: str | None = None
+    # stx-allow: fallback (reason: credentials file may be missing or unreadable)
     try:
         from .credentials import read_credentials_metadata
 
@@ -549,6 +570,7 @@ def collect_rich(
         pass
 
     # ---- Machine resource metrics (psutil, optional) -----------------------
+    # stx-allow: fallback (reason: optional dependency not always installed)
     try:
         import psutil as _psutil
 
@@ -661,6 +683,7 @@ def _collect_action_summary_fields(agent_name: str) -> dict[str, Any]:
     heartbeat. All keys are prefixed ``action_`` so consumers know
     which subsystem they came from.
     """
+    # stx-allow: fallback (reason: action database may be corrupt or missing)
     try:
         from . import action_store
 

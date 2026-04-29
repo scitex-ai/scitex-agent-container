@@ -43,6 +43,7 @@ def _resolve_agent(flag: str) -> str:
         val = os.environ.get(key)
         if val:
             return val
+    # stx-allow: fallback (reason: cwd may be unavailable in certain process contexts)
     try:
         return Path.cwd().name or "anonymous-agent"
     except Exception:
@@ -65,8 +66,10 @@ def _resolve_agent(flag: str) -> str:
 )
 def hook_event(kind: str, agent_flag: str) -> None:
     """Append a Claude Code hook event to the per-agent ring-buffer."""
+    # stx-allow: fallback (reason: hook events must never break the agent session on any error)
     try:
         raw = sys.stdin.read() or "{}"
+        # stx-allow: fallback (reason: stdin may not be valid JSON; preserve raw content)
         try:
             payload = json.loads(raw)
         except Exception:

@@ -142,6 +142,7 @@ def validate_raw(raw: dict, path: str) -> list[str]:
 def validate_config(path: str | Path) -> list[str]:
     """Validate a config file and return list of errors (empty = valid)."""
     path = Path(path).resolve()
+    # stx-allow: fallback (reason: config file may be missing, unreadable, or contain invalid YAML)
     try:
         with open(path) as f:
             raw = yaml.safe_load(f)

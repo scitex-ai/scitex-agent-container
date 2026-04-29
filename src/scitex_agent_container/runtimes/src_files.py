@@ -73,6 +73,7 @@ def _extract_user_tail(workspace_path: Path, end_marker: str = END_MARKER) -> st
     """
     if not workspace_path.exists():
         return ""
+    # stx-allow: fallback (reason: filesystem read may fail on permission or I/O error)
     try:
         existing = workspace_path.read_text()
     except OSError:
@@ -318,6 +319,7 @@ def deploy_src_mcp_json(config: AgentConfig, workdir: str) -> None:
     text = _interpolate_env(text)
 
     # Validate JSON
+    # stx-allow: fallback (reason: src_mcp.json may contain invalid JSON after interpolation)
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
@@ -330,6 +332,7 @@ def deploy_src_mcp_json(config: AgentConfig, workdir: str) -> None:
     # Our own servers are always replaced wholesale below.
     existing: dict = {}
     if dest.exists():
+        # stx-allow: fallback (reason: existing .mcp.json may be corrupt or unreadable)
         try:
             existing = json.loads(dest.read_text())
         except (json.JSONDecodeError, OSError):
@@ -357,6 +360,7 @@ def deploy_src_mcp_json(config: AgentConfig, workdir: str) -> None:
     # the common case of "PR merged N hours ago, agent still stale"
     # now leaves a breadcrumb in the agent-container log instead of
     # being a silent no-op.
+    # stx-allow: fallback (reason: stat may fail if file was removed between exists() check and stat())
     try:
         if dest.exists():
             src_mtime = src.stat().st_mtime
@@ -393,6 +397,7 @@ def cleanup_src_mcp_json(config: AgentConfig, workdir: str) -> None:
     if not src.exists():
         return
 
+    # stx-allow: fallback (reason: src_mcp.json may be corrupt or unreadable)
     try:
         src_data = json.loads(src.read_text())
     except (json.JSONDecodeError, OSError):
@@ -406,6 +411,7 @@ def cleanup_src_mcp_json(config: AgentConfig, workdir: str) -> None:
     if not dest.exists():
         return
 
+    # stx-allow: fallback (reason: .mcp.json may be corrupt or unreadable)
     try:
         data = json.loads(dest.read_text())
     except (json.JSONDecodeError, OSError):

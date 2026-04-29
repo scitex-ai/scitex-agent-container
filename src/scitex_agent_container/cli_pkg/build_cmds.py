@@ -22,6 +22,7 @@ def check(config_path: str) -> None:
     available before starting the agent. Useful for debugging deployment
     failures.
     """
+    # stx-allow: fallback (reason: config load may fail with user-visible error for invalid YAML)
     try:
         config = load_config(config_path)
     except Exception as exc:
@@ -63,6 +64,7 @@ def check(config_path: str) -> None:
             console.print("    [red]GNU screen not found[/red]")
             console.print("    [red]  Fix: sudo apt install screen[/red]")
 
+        # stx-allow: fallback (reason: python3 binary may not be on PATH in some environments)
         try:
             proc = subprocess.run(
                 ["python3", "--version"],
@@ -83,6 +85,7 @@ def check(config_path: str) -> None:
 
         sac_bin = shutil.which("scitex-agent-container")
         if sac_bin:
+            # stx-allow: fallback (reason: version check subprocess may fail)
             try:
                 proc = subprocess.run(
                     ["scitex-agent-container", "--version"],
@@ -101,6 +104,7 @@ def check(config_path: str) -> None:
             console.print(f"  {'scitex-agent-container:':30s} [red]FAIL[/red]")
             console.print("    [red]  Fix: pip install scitex-agent-container[/red]")
 
+        # stx-allow: fallback (reason: df command may not be available on all systems)
         try:
             proc = subprocess.run(
                 ["df", "-h", "/"], capture_output=True, text=True, timeout=5

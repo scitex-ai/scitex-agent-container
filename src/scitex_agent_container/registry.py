@@ -64,6 +64,7 @@ class Registry:
             return []
         entries = []
         for path in sorted(self.dir.glob("*.json")):
+            # stx-allow: fallback (reason: individual registry entry file may be corrupt or unreadable)
             try:
                 with open(path) as f:
                     entries.append(json.load(f))
@@ -107,6 +108,7 @@ class Registry:
 
         cleaned = 0
         for path in list(self.dir.glob("*.json")):
+            # stx-allow: fallback (reason: registry entry file may be corrupt; remove it on error)
             try:
                 with open(path) as f:
                     data = json.load(f)

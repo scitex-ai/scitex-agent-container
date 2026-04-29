@@ -85,6 +85,7 @@ def _all_safe_keys() -> list[str]:
 
 def _load_json(path: Path) -> dict[str, Any] | None:
     """Load a JSON file; return ``None`` if missing or unparseable."""
+    # stx-allow: fallback (reason: filesystem read may fail on missing or corrupt file)
     try:
         with path.open("r", encoding="utf-8") as fh:
             data = json.load(fh)

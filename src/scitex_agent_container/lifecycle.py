@@ -47,6 +47,7 @@ def _fire_forget_hook(
     ``http(s)://`` URLs. The legacy path filters out URL entries to
     avoid double-dispatch of the same side-effect.
     """
+    # stx-allow: fallback (reason: hook dispatch may raise unexpectedly; must not block lifecycle ops)
     try:
         run_hook(agent_name, hook_name, list(commands or []), context=context)
     except Exception:  # pragma: no cover — defensive
@@ -158,6 +159,7 @@ def agent_start(
 
     # Start context-management sensor in background if enabled
     if config.context_management.enabled:
+        # stx-allow: fallback (reason: context manager sensor start may fail; must not block agent start)
         try:
             from .context_manager import start_sensor
 
@@ -204,6 +206,7 @@ def agent_stop(
             return True
         raise RuntimeError(f"Agent '{name}' not found in registry")
 
+    # stx-allow: fallback (reason: config file may be missing or invalid for stale registry entries)
     try:
         config = load_config(entry["config"])
     except Exception:
@@ -222,6 +225,7 @@ def agent_stop(
     }
 
     # Pre-stop hooks
+    # stx-allow: fallback (reason: pre-stop hooks may fail; force mode must continue cleanup)
     try:
         _run_hooks(config.hooks.get("pre_stop", []), extra_env=hook_env)
     except Exception:
@@ -229,6 +233,7 @@ def agent_stop(
             raise
     _fire_forget_hook(config.name, "pre_stop", config.hooks.get("pre_stop", []))
 
+    # stx-allow: fallback (reason: runtime stop may fail if process already exited)
     try:
         runtime.stop(config)
     except Exception:
@@ -236,6 +241,7 @@ def agent_stop(
             raise
 
     # Post-stop hooks
+    # stx-allow: fallback (reason: post-stop hooks may fail; force mode must continue cleanup)
     try:
         _run_hooks(config.hooks.get("post_stop", []), extra_env=hook_env)
     except Exception:
@@ -261,6 +267,7 @@ def agent_stop_all(
     results: list[tuple[str, bool, str]] = []
     for entry in registry.list_all():
         name = entry.get("name", "?")
+        # stx-allow: fallback (reason: individual agent stop may fail; batch must continue with force mode)
         try:
             agent_stop(name, registry=registry, force=force)
             results.append((name, True, "stopped"))
@@ -291,6 +298,7 @@ def agent_status(name: str, registry: Registry | None = None) -> dict:
     if entry is None:
         raise RuntimeError(f"Agent '{name}' not found in registry")
 
+    # stx-allow: fallback (reason: config load or runtime check may fail for stopped/stale agents)
     try:
         config = load_config(entry["config"])
         runtime = _get_runtime(config)
@@ -365,6 +373,7 @@ def agent_status(name: str, registry: Registry | None = None) -> dict:
     # Expose the full agent_meta dict from the live sensor if present
     # (todo#285 Phase 2b). This is the transcript-derived source of
     # truth used by the dashboard when it's available.
+    # stx-allow: fallback (reason: live sensor metadata is optional; failure must not break status)
     try:
         from .context_manager import get_sensor as _gs
 
@@ -375,6 +384,7 @@ def agent_status(name: str, registry: Registry | None = None) -> dict:
         pass
 
     # Snapshot block — cheap read from cache (todo#286). Never re-gathers.
+    # stx-allow: fallback (reason: snapshot read may fail if cache file is missing or corrupt)
     try:
         from .snapshot import read_latest
 
@@ -393,6 +403,7 @@ def agent_status(name: str, registry: Registry | None = None) -> dict:
     # Enrich with claude-hud-style metadata. Canonical source for the
     # Agents-tab dashboard; the MCP sidecar heartbeat shells out to this
     # command rather than duplicating the logic in TypeScript.
+    # stx-allow: fallback (reason: metadata collection must never block status output)
     try:
         from .agent_meta import collect_rich
 

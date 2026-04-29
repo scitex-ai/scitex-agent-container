@@ -58,6 +58,7 @@ def _probe_remote(cfg) -> bool | None:
     regression suite needs to simulate hung + fast probes without
     real SSH).
     """
+    # stx-allow: fallback (reason: remote liveness probe may fail on network or SSH error)
     try:
         from ..runtimes.claude_code import ClaudeCodeRuntime
         return ClaudeCodeRuntime().is_running(cfg)
@@ -102,11 +103,13 @@ def get_agent_list_data(
         """Detect which multiplexer hosts a session. Tmux preferred."""
         if not session_name or session_name == "?":
             return None
+        # stx-allow: fallback (reason: tmux may not be installed or session may not exist)
         try:
             if TmuxManager.exists(session_name):
                 return "tmux"
         except Exception:
             pass
+        # stx-allow: fallback (reason: screen may not be installed or session may not exist)
         try:
             if ScreenManager.exists(session_name):
                 return "screen"
@@ -128,6 +131,7 @@ def get_agent_list_data(
         config_path = entry.get("config")
         cfg = None
         if config_path:
+            # stx-allow: fallback (reason: config file may be invalid or missing for stale entries)
             try:
                 cfg = load_config(config_path)
                 labels = cfg.labels
@@ -169,6 +173,7 @@ def get_agent_list_data(
     probe_results: dict[int, bool | None] = {}
     if remote_probes:
         pool = ThreadPoolExecutor(max_workers=max_parallel_probes)
+        # stx-allow: fallback (reason: remote probe futures may timeout or raise; pool must be shut down)
         try:
             future_to_idx = {
                 pool.submit(_probe_remote, cfg): idx
@@ -176,6 +181,7 @@ def get_agent_list_data(
             }
             for future in list(future_to_idx):
                 idx = future_to_idx[future]
+                # stx-allow: fallback (reason: individual probe future may timeout or raise)
                 try:
                     probe_results[idx] = future.result(
                         timeout=remote_probe_timeout_s
@@ -199,6 +205,7 @@ def get_agent_list_data(
         cfg = prep["cfg"]
 
         liveness_unknown = False
+        # stx-allow: fallback (reason: liveness check may fail for stopped or unreachable agents)
         try:
             if cfg and cfg.remote.is_remote:
                 probe = probe_results.get(prep["idx"])

@@ -38,6 +38,7 @@ def parse_context_percent(pane_text: str) -> float | None:
         return None
     for line in reversed(pane_text.splitlines()):
         for match in _PERCENT_RE.finditer(line):
+            # stx-allow: fallback (reason: regex match group may not be convertible to float)
             try:
                 value = float(match.group(1))
             except ValueError:
@@ -69,6 +70,7 @@ def fetch_agent_meta(
     if not explicit:
         return None
     resolved = str(Path(explicit).expanduser())
+    # stx-allow: fallback (reason: subprocess may not be available or script may fail)
     try:
         r = subprocess.run(
             [resolved, agent_name],
@@ -84,6 +86,7 @@ def fetch_agent_meta(
         OSError,
     ):
         return None
+    # stx-allow: fallback (reason: stdout may be empty or contain non-JSON content)
     try:
         data = (
             json.loads(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else None
@@ -197,6 +200,7 @@ class ContextManager:
                 threshold,
                 self.config.strategy,
             )
+            # stx-allow: fallback (reason: dispatcher may raise; must not crash the sensor loop)
             try:
                 self.dispatcher(self.config.strategy, self.agent_config)
             except Exception:  # pragma: no cover — defensive
@@ -235,10 +239,12 @@ def run_forever(cm: ContextManager) -> None:
     """
     interval = max(1, int(cm.config.check_interval_seconds))
     while not cm.stopped:
+        # stx-allow: fallback (reason: context manager tick may raise unexpectedly; loop must continue)
         try:
             cm.tick()
         except Exception:  # pragma: no cover — defensive
             logger.exception("context_manager[%s]: tick failed", cm.agent_name)
+        # stx-allow: fallback (reason: snapshot piggyback tick may fail; must not block context loop)
         try:
             from .snapshot import snapshot_tick
 
@@ -265,6 +271,7 @@ def _fire_hook(
     context: dict[str, Any] | None = None,
 ) -> None:
     """Non-blocking fire of an ``on_*`` hook. Swallows all errors."""
+    # stx-allow: fallback (reason: hook dispatch may raise unexpectedly; must not block context manager)
     try:
         from .hooks import run_hook
 
@@ -314,6 +321,7 @@ def default_dispatcher(strategy: str, agent_config: AgentConfig | None) -> None:
                 "strategy": "restart",
             },
         )
+        # stx-allow: fallback (reason: agent restart may fail due to runtime or registry error)
         try:
             agent_restart(agent_config.name)
         except Exception:
@@ -349,6 +357,7 @@ def start_sensor(agent_config: AgentConfig) -> ContextManager | None:
     )
     _SENSORS[agent_config.name] = cm
     thread.start()
+    # stx-allow: fallback (reason: sidecar registration is optional; failure must not block agent start)
     try:
         from .snapshot import register_sidecar
 

@@ -91,6 +91,7 @@ def parse_claude(spec: dict) -> ClaudeSpec:
         session = raw.get("session", "continue-or-new")
     continue_max_age = raw.get("continue_max_age_minutes")
     if continue_max_age is not None:
+        # stx-allow: fallback (reason: continue_max_age_minutes value may be wrong type in YAML)
         try:
             continue_max_age = int(continue_max_age)
         except (TypeError, ValueError):
@@ -202,6 +203,7 @@ def parse_skills(spec: dict) -> SkillsSpec:
 
 def parse_context_management(spec: dict) -> ContextManagementConfig:
     raw = spec.get("context_management", {}) or {}
+    # stx-allow: fallback (reason: config value may be wrong type or missing)
     try:
         trigger = float(raw.get("trigger_at_percent", 70.0))
     except (TypeError, ValueError):
@@ -209,10 +211,12 @@ def parse_context_management(spec: dict) -> ContextManagementConfig:
     strategy = str(raw.get("strategy", "noop") or "noop")
     if strategy not in ("compact", "restart", "noop"):
         strategy = "noop"
+    # stx-allow: fallback (reason: config value may be wrong type or missing)
     try:
         warn_n = int(raw.get("warn_before_n_checks", 0))
     except (TypeError, ValueError):
         warn_n = 0
+    # stx-allow: fallback (reason: config value may be wrong type or missing)
     try:
         interval = int(raw.get("check_interval_seconds", 300))
     except (TypeError, ValueError):
@@ -261,6 +265,7 @@ def parse_listen(spec: dict) -> list[ListenPort]:
         if not isinstance(item, dict):
             continue
         proto = str(item.get("proto", "tcp") or "tcp")
+        # stx-allow: fallback (reason: listen port value may be wrong type or missing)
         try:
             port = int(item.get("port", 0) or 0)
         except (TypeError, ValueError):
@@ -307,6 +312,7 @@ def _parse_command_list(raw: Any) -> list[StartupCommand]:
             if item:
                 out.append(StartupCommand(delay=0, command=item))
         elif isinstance(item, dict) and item.get("command"):
+            # stx-allow: fallback (reason: delay value may be wrong type in YAML)
             try:
                 delay = int(item.get("delay", 0))
             except (TypeError, ValueError):
@@ -336,14 +342,17 @@ def parse_startup(spec: dict) -> StartupSpec:
         elif isinstance(item, dict) and item.get("regex"):
             patterns.append(ReadyPattern(regex=str(item["regex"])))
 
+    # stx-allow: fallback (reason: startup spec value may be wrong type or missing)
     try:
         idle_ticks = max(1, int(raw.get("ready_idle_ticks", 3)))
     except (TypeError, ValueError):
         idle_ticks = 3
+    # stx-allow: fallback (reason: startup spec value may be wrong type or missing)
     try:
         poll_interval = max(0.05, float(raw.get("ready_poll_interval_seconds", 0.5)))
     except (TypeError, ValueError):
         poll_interval = 0.5
+    # stx-allow: fallback (reason: startup spec value may be wrong type or missing)
     try:
         timeout = max(1.0, float(raw.get("ready_timeout_seconds", 60.0)))
     except (TypeError, ValueError):

@@ -39,10 +39,12 @@ def _load_hostname_aliases() -> dict[str, str]:
     """
     if not _CONFIG_PATH.exists():
         return {}
+    # stx-allow: fallback (reason: optional dependency not always installed)
     try:
         import yaml  # PyYAML ships with the container; same import sac uses.
     except ImportError:
         return {}
+    # stx-allow: fallback (reason: config file may contain invalid YAML or be unreadable)
     try:
         data = yaml.safe_load(_CONFIG_PATH.read_text()) or {}
     except Exception:

@@ -155,6 +155,7 @@ class ScreenManager:
     def capture_content(session_name: str) -> str:
         """Capture current screen content via hardcopy."""
         tmp_path = f"/tmp/.screen-hardcopy-{session_name}.txt"
+        # stx-allow: fallback (reason: screen hardcopy may fail if session does not exist)
         try:
             Path(tmp_path).unlink(missing_ok=True)
             subprocess.run(

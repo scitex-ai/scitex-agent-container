@@ -38,6 +38,7 @@ class ReadyTimeout(RuntimeError):
 
 def _default_capture(pane_target: str) -> str:
     """Fallback tmux capture when caller does not inject one."""
+    # stx-allow: fallback (reason: subprocess may not be available or tmux session may not exist)
     try:
         result = subprocess.run(
             ["tmux", "capture-pane", "-t", pane_target, "-p"],
@@ -132,12 +133,14 @@ def wait_for_ready(
                 poll_count,
             )
             if capture_callback is not None:
+                # stx-allow: fallback (reason: capture callback is user-supplied and may raise)
                 try:
                     capture_callback(last_tail)
                 except Exception:
                     logger.exception("capture_callback raised; ignoring")
             return False
 
+        # stx-allow: fallback (reason: pane capture may fail if multiplexer is unavailable)
         try:
             content = capture(pane_target)
         except subprocess.CalledProcessError as exc:

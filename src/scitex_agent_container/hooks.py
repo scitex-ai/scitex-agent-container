@@ -71,6 +71,7 @@ def _dispatch_http(
         method="POST",
         headers={"Content-Type": "application/json"},
     )
+    # stx-allow: fallback (reason: HTTP POST to hook URL may fail due to network or server error)
     try:
         with urlrequest.urlopen(req, timeout=_HTTP_TIMEOUT_S) as resp:
             resp.read()
@@ -90,6 +91,7 @@ def _dispatch_shell(
     hook_name: str,
     context: Mapping[str, Any] | None,
 ) -> None:
+    # stx-allow: fallback (reason: shell command string may be malformed or unparseable)
     try:
         argv = shlex.split(cmd)
     except ValueError as exc:
@@ -109,6 +111,7 @@ def _dispatch_shell(
         "SCITEX_HOOK": hook_name,
         **_flatten_ctx_env(context),
     }
+    # stx-allow: fallback (reason: subprocess hook command may fail or not be found)
     try:
         subprocess.run(
             argv,
@@ -143,6 +146,7 @@ def _run_one(
     entry = (entry or "").strip()
     if not entry:
         return
+    # stx-allow: fallback (reason: hook dispatch may raise unexpectedly; errors are logged and swallowed)
     try:
         if entry.startswith(("http://", "https://")):
             _dispatch_http(entry, agent_name, hook_name, context)
@@ -166,6 +170,7 @@ def run_hook(
     if not commands:
         return
     for entry in commands:
+        # stx-allow: fallback (reason: thread pool may be shut down at interpreter exit)
         try:
             _POOL.submit(_run_one, entry, agent_name, hook_name, context)
         except RuntimeError:

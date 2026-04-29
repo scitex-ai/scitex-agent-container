@@ -91,6 +91,7 @@ def _session_resumable(
         return False
     candidates = []
     for entry in proj_dir.glob("*.jsonl"):
+        # stx-allow: fallback (reason: stat may fail if file was deleted between glob and stat())
         try:
             st = entry.stat()
             if entry.is_file() and st.st_size > 0:
@@ -220,6 +221,7 @@ class ClaudeCodeRuntime(RuntimeBase):
         # than the OS-reported FQDN ("Yusukes-MacBook-Air.local"). The
         # sidecar already prefers SCITEX_OROCHI_MACHINE over Node's
         # hostname() — this just hands it the canonical value.
+        # stx-allow: fallback (reason: hostname resolution may fail on misconfigured hosts)
         try:
             from ..config._host import resolve_hostname
 
@@ -420,6 +422,7 @@ class ClaudeCodeRuntime(RuntimeBase):
         def _on_timeout(tail_text: str) -> None:
             ts = time.strftime("%Y%m%dT%H%M%S")
             path = log_dir / f"boot-capture-{ts}.txt"
+            # stx-allow: fallback (reason: boot capture file write may fail on disk full)
             try:
                 path.write_text(tail_text or "")
                 logger.warning(
@@ -492,6 +495,7 @@ class ClaudeCodeRuntime(RuntimeBase):
         for sc in commands:
             if sc.delay > 0:
                 time.sleep(sc.delay)
+            # stx-allow: fallback (reason: startup command send may fail if session closed unexpectedly)
             try:
                 mux.send_text_and_submit(config.screen_name, sc.command)
                 logger.info(

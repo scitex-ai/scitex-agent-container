@@ -91,6 +91,7 @@ class SSHRemote:
 
         use_login = getattr(config.remote, "login_shell", True)
 
+        # stx-allow: fallback (reason: SSH preflight check may fail if host is unreachable)
         try:
             ssh_cmd = SSHRemote._ssh_base(config)
             if use_login:
@@ -240,6 +241,7 @@ class SSHRemote:
             config.remote.host,
             remote_path,
         )
+        # stx-allow: fallback (reason: SSH config copy may fail due to network or SSH error)
         try:
             with open(local_path) as f:
                 raw = _yaml.safe_load(f)
@@ -277,6 +279,7 @@ class SSHRemote:
             local_src = defdir / src_file
             if local_src.exists():
                 remote_src = f"{remote_dir}/{src_file}"
+                # stx-allow: fallback (reason: SSH file copy may fail if remote path is inaccessible)
                 try:
                     content_src = local_src.read_text()
                     ssh_cmd_src = SSHRemote._ssh_base(config) + [f"cat > {remote_src}"]
@@ -317,6 +320,7 @@ class SSHRemote:
             ssh_cmd.append(remote_cmd)
 
         logger.info("SSH [%s]: %s", config.remote.host, remote_cmd)
+        # stx-allow: fallback (reason: SSH command may timeout if remote host is unreachable)
         try:
             result = subprocess.run(
                 ssh_cmd,
@@ -366,6 +370,7 @@ class SSHRemote:
         if result.returncode != 0:
             screen_name = config.screen_name or f"cld-{config.name}"
             screen_output = ""
+            # stx-allow: fallback (reason: SSH diagnostic capture may fail if screen session is absent)
             try:
                 diag = SSHRemote.run(
                     config,
@@ -412,6 +417,7 @@ class SSHRemote:
     def is_running(config: AgentConfig) -> bool:
         """Check if agent is running on remote machine via screen -ls."""
         screen_name = config.screen_name or f"cld-{config.name}"
+        # stx-allow: fallback (reason: SSH liveness check may fail if host is unreachable)
         try:
             result = SSHRemote.run(
                 config,

@@ -46,6 +46,7 @@ def snapshot(
     terse: bool,
 ) -> None:
     """Take a self-snapshot for AGENT and print it as JSON."""
+    # stx-allow: fallback (reason: snapshot gathering may fail on probe or I/O error)
     try:
         snap = take_snapshot(agent, session=session, with_diff=with_diff)
     except Exception as exc:  # pragma: no cover — defensive
