@@ -306,3 +306,69 @@ def cleanup() -> None:
         console.print(f"[green]Cleaned {cleaned} stale registry entries[/green]")
     else:
         console.print("[dim]No stale entries found.[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# Auto-accept subcommands
+# ---------------------------------------------------------------------------
+
+
+@click.command("send-accept")
+@click.argument("agent")
+def send_accept(agent: str) -> None:
+    """One-shot: capture → classify → respond for AGENT, then exit."""
+    from ..auto_accept_daemon import send_accept_once
+
+    state, sent = send_accept_once(agent)
+    if sent:
+        console.print(f"[green]sent action for agent '{agent}' (state={state})[/green]")
+    else:
+        console.print(f"[dim]no action for agent '{agent}' (state={state})[/dim]")
+
+
+@click.command("start-auto-accept")
+@click.argument("agent")
+@click.option("--tick", "tick_s", default=60.0, show_default=True, help="Daemon tick interval in seconds.")
+def start_auto_accept(agent: str, tick_s: float) -> None:
+    """Start the auto-accept daemon for AGENT (throttle 5 s min, default 60 s tick)."""
+    import multiprocessing
+
+    from ..auto_accept_daemon import read_pid, run_daemon
+
+    existing = read_pid(agent)
+    if existing:
+        try:
+            import os as _os
+            _os.kill(existing, 0)
+            console.print(f"[yellow]auto-accept daemon already running for '{agent}' (pid={existing})[/yellow]")
+            return
+        except OSError:
+            pass  # stale pid file
+
+    def _target():
+        run_daemon(agent, tick_s=tick_s)
+
+    p = multiprocessing.Process(target=_target, daemon=False, name=f"sac-auto-accept-{agent}")
+    p.start()
+    console.print(f"[green]auto-accept daemon started for '{agent}' (pid={p.pid}, tick={tick_s}s)[/green]")
+
+
+@click.command("stop-auto-accept")
+@click.argument("agent")
+def stop_auto_accept(agent: str) -> None:
+    """Stop the auto-accept daemon for AGENT."""
+    import os as _os
+    import signal
+
+    from ..auto_accept_daemon import clear_pid, read_pid
+
+    pid = read_pid(agent)
+    if pid is None:
+        console.print(f"[dim]no auto-accept daemon found for '{agent}'[/dim]")
+        return
+    try:
+        _os.kill(pid, signal.SIGTERM)
+        console.print(f"[green]sent SIGTERM to auto-accept daemon for '{agent}' (pid={pid})[/green]")
+    except ProcessLookupError:
+        console.print(f"[yellow]stale pid {pid} for '{agent}' — cleaning up[/yellow]")
+        clear_pid(agent)

@@ -15,7 +15,12 @@ from .action_cmds import actions_cli
 from .build_cmds import build, check, validate
 from .hook_cmds import hook_event
 from .info_cmds import attach, find, list_python_apis, logs
-from .lifecycle_cmds import cleanup, restart, start, stop
+from .lifecycle_cmds import (
+    cleanup,
+    restart,
+    start,
+    stop,
+)
 from .probe_cmds import probe_network
 from .render_cmds import render_attach, render_sbatch
 from .snapshot_cmds import snapshot
@@ -55,6 +60,11 @@ main.add_command(start)
 main.add_command(stop)
 main.add_command(restart)
 main.add_command(cleanup)
+
+# Auto-accept
+main.add_command(send_accept)
+main.add_command(start_auto_accept)
+main.add_command(stop_auto_accept)
 
 # Status / listing
 main.add_command(status)
