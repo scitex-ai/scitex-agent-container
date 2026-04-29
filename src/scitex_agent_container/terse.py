@@ -75,6 +75,11 @@ TERSE_STATUS_FIELDS: tuple[str, ...] = (
     # hook-captured tool liveness (LLM-level heartbeat)
     "last_tool_at",
     "last_tool_name",
+    # stuck-subagent detection (orochi#133): Agent pretool events with
+    # no matching posttool in the ring-buffer window. Non-zero count +
+    # non-zero subagent_count is the healer's trigger threshold.
+    "open_agent_calls_count",
+    "oldest_open_agent_age_s",
     # high-level "what is this agent doing" + tool name only
     # (``current_tool_input`` is intentionally excluded — may carry
     # prompt / path fragments that count as PII)

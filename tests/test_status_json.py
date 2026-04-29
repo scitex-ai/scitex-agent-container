@@ -529,9 +529,9 @@ def test_status_terse_payload_size_under_threshold() -> None:
     projected = project_terse(full, TERSE_STATUS_FIELDS)
     size = len(_json.dumps(projected))
     assert size < 4096, f"terse payload too large: {size}B"
-    # And the expected shape: ~32 fields (31 after we merged two
-    # subagent spellings — keep both, so exactly 32)
-    assert len(TERSE_STATUS_FIELDS) == 32
+    # And the expected shape: 34 fields (added open_agent_calls_count +
+    # oldest_open_agent_age_s for orochi#133 stuck-subagent detection)
+    assert len(TERSE_STATUS_FIELDS) == 34
     assert set(projected.keys()) == set(TERSE_STATUS_FIELDS)
 
 
