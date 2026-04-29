@@ -31,15 +31,26 @@ from __future__ import annotations
 
 import logging
 import shlex
+import subprocess
 from typing import TYPE_CHECKING
 
 from ..config import AgentConfig
+from ._ssh_chain import build_ssh_command, skip_local_hops
 from .base import RuntimeBase
 
 if TYPE_CHECKING:
     from scitex_hpc import Reservation as _ResType  # noqa: F401
 
 logger = logging.getLogger(__name__)
+
+_SSH_OPTS = [
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    "StrictHostKeyChecking=accept-new",
+    "-o",
+    "ConnectTimeout=10",
+]
 
 
 def _import_reservation():
@@ -126,6 +137,37 @@ class SlurmTenantRuntime(RuntimeBase):
             parts.append("--continue")
         return shlex.join(parts)
 
+    def _exec_on_node(
+        self, config: AgentConfig, res, cmd_str: str, timeout: int = 60
+    ) -> subprocess.CompletedProcess:
+        """Execute ``cmd_str`` on the compute node.
+
+        When ``spec.remote.hops`` is set, SSH directly via the chain
+        (location-aware self-skip applied).  Falls back to
+        ``res.exec()`` when hops is empty (legacy srun path).
+        """
+        hops = config.remote.hops
+        if not hops:
+            return res.exec(cmd_str, check=False, timeout=timeout)
+
+        remaining = skip_local_hops(hops)
+        if not remaining:
+            # All hops matched local host — run tmux command directly.
+            return subprocess.run(
+                cmd_str,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        ssh_cmd = build_ssh_command(remaining, cmd_str, _SSH_OPTS)
+        return subprocess.run(
+            ssh_cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+
     def start(
         self,
         config: AgentConfig,
@@ -138,20 +180,20 @@ class SlurmTenantRuntime(RuntimeBase):
 
         # Force: kill any stale session with the same name first
         if force:
-            res.exec(
+            self._exec_on_node(
+                config,
+                res,
                 self._tmux(res, "kill-session", "-t", shlex.quote(session))
                 + " 2>/dev/null || true",
-                check=False,
-                timeout=60,
             )
 
         # Bail if the session already exists and we're not forcing
         if not force:
-            check = res.exec(
+            check = self._exec_on_node(
+                config,
+                res,
                 self._tmux(res, "has-session", "-t", shlex.quote(session))
                 + " 2>/dev/null && echo HAS || echo NONE",
-                check=False,
-                timeout=60,
             )
             if "HAS" in (check.stdout or ""):
                 logger.info(
@@ -163,7 +205,7 @@ class SlurmTenantRuntime(RuntimeBase):
 
         claude_cmd = self._build_claude_command(config)
         # tmux new -d (detached) -s <session> '<command>'
-        # The double-shell-quote is intentional: outer wrapper for srun, inner
+        # The double-shell-quote is intentional: outer wrapper for ssh/srun, inner
         # for tmux's command argument.
         tmux_cmd = self._tmux(
             res,
@@ -173,7 +215,7 @@ class SlurmTenantRuntime(RuntimeBase):
             shlex.quote(session),
             shlex.quote(claude_cmd),
         )
-        result = res.exec(tmux_cmd, check=False, timeout=60)
+        result = self._exec_on_node(config, res, tmux_cmd)
         if result.returncode != 0:
             raise RuntimeError(
                 f"tmux new-session failed in reservation {res.id}: "
@@ -197,11 +239,11 @@ class SlurmTenantRuntime(RuntimeBase):
             logger.warning("SlurmTenantRuntime: cannot stop %s — %s", config.name, exc)
             return False
         session = self._tmux_session(config)
-        result = res.exec(
+        result = self._exec_on_node(
+            config,
+            res,
             self._tmux(res, "kill-session", "-t", shlex.quote(session))
             + " 2>&1 || true",
-            check=False,
-            timeout=60,
         )
         logger.info(
             "SlurmTenantRuntime: stopped tmux %s @ reservation %s (rc=%s)",
@@ -217,11 +259,11 @@ class SlurmTenantRuntime(RuntimeBase):
         except RuntimeError:
             return False
         session = self._tmux_session(config)
-        result = res.exec(
+        result = self._exec_on_node(
+            config,
+            res,
             self._tmux(res, "has-session", "-t", shlex.quote(session))
             + " 2>/dev/null && echo HAS || echo NONE",
-            check=False,
-            timeout=60,
         )
         return "HAS" in (result.stdout or "")
 
@@ -233,7 +275,9 @@ class SlurmTenantRuntime(RuntimeBase):
             return f"(reservation unavailable: {exc})"
         session = self._tmux_session(config)
         # tmux capture-pane writes to stdout with -p
-        result = res.exec(
+        result = self._exec_on_node(
+            config,
+            res,
             self._tmux(
                 res,
                 "capture-pane",
@@ -244,8 +288,6 @@ class SlurmTenantRuntime(RuntimeBase):
                 f"-{int(lines)}",
             )
             + " 2>/dev/null || echo '(no session)'",
-            check=False,
-            timeout=60,
         )
         return result.stdout or ""
 

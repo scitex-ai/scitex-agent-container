@@ -162,6 +162,10 @@ class SlurmSpec:
 
 @dataclass
 class RemoteSpec:
+    # Chain-based remote: list of SSH config aliases (new format).
+    # Populated when spec.remote is a str or list[str].
+    # Empty when using legacy dict format.
+    hops: list = field(default_factory=list)
     host: str = ""  # SSH host (hostname or IP)
     user: str = ""  # SSH user
     key: str = ""  # Path to SSH key (optional)
@@ -173,7 +177,7 @@ class RemoteSpec:
     @property
     def is_remote(self) -> bool:
         """Return True if this agent should be deployed via SSH."""
-        return bool(self.host)
+        return bool(self.hops or self.host)
 
 
 @dataclass
