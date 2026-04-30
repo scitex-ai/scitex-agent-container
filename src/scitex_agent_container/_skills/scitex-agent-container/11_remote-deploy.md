@@ -1,6 +1,7 @@
 ---
 name: agent-container-remote-deploy
 description: SSH remote deployment of agents to other machines.
+tags: [scitex-agent-container, scitex-package]
 ---
 
 # Remote SSH Deployment

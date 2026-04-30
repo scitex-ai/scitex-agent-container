@@ -1,6 +1,7 @@
 ---
 name: scitex-resource-management
 description: How agents query machine + SLURM resources via the standalone scitex-resource package, and why live queries are banned on the hot path.
+tags: [scitex-agent-container, scitex-package]
 ---
 
 # Resource Management

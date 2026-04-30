@@ -9,6 +9,7 @@ interfaces:
   skills: 2
   hook: 0
   http: 0
+tags: [scitex-agent-container, scitex-package]
 ---
 
 # scitex-agent-container

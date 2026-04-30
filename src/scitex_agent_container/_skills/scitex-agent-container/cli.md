@@ -1,6 +1,7 @@
 ---
 name: agent-container-cli
 description: CLI commands and Python API for scitex-agent-container (and its short alias `sac`). Specialization of scitex-cli-convention.
+tags: [scitex-agent-container, scitex-package]
 ---
 
 > **This skill is a specialization of the canonical SciTeX CLI convention.**

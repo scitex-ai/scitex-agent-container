@@ -1,6 +1,7 @@
 ---
 name: agent-container-cli
 description: CLI commands and Python API for scitex-agent-container. Both the long form (`scitex-agent-container ...`) and the short alias (`sac ...`) are installed by the package.
+tags: [scitex-agent-container, scitex-package]
 ---
 
 # scitex-agent-container CLI

@@ -1,3 +1,9 @@
+---
+name: templates
+description: Templates and Examples — see file body for details.
+tags: [scitex-agent-container, scitex-package]
+---
+
 # Templates and Examples
 
 Two directories under `config/` ship YAML you can copy:

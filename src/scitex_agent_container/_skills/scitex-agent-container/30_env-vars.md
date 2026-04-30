@@ -1,6 +1,7 @@
 ---
 name: scitex-agent-container-env-vars
 description: Environment variables read by scitex-agent-container at import / runtime. Follow SCITEX_<MODULE>_* convention — see general/10_arch-environment-variables.md.
+tags: [scitex-agent-container, scitex-package]
 ---
 
 # scitex-agent-container — Environment Variables

@@ -1,3 +1,9 @@
+---
+name: wsl-connectivity
+description: WSL ↔ Fleet-Hub Connectivity (todo#457) — see file body for details.
+tags: [scitex-agent-container, scitex-package]
+---
+
 # WSL ↔ Fleet-Hub Connectivity (todo#457)
 
 ## Problem

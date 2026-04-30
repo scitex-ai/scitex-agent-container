@@ -1,6 +1,7 @@
 ---
 name: agent-container-auto-accept
 description: Modular TUI prompt detection and auto-acceptance for Claude Code.
+tags: [scitex-agent-container, scitex-package]
 ---
 
 # Auto-Accept TUI Prompts
