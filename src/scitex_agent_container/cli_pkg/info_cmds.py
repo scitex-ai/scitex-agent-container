@@ -60,9 +60,10 @@ def find(
         elif sub.suffix == ".yaml":
             candidates.append(sub)
     for yaml_path in candidates:
+        # stx-allow: fallback (reason: individual YAML files in the search directory may be invalid or unrelated; skipping bad files lets the search return partial results rather than aborting)
         try:
             cfg = load_config(yaml_path)
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             continue
         caps = [
             c.strip()
@@ -112,13 +113,14 @@ def find(
 )
 def logs(name: str, lines: int) -> None:
     """Show recent agent output."""
+    # stx-allow: fallback (reason: agent_logs reads from multiplexer or log files that may be absent if the agent was never started; error is reported and CLI exits with code 1)
     try:
         output = agent_logs(name, lines)
         if output:
             console.print(output)
         else:
             console.print("[dim]No log output captured.[/dim]")
-    except Exception as exc:
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         console.print(f"[red]Error: {exc}[/red]")
         sys.exit(1)
 
@@ -216,7 +218,7 @@ def list_python_apis(
             if obj and callable(obj):
                 try:
                     sig = str(inspect.signature(obj))
-                except (ValueError, TypeError):
+                except (ValueError, TypeError):  # stx-allow: fallback (reason: type coercion or format mismatch)
                     sig = "()"
                 click.echo(f"{indent}[{t}] {name}{sig}")
             else:

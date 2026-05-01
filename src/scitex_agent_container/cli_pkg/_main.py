@@ -13,9 +13,21 @@ from ._helpers import HelpRecursiveGroup
 from .account_cmds import account, quota_watch
 from .action_cmds import actions_cli
 from .build_cmds import build, check, validate
+from .contributor_spec_cmds import contributor_spec
 from .hook_cmds import hook_event
 from .info_cmds import attach, find, list_python_apis, logs
-from .lifecycle_cmds import cleanup, restart, start, stop
+from .install_cmds import install_group, install_post_merge_cron
+from .lifecycle_cmds import (
+    cleanup,
+    restart,
+    send_accept,
+    start,
+    start_auto_accept,
+    stop,
+    stop_auto_accept,
+)
+from .install_cmds import install_group, install_post_merge_cron
+from .priority_cmds import priority_check, singleton_reconcile
 from .probe_cmds import probe_network
 from .recall_cmds import recall
 from .render_cmds import render_attach, render_sbatch
@@ -57,6 +69,11 @@ main.add_command(stop)
 main.add_command(restart)
 main.add_command(cleanup)
 
+# Auto-accept
+main.add_command(send_accept)
+main.add_command(start_auto_accept)
+main.add_command(stop_auto_accept)
+
 # Status / listing
 main.add_command(status)
 main.add_command(list_agents)  # registered as 'list'
@@ -93,8 +110,23 @@ main.add_command(actions_cli)
 main.add_command(render_sbatch)
 main.add_command(render_attach)
 
+# Contributor spec generation (chunk B of ZOO#01 spec-template).
+main.add_command(contributor_spec)
+
 # Connectivity probe (todo#457): fleet-facing WSL ↔ hub liveness.
 main.add_command(probe_network)
+
+# Singleton priority check: reports whether this host should yield to a
+# higher-priority reachable host (building block for healer reconciler, #250).
+main.add_command(priority_check)
+
+# Singleton reconciliation: sweep all local registered agents and yield any
+# that have a higher-priority reachable host. Closes the automation gap in #250.
+main.add_command(singleton_reconcile)
+
+# Install helpers: host bootstrap + cron installer.
+main.add_command(install_group)
+main.add_command(install_post_merge_cron)
 
 # A2A protocol — generic agent-to-agent surface (no fleet deps).
 from .a2a_cmds import a2a as a2a_group  # noqa: E402

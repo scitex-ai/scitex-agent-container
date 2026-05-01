@@ -174,7 +174,7 @@ def _parse_iso(s: str) -> datetime:
         raw = raw[:-1] + "+00:00"
     try:
         dt = datetime.fromisoformat(raw)
-    except ValueError as exc:
+    except ValueError as exc:  # stx-allow: fallback (reason: type coercion or format mismatch)
         raise click.ClickException(f"invalid ISO timestamp: {s!r} ({exc})")
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 

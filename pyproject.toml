@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "scitex-agent-container"
-version = "0.10.7"
+version = "0.11.0"
 description = "Declarative YAML-based framework for defining, managing, and orchestrating AI coding agent instances"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -82,6 +82,7 @@ docs = [
 [project.scripts]
 scitex-agent-container = "scitex_agent_container.cli:main"
 sac = "scitex_agent_container.cli:main"
+sac-statusline = "scitex_agent_container.statusline:main"
 
 [project.entry-points."scitex_dev.docs"]
 scitex-agent-container = "scitex_agent_container"
@@ -94,9 +95,13 @@ scitex-agent-container = "scitex_agent_container"
 Homepage = "https://github.com/ywatanabe1989/scitex-agent-container"
 Repository = "https://github.com/ywatanabe1989/scitex-agent-container.git"
 Issues = "https://github.com/ywatanabe1989/scitex-agent-container/issues"
+Documentation = "https://scitex-agent-container.readthedocs.io"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/scitex_agent_container"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/scitex_agent_container/cron/post-merge-pull.sh" = "scitex_agent_container/cron/post-merge-pull.sh"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

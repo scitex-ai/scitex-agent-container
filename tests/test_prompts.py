@@ -144,6 +144,7 @@ def test_theme_selection_no_match_on_theme_command_output():
     assert _detect_theme_selection("1. Auto (match terminal)\n") is False
 
 
+
 def test_file_trust_match():
     content = "Do you trust the files in this folder? yes/no"
     assert _detect_file_trust(content) is True

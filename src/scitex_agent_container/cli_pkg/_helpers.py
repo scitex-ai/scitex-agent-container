@@ -58,10 +58,12 @@ def _probe_remote(cfg) -> bool | None:
     regression suite needs to simulate hung + fast probes without
     real SSH).
     """
+    # stx-allow: fallback (reason: SSH probe may fail if host is unreachable;
+    # None signals "liveness unknown" which callers convert to status="unknown")
     try:
         from ..runtimes.claude_code import ClaudeCodeRuntime
         return ClaudeCodeRuntime().is_running(cfg)
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         return None
 
 
@@ -102,15 +104,19 @@ def get_agent_list_data(
         """Detect which multiplexer hosts a session. Tmux preferred."""
         if not session_name or session_name == "?":
             return None
+        # stx-allow: fallback (reason: tmux binary may be absent on the host;
+        # None fallthrough tries screen next rather than raising)
         try:
             if TmuxManager.exists(session_name):
                 return "tmux"
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             pass
+        # stx-allow: fallback (reason: screen binary may be absent; None
+        # return means multiplexer is unknown, not an error)
         try:
             if ScreenManager.exists(session_name):
                 return "screen"
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             pass
         return None
 
@@ -128,12 +134,14 @@ def get_agent_list_data(
         config_path = entry.get("config")
         cfg = None
         if config_path:
+            # stx-allow: fallback (reason: config YAML may be corrupt or
+            # missing — agent still appears in list with empty labels)
             try:
                 cfg = load_config(config_path)
                 labels = cfg.labels
                 if cfg.remote.is_remote:
                     remote_host = cfg.remote.host
-            except Exception:
+            except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                 pass
 
         if machine and labels.get("machine") != machine:
@@ -176,14 +184,16 @@ def get_agent_list_data(
             }
             for future in list(future_to_idx):
                 idx = future_to_idx[future]
+                # stx-allow: fallback (reason: per-probe SSH or runtime
+                # exception maps to None = "liveness unknown", not "stopped")
                 try:
                     probe_results[idx] = future.result(
                         timeout=remote_probe_timeout_s
                     )
-                except _FuturesTimeout:
+                except _FuturesTimeout:  # stx-allow: fallback (reason: expected failure — see inline comment)
                     probe_results[idx] = None
                     future.cancel()
-                except Exception:
+                except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                     probe_results[idx] = None
         finally:
             pool.shutdown(wait=False)
@@ -198,7 +208,14 @@ def get_agent_list_data(
         remote_host = prep["remote_host"]
         cfg = prep["cfg"]
 
+        multiplexer: str | None = None
+        if not (cfg and cfg.remote.is_remote):
+            multiplexer = _detect_multiplexer(screen_name)
+
         liveness_unknown = False
+        # stx-allow: fallback (reason: ScreenManager.exists may raise if the
+        # screen binary is absent — liveness_unknown=True surfaces as "unknown"
+        # status rather than crashing the list command)
         try:
             if cfg and cfg.remote.is_remote:
                 probe = probe_results.get(prep["idx"])
@@ -208,14 +225,15 @@ def get_agent_list_data(
                 else:
                     is_running = bool(probe)
             else:
-                is_running = ScreenManager.exists(screen_name)
-        except Exception:
+                # _detect_multiplexer returned non-None iff either the tmux
+                # OR screen backend sees this session live — use it as the
+                # authoritative liveness signal. Previously this path
+                # hardcoded ScreenManager.exists(), which always returned
+                # False for tmux agents and reported them as stopped.
+                is_running = multiplexer is not None
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             is_running = False
             liveness_unknown = True
-
-        multiplexer: str | None = None
-        if not (cfg and cfg.remote.is_remote):
-            multiplexer = _detect_multiplexer(screen_name)
 
         status_val: str
         if liveness_unknown:

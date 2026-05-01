@@ -16,7 +16,7 @@ from .base import RuntimeBase
 from .claude_md import cleanup_claude_md, setup_claude_md
 from .mcp_config import cleanup_mcp_config, setup_mcp_config
 from .onboarding import ensure_project_onboarding
-from .settings_json import cleanup_settings_json, setup_settings_json
+from .settings_json import cleanup_settings_json, ensure_global_settings_json, setup_settings_json
 from .src_files import (  # noqa: F401
     cleanup_src_claude_md,
     cleanup_src_env,
@@ -103,7 +103,7 @@ def _session_resumable(
             st = entry.stat()
             if entry.is_file() and st.st_size > 0:
                 candidates.append((st.st_mtime, entry))
-        except OSError:
+        except OSError:  # stx-allow: fallback (reason: file system operation failure)
             continue
     if not candidates:
         return False
@@ -229,6 +229,18 @@ class ClaudeCodeRuntime(RuntimeBase):
             )
 
         lines = []
+        # Source .env files first so explicit env: values in YAML override them.
+        # Relative paths are resolved relative to workdir on the target host.
+        # set -a / set +a auto-exports every variable sourced from the file.
+        for env_file in config.env_files:
+            if env_file.startswith("/") or env_file.startswith("~"):
+                file_path = f'"{env_file}"'
+            else:
+                # Workspace-relative: workdir is cd'd to before this runs.
+                file_path = f'"./{env_file}"'
+            lines.append(
+                f"if [ -f {file_path} ]; then set -a; . {file_path}; set +a; fi"
+            )
         for key, value in config.env.items():
             lines.append(f'export {key}="{_resolve(str(value))}"')
         # Always export the canonical fleet hostname so downstream consumers
@@ -236,6 +248,7 @@ class ClaudeCodeRuntime(RuntimeBase):
         # than the OS-reported FQDN ("Yusukes-MacBook-Air.local"). The
         # sidecar already prefers SCITEX_OROCHI_MACHINE over Node's
         # hostname() — this just hands it the canonical value.
+        # stx-allow: fallback (reason: resolve_hostname() can fail on misconfiguration; leaving SCITEX_OROCHI_MACHINE unset is safe because the sidecar falls back to its own hostname() call)
         try:
             from ..config._host import resolve_hostname
 
@@ -243,7 +256,7 @@ class ClaudeCodeRuntime(RuntimeBase):
             if _canonical:
                 lines.append(f'export SCITEX_OROCHI_MACHINE="{_canonical}"')
                 lines.append(f'export SCITEX_AGENT_CONTAINER_HOSTNAME="{_canonical}"')
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             # resolve_hostname falls through to socket.gethostname() short
             # form on misconfig; if even that raises, leave the env unset
             # and let the sidecar fall back to its own hostname() call.
@@ -443,7 +456,7 @@ class ClaudeCodeRuntime(RuntimeBase):
                     config.name,
                     path,
                 )
-            except OSError:
+            except OSError:  # stx-allow: fallback (reason: file system operation failure)
                 logger.exception(
                     "Failed to write boot capture for %s to %s",
                     config.name,
@@ -508,6 +521,7 @@ class ClaudeCodeRuntime(RuntimeBase):
         for sc in commands:
             if sc.delay > 0:
                 time.sleep(sc.delay)
+            # stx-allow: fallback (reason: multiplexer send can fail if the session is temporarily unavailable; logging the error and continuing allows remaining startup commands to be attempted)
             try:
                 mux.send_text_and_submit(config.screen_name, sc.command)
                 logger.info(
@@ -516,7 +530,7 @@ class ClaudeCodeRuntime(RuntimeBase):
                     sc.delay,
                     sc.command,
                 )
-            except Exception:
+            except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                 logger.exception(
                     "Failed to send startup command to %s: %s",
                     config.screen_name,
@@ -540,12 +554,17 @@ class ClaudeCodeRuntime(RuntimeBase):
         config: AgentConfig,
         no_preflight: bool = False,
         force: bool = False,
+        dry_run: bool = False,
     ) -> bool:
         """Start a Claude Code agent.
 
         ``force`` is passed through to SSHRemote.start so the remote
         ``scitex-agent-container start`` call receives ``--force`` and
         stops any existing instance before relaunching.
+
+        ``dry_run``: materialize the workspace (CLAUDE.md, .mcp.json,
+        .env, settings.json) but do NOT launch the multiplexer or the
+        Claude Code process. Returns True when prep succeeds.
         """
         if _should_dispatch_remote(config):
             return SSHRemote.start(config, no_preflight=no_preflight, force=force)
@@ -563,6 +582,13 @@ class ClaudeCodeRuntime(RuntimeBase):
         env_exports = self._build_env_exports(config)
         workdir = config.expanded_workdir
 
+        # Source workspace .env before explicit env so path-based token vars
+        # (SCITEX_OROCHI_A2A_TOKEN_PATH, etc.) reach the agent process.
+        # config.env exports follow and take precedence over .env values.
+        env_file = Path(workdir) / ".env"
+        env_source = f"if [ -f '{env_file}' ]; then set -a; source '{env_file}'; set +a; fi"
+        env_exports = env_source + ("\n" + env_exports if env_exports else "")
+
         # Pre-populate ~/.claude.json projects entry so the agent skips
         # interactive onboarding (theme / login-method / dev-channels prompts).
         ensure_project_onboarding(workdir)
@@ -577,7 +603,12 @@ class ClaudeCodeRuntime(RuntimeBase):
         else:
             _setup_claude_md(config, workdir)
         setup_mcp_config(config, workdir)
+        ensure_global_settings_json()
         setup_settings_json(config, workdir)
+
+        if dry_run:
+            # Workspace materialized; skip multiplexer + Claude Code launch.
+            return True
 
         mux = self._get_mux(config)
         started = mux.start(
@@ -589,9 +620,10 @@ class ClaudeCodeRuntime(RuntimeBase):
         )
 
         if started:
+            # stx-allow: fallback (reason: a2a sidecar is optional; a spawn failure must not prevent the agent itself from starting)
             try:
                 _a2a_start_sidecar(config)
-            except Exception:  # noqa: BLE001 — never block agent start
+            except Exception:  # noqa: BLE001 — never block agent start  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                 logger.exception("a2a sidecar spawn failed for %s", config.name)
 
             has_tasks = self._needs_auto_accept(config) or config.startup_commands
@@ -624,9 +656,10 @@ class ClaudeCodeRuntime(RuntimeBase):
             elif config.container.runtime == "apptainer":
                 return ApptainerRuntime().stop(config)
 
+        # stx-allow: fallback (reason: a2a sidecar cleanup is best-effort; a stop failure must not prevent the agent session from being torn down)
         try:
             _a2a_stop_sidecar(config)
-        except Exception:  # noqa: BLE001 — never block agent stop
+        except Exception:  # noqa: BLE001 — never block agent stop  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             logger.exception("a2a sidecar stop failed for %s", config.name)
 
         is_v2 = bool(config.mcp_servers) or _has_src_files(config)

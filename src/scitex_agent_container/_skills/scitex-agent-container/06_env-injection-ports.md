@@ -1,3 +1,9 @@
+---
+name: env-injection-ports
+description: Env-injection ports for agents — see file body for details.
+tags: [scitex-agent-container, scitex-package]
+---
+
 # Env-injection ports for agents
 
 Agents have **four distinct env-injection ports** with different reach and persistence.

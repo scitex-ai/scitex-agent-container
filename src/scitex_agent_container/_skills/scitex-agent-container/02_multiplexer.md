@@ -1,6 +1,7 @@
 ---
 name: agent-container-multiplexer
 description: tmux vs screen multiplexer support, capture-pane, send-keys.
+tags: [scitex-agent-container, scitex-package]
 ---
 
 # Multiplexer

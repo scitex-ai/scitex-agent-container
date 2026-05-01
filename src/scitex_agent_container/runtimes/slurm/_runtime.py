@@ -92,7 +92,7 @@ class SlurmRuntime(RuntimeBase):
                 timeout=30,
                 check=False,
             )
-        except FileNotFoundError as exc:
+        except FileNotFoundError as exc:  # stx-allow: fallback (reason: file may not exist on first use)
             raise RuntimeError(
                 "sbatch binary not found on this host. SlurmRuntime must run "
                 "from a SLURM submission host (login node)."
@@ -148,7 +148,7 @@ class SlurmRuntime(RuntimeBase):
                 timeout=15,
                 check=False,
             )
-        except FileNotFoundError:
+        except FileNotFoundError:  # stx-allow: fallback (reason: file may not exist on first use)
             logger.warning("scancel not found; cannot stop %s", config.name)
             return False
         _clear_state(config.name)
@@ -175,7 +175,7 @@ class SlurmRuntime(RuntimeBase):
                 timeout=15,
                 check=False,
             )
-        except FileNotFoundError:
+        except FileNotFoundError:  # stx-allow: fallback (reason: file may not exist on first use)
             return False
         status = (proc.stdout or "").strip()
         # PENDING / RUNNING / CONFIGURING etc. all mean "still allocated".
@@ -203,7 +203,7 @@ class SlurmRuntime(RuntimeBase):
                 check=False,
             )
             return proc.stdout
-        except FileNotFoundError:
+        except FileNotFoundError:  # stx-allow: fallback (reason: file may not exist on first use)
             return log_file.read_text()[-4096:]
 
 
@@ -233,7 +233,7 @@ def _maybe_register_hpc_reservation(cfg: AgentConfig, job_id: str) -> None:
     """
     try:
         from scitex_hpc import Reservation  # type: ignore
-    except ImportError:
+    except ImportError:  # stx-allow: fallback (reason: optional dependency not installed)
         return
     try:
         Reservation.from_jobid(
@@ -243,10 +243,11 @@ def _maybe_register_hpc_reservation(cfg: AgentConfig, job_id: str) -> None:
             persistent=bool(cfg.slurm.auto_resubmit),
             refresh_node=False,  # squeue probe over loopback adds no value
         )
-    except FileExistsError:
+    except FileExistsError:  # stx-allow: fallback (reason: expected failure — see inline comment)
         # Lease already present — typical on a force-restart. Leave it
         # alone; sac's primary state file is the source of truth.
         pass
+    # stx-allow: fallback (reason: optional scitex-hpc integration; registration failure must not abort job submission)
     except Exception as exc:  # pragma: no cover — defensive
         logger.warning(
             "scitex-hpc Reservation registration failed for %s: %s",
@@ -265,14 +266,15 @@ def _maybe_clear_hpc_reservation(agent_name: str) -> None:
     """
     try:
         from scitex_hpc import Reservation  # type: ignore
-    except ImportError:
+    except ImportError:  # stx-allow: fallback (reason: optional dependency not installed)
         return
+    # stx-allow: fallback (reason: optional scitex-hpc integration; lease cleanup failure must not block agent shutdown)
     try:
         res = Reservation.get(agent_name, host="localhost")
         if res is not None:
             # missing_ok=True so an already-cancelled job doesn't raise
             res.release(missing_ok=True)
-    except Exception as exc:  # pragma: no cover — defensive
+    except Exception as exc:  # pragma: no cover — defensive  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         logger.warning(
             "scitex-hpc Reservation cleanup failed for %s: %s", agent_name, exc
         )

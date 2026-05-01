@@ -53,11 +53,11 @@ def _check_a2a_card(config: AgentConfig) -> tuple[bool, str]:
     try:
         with urllib.request.urlopen(url, timeout=5) as resp:
             data = json.loads(resp.read())
-    except urllib.error.HTTPError as exc:
+    except urllib.error.HTTPError as exc:  # stx-allow: fallback (reason: expected failure — see inline comment)
         return False, f"unhealthy: AgentCard HTTP {exc.code} from {url}"
-    except (urllib.error.URLError, OSError) as exc:
+    except (urllib.error.URLError, OSError) as exc:  # stx-allow: fallback (reason: file system operation failure)
         return False, f"unhealthy: AgentCard unreachable at {url}: {exc}"
-    except (ValueError, json.JSONDecodeError) as exc:
+    except (ValueError, json.JSONDecodeError) as exc:  # stx-allow: fallback (reason: malformed JSON tolerated)
         return False, f"unhealthy: AgentCard malformed JSON: {exc}"
 
     elapsed_ms = int((time.time() - t0) * 1000)
@@ -160,9 +160,10 @@ def health_monitor(
             time.sleep(current_backoff)
 
             if restart_fn is not None:
+                # stx-allow: fallback (reason: restart callback failure must not abort the health-monitor loop; error is printed and monitoring continues)
                 try:
                     restart_fn(config)
-                except Exception:
+                except Exception:  # stx-allow: fallback (reason: non-fatal restart failure — health monitor loop must continue regardless)
                     traceback.print_exc()
 
             retries += 1

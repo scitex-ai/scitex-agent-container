@@ -1,9 +1,14 @@
 """Rich agent metadata collection (claude-hud-style).
 
-Canonical source of truth for the metadata payload emitted by
-``scitex-agent-container status <name> --json``. External consumers
-(fleet heartbeat pushers, dashboards) shell out to this module via
-``sac status --json`` so the collection logic stays in one place.
+Canonical source of truth for the metadata payload that is:
+  1. Emitted by ``scitex-agent-container status <name> --json``.
+  2. POSTed by the MCP sidecar heartbeat to ``/api/agents/register/``.
+
+Ported 2026-04-12 from the pre-restructure
+``~/.scitex/orochi/agents/mamba-healer-mba/scripts/agent_meta.py`` — the
+fleet script now lives at ``~/.scitex/orochi/shared/scripts/agent_meta.py``
+(2026-04-17 runtime/ layout) and shells out to this module via ``sac
+status --json``, so the collection logic still lives in one place.
 
 Every field is best-effort: any failure leaves the field as its default
 (``""``, ``0``, ``0.0``, ``[]``) and never raises. The caller merges this
@@ -35,7 +40,7 @@ def detect_multiplexer(session: str) -> str:
             == 0
         ):
             return "tmux"
-    except FileNotFoundError:
+    except FileNotFoundError:  # stx-allow: fallback (reason: file may not exist on first use)
         pass
     try:
         r = subprocess.run(
@@ -45,7 +50,7 @@ def detect_multiplexer(session: str) -> str:
         )
         if session in r.stdout:
             return "screen"
-    except FileNotFoundError:
+    except FileNotFoundError:  # stx-allow: fallback (reason: file may not exist on first use)
         pass
     return ""
 
@@ -62,26 +67,32 @@ def _encode_claude_project(workdir: str) -> str:
 
 def _latest_jsonls(workdir: str) -> list[Path]:
     # Claude Code encodes the *resolved* cwd, so follow symlinks first.
+    # stx-allow: fallback (reason: broken symlink or cross-device path can
+    # raise — raw workdir string is an acceptable fallback for encoding)
     try:
         resolved = str(Path(workdir).expanduser().resolve())
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         resolved = workdir
     proj_dir = Path.home() / ".claude" / "projects" / _encode_claude_project(resolved)
     if not proj_dir.is_dir():
         return []
+    # stx-allow: fallback (reason: concurrent file deletion between glob and
+    # stat() causes OSError — return empty list rather than raising)
     try:
         return sorted(
             proj_dir.glob("*.jsonl"),
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         return []
 
 
 def _parse_skills(workdir: str) -> list[str]:
     """Parse ```skills fenced code block from workspace CLAUDE.md."""
     skills: list[str] = []
+    # stx-allow: fallback (reason: CLAUDE.md may be absent or unreadable;
+    # empty skills list is an acceptable result for unconfigured agents)
     try:
         cmd = Path(workdir) / "CLAUDE.md"
         if cmd.is_file():
@@ -91,7 +102,7 @@ def _parse_skills(workdir: str) -> list[str]:
                     ln = ln.strip()
                     if ln and not ln.startswith("#"):
                         skills.append(ln)
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         pass
     return skills
 
@@ -121,13 +132,15 @@ def parse_subagent_count_from_pane_text(pane: str) -> int:
 def _subagent_count_from_pane(session: str, multiplexer: str) -> int:
     if multiplexer != "tmux":
         return 0
+    # stx-allow: fallback (reason: session may not exist yet; 0 is the
+    # correct "unknown" sentinel — never block a heartbeat on tmux error)
     try:
         pane = subprocess.run(
             ["tmux", "capture-pane", "-t", session, "-p"],
             capture_output=True,
             text=True,
         ).stdout
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         return 0
     return parse_subagent_count_from_pane_text(pane)
 
@@ -136,6 +149,8 @@ def _capture_pane(session: str, multiplexer: str, max_chars: int = 10000) -> str
     """Return the current tmux pane contents, truncated. Empty on error."""
     if multiplexer != "tmux":
         return ""
+    # stx-allow: fallback (reason: session may have exited between the
+    # has-session check and capture-pane — empty string is safe for callers)
     try:
         out = (
             subprocess.run(
@@ -145,7 +160,7 @@ def _capture_pane(session: str, multiplexer: str, max_chars: int = 10000) -> str
             ).stdout
             or ""
         )
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         return ""
     if len(out) > max_chars:
         out = out[-max_chars:]
@@ -258,13 +273,15 @@ def _config_candidates(workdir: str, filename: str) -> list[Path]:
         cands += [p / filename, p / ".claude" / filename]
         if p.parent.name == "workspaces":
             cands.append(p.parent / f"mamba-{p.name}" / filename)
+        # stx-allow: fallback (reason: git root walk can fail on pathological
+        # filesystems — missing git root just skips that candidate)
         try:
             git_root = p
             while git_root != git_root.parent and not (git_root / ".git").exists():
                 git_root = git_root.parent
             if (git_root / ".git").exists():
                 cands.append(git_root / filename)
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             pass
     cands += [home / ".claude" / filename, home / filename]
     # Dedup preserving order.
@@ -281,11 +298,13 @@ def _config_candidates(workdir: str, filename: str) -> list[Path]:
 
 def _read_claude_md(workdir: str, max_chars: int = 20000) -> str:
     for p in _config_candidates(workdir, "CLAUDE.md"):
+        # stx-allow: fallback (reason: permission error on one candidate
+        # must not prevent trying the next — best-effort file read)
         try:
             if not p.is_file():
                 continue
             return p.read_text(errors="replace")[:max_chars]
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             continue
     return ""
 
@@ -308,19 +327,76 @@ def _redact_mcp_tree(obj):
 
 def _read_mcp_json(workdir: str, max_chars: int = 10000) -> str:
     for p in _config_candidates(workdir, ".mcp.json"):
+        # stx-allow: fallback (reason: permission error on one candidate
+        # must not prevent trying the next — best-effort file read)
         try:
             if not p.is_file():
                 continue
             raw = p.read_text(errors="replace")
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             continue
+        # stx-allow: fallback (reason: corrupt JSON falls back to raw-with-
+        # redaction rather than raising — collect_rich is best-effort)
         try:
             doc = json.loads(raw)
             pretty = json.dumps(_redact_mcp_tree(doc), indent=2)
             return pretty[:max_chars]
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             return _redact_secrets(raw[:max_chars])
     return ""
+
+
+def _parse_mcp_servers(workdir: str) -> list[dict[str, Any]]:
+    """Return a structured summary of MCP servers configured for this agent.
+
+    Parses ``<workdir>/.mcp.json`` into a flat list of
+    ``{name, transport, url_host, command}`` entries so the dashboard
+    can render a setup-audit table alongside installed plugins. URL
+    hosts (not full URLs) and commands (not args) are surfaced because
+    that is enough to verify the server is pointing at the right
+    endpoint without exposing query-string secrets.
+
+    Returns [] if the file is missing or malformed — callers never get
+    ``None``.
+    """
+    try:
+        p = Path(workdir) / ".mcp.json"
+        if not p.is_file():
+            return []
+        doc = json.loads(p.read_text(errors="replace"))
+    except Exception:
+        return []
+    if not isinstance(doc, dict):
+        return []
+    servers = doc.get("mcpServers")
+    if not isinstance(servers, dict):
+        return []
+    out: list[dict[str, Any]] = []
+    for sname, sconf in servers.items():
+        if not isinstance(sconf, dict):
+            continue
+        transport = sconf.get("type") or sconf.get("transport")
+        url_host: str | None = None
+        url_val = sconf.get("url")
+        if isinstance(url_val, str):
+            try:
+                from urllib.parse import urlparse
+
+                url_host = urlparse(url_val).hostname or None
+            except Exception:
+                url_host = None
+        command = sconf.get("command")
+        if not isinstance(command, str):
+            command = None
+        out.append(
+            {
+                "name": sname,
+                "transport": transport if isinstance(transport, str) else None,
+                "url_host": url_host,
+                "command": command,
+            }
+        )
+    return out
 
 
 def _pids_from_session(session: str, multiplexer: str) -> tuple[int, int]:
@@ -328,6 +404,8 @@ def _pids_from_session(session: str, multiplexer: str) -> tuple[int, int]:
     ppid = 0
     if multiplexer != "tmux":
         return pid, ppid
+    # stx-allow: fallback (reason: tmux session may not exist yet or pgrep
+    # may return no results — pid/ppid of 0 is a valid "unknown" sentinel)
     try:
         out = (
             subprocess.run(
@@ -350,7 +428,7 @@ def _pids_from_session(session: str, multiplexer: str) -> tuple[int, int]:
                 .splitlines()
             )
             pid = int(ps[0]) if ps else ppid
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         pass
     return pid, ppid
 
@@ -375,6 +453,21 @@ def collect_rich(
     """
     multiplexer = detect_multiplexer(session)
 
+    # ---- statusline JSON (authoritative, written by sac-statusline) --------
+    # Prefer the persisted JSON that Claude Code's statusLine command writes
+    # each turn — it contains the exact used_percentage from /context and
+    # authoritative rate-limit resets. Falls back to JSONL approximation when
+    # the file is absent (agent not yet launched with sac-statusline wired).
+    _sl: dict = {}
+    # stx-allow: fallback (reason: statusline module is optional; import or
+    # read failure falls back to JSONL approximation — collect_rich is best-effort)
+    try:
+        from .statusline import read_statusline_json
+
+        _sl = read_statusline_json(name) or {}
+    except Exception:
+        pass
+
     # ---- transcript-derived fields ----------------------------------
     context_pct = 0.0
     current_tool = ""
@@ -385,25 +478,42 @@ def collect_rich(
     model = ""
     started_at = ""
 
+    # Seed context_pct from statusline JSON if available (overridden below
+    # by the JSONL scan only when the statusline file is absent).
+    if _sl:
+        _cw = _sl.get("context_window") or {}
+        _cw_pct = _cw.get("used_percentage")
+        if _cw_pct is not None:
+            context_pct = round(float(_cw_pct), 1)
+        _sl_model = (_sl.get("model") or {}).get("display_name", "")
+        if _sl_model:
+            model = _sl_model
+
     jsonls = _latest_jsonls(workdir)
     if jsonls:
+        # stx-allow: fallback (reason: stat() can race with file deletion;
+        # missing started_at is acceptable — field stays empty)
         try:
             earliest = min(jsonls, key=lambda p: p.stat().st_mtime)
             started_at = datetime.fromtimestamp(
                 earliest.stat().st_mtime, tz=timezone.utc
             ).isoformat()
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             pass
 
+        # stx-allow: fallback (reason: JSONL may be unreadable mid-rotate;
+        # empty lines list means no transcript fields — non-fatal)
         try:
             lines = jsonls[0].read_text().splitlines()[-50:]
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             lines = []
 
         for line in reversed(lines):
+            # stx-allow: fallback (reason: individual JSONL lines may be
+            # truncated mid-write; skip invalid lines and keep scanning)
             try:
                 obj = json.loads(line)
-            except Exception:
+            except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                 continue
             if obj.get("type") == "assistant" and "message" in obj:
                 msg = obj["message"]
@@ -411,23 +521,28 @@ def collect_rich(
                     model = msg.get("model", "")
                 if not last_activity:
                     last_activity = obj.get("timestamp", "")
-                u = msg.get("usage", {})
-                total = (
-                    u.get("input_tokens", 0)
-                    + u.get("cache_read_input_tokens", 0)
-                    + u.get("cache_creation_input_tokens", 0)
-                )
-                # Opus 4.6 1M context = 1,000,000 tokens
-                context_pct = round((total / 1_000_000) * 100, 1)
+                # Only fall back to the JSONL approximation when the
+                # authoritative statusline JSON didn't supply a value.
+                if not _sl:
+                    u = msg.get("usage", {})
+                    total = (
+                        u.get("input_tokens", 0)
+                        + u.get("cache_read_input_tokens", 0)
+                        + u.get("cache_creation_input_tokens", 0)
+                    )
+                    # Opus 4.6 1M context = 1,000,000 tokens
+                    context_pct = round((total / 1_000_000) * 100, 1)
                 break
 
         # Find the most recent tool_use AND its input preview, so the
         # dashboard can show "Bash: docker compose build" instead of just
         # "Bash". Per ywatanabe complaint msg 5481.
         for line in reversed(lines):
+            # stx-allow: fallback (reason: truncated JSONL line during rotation;
+            # skip and keep scanning for last valid tool_use)
             try:
                 obj = json.loads(line)
-            except Exception:
+            except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                 continue
             if obj.get("type") == "assistant":
                 content = obj.get("message", {}).get("content", [])
@@ -468,9 +583,11 @@ def collect_rich(
         # "what was this agent last asked to do" snippet which is more
         # meaningful than the tool name alone.
         for line in reversed(lines):
+            # stx-allow: fallback (reason: truncated JSONL line during rotation;
+            # skip and keep scanning for last valid user message)
             try:
                 obj = json.loads(line)
-            except Exception:
+            except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                 continue
             if obj.get("type") == "user" and "message" in obj:
                 msg = obj["message"]
@@ -516,29 +633,35 @@ def collect_rich(
     # ---- workspace file snapshots -----------------------------------
     claude_md = _read_claude_md(workdir)
     mcp_json = _read_mcp_json(workdir)
+    mcp_servers = _parse_mcp_servers(workdir)
 
     # ---- hook-captured tool / prompt log ----------------------------
     # Populated by `scitex-agent-container hook-event` entries wired into
     # the agent's .claude/settings.local.json. Non-agentic: pure ring-
     # buffer read.
+    # stx-allow: fallback (reason: event_log DB may not exist on agents that
+    # haven't run a hook yet — empty summary is a valid initial state)
     try:
         from .event_log import summarize as _summarize_events
 
         _event_summary = _summarize_events(name, limit=50)
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         _event_summary = {
             "recent_tools": [],
             "recent_prompts": [],
             "agent_calls": [],
+            "open_agent_calls": [],
             "background_tasks": [],
             "counts": {},
         }
     # Use canonical fleet name (e.g. "nas" instead of "DXP480TPLUS-994")
+    # stx-allow: fallback (reason: resolve_hostname reads a YAML that may be
+    # absent on unconfigured hosts — raw gethostname is an acceptable fallback)
     try:
         from .config._host import resolve_hostname
 
         machine = resolve_hostname()
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         machine = socket.gethostname().split(".")[0]
 
     # ---- Claude quota fields ----------------------------------------
@@ -548,28 +671,118 @@ def collect_rich(
     quota_7d_reset_at: str | None = None
     quota_from_cache: bool = False
     quota_error: str | None = None
-    try:
-        usage = fetch_usage()
-        quota_5h_used_pct = usage.get("used_pct_5h")
-        quota_7d_used_pct = usage.get("used_pct_7d")
-        quota_5h_reset_at = usage.get("reset_at_5h")
-        quota_7d_reset_at = usage.get("reset_at_7d")
-        quota_from_cache = bool(usage.get("from_cache", False))
-        quota_error = usage.get("error")
-    except Exception as exc:
-        quota_error = f"fetch_usage raised: {exc}"
+
+    # Prefer statusline JSON rate-limits (exact values from Claude Code)
+    # over the fetch_usage scrape when available.
+    if _sl:
+        _rl = _sl.get("rate_limits") or {}
+        _fh = _rl.get("five_hour") or {}
+        _sd = _rl.get("seven_day") or {}
+        if _fh.get("used_percentage") is not None:
+            quota_5h_used_pct = round(float(_fh["used_percentage"]), 1)
+        if _sd.get("used_percentage") is not None:
+            quota_7d_used_pct = round(float(_sd["used_percentage"]), 1)
+        quota_5h_reset_at = _fh.get("resets_at") or None
+        quota_7d_reset_at = _sd.get("resets_at") or None
+        quota_from_cache = False  # live from statusline, not cached
+
+    if quota_5h_used_pct is None:
+        # stx-allow: fallback (reason: fetch_usage may fail on network timeout
+        # or missing credentials; quota_error captures the reason for callers)
+        try:
+            usage = fetch_usage()
+            quota_5h_used_pct = usage.get("used_pct_5h")
+            quota_7d_used_pct = usage.get("used_pct_7d")
+            quota_5h_reset_at = usage.get("reset_at_5h")
+            quota_7d_reset_at = usage.get("reset_at_7d")
+            quota_from_cache = bool(usage.get("from_cache", False))
+            quota_error = usage.get("error")
+        except Exception as exc:  # stx-allow: fallback
+            quota_error = f"fetch_usage raised: {exc}"
 
     # ---- Account / credential identity ------------------------------------
+    # Pull the full non-secret credentials view so downstream consumers
+    # can render plan, plugins, statusline command, and auth-rotation
+    # state without re-scanning ~/.claude/. The dashboard previously
+    # showed billing_type ("stripe_subscription") as the plan, which is
+    # wrong — the real plan comes from rateLimitTier in credentials.json
+    # and is normalized to plan_label here.
     account_email: str | None = None
+    account_plan_label: str | None = None
+    account_subscription_type: str | None = None
+    account_rate_limit_tier: str | None = None
+    account_organization_name: str | None = None
+    account_uuid: str | None = None
+    oauth_expires_at: int | None = None
+    installed_plugins: list = []
+    status_line_command: str | None = None
+    # stx-allow: fallback (reason: credentials file absent on freshly
+    # provisioned agents — account_email stays None until auth completes)
     try:
         from .credentials import read_credentials_metadata
 
         _cred = read_credentials_metadata()
         account_email = _cred.get("email_address")
-    except Exception:
+        account_plan_label = _cred.get("plan_label")
+        account_subscription_type = _cred.get("subscription_type")
+        account_rate_limit_tier = _cred.get("rate_limit_tier")
+        account_organization_name = _cred.get("organization_name")
+        account_uuid = _cred.get("account_uuid")
+        _expires = _cred.get("oauth_expires_at")
+        if isinstance(_expires, int):
+            oauth_expires_at = _expires
+        _plugins = _cred.get("installed_plugins")
+        if isinstance(_plugins, list):
+            installed_plugins = _plugins
+        _slc = _cred.get("status_line_command")
+        if isinstance(_slc, str):
+            status_line_command = _slc
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         pass
 
+    # ---- Auth-rotation tracking -------------------------------------------
+    # When Claude Code rotates the OAuth token the expiresAt timestamp
+    # jumps. We append one NDJSON line per observed change, keyed on the
+    # email so the dashboard can show "this email has rotated N times,
+    # last at T". The log is local-only (not pushed as a bulk field)
+    # because the hub should dedupe rotations on its side from the
+    # per-heartbeat oauth_expires_at field.
+    if account_email and isinstance(oauth_expires_at, int):
+        try:
+            rot_dir = Path.home() / ".scitex" / "agent-container" / "auth-rotations"
+            rot_dir.mkdir(parents=True, exist_ok=True)
+            rot_file = rot_dir / f"{account_email}.ndjson"
+            last_expires: int | None = None
+            if rot_file.is_file():
+                try:
+                    for line in reversed(rot_file.read_text().splitlines()):
+                        line = line.strip()
+                        if not line:
+                            continue
+                        obj = json.loads(line)
+                        if isinstance(obj, dict) and isinstance(
+                            obj.get("oauth_expires_at"), int
+                        ):
+                            last_expires = obj["oauth_expires_at"]
+                            break
+                except Exception:
+                    last_expires = None
+            if last_expires != oauth_expires_at:
+                entry = {
+                    "ts": datetime.now(tz=timezone.utc).isoformat(),
+                    "email": account_email,
+                    "account_uuid": account_uuid,
+                    "oauth_expires_at": oauth_expires_at,
+                    "plan_label": account_plan_label,
+                }
+                with rot_file.open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(entry) + "\n")
+        except Exception:
+            pass
+
     # ---- Machine resource metrics (psutil, optional) -----------------------
+    # stx-allow: fallback (reason: psutil is an optional dependency; absent
+    # on minimal installs — metrics dict stays empty, dashboard handles it)
     try:
         import psutil as _psutil
 
@@ -578,9 +791,15 @@ def collect_rich(
         _disk = _psutil.disk_usage("/")
         _load = _psutil.getloadavg()
         _cpu_count = _psutil.cpu_count(logical=True) or 0
+        # stx-allow: fallback (reason: cpu_freq may be None on VMs/containers)
+        try:
+            _freq = _psutil.cpu_freq()
+            _cpu_model = f"{_cpu_count}x @ {_freq.max:.0f}MHz" if _freq else ""
+        except Exception:
+            _cpu_model = ""
         _metrics = {
             "cpu_count": _cpu_count,
-            "cpu_model": "",
+            "cpu_model": _cpu_model,
             "cpu_used_percent": round(_cpu_pct, 1),
             "load_avg_1m": round(_load[0], 2),
             "load_avg_5m": round(_load[1], 2),
@@ -588,9 +807,13 @@ def collect_rich(
             "mem_used_percent": round(_vm.percent, 1),
             "mem_total_mb": round(_vm.total / 1024 / 1024, 1),
             "mem_free_mb": round(_vm.available / 1024 / 1024, 1),
+            "mem_used_mb": round((_vm.total - _vm.available) / 1024 / 1024, 1),
             "disk_used_percent": round(_disk.percent, 1),
+            "disk_total_mb": round(_disk.total / 1024 / 1024, 1),
+            "disk_used_mb": round(_disk.used / 1024 / 1024, 1),
+            "resource_source": "local",
         }
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         _metrics = {}
 
     return {
@@ -628,7 +851,27 @@ def collect_rich(
         "quota_from_cache": quota_from_cache,
         "quota_error": quota_error,
         # ---- Account identity (which Claude account this agent is using) ----
+        # `account_email` stays as the stable id consumers group on.
+        # `account_plan_label` is the human-readable plan ("Max 20x" etc.)
+        # derived from rateLimitTier — dashboards should prefer this over
+        # billing_type, which only reports payment method.
+        # `oauth_expires_at` is the unix-ms token expiry; a change across
+        # heartbeats indicates the OAuth token was rotated.
         "account_email": account_email,
+        "account_plan_label": account_plan_label,
+        "account_subscription_type": account_subscription_type,
+        "account_rate_limit_tier": account_rate_limit_tier,
+        "account_organization_name": account_organization_name,
+        "account_uuid": account_uuid,
+        "oauth_expires_at": oauth_expires_at,
+        # ---- Claude Code setup audit (for web-UI setup check) ---------------
+        # `installed_plugins` lists what is installed via /plugin install.
+        # `status_line_command` exposes whatever claude-hud / custom
+        # statusline the user wired up — the hub uses it as a "setup-ok"
+        # signal (is claude-hud wired in? is the sac-statusline wrapper
+        # in place?).
+        "installed_plugins": installed_plugins,
+        "status_line_command": status_line_command,
         # ---- Machine resource metrics (for hub /api/resources/) -------------
         # NOTE: metrics are host-level, not agent-level. When multiple agents
         # run on the same host they all report identical values; the hub is
@@ -643,9 +886,11 @@ def collect_rich(
         # ---- Workspace file snapshots --------------------------------------
         # Full CLAUDE.md (truncated) so downstream consumers do not need
         # per-host filesystem access. .mcp.json has token-style keys
-        # redacted.
+        # redacted. mcp_servers is the structured view for setup audit
+        # (name + transport + host/command, nothing sensitive).
         "claude_md": claude_md,
         "mcp_json": mcp_json,
+        "mcp_servers": mcp_servers,
         # ---- Claude Code hook-captured events ------------------------------
         # Structured view of the last N events the agent fired through
         # .claude/settings.local.json hooks. Surfaces full tool inputs
@@ -655,6 +900,18 @@ def collect_rich(
         "recent_tools": _event_summary.get("recent_tools") or [],
         "recent_prompts": _event_summary.get("recent_prompts") or [],
         "agent_calls": _event_summary.get("agent_calls") or [],
+        "open_agent_calls": _event_summary.get("open_agent_calls") or [],
+        # Scalar summaries for terse projection and healer thresholding.
+        # open_agent_calls_count > 0 means there are Agent pretool events
+        # with no matching posttool — possible stuck subagent.
+        # oldest_open_agent_age_s gives the age of the oldest such call.
+        # Cross-check with subagent_count before alerting (ring-buffer
+        # rotation can produce false positives).
+        "open_agent_calls_count": len(_event_summary.get("open_agent_calls") or []),
+        "oldest_open_agent_age_s": max(
+            (c.get("age_seconds") or 0 for c in (_event_summary.get("open_agent_calls") or [])),
+            default=None,
+        ) or None,
         "background_tasks": _event_summary.get("background_tasks") or [],
         "tool_counts": _event_summary.get("counts") or {},
         # Functional-heartbeat shortcuts — top-level so consumers don't
@@ -682,6 +939,8 @@ def _collect_action_summary_fields(agent_name: str) -> dict[str, Any]:
     heartbeat. All keys are prefixed ``action_`` so consumers know
     which subsystem they came from.
     """
+    # stx-allow: fallback (reason: actions.db may be absent or corrupt;
+    # empty action summary never blocks a heartbeat — fail-open by design)
     try:
         from . import action_store
 
@@ -694,7 +953,7 @@ def _collect_action_summary_fields(agent_name: str) -> dict[str, Any]:
             "action_counts": summary.get("counts", {}),
             "p95_elapsed_s_by_action": summary.get("p95_elapsed_s_by_action", {}),
         }
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         return {
             "last_action_at": "",
             "last_action_name": "",

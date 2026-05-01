@@ -55,7 +55,12 @@ class TmuxManager:
         """
         venv_activate = ""
         if venv:
-            activate = Path(venv).expanduser() / "bin" / "activate"
+            venv_path = Path(venv)
+            if not venv_path.is_absolute() and not venv.startswith("~"):
+                # Workspace-relative: resolve under workdir on target host.
+                activate = Path(workdir) / venv_path / "bin" / "activate"
+            else:
+                activate = venv_path.expanduser() / "bin" / "activate"
             venv_activate = f"source '{activate}' || exit 1\n"
 
         shell_script = (

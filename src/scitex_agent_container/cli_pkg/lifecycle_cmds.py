@@ -30,26 +30,42 @@ def _singleton_skip_reason(config: AgentConfig, hostname: str) -> str | None:
     """Return a human-readable skip reason if ``config`` is a singleton on
     the wrong host, else None.
 
-    Multi-instance (``hosts:`` set) never skips. Singleton with no host
-    preference (empty ``host:``) launches anywhere. Singleton with
-    ``host:`` set skips when the current host isn't the preferred (head
-    of the list) and isn't a fallback either.
+    Multi-instance (``hosts:`` set or per-host scheduling) never skips.
+    Singleton with no host preference launches anywhere. Singleton with
+    ``host:``/``preferred-host`` set skips when the current host doesn't match.
     """
+    # v3 config: use hosts_spec
     spec = config.hosts_spec
     if spec.hosts:  # multi-instance
         return None
     host = spec.host
-    if not host:  # local singleton — never skip
+    if host:
+        chain = [host] if isinstance(host, str) else list(host)
+        if not chain or hostname == chain[0]:
+            return None
+        if hostname in chain[1:]:
+            return None
+        fallback_str = (
+            f" (fallback-hosts: {', '.join(chain[1:])})" if len(chain) > 1 else ""
+        )
+        return f"singleton prefers '{chain[0]}', current host is '{hostname}'{fallback_str}"
+    # v2 config: use scheduling spec
+    sched = config.scheduling
+    if sched.mode != "singleton":
         return None
-    chain = [host] if isinstance(host, str) else list(host)
-    if not chain or hostname == chain[0]:
+    if not sched.preferred_host:
         return None
-    if hostname in chain[1:]:
-        return None  # we're a fallback for this singleton — let it run
-    fallback_str = (
-        f" (fallback-hosts: {', '.join(chain[1:])})" if len(chain) > 1 else ""
+    if sched.preferred_host == hostname:
+        return None
+    fallback = (
+        f" (fallback-hosts: {', '.join(sched.fallback_hosts)})"
+        if sched.fallback_hosts
+        else ""
     )
-    return f"singleton prefers '{chain[0]}', current host is '{hostname}'{fallback_str}"
+    return (
+        f"singleton pinned to '{sched.preferred_host}', "
+        f"current host is '{hostname}'{fallback}"
+    )
 
 
 def _iter_agent_yamls(agents_dir: "Path") -> "list[tuple[str, str]]":
@@ -77,25 +93,28 @@ def _iter_agent_yamls(agents_dir: "Path") -> "list[tuple[str, str]]":
 
 
 def _discover_all_agents() -> list[str]:
-    """Find all agent YAML files under sac's own root and the plugin-port dirs.
+    """Find all agent YAML files in the sac install root and shared-host layout.
 
     Search locations (earlier wins on name collision):
-      1. ``~/.scitex/agent-container/agents/<name>/<name>.yaml``
-         and ``~/.scitex/agent-container/agents/<name>.yaml``.
-      2. Each colon-separated dir in ``$SCITEX_AGENT_CONTAINER_YAML_DIRS``.
-         External orchestrators (orochi, etc.) set this to hand sac their
-         own agent-definition roots without sac knowing about them.
+      1. ``~/.scitex/agent-container/agents/<name>/<name>.yaml`` (sac root)
+      2. ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` (plugin-port colon-separated dirs)
+      3. ``~/.scitex/orochi/<HOST>/agents/`` (host-specific override)
+      4. ``~/.scitex/orochi/shared/agents/`` (fleet-shared)
+      5. ``~/.scitex/orochi/agents/`` (legacy flat layout)
+
+    Note: per-agent runtime state (CLAUDE.md / .mcp.json / .claude/) lives at
+    ``~/.scitex/orochi/runtime/workspaces/<effective-id>/`` (see the 2026-04-17
+    layout). ``<HOST> = ${SCITEX_OROCHI_HOSTNAME:-$(hostname -s)}``.
 
     Returned paths are sorted by effective agent name for stable ordering.
     """
     from pathlib import Path
 
-    from scitex_config._ecosystem import local_state
-
     # name -> yaml path; later writes are ignored (earlier = higher priority).
     found: dict[str, str] = {}
 
-    primary = local_state.path("agent-container", "agents")
+    home = Path.home()
+    primary = home / ".scitex" / "agent-container" / "agents"
     search_dirs: list[Path] = [primary]
 
     env_raw = os.environ.get("SCITEX_AGENT_CONTAINER_YAML_DIRS", "")
@@ -105,6 +124,23 @@ def _discover_all_agents() -> list[str]:
             search_dirs.append(Path(p).expanduser())
 
     for src_dir in search_dirs:
+        for name, yaml_path in _iter_agent_yamls(src_dir):
+            if name not in found:
+                found[name] = yaml_path
+
+    # Fleet layout search
+    root = home / ".scitex" / "orochi"
+    try:
+        host = resolve_hostname()
+    except RuntimeError:
+        host = ""
+
+    host_dir = root / host / "agents" if host else None
+    shared_dir = root / "shared" / "agents"
+
+    for src_dir in (host_dir, shared_dir):
+        if src_dir is None:
+            continue
         for name, yaml_path in _iter_agent_yamls(src_dir):
             if name not in found:
                 found[name] = yaml_path
@@ -152,6 +188,22 @@ def _discover_all_agents() -> list[str]:
     default=None,
     help="Override the YAML's claude.session for this start invocation.",
 )
+@click.option(
+    "--dry-run",
+    "dry_run",
+    is_flag=True,
+    default=False,
+    help="Materialize the workspace files (CLAUDE.md, .mcp.json, .env, "
+    "settings.json) but skip launching the multiplexer / Claude Code. "
+    "Use to inspect the planned workspace without starting the agent.",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Emit a structured JSON report on stdout instead of human prose.",
+)
 def start(
     config_path: str | None,
     start_all: bool,
@@ -159,8 +211,15 @@ def start(
     force: bool,
     resume_id: str | None,
     session_mode: str | None,
+    dry_run: bool,
+    as_json: bool,
 ) -> None:
     """Start an agent from a YAML definition, or --all to start every agent."""
+    import json as _json
+
+    def _emit_json(payload: dict) -> None:
+        click.echo(_json.dumps(payload, ensure_ascii=False))
+
     if (resume_id or session_mode) and start_all:
         click.echo(
             "Error: --resume / --session cannot be combined with --all "
@@ -176,6 +235,7 @@ def start(
         sys.exit(2)
     if resume_id and session_mode is None:
         session_mode = "resume"
+
     if start_all:
         yamls = _discover_all_agents()
         if not yamls:
@@ -186,10 +246,11 @@ def start(
             return
         try:
             current_host = resolve_hostname()
-        except RuntimeError:
+        except RuntimeError:  # stx-allow: fallback (reason: runtime state error — handled gracefully)
             current_host = ""
         console.print(f"[blue]Starting {len(yamls)} agents...[/blue]")
         for yaml_path in yamls:
+            # stx-allow: fallback (reason: one agent's config parse or launch failure must not abort the remaining agents in a bulk --all start; printing FAILED and continuing is the correct bulk-safe behavior)
             try:
                 config = load_config(yaml_path)
                 skip = _singleton_skip_reason(config, current_host)
@@ -205,9 +266,16 @@ def start(
                     f"  [blue]{config.name}[/blue] ({location})...",
                     end=" ",
                 )
-                agent_start(yaml_path, no_preflight=no_preflight, force=force)
-                console.print("[green]OK[/green]")
-            except Exception as exc:
+                agent_start(
+                    yaml_path,
+                    no_preflight=no_preflight,
+                    force=force,
+                    dry_run=dry_run,
+                )
+                console.print(
+                    "[green]DRY-RUN OK[/green]" if dry_run else "[green]OK[/green]"
+                )
+            except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                 console.print(f"[red]FAILED: {exc}[/red]")
         return
 
@@ -220,58 +288,107 @@ def start(
         )
         sys.exit(2)
 
+    # stx-allow: fallback (reason: config resolution, YAML parse, or agent_start can raise on misconfiguration or launch failure; catching here gives a clean error message and non-zero exit rather than an unhandled traceback)
     try:
         config_path = resolve_config(config_path)
         config = load_config(config_path)
         try:
             current_host = resolve_hostname()
-        except RuntimeError:
+        except RuntimeError:  # stx-allow: fallback (reason: runtime state error — handled gracefully)
             current_host = ""
         skip = _singleton_skip_reason(config, current_host)
         if skip:
-            console.print(f"[yellow]Skipping '{config.name}': {skip}[/yellow]")
+            if as_json:
+                _emit_json(
+                    {
+                        "name": config.name,
+                        "status": "skipped",
+                        "reason": skip,
+                        "dry_run": dry_run,
+                    }
+                )
+            else:
+                console.print(f"[yellow]Skipping '{config.name}': {skip}[/yellow]")
             return
         location = (
             f"REMOTE: {config.remote.host}" if config.remote.is_remote else "LOCAL"
         )
-        console.print(
-            f"[blue]Starting agent '{config.name}' "
-            f"(runtime: {config.runtime}, {location})...[/blue]"
-        )
-        if no_preflight:
-            console.print("[dim]Preflight checks skipped (--no-preflight)[/dim]")
-        if force:
-            console.print("[dim]Force mode: stopping any existing instance first[/dim]")
-        if session_mode:
+        if not as_json:
             console.print(
-                f"[dim]Session override: claude.session = {session_mode}"
-                + (f", resume_id = {resume_id}" if resume_id else "")
-                + "[/dim]"
+                f"[blue]{'Dry-running' if dry_run else 'Starting'} agent "
+                f"'{config.name}' (runtime: {config.runtime}, {location})...[/blue]"
             )
+            if no_preflight:
+                console.print("[dim]Preflight checks skipped (--no-preflight)[/dim]")
+            if force:
+                console.print(
+                    "[dim]Force mode: stopping any existing instance first[/dim]"
+                )
+            if session_mode:
+                console.print(
+                    f"[dim]Session override: claude.session = {session_mode}"
+                    + (f", resume_id = {resume_id}" if resume_id else "")
+                    + "[/dim]"
+                )
         agent_start(
             config_path,
             no_preflight=no_preflight,
             force=force,
+            dry_run=dry_run,
             session_override=session_mode,
             resume_id_override=resume_id,
         )
-        console.print(
-            f"[green]Agent '{config.name}' started successfully [{location}][/green]"
-        )
-        if not config.claude.auto_accept and any(
-            df in f
-            for f in config.claude.flags
-            for df in (
-                "--dangerously-skip-permissions",
-                "--dangerously-load-development-channels",
+        if as_json:
+            _emit_json(
+                {
+                    "name": config.name,
+                    "status": "dry_run_ok" if dry_run else "started",
+                    "runtime": config.runtime,
+                    "location": location.lower(),
+                    "workdir": config.expanded_workdir,
+                    "dry_run": dry_run,
+                }
             )
-        ):
+        else:
+            verb = (
+                "dry-run prepared the workspace for"
+                if dry_run
+                else "started successfully ["
+            )
+            tail = "" if dry_run else f"[{location}]"
             console.print(
-                f"[yellow]auto_accept: false — manual TUI acceptance required on {config.remote.host or 'local'}[/yellow]"
+                f"[green]Agent '{config.name}' {verb}{tail}[/green]"
+                if dry_run
+                else f"[green]Agent '{config.name}' started successfully [{location}][/green]"
             )
+            if (
+                not dry_run
+                and not config.claude.auto_accept
+                and any(
+                    df in f
+                    for f in config.claude.flags
+                    for df in (
+                        "--dangerously-skip-permissions",
+                        "--dangerously-load-development-channels",
+                    )
+                )
+            ):
+                console.print(
+                    f"[yellow]auto_accept: false — manual TUI acceptance required on {config.remote.host or 'local'}[/yellow]"
+                )
     except Exception as exc:
-        console.print(f"[red]Error: {exc}[/red]")
-        traceback.print_exc()
+        if as_json:
+            _emit_json(
+                {
+                    "name": config_path,
+                    "status": "error",
+                    "error": str(exc),
+                    "dry_run": dry_run,
+                }
+            )
+        else:
+            console.print(f"[red]Error: {exc}[/red]")
+            traceback.print_exc()
         sys.exit(1)
 
 
@@ -318,6 +435,7 @@ def stop(name: str | None, stop_all: bool, force: bool) -> None:
             sys.exit(1)
         return
 
+    # stx-allow: fallback (reason: config resolution or agent_stop can raise if the agent is not in the registry or the session is already gone; error message + sys.exit(1) is cleaner than an unhandled traceback)
     try:
         # Accept either agent name or YAML path
         if "/" in name or name.endswith((".yaml", ".yml")):  # type: ignore[union-attr]
@@ -326,7 +444,7 @@ def stop(name: str | None, stop_all: bool, force: bool) -> None:
             name = config.name
         agent_stop(name, force=force)  # type: ignore[arg-type]
         console.print(f"[green]Agent '{name}' stopped[/green]")
-    except Exception as exc:
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         console.print(f"[red]Error: {exc}[/red]")
         sys.exit(1)
 
@@ -335,6 +453,7 @@ def stop(name: str | None, stop_all: bool, force: bool) -> None:
 @click.argument("name")
 def restart(name: str) -> None:
     """Restart an agent."""
+    # stx-allow: fallback (reason: config resolution or agent_restart can raise if the agent is not running or the session cannot be found; error message + sys.exit(1) is cleaner than an unhandled traceback)
     try:
         if "/" in name or name.endswith((".yaml", ".yml")):
             config_path = resolve_config(name)
@@ -342,7 +461,7 @@ def restart(name: str) -> None:
             name = config.name
         agent_restart(name)
         console.print(f"[green]Agent '{name}' restarted[/green]")
-    except Exception as exc:
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         console.print(f"[red]Error: {exc}[/red]")
         sys.exit(1)
 
@@ -356,3 +475,69 @@ def cleanup() -> None:
         console.print(f"[green]Cleaned {cleaned} stale registry entries[/green]")
     else:
         console.print("[dim]No stale entries found.[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# Auto-accept subcommands
+# ---------------------------------------------------------------------------
+
+
+@click.command("send-accept")
+@click.argument("agent")
+def send_accept(agent: str) -> None:
+    """One-shot: capture → classify → respond for AGENT, then exit."""
+    from ..auto_accept_daemon import send_accept_once
+
+    state, sent = send_accept_once(agent)
+    if sent:
+        console.print(f"[green]sent action for agent '{agent}' (state={state})[/green]")
+    else:
+        console.print(f"[dim]no action for agent '{agent}' (state={state})[/dim]")
+
+
+@click.command("start-auto-accept")
+@click.argument("agent")
+@click.option("--tick", "tick_s", default=60.0, show_default=True, help="Daemon tick interval in seconds.")
+def start_auto_accept(agent: str, tick_s: float) -> None:
+    """Start the auto-accept daemon for AGENT (throttle 5 s min, default 60 s tick)."""
+    import multiprocessing
+
+    from ..auto_accept_daemon import read_pid, run_daemon
+
+    existing = read_pid(agent)
+    if existing:
+        try:
+            import os as _os
+            _os.kill(existing, 0)
+            console.print(f"[yellow]auto-accept daemon already running for '{agent}' (pid={existing})[/yellow]")
+            return
+        except OSError:  # stx-allow: fallback (reason: file system operation failure)
+            pass  # stale pid file
+
+    def _target():
+        run_daemon(agent, tick_s=tick_s)
+
+    p = multiprocessing.Process(target=_target, daemon=False, name=f"sac-auto-accept-{agent}")
+    p.start()
+    console.print(f"[green]auto-accept daemon started for '{agent}' (pid={p.pid}, tick={tick_s}s)[/green]")
+
+
+@click.command("stop-auto-accept")
+@click.argument("agent")
+def stop_auto_accept(agent: str) -> None:
+    """Stop the auto-accept daemon for AGENT."""
+    import os as _os
+    import signal
+
+    from ..auto_accept_daemon import clear_pid, read_pid
+
+    pid = read_pid(agent)
+    if pid is None:
+        console.print(f"[dim]no auto-accept daemon found for '{agent}'[/dim]")
+        return
+    try:
+        _os.kill(pid, signal.SIGTERM)
+        console.print(f"[green]sent SIGTERM to auto-accept daemon for '{agent}' (pid={pid})[/green]")
+    except ProcessLookupError:  # stx-allow: fallback (reason: process probe expected failure)
+        console.print(f"[yellow]stale pid {pid} for '{agent}' — cleaning up[/yellow]")
+        clear_pid(agent)

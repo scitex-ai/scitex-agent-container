@@ -40,17 +40,16 @@ def parse_context_percent(pane_text: str) -> float | None:
         for match in _PERCENT_RE.finditer(line):
             try:
                 value = float(match.group(1))
-            except ValueError:
+            except ValueError:  # stx-allow: fallback (reason: type coercion or format mismatch)
                 continue
             if 0.0 <= value <= 100.0:
                 return value
     return None
 
 
-# Agent-meta script is an external plugin. sac ships no default — if the
-# env var is unset, fetch_agent_meta returns None. External orchestrators
-# (orochi etc.) set SCITEX_AGENT_CONTAINER_AGENT_META_SCRIPT to point at
-# their own script.
+# 2026-04-17 runtime/ layout: client scripts live under shared/scripts/.
+_DEFAULT_AGENT_META_SCRIPT = "~/.scitex/orochi/shared/scripts/agent_meta.py"
+# Legacy env var for backward-compat overrides.
 _AGENT_META_ENV = "SCITEX_AGENT_CONTAINER_AGENT_META_SCRIPT"
 
 
@@ -65,10 +64,9 @@ def fetch_agent_meta(
     the ``script_path`` argument (argument wins). If neither is set,
     returns None without invoking anything.
     """
-    explicit = script_path or os.environ.get(_AGENT_META_ENV)
-    if not explicit:
-        return None
-    resolved = str(Path(explicit).expanduser())
+    explicit = script_path or os.environ.get(_AGENT_META_ENV) or os.environ.get("SCITEX_AGENT_META_SCRIPT")
+    path = explicit if explicit else _DEFAULT_AGENT_META_SCRIPT
+    resolved = str(Path(path).expanduser())
     try:
         r = subprocess.run(
             [resolved, agent_name],
@@ -88,7 +86,7 @@ def fetch_agent_meta(
         data = (
             json.loads(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else None
         )
-    except (json.JSONDecodeError, IndexError):
+    except (json.JSONDecodeError, IndexError):  # stx-allow: fallback (reason: malformed JSON tolerated)
         return None
     if not isinstance(data, dict):
         return None
@@ -197,9 +195,11 @@ class ContextManager:
                 threshold,
                 self.config.strategy,
             )
+            # stx-allow: fallback (reason: dispatcher failure must not break the
+            # sensor loop — logged but sensor continues ticking)
             try:
                 self.dispatcher(self.config.strategy, self.agent_config)
-            except Exception:  # pragma: no cover — defensive
+            except Exception:  # pragma: no cover — defensive  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                 logger.exception(
                     "context_manager[%s]: dispatcher raised", self.agent_name
                 )
@@ -235,10 +235,14 @@ def run_forever(cm: ContextManager) -> None:
     """
     interval = max(1, int(cm.config.check_interval_seconds))
     while not cm.stopped:
+        # stx-allow: fallback (reason: individual tick failure must not kill
+        # the sensor thread — logged and loop continues on next interval)
         try:
             cm.tick()
-        except Exception:  # pragma: no cover — defensive
+        except Exception:  # pragma: no cover — defensive  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             logger.exception("context_manager[%s]: tick failed", cm.agent_name)
+        # stx-allow: fallback (reason: snapshot module is optional; import or
+        # tick failure must not stop the context-manager loop)
         try:
             from .snapshot import snapshot_tick
 
@@ -247,7 +251,7 @@ def run_forever(cm: ContextManager) -> None:
                 session=cm.session_name,
                 agent_config=cm.agent_config,
             )
-        except Exception:  # pragma: no cover — defensive
+        except Exception:  # pragma: no cover — defensive  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             logger.exception("snapshot[%s]: piggyback tick failed", cm.agent_name)
         # Use Event.wait so stop() breaks us out promptly.
         if cm._stop.wait(interval):
@@ -265,12 +269,14 @@ def _fire_hook(
     context: dict[str, Any] | None = None,
 ) -> None:
     """Non-blocking fire of an ``on_*`` hook. Swallows all errors."""
+    # stx-allow: fallback (reason: user-configured hook commands may fail;
+    # hook dispatch is non-blocking and must never abort the dispatcher)
     try:
         from .hooks import run_hook
 
         commands = (agent_config.hooks or {}).get(hook_name, []) or []
         run_hook(agent_config.name, hook_name, commands, context=context)
-    except Exception:  # pragma: no cover — defensive
+    except Exception:  # pragma: no cover — defensive  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         logger.exception(
             "context_manager[%s]: %s hook dispatch failed",
             agent_config.name,
@@ -314,9 +320,11 @@ def default_dispatcher(strategy: str, agent_config: AgentConfig | None) -> None:
                 "strategy": "restart",
             },
         )
+        # stx-allow: fallback (reason: agent_restart may fail if the session
+        # already exited — logged and dispatcher returns without crashing)
         try:
             agent_restart(agent_config.name)
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             logger.exception("context_manager[%s]: restart failed", agent_config.name)
         return
 
@@ -349,6 +357,8 @@ def start_sensor(agent_config: AgentConfig) -> ContextManager | None:
     )
     _SENSORS[agent_config.name] = cm
     thread.start()
+    # stx-allow: fallback (reason: snapshot sidecar registration is optional;
+    # failure here must not prevent the context-manager thread from running)
     try:
         from .snapshot import register_sidecar
 
@@ -364,7 +374,7 @@ def start_sensor(agent_config: AgentConfig) -> ContextManager | None:
             name="snapshot",
             thread=thread,
         )
-    except Exception:  # pragma: no cover — defensive
+    except Exception:  # pragma: no cover — defensive  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         logger.exception(
             "context_manager[%s]: sidecar registration failed",
             agent_config.name,

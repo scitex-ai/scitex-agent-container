@@ -1,3 +1,9 @@
+---
+name: slurm-tenant
+description: SLURM tenant runtime — many agents in one allocation — see file body for details.
+tags: [scitex-agent-container, scitex-package]
+---
+
 # SLURM tenant runtime — many agents in one allocation
 
 `runtime: slurm-tenant` (sac ≥0.10.0) launches an agent as a tenant of an existing `scitex-hpc` Reservation. Every tenant becomes a tmux session inside the same SLURM allocation, attached to a shared tmux server bootstrapped at `sbatch` script PID 1.

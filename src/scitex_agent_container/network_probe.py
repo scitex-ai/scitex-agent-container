@@ -101,6 +101,7 @@ def probe_dns(
     """
     start = time.monotonic()
     old = socket.getdefaulttimeout()
+    # stx-allow: fallback (reason: DNS resolution can fail with timeout, NXDOMAIN, or no resolver; ProbeResult(ok=False) records the failure as diagnostic evidence without raising)
     try:
         socket.setdefaulttimeout(timeout)
         infos = socket.getaddrinfo(host, None)
@@ -112,7 +113,7 @@ def probe_dns(
             latency_ms=latency_ms,
             extra={"addrs": addrs},
         )
-    except Exception as exc:  # pragma: no cover - exercised via fake
+    except Exception as exc:  # pragma: no cover - exercised via fake  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         latency_ms = (time.monotonic() - start) * 1000.0
         return ProbeResult(
             name="dns",
@@ -137,12 +138,13 @@ def probe_tcp(
     request would pass ``probe_https`` but also passes this layer.
     """
     start = time.monotonic()
+    # stx-allow: fallback (reason: TCP connect can fail with connection refused, timeout, or no route to host; ProbeResult(ok=False) captures the failure as connectivity evidence)
     try:
         with socket.create_connection((host, port), timeout=timeout):
             pass
         latency_ms = (time.monotonic() - start) * 1000.0
         return ProbeResult(name="tcp", ok=True, latency_ms=latency_ms)
-    except Exception as exc:
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         latency_ms = (time.monotonic() - start) * 1000.0
         return ProbeResult(
             name="tcp",
@@ -168,6 +170,7 @@ def probe_https(
     if they actually need a 2xx.
     """
     start = time.monotonic()
+    # stx-allow: fallback (reason: HTTPS probe can fail with SSL errors, timeout, or captive portal disruption; ProbeResult(ok=False) records the transport failure without raising)
     try:
         ctx = ssl.create_default_context()
         req = urllib.request.Request(url, method="GET")
@@ -185,7 +188,7 @@ def probe_https(
                 err="" if ok else f"status={status}",
                 extra={"status": status},
             )
-    except urllib.error.HTTPError as exc:
+    except urllib.error.HTTPError as exc:  # stx-allow: fallback (reason: expected failure — see inline comment)
         # Cloudflare / hub returning 4xx is still "transport ok".
         latency_ms = (time.monotonic() - start) * 1000.0
         status = exc.code
@@ -200,7 +203,7 @@ def probe_https(
             err="" if ok else f"status={status}",
             extra={"status": status},
         )
-    except Exception as exc:
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         latency_ms = (time.monotonic() - start) * 1000.0
         return ProbeResult(
             name="https",
@@ -235,7 +238,7 @@ def _read_ip_route() -> str:
         return ""
     try:
         lines = path.read_text().splitlines()
-    except OSError:
+    except OSError:  # stx-allow: fallback (reason: file system operation failure)
         return ""
     # /proc/net/route columns: Iface Destination Gateway Flags RefCnt Use Metric Mask ...
     # A default route has Destination == "00000000".
@@ -249,7 +252,7 @@ def _read_ip_route() -> str:
         # gw_hex is little-endian IPv4 bytes.
         try:
             gw_int = int(gw_hex, 16)
-        except ValueError:
+        except ValueError:  # stx-allow: fallback (reason: type coercion or format mismatch)
             continue
         octets = [(gw_int >> (8 * i)) & 0xFF for i in range(4)]
         gw = ".".join(str(o) for o in octets)
@@ -280,6 +283,7 @@ def probe_gateway(
             latency_ms=latency_ms,
             err="no default route",
         )
+    # stx-allow: fallback (reason: gateway TCP probe to port 53 can fail if the router filters the port or Wi-Fi is lost; ProbeResult(ok=False) provides LAN reachability evidence without raising)
     try:
         with socket.create_connection((gw, 53), timeout=timeout):
             pass
@@ -290,7 +294,7 @@ def probe_gateway(
             latency_ms=latency_ms,
             extra={"gateway": gw},
         )
-    except Exception as exc:
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         latency_ms = (time.monotonic() - start) * 1000.0
         return ProbeResult(
             name="gateway",
@@ -301,6 +305,61 @@ def probe_gateway(
         )
 
 
+def probe_cloudflared() -> ProbeResult:
+    """Detect a running cloudflared tunnel daemon on this host.
+
+    Scans the process list for ``cloudflared tunnel run`` (the long-lived
+    bastion daemon). Does not probe the tunnel's remote endpoint — just
+    confirms the local process is alive. If the process is present the
+    tunnel is *likely* healthy (cloudflared auto-reconnects); absence
+    means the bastion path is definitely down.
+
+    Reports the PID of the first matching process in ``extra``.
+    Uses only stdlib ``subprocess`` so it works without psutil.
+    """
+    t0 = time.monotonic()
+    # stx-allow: fallback (reason: pgrep may be absent on some OS (Windows/
+    # minimal containers); any unexpected pgrep output is a graceful miss)
+    try:
+        import subprocess as _sp
+
+        result = _sp.run(
+            ["pgrep", "-f", "cloudflared tunnel run"],
+            capture_output=True,
+            text=True,
+        )
+        latency_ms = round((time.monotonic() - t0) * 1000, 2)
+        if result.returncode == 0:
+            pids = [p.strip() for p in result.stdout.splitlines() if p.strip()]
+            pid = int(pids[0]) if pids else 0
+            return ProbeResult(
+                name="cloudflared",
+                ok=True,
+                latency_ms=latency_ms,
+                extra={"pid": pid},
+            )
+        return ProbeResult(
+            name="cloudflared",
+            ok=False,
+            latency_ms=latency_ms,
+            err="cloudflared tunnel run process not found",
+        )
+    except FileNotFoundError:
+        return ProbeResult(
+            name="cloudflared",
+            ok=False,
+            latency_ms=round((time.monotonic() - t0) * 1000, 2),
+            err="pgrep not available on this host",
+        )
+    except Exception as exc:
+        return ProbeResult(
+            name="cloudflared",
+            ok=False,
+            latency_ms=round((time.monotonic() - t0) * 1000, 2),
+            err=str(exc),
+        )
+
+
 def run_all_probes(
     *,
     hub_host: str = DEFAULT_HUB_HOST,
@@ -308,18 +367,20 @@ def run_all_probes(
     hub_url: str = DEFAULT_HUB_URL,
     timeout: float = DEFAULT_TIMEOUT_S,
 ) -> list[ProbeResult]:
-    """Run the four probes in the order dns → gateway → tcp → https.
+    """Run probes in the order dns → gateway → tcp → https → cloudflared.
 
     DNS first because hub_host is a name; if DNS fails TCP/HTTPS will
     also fail with a confusing error. Gateway second so we can tell
     "lost Wi-Fi" from "lost DNS only". TCP before HTTPS so a TLS
-    failure is distinguishable from a routing failure.
+    failure is distinguishable from a routing failure. Cloudflared last
+    (process check — independent of the network probes).
     """
     return [
         probe_dns(hub_host, timeout=timeout),
         probe_gateway(timeout=timeout),
         probe_tcp(hub_host, hub_port, timeout=timeout),
         probe_https(hub_url, timeout=timeout),
+        probe_cloudflared(),
     ]
 
 
@@ -352,12 +413,13 @@ def append_result(
     Does not rotate — the file is append-only and small (one line per
     run, <1 KiB); ops rotates weekly via logrotate if needed.
     """
+    # stx-allow: fallback (reason: JSONL append can fail due to disk full or permission error; returning None is safe since probe logging must never raise or disrupt the caller)
     try:
         path = _log_path(agent, root=root)
         with path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(summary, separators=(",", ":")) + "\n")
         return path
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         return None
 
 

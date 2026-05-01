@@ -78,15 +78,16 @@ def test_resolve_config_not_found_lists_searched_paths(fake_home, monkeypatch):
     assert "missing" in msg
 
 
-def test_resolve_config_no_orochi_fallback(fake_home):
-    """sac must not search ~/.scitex/orochi/ or ~/.dotfiles/...; consumers
-    that want that extension set SCITEX_AGENT_CONTAINER_YAML_DIRS."""
+def test_resolve_config_fleet_shared_agents_fallback(fake_home):
+    """sac searches ~/.dotfiles/src/.scitex/orochi/shared/agents as a built-in
+    fleet fallback (PR #99 / orochi-runtime-layout), so a yaml placed there
+    IS resolved without setting SCITEX_AGENT_CONTAINER_YAML_DIRS."""
     orochi_path = (
         fake_home / ".dotfiles" / "src" / ".scitex" / "orochi" / "shared" / "agents"
     )
-    _write(orochi_path / "foo" / "foo.yaml", "orochi")
-    with pytest.raises(FileNotFoundError):
-        resolve_config("foo")
+    yaml_file = _write(orochi_path / "foo" / "foo.yaml", "name: foo\nversion: 1\n")
+    result = resolve_config("foo")
+    assert result == str(yaml_file)
 
 
 def test_resolve_config_absolute_path_unchanged(fake_home, tmp_path):

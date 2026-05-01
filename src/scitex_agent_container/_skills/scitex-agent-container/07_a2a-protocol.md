@@ -1,3 +1,9 @@
+---
+name: a2a-protocol
+description: A2A protocol — native sac surface — see file body for details.
+tags: [scitex-agent-container, scitex-package]
+---
+
 # A2A protocol — native sac surface
 
 [A2A](https://a2a-protocol.org/) is an open agent-to-agent JSON-RPC protocol. sac speaks it directly, with **zero fleet dependencies**: no orochi, no Cloudflare tunnel, no Gitea identity. A single agent YAML can expose its own A2A endpoint with one command.

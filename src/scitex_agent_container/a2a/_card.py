@@ -28,11 +28,11 @@ DEFAULT_OUTPUT_MODES = ["text/plain", "application/json"]
 
 
 def _read_description(name: str, v3: dict[str, Any]) -> str:
-    """First non-empty heading from the YAML metadata, or a default."""
+    """Return the A2A card description from metadata.labels.description."""
     labels = (v3.get("metadata") or {}).get("labels") or {}
-    caps = labels.get("capabilities", "")
-    if isinstance(caps, str) and caps.strip():
-        return caps.strip().split(",")[0].strip().capitalize()
+    desc = labels.get("description", "")
+    if desc:
+        return desc
     role = labels.get("role", "")
     if role:
         return f"sac agent: {name} ({role})"

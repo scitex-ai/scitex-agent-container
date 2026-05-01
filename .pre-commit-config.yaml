@@ -1,0 +1,13 @@
+repos:
+  - repo: local
+    hooks:
+      - id: stx-allow-fallback
+        name: "stx-allow: fallback lint (no-silent-fallback)"
+        entry: python scripts/check_stx_allow.py
+        language: python
+        types: [python]
+        pass_filenames: true
+        description: >
+          Every except clause in src/ must carry a
+          '# stx-allow: fallback (reason: ...)' comment.
+          Fleet-wide convention — see docs/conventions/no-silent-fallback.md.

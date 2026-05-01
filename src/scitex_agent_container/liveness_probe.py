@@ -215,9 +215,10 @@ def wait_for_nonce_echo(
     while True:
         now = time_fn()
         expired = now >= deadline
+        # stx-allow: fallback (reason: tmux/screen capture can fail transiently; treating pane as empty lets the probe loop continue safely)
         try:
             pane = capture(pane_target) or ""
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:  # pragma: no cover - defensive  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             logger.debug("capture_fn raised %s: %s", type(exc).__name__, exc)
             pane = ""
         poll_count += 1

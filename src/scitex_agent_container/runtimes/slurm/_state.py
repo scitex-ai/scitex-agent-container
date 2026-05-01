@@ -37,7 +37,7 @@ def _read_state(name: str) -> dict | None:
         return None
     try:
         return json.loads(p.read_text())
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError):  # stx-allow: fallback (reason: malformed JSON tolerated)
         return None
 
 

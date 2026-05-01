@@ -12,9 +12,11 @@ from ._types import (
     HealthSpec,
     HostsSpec,
     ListenPort,
+    OrochiSpec,
     ReadyPattern,
     RemoteSpec,
     RestartSpec,
+    SchedulingSpec,
     SkillsSpec,
     SlurmHeartbeatSpec,
     SlurmHooks,
@@ -59,6 +61,43 @@ def parse_hosts_spec(spec: dict) -> "HostsSpec":
     return HostsSpec(host=host, hosts=hosts)
 
 
+_VALID_SCHEDULING_MODES = ("per-host", "singleton")
+
+
+def parse_scheduling(spec: dict) -> tuple[SchedulingSpec, bool]:
+    """Parse ``spec.scheduling`` block (new shared-host layout).
+
+    Returns a ``(scheduling, explicit)`` tuple. ``explicit`` is True iff
+    the YAML declared a ``spec.scheduling`` key — this gates effective-id
+    composition so legacy v2 YAMLs (no scheduling block, ``metadata.name``
+    already baked with host) remain byte-identical to pre-change behavior.
+    """
+    if "scheduling" not in spec:
+        return SchedulingSpec(), False
+    raw = spec.get("scheduling") or {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"spec.scheduling must be a mapping, got {type(raw).__name__}")
+    mode = raw.get("mode", "per-host") or "per-host"
+    if mode not in _VALID_SCHEDULING_MODES:
+        raise ValueError(
+            f"spec.scheduling.mode must be one of {_VALID_SCHEDULING_MODES}, "
+            f"got {mode!r}"
+        )
+    preferred = raw.get("preferred-host", raw.get("preferred_host", "")) or ""
+    fallback_raw = raw.get("fallback-hosts", raw.get("fallback_hosts", [])) or []
+    if isinstance(fallback_raw, str):
+        fallback_raw = [fallback_raw]
+    fallback = [str(h) for h in fallback_raw]
+    return (
+        SchedulingSpec(
+            mode=mode,
+            preferred_host=str(preferred),
+            fallback_hosts=fallback,
+        ),
+        True,
+    )
+
+
 # All known hook keys. Unknown keys in the YAML are ignored (forward-compat).
 HOOK_KEYS = (
     "pre_start",
@@ -69,6 +108,19 @@ HOOK_KEYS = (
     "on_restart",
     "on_diff",
 )
+
+
+def parse_orochi(spec: dict) -> OrochiSpec:
+    raw = spec.get("orochi", {}) or {}
+    hosts = raw.get("hosts", []) or []
+    return OrochiSpec(
+        enabled=raw.get("enabled", bool(hosts)),
+        hosts=hosts,
+        port=int(raw.get("port", 8559)),
+        token_env=raw.get("token_env", "SCITEX_OROCHI_TOKEN"),
+        channels=raw.get("channels", []) or [],
+        heartbeat_interval=int(raw.get("heartbeat_interval", 60)),
+    )
 
 
 def parse_container(spec: dict) -> ContainerSpec:
@@ -94,7 +146,7 @@ def parse_claude(spec: dict) -> ClaudeSpec:
     if continue_max_age is not None:
         try:
             continue_max_age = int(continue_max_age)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError):  # stx-allow: fallback (reason: type coercion or format mismatch)
             continue_max_age = None
     return ClaudeSpec(
         channels=raw.get("channels", []) or [],
@@ -196,9 +248,26 @@ def parse_slurm(spec: dict) -> SlurmSpec:
 
 def parse_skills(spec: dict) -> SkillsSpec:
     raw = spec.get("skills", {}) or {}
+    mode = (raw.get("injection_mode") or "at-import").strip()
+    if mode not in {"block", "at-import"}:
+        mode = "at-import"
+    valid_strategies = {"skill-id", "tag", "filename"}
+    match_by = raw.get("match_by")
+    if match_by is None:
+        match_by_value = ["skill-id", "tag"]
+    else:
+        match_by_value = [s for s in match_by if s in valid_strategies]
+        if not match_by_value:
+            match_by_value = ["skill-id", "tag"]
+    style = (raw.get("match_style") or "exact").strip()
+    if style not in {"exact", "partial"}:
+        style = "exact"
     return SkillsSpec(
         required=raw.get("required", []) or [],
         available=raw.get("available", []) or [],
+        injection_mode=mode,
+        match_by=match_by_value,
+        match_style=style,
     )
 
 
@@ -206,18 +275,18 @@ def parse_context_management(spec: dict) -> ContextManagementConfig:
     raw = spec.get("context_management", {}) or {}
     try:
         trigger = float(raw.get("trigger_at_percent", 70.0))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # stx-allow: fallback (reason: type coercion or format mismatch)
         trigger = 70.0
     strategy = str(raw.get("strategy", "noop") or "noop")
     if strategy not in ("compact", "restart", "noop"):
         strategy = "noop"
     try:
         warn_n = int(raw.get("warn_before_n_checks", 0))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # stx-allow: fallback (reason: type coercion or format mismatch)
         warn_n = 0
     try:
         interval = int(raw.get("check_interval_seconds", 300))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # stx-allow: fallback (reason: type coercion or format mismatch)
         interval = 300
     state_file = str(
         raw.get("state_file", "~/.scitex/agent-container/state/<agent>.json")
@@ -232,7 +301,20 @@ def parse_context_management(spec: dict) -> ContextManagementConfig:
 
 
 def parse_remote(spec: dict) -> RemoteSpec:
-    raw = spec.get("remote", {}) or {}
+    raw = spec.get("remote", {})
+    if raw is None:
+        raw = {}
+
+    # New: list of SSH config aliases → chain format
+    if isinstance(raw, list):
+        hops = [str(h) for h in raw if h]
+        return RemoteSpec(hops=hops)
+
+    # New: single string → single hop (legacy single-host shorthand)
+    if isinstance(raw, str):
+        return RemoteSpec(hops=[raw] if raw.strip() else [], host=raw.strip())
+
+    # Legacy: dict with explicit host/user/key fields
     return RemoteSpec(
         host=raw.get("host", ""),
         user=raw.get("user", ""),
@@ -265,7 +347,7 @@ def parse_listen(spec: dict) -> list[ListenPort]:
         proto = str(item.get("proto", "tcp") or "tcp")
         try:
             port = int(item.get("port", 0) or 0)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError):  # stx-allow: fallback (reason: type coercion or format mismatch)
             port = 0
         path = str(item.get("path", "") or "")
         if proto in ("tcp", "udp") and port <= 0:
@@ -311,7 +393,7 @@ def _parse_command_list(raw: Any) -> list[StartupCommand]:
         elif isinstance(item, dict) and item.get("command"):
             try:
                 delay = int(item.get("delay", 0))
-            except (TypeError, ValueError):
+            except (TypeError, ValueError):  # stx-allow: fallback (reason: type coercion or format mismatch)
                 delay = 0
             out.append(StartupCommand(delay=delay, command=str(item["command"])))
     return out
@@ -340,15 +422,15 @@ def parse_startup(spec: dict) -> StartupSpec:
 
     try:
         idle_ticks = max(1, int(raw.get("ready_idle_ticks", 3)))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # stx-allow: fallback (reason: type coercion or format mismatch)
         idle_ticks = 3
     try:
         poll_interval = max(0.05, float(raw.get("ready_poll_interval_seconds", 0.5)))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # stx-allow: fallback (reason: type coercion or format mismatch)
         poll_interval = 0.5
     try:
         timeout = max(1.0, float(raw.get("ready_timeout_seconds", 60.0)))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # stx-allow: fallback (reason: type coercion or format mismatch)
         timeout = 60.0
 
     on_timeout = str(

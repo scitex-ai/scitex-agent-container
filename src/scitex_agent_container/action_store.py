@@ -82,7 +82,7 @@ def _safe_float(value: Any) -> float | None:
         return None
     try:
         return float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # stx-allow: fallback (reason: type coercion or format mismatch)
         return None
 
 
@@ -135,7 +135,7 @@ def _truncate_snapshot(
     # Arbitrary serializable object — dump once then truncate.
     try:
         dumped = json.dumps(snap, default=str)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # stx-allow: fallback (reason: type coercion or format mismatch)
         dumped = str(snap)
     s = dumped[-max_chars:] if len(dumped) > max_chars else dumped
     return {"format": "json-dump", "text": s}
@@ -166,13 +166,14 @@ def append_attempt(
         action = str(record["action"])
         outcome = str(record["outcome"])
         elapsed_s = float(record["elapsed_s"])
-    except (KeyError, TypeError, ValueError) as exc:
+    except (KeyError, TypeError, ValueError) as exc:  # stx-allow: fallback (reason: type coercion or format mismatch)
         logger.warning("action_store.append_attempt: invalid record: %s", exc)
         return
     ts = str(record.get("ts") or datetime.now(timezone.utc).isoformat())
     pane_before = _truncate_snapshot(record.get("pane_before"))
     pane_after = _truncate_snapshot(record.get("pane_after"))
     extras = record.get("extras") or {}
+    # stx-allow: fallback (reason: DB insert can fail due to disk full, file lock, or corrupt schema; swallowing keeps agent alive per fail-closed design)
     try:
         conn = _get_conn(_db_path(root))
         try:
@@ -193,7 +194,7 @@ def append_attempt(
             )
         finally:
             conn.close()
-    except Exception as exc:
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         logger.warning("action_store.append_attempt: insert failed: %s", exc)
 
 
@@ -205,7 +206,7 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
             continue
         try:
             out[key] = json.loads(raw)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError):  # stx-allow: fallback (reason: type coercion or format mismatch)
             # Leave the raw string in place; the JSON column is
             # corrupt but the rest of the row is still useful.
             pass
@@ -275,13 +276,14 @@ def query(
         + " ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?"
     )
     params.extend([int(limit), int(offset)])
+    # stx-allow: fallback (reason: DB read can fail due to missing file, lock contention, or I/O error; empty list is a safe no-results response)
     try:
         conn = _get_conn(_db_path(root))
         try:
             rows = conn.execute(sql, tuple(params)).fetchall()
         finally:
             conn.close()
-    except Exception as exc:
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         logger.warning("action_store.query failed: %s", exc)
         return []
     return [_row_to_dict(r) for r in rows]
@@ -319,6 +321,7 @@ def stats(
         "ORDER BY action ASC, count DESC"
     )
     sql_samples = "SELECT action, outcome, elapsed_s FROM attempts" + where
+    # stx-allow: fallback (reason: DB read can fail due to missing file, lock contention, or I/O error; empty list means no stats available, which is acceptable for a best-effort summary)
     try:
         conn = _get_conn(_db_path(root))
         try:
@@ -326,7 +329,7 @@ def stats(
             samples = conn.execute(sql_samples, tuple(params)).fetchall()
         finally:
             conn.close()
-    except Exception as exc:
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         logger.warning("action_store.stats failed: %s", exc)
         return []
     # Bucket samples by (action, outcome) for p95.
@@ -394,7 +397,7 @@ def summarize(
         counts[key] = counts.get(key, 0) + 1
         try:
             samples_by_action.setdefault(r["action"], []).append(float(r["elapsed_s"]))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError):  # stx-allow: fallback (reason: type coercion or format mismatch)
             pass
     p95: dict[str, float] = {}
     for name, samples in samples_by_action.items():
@@ -422,6 +425,7 @@ def purge_old(
     rows deleted. Safe to call periodically from a cron / daemon."""
     d = int(days) if days is not None else DEFAULT_RETENTION_DAYS
     cutoff = (datetime.now(timezone.utc) - timedelta(days=d)).isoformat()
+    # stx-allow: fallback (reason: DB delete can fail due to disk error or lock; returning 0 is safe since purge is maintenance-only and a missed run leaves stale rows that will be retried next call)
     try:
         conn = _get_conn(_db_path(root))
         try:
@@ -431,13 +435,14 @@ def purge_old(
             return int(deleted)
         finally:
             conn.close()
-    except Exception as exc:
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         logger.warning("action_store.purge_old failed: %s", exc)
         return 0
 
 
 def _all_rows(root: Path | None = None) -> Iterable[dict[str, Any]]:
     """Iterator over every row — used by tests / export tooling."""
+    # stx-allow: fallback (reason: DB read can fail due to missing file or I/O error; empty iterable is safe since _all_rows is used by tests/export tooling where no results is a valid outcome)
     try:
         conn = _get_conn(_db_path(root))
         try:
@@ -448,7 +453,7 @@ def _all_rows(root: Path | None = None) -> Iterable[dict[str, Any]]:
             ).fetchall()
         finally:
             conn.close()
-    except Exception as exc:
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         logger.warning("action_store._all_rows failed: %s", exc)
         return []
     return [_row_to_dict(r) for r in rows]

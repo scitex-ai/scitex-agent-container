@@ -48,6 +48,8 @@ def _preview_tool_input(tool_name: str, tool_input: dict | None) -> str:
     """Return a short human-readable preview for the tool input."""
     if not tool_input:
         return ""
+    # stx-allow: fallback (reason: unexpected tool_input shape must not crash
+    # the hook handler — empty string preview is acceptable)
     try:
         if tool_name == "Bash":
             s = tool_input.get("description") or tool_input.get("command") or ""
@@ -70,7 +72,7 @@ def _preview_tool_input(tool_name: str, tool_input: dict | None) -> str:
             )
         else:
             s = json.dumps(tool_input)[:PREVIEW_MAX_CHARS]
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: tool input preview best-effort — malformed payloads must not break hook events)
         s = ""
     if not isinstance(s, str):
         s = str(s)
@@ -120,17 +122,22 @@ def append_event(
                 fcntl.flock(f.fileno(), fcntl.LOCK_EX)
                 f.write(line)
             finally:
+                # stx-allow: fallback (reason: unlock failure after write is
+                # non-fatal — other processes will time out and re-acquire)
                 try:
                     fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-                except Exception:
+                except Exception:  # stx-allow: fallback (reason: file lock release best-effort — flock errors must not block agent)
                     pass
         _rotate_if_large(path)
+    # stx-allow: fallback (reason: fail-closed event append — hook invocations must never raise)
     except Exception:
         # Fail-closed: never break the agent session.
         pass
 
 
 def _rotate_if_large(path: Path, cap: int = DEFAULT_CAP_LINES) -> None:
+    # stx-allow: fallback (reason: rotation is best-effort — disk full or
+    # permission error keeps the old file intact without crashing the hook)
     try:
         with open(path, "r", encoding="utf-8") as f:
             lines = f.readlines()
@@ -141,7 +148,7 @@ def _rotate_if_large(path: Path, cap: int = DEFAULT_CAP_LINES) -> None:
         with open(tmp, "w", encoding="utf-8") as f:
             f.writelines(keep)
         os.replace(tmp, path)
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: log rotation is best-effort — rotation failures must not break event appends)
         pass
 
 
@@ -152,6 +159,8 @@ def read_recent(
     root: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Return the last ``limit`` event records (oldest-first)."""
+    # stx-allow: fallback (reason: log file may not exist yet for new agents;
+    # empty list is the correct initial state)
     try:
         path = _agent_log_path(agent, root)
         if not path.is_file():
@@ -160,13 +169,72 @@ def read_recent(
             lines = f.readlines()
         out: list[dict[str, Any]] = []
         for ln in lines[-limit:]:
+            # stx-allow: fallback (reason: truncated line during concurrent
+            # write — skip and continue collecting valid records)
             try:
                 out.append(json.loads(ln))
-            except Exception:
+            except Exception:  # stx-allow: fallback (reason: skip corrupt log lines — partial log damage must not block reads)
                 continue
         return out
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: log read failure returns empty list — missing log file is normal on first boot)
         return []
+
+
+def _compute_open_agent_calls(
+    recent_tools: list[dict[str, Any]],
+    now: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Return Agent pretool events with no matching posttool (LIFO matching).
+
+    Walks ``recent_tools`` in chronological order, maintaining a stack of
+    open Agent pretool events. Each Agent posttool pops the most-recent
+    unmatched pretool (LIFO — subagents can be nested). Entries still on
+    the stack at the end have no posttool in the observed window.
+
+    Each returned record adds ``age_seconds`` (wall-clock seconds since
+    ``ts``) so callers can threshold on stuck duration without re-parsing
+    ISO timestamps.
+
+    Caveats
+    -------
+    - The event log is a ring-buffer. A pretool that fired before the
+      window started would look "open" even if it already completed.
+      Consumers should cross-check ``subagent_count`` from the pane text
+      before declaring an open call "stuck".
+    - Nested Agent calls are matched LIFO, which is the correct order
+      when the outer agent waits for the inner one to complete.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    stack: list[dict[str, Any]] = []
+    for ev in recent_tools:
+        tool = ev.get("tool", "")
+        if tool != "Agent":
+            continue
+        if ev.get("kind") == "pretool":
+            stack.append(ev)
+        elif ev.get("kind") == "posttool" and stack:
+            stack.pop()
+
+    result: list[dict[str, Any]] = []
+    for ev in stack:
+        ts_str = ev.get("ts", "")
+        age: float | None = None
+        try:
+            started = datetime.fromisoformat(ts_str)
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
+            age = (now - started).total_seconds()
+        except Exception:
+            pass
+        result.append(
+            {
+                "ts": ts_str,
+                "input_preview": ev.get("input_preview", ""),
+                "age_seconds": age,
+            }
+        )
+    return result
 
 
 def summarize(
@@ -183,6 +251,10 @@ def summarize(
           "recent_tools":       [{ts, tool, input_preview, ...}, ...] last ``limit``
           "recent_prompts":     [{ts, prompt_preview}, ...]            last 5
           "agent_calls":        [{ts, input_preview}, ...]             last 20 Agent invocations
+          "open_agent_calls":   [{ts, input_preview, age_seconds}, ...]
+                                  Agent pretool events with no matching posttool in the
+                                  observation window. Non-empty = subagent(s) may be stuck.
+                                  Cross-check with ``subagent_count`` before alerting.
           "background_tasks":   [{ts, input_preview}, ...]             unresolved Bash run_in_background starts
           "counts":             {tool_name: count_in_window}
           "last_tool_at":       ISO ts of newest tool (pretool kind) — "functional" heartbeat
@@ -251,6 +323,7 @@ def summarize(
         "recent_tools": recent_tools[-limit:],
         "recent_prompts": recent_prompts[-5:],
         "agent_calls": agent_calls[-20:],
+        "open_agent_calls": _compute_open_agent_calls(recent_tools),
         "background_tasks": background_tasks[-20:],
         "counts": counts,
         "last_tool_at": last_tool_at,

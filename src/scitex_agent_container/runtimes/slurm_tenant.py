@@ -31,22 +31,38 @@ from __future__ import annotations
 
 import logging
 import shlex
+import subprocess
 from typing import TYPE_CHECKING
 
 from ..config import AgentConfig
+from ._ssh_chain import build_ssh_command, skip_local_hops
 from .base import RuntimeBase
+from .claude_code import _has_src_files
+from .claude_md import setup_claude_md
+from .mcp_config import setup_mcp_config
+from .settings_json import setup_settings_json
+from .src_files import deploy_src_claude_md, deploy_src_env, deploy_src_mcp_json
 
 if TYPE_CHECKING:
     from scitex_hpc import Reservation as _ResType  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
+_SSH_OPTS = [
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    "StrictHostKeyChecking=accept-new",
+    "-o",
+    "ConnectTimeout=10",
+]
+
 
 def _import_reservation():
     """Late import so missing scitex-hpc gives a clear error, not import-time crash."""
     try:
         from scitex_hpc import Reservation  # type: ignore
-    except ImportError as exc:
+    except ImportError as exc:  # stx-allow: fallback (reason: optional dependency not installed)
         raise RuntimeError(
             "runtime: slurm-tenant requires scitex-hpc>=0.5.1. "
             "Install via: pip install 'scitex-agent-container[slurm]'"
@@ -114,17 +130,116 @@ class SlurmTenantRuntime(RuntimeBase):
         return res
 
     def _build_claude_command(self, cfg: AgentConfig) -> str:
-        """Render the ``claude`` invocation as a single shell-quotable string."""
+        """Render the ``claude`` invocation as a single shell-quotable string.
+
+        Each YAML flag entry is shlex.split first, so an entry like
+        ``"--add-dir ~/proj/foo"`` is correctly forwarded as two argv
+        tokens (``--add-dir`` and ``~/proj/foo``) rather than one
+        space-bundled string that ``claude`` would reject.
+        """
         parts = ["claude"]
         if cfg.model:
             parts.extend(["--model", cfg.model])
         for ch in cfg.claude.channels:
             parts.extend(["--channels", ch])
         for flag in cfg.claude.flags:
-            parts.append(flag)
+            # Only shlex.split when the entry looks like a bundled flag
+            # (starts with ``-`` AND contains whitespace), so that a
+            # bare value entry such as ``"/path with spaces"`` is left
+            # alone rather than torn apart on its inner space.
+            if (
+                isinstance(flag, str)
+                and " " in flag
+                and flag.lstrip().startswith("-")
+            ):
+                parts.extend(shlex.split(flag))
+            else:
+                parts.append(flag)
         if cfg.claude.session == "continue":
             parts.append("--continue")
         return shlex.join(parts)
+
+    def _exec_on_node(
+        self, config: AgentConfig, res, cmd_str: str, timeout: int = 60
+    ) -> subprocess.CompletedProcess:
+        """Execute ``cmd_str`` on the compute node.
+
+        When ``spec.remote.hops`` is set, SSH directly via the chain
+        (location-aware self-skip applied).  Falls back to
+        ``res.exec()`` when hops is empty (legacy srun path).
+        """
+        hops = config.remote.hops
+        if not hops:
+            return res.exec(cmd_str, check=False, timeout=timeout)
+
+        remaining = skip_local_hops(hops)
+        if not remaining:
+            # All hops matched local host — run tmux command directly.
+            return subprocess.run(
+                cmd_str,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        ssh_cmd = build_ssh_command(remaining, cmd_str, _SSH_OPTS)
+        return subprocess.run(
+            ssh_cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+
+    def _build_env_prefix(self, config: AgentConfig) -> str:
+        """Render ``KEY=value KEY2=value2 ...`` for the tmux launch line.
+
+        Each spec ``env:`` entry is forwarded to the compute-side claude
+        via inline assignment in the bash command (``FOO=bar
+        BAZ=qux exec claude ...``). Values support:
+
+        * ``~``-prefix → expanded to ``$HOME`` literal so the compute
+          shell does the expansion at exec time.
+        * ``${VAR}`` → kept as a shell ref so the compute shell
+          resolves it from its own env (lets agents inherit values
+          like ``$ANTHROPIC_API_KEY2`` that are set in the user's
+          login profile but not in the spec).
+
+        Returns an empty string when ``config.env`` is empty.
+        """
+        if not config.env:
+            return ""
+        pairs: list[str] = []
+        for k, v in config.env.items():
+            if not isinstance(v, str):
+                v = str(v)
+            if v.startswith("~"):
+                v = "$HOME" + v[1:]
+            # Quote the value so bash treats it as a single token, but
+            # leave ${VAR} refs unexpanded by the local quoting layer
+            # (they still get expanded by the remote bash).
+            pairs.append(f"{k}={shlex.quote(v)}")
+        return " ".join(pairs)
+
+    def _setup_workspace(self, config: AgentConfig) -> str:
+        """Provision the agent's workspace dir on disk and return its path.
+
+        slurm-tenant relies on the compute node sharing $HOME with the
+        login node (NFS on Spartan, etc.), so writing the workspace
+        files locally is enough for the compute-side ``claude`` to find
+        them. Mirrors the v1/v2 src-files vs. legacy fork in
+        ``ClaudeCodeRuntime.start``.
+        """
+        workdir = config.expanded_workdir
+        is_v2 = bool(config.mcp_servers) or _has_src_files(config)
+        if is_v2:
+            deploy_src_claude_md(config, workdir)
+            deploy_src_mcp_json(config, workdir)
+            deploy_src_env(config, workdir)
+        else:
+            setup_claude_md(config, workdir)
+        setup_mcp_config(config, workdir)
+        setup_settings_json(config, workdir)
+        return workdir
 
     def start(
         self,
@@ -138,20 +253,20 @@ class SlurmTenantRuntime(RuntimeBase):
 
         # Force: kill any stale session with the same name first
         if force:
-            res.exec(
+            self._exec_on_node(
+                config,
+                res,
                 self._tmux(res, "kill-session", "-t", shlex.quote(session))
                 + " 2>/dev/null || true",
-                check=False,
-                timeout=60,
             )
 
         # Bail if the session already exists and we're not forcing
         if not force:
-            check = res.exec(
+            check = self._exec_on_node(
+                config,
+                res,
                 self._tmux(res, "has-session", "-t", shlex.quote(session))
                 + " 2>/dev/null && echo HAS || echo NONE",
-                check=False,
-                timeout=60,
             )
             if "HAS" in (check.stdout or ""):
                 logger.info(
@@ -161,9 +276,27 @@ class SlurmTenantRuntime(RuntimeBase):
                 )
                 return True
 
+        # Provision workspace files on the shared filesystem before the
+        # compute-side claude tries to read them. Compute and login nodes
+        # share $HOME on Spartan/sapphire, so writing locally is enough.
+        workdir = self._setup_workspace(config)
+
         claude_cmd = self._build_claude_command(config)
+        env_prefix = self._build_env_prefix(config)
+        # tmux launches ``[cd <workdir> &&] [<env>] exec <claude>`` so the
+        # agent's cwd is its workspace dir (.mcp.json, CLAUDE.md,
+        # ~/.claude/projects/<encoded>/ all relative to it) and any
+        # spec-declared env vars (e.g. ANTHROPIC_API_KEY redirects,
+        # SCITEX_OROCHI_AGENT) reach the compute-side claude even if
+        # the user's login shell on the compute node doesn't set them.
+        if env_prefix:
+            cwd_cmd = (
+                f"cd {shlex.quote(workdir)} && {env_prefix} exec {claude_cmd}"
+            )
+        else:
+            cwd_cmd = f"cd {shlex.quote(workdir)} && exec {claude_cmd}"
         # tmux new -d (detached) -s <session> '<command>'
-        # The double-shell-quote is intentional: outer wrapper for srun, inner
+        # The double-shell-quote is intentional: outer wrapper for ssh/srun, inner
         # for tmux's command argument.
         tmux_cmd = self._tmux(
             res,
@@ -171,9 +304,9 @@ class SlurmTenantRuntime(RuntimeBase):
             "-d",
             "-s",
             shlex.quote(session),
-            shlex.quote(claude_cmd),
+            shlex.quote(cwd_cmd),
         )
-        result = res.exec(tmux_cmd, check=False, timeout=60)
+        result = self._exec_on_node(config, res, tmux_cmd)
         if result.returncode != 0:
             raise RuntimeError(
                 f"tmux new-session failed in reservation {res.id}: "
@@ -193,15 +326,15 @@ class SlurmTenantRuntime(RuntimeBase):
         """Kill the agent's tmux session. Does NOT release the reservation."""
         try:
             res = self._resolve_reservation(config)
-        except RuntimeError as exc:
+        except RuntimeError as exc:  # stx-allow: fallback (reason: runtime state error — handled gracefully)
             logger.warning("SlurmTenantRuntime: cannot stop %s — %s", config.name, exc)
             return False
         session = self._tmux_session(config)
-        result = res.exec(
+        result = self._exec_on_node(
+            config,
+            res,
             self._tmux(res, "kill-session", "-t", shlex.quote(session))
             + " 2>&1 || true",
-            check=False,
-            timeout=60,
         )
         logger.info(
             "SlurmTenantRuntime: stopped tmux %s @ reservation %s (rc=%s)",
@@ -214,14 +347,14 @@ class SlurmTenantRuntime(RuntimeBase):
     def is_running(self, config: AgentConfig) -> bool:
         try:
             res = self._resolve_reservation(config)
-        except RuntimeError:
+        except RuntimeError:  # stx-allow: fallback (reason: runtime state error — handled gracefully)
             return False
         session = self._tmux_session(config)
-        result = res.exec(
+        result = self._exec_on_node(
+            config,
+            res,
             self._tmux(res, "has-session", "-t", shlex.quote(session))
             + " 2>/dev/null && echo HAS || echo NONE",
-            check=False,
-            timeout=60,
         )
         return "HAS" in (result.stdout or "")
 
@@ -229,11 +362,13 @@ class SlurmTenantRuntime(RuntimeBase):
         """Capture the last ``lines`` of pane content from the tmux session."""
         try:
             res = self._resolve_reservation(config)
-        except RuntimeError as exc:
+        except RuntimeError as exc:  # stx-allow: fallback (reason: runtime state error — handled gracefully)
             return f"(reservation unavailable: {exc})"
         session = self._tmux_session(config)
         # tmux capture-pane writes to stdout with -p
-        result = res.exec(
+        result = self._exec_on_node(
+            config,
+            res,
             self._tmux(
                 res,
                 "capture-pane",
@@ -244,8 +379,6 @@ class SlurmTenantRuntime(RuntimeBase):
                 f"-{int(lines)}",
             )
             + " 2>/dev/null || echo '(no session)'",
-            check=False,
-            timeout=60,
         )
         return result.stdout or ""
 

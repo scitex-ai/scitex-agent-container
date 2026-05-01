@@ -25,6 +25,9 @@ def _patch_basics(monkeypatch, hostname="testhost"):
     monkeypatch.setattr("socket.gethostname", lambda: hostname)
     fake_uname = _os.uname_result(("Linux", hostname, "1.0", "", "x86_64"))
     monkeypatch.setattr("os.uname", lambda: fake_uname)
+    # Suppress scitex_resource so host machine aliases don't leak into tests.
+    monkeypatch.setattr(hi, "_load_resource_aliases", lambda: set())
+    hi._reset_cache_for_tests()
 
 
 def test_is_local_host_accepts_none_and_empty(monkeypatch):

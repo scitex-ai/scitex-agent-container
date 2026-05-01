@@ -9,6 +9,7 @@ import re
 from pathlib import Path
 
 from ..config import AgentConfig
+from .claude_md import build_skills_lines
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +76,7 @@ def _extract_user_tail(workspace_path: Path, end_marker: str = END_MARKER) -> st
         return ""
     try:
         existing = workspace_path.read_text()
-    except OSError:
+    except OSError:  # stx-allow: fallback (reason: file system operation failure)
         return ""
     idx = existing.rfind(end_marker)
     if idx == -1:
@@ -167,7 +168,17 @@ def deploy_src_claude_md(config: AgentConfig, workdir: str) -> None:
         "     anything between them — all changes there will be lost.\n"
         "     ================================================================ -->"
     )
-    new_content = f"{start_tag}\n{section_body}\n{END_MARKER}\n{guide_comment}\n"
+    # Append skills section (Required + Available, per spec.skills) inside
+    # the managed block, after the user's src_CLAUDE content but before the
+    # End marker. In at-import mode, this materializes as ``@<absolute path>``
+    # lines that Claude Code follows at session start.
+    skills_lines = build_skills_lines(config)
+    skills_block = ("\n" + "\n".join(skills_lines)).rstrip() if skills_lines else ""
+    new_content = (
+        f"{start_tag}\n{section_body}\n{skills_block}\n{END_MARKER}\n{guide_comment}\n"
+        if skills_block
+        else f"{start_tag}\n{section_body}\n{END_MARKER}\n{guide_comment}\n"
+    )
 
     # Validate: if a workspace CLAUDE.md already exists, its markers must
     # be well-formed (exactly 1 Start, 1 End, Start-before-End). Refuse the
@@ -269,6 +280,46 @@ def cleanup_src_claude_md(config: AgentConfig, workdir: str) -> None:
         logger.info("Cleaned up CLAUDE.md for %s at %s", config.name, dest)
 
 
+_TEMPLATE_DIR = Path(__file__).parent.parent / "_agent_templates"
+
+
+def _generate_src_mcp_from_template(config: AgentConfig) -> None:
+    """Write src_mcp.json into the agent definition dir from the canonical template.
+
+    Called when src_mcp.json is absent but metadata.labels.channels is set.
+    This implements the Option (a) lifecycle policy from todo#35: src_mcp.json
+    is treated as a generated artifact, regenerated from the upstream template
+    on every startup, so it never needs to be committed to git.
+    """
+    defdir = _definition_dir(config)
+    if defdir is None:
+        return
+    channels = config.labels.get("channels", "")
+    if not channels:
+        return
+    template = _TEMPLATE_DIR / "src_mcp.json"
+    if not template.exists():
+        logger.warning(
+            "Canonical src_mcp.json template missing at %s — cannot auto-generate for %s",
+            template,
+            config.name,
+        )
+        return
+    dest = defdir / "src_mcp.json"
+    text = template.read_text()
+    # Inject channels label so the template placeholder resolves correctly
+    os.environ.setdefault("SCITEX_OROCHI_URL", "wss://scitex-orochi.com")
+    text = _interpolate_metadata(text, config)
+    text = _interpolate_env(text)
+    dest.write_text(text)
+    logger.info(
+        "Auto-generated src_mcp.json for %s at %s (channels=%s)",
+        config.name,
+        dest,
+        channels,
+    )
+
+
 def deploy_src_mcp_json(config: AgentConfig, workdir: str) -> None:
     """Copy ``src_mcp.json`` to ``{workdir}/.mcp.json`` on EVERY invocation.
 
@@ -297,14 +348,18 @@ def deploy_src_mcp_json(config: AgentConfig, workdir: str) -> None:
     * ``${ENV_VAR}`` → resolved from ``os.environ`` at write time.
     * ``~`` prefix in ``args`` entries → expanded to ``$HOME``.
 
-    If ``src_mcp.json`` does not exist next to the agent YAML, does
-    nothing (legacy-v1 / no-MCP agents).
+    If ``src_mcp.json`` does not exist next to the agent YAML but
+    ``metadata.labels.channels`` is set, auto-generates it from the
+    canonical template (Option (a) lifecycle policy, todo#35).
+    If neither exists, does nothing (legacy-v1 / no-MCP agents).
     """
     defdir = _definition_dir(config)
     if defdir is None:
         return
 
     src = defdir / "src_mcp.json"
+    if not src.exists():
+        _generate_src_mcp_from_template(config)
     if not src.exists():
         return
 
@@ -319,7 +374,7 @@ def deploy_src_mcp_json(config: AgentConfig, workdir: str) -> None:
     # Validate JSON
     try:
         data = json.loads(text)
-    except json.JSONDecodeError as exc:
+    except json.JSONDecodeError as exc:  # stx-allow: fallback (reason: malformed JSON tolerated)
         logger.warning("Invalid JSON in %s: %s", src, exc)
         return
 
@@ -331,7 +386,7 @@ def deploy_src_mcp_json(config: AgentConfig, workdir: str) -> None:
     if dest.exists():
         try:
             existing = json.loads(dest.read_text())
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, OSError):  # stx-allow: fallback (reason: malformed JSON tolerated)
             pass
     if not isinstance(existing, dict):
         existing = {}
@@ -369,7 +424,7 @@ def deploy_src_mcp_json(config: AgentConfig, workdir: str) -> None:
                     drift_minutes,
                     dest,
                 )
-    except OSError:
+    except OSError:  # stx-allow: fallback (reason: file system operation failure)
         pass
 
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -394,7 +449,7 @@ def cleanup_src_mcp_json(config: AgentConfig, workdir: str) -> None:
 
     try:
         src_data = json.loads(src.read_text())
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError):  # stx-allow: fallback (reason: malformed JSON tolerated)
         return
 
     keys_to_remove = list(src_data.get("mcpServers", {}).keys())
@@ -407,7 +462,7 @@ def cleanup_src_mcp_json(config: AgentConfig, workdir: str) -> None:
 
     try:
         data = json.loads(dest.read_text())
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError):  # stx-allow: fallback (reason: malformed JSON tolerated)
         return
 
     servers = data.get("mcpServers", {})
@@ -472,7 +527,7 @@ def deploy_src_env(config: AgentConfig, workdir: str) -> None:
     dest.write_text(text)
     try:
         os.chmod(dest, 0o600)
-    except OSError as exc:
+    except OSError as exc:  # stx-allow: fallback (reason: file system operation failure)
         logger.warning("Failed to chmod 0600 on %s: %s", dest, exc)
 
     logger.info("Deployed src_env for %s to %s", config.name, dest)

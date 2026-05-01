@@ -2,27 +2,10 @@
 # scitex-agent-container
 
 <p align="center">
-  <a href="https://scitex.ai">
-    <img src="docs/scitex-logo-blue-cropped.png" alt="SciTeX" width="400">
-  </a>
-</p>
-
-<p align="center"><b>Declarative YAML-based AI agent lifecycle management</b></p>
-
-<p align="center">
-  <a href="https://badge.fury.io/py/scitex-agent-container"><img src="https://badge.fury.io/py/scitex-agent-container.svg" alt="PyPI version"></a>
-  <a href="https://scitex-agent-container.readthedocs.io/"><img src="https://readthedocs.org/projects/scitex-agent-container/badge/?version=latest" alt="Documentation"></a>
-  <a href="https://github.com/ywatanabe1989/scitex-agent-container/actions/workflows/ci.yml"><img src="https://github.com/ywatanabe1989/scitex-agent-container/actions/workflows/ci.yml/badge.svg" alt="Tests"></a>
-  <a href="https://www.gnu.org/licenses/agpl-3.0"><img src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg" alt="License: AGPL-3.0"></a>
-</p>
-
-<p align="center">
   <code>pip install scitex-agent-container</code>
 </p>
 
 ---
-
-> **Interfaces:** Python ⭐⭐ · CLI ⭐⭐⭐ · MCP ⭐ · Skills ⭐⭐ · Hook — · HTTP —
 
 ## Problem and Solution
 
@@ -452,7 +435,9 @@ the schema without touching this package.
 
 ## Part of SciTeX
 
-scitex-agent-container is part of [**SciTeX**](https://scitex.ai), used as a generic agent lifecycle library by downstream orchestrators like [scitex-orochi](https://github.com/ywatanabe1989/scitex-orochi) for multi-machine fleet dispatch.
+`scitex-agent-container` is part of [**SciTeX**](https://scitex.ai). Install via
+the umbrella with `pip install scitex[agent-container]` to use as
+`scitex.agent_container` (Python) or `scitex agent-container ...` (CLI).
 
 >Four Freedoms for Research
 >

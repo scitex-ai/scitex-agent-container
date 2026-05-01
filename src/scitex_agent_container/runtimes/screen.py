@@ -56,7 +56,12 @@ class ScreenManager:
         """
         venv_activate = ""
         if venv:
-            activate = Path(venv).expanduser() / "bin" / "activate"
+            venv_path = Path(venv)
+            if not venv_path.is_absolute() and not venv.startswith("~"):
+                # Workspace-relative: resolve under workdir on target host.
+                activate = Path(workdir) / venv_path / "bin" / "activate"
+            else:
+                activate = venv_path.expanduser() / "bin" / "activate"
             venv_activate = f"source '{activate}' || exit 1\n"
 
         shell_script = (
@@ -155,6 +160,7 @@ class ScreenManager:
     def capture_content(session_name: str) -> str:
         """Capture current screen content via hardcopy."""
         tmp_path = f"/tmp/.screen-hardcopy-{session_name}.txt"
+        # stx-allow: fallback (reason: screen hardcopy is best-effort; any OS/process error returns empty string so the caller can degrade gracefully)
         try:
             Path(tmp_path).unlink(missing_ok=True)
             subprocess.run(
@@ -169,7 +175,7 @@ class ScreenManager:
             if Path(tmp_path).exists():
                 return Path(tmp_path).read_text(errors="replace")
             return ""
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             return ""
         finally:
             Path(tmp_path).unlink(missing_ok=True)

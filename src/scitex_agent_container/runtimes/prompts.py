@@ -150,6 +150,27 @@ def _detect_file_trust_radio(content: str) -> bool:
     )
 
 
+def _detect_external_imports(content: str) -> bool:
+    """External CLAUDE.md file imports prompt.
+
+    Appears when ``CLAUDE.md`` (or ``.claude/CLAUDE.md``) contains
+    ``@<absolute-path>`` imports pointing OUTSIDE the agent's
+    workdir. Triggered by the at-import skill-injection mode (sac
+    PR #74) when skills live in ``~/.claude/skills/`` or the
+    package source trees rather than the workspace itself.
+
+    Matches:
+      "Allow external CLAUDE.md file imports?"
+      "1. Yes, allow external imports"
+      "Enter to confirm"
+    """
+    return (
+        "Allow external CLAUDE.md file imports" in content
+        and "1. Yes, allow external imports" in content
+        and "Enter to confirm" in content
+    )
+
+
 def _detect_login_method(content: str) -> bool:
     """First-run login-method picker on a fresh HOME.
 
@@ -180,6 +201,24 @@ def _detect_theme_selection(content: str) -> bool:
     options starting with "1. Auto (match terminal)".
     """
     return "Choose the text style" in content and "1. Auto (match terminal)" in content
+
+
+def _detect_compose_pending_unsent(content: str) -> bool:
+    """Detect unsent text sitting in the Claude Code compose buffer.
+
+    The classifier in ``agent_meta._classify_pane_state`` matches
+    ``❯[ \\t]+\\S`` (non-whitespace after the prompt marker on the same
+    line), meaning the user has typed something but not yet pressed Enter.
+    We mirror that pattern here so the prompts system can submit it via
+    a plain Enter keystroke.
+
+    Excluded: lines that are just the decorative separator below an empty
+    prompt — those contain only whitespace after ``❯``.
+    """
+    import re
+
+    return bool(re.search(r"❯[ \t]+\S", content))
+
 
 
 def _detect_done(content: str) -> bool:
@@ -253,6 +292,18 @@ PROMPT_HANDLERS: list[PromptHandler] = [
         detect=_detect_login_method,
         keys=["2", "Enter"],  # "2. Anthropic Console account · API usage billing"
         priority=10,
+    ),
+    PromptHandler(
+        name="compose-pending-unsent",
+        detect=_detect_compose_pending_unsent,
+        keys=["Enter"],  # submit unsent compose buffer
+        priority=11,
+    ),
+    PromptHandler(
+        name="external-imports",
+        detect=_detect_external_imports,
+        keys=["1", "Enter"],  # "1. Yes, allow external imports"
+        priority=12,
     ),
 ]
 

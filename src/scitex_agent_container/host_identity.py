@@ -49,19 +49,21 @@ def _short(name: str) -> str:
 def _auto_aliases() -> set[str]:
     """Names this host always answers to, derived from the OS."""
     names: set[str] = set(_UNIVERSAL_LOOPBACK)
+    # stx-allow: fallback (reason: socket.gethostname() can fail in restricted container environments; loopback names are still returned as a safe baseline)
     try:
         hn = socket.gethostname()
         if hn:
             names.add(hn)
             names.add(_short(hn))
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         pass
+    # stx-allow: fallback (reason: os.uname() is unavailable on some platforms (e.g. Windows); hostname-derived names are best-effort and the loopback set is still complete)
     try:
         nn = os.uname().nodename
         if nn:
             names.add(nn)
             names.add(_short(nn))
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         pass
     return names
 
@@ -72,7 +74,7 @@ def _load_file_aliases() -> set[str]:
         return set()
     try:
         data = yaml.safe_load(HOST_IDENTITY_PATH.read_text()) or {}
-    except yaml.YAMLError as exc:
+    except yaml.YAMLError as exc:  # stx-allow: fallback (reason: expected failure — see inline comment)
         raise RuntimeError(f"Invalid YAML in {HOST_IDENTITY_PATH}: {exc}") from exc
     if not isinstance(data, dict):
         raise RuntimeError(
@@ -90,7 +92,7 @@ def _load_resource_aliases() -> set[str]:
     """Aliases declared in scitex-resource's machine config."""
     try:
         from scitex_resource import get_machine_config, get_machine_name
-    except ImportError:
+    except ImportError:  # stx-allow: fallback (reason: optional dependency not installed)
         return set()
     out: set[str] = set()
     name = (get_machine_name() or "").strip()

@@ -67,7 +67,7 @@ class Registry:
             try:
                 with open(path) as f:
                     entries.append(json.load(f))
-            except (json.JSONDecodeError, OSError):
+            except (json.JSONDecodeError, OSError):  # stx-allow: fallback (reason: malformed JSON tolerated)
                 continue
         return entries
 
@@ -116,7 +116,7 @@ class Registry:
                 if not _tmux_alive(session_name) and not _screen_alive(session_name):
                     path.unlink()
                     cleaned += 1
-            except (json.JSONDecodeError, OSError):
+            except (json.JSONDecodeError, OSError):  # stx-allow: fallback (reason: malformed JSON tolerated)
                 path.unlink(missing_ok=True)
                 cleaned += 1
 

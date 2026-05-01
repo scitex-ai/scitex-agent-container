@@ -229,6 +229,7 @@ class TestSummarize:
             "recent_tools": [],
             "recent_prompts": [],
             "agent_calls": [],
+            "open_agent_calls": [],
             "background_tasks": [],
             "counts": {},
             "last_tool_at": "",
@@ -314,3 +315,62 @@ class TestSummarize:
         # Both pretool and posttool appear in recent_tools
         assert len(out["recent_tools"]) == 2
         assert [t["kind"] for t in out["recent_tools"]] == ["pretool", "posttool"]
+
+
+class TestOpenAgentCalls:
+    """_compute_open_agent_calls LIFO matching detects stuck Agent calls."""
+
+    def test_matched_pretool_posttool_not_open(self, tmp_root: Path):
+        """Completed Agent call (pretool + posttool) does not appear in open."""
+        for kind, resp in [("pretool", None), ("posttool", {"content": "done"})]:
+            payload: dict = {"tool_name": "Agent", "tool_input": {"description": "task"}}
+            if resp:
+                payload["tool_response"] = resp
+            append_event("ag-m", kind, payload, root=tmp_root)
+        out = summarize("ag-m", root=tmp_root)
+        assert out["open_agent_calls"] == []
+
+    def test_unmatched_pretool_appears_open(self, tmp_root: Path):
+        """Agent pretool with no posttool is in open_agent_calls."""
+        append_event(
+            "ag-u",
+            "pretool",
+            {"tool_name": "Agent", "tool_input": {"description": "long task"}},
+            root=tmp_root,
+        )
+        out = summarize("ag-u", root=tmp_root)
+        assert len(out["open_agent_calls"]) == 1
+        assert out["open_agent_calls"][0]["input_preview"] == "long task"
+        # age_seconds should be a small non-negative float
+        assert out["open_agent_calls"][0]["age_seconds"] is not None
+        assert out["open_agent_calls"][0]["age_seconds"] >= 0
+
+    def test_nested_agents_lifo_matching(self, tmp_root: Path):
+        """Two Agent pretools + one posttool leaves one open (LIFO)."""
+        for desc in ["outer", "inner"]:
+            append_event(
+                "ag-n",
+                "pretool",
+                {"tool_name": "Agent", "tool_input": {"description": desc}},
+                root=tmp_root,
+            )
+        # inner completes first
+        append_event(
+            "ag-n",
+            "posttool",
+            {"tool_name": "Agent", "tool_response": {"content": "inner done"}},
+            root=tmp_root,
+        )
+        out = summarize("ag-n", root=tmp_root)
+        assert len(out["open_agent_calls"]) == 1
+        # "outer" was pushed first; "inner" pretool was popped by the posttool
+        assert out["open_agent_calls"][0]["input_preview"] == "outer"
+
+    def test_no_agent_calls_empty_open(self, tmp_root: Path):
+        """No Agent events → empty open_agent_calls."""
+        append_event(
+            "ag-e", "pretool", {"tool_name": "Read", "tool_input": {"file_path": "/x"}},
+            root=tmp_root,
+        )
+        out = summarize("ag-e", root=tmp_root)
+        assert out["open_agent_calls"] == []

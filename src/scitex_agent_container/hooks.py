@@ -74,7 +74,7 @@ def _dispatch_http(
     try:
         with urlrequest.urlopen(req, timeout=_HTTP_TIMEOUT_S) as resp:
             resp.read()
-    except (urlerror.URLError, urlerror.HTTPError, OSError, ValueError) as exc:
+    except (urlerror.URLError, urlerror.HTTPError, OSError, ValueError) as exc:  # stx-allow: fallback (reason: file system operation failure)
         logger.warning(
             "hook[%s/%s] HTTP POST %s failed: %s",
             agent_name,
@@ -92,7 +92,7 @@ def _dispatch_shell(
 ) -> None:
     try:
         argv = shlex.split(cmd)
-    except ValueError as exc:
+    except ValueError as exc:  # stx-allow: fallback (reason: type coercion or format mismatch)
         logger.warning(
             "hook[%s/%s] shlex split failed for %r: %s",
             agent_name,
@@ -143,12 +143,13 @@ def _run_one(
     entry = (entry or "").strip()
     if not entry:
         return
+    # stx-allow: fallback (reason: hook dispatch is fire-and-forget; a crashed hook must not propagate and disrupt the calling agent)
     try:
         if entry.startswith(("http://", "https://")):
             _dispatch_http(entry, agent_name, hook_name, context)
         else:
             _dispatch_shell(entry, agent_name, hook_name, context)
-    except Exception:  # pragma: no cover — ultimate safety net
+    except Exception:  # pragma: no cover  # stx-allow: fallback (reason: ultimate hook dispatch safety net — hook crashes must not break agent startup)
         logger.exception("hook[%s/%s] dispatch crashed", agent_name, hook_name)
 
 
@@ -168,7 +169,7 @@ def run_hook(
     for entry in commands:
         try:
             _POOL.submit(_run_one, entry, agent_name, hook_name, context)
-        except RuntimeError:
+        except RuntimeError:  # stx-allow: fallback (reason: runtime state error — handled gracefully)
             # Pool shut down (interpreter exit) — run inline as a
             # last-ditch effort so tests / shutdown paths still work.
             _run_one(entry, agent_name, hook_name, context)

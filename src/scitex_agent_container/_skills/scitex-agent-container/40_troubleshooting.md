@@ -1,6 +1,7 @@
 ---
 name: agent-container-troubleshooting
 description: Common launch failures and their fixes for scitex-agent-container agents.
+tags: [scitex-agent-container, scitex-package]
 ---
 
 # Agent Launch Troubleshooting

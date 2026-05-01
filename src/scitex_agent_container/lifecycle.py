@@ -32,9 +32,9 @@ def _get_runtime(config: AgentConfig):
 def _fallback_workdir(name: str) -> str:
     """Return the workdir path used when the agent's YAML can't be loaded.
 
-    Canonical sac layout: ``~/.scitex/agent-container/workspaces/<id>/``.
+    Canonical 2026-04-17 layout: ``~/.scitex/orochi/runtime/workspaces/<id>/``.
     """
-    return str(Path.home() / ".scitex" / "agent-container" / "workspaces" / name)
+    return str(Path.home() / ".scitex" / "orochi" / "runtime" / "workspaces" / name)
 
 
 def _fire_forget_hook(
@@ -51,9 +51,10 @@ def _fire_forget_hook(
     ``http(s)://`` URLs. The legacy path filters out URL entries to
     avoid double-dispatch of the same side-effect.
     """
+    # stx-allow: fallback (reason: hook dispatch is fire-and-forget; a URL hook failing must never crash the caller)
     try:
         run_hook(agent_name, hook_name, list(commands or []), context=context)
-    except Exception:  # pragma: no cover — defensive
+    except Exception:  # pragma: no cover  # stx-allow: fallback (reason: hook dispatch safety net — hook crashes must not propagate to caller)
         import sys
 
         print(
@@ -100,6 +101,7 @@ def agent_start(
     force: bool = False,
     session_override: str | None = None,
     resume_id_override: str | None = None,
+    dry_run: bool = False,
 ) -> bool:
     """Start an agent from a YAML config file.
 
@@ -115,6 +117,9 @@ def agent_start(
         resume_id_override: If set, override config.claude.resume_id. Pass
             with session_override="resume" to launch ``claude --resume <id>``
             without editing the YAML.
+        dry_run: If True, materialize the workspace files but skip the
+            multiplexer / Claude Code launch and registry registration.
+            Hooks (pre_start / post_start) are also skipped.
 
     Returns True on success, False on failure.
     """
@@ -130,11 +135,18 @@ def agent_start(
     # Already running?
     if registry.exists(config.name) and runtime.is_running(config):
         if not force:
-            raise RuntimeError(f"Agent '{config.name}' is already running")
-        agent_stop(config.name, registry=registry, force=True)
-        # Small grace period so the screen is fully torn down before we
-        # try to create a new one with the same name.
-        time.sleep(1)
+            if dry_run:
+                # Allow dry-run to inspect the planned workspace even
+                # while the live agent is running — the prep does not
+                # touch the live tmux session.
+                pass
+            else:
+                raise RuntimeError(f"Agent '{config.name}' is already running")
+        else:
+            agent_stop(config.name, registry=registry, force=True)
+            # Small grace period so the screen is fully torn down before we
+            # try to create a new one with the same name.
+            time.sleep(1)
     elif force and registry.exists(config.name):
         # Registry says it exists but runtime says not running — stale entry.
         agent_stop(config.name, registry=registry, force=True)
@@ -145,6 +157,39 @@ def agent_start(
         "SCITEX_AGENT_CONTAINER_SCREEN_NAME": config.screen_name,
         "SCITEX_AGENT_CONTAINER_NAME": config.name,
     }
+
+    if dry_run:
+        # Materialize the workspace via the runtime's dry-run path; skip
+        # hooks, registry, context-manager, health monitor.
+        try:
+            return runtime.start(
+                config, no_preflight=no_preflight, force=force, dry_run=True
+            )
+        except TypeError:
+            # Older runtimes without dry_run support — fail loudly so
+            # the caller knows this runtime can't dry-run.
+            raise RuntimeError(
+                f"runtime {type(runtime).__name__} does not support --dry-run"
+            )
+
+    # ZOO#12 — lead-state-handover plumbing. All three calls are
+    # best-effort: missing token / 404 / network errors must NOT block
+    # agent_start. ``ensure_instance_uuid`` writes
+    # ``SCITEX_AGENT_INSTANCE_UUID`` into ``config.env`` so the runtime's
+    # ``_build_env_exports`` (claude_code.py) propagates it; the runtime
+    # is supposed to read it back when wiring up the orochi WS connect
+    # (FR-E). ``hydrate_from_hub`` is pre-start so the agent's boot-time
+    # skill can pick up the snapshot before claude actually launches.
+    from . import _handover as _h
+
+    _h.ensure_instance_uuid(config)
+    try:
+        _h.hydrate_from_hub(config)
+    except Exception:
+        # Defensive: hub_client already swallows transport errors, but
+        # in case of a serialization bug here, never let agent_start
+        # die because of a snapshot fetch.
+        traceback.print_exc()
 
     # Pre-start hooks
     _run_hooks(config.hooks.get("pre_start", []), extra_env=hook_env)
@@ -173,11 +218,12 @@ def agent_start(
 
     # Start context-management sensor in background if enabled
     if config.context_management.enabled:
+        # stx-allow: fallback (reason: context_manager sensor spawn may fail if tmux is unavailable; agent has already started and a sensor failure must not abort it)
         try:
             from .context_manager import start_sensor
 
             start_sensor(config)
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             import sys
 
             print(
@@ -194,6 +240,15 @@ def agent_start(
             daemon=True,
         )
         thread.start()
+
+    # ZOO#12 FR-B — priority-failback poller. No-op when the spec lacks
+    # a ``priority_list``; otherwise polls the hub every 60 s and steps
+    # aside (snapshot push + SIGTERM) when a higher-priority host is
+    # healthy. Daemon thread, dies with the process.
+    try:
+        _h.start_failback_poller(config)
+    except Exception:
+        traceback.print_exc()
 
     return True
 
@@ -219,9 +274,10 @@ def agent_stop(
             return True
         raise RuntimeError(f"Agent '{name}' not found in registry")
 
+    # stx-allow: fallback (reason: YAML file may have been deleted while the agent was registered; force-stop must succeed even without a config)
     try:
         config = load_config(entry["config"])
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         if not force:
             raise
         # Config gone — just nuke the registry entry
@@ -236,24 +292,39 @@ def agent_stop(
         "SCITEX_AGENT_CONTAINER_NAME": config.name,
     }
 
+    # ZOO#12 FR-A — push a sentinel snapshot to the hub right before
+    # the agent stops, so a future agent_start (here or on a different
+    # host) can hydrate. Best-effort: never block the stop path on a
+    # hub outage. The sentinel is a marker; the agent's own pre_stop
+    # hook is the right place for richer state (transcript, memory).
+    try:
+        from . import _handover as _h
+
+        _h.push_pre_stop_snapshot(config)
+    except Exception:
+        traceback.print_exc()
+
     # Pre-stop hooks
+    # stx-allow: fallback (reason: hook commands may reference paths or env vars absent at stop time; force-stop must continue regardless)
     try:
         _run_hooks(config.hooks.get("pre_stop", []), extra_env=hook_env)
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         if not force:
             raise
     _fire_forget_hook(config.name, "pre_stop", config.hooks.get("pre_stop", []))
 
+    # stx-allow: fallback (reason: tmux/screen session may already be dead; force-stop should still proceed to clean up registry)
     try:
         runtime.stop(config)
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         if not force:
             raise
 
     # Post-stop hooks
+    # stx-allow: fallback (reason: post-stop hooks are best-effort notification; a failed hook must not prevent registry cleanup)
     try:
         _run_hooks(config.hooks.get("post_stop", []), extra_env=hook_env)
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         if not force:
             raise
     _fire_forget_hook(config.name, "post_stop", config.hooks.get("post_stop", []))
@@ -276,10 +347,11 @@ def agent_stop_all(
     results: list[tuple[str, bool, str]] = []
     for entry in registry.list_all():
         name = entry.get("name", "?")
+        # stx-allow: fallback (reason: stopping one agent may fail due to a missing config or dead session; other agents in the registry should still be stopped)
         try:
             agent_stop(name, registry=registry, force=force)
             results.append((name, True, "stopped"))
-        except Exception as exc:
+        except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             results.append((name, False, str(exc)))
             if not force:
                 break
@@ -306,11 +378,12 @@ def agent_status(name: str, registry: Registry | None = None) -> dict:
     if entry is None:
         raise RuntimeError(f"Agent '{name}' not found in registry")
 
+    # stx-allow: fallback (reason: YAML or runtime may be unavailable; status should degrade to stopped=False rather than raise)
     try:
         config = load_config(entry["config"])
         runtime = _get_runtime(config)
         running = runtime.is_running(config)
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         traceback.print_exc()
         running = False
         config = None
@@ -380,16 +453,18 @@ def agent_status(name: str, registry: Registry | None = None) -> dict:
     # Expose the full agent_meta dict from the live sensor if present
     # (todo#285 Phase 2b). This is the transcript-derived source of
     # truth used by the dashboard when it's available.
+    # stx-allow: fallback (reason: context_manager module may be unimported or sensor absent; agent_meta is optional enrichment and None is acceptable)
     try:
         from .context_manager import get_sensor as _gs
 
         _live = _gs(name)
         if _live is not None and _live.last_meta is not None:
             result["agent_meta"] = _live.last_meta
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         pass
 
     # Snapshot block — cheap read from cache (todo#286). Never re-gathers.
+    # stx-allow: fallback (reason: snapshot module may not yet exist or cache may be absent on first run; None snapshot is valid initial state)
     try:
         from .snapshot import read_latest
 
@@ -402,12 +477,13 @@ def agent_status(name: str, registry: Registry | None = None) -> dict:
             }
         else:
             result["snapshot"] = None
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         result["snapshot"] = None
 
     # Enrich with claude-hud-style metadata. Canonical source for the
     # Agents-tab dashboard; the MCP sidecar heartbeat shells out to this
     # command rather than duplicating the logic in TypeScript.
+    # stx-allow: fallback (reason: agent_meta requires psutil and an active tmux session; metadata enrichment is optional and must never break status)
     try:
         from .agent_meta import collect_rich
 
@@ -423,7 +499,7 @@ def agent_status(name: str, registry: Registry | None = None) -> dict:
         # Never let rich overwrite the canonical registry/config fields.
         for k, v in rich.items():
             result.setdefault(k, v)
-    except Exception:
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         # Never let metadata collection break status.
         pass
 

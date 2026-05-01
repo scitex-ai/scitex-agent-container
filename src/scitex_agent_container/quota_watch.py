@@ -1,15 +1,19 @@
 """Quota-aware credential rotation monitor.
 
 Monitors 5h/7d quota usage and rotates to a stored account when threshold
-is exceeded. Designed to run as a background loop in tmux.
+is exceeded. Designed to run as a background loop in tmux or as a launchd
+daemon.
 
 Usage:
     scitex-agent-container quota-watch [--threshold 80] [--interval 300]
+    scitex-agent-container quota-watch --daemon   # detach, write to log
 """
 
 from __future__ import annotations
 
 import logging
+import os
+import sys
 import time
 from pathlib import Path
 
@@ -21,6 +25,8 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_THRESHOLD = 80.0  # rotate when usage exceeds this %
 DEFAULT_INTERVAL = 300  # check every 5 minutes
+SURVIVAL_THRESHOLD = 50.0  # warn in survival mode when usage exceeds this %
+_DEFAULT_LOG_PATH = Path.home() / ".scitex" / "logs" / "quota-watch.log"
 
 
 def _select_next_account(
@@ -59,6 +65,7 @@ def check_and_rotate(
 
     Never raises.
     """
+    # stx-allow: fallback (reason: quota check must never raise; caller expects a dict with action="error" on any failure)
     try:
         usage = fetch_usage(home=home)
         meta = read_credentials_metadata(home=home)
@@ -144,6 +151,7 @@ def check_and_rotate(
             ),
         }
 
+    # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
     except Exception as exc:
         return {
             "action": "error",
@@ -154,13 +162,109 @@ def check_and_rotate(
         }
 
 
+def survival_mode_check(
+    store_dir: Path | None = None,
+    home: Path | None = None,
+    warn_threshold: float = SURVIVAL_THRESHOLD,
+) -> dict:
+    """Check whether the fleet is in single-account survival mode.
+
+    Single-account survival mode: only 1 account available in the store, and
+    the current 5h quota usage has exceeded *warn_threshold*.  In this state
+    agents should suppress non-critical Orochi chatter to preserve quota for
+    critical work.
+
+    Returns:
+        Dict with keys:
+            survival_mode: bool — True when single-account AND quota > warn_threshold
+            account_count:  int
+            quota_5h_pct:   float | None
+            message:        str
+    """
+    try:
+        _home = home or Path.home()
+        accounts = list_accounts(store_dir=store_dir, home=_home)
+        count = len(accounts)
+        usage = fetch_usage(home=_home)
+        q5 = usage.get("used_pct_5h")
+
+        if count <= 1 and q5 is not None and q5 >= warn_threshold:
+            msg = (
+                f"SURVIVAL MODE: only {count} account(s) available, "
+                f"5h quota at {q5}%. Suppress non-critical agent chatter."
+            )
+            return {
+                "survival_mode": True,
+                "account_count": count,
+                "quota_5h_pct": q5,
+                "message": msg,
+            }
+
+        return {
+            "survival_mode": False,
+            "account_count": count,
+            "quota_5h_pct": q5,
+            "message": (
+                f"ok: {count} account(s), 5h quota={q5}%"
+            ),
+        }
+    except Exception as exc:
+        return {
+            "survival_mode": False,
+            "account_count": 0,
+            "quota_5h_pct": None,
+            "message": f"survival_mode_check error: {exc}",
+        }
+
+
+def _daemonize(log_path: Path) -> None:
+    """Fork the process into a background daemon (UNIX double-fork)."""
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # First fork
+    pid = os.fork()
+    if pid > 0:
+        sys.exit(0)  # exit parent
+
+    os.setsid()
+
+    # Second fork (prevent reacquiring controlling terminal)
+    pid = os.fork()
+    if pid > 0:
+        sys.exit(0)
+
+    # Redirect stdio to log file
+    log_fd = open(log_path, "a", encoding="utf-8")
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.dup2(log_fd.fileno(), sys.stdout.fileno())
+    os.dup2(log_fd.fileno(), sys.stderr.fileno())
+    devnull = open(os.devnull, "r")
+    os.dup2(devnull.fileno(), sys.stdin.fileno())
+
+
 def run_loop(
     threshold: float = DEFAULT_THRESHOLD,
     interval: int = DEFAULT_INTERVAL,
     store_dir: Path | None = None,
     home: Path | None = None,
+    daemon: bool = False,
+    log_path: Path | None = None,
 ) -> None:
-    """Run indefinitely, checking quota every interval seconds."""
+    """Run indefinitely, checking quota every interval seconds.
+
+    Args:
+        threshold: Rotate when usage exceeds this %.
+        interval:  Seconds between checks.
+        store_dir: Override for account store directory.
+        home:      Override for home directory.
+        daemon:    If True, double-fork into background before looping.
+        log_path:  Log file path used when daemon=True (default: ~/.scitex/logs/quota-watch.log).
+    """
+    if daemon:
+        _log = log_path or _DEFAULT_LOG_PATH
+        _daemonize(_log)
+        # After fork we continue here in the daemon child
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s"
     )
@@ -175,4 +279,10 @@ def run_loop(
             logger.warning("[%s] %s", action.upper(), msg)
         else:
             logger.info("[%s] %s", action, msg)
+
+        # Survival mode check — emit a warning if needed
+        sv = survival_mode_check(store_dir=store_dir, home=home)
+        if sv["survival_mode"]:
+            logger.warning("[SURVIVAL] %s", sv["message"])
+
         time.sleep(interval)

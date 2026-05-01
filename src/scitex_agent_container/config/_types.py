@@ -101,6 +101,16 @@ class SlurmHooks:
 
 
 @dataclass
+class OrochiSpec:
+    enabled: bool = False
+    hosts: list[str] = field(default_factory=list)
+    port: int = 8559
+    token_env: str = "SCITEX_OROCHI_TOKEN"
+    channels: list[str] = field(default_factory=list)
+    heartbeat_interval: int = 60
+
+
+@dataclass
 class SlurmHeartbeatSpec:
     """Compute-node heartbeat daemon for the SLURM runtime.
 
@@ -162,6 +172,10 @@ class SlurmSpec:
 
 @dataclass
 class RemoteSpec:
+    # Chain-based remote: list of SSH config aliases (new format).
+    # Populated when spec.remote is a str or list[str].
+    # Empty when using legacy dict format.
+    hops: list = field(default_factory=list)
     host: str = ""  # SSH host (hostname or IP)
     user: str = ""  # SSH user
     key: str = ""  # Path to SSH key (optional)
@@ -173,7 +187,7 @@ class RemoteSpec:
     @property
     def is_remote(self) -> bool:
         """Return True if this agent should be deployed via SSH."""
-        return bool(self.host)
+        return bool(self.hops or self.host)
 
 
 @dataclass
@@ -199,6 +213,29 @@ class ContextManagementConfig:
 class SkillsSpec:
     required: list[str] = field(default_factory=list)  # Auto-loaded at startup
     available: list[str] = field(default_factory=list)  # Available but not auto-loaded
+    # How sac materializes the skill list into the agent's CLAUDE.md:
+    #   "at-import" — resolve each name to file paths and emit `@<path>` lines
+    #                 so Claude Code inlines the content at session start
+    #                 (default — eager loading per Anthropic @-import).
+    #   "block"     — emit a ```skills <name>``` block (legacy lazy form).
+    injection_mode: str = "at-import"
+    # Strategies used to resolve a skill name → file paths in at-import mode.
+    # Each entry runs independently; results are unioned + deduped.
+    #   "skill-id" — Anthropic-canonical: walk skill roots, for each
+    #                ``<dir>/SKILL.md`` resolve identity as
+    #                ``frontmatter.name`` (if set) ELSE ``<dir>.name``.
+    #                Match if identity equals the requested value.
+    #                See https://docs.claude.com/en/docs/claude-code/skills.
+    #   "tag"      — files where frontmatter ``tags:`` contains the value
+    #                (orchestration extension; not in Anthropic spec but
+    #                used by ywatanabe ``tags-expand`` pattern).
+    #   "filename" — files whose basename (without ``.md``) matches
+    #                (opt-in; broader than ``skill-id``, can over-match).
+    match_by: list[str] = field(default_factory=lambda: ["skill-id", "tag"])
+    # Comparison style for ``match_by`` strategies.
+    #   "exact"   — value == candidate (default)
+    #   "partial" — value substring of candidate (case-sensitive)
+    match_style: str = "exact"
 
 
 @dataclass
@@ -222,6 +259,27 @@ class HostsSpec:
 
     host: str | list[str] = ""
     hosts: str | list[str] = field(default_factory=list)
+
+
+@dataclass
+class SchedulingSpec:
+    """Fleet-wide scheduling policy for an agent (shared-host layout).
+
+    ``mode`` controls effective-id composition and launch-skip behavior:
+      * ``per-host`` (default): agent is started on every host that runs
+        ``sac start <name>``; the effective id is ``<metadata.name>-<HOST>``
+        unless the name already ends with ``-<HOST>``.
+      * ``singleton``: exactly one instance fleet-wide. The effective id
+        stays as the bare ``<metadata.name>``. Only launched on
+        ``preferred-host``; on other hosts the launch is a no-op.
+
+    ``fallback-hosts`` is recorded for observability but not acted on
+    automatically — manual failover today.
+    """
+
+    mode: str = "per-host"
+    preferred_host: str = ""
+    fallback_hosts: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -314,6 +372,7 @@ class AgentConfig:
     workdir: str = "~/proj"
     python_venv: str = ""  # resolved venv path (post _resolve_python_venv)
     env: dict[str, str] = field(default_factory=dict)
+    env_files: list[str] = field(default_factory=list)  # .env file paths (workspace-relative ok)
     screen_name: str = ""
     labels: dict[str, str] = field(default_factory=dict)
     container: ContainerSpec = field(default_factory=ContainerSpec)
@@ -336,6 +395,8 @@ class AgentConfig:
     multiplexer: str = "tmux"  # "tmux" (default) or "screen"
     hosts_spec: HostsSpec = field(default_factory=HostsSpec)
     slurm: SlurmSpec = field(default_factory=SlurmSpec)
+    scheduling: SchedulingSpec = field(default_factory=SchedulingSpec)
+    orochi: OrochiSpec = field(default_factory=OrochiSpec)
     config_path: str = ""
 
     def __post_init__(self) -> None:

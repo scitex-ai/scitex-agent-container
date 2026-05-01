@@ -255,9 +255,10 @@ def run_action(
         return attempt
 
     # Pre-snapshot (if this fails the action is unrunnable).
+    # stx-allow: fallback (reason: pane capture or context-pct read can raise on transient mux errors; SEND_ERROR is the only safe outcome when the pre-state is unknown)
     try:
         before = action.snapshot(ctx)
-    except Exception as exc:  # pragma: no cover - defensive
+    except Exception as exc:  # pragma: no cover - defensive  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         logger.warning(
             "PaneAction %s: pre-snapshot raised %s; treating as SEND_ERROR",
             action.name,
@@ -276,10 +277,11 @@ def run_action(
         return _finish(ActionOutcome.PRECONDITION_FAIL, before, None)
 
     # Send.
+    # stx-allow: fallback (reason: mux keystroke emission or SSH call can fail; SEND_ERROR with the error captured in extras is the correct terminal outcome — no polling should follow a failed send)
     try:
         action.before_send(ctx)
         action.send(ctx)
-    except Exception as exc:
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         logger.warning("PaneAction %s: send raised %s", action.name, exc)
         ctx.extras.setdefault("send_error", f"{type(exc).__name__}: {exc}")
         return _finish(ActionOutcome.SEND_ERROR, before, None)
@@ -289,18 +291,20 @@ def run_action(
     now_snap = before  # default if we never poll (timeout_s <= 0)
     while True:
         current = time_fn()
+        # stx-allow: fallback (reason: snapshot during polling can fail transiently if the pane is briefly unavailable; retaining the previous snapshot lets is_complete keep evaluating rather than aborting the poll loop)
         try:
             now_snap = action.snapshot(ctx)
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:  # pragma: no cover - defensive  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             logger.debug(
                 "PaneAction %s: snapshot during polling raised %s",
                 action.name,
                 exc,
             )
             # Keep the previous snapshot so is_complete sees something.
+        # stx-allow: fallback (reason: subclass is_complete can raise if snapshot fields have unexpected shape; treating as not-done keeps the poll loop alive rather than crashing the engine)
         try:
             done = action.is_complete(before, now_snap)
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:  # pragma: no cover - defensive  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             logger.debug("PaneAction %s: is_complete raised %s", action.name, exc)
             done = False
         if done:

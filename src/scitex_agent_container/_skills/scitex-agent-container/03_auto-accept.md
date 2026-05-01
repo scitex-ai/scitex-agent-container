@@ -1,6 +1,7 @@
 ---
 name: agent-container-auto-accept
 description: Modular TUI prompt detection and auto-acceptance for Claude Code.
+tags: [scitex-agent-container, scitex-package]
 ---
 
 # Auto-Accept TUI Prompts
@@ -9,12 +10,22 @@ Claude Code shows confirmation prompts for dangerous flags. The auto-accept syst
 
 ## Built-in Handlers
 
-| Name | Detects | Sends |
-|------|---------|-------|
-| bypass-permissions | "2. Yes, I accept" + "Bypass Permissions" | `2`, `Enter` |
-| dev-channels | "1. I am using this for local development" | `1`, `Enter` |
-| thinking-effort | "Medium" + "thinking" | `1`, `Enter` |
-| skip-permissions-yn | "skip-permissions" or "Trust" (legacy y/n) | `y`, `Enter` |
+Ordered by priority (lowest number runs first). See
+`src/scitex_agent_container/runtimes/prompts.py::PROMPT_HANDLERS` for
+the canonical list.
+
+| Priority | Name | Detects | Sends |
+|---:|------|---------|-------|
+| 1 | bypass-permissions   | "2. Yes, I accept" + "Bypass Permissions"         | `2`, `Enter` |
+| 2 | dev-channels         | "1. I am using this for local development"        | `1`, `Enter` |
+| 3 | thinking-effort      | "1. Medium (recommended)" + "thinking"            | `1`, `Enter` |
+| 4 | mcp-json-edit        | "1. Yes, proceed" in the `.mcp.json` edit dialog  | `1`, `Enter` |
+| 5 | skip-permissions-yn  | Legacy y/n skip-permissions / trust prompt        | `y`, `Enter` |
+| 6 | press-enter-continue | Informational banner / context-window warning     | `Enter` |
+| 7 | file-trust           | "Do you trust the files in this folder?" (y/n)    | `y`, `Enter` |
+| 8 | file-trust-radio     | "1. Yes, I trust this folder" (radio variant)     | `1`, `Enter` |
+| 9 | theme-selection      | "1. Auto (match terminal)" on first run           | `1`, `Enter` |
+| 10 | login-method        | "2. Anthropic Console account · API usage billing"| `2`, `Enter` |
 
 ## Design
 

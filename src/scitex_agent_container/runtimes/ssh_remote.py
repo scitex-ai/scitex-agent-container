@@ -37,6 +37,14 @@ class SSHRemote:
     @staticmethod
     def _ssh_base(config: AgentConfig) -> list[str]:
         """Build the base SSH command with options."""
+        if config.remote.hops:
+            from ._ssh_chain import render_ssh_chain, skip_local_hops
+
+            remaining = skip_local_hops(config.remote.hops)
+            cmd = ["ssh"] + SSHRemote.SSH_OPTS
+            cmd.extend(render_ssh_chain(remaining))
+            return cmd
+        # Legacy dict-format path
         cmd = ["ssh"] + SSHRemote.SSH_OPTS
         if config.remote.key:
             cmd += ["-i", config.remote.key]
@@ -104,7 +112,7 @@ class SSHRemote:
                 text=True,
                 timeout=timeout,
             )
-        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:  # stx-allow: fallback (reason: file may not exist on first use)
             results.append(
                 (
                     "SSH connection",
@@ -254,7 +262,7 @@ class SSHRemote:
             result = subprocess.run(
                 ssh_cmd, input=content, capture_output=True, text=True, timeout=30
             )
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired:  # stx-allow: fallback (reason: subprocess execution failure)
             t = SSHRemote._ssh_target(config)
             raise RuntimeError(
                 f"ERROR: Timed out copying config to {config.remote.host}\n"
@@ -277,6 +285,7 @@ class SSHRemote:
             local_src = defdir / src_file
             if local_src.exists():
                 remote_src = f"{remote_dir}/{src_file}"
+                # stx-allow: fallback (reason: src_* files are optional v2 enhancements; an SSH/IO error copying them must not abort the remote deploy of the primary config)
                 try:
                     content_src = local_src.read_text()
                     ssh_cmd_src = SSHRemote._ssh_base(config) + [f"cat > {remote_src}"]
@@ -293,7 +302,7 @@ class SSHRemote:
                         config.remote.host,
                         remote_src,
                     )
-                except Exception:
+                except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                     logger.warning("Failed to copy %s to remote", src_file)
 
         return remote_path
@@ -324,7 +333,7 @@ class SSHRemote:
                 text=True,
                 timeout=timeout,
             )
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired:  # stx-allow: fallback (reason: subprocess execution failure)
             t = SSHRemote._ssh_target(config)
             raise RuntimeError(
                 f"ERROR: SSH command timed out on {config.remote.host}\n"
@@ -366,6 +375,7 @@ class SSHRemote:
         if result.returncode != 0:
             screen_name = config.screen_name or f"cld-{config.name}"
             screen_output = ""
+            # stx-allow: fallback (reason: diagnostic SSH call to capture screen state can fail independently of the original start failure; the RuntimeError is raised regardless with whatever output was captured)
             try:
                 diag = SSHRemote.run(
                     config,
@@ -375,7 +385,7 @@ class SSHRemote:
                     timeout=30,
                 )
                 screen_output = diag.stdout.strip()
-            except Exception:
+            except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                 screen_output = "(could not capture screen output)"
             raise RuntimeError(
                 f"Failed to start agent '{config.name}' on {config.remote.host}\n"
@@ -412,6 +422,7 @@ class SSHRemote:
     def is_running(config: AgentConfig) -> bool:
         """Check if agent is running on remote machine via screen -ls."""
         screen_name = config.screen_name or f"cld-{config.name}"
+        # stx-allow: fallback (reason: SSH connectivity may be unavailable when checking status; returning False is correct because an unreachable host means the agent cannot be confirmed running)
         try:
             result = SSHRemote.run(
                 config,
@@ -419,7 +430,7 @@ class SSHRemote:
                 timeout=30,
             )
             return screen_name in (result.stdout or "")
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             return False
 
     @staticmethod

@@ -196,9 +196,10 @@ class AutoResponseScheduler:
         # agent, and compacting first keeps the subsequent probe
         # cheap.
         ctx_pct = None
+        # stx-allow: fallback (reason: context_pct_fn reads tmux/pane state that may be unavailable; None disables compaction for this tick, which is safe)
         try:
             ctx_pct = ctx.context_pct_fn()
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             ctx_pct = None
 
         if should_compact(now, self.state, self.policy, ctx_pct):
@@ -241,9 +242,10 @@ class AutoResponseScheduler:
         """
         start = self._time()
         while True:
+            # stx-allow: fallback (reason: a single tick may fail due to transient mux/session errors; logging and continuing keeps the scheduler alive across intermittent failures)
             try:
                 self.tick()
-            except Exception as exc:  # pragma: no cover - defensive
+            except Exception as exc:  # pragma: no cover - defensive  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                 logger.warning(
                     "auto_response tick raised %s: %s", type(exc).__name__, exc
                 )

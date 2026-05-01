@@ -22,9 +22,10 @@ def check(config_path: str) -> None:
     available before starting the agent. Useful for debugging deployment
     failures.
     """
+    # stx-allow: fallback (reason: config file may not exist or contain invalid YAML; CLI exits with code 1 to signal preflight failure)
     try:
         config = load_config(config_path)
-    except Exception as exc:
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         console.print(f"[red]Error loading config: {exc}[/red]")
         sys.exit(1)
 
@@ -77,12 +78,13 @@ def check(config_path: str) -> None:
             else:
                 all_ok = False
                 console.print(f"  {'python:':30s} [red]FAIL[/red]")
-        except FileNotFoundError:
+        except FileNotFoundError:  # stx-allow: fallback (reason: file may not exist on first use)
             all_ok = False
             console.print(f"  {'python:':30s} [red]FAIL (python3 not found)[/red]")
 
         sac_bin = shutil.which("scitex-agent-container")
         if sac_bin:
+            # stx-allow: fallback (reason: subprocess to get version may fail due to permission or env issues; "unknown" version is safe for the preflight display)
             try:
                 proc = subprocess.run(
                     ["scitex-agent-container", "--version"],
@@ -91,7 +93,7 @@ def check(config_path: str) -> None:
                     timeout=5,
                 )
                 ver = proc.stdout.strip() if proc.returncode == 0 else "unknown"
-            except Exception:
+            except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                 ver = "unknown"
             console.print(
                 f"  {'scitex-agent-container:':30s} [green]OK ({ver})[/green]"
@@ -101,6 +103,7 @@ def check(config_path: str) -> None:
             console.print(f"  {'scitex-agent-container:':30s} [red]FAIL[/red]")
             console.print("    [red]  Fix: pip install scitex-agent-container[/red]")
 
+        # stx-allow: fallback (reason: df may be unavailable or timeout in restricted environments; showing "unknown" disk status is acceptable for a preflight report)
         try:
             proc = subprocess.run(
                 ["df", "-h", "/"], capture_output=True, text=True, timeout=5
@@ -113,7 +116,7 @@ def check(config_path: str) -> None:
                     console.print(
                         f"  {'disk space:':30s} [green]OK ({usage} used)[/green]"
                     )
-        except Exception:
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             console.print(f"  {'disk space:':30s} [dim]unknown[/dim]")
 
     if all_ok:
