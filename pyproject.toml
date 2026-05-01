@@ -95,6 +95,7 @@ scitex-agent-container = "scitex_agent_container"
 Homepage = "https://github.com/ywatanabe1989/scitex-agent-container"
 Repository = "https://github.com/ywatanabe1989/scitex-agent-container.git"
 Issues = "https://github.com/ywatanabe1989/scitex-agent-container/issues"
+Documentation = "https://scitex-agent-container.readthedocs.io"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/scitex_agent_container"]
