@@ -435,7 +435,9 @@ the schema without touching this package.
 
 ## Part of SciTeX
 
-scitex-agent-container is part of [**SciTeX**](https://scitex.ai), used as a generic agent lifecycle library by downstream orchestrators like [scitex-orochi](https://github.com/ywatanabe1989/scitex-orochi) for multi-machine fleet dispatch.
+`scitex-agent-container` is part of [**SciTeX**](https://scitex.ai). Install via
+the umbrella with `pip install scitex[agent-container]` to use as
+`scitex.agent_container` (Python) or `scitex agent-container ...` (CLI).
 
 >Four Freedoms for Research
 >
