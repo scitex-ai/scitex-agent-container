@@ -82,6 +82,23 @@ cp config/templates/local.yaml ~/.scitex/orochi/agents/my-agent/my-agent.yaml
 scitex-agent-container start my-agent
 ```
 
+## 1 Interfaces
+
+<details open>
+<summary><strong>CLI</strong></summary>
+
+<br>
+
+```bash
+sac start <agent-yaml>      # launch declared agent in tmux/screen with auto-accept + watchdog
+sac stop <agent>            # graceful stop
+sac status                  # live state of every pane
+sac deploy <host>           # SSH-deploy fleet to remote host
+sac --help-recursive        # full subcommand tree
+```
+
+</details>
+
 ## Quickstart (v2 config)
 
 1. Create agent definition directory:
