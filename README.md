@@ -1,8 +1,24 @@
-<!-- SciTeX Convention: Header (logo, tagline, badges) -->
 # scitex-agent-container
 
+<!-- scitex-badges:start -->
+[![PyPI](https://img.shields.io/pypi/v/scitex-agent-container.svg)](https://pypi.org/project/scitex-agent-container/)
+[![Python](https://img.shields.io/pypi/pyversions/scitex-agent-container.svg)](https://pypi.org/project/scitex-agent-container/)
+[![Tests](https://github.com/ywatanabe1989/scitex-agent-container/actions/workflows/test.yml/badge.svg)](https://github.com/ywatanabe1989/scitex-agent-container/actions/workflows/test.yml)
+[![Coverage](https://codecov.io/gh/ywatanabe1989/scitex-agent-container/graph/badge.svg)](https://codecov.io/gh/ywatanabe1989/scitex-agent-container)
+[![Docs](https://readthedocs.org/projects/scitex-agent-container/badge/?version=latest)](https://scitex-agent-container.readthedocs.io/en/latest/)
+[![License: AGPL v3](https://img.shields.io/badge/license-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+<!-- scitex-badges:end -->
+
 <p align="center">
-  <code>pip install scitex-agent-container</code>
+  <a href="https://scitex.ai">
+    <img src="docs/scitex-logo-blue-cropped.png" alt="SciTeX" width="400">
+  </a>
+</p>
+
+<p align="center"><b>Declarative YAML-based AI agent lifecycle management with tmux/screen, SSH remote deploy, health checks, and auto-accept.</b></p>
+
+<p align="center">
+  <a href="https://scitex-agent-container.readthedocs.io/">Full Documentation</a> · <code>pip install scitex-agent-container</code>
 </p>
 
 ---

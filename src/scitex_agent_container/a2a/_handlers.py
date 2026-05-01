@@ -75,6 +75,85 @@ def handle_claude_cli(agent_name: str, user_text: str) -> str:
     return res.stdout.strip() or "(empty response)"
 
 
+def _agent_mcp_servers_and_cwd(agent_name: str) -> tuple[dict, str | None]:
+    """Resolve the agent's MCP servers + workspace cwd from the registry.
+
+    Returns ``(mcp_servers_dict, cwd_or_None)``. Empty dict + None if the
+    agent isn't registered or its workspace has no ``.mcp.json``. This
+    lets ``claude_session`` requests reach the same MCP servers (orochi,
+    custom stdio, etc.) the agent's interactive Claude Code session would.
+    """
+    import json as _json
+    import re as _re
+    from pathlib import Path as _Path
+
+    try:
+        from scitex_agent_container.registry import Registry
+    except ImportError:
+        return {}, None
+
+    try:
+        entry = Registry().get(agent_name)
+    except Exception:  # stx-allow: fallback (reason: registry IO best-effort)
+        return {}, None
+    if not entry:
+        return {}, None
+    config_path = entry.get("config")
+    if not config_path:
+        return {}, None
+
+    # Workdir lives next to the agent's runtime workspace; sac writes
+    # `.mcp.json` there at startup via runtimes/mcp_config.py.
+    try:
+        from scitex_agent_container.config import load_config
+
+        cfg = load_config(config_path)
+        workdir = str(_Path(cfg.expanded_workdir).expanduser())
+    except Exception:  # stx-allow: fallback (reason: config load best-effort)
+        return {}, None
+
+    mcp_path = _Path(workdir) / ".mcp.json"
+    if not mcp_path.is_file():
+        return {}, workdir
+    try:
+        raw = _json.loads(mcp_path.read_text(encoding="utf-8"))
+    except (
+        OSError,
+        _json.JSONDecodeError,
+    ):  # stx-allow: fallback (reason: malformed JSON tolerated)
+        return {}, workdir
+
+    mcp_servers = raw.get("mcpServers", {}) if isinstance(raw, dict) else {}
+    if not isinstance(mcp_servers, dict):
+        return {}, workdir
+
+    # Resolve `${VAR}` references against this process's environment so
+    # tokens (SCITEX_OROCHI_TOKEN, etc.) reach the spawned MCP processes.
+    def _resolve_env(value):
+        if isinstance(value, str):
+            return _re.sub(
+                r"\$\{(\w+)\}",
+                lambda m: os.environ.get(m.group(1), m.group(0)),
+                value,
+            )
+        if isinstance(value, dict):
+            return {k: _resolve_env(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [_resolve_env(v) for v in value]
+        return value
+
+    resolved: dict = {}
+    for name, entry_dict in mcp_servers.items():
+        if not isinstance(entry_dict, dict):
+            continue
+        # SDK expects `type` to be present (or absent for stdio); the
+        # on-disk .mcp.json may or may not have it. Default to stdio.
+        e = _resolve_env(dict(entry_dict))
+        e.setdefault("type", "stdio")
+        resolved[name] = e
+    return resolved, workdir
+
+
 def handle_claude_session(agent_name: str, user_text: str) -> str:
     """Drive Claude via ``claude-agent-sdk`` — no ``claude --print``.
 
@@ -83,13 +162,20 @@ def handle_claude_session(agent_name: str, user_text: str) -> str:
     speaks structured streaming on stdin/stdout to a long-lived ``claude``
     process and survives the eventual ``--print`` deprecation.
 
+    MCP wiring: looks up the agent's workspace ``.mcp.json`` (written by
+    sac at agent-start time from ``spec.mcp_servers``) and passes it
+    through to the SDK. So an agent whose YAML declares the
+    ``scitex-orochi`` MCP server can answer A2A requests AND speak
+    orochi from the same handler call. ``${VAR}`` references in the
+    on-disk JSON are resolved against this process's environment.
+
     Env knobs:
 
     * ``SAC_A2A_CLAUDE_MODEL`` — model id (default: SDK default).
     * ``SAC_A2A_CLAUDE_SYSTEM`` — appended system prompt (default:
       :data:`CLAUDE_DEFAULT_SYSTEM`).
     * ``SAC_A2A_CLAUDE_TIMEOUT_S`` — per-call timeout in seconds
-      (default 25; bump for prompts that read multiple files).
+      (default 25; bump for prompts that read multiple files / call MCP).
 
     Auth: the bundled CLI honors ``ANTHROPIC_API_KEY`` (canonical, ToS-
     clean) and falls back to ``~/.claude/.credentials.json`` OAuth on
@@ -114,9 +200,15 @@ def handle_claude_session(agent_name: str, user_text: str) -> str:
 
     system = os.environ.get("SAC_A2A_CLAUDE_SYSTEM", CLAUDE_DEFAULT_SYSTEM)
     model = os.environ.get("SAC_A2A_CLAUDE_MODEL")
+    mcp_servers, workdir = _agent_mcp_servers_and_cwd(agent_name)
+
     options_kwargs: dict = {"system_prompt": system}
     if model:
         options_kwargs["model"] = model
+    if workdir:
+        options_kwargs["cwd"] = workdir
+    if mcp_servers:
+        options_kwargs["mcp_servers"] = mcp_servers
     options = ClaudeAgentOptions(**options_kwargs)
 
     chunks: list[str] = []
