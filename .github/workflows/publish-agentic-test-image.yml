@@ -1,0 +1,74 @@
+name: Publish scitex-agentic-test image
+
+# Builds containers/Dockerfile.agentic-test and pushes to
+#   ghcr.io/ywatanabe1989/scitex-agentic-test:latest
+#   ghcr.io/ywatanabe1989/scitex-agentic-test:vX.Y.Z   (on v* tags)
+#
+# Consumed by scitex-dev's _agentic_testing harness — see
+# scitex-dev/_skills/general/scitex-dev/17_agentic-test-skills.md
+#
+# Trigger: explicit (workflow_dispatch) or v* tag push, mirroring the
+# opt-in publish pattern used by publish-pypi.yml.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Tag to publish (e.g. v0.11.0). "latest" only on workflow_dispatch.'
+        required: true
+        type: string
+        default: latest
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute tags
+        id: tags
+        run: |
+          set -e
+          declare -a tags
+          tags+=("ghcr.io/ywatanabe1989/scitex-agentic-test:latest")
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            # Tag push: also publish the version tag (strip the leading 'v').
+            ref="${GITHUB_REF_NAME}"
+            tags+=("ghcr.io/ywatanabe1989/scitex-agentic-test:${ref}")
+          elif [[ "${{ inputs.version }}" != "latest" ]]; then
+            # workflow_dispatch with explicit version
+            tags+=("ghcr.io/ywatanabe1989/scitex-agentic-test:${{ inputs.version }}")
+          fi
+          printf 'tags<<EOF\n%s\nEOF\n' "$(IFS=,; echo "${tags[*]}")" >> "$GITHUB_OUTPUT"
+          printf 'Selected tags: %s\n' "${tags[*]}"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: containers
+          file: containers/Dockerfile.agentic-test
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/ywatanabe1989/scitex-agent-container
+            org.opencontainers.image.description=Stateless runtime for scitex skill-trigger agentic tests (Node + claude CLI; no baked skills/credentials)
+            org.opencontainers.image.licenses=AGPL-3.0-only

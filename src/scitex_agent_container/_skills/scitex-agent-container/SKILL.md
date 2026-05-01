@@ -26,7 +26,7 @@ and observe it through a rich non-agentic status surface.
 | Surface | Location |
 |---|---|
 | Python API | `scitex_agent_container` (`AgentConfig`, `load_config`, `validate_config`, `agent_start`, `agent_stop`, `agent_restart`, `agent_status`, `agent_logs`, `Registry`) |
-| CLI entry points | `scitex-agent-container`, `sac` (see [cli.md](cli.md)) |
+| CLI entry points | `scitex-agent-container`, `sac` (see [10_cli.md](10_cli.md)) |
 | MCP servers | None bundled — agents spawn their own via `src_mcp.json` |
 | Runtimes | `runtimes/tmux.py`, `runtimes/screen.py`, `runtimes/claude_code.py`, `runtimes/apptainer.py`, `runtimes/docker.py`, `runtimes/sbatch_spartan.py`, `runtimes/ssh_remote.py` |
 | PaneActions | `actions/nonce_probe.py`, `actions/compact.py` (typed, logged via `action_store` to `~/.scitex/agent-container/actions.db`) |
