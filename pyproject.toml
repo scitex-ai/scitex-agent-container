@@ -43,6 +43,9 @@ dependencies = [
     # `[http-server]` extras pull in starlette + sse-starlette for the
     # JSON-RPC + SSE routes we mount in `a2a/_server.py`.
     "a2a-sdk[http-server]>=1.0.2",
+    # Anthropic's official SDK — backs the `claude_session` handler
+    # (replaces the legacy `claude_cli` / `claude --print` path).
+    "claude-agent-sdk>=0.1.0",
     "uvicorn>=0.27",
     # protobuf 6.x removed FieldDescriptor.label, which a2a-sdk 1.0.x's
     # validate_proto_required_fields still references — pin until upstream

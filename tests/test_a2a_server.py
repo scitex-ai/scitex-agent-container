@@ -74,10 +74,16 @@ def echo_client() -> TestClient:
 
 def test_executors_registry_keys():
     """The executor registry exposes one entry per built-in handler."""
-    assert set(EXECUTORS) == {"echo", "claude_cli", "exec"}
+    assert set(EXECUTORS) == {"echo", "claude_session", "claude_cli", "exec"}
     assert EXECUTORS["echo"] is EchoExecutor
     assert EXECUTORS["claude_cli"] is ClaudeCliExecutor
     assert EXECUTORS["exec"] is ExecExecutor
+    # claude_session — SDK-backed (recommended for new agents)
+    from scitex_agent_container.a2a.executors._claude_session import (
+        ClaudeSessionExecutor,
+    )
+
+    assert EXECUTORS["claude_session"] is ClaudeSessionExecutor
 
 
 def test_executors_construct_from_yaml_handler():

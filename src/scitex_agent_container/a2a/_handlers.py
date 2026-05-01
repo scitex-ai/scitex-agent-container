@@ -1,10 +1,15 @@
 """Pluggable A2A ``tasks/send`` handlers for sac.
 
-Three built-ins:
+Four built-ins:
 
 * :func:`handle_echo` — canned reply, zero deps. The default.
-* :func:`handle_claude_cli` — runs ``claude --print`` with the user
-  text and forwards stdout. Requires ``claude`` on PATH.
+* :func:`handle_claude_session` — drives Claude via Anthropic's
+  official ``claude-agent-sdk`` (structured streaming, no ``--print``).
+  **Recommended** for new agents — survives ``--print`` deprecation.
+* :func:`handle_claude_cli` — *(legacy)* runs ``claude --print`` with
+  the user text and forwards stdout. Kept for back-compat; will be
+  removed once ``claude --print`` itself is removed upstream. Migrate
+  to ``claude_session``.
 * :func:`handle_exec` — runs an arbitrary command, passing the user
   text on stdin and returning stdout. Lets ops wire in any custom
   handler script (Python, shell, etc.) without sac changes.
@@ -55,15 +60,87 @@ def handle_claude_cli(agent_name: str, user_text: str) -> str:
             text=True,
             timeout=CLAUDE_TIMEOUT_S,
         )
-    except FileNotFoundError as exc:  # stx-allow: fallback (reason: file may not exist on first use)
+    except (
+        FileNotFoundError
+    ) as exc:  # stx-allow: fallback (reason: file may not exist on first use)
         raise HandlerError(f"claude CLI not found at {claude_bin!r}") from exc
-    except subprocess.TimeoutExpired as exc:  # stx-allow: fallback (reason: subprocess execution failure)
+    except (
+        subprocess.TimeoutExpired
+    ) as exc:  # stx-allow: fallback (reason: subprocess execution failure)
         raise HandlerError(f"claude CLI timeout after {CLAUDE_TIMEOUT_S:.0f}s") from exc
     if res.returncode != 0:
         raise HandlerError(
             f"claude CLI failed (rc={res.returncode}): {res.stderr.strip()[:300]}"
         )
     return res.stdout.strip() or "(empty response)"
+
+
+def handle_claude_session(agent_name: str, user_text: str) -> str:
+    """Drive Claude via ``claude-agent-sdk`` — no ``claude --print``.
+
+    Same wire contract as :func:`handle_claude_cli` (sync ``(name, text)
+    -> str``), but uses Anthropic's official SDK underneath. The SDK
+    speaks structured streaming on stdin/stdout to a long-lived ``claude``
+    process and survives the eventual ``--print`` deprecation.
+
+    Env knobs:
+
+    * ``SAC_A2A_CLAUDE_MODEL`` — model id (default: SDK default).
+    * ``SAC_A2A_CLAUDE_SYSTEM`` — appended system prompt (default:
+      :data:`CLAUDE_DEFAULT_SYSTEM`).
+    * ``SAC_A2A_CLAUDE_TIMEOUT_S`` — per-call timeout in seconds
+      (default 25; bump for prompts that read multiple files).
+
+    Auth: the bundled CLI honors ``ANTHROPIC_API_KEY`` (canonical, ToS-
+    clean) and falls back to ``~/.claude/.credentials.json`` OAuth on
+    personal machines. See Anthropic's commercial ToS for redistributed
+    products.
+    """
+    try:
+        import asyncio
+        import warnings as _warnings
+
+        from claude_agent_sdk import (
+            AssistantMessage,
+            ClaudeAgentOptions,
+            TextBlock,
+            query,
+        )
+    except ImportError as exc:  # stx-allow: fallback (reason: optional dep at runtime)
+        raise HandlerError(
+            "claude_session handler requires `claude-agent-sdk` "
+            "(`pip install claude-agent-sdk`)."
+        ) from exc
+
+    system = os.environ.get("SAC_A2A_CLAUDE_SYSTEM", CLAUDE_DEFAULT_SYSTEM)
+    model = os.environ.get("SAC_A2A_CLAUDE_MODEL")
+    options_kwargs: dict = {"system_prompt": system}
+    if model:
+        options_kwargs["model"] = model
+    options = ClaudeAgentOptions(**options_kwargs)
+
+    chunks: list[str] = []
+
+    async def _consume() -> None:
+        async for msg in query(prompt=user_text, options=options):
+            if isinstance(msg, AssistantMessage):
+                for block in msg.content:
+                    if isinstance(block, TextBlock):
+                        chunks.append(block.text)
+
+    try:
+        # Suppress noisy SDK / asyncio shutdown warnings per call.
+        with _warnings.catch_warnings():
+            _warnings.simplefilter("ignore")
+            asyncio.run(asyncio.wait_for(_consume(), timeout=CLAUDE_TIMEOUT_S))
+    except asyncio.TimeoutError as exc:
+        raise HandlerError(
+            f"claude_session timeout after {CLAUDE_TIMEOUT_S:.0f}s"
+        ) from exc
+    except Exception as exc:  # stx-allow: fallback (reason: SDK surface is broad)
+        raise HandlerError(f"claude_session failed: {exc}") from exc
+
+    return "\n".join(chunks).strip() or "(empty response)"
 
 
 def handle_exec(agent_name: str, user_text: str) -> str:
@@ -75,7 +152,9 @@ def handle_exec(agent_name: str, user_text: str) -> str:
         )
     try:
         argv = shlex.split(raw)
-    except ValueError as exc:  # stx-allow: fallback (reason: type coercion or format mismatch)
+    except (
+        ValueError
+    ) as exc:  # stx-allow: fallback (reason: type coercion or format mismatch)
         raise HandlerError(f"could not parse SAC_A2A_EXEC_COMMAND: {exc}") from exc
     if not argv:
         raise HandlerError("SAC_A2A_EXEC_COMMAND parsed to empty argv")
@@ -88,9 +167,13 @@ def handle_exec(agent_name: str, user_text: str) -> str:
             timeout=EXEC_TIMEOUT_S,
             env={**os.environ, "SAC_A2A_AGENT": agent_name},
         )
-    except FileNotFoundError as exc:  # stx-allow: fallback (reason: file may not exist on first use)
+    except (
+        FileNotFoundError
+    ) as exc:  # stx-allow: fallback (reason: file may not exist on first use)
         raise HandlerError(f"exec command not found: {argv[0]!r}") from exc
-    except subprocess.TimeoutExpired as exc:  # stx-allow: fallback (reason: subprocess execution failure)
+    except (
+        subprocess.TimeoutExpired
+    ) as exc:  # stx-allow: fallback (reason: subprocess execution failure)
         raise HandlerError(f"exec command timeout after {EXEC_TIMEOUT_S:.0f}s") from exc
     if res.returncode != 0:
         raise HandlerError(
@@ -101,6 +184,7 @@ def handle_exec(agent_name: str, user_text: str) -> str:
 
 HANDLERS: dict[str, Callable[[str, str], str]] = {
     "echo": handle_echo,
-    "claude_cli": handle_claude_cli,
+    "claude_session": handle_claude_session,  # recommended (SDK-backed)
+    "claude_cli": handle_claude_cli,  # legacy (--print, deprecating upstream)
     "exec": handle_exec,
 }
