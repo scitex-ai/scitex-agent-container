@@ -1,0 +1,1104 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>scitex_agent_container.action_store &mdash; scitex-agent-container v0.11.0</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=9edc463e" />
+      <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=f3b36f1a"></script>
+      <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+      <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+      <script src="../../_static/copybutton.js?v=f281be69"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            scitex-agent-container
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../installation.html">Installation</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../installation.html#from-pypi">From PyPI</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../installation.html#from-source">From Source</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../installation.html#requirements">Requirements</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../quickstart.html">Quickstart</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../templates.html">Templates and Examples</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../templates.html#pattern-templates">Pattern Templates</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../templates.html#instantiating-a-template">Instantiating a Template</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../templates.html#examples">Examples</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../slurm.html">SLURM Runtimes</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../slurm.html#single-agent-runtime-slurm">Single-agent (<code class="docutils literal notranslate"><span class="pre">runtime:</span> <span class="pre">slurm</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../slurm.html#multi-tenant-runtime-slurm-tenant">Multi-tenant (<code class="docutils literal notranslate"><span class="pre">runtime:</span> <span class="pre">slurm-tenant</span></code>)</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../slurm.html#step-1-book-the-reservation">Step 1 — book the reservation</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../slurm.html#step-2-write-tenant-yamls">Step 2 — write tenant YAMLs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../slurm.html#step-3-start-agents-into-the-allocation">Step 3 — start agents into the allocation</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../slurm.html#step-4-operate-them">Step 4 — operate them</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../../slurm.html#architectural-notes">Architectural notes</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../slurm.html#migration-path">Migration path</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../slurm.html#troubleshooting">Troubleshooting</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../status_and_hooks.html">Status and Hook Integration</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../status_and_hooks.html#rich-status">Rich Status</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../status_and_hooks.html#claude-code-hook-integration">Claude Code Hook Integration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../status_and_hooks.html#zero-coupling-design">Zero Coupling Design</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../actions.html">Pane Actions</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../actions.html#why">Why</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../actions.html#architecture">Architecture</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../actions.html#cli">CLI</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../actions.html#runtime-timing">Runtime timing</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../actions.html#status-integration">Status integration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../actions.html#extending">Extending</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../api/scitex_agent_container.html">scitex_agent_container API Reference</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig"><code class="docutils literal notranslate"><span class="pre">AgentConfig</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.name"><code class="docutils literal notranslate"><span class="pre">AgentConfig.name</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.runtime"><code class="docutils literal notranslate"><span class="pre">AgentConfig.runtime</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.model"><code class="docutils literal notranslate"><span class="pre">AgentConfig.model</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.workdir</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.python_venv"><code class="docutils literal notranslate"><span class="pre">AgentConfig.python_venv</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.env"><code class="docutils literal notranslate"><span class="pre">AgentConfig.env</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.env_files"><code class="docutils literal notranslate"><span class="pre">AgentConfig.env_files</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.screen_name"><code class="docutils literal notranslate"><span class="pre">AgentConfig.screen_name</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.labels"><code class="docutils literal notranslate"><span class="pre">AgentConfig.labels</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.container"><code class="docutils literal notranslate"><span class="pre">AgentConfig.container</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.claude"><code class="docutils literal notranslate"><span class="pre">AgentConfig.claude</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.health"><code class="docutils literal notranslate"><span class="pre">AgentConfig.health</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.watchdog"><code class="docutils literal notranslate"><span class="pre">AgentConfig.watchdog</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.restart"><code class="docutils literal notranslate"><span class="pre">AgentConfig.restart</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.hooks"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hooks</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.listen"><code class="docutils literal notranslate"><span class="pre">AgentConfig.listen</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.extensions"><code class="docutils literal notranslate"><span class="pre">AgentConfig.extensions</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.telegram"><code class="docutils literal notranslate"><span class="pre">AgentConfig.telegram</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.remote"><code class="docutils literal notranslate"><span class="pre">AgentConfig.remote</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.skills</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.context_management"><code class="docutils literal notranslate"><span class="pre">AgentConfig.context_management</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.startup_commands"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_commands</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.startup"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.mcp_servers"><code class="docutils literal notranslate"><span class="pre">AgentConfig.mcp_servers</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.multiplexer"><code class="docutils literal notranslate"><span class="pre">AgentConfig.multiplexer</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.hosts_spec"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hosts_spec</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.slurm"><code class="docutils literal notranslate"><span class="pre">AgentConfig.slurm</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.scheduling"><code class="docutils literal notranslate"><span class="pre">AgentConfig.scheduling</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.orochi"><code class="docutils literal notranslate"><span class="pre">AgentConfig.orochi</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.config_path"><code class="docutils literal notranslate"><span class="pre">AgentConfig.config_path</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.expanded_workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.expanded_workdir</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.load_config"><code class="docutils literal notranslate"><span class="pre">load_config()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.validate_config"><code class="docutils literal notranslate"><span class="pre">validate_config()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.agent_start"><code class="docutils literal notranslate"><span class="pre">agent_start()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.agent_stop"><code class="docutils literal notranslate"><span class="pre">agent_stop()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.agent_restart"><code class="docutils literal notranslate"><span class="pre">agent_restart()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.agent_status"><code class="docutils literal notranslate"><span class="pre">agent_status()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.agent_logs"><code class="docutils literal notranslate"><span class="pre">agent_logs()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.Registry"><code class="docutils literal notranslate"><span class="pre">Registry</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.Registry.__init__"><code class="docutils literal notranslate"><span class="pre">Registry.__init__()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.Registry.add"><code class="docutils literal notranslate"><span class="pre">Registry.add()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.Registry.remove"><code class="docutils literal notranslate"><span class="pre">Registry.remove()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.Registry.get"><code class="docutils literal notranslate"><span class="pre">Registry.get()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.Registry.list_all"><code class="docutils literal notranslate"><span class="pre">Registry.list_all()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.Registry.exists"><code class="docutils literal notranslate"><span class="pre">Registry.exists()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.Registry.cleanup_stale"><code class="docutils literal notranslate"><span class="pre">Registry.cleanup_stale()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/scitex_agent_container.html#module-scitex_agent_container.config">Config</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig"><code class="docutils literal notranslate"><span class="pre">AgentConfig</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.name"><code class="docutils literal notranslate"><span class="pre">AgentConfig.name</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.runtime"><code class="docutils literal notranslate"><span class="pre">AgentConfig.runtime</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.model"><code class="docutils literal notranslate"><span class="pre">AgentConfig.model</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.workdir</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.python_venv"><code class="docutils literal notranslate"><span class="pre">AgentConfig.python_venv</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.env"><code class="docutils literal notranslate"><span class="pre">AgentConfig.env</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.env_files"><code class="docutils literal notranslate"><span class="pre">AgentConfig.env_files</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.screen_name"><code class="docutils literal notranslate"><span class="pre">AgentConfig.screen_name</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.labels"><code class="docutils literal notranslate"><span class="pre">AgentConfig.labels</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.container"><code class="docutils literal notranslate"><span class="pre">AgentConfig.container</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.claude"><code class="docutils literal notranslate"><span class="pre">AgentConfig.claude</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.health"><code class="docutils literal notranslate"><span class="pre">AgentConfig.health</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.watchdog"><code class="docutils literal notranslate"><span class="pre">AgentConfig.watchdog</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.restart"><code class="docutils literal notranslate"><span class="pre">AgentConfig.restart</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hooks"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hooks</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.listen"><code class="docutils literal notranslate"><span class="pre">AgentConfig.listen</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.extensions"><code class="docutils literal notranslate"><span class="pre">AgentConfig.extensions</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.telegram"><code class="docutils literal notranslate"><span class="pre">AgentConfig.telegram</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.remote"><code class="docutils literal notranslate"><span class="pre">AgentConfig.remote</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.skills</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.context_management"><code class="docutils literal notranslate"><span class="pre">AgentConfig.context_management</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_commands"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_commands</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.mcp_servers"><code class="docutils literal notranslate"><span class="pre">AgentConfig.mcp_servers</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.multiplexer"><code class="docutils literal notranslate"><span class="pre">AgentConfig.multiplexer</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hosts_spec"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hosts_spec</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.slurm"><code class="docutils literal notranslate"><span class="pre">AgentConfig.slurm</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.scheduling"><code class="docutils literal notranslate"><span class="pre">AgentConfig.scheduling</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.orochi"><code class="docutils literal notranslate"><span class="pre">AgentConfig.orochi</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.config_path"><code class="docutils literal notranslate"><span class="pre">AgentConfig.config_path</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.expanded_workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.expanded_workdir</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.channels"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.channels</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.flags"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.flags</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.session"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.session</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.continue_max_age_minutes"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.continue_max_age_minutes</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.resume_id"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.resume_id</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.auto_accept"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.auto_accept</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.__init__"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec"><code class="docutils literal notranslate"><span class="pre">ContainerSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.runtime"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.runtime</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.image"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.image</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.volumes"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.volumes</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.network"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.network</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.mount_host_claude"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.mount_host_claude</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.__init__"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.trigger_at_percent"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.trigger_at_percent</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.strategy"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.strategy</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.warn_before_n_checks"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.warn_before_n_checks</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.check_interval_seconds"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.check_interval_seconds</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.state_file"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.state_file</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.enabled"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.enabled</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.__init__"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.HealthSpec"><code class="docutils literal notranslate"><span class="pre">HealthSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.HealthSpec.enabled"><code class="docutils literal notranslate"><span class="pre">HealthSpec.enabled</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.HealthSpec.interval"><code class="docutils literal notranslate"><span class="pre">HealthSpec.interval</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.HealthSpec.timeout"><code class="docutils literal notranslate"><span class="pre">HealthSpec.timeout</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.HealthSpec.method"><code class="docutils literal notranslate"><span class="pre">HealthSpec.method</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.HealthSpec.__init__"><code class="docutils literal notranslate"><span class="pre">HealthSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec"><code class="docutils literal notranslate"><span class="pre">HookSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.pre_start"><code class="docutils literal notranslate"><span class="pre">HookSpec.pre_start</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.post_start"><code class="docutils literal notranslate"><span class="pre">HookSpec.post_start</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.pre_stop"><code class="docutils literal notranslate"><span class="pre">HookSpec.pre_stop</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.post_stop"><code class="docutils literal notranslate"><span class="pre">HookSpec.post_stop</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.on_compact"><code class="docutils literal notranslate"><span class="pre">HookSpec.on_compact</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.on_restart"><code class="docutils literal notranslate"><span class="pre">HookSpec.on_restart</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.on_diff"><code class="docutils literal notranslate"><span class="pre">HookSpec.on_diff</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.counts"><code class="docutils literal notranslate"><span class="pre">HookSpec.counts()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.__init__"><code class="docutils literal notranslate"><span class="pre">HookSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.HostsSpec"><code class="docutils literal notranslate"><span class="pre">HostsSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.HostsSpec.host"><code class="docutils literal notranslate"><span class="pre">HostsSpec.host</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.HostsSpec.hosts"><code class="docutils literal notranslate"><span class="pre">HostsSpec.hosts</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.HostsSpec.__init__"><code class="docutils literal notranslate"><span class="pre">HostsSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ListenPort"><code class="docutils literal notranslate"><span class="pre">ListenPort</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ListenPort.port"><code class="docutils literal notranslate"><span class="pre">ListenPort.port</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ListenPort.proto"><code class="docutils literal notranslate"><span class="pre">ListenPort.proto</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ListenPort.path"><code class="docutils literal notranslate"><span class="pre">ListenPort.path</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ListenPort.name"><code class="docutils literal notranslate"><span class="pre">ListenPort.name</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ListenPort.owner"><code class="docutils literal notranslate"><span class="pre">ListenPort.owner</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ListenPort.__init__"><code class="docutils literal notranslate"><span class="pre">ListenPort.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.OrochiSpec"><code class="docutils literal notranslate"><span class="pre">OrochiSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.OrochiSpec.enabled"><code class="docutils literal notranslate"><span class="pre">OrochiSpec.enabled</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.OrochiSpec.hosts"><code class="docutils literal notranslate"><span class="pre">OrochiSpec.hosts</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.OrochiSpec.port"><code class="docutils literal notranslate"><span class="pre">OrochiSpec.port</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.OrochiSpec.token_env"><code class="docutils literal notranslate"><span class="pre">OrochiSpec.token_env</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.OrochiSpec.channels"><code class="docutils literal notranslate"><span class="pre">OrochiSpec.channels</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.OrochiSpec.heartbeat_interval"><code class="docutils literal notranslate"><span class="pre">OrochiSpec.heartbeat_interval</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.OrochiSpec.__init__"><code class="docutils literal notranslate"><span class="pre">OrochiSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ReadyPattern"><code class="docutils literal notranslate"><span class="pre">ReadyPattern</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ReadyPattern.regex"><code class="docutils literal notranslate"><span class="pre">ReadyPattern.regex</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ReadyPattern.__init__"><code class="docutils literal notranslate"><span class="pre">ReadyPattern.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec"><code class="docutils literal notranslate"><span class="pre">RemoteSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.hops"><code class="docutils literal notranslate"><span class="pre">RemoteSpec.hops</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.host"><code class="docutils literal notranslate"><span class="pre">RemoteSpec.host</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.user"><code class="docutils literal notranslate"><span class="pre">RemoteSpec.user</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.key"><code class="docutils literal notranslate"><span class="pre">RemoteSpec.key</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.port"><code class="docutils literal notranslate"><span class="pre">RemoteSpec.port</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.timeout"><code class="docutils literal notranslate"><span class="pre">RemoteSpec.timeout</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.login_shell"><code class="docutils literal notranslate"><span class="pre">RemoteSpec.login_shell</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.no_preflight"><code class="docutils literal notranslate"><span class="pre">RemoteSpec.no_preflight</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.is_remote"><code class="docutils literal notranslate"><span class="pre">RemoteSpec.is_remote</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.__init__"><code class="docutils literal notranslate"><span class="pre">RemoteSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec"><code class="docutils literal notranslate"><span class="pre">RestartSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.policy"><code class="docutils literal notranslate"><span class="pre">RestartSpec.policy</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.max_retries"><code class="docutils literal notranslate"><span class="pre">RestartSpec.max_retries</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.backoff_initial"><code class="docutils literal notranslate"><span class="pre">RestartSpec.backoff_initial</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.backoff_max"><code class="docutils literal notranslate"><span class="pre">RestartSpec.backoff_max</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.backoff_multiplier"><code class="docutils literal notranslate"><span class="pre">RestartSpec.backoff_multiplier</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.__init__"><code class="docutils literal notranslate"><span class="pre">RestartSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SchedulingSpec"><code class="docutils literal notranslate"><span class="pre">SchedulingSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SchedulingSpec.mode"><code class="docutils literal notranslate"><span class="pre">SchedulingSpec.mode</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SchedulingSpec.preferred_host"><code class="docutils literal notranslate"><span class="pre">SchedulingSpec.preferred_host</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SchedulingSpec.fallback_hosts"><code class="docutils literal notranslate"><span class="pre">SchedulingSpec.fallback_hosts</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SchedulingSpec.__init__"><code class="docutils literal notranslate"><span class="pre">SchedulingSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SkillsSpec"><code class="docutils literal notranslate"><span class="pre">SkillsSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SkillsSpec.required"><code class="docutils literal notranslate"><span class="pre">SkillsSpec.required</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SkillsSpec.available"><code class="docutils literal notranslate"><span class="pre">SkillsSpec.available</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SkillsSpec.injection_mode"><code class="docutils literal notranslate"><span class="pre">SkillsSpec.injection_mode</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SkillsSpec.match_by"><code class="docutils literal notranslate"><span class="pre">SkillsSpec.match_by</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SkillsSpec.match_style"><code class="docutils literal notranslate"><span class="pre">SkillsSpec.match_style</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SkillsSpec.__init__"><code class="docutils literal notranslate"><span class="pre">SkillsSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SlurmHeartbeatSpec"><code class="docutils literal notranslate"><span class="pre">SlurmHeartbeatSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SlurmHeartbeatSpec.command"><code class="docutils literal notranslate"><span class="pre">SlurmHeartbeatSpec.command</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SlurmHeartbeatSpec.interval_s"><code class="docutils literal notranslate"><span class="pre">SlurmHeartbeatSpec.interval_s</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SlurmHeartbeatSpec.log_file"><code class="docutils literal notranslate"><span class="pre">SlurmHeartbeatSpec.log_file</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SlurmHeartbeatSpec.__init__"><code class="docutils literal notranslate"><span class="pre">SlurmHeartbeatSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SlurmHooks"><code class="docutils literal notranslate"><span class="pre">SlurmHooks</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SlurmHooks.pre_submit"><code class="docutils literal notranslate"><span class="pre">SlurmHooks.pre_submit</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SlurmHooks.pre_agent"><code class="docutils literal notranslate"><span class="pre">SlurmHooks.pre_agent</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SlurmHooks.walltime_signal"><code class="docutils literal notranslate"><span class="pre">SlurmHooks.walltime_signal</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SlurmHooks.post_agent"><code class="docutils literal notranslate"><span class="pre">SlurmHooks.post_agent</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SlurmHooks.attach"><code class="docutils literal notranslate"><span class="pre">SlurmHooks.attach</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SlurmHooks.__init__"><code class="docutils literal notranslate"><span class="pre">SlurmHooks.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SlurmSpec"><code class="docutils literal notranslate"><span class="pre">SlurmSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SlurmSpec.partition"><code class="docutils literal notranslate"><span class="pre">SlurmSpec.partition</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SlurmSpec.time_limit"><code class="docutils literal notranslate"><span class="pre">SlurmSpec.time_limit</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SlurmSpec.cpus_per_task"><code class="docutils literal notranslate"><span class="pre">SlurmSpec.cpus_per_task</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SlurmSpec.mem"><code class="docutils literal notranslate"><span class="pre">SlurmSpec.mem</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SlurmSpec.nodes"><code class="docutils literal notranslate"><span class="pre">SlurmSpec.nodes</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SlurmSpec.ntasks"><code class="docutils literal notranslate"><span class="pre">SlurmSpec.ntasks</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SlurmSpec.gres"><code class="docutils literal notranslate"><span class="pre">SlurmSpec.gres</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SlurmSpec.job_name"><code class="docutils literal notranslate"><span class="pre">SlurmSpec.job_name</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SlurmSpec.signal"><code class="docutils literal notranslate"><span class="pre">SlurmSpec.signal</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SlurmSpec.auto_resubmit"><code class="docutils literal notranslate"><span class="pre">SlurmSpec.auto_resubmit</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SlurmSpec.hold"><code class="docutils literal notranslate"><span class="pre">SlurmSpec.hold</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SlurmSpec.logs_dir"><code class="docutils literal notranslate"><span class="pre">SlurmSpec.logs_dir</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SlurmSpec.hooks"><code class="docutils literal notranslate"><span class="pre">SlurmSpec.hooks</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SlurmSpec.heartbeat"><code class="docutils literal notranslate"><span class="pre">SlurmSpec.heartbeat</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SlurmSpec.extra_directives"><code class="docutils literal notranslate"><span class="pre">SlurmSpec.extra_directives</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SlurmSpec.reservation"><code class="docutils literal notranslate"><span class="pre">SlurmSpec.reservation</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.SlurmSpec.__init__"><code class="docutils literal notranslate"><span class="pre">SlurmSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.StartupCommand"><code class="docutils literal notranslate"><span class="pre">StartupCommand</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.StartupCommand.delay"><code class="docutils literal notranslate"><span class="pre">StartupCommand.delay</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.StartupCommand.command"><code class="docutils literal notranslate"><span class="pre">StartupCommand.command</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.StartupCommand.__init__"><code class="docutils literal notranslate"><span class="pre">StartupCommand.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.StartupSpec"><code class="docutils literal notranslate"><span class="pre">StartupSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.StartupSpec.ready_patterns"><code class="docutils literal notranslate"><span class="pre">StartupSpec.ready_patterns</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.StartupSpec.ready_idle_ticks"><code class="docutils literal notranslate"><span class="pre">StartupSpec.ready_idle_ticks</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.StartupSpec.ready_poll_interval_seconds"><code class="docutils literal notranslate"><span class="pre">StartupSpec.ready_poll_interval_seconds</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.StartupSpec.ready_timeout_seconds"><code class="docutils literal notranslate"><span class="pre">StartupSpec.ready_timeout_seconds</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.StartupSpec.on_timeout"><code class="docutils literal notranslate"><span class="pre">StartupSpec.on_timeout</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.StartupSpec.commands"><code class="docutils literal notranslate"><span class="pre">StartupSpec.commands</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.StartupSpec.__init__"><code class="docutils literal notranslate"><span class="pre">StartupSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.TelegramSpec"><code class="docutils literal notranslate"><span class="pre">TelegramSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.TelegramSpec.bot_token_env"><code class="docutils literal notranslate"><span class="pre">TelegramSpec.bot_token_env</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.TelegramSpec.allowed_users"><code class="docutils literal notranslate"><span class="pre">TelegramSpec.allowed_users</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.TelegramSpec.auto_connect"><code class="docutils literal notranslate"><span class="pre">TelegramSpec.auto_connect</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.TelegramSpec.greeting"><code class="docutils literal notranslate"><span class="pre">TelegramSpec.greeting</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.TelegramSpec.__init__"><code class="docutils literal notranslate"><span class="pre">TelegramSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec.enabled"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec.enabled</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec.interval"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec.interval</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec.resp_y_n"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec.resp_y_n</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec.resp_y_y_n"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec.resp_y_y_n</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec.resp_waiting"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec.resp_waiting</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec.__init__"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.compose_effective_name"><code class="docutils literal notranslate"><span class="pre">compose_effective_name()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.load_config"><code class="docutils literal notranslate"><span class="pre">load_config()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.resolve_config"><code class="docutils literal notranslate"><span class="pre">resolve_config()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.resolve_hostname"><code class="docutils literal notranslate"><span class="pre">resolve_hostname()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.substitute_hostnames"><code class="docutils literal notranslate"><span class="pre">substitute_hostnames()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.validate_config"><code class="docutils literal notranslate"><span class="pre">validate_config()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.validate_contributor_spec"><code class="docutils literal notranslate"><span class="pre">validate_contributor_spec()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.validate_contributor_spec_raw"><code class="docutils literal notranslate"><span class="pre">validate_contributor_spec_raw()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/scitex_agent_container.html#module-scitex_agent_container.lifecycle">Lifecycle</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.lifecycle._get_runtime"><code class="docutils literal notranslate"><span class="pre">_get_runtime()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.lifecycle._fallback_workdir"><code class="docutils literal notranslate"><span class="pre">_fallback_workdir()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.lifecycle._fire_forget_hook"><code class="docutils literal notranslate"><span class="pre">_fire_forget_hook()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.lifecycle._run_hooks"><code class="docutils literal notranslate"><span class="pre">_run_hooks()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.lifecycle.agent_start"><code class="docutils literal notranslate"><span class="pre">agent_start()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.lifecycle.agent_stop"><code class="docutils literal notranslate"><span class="pre">agent_stop()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.lifecycle.agent_stop_all"><code class="docutils literal notranslate"><span class="pre">agent_stop_all()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.lifecycle.agent_restart"><code class="docutils literal notranslate"><span class="pre">agent_restart()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.lifecycle.agent_status"><code class="docutils literal notranslate"><span class="pre">agent_status()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.lifecycle.agent_logs"><code class="docutils literal notranslate"><span class="pre">agent_logs()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/scitex_agent_container.html#module-scitex_agent_container.registry">Registry</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.registry.Registry"><code class="docutils literal notranslate"><span class="pre">Registry</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.registry.Registry.__init__"><code class="docutils literal notranslate"><span class="pre">Registry.__init__()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.registry.Registry.add"><code class="docutils literal notranslate"><span class="pre">Registry.add()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.registry.Registry.remove"><code class="docutils literal notranslate"><span class="pre">Registry.remove()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.registry.Registry.get"><code class="docutils literal notranslate"><span class="pre">Registry.get()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.registry.Registry.list_all"><code class="docutils literal notranslate"><span class="pre">Registry.list_all()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.registry.Registry.exists"><code class="docutils literal notranslate"><span class="pre">Registry.exists()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.registry.Registry.cleanup_stale"><code class="docutils literal notranslate"><span class="pre">Registry.cleanup_stale()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/scitex_agent_container.html#module-scitex_agent_container.agent_meta">Observability</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.agent_meta.detect_multiplexer"><code class="docutils literal notranslate"><span class="pre">detect_multiplexer()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.agent_meta._encode_claude_project"><code class="docutils literal notranslate"><span class="pre">_encode_claude_project()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.agent_meta._parse_skills"><code class="docutils literal notranslate"><span class="pre">_parse_skills()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.agent_meta.parse_subagent_count_from_pane_text"><code class="docutils literal notranslate"><span class="pre">parse_subagent_count_from_pane_text()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.agent_meta._capture_pane"><code class="docutils literal notranslate"><span class="pre">_capture_pane()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.agent_meta._classify_pane_state"><code class="docutils literal notranslate"><span class="pre">_classify_pane_state()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.agent_meta._config_candidates"><code class="docutils literal notranslate"><span class="pre">_config_candidates()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.agent_meta._parse_mcp_servers"><code class="docutils literal notranslate"><span class="pre">_parse_mcp_servers()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.agent_meta.collect_rich"><code class="docutils literal notranslate"><span class="pre">collect_rich()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.agent_meta._collect_action_summary_fields"><code class="docutils literal notranslate"><span class="pre">_collect_action_summary_fields()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#design-rules">Design rules</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.event_log._preview_tool_input"><code class="docutils literal notranslate"><span class="pre">_preview_tool_input()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.event_log.append_event"><code class="docutils literal notranslate"><span class="pre">append_event()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.event_log.read_recent"><code class="docutils literal notranslate"><span class="pre">read_recent()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.event_log._compute_open_agent_calls"><code class="docutils literal notranslate"><span class="pre">_compute_open_agent_calls()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.event_log.summarize"><code class="docutils literal notranslate"><span class="pre">summarize()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.snapshot.register_sidecar"><code class="docutils literal notranslate"><span class="pre">register_sidecar()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.snapshot.cache_dir"><code class="docutils literal notranslate"><span class="pre">cache_dir()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.snapshot._snapshot_lock"><code class="docutils literal notranslate"><span class="pre">_snapshot_lock()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.snapshot._probe_screen_count"><code class="docutils literal notranslate"><span class="pre">_probe_screen_count()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.snapshot._probe_claude_pid"><code class="docutils literal notranslate"><span class="pre">_probe_claude_pid()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.snapshot._probe_nproc"><code class="docutils literal notranslate"><span class="pre">_probe_nproc()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.snapshot.gather_snapshot"><code class="docutils literal notranslate"><span class="pre">gather_snapshot()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.snapshot.compute_diff_fields"><code class="docutils literal notranslate"><span class="pre">compute_diff_fields()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.snapshot.take_snapshot"><code class="docutils literal notranslate"><span class="pre">take_snapshot()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.snapshot.read_latest"><code class="docutils literal notranslate"><span class="pre">read_latest()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.snapshot.snapshot_tick"><code class="docutils literal notranslate"><span class="pre">snapshot_tick()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/scitex_agent_container.html#module-scitex_agent_container.action_base">Pane Actions</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#why-a-base-class">Why a base class</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#subclass-contract">Subclass contract</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#outcomes">Outcomes</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_base.ActionOutcome"><code class="docutils literal notranslate"><span class="pre">ActionOutcome</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_base.ActionOutcome.SUCCESS"><code class="docutils literal notranslate"><span class="pre">ActionOutcome.SUCCESS</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_base.ActionOutcome.PRECONDITION_FAIL"><code class="docutils literal notranslate"><span class="pre">ActionOutcome.PRECONDITION_FAIL</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_base.ActionOutcome.SEND_ERROR"><code class="docutils literal notranslate"><span class="pre">ActionOutcome.SEND_ERROR</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_base.ActionOutcome.COMPLETION_TIMEOUT"><code class="docutils literal notranslate"><span class="pre">ActionOutcome.COMPLETION_TIMEOUT</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_base.ActionOutcome.SKIPPED_BY_POLICY"><code class="docutils literal notranslate"><span class="pre">ActionOutcome.SKIPPED_BY_POLICY</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_base.ActionContext"><code class="docutils literal notranslate"><span class="pre">ActionContext</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_base.ActionContext.agent"><code class="docutils literal notranslate"><span class="pre">ActionContext.agent</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_base.ActionContext.session"><code class="docutils literal notranslate"><span class="pre">ActionContext.session</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_base.ActionContext.mux"><code class="docutils literal notranslate"><span class="pre">ActionContext.mux</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_base.ActionContext.capture_fn"><code class="docutils literal notranslate"><span class="pre">ActionContext.capture_fn</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_base.ActionContext.context_pct_fn"><code class="docutils literal notranslate"><span class="pre">ActionContext.context_pct_fn</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_base.ActionContext.extras"><code class="docutils literal notranslate"><span class="pre">ActionContext.extras</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_base.ActionContext.__init__"><code class="docutils literal notranslate"><span class="pre">ActionContext.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_base.ActionAttempt"><code class="docutils literal notranslate"><span class="pre">ActionAttempt</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_base.ActionAttempt.agent"><code class="docutils literal notranslate"><span class="pre">ActionAttempt.agent</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_base.ActionAttempt.action"><code class="docutils literal notranslate"><span class="pre">ActionAttempt.action</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_base.ActionAttempt.outcome"><code class="docutils literal notranslate"><span class="pre">ActionAttempt.outcome</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_base.ActionAttempt.elapsed_s"><code class="docutils literal notranslate"><span class="pre">ActionAttempt.elapsed_s</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_base.ActionAttempt.started_at"><code class="docutils literal notranslate"><span class="pre">ActionAttempt.started_at</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_base.ActionAttempt.pane_before"><code class="docutils literal notranslate"><span class="pre">ActionAttempt.pane_before</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_base.ActionAttempt.pane_after"><code class="docutils literal notranslate"><span class="pre">ActionAttempt.pane_after</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_base.ActionAttempt.extras"><code class="docutils literal notranslate"><span class="pre">ActionAttempt.extras</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_base.ActionAttempt.as_store_record"><code class="docutils literal notranslate"><span class="pre">ActionAttempt.as_store_record()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_base.ActionAttempt.__init__"><code class="docutils literal notranslate"><span class="pre">ActionAttempt.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_base.PaneAction"><code class="docutils literal notranslate"><span class="pre">PaneAction</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_base.PaneAction.name"><code class="docutils literal notranslate"><span class="pre">PaneAction.name</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_base.PaneAction.snapshot"><code class="docutils literal notranslate"><span class="pre">PaneAction.snapshot()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_base.PaneAction.precheck"><code class="docutils literal notranslate"><span class="pre">PaneAction.precheck()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_base.PaneAction.send"><code class="docutils literal notranslate"><span class="pre">PaneAction.send()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_base.PaneAction.is_complete"><code class="docutils literal notranslate"><span class="pre">PaneAction.is_complete()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_base.PaneAction.before_send"><code class="docutils literal notranslate"><span class="pre">PaneAction.before_send()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_base.PaneAction.extras_at_end"><code class="docutils literal notranslate"><span class="pre">PaneAction.extras_at_end()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_base.run_action"><code class="docutils literal notranslate"><span class="pre">run_action()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scope">Scope</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#design-rules-follows-event-log-py-conventions">Design rules (follows <code class="docutils literal notranslate"><span class="pre">event_log.py</span></code> conventions)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_store._safe_float"><code class="docutils literal notranslate"><span class="pre">_safe_float()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_store._get_conn"><code class="docutils literal notranslate"><span class="pre">_get_conn()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_store._truncate_snapshot"><code class="docutils literal notranslate"><span class="pre">_truncate_snapshot()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_store.append_attempt"><code class="docutils literal notranslate"><span class="pre">append_attempt()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_store._parse_since"><code class="docutils literal notranslate"><span class="pre">_parse_since()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_store.query"><code class="docutils literal notranslate"><span class="pre">query()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_store.stats"><code class="docutils literal notranslate"><span class="pre">stats()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_store.summarize"><code class="docutils literal notranslate"><span class="pre">summarize()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_store.purge_old"><code class="docutils literal notranslate"><span class="pre">purge_old()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.action_store._all_rows"><code class="docutils literal notranslate"><span class="pre">_all_rows()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#composition">Composition</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#outcome-interpretation-via-actionoutcome">Outcome interpretation (via <code class="docutils literal notranslate"><span class="pre">ActionOutcome</span></code>)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.actions.nonce_probe.NonceProbeAction"><code class="docutils literal notranslate"><span class="pre">NonceProbeAction</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.actions.nonce_probe.NonceProbeAction.name"><code class="docutils literal notranslate"><span class="pre">NonceProbeAction.name</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.actions.nonce_probe.NonceProbeAction.__init__"><code class="docutils literal notranslate"><span class="pre">NonceProbeAction.__init__()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.actions.nonce_probe.NonceProbeAction.snapshot"><code class="docutils literal notranslate"><span class="pre">NonceProbeAction.snapshot()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.actions.nonce_probe.NonceProbeAction.precheck"><code class="docutils literal notranslate"><span class="pre">NonceProbeAction.precheck()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.actions.nonce_probe.NonceProbeAction.before_send"><code class="docutils literal notranslate"><span class="pre">NonceProbeAction.before_send()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.actions.nonce_probe.NonceProbeAction.send"><code class="docutils literal notranslate"><span class="pre">NonceProbeAction.send()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.actions.nonce_probe.NonceProbeAction.is_complete"><code class="docutils literal notranslate"><span class="pre">NonceProbeAction.is_complete()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#why-a-separate-completion-signal-matters">Why a separate completion signal matters</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#outcome-interpretation">Outcome interpretation</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.actions.compact.CompactAction"><code class="docutils literal notranslate"><span class="pre">CompactAction</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.actions.compact.CompactAction.name"><code class="docutils literal notranslate"><span class="pre">CompactAction.name</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.actions.compact.CompactAction.__init__"><code class="docutils literal notranslate"><span class="pre">CompactAction.__init__()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.actions.compact.CompactAction.snapshot"><code class="docutils literal notranslate"><span class="pre">CompactAction.snapshot()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.actions.compact.CompactAction.precheck"><code class="docutils literal notranslate"><span class="pre">CompactAction.precheck()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.actions.compact.CompactAction.send"><code class="docutils literal notranslate"><span class="pre">CompactAction.send()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.actions.compact.CompactAction.is_complete"><code class="docutils literal notranslate"><span class="pre">CompactAction.is_complete()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.actions.compact._coerce_float"><code class="docutils literal notranslate"><span class="pre">_coerce_float()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/scitex_agent_container.html#module-scitex_agent_container.runtimes.multiplexer">Runtimes / Multiplexer</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.runtimes.multiplexer.MultiplexerProtocol"><code class="docutils literal notranslate"><span class="pre">MultiplexerProtocol</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.runtimes.multiplexer.MultiplexerProtocol.exists"><code class="docutils literal notranslate"><span class="pre">MultiplexerProtocol.exists()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.runtimes.multiplexer.MultiplexerProtocol.start"><code class="docutils literal notranslate"><span class="pre">MultiplexerProtocol.start()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.runtimes.multiplexer.MultiplexerProtocol.stop"><code class="docutils literal notranslate"><span class="pre">MultiplexerProtocol.stop()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.runtimes.multiplexer.MultiplexerProtocol.capture_content"><code class="docutils literal notranslate"><span class="pre">MultiplexerProtocol.capture_content()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.runtimes.multiplexer.MultiplexerProtocol.capture_logs"><code class="docutils literal notranslate"><span class="pre">MultiplexerProtocol.capture_logs()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.runtimes.multiplexer.MultiplexerProtocol.send_keys"><code class="docutils literal notranslate"><span class="pre">MultiplexerProtocol.send_keys()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.runtimes.multiplexer.MultiplexerProtocol.send_text_and_submit"><code class="docutils literal notranslate"><span class="pre">MultiplexerProtocol.send_text_and_submit()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.runtimes.multiplexer.MultiplexerProtocol.attach"><code class="docutils literal notranslate"><span class="pre">MultiplexerProtocol.attach()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.runtimes.multiplexer.MultiplexerProtocol.__init__"><code class="docutils literal notranslate"><span class="pre">MultiplexerProtocol.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.runtimes.multiplexer.get_multiplexer"><code class="docutils literal notranslate"><span class="pre">get_multiplexer()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.PromptHandler"><code class="docutils literal notranslate"><span class="pre">PromptHandler</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.PromptHandler.name"><code class="docutils literal notranslate"><span class="pre">PromptHandler.name</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.PromptHandler.detect"><code class="docutils literal notranslate"><span class="pre">PromptHandler.detect</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.PromptHandler.keys"><code class="docutils literal notranslate"><span class="pre">PromptHandler.keys</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.PromptHandler.priority"><code class="docutils literal notranslate"><span class="pre">PromptHandler.priority</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.PromptHandler.__init__"><code class="docutils literal notranslate"><span class="pre">PromptHandler.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_bypass_permissions"><code class="docutils literal notranslate"><span class="pre">_detect_bypass_permissions()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_dev_channels"><code class="docutils literal notranslate"><span class="pre">_detect_dev_channels()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_thinking_effort"><code class="docutils literal notranslate"><span class="pre">_detect_thinking_effort()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_skip_permissions_yn"><code class="docutils literal notranslate"><span class="pre">_detect_skip_permissions_yn()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_mcp_json_edit"><code class="docutils literal notranslate"><span class="pre">_detect_mcp_json_edit()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_press_enter_continue"><code class="docutils literal notranslate"><span class="pre">_detect_press_enter_continue()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_file_trust"><code class="docutils literal notranslate"><span class="pre">_detect_file_trust()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_file_trust_radio"><code class="docutils literal notranslate"><span class="pre">_detect_file_trust_radio()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_external_imports"><code class="docutils literal notranslate"><span class="pre">_detect_external_imports()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_login_method"><code class="docutils literal notranslate"><span class="pre">_detect_login_method()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_theme_selection"><code class="docutils literal notranslate"><span class="pre">_detect_theme_selection()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_compose_pending_unsent"><code class="docutils literal notranslate"><span class="pre">_detect_compose_pending_unsent()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_done"><code class="docutils literal notranslate"><span class="pre">_detect_done()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.register_prompt"><code class="docutils literal notranslate"><span class="pre">register_prompt()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.detect_and_respond"><code class="docutils literal notranslate"><span class="pre">detect_and_respond()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.is_ready"><code class="docutils literal notranslate"><span class="pre">is_ready()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">scitex-agent-container</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">scitex_agent_container.action_store</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for scitex_agent_container.action_store</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;SQLite-backed attempt log for ``PaneAction`` executions.</span>
+
+<span class="sd">Every run of a :class:`PaneAction` (see ``action_base.py``) writes</span>
+<span class="sd">one ``attempts`` row so the fleet accumulates structured evidence</span>
+<span class="sd">of what was tried and how it ended. The log is **ad-hoc** — humans</span>
+<span class="sd">and future tooling read it to debug / revise the package; there is</span>
+<span class="sd">no runtime post-hook that mutates behavior based on the log.</span>
+
+<span class="sd">Scope</span>
+<span class="sd">-----</span>
+<span class="sd">- One host-level DB: ``~/.scitex/agent-container/actions.db``.</span>
+<span class="sd">- One row per attempt; ``agent`` is a column so cross-agent</span>
+<span class="sd">  queries (e.g. &quot;which hosts see the most ``silent`` probes?&quot;) are</span>
+<span class="sd">  trivial.</span>
+<span class="sd">- Snapshots (``pane_before`` / ``pane_after``) are stored as JSON</span>
+<span class="sd">  blobs with a ``format`` discriminator so the on-disk schema can</span>
+<span class="sd">  later accept diff-encoded variants without breaking readers.</span>
+
+<span class="sd">Design rules (follows ``event_log.py`` conventions)</span>
+<span class="sd">--------------------------------------------------</span>
+<span class="sd">- **Non-agentic.** Pure SQL + ``json``.</span>
+<span class="sd">- **Fail-closed.** Any write-path exception is swallowed so a</span>
+<span class="sd">  logging hiccup never takes an agent down.</span>
+<span class="sd">- **Stdlib only.** ``sqlite3`` + ``json`` + ``pathlib``.</span>
+<span class="sd">- **Injectable.** ``root`` override everywhere so tests use a</span>
+<span class="sd">  temp directory.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">sqlite3</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">datetime</span><span class="p">,</span> <span class="n">timedelta</span><span class="p">,</span> <span class="n">timezone</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Iterable</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+<span class="n">DEFAULT_ROOT</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="n">Path</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;XDG_DATA_HOME&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="n">Path</span><span class="o">.</span><span class="n">home</span><span class="p">()</span> <span class="o">/</span> <span class="s2">&quot;.scitex&quot;</span><span class="p">)</span> <span class="o">/</span> <span class="s2">&quot;agent-container&quot;</span>
+<span class="p">)</span>
+<span class="n">DEFAULT_DB_FILENAME</span> <span class="o">=</span> <span class="s2">&quot;actions.db&quot;</span>
+<span class="n">DEFAULT_RETENTION_DAYS</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;SCITEX_AGENT_ACTION_RETENTION_DAYS&quot;</span><span class="p">,</span> <span class="s2">&quot;30&quot;</span><span class="p">))</span>
+<span class="c1"># Cap snapshot text at 4 KB per side. Bigger captures rarely carry</span>
+<span class="c1"># more signal and the DB grows fast otherwise.</span>
+<span class="n">DEFAULT_SNAPSHOT_MAX_CHARS</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span>
+    <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;SCITEX_AGENT_ACTION_SNAPSHOT_MAX_CHARS&quot;</span><span class="p">,</span> <span class="s2">&quot;4096&quot;</span><span class="p">)</span>
+<span class="p">)</span>
+
+<span class="c1"># Canonical outcome strings. Declared here so tests and callers can</span>
+<span class="c1"># import them without dragging in the base-class module.</span>
+<span class="n">OUTCOMES</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="s2">&quot;success&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;precondition_fail&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;send_error&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;completion_timeout&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;skipped_by_policy&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">_SCHEMA_SQL</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
+<span class="s2">CREATE TABLE IF NOT EXISTS attempts (</span>
+<span class="s2">    id           INTEGER PRIMARY KEY AUTOINCREMENT,</span>
+<span class="s2">    ts           TEXT    NOT NULL,</span>
+<span class="s2">    agent        TEXT    NOT NULL,</span>
+<span class="s2">    action       TEXT    NOT NULL,</span>
+<span class="s2">    outcome      TEXT    NOT NULL,</span>
+<span class="s2">    elapsed_s    REAL    NOT NULL,</span>
+<span class="s2">    pane_before  TEXT,</span>
+<span class="s2">    pane_after   TEXT,</span>
+<span class="s2">    extras       TEXT</span>
+<span class="s2">);</span>
+<span class="s2">CREATE INDEX IF NOT EXISTS idx_attempts_ts ON attempts(ts);</span>
+<span class="s2">CREATE INDEX IF NOT EXISTS idx_attempts_agent_action ON attempts(agent, action);</span>
+<span class="s2">&quot;&quot;&quot;</span>
+
+
+<div class="viewcode-block" id="_safe_float">
+<a class="viewcode-back" href="../../api/scitex_agent_container.html#scitex_agent_container.action_store._safe_float">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">_safe_float</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Coerce to float, returning None for None / unparseable.&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">value</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
+    <span class="k">except</span> <span class="p">(</span><span class="ne">TypeError</span><span class="p">,</span> <span class="ne">ValueError</span><span class="p">):</span>  <span class="c1"># stx-allow: fallback (reason: type coercion or format mismatch)</span>
+        <span class="k">return</span> <span class="kc">None</span></div>
+
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_db_path</span><span class="p">(</span><span class="n">root</span><span class="p">:</span> <span class="n">Path</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Path</span><span class="p">:</span>
+    <span class="n">base</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">root</span><span class="p">)</span> <span class="k">if</span> <span class="n">root</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">DEFAULT_ROOT</span>
+    <span class="n">base</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">base</span> <span class="o">/</span> <span class="n">DEFAULT_DB_FILENAME</span>
+
+
+<div class="viewcode-block" id="_get_conn">
+<a class="viewcode-back" href="../../api/scitex_agent_container.html#scitex_agent_container.action_store._get_conn">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">_get_conn</span><span class="p">(</span><span class="n">db_path</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">Connection</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Open a connection with WAL mode and the schema ensured.</span>
+
+<span class="sd">    WAL keeps concurrent reads safe while a single writer inserts.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">conn</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">db_path</span><span class="p">),</span> <span class="n">isolation_level</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+    <span class="n">conn</span><span class="o">.</span><span class="n">row_factory</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">Row</span>
+    <span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">&quot;PRAGMA journal_mode=WAL&quot;</span><span class="p">)</span>
+    <span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">&quot;PRAGMA synchronous=NORMAL&quot;</span><span class="p">)</span>
+    <span class="n">conn</span><span class="o">.</span><span class="n">executescript</span><span class="p">(</span><span class="n">_SCHEMA_SQL</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">conn</span></div>
+
+
+
+<div class="viewcode-block" id="_truncate_snapshot">
+<a class="viewcode-back" href="../../api/scitex_agent_container.html#scitex_agent_container.action_store._truncate_snapshot">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">_truncate_snapshot</span><span class="p">(</span>
+    <span class="n">snap</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">max_chars</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">DEFAULT_SNAPSHOT_MAX_CHARS</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Coerce a snapshot into the ``{format, text}`` wrapper.</span>
+
+<span class="sd">    Accepts:</span>
+<span class="sd">    - None                       -&gt; returns None</span>
+<span class="sd">    - dict with &#39;format&#39; key     -&gt; passes through after text truncation</span>
+<span class="sd">    - plain str                  -&gt; wraps as {&quot;format&quot;: &quot;full&quot;, &quot;text&quot;: s}</span>
+<span class="sd">    - other dict                 -&gt; returns {&quot;format&quot;: &quot;full&quot;, &quot;text&quot;: json-dump}</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">snap</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">snap</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span> <span class="ow">and</span> <span class="s2">&quot;format&quot;</span> <span class="ow">in</span> <span class="n">snap</span><span class="p">:</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">snap</span><span class="p">)</span>
+        <span class="n">text</span> <span class="o">=</span> <span class="n">out</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;text&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">text</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">max_chars</span><span class="p">:</span>
+            <span class="n">out</span><span class="p">[</span><span class="s2">&quot;text&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">text</span><span class="p">[</span><span class="o">-</span><span class="n">max_chars</span><span class="p">:]</span>
+            <span class="n">out</span><span class="p">[</span><span class="s2">&quot;truncated&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">True</span>
+        <span class="k">return</span> <span class="n">out</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">snap</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
+        <span class="n">s</span> <span class="o">=</span> <span class="n">snap</span><span class="p">[</span><span class="o">-</span><span class="n">max_chars</span><span class="p">:]</span> <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">snap</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">max_chars</span> <span class="k">else</span> <span class="n">snap</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s2">&quot;format&quot;</span><span class="p">:</span> <span class="s2">&quot;full&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;text&quot;</span><span class="p">:</span> <span class="n">s</span><span class="p">,</span>
+            <span class="o">**</span><span class="p">({</span><span class="s2">&quot;truncated&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span> <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">snap</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">max_chars</span> <span class="k">else</span> <span class="p">{}),</span>
+        <span class="p">}</span>
+    <span class="c1"># Arbitrary serializable object — dump once then truncate.</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">dumped</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">snap</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="nb">str</span><span class="p">)</span>
+    <span class="k">except</span> <span class="p">(</span><span class="ne">TypeError</span><span class="p">,</span> <span class="ne">ValueError</span><span class="p">):</span>  <span class="c1"># stx-allow: fallback (reason: type coercion or format mismatch)</span>
+        <span class="n">dumped</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">snap</span><span class="p">)</span>
+    <span class="n">s</span> <span class="o">=</span> <span class="n">dumped</span><span class="p">[</span><span class="o">-</span><span class="n">max_chars</span><span class="p">:]</span> <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">dumped</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">max_chars</span> <span class="k">else</span> <span class="n">dumped</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;format&quot;</span><span class="p">:</span> <span class="s2">&quot;json-dump&quot;</span><span class="p">,</span> <span class="s2">&quot;text&quot;</span><span class="p">:</span> <span class="n">s</span><span class="p">}</span></div>
+
+
+
+<div class="viewcode-block" id="append_attempt">
+<a class="viewcode-back" href="../../api/scitex_agent_container.html#scitex_agent_container.action_store.append_attempt">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">append_attempt</span><span class="p">(</span>
+    <span class="n">record</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">root</span><span class="p">:</span> <span class="n">Path</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Insert one attempt row. Never raises.</span>
+
+<span class="sd">    Required record keys:</span>
+
+<span class="sd">    * ``agent`` (str)</span>
+<span class="sd">    * ``action`` (str) — the action name</span>
+<span class="sd">    * ``outcome`` (one of :data:`OUTCOMES`)</span>
+<span class="sd">    * ``elapsed_s`` (float)</span>
+
+<span class="sd">    Optional:</span>
+
+<span class="sd">    * ``ts`` — ISO-8601 UTC; auto-populated if missing.</span>
+<span class="sd">    * ``pane_before`` / ``pane_after`` — snapshot dicts / strings.</span>
+<span class="sd">    * ``extras`` — action-specific fields (dict).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">agent</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">record</span><span class="p">[</span><span class="s2">&quot;agent&quot;</span><span class="p">])</span>
+        <span class="n">action</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">record</span><span class="p">[</span><span class="s2">&quot;action&quot;</span><span class="p">])</span>
+        <span class="n">outcome</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">record</span><span class="p">[</span><span class="s2">&quot;outcome&quot;</span><span class="p">])</span>
+        <span class="n">elapsed_s</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">record</span><span class="p">[</span><span class="s2">&quot;elapsed_s&quot;</span><span class="p">])</span>
+    <span class="k">except</span> <span class="p">(</span><span class="ne">KeyError</span><span class="p">,</span> <span class="ne">TypeError</span><span class="p">,</span> <span class="ne">ValueError</span><span class="p">)</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: type coercion or format mismatch)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;action_store.append_attempt: invalid record: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">exc</span><span class="p">)</span>
+        <span class="k">return</span>
+    <span class="n">ts</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">record</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;ts&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">(</span><span class="n">timezone</span><span class="o">.</span><span class="n">utc</span><span class="p">)</span><span class="o">.</span><span class="n">isoformat</span><span class="p">())</span>
+    <span class="n">pane_before</span> <span class="o">=</span> <span class="n">_truncate_snapshot</span><span class="p">(</span><span class="n">record</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;pane_before&quot;</span><span class="p">))</span>
+    <span class="n">pane_after</span> <span class="o">=</span> <span class="n">_truncate_snapshot</span><span class="p">(</span><span class="n">record</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;pane_after&quot;</span><span class="p">))</span>
+    <span class="n">extras</span> <span class="o">=</span> <span class="n">record</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;extras&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="p">{}</span>
+    <span class="c1"># stx-allow: fallback (reason: DB insert can fail due to disk full, file lock, or corrupt schema; swallowing keeps agent alive per fail-closed design)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="n">_get_conn</span><span class="p">(</span><span class="n">_db_path</span><span class="p">(</span><span class="n">root</span><span class="p">))</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span>
+                <span class="s2">&quot;INSERT INTO attempts &quot;</span>
+                <span class="s2">&quot;(ts, agent, action, outcome, elapsed_s, pane_before, pane_after, extras) &quot;</span>
+                <span class="s2">&quot;VALUES (?, ?, ?, ?, ?, ?, ?, ?)&quot;</span><span class="p">,</span>
+                <span class="p">(</span>
+                    <span class="n">ts</span><span class="p">,</span>
+                    <span class="n">agent</span><span class="p">,</span>
+                    <span class="n">action</span><span class="p">,</span>
+                    <span class="n">outcome</span><span class="p">,</span>
+                    <span class="n">elapsed_s</span><span class="p">,</span>
+                    <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">pane_before</span><span class="p">)</span> <span class="k">if</span> <span class="n">pane_before</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+                    <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">pane_after</span><span class="p">)</span> <span class="k">if</span> <span class="n">pane_after</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+                    <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">extras</span><span class="p">),</span>
+                <span class="p">),</span>
+            <span class="p">)</span>
+        <span class="k">finally</span><span class="p">:</span>
+            <span class="n">conn</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: catch-all safety net — see inline comment for context)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;action_store.append_attempt: insert failed: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">exc</span><span class="p">)</span></div>
+
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_row_to_dict</span><span class="p">(</span><span class="n">row</span><span class="p">:</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">Row</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">row</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;pane_before&quot;</span><span class="p">,</span> <span class="s2">&quot;pane_after&quot;</span><span class="p">,</span> <span class="s2">&quot;extras&quot;</span><span class="p">):</span>
+        <span class="n">raw</span> <span class="o">=</span> <span class="n">out</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">raw</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">continue</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">out</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">raw</span><span class="p">)</span>
+        <span class="k">except</span> <span class="p">(</span><span class="ne">TypeError</span><span class="p">,</span> <span class="ne">ValueError</span><span class="p">):</span>  <span class="c1"># stx-allow: fallback (reason: type coercion or format mismatch)</span>
+            <span class="c1"># Leave the raw string in place; the JSON column is</span>
+            <span class="c1"># corrupt but the rest of the row is still useful.</span>
+            <span class="k">pass</span>
+    <span class="k">return</span> <span class="n">out</span>
+
+
+<div class="viewcode-block" id="_parse_since">
+<a class="viewcode-back" href="../../api/scitex_agent_container.html#scitex_agent_container.action_store._parse_since">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">_parse_since</span><span class="p">(</span><span class="n">since</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">datetime</span> <span class="o">|</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Accept either a datetime, an ISO string, or a human-readable</span>
+<span class="sd">    relative string like ``&#39;24h&#39;`` / ``&#39;7d&#39;`` / ``&#39;30m&#39;`` and return</span>
+<span class="sd">    an ISO UTC string suitable for a ``ts &gt;= ?`` comparison.&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">since</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">since</span><span class="p">,</span> <span class="n">datetime</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">since</span><span class="o">.</span><span class="n">astimezone</span><span class="p">(</span><span class="n">timezone</span><span class="o">.</span><span class="n">utc</span><span class="p">)</span><span class="o">.</span><span class="n">isoformat</span><span class="p">()</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">since</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
+        <span class="n">s</span> <span class="o">=</span> <span class="n">since</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">s</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">None</span>
+        <span class="c1"># Relative form: &lt;number&gt;&lt;unit&gt;.</span>
+        <span class="k">if</span> <span class="n">s</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;s&quot;</span><span class="p">,</span> <span class="s2">&quot;m&quot;</span><span class="p">,</span> <span class="s2">&quot;h&quot;</span><span class="p">,</span> <span class="s2">&quot;d&quot;</span><span class="p">)</span> <span class="ow">and</span> <span class="n">s</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;.&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">isdigit</span><span class="p">():</span>
+            <span class="n">n</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">s</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">])</span>
+            <span class="n">unit</span> <span class="o">=</span> <span class="n">s</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+            <span class="n">seconds</span> <span class="o">=</span> <span class="p">{</span>
+                <span class="s2">&quot;s&quot;</span><span class="p">:</span> <span class="n">n</span><span class="p">,</span>
+                <span class="s2">&quot;m&quot;</span><span class="p">:</span> <span class="n">n</span> <span class="o">*</span> <span class="mi">60</span><span class="p">,</span>
+                <span class="s2">&quot;h&quot;</span><span class="p">:</span> <span class="n">n</span> <span class="o">*</span> <span class="mi">3600</span><span class="p">,</span>
+                <span class="s2">&quot;d&quot;</span><span class="p">:</span> <span class="n">n</span> <span class="o">*</span> <span class="mi">86400</span><span class="p">,</span>
+            <span class="p">}[</span><span class="n">unit</span><span class="p">]</span>
+            <span class="n">t</span> <span class="o">=</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">(</span><span class="n">timezone</span><span class="o">.</span><span class="n">utc</span><span class="p">)</span> <span class="o">-</span> <span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="n">seconds</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">t</span><span class="o">.</span><span class="n">isoformat</span><span class="p">()</span>
+        <span class="c1"># Otherwise treat as ISO.</span>
+        <span class="k">return</span> <span class="n">since</span>
+    <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Unsupported &#39;since&#39; type: </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">since</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="query">
+<a class="viewcode-back" href="../../api/scitex_agent_container.html#scitex_agent_container.action_store.query">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">query</span><span class="p">(</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">agent</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">action</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">outcome</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">since</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">datetime</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">limit</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">50</span><span class="p">,</span>
+    <span class="n">offset</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+    <span class="n">root</span><span class="p">:</span> <span class="n">Path</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return matching attempts, newest first.&quot;&quot;&quot;</span>
+    <span class="n">conditions</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">params</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">if</span> <span class="n">agent</span><span class="p">:</span>
+        <span class="n">conditions</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;agent = ?&quot;</span><span class="p">)</span>
+        <span class="n">params</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">agent</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">action</span><span class="p">:</span>
+        <span class="n">conditions</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;action = ?&quot;</span><span class="p">)</span>
+        <span class="n">params</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">action</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">outcome</span><span class="p">:</span>
+        <span class="n">conditions</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;outcome = ?&quot;</span><span class="p">)</span>
+        <span class="n">params</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">outcome</span><span class="p">)</span>
+    <span class="n">since_iso</span> <span class="o">=</span> <span class="n">_parse_since</span><span class="p">(</span><span class="n">since</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">since_iso</span><span class="p">:</span>
+        <span class="n">conditions</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;ts &gt;= ?&quot;</span><span class="p">)</span>
+        <span class="n">params</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">since_iso</span><span class="p">)</span>
+    <span class="n">where</span> <span class="o">=</span> <span class="p">(</span><span class="s2">&quot; WHERE &quot;</span> <span class="o">+</span> <span class="s2">&quot; AND &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">conditions</span><span class="p">))</span> <span class="k">if</span> <span class="n">conditions</span> <span class="k">else</span> <span class="s2">&quot;&quot;</span>
+    <span class="n">sql</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;SELECT id, ts, agent, action, outcome, elapsed_s, &quot;</span>
+        <span class="s2">&quot;pane_before, pane_after, extras FROM attempts&quot;</span>
+        <span class="o">+</span> <span class="n">where</span>
+        <span class="o">+</span> <span class="s2">&quot; ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?&quot;</span>
+    <span class="p">)</span>
+    <span class="n">params</span><span class="o">.</span><span class="n">extend</span><span class="p">([</span><span class="nb">int</span><span class="p">(</span><span class="n">limit</span><span class="p">),</span> <span class="nb">int</span><span class="p">(</span><span class="n">offset</span><span class="p">)])</span>
+    <span class="c1"># stx-allow: fallback (reason: DB read can fail due to missing file, lock contention, or I/O error; empty list is a safe no-results response)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="n">_get_conn</span><span class="p">(</span><span class="n">_db_path</span><span class="p">(</span><span class="n">root</span><span class="p">))</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">rows</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="n">sql</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">params</span><span class="p">))</span><span class="o">.</span><span class="n">fetchall</span><span class="p">()</span>
+        <span class="k">finally</span><span class="p">:</span>
+            <span class="n">conn</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: catch-all safety net — see inline comment for context)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;action_store.query failed: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">exc</span><span class="p">)</span>
+        <span class="k">return</span> <span class="p">[]</span>
+    <span class="k">return</span> <span class="p">[</span><span class="n">_row_to_dict</span><span class="p">(</span><span class="n">r</span><span class="p">)</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">rows</span><span class="p">]</span></div>
+
+
+
+<div class="viewcode-block" id="stats">
+<a class="viewcode-back" href="../../api/scitex_agent_container.html#scitex_agent_container.action_store.stats">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">stats</span><span class="p">(</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">agent</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">since</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">datetime</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">root</span><span class="p">:</span> <span class="n">Path</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Per-(action, outcome) counts + mean/p95 elapsed.</span>
+
+<span class="sd">    Returns a list of rows::</span>
+
+<span class="sd">        [{&quot;action&quot;: &quot;nonce-probe&quot;, &quot;outcome&quot;: &quot;success&quot;, &quot;count&quot;: 42,</span>
+<span class="sd">          &quot;mean_elapsed_s&quot;: 3.1, &quot;p95_elapsed_s&quot;: 5.9}, ...]</span>
+
+<span class="sd">    p95 is computed in Python (sqlite has no native percentile);</span>
+<span class="sd">    sample sets are bounded by query limits so it stays cheap.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">conditions</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">params</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">if</span> <span class="n">agent</span><span class="p">:</span>
+        <span class="n">conditions</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;agent = ?&quot;</span><span class="p">)</span>
+        <span class="n">params</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">agent</span><span class="p">)</span>
+    <span class="n">since_iso</span> <span class="o">=</span> <span class="n">_parse_since</span><span class="p">(</span><span class="n">since</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">since_iso</span><span class="p">:</span>
+        <span class="n">conditions</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;ts &gt;= ?&quot;</span><span class="p">)</span>
+        <span class="n">params</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">since_iso</span><span class="p">)</span>
+    <span class="n">where</span> <span class="o">=</span> <span class="p">(</span><span class="s2">&quot; WHERE &quot;</span> <span class="o">+</span> <span class="s2">&quot; AND &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">conditions</span><span class="p">))</span> <span class="k">if</span> <span class="n">conditions</span> <span class="k">else</span> <span class="s2">&quot;&quot;</span>
+    <span class="n">sql_counts</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;SELECT action, outcome, COUNT(*) AS count, AVG(elapsed_s) AS mean &quot;</span>
+        <span class="s2">&quot;FROM attempts&quot;</span> <span class="o">+</span> <span class="n">where</span> <span class="o">+</span> <span class="s2">&quot; GROUP BY action, outcome &quot;</span>
+        <span class="s2">&quot;ORDER BY action ASC, count DESC&quot;</span>
+    <span class="p">)</span>
+    <span class="n">sql_samples</span> <span class="o">=</span> <span class="s2">&quot;SELECT action, outcome, elapsed_s FROM attempts&quot;</span> <span class="o">+</span> <span class="n">where</span>
+    <span class="c1"># stx-allow: fallback (reason: DB read can fail due to missing file, lock contention, or I/O error; empty list means no stats available, which is acceptable for a best-effort summary)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="n">_get_conn</span><span class="p">(</span><span class="n">_db_path</span><span class="p">(</span><span class="n">root</span><span class="p">))</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">groups</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="n">sql_counts</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">params</span><span class="p">))</span><span class="o">.</span><span class="n">fetchall</span><span class="p">()</span>
+            <span class="n">samples</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="n">sql_samples</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">params</span><span class="p">))</span><span class="o">.</span><span class="n">fetchall</span><span class="p">()</span>
+        <span class="k">finally</span><span class="p">:</span>
+            <span class="n">conn</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: catch-all safety net — see inline comment for context)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;action_store.stats failed: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">exc</span><span class="p">)</span>
+        <span class="k">return</span> <span class="p">[]</span>
+    <span class="c1"># Bucket samples by (action, outcome) for p95.</span>
+    <span class="n">buckets</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">],</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">samples</span><span class="p">:</span>
+        <span class="n">key</span> <span class="o">=</span> <span class="p">(</span><span class="n">s</span><span class="p">[</span><span class="s2">&quot;action&quot;</span><span class="p">],</span> <span class="n">s</span><span class="p">[</span><span class="s2">&quot;outcome&quot;</span><span class="p">])</span>
+        <span class="n">buckets</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="p">[])</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">s</span><span class="p">[</span><span class="s2">&quot;elapsed_s&quot;</span><span class="p">]))</span>
+    <span class="n">out</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">g</span> <span class="ow">in</span> <span class="n">groups</span><span class="p">:</span>
+        <span class="n">samples_sorted</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">buckets</span><span class="o">.</span><span class="n">get</span><span class="p">((</span><span class="n">g</span><span class="p">[</span><span class="s2">&quot;action&quot;</span><span class="p">],</span> <span class="n">g</span><span class="p">[</span><span class="s2">&quot;outcome&quot;</span><span class="p">]),</span> <span class="p">[]))</span>
+        <span class="n">p95</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="k">if</span> <span class="n">samples_sorted</span><span class="p">:</span>
+            <span class="n">idx</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">int</span><span class="p">(</span><span class="mf">0.95</span> <span class="o">*</span> <span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">samples_sorted</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)))</span>
+            <span class="n">p95</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">samples_sorted</span><span class="p">[</span><span class="n">idx</span><span class="p">])</span>
+        <span class="n">out</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+            <span class="p">{</span>
+                <span class="s2">&quot;action&quot;</span><span class="p">:</span> <span class="n">g</span><span class="p">[</span><span class="s2">&quot;action&quot;</span><span class="p">],</span>
+                <span class="s2">&quot;outcome&quot;</span><span class="p">:</span> <span class="n">g</span><span class="p">[</span><span class="s2">&quot;outcome&quot;</span><span class="p">],</span>
+                <span class="s2">&quot;count&quot;</span><span class="p">:</span> <span class="nb">int</span><span class="p">(</span><span class="n">g</span><span class="p">[</span><span class="s2">&quot;count&quot;</span><span class="p">]),</span>
+                <span class="s2">&quot;mean_elapsed_s&quot;</span><span class="p">:</span> <span class="nb">float</span><span class="p">(</span><span class="n">g</span><span class="p">[</span><span class="s2">&quot;mean&quot;</span><span class="p">])</span> <span class="k">if</span> <span class="n">g</span><span class="p">[</span><span class="s2">&quot;mean&quot;</span><span class="p">]</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+                <span class="s2">&quot;p95_elapsed_s&quot;</span><span class="p">:</span> <span class="n">p95</span><span class="p">,</span>
+            <span class="p">}</span>
+        <span class="p">)</span>
+    <span class="k">return</span> <span class="n">out</span></div>
+
+
+
+<div class="viewcode-block" id="summarize">
+<a class="viewcode-back" href="../../api/scitex_agent_container.html#scitex_agent_container.action_store.summarize">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">summarize</span><span class="p">(</span>
+    <span class="n">agent</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">limit</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">100</span><span class="p">,</span>
+    <span class="n">root</span><span class="p">:</span> <span class="n">Path</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Compact summary for the status payload / heartbeat.</span>
+
+<span class="sd">    Keys::</span>
+
+<span class="sd">        {</span>
+<span class="sd">          &quot;last_action_at&quot;:      ISO ts or &quot;&quot;</span>
+<span class="sd">          &quot;last_action_name&quot;:    action name or &quot;&quot;  (renamed from</span>
+<span class="sd">                                                     &quot;last_action&quot; to avoid</span>
+<span class="sd">                                                     collision with the</span>
+<span class="sd">                                                     pre-existing orochi</span>
+<span class="sd">                                                     liveness timestamp field)</span>
+<span class="sd">          &quot;last_action_outcome&quot;: outcome string or &quot;&quot;</span>
+<span class="sd">          &quot;last_action_elapsed_s&quot;: float or None</span>
+<span class="sd">          &quot;counts&quot;:              {&quot;&lt;action&gt;:&lt;outcome&gt;&quot;: n}</span>
+<span class="sd">          &quot;p95_elapsed_s_by_action&quot;: {&quot;&lt;action&gt;&quot;: p95 float}</span>
+<span class="sd">        }</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">rows</span> <span class="o">=</span> <span class="n">query</span><span class="p">(</span><span class="n">agent</span><span class="o">=</span><span class="n">agent</span><span class="p">,</span> <span class="n">limit</span><span class="o">=</span><span class="n">limit</span><span class="p">,</span> <span class="n">root</span><span class="o">=</span><span class="n">root</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">rows</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s2">&quot;last_action_at&quot;</span><span class="p">:</span> <span class="s2">&quot;&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;last_action_name&quot;</span><span class="p">:</span> <span class="s2">&quot;&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;last_action_outcome&quot;</span><span class="p">:</span> <span class="s2">&quot;&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;last_action_elapsed_s&quot;</span><span class="p">:</span> <span class="kc">None</span><span class="p">,</span>
+            <span class="s2">&quot;counts&quot;</span><span class="p">:</span> <span class="p">{},</span>
+            <span class="s2">&quot;p95_elapsed_s_by_action&quot;</span><span class="p">:</span> <span class="p">{},</span>
+        <span class="p">}</span>
+    <span class="n">last</span> <span class="o">=</span> <span class="n">rows</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>  <span class="c1"># newest first from query()</span>
+    <span class="n">counts</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="n">samples_by_action</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">rows</span><span class="p">:</span>
+        <span class="n">key</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;action&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">:</span><span class="si">{</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;outcome&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="n">counts</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">counts</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">samples_by_action</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="n">r</span><span class="p">[</span><span class="s2">&quot;action&quot;</span><span class="p">],</span> <span class="p">[])</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">r</span><span class="p">[</span><span class="s2">&quot;elapsed_s&quot;</span><span class="p">]))</span>
+        <span class="k">except</span> <span class="p">(</span><span class="ne">TypeError</span><span class="p">,</span> <span class="ne">ValueError</span><span class="p">):</span>  <span class="c1"># stx-allow: fallback (reason: type coercion or format mismatch)</span>
+            <span class="k">pass</span>
+    <span class="n">p95</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">samples</span> <span class="ow">in</span> <span class="n">samples_by_action</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">samples</span><span class="p">:</span>
+            <span class="k">continue</span>
+        <span class="n">ordered</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">samples</span><span class="p">)</span>
+        <span class="n">idx</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">int</span><span class="p">(</span><span class="mf">0.95</span> <span class="o">*</span> <span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">ordered</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)))</span>
+        <span class="n">p95</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">ordered</span><span class="p">[</span><span class="n">idx</span><span class="p">])</span>
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">&quot;last_action_at&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">last</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;ts&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span><span class="p">),</span>
+        <span class="s2">&quot;last_action_name&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">last</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;action&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span><span class="p">),</span>
+        <span class="s2">&quot;last_action_outcome&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">last</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;outcome&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span><span class="p">),</span>
+        <span class="s2">&quot;last_action_elapsed_s&quot;</span><span class="p">:</span> <span class="n">_safe_float</span><span class="p">(</span><span class="n">last</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;elapsed_s&quot;</span><span class="p">)),</span>
+        <span class="s2">&quot;counts&quot;</span><span class="p">:</span> <span class="n">counts</span><span class="p">,</span>
+        <span class="s2">&quot;p95_elapsed_s_by_action&quot;</span><span class="p">:</span> <span class="n">p95</span><span class="p">,</span>
+    <span class="p">}</span></div>
+
+
+
+<div class="viewcode-block" id="purge_old">
+<a class="viewcode-back" href="../../api/scitex_agent_container.html#scitex_agent_container.action_store.purge_old">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">purge_old</span><span class="p">(</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">days</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">root</span><span class="p">:</span> <span class="n">Path</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Delete rows older than ``days`` (default from env). Returns</span>
+<span class="sd">    rows deleted. Safe to call periodically from a cron / daemon.&quot;&quot;&quot;</span>
+    <span class="n">d</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">days</span><span class="p">)</span> <span class="k">if</span> <span class="n">days</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">DEFAULT_RETENTION_DAYS</span>
+    <span class="n">cutoff</span> <span class="o">=</span> <span class="p">(</span><span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">(</span><span class="n">timezone</span><span class="o">.</span><span class="n">utc</span><span class="p">)</span> <span class="o">-</span> <span class="n">timedelta</span><span class="p">(</span><span class="n">days</span><span class="o">=</span><span class="n">d</span><span class="p">))</span><span class="o">.</span><span class="n">isoformat</span><span class="p">()</span>
+    <span class="c1"># stx-allow: fallback (reason: DB delete can fail due to disk error or lock; returning 0 is safe since purge is maintenance-only and a missed run leaves stale rows that will be retried next call)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="n">_get_conn</span><span class="p">(</span><span class="n">_db_path</span><span class="p">(</span><span class="n">root</span><span class="p">))</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">cur</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">&quot;DELETE FROM attempts WHERE ts &lt; ?&quot;</span><span class="p">,</span> <span class="p">(</span><span class="n">cutoff</span><span class="p">,))</span>
+            <span class="n">deleted</span> <span class="o">=</span> <span class="n">cur</span><span class="o">.</span><span class="n">rowcount</span>
+            <span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">&quot;VACUUM&quot;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="nb">int</span><span class="p">(</span><span class="n">deleted</span><span class="p">)</span>
+        <span class="k">finally</span><span class="p">:</span>
+            <span class="n">conn</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: catch-all safety net — see inline comment for context)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;action_store.purge_old failed: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">exc</span><span class="p">)</span>
+        <span class="k">return</span> <span class="mi">0</span></div>
+
+
+
+<div class="viewcode-block" id="_all_rows">
+<a class="viewcode-back" href="../../api/scitex_agent_container.html#scitex_agent_container.action_store._all_rows">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">_all_rows</span><span class="p">(</span><span class="n">root</span><span class="p">:</span> <span class="n">Path</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Iterable</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Iterator over every row — used by tests / export tooling.&quot;&quot;&quot;</span>
+    <span class="c1"># stx-allow: fallback (reason: DB read can fail due to missing file or I/O error; empty iterable is safe since _all_rows is used by tests/export tooling where no results is a valid outcome)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="n">_get_conn</span><span class="p">(</span><span class="n">_db_path</span><span class="p">(</span><span class="n">root</span><span class="p">))</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">rows</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span>
+                <span class="s2">&quot;SELECT id, ts, agent, action, outcome, elapsed_s, &quot;</span>
+                <span class="s2">&quot;pane_before, pane_after, extras &quot;</span>
+                <span class="s2">&quot;FROM attempts ORDER BY ts ASC, id ASC&quot;</span>
+            <span class="p">)</span><span class="o">.</span><span class="n">fetchall</span><span class="p">()</span>
+        <span class="k">finally</span><span class="p">:</span>
+            <span class="n">conn</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: catch-all safety net — see inline comment for context)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;action_store._all_rows failed: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">exc</span><span class="p">)</span>
+        <span class="k">return</span> <span class="p">[]</span>
+    <span class="k">return</span> <span class="p">[</span><span class="n">_row_to_dict</span><span class="p">(</span><span class="n">r</span><span class="p">)</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">rows</span><span class="p">]</span></div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2026, Yusuke Watanabe.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>
