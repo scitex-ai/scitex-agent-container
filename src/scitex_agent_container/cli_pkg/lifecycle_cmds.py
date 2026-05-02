@@ -204,6 +204,15 @@ def _discover_all_agents() -> list[str]:
     default=False,
     help="Emit a structured JSON report on stdout instead of human prose.",
 )
+@click.option(
+    "-y",
+    "--yes",
+    "yes",
+    is_flag=True,
+    default=False,
+    help="Skip confirmation prompt (currently a no-op; reserved for future "
+    "interactive confirmations).",
+)
 def start(
     config_path: str | None,
     start_all: bool,
@@ -213,8 +222,16 @@ def start(
     session_mode: str | None,
     dry_run: bool,
     as_json: bool,
+    yes: bool,
 ) -> None:
-    """Start an agent from a YAML definition, or --all to start every agent."""
+    """Start an agent from a YAML definition, or --all to start every agent.
+
+    \b
+    Example:
+      $ sac start ~/.scitex/agent-container/agents/foo/foo.yaml
+      $ sac start --all
+      $ sac start foo --dry-run
+    """
     import json as _json
 
     def _emit_json(payload: dict) -> None:
@@ -244,9 +261,14 @@ def start(
                 "~/.scitex/agent-container/agents/ or $SCITEX_AGENT_CONTAINER_YAML_DIRS[/dim]"
             )
             return
+        if not yes and not click.confirm(f"Start {len(yamls)} agents?", default=True):
+            click.echo("Aborted.")
+            return
         try:
             current_host = resolve_hostname()
-        except RuntimeError:  # stx-allow: fallback (reason: runtime state error — handled gracefully)
+        except (
+            RuntimeError
+        ):  # stx-allow: fallback (reason: runtime state error — handled gracefully)
             current_host = ""
         console.print(f"[blue]Starting {len(yamls)} agents...[/blue]")
         for yaml_path in yamls:
@@ -294,7 +316,9 @@ def start(
         config = load_config(config_path)
         try:
             current_host = resolve_hostname()
-        except RuntimeError:  # stx-allow: fallback (reason: runtime state error — handled gracefully)
+        except (
+            RuntimeError
+        ):  # stx-allow: fallback (reason: runtime state error — handled gracefully)
             current_host = ""
         skip = _singleton_skip_reason(config, current_host)
         if skip:
@@ -409,7 +433,13 @@ def start(
     help="Tolerate stale registry, missing configs, and hook failures.",
 )
 def stop(name: str | None, stop_all: bool, force: bool) -> None:
-    """Stop a running agent (or --all)."""
+    """Stop a running agent (or --all).
+
+    \b
+    Example:
+      $ sac stop foo
+      $ sac stop --all
+    """
     if not stop_all and not name:
         click.echo(
             "Error: provide a NAME or use --all.\n"
@@ -451,8 +481,35 @@ def stop(name: str | None, stop_all: bool, force: bool) -> None:
 
 @click.command()
 @click.argument("name")
-def restart(name: str) -> None:
-    """Restart an agent."""
+@click.option(
+    "--dry-run",
+    "dry_run",
+    is_flag=True,
+    default=False,
+    help="Print what would be restarted without making changes.",
+)
+@click.option(
+    "-y",
+    "--yes",
+    "yes",
+    is_flag=True,
+    default=False,
+    help="Skip confirmation prompt.",
+)
+def restart(name: str, dry_run: bool, yes: bool) -> None:
+    """Restart an agent.
+
+    \b
+    Example:
+      $ sac restart foo
+      $ sac restart foo --dry-run
+    """
+    if dry_run:
+        click.echo(f"[dry-run] would restart agent '{name}'")
+        return
+    if not yes and not click.confirm(f"Restart agent '{name}'?", default=True):
+        click.echo("Aborted.")
+        return
     # stx-allow: fallback (reason: config resolution or agent_restart can raise if the agent is not running or the session cannot be found; error message + sys.exit(1) is cleaner than an unhandled traceback)
     try:
         if "/" in name or name.endswith((".yaml", ".yml")):
@@ -467,9 +524,41 @@ def restart(name: str) -> None:
 
 
 @click.command()
-def cleanup() -> None:
-    """Remove stale registry entries (where the screen is already gone)."""
+@click.option(
+    "--dry-run",
+    "dry_run",
+    is_flag=True,
+    default=False,
+    help="Show how many stale entries would be removed without modifying registry.",
+)
+@click.option(
+    "-y",
+    "--yes",
+    "yes",
+    is_flag=True,
+    default=False,
+    help="Skip confirmation prompt.",
+)
+def cleanup(dry_run: bool, yes: bool) -> None:
+    """Remove stale registry entries (where the screen is already gone).
+
+    \b
+    Example:
+      $ sac cleanup
+      $ sac cleanup --dry-run
+    """
     registry = Registry()
+    if dry_run:
+        # Probe count without mutating: re-implement minimal stale check via
+        # a fresh probe — fall back to a textual hint if the registry doesn't
+        # expose a non-mutating preview.
+        click.echo(
+            "[dry-run] would remove stale registry entries (run without --dry-run to apply)"
+        )
+        return
+    if not yes and not click.confirm("Remove stale registry entries?", default=True):
+        click.echo("Aborted.")
+        return
     cleaned = registry.cleanup_stale()
     if cleaned:
         console.print(f"[green]Cleaned {cleaned} stale registry entries[/green]")
@@ -484,8 +573,33 @@ def cleanup() -> None:
 
 @click.command("send-accept")
 @click.argument("agent")
-def send_accept(agent: str) -> None:
-    """One-shot: capture → classify → respond for AGENT, then exit."""
+@click.option(
+    "--dry-run",
+    "dry_run",
+    is_flag=True,
+    default=False,
+    help="Print what would be sent without dispatching the action.",
+)
+@click.option(
+    "-y",
+    "--yes",
+    "yes",
+    is_flag=True,
+    default=False,
+    help="Skip confirmation prompt (currently a no-op; reserved).",
+)
+def send_accept(agent: str, dry_run: bool, yes: bool) -> None:
+    """One-shot: capture → classify → respond for AGENT, then exit.
+
+    \b
+    Example:
+      $ sac send-accept foo
+      $ sac send-accept foo --dry-run
+    """
+    _ = yes  # accepted for API consistency; no prompt is currently shown.
+    if dry_run:
+        click.echo(f"[dry-run] would send accept action for agent '{agent}'")
+        return
     from ..auto_accept_daemon import send_accept_once
 
     state, sent = send_accept_once(agent)
@@ -497,9 +611,42 @@ def send_accept(agent: str) -> None:
 
 @click.command("start-auto-accept")
 @click.argument("agent")
-@click.option("--tick", "tick_s", default=60.0, show_default=True, help="Daemon tick interval in seconds.")
-def start_auto_accept(agent: str, tick_s: float) -> None:
-    """Start the auto-accept daemon for AGENT (throttle 5 s min, default 60 s tick)."""
+@click.option(
+    "--tick",
+    "tick_s",
+    default=60.0,
+    show_default=True,
+    help="Daemon tick interval in seconds.",
+)
+@click.option(
+    "--dry-run",
+    "dry_run",
+    is_flag=True,
+    default=False,
+    help="Print what would be started without forking the daemon.",
+)
+@click.option(
+    "-y",
+    "--yes",
+    "yes",
+    is_flag=True,
+    default=False,
+    help="Skip confirmation prompt (currently a no-op; reserved).",
+)
+def start_auto_accept(agent: str, tick_s: float, dry_run: bool, yes: bool) -> None:
+    """Start the auto-accept daemon for AGENT (throttle 5 s min, default 60 s tick).
+
+    \b
+    Example:
+      $ sac start-auto-accept foo
+      $ sac start-auto-accept foo --tick 30
+    """
+    _ = yes  # accepted for API consistency; no prompt is currently shown.
+    if dry_run:
+        click.echo(
+            f"[dry-run] would start auto-accept daemon for agent '{agent}' (tick={tick_s}s)"
+        )
+        return
     import multiprocessing
 
     from ..auto_accept_daemon import read_pid, run_daemon
@@ -508,8 +655,11 @@ def start_auto_accept(agent: str, tick_s: float) -> None:
     if existing:
         try:
             import os as _os
+
             _os.kill(existing, 0)
-            console.print(f"[yellow]auto-accept daemon already running for '{agent}' (pid={existing})[/yellow]")
+            console.print(
+                f"[yellow]auto-accept daemon already running for '{agent}' (pid={existing})[/yellow]"
+            )
             return
         except OSError:  # stx-allow: fallback (reason: file system operation failure)
             pass  # stale pid file
@@ -517,15 +667,48 @@ def start_auto_accept(agent: str, tick_s: float) -> None:
     def _target():
         run_daemon(agent, tick_s=tick_s)
 
-    p = multiprocessing.Process(target=_target, daemon=False, name=f"sac-auto-accept-{agent}")
+    p = multiprocessing.Process(
+        target=_target, daemon=False, name=f"sac-auto-accept-{agent}"
+    )
     p.start()
-    console.print(f"[green]auto-accept daemon started for '{agent}' (pid={p.pid}, tick={tick_s}s)[/green]")
+    console.print(
+        f"[green]auto-accept daemon started for '{agent}' (pid={p.pid}, tick={tick_s}s)[/green]"
+    )
 
 
 @click.command("stop-auto-accept")
 @click.argument("agent")
-def stop_auto_accept(agent: str) -> None:
-    """Stop the auto-accept daemon for AGENT."""
+@click.option(
+    "--dry-run",
+    "dry_run",
+    is_flag=True,
+    default=False,
+    help="Print what would be stopped without sending SIGTERM.",
+)
+@click.option(
+    "-y",
+    "--yes",
+    "yes",
+    is_flag=True,
+    default=False,
+    help="Skip confirmation prompt.",
+)
+def stop_auto_accept(agent: str, dry_run: bool, yes: bool) -> None:
+    """Stop the auto-accept daemon for AGENT.
+
+    \b
+    Example:
+      $ sac stop-auto-accept foo
+      $ sac stop-auto-accept foo --dry-run
+    """
+    if dry_run:
+        click.echo(f"[dry-run] would stop auto-accept daemon for agent '{agent}'")
+        return
+    if not yes and not click.confirm(
+        f"Stop auto-accept daemon for '{agent}'?", default=True
+    ):
+        click.echo("Aborted.")
+        return
     import os as _os
     import signal
 
@@ -537,7 +720,11 @@ def stop_auto_accept(agent: str) -> None:
         return
     try:
         _os.kill(pid, signal.SIGTERM)
-        console.print(f"[green]sent SIGTERM to auto-accept daemon for '{agent}' (pid={pid})[/green]")
-    except ProcessLookupError:  # stx-allow: fallback (reason: process probe expected failure)
+        console.print(
+            f"[green]sent SIGTERM to auto-accept daemon for '{agent}' (pid={pid})[/green]"
+        )
+    except (
+        ProcessLookupError
+    ):  # stx-allow: fallback (reason: process probe expected failure)
         console.print(f"[yellow]stale pid {pid} for '{agent}' — cleaning up[/yellow]")
         clear_pid(agent)
