@@ -109,10 +109,7 @@ packages = ["src/scitex_agent_container"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-# importlib mode avoids sys.path manipulation, so test directories that
-# share a name with the source package (e.g. tests/scitex_agent_container/)
-# don't shadow the real package on Python 3.12 + pytest 9.0.3.
-addopts = "-v --tb=short -m 'not integration' --import-mode=importlib"
+addopts = "-v --tb=short -m 'not integration'"
 markers = [
     "integration: slow end-to-end tests that spawn a real Claude Code agent (require claude CLI + tmux + ANTHROPIC_API_KEY or SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY). Opt in with '-m integration'.",
     "docker_smoke: real-Docker smoke tests for DockerRuntime (build image, start/stop newbie-docker agent, exec claude -p). Skipped unless docker daemon reachable. Opt in with '-m docker_smoke'.",
