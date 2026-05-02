@@ -71,7 +71,7 @@ def boot(dry_run: bool) -> None:  # noqa: C901
 
     Safe to re-run — every step is idempotent.
 
-    \\b
+    \b
     Steps:
       1. Create ~/.venv-3.11 (python3.11+) if missing.
       2. pip install -e <this package> into the venv.
@@ -80,6 +80,11 @@ def boot(dry_run: bool) -> None:  # noqa: C901
       5. Create ~/.scitex/orochi/shared/{agents,skills,logs,cron}/.
       6. Copy bundled post-merge-pull.sh to the cron dir (chmod +x).
       7. Print "boot OK" and the installed sac version.
+
+    \b
+    Example:
+      $ sac install boot
+      $ sac install boot --dry-run
     """
     tag = "[dim][dry-run][/dim] " if dry_run else ""
 
@@ -263,13 +268,32 @@ def _deploy_cron_script(dry_run: bool, tag: str) -> None:
     default=False,
     help="Remove the post-merge-pull cron entry if present.",
 )
-def install_post_merge_cron(dry_run: bool, uninstall: bool) -> None:
+@click.option(
+    "-y",
+    "--yes",
+    "yes",
+    is_flag=True,
+    default=False,
+    help="Skip the confirmation prompt.",
+)
+def install_post_merge_cron(dry_run: bool, uninstall: bool, yes: bool) -> None:
     """Add (or remove) the post-merge-pull crontab entry.
 
     Idempotent: re-running when the line already exists is a no-op.
     Requires post-merge-pull.sh to be deployed first
     (run ``sac install boot`` to do that).
+
+    \b
+    Example:
+      $ sac install-post-merge-cron
+      $ sac install-post-merge-cron --dry-run
+      $ sac install-post-merge-cron --uninstall
     """
+    if not dry_run and not yes:
+        action = "Remove" if uninstall else "Install"
+        if not click.confirm(f"{action} post-merge-pull cron entry?", default=True):
+            click.echo("Aborted.")
+            return
     if dry_run and uninstall:
         click.echo("Error: --dry-run and --uninstall are mutually exclusive.", err=True)
         sys.exit(2)

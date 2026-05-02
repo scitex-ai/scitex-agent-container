@@ -55,7 +55,9 @@ class TestBoot:
         )
         # Patch subprocess so nothing is actually run.
         with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="tmux 3.3", stderr="")
+            mock_run.return_value = MagicMock(
+                returncode=0, stdout="tmux 3.3", stderr=""
+            )
             runner = CliRunner()
             result = runner.invoke(boot, ["--dry-run"])
 
@@ -75,7 +77,9 @@ class TestBoot:
         )
         # Avoid actually running anything.
         with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="tmux 3.3a", stderr="")
+            mock_run.return_value = MagicMock(
+                returncode=0, stdout="tmux 3.3a", stderr=""
+            )
             with patch(
                 "scitex_agent_container.cli_pkg.install_cmds._find_python311",
                 return_value="/usr/bin/python3.11",
@@ -110,6 +114,10 @@ class TestInstallPostMergeCron:
                 return _make_crontab_proc(stdout=crontab_out, returncode=crontab_rc)
             return _make_crontab_proc(stdout="", returncode=0)
 
+        # Inject -y to skip the confirmation prompt unless the caller already
+        # supplied --dry-run / -y / --yes (those bypass the prompt themselves).
+        if not any(a in args for a in ("-y", "--yes", "--dry-run")):
+            args = [*args, "-y"]
         with patch("subprocess.run", side_effect=_side_effect) as mock_run:
             result = runner.invoke(install_post_merge_cron, args)
         return result, mock_run
@@ -226,29 +234,48 @@ class TestPostMergePullScript:
         upstream.mkdir(parents=True)
         clone.mkdir(parents=True)
 
-        subprocess.run(["git", "init", "--bare", str(upstream)], check=True, capture_output=True)
+        subprocess.run(
+            ["git", "init", "--bare", str(upstream)], check=True, capture_output=True
+        )
         subprocess.run(["git", "init", str(clone)], check=True, capture_output=True)
         subprocess.run(
             ["git", "-C", str(clone), "remote", "add", "gitea", str(upstream)],
-            check=True, capture_output=True,
+            check=True,
+            capture_output=True,
         )
         # Initial commit.
         (clone / "README.md").write_text("hello")
-        subprocess.run(["git", "-C", str(clone), "add", "."], check=True, capture_output=True)
+        subprocess.run(
+            ["git", "-C", str(clone), "add", "."], check=True, capture_output=True
+        )
         subprocess.run(
             ["git", "-C", str(clone), "commit", "--allow-empty", "-m", "init"],
-            check=True, capture_output=True,
-            env={**__import__("os").environ, "GIT_AUTHOR_NAME": "test", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "test", "GIT_COMMITTER_EMAIL": "t@t"},
+            check=True,
+            capture_output=True,
+            env={
+                **__import__("os").environ,
+                "GIT_AUTHOR_NAME": "test",
+                "GIT_AUTHOR_EMAIL": "t@t",
+                "GIT_COMMITTER_NAME": "test",
+                "GIT_COMMITTER_EMAIL": "t@t",
+            },
         )
         subprocess.run(
             ["git", "-C", str(clone), "push", "gitea", "HEAD:develop"],
-            check=True, capture_output=True,
+            check=True,
+            capture_output=True,
         )
         return clone
 
     def test_script_pulls_clean_repo(self, tmp_path):
         """Script pulls a clean repo and writes a log entry."""
-        script = Path(__file__).parent.parent / "src" / "scitex_agent_container" / "cron" / "post-merge-pull.sh"
+        script = (
+            Path(__file__).parent.parent
+            / "src"
+            / "scitex_agent_container"
+            / "cron"
+            / "post-merge-pull.sh"
+        )
         assert script.exists(), f"Cron script not found: {script}"
 
         clone = self._make_repo(tmp_path, "scitex-agent-container")
@@ -274,18 +301,28 @@ class TestPostMergePullScript:
 
     def test_script_skips_dirty_repo(self, tmp_path):
         """Script skips repos with uncommitted changes and logs WARN."""
-        script = Path(__file__).parent.parent / "src" / "scitex_agent_container" / "cron" / "post-merge-pull.sh"
+        script = (
+            Path(__file__).parent.parent
+            / "src"
+            / "scitex_agent_container"
+            / "cron"
+            / "post-merge-pull.sh"
+        )
         clone = self._make_repo(tmp_path, "scitex-agent-container")
 
         # Make the clone dirty.
         (clone / "dirty.txt").write_text("unsaved")
-        subprocess.run(["git", "-C", str(clone), "add", "dirty.txt"], capture_output=True)
+        subprocess.run(
+            ["git", "-C", str(clone), "add", "dirty.txt"], capture_output=True
+        )
 
         log_dir = tmp_path / ".scitex" / "orochi" / "shared" / "logs"
         log_dir.mkdir(parents=True)
 
         env = {**__import__("os").environ, "HOME": str(tmp_path)}
-        result = subprocess.run(["bash", str(script)], capture_output=True, text=True, env=env)
+        result = subprocess.run(
+            ["bash", str(script)], capture_output=True, text=True, env=env
+        )
         assert result.returncode == 0
         log_files = list(log_dir.glob("post-merge-pull.*.log"))
         assert log_files

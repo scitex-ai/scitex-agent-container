@@ -91,11 +91,10 @@ def run_cmd(
 ) -> None:
     """Run a PaneAction against AGENT (registry name).
 
-    Examples::
-
-        scitex-agent-container actions run nonce-probe head-ywata-note-win
-        scitex-agent-container actions run compact head-ywata-note-win \\
-            --min-drop-pct 30 --timeout 60
+    \b
+    Example:
+      $ sac actions run nonce-probe head-ywata-note-win
+      $ sac actions run compact head-ywata-note-win --min-drop-pct 30 --timeout 60
     """
     # --- resolve agent -> config + multiplexer session -----------------
     registry = Registry()
@@ -234,7 +233,13 @@ def query_cmd(
     offset: int,
     as_json: bool,
 ) -> None:
-    """List recent attempts, most recent first."""
+    """List recent attempts, most recent first.
+
+    \b
+    Example:
+      $ sac actions query --agent head-ywata-note-win
+      $ sac actions query --action compact --since 1h --json
+    """
     rows = action_store.query(
         agent=agent,
         action=action,
@@ -269,7 +274,13 @@ def query_cmd(
 )
 @click.option("--json", "as_json", is_flag=True, default=False)
 def stats_cmd(agent: Optional[str], since: Optional[str], as_json: bool) -> None:
-    """Per-(action, outcome) counts + mean / p95 elapsed."""
+    """Per-(action, outcome) counts + mean / p95 elapsed.
+
+    \b
+    Example:
+      $ sac actions stats
+      $ sac actions stats --agent head-ywata-note-win --since 1d --json
+    """
     rows = action_store.stats(agent=agent, since=since)
     if as_json:
         _json_echo(rows)
@@ -302,8 +313,38 @@ def stats_cmd(agent: Optional[str], since: Optional[str], as_json: bool) -> None
     help="Override SCITEX_AGENT_ACTION_RETENTION_DAYS (default 30).",
 )
 @click.option("--json", "as_json", is_flag=True, default=False)
-def purge_cmd(days: Optional[int], as_json: bool) -> None:
-    """Delete rows older than ``--days``."""
+@click.option(
+    "--dry-run",
+    "dry_run",
+    is_flag=True,
+    default=False,
+    help="Print the row count that would be deleted, without deleting.",
+)
+@click.option(
+    "-y",
+    "--yes",
+    "yes",
+    is_flag=True,
+    default=False,
+    help="Skip the confirmation prompt.",
+)
+def purge_cmd(days: Optional[int], as_json: bool, dry_run: bool, yes: bool) -> None:
+    """Delete rows older than ``--days``.
+
+    \b
+    Example:
+      $ sac actions purge
+      $ sac actions purge --days 7
+      $ sac actions purge --dry-run
+    """
+    if dry_run:
+        click.echo(f"[dry-run] would delete rows older than {days or 30} days")
+        return
+    if not yes and not click.confirm(
+        f"Purge action rows older than {days or 30} days?", default=False
+    ):
+        click.echo("Aborted.")
+        return
     deleted = action_store.purge_old(days=days)
     if as_json:
         _json_echo({"deleted": deleted})

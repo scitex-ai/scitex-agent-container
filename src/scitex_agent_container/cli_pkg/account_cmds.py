@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import click
 
-
 # ---------------------------------------------------------------------------
 # account group
 # ---------------------------------------------------------------------------
@@ -26,11 +25,39 @@ def account() -> None:
     default=None,
     help="Email address label for this account (informational only).",
 )
-def account_save(name: str, email: str | None) -> None:
-    """Snapshot the current credentials under NAME for later rotation."""
+@click.option(
+    "--dry-run",
+    "dry_run",
+    is_flag=True,
+    default=False,
+    help="Show what would be saved without writing any files.",
+)
+@click.option(
+    "-y",
+    "--yes",
+    "yes",
+    is_flag=True,
+    default=False,
+    help="Skip confirmation prompt (currently a no-op; reserved).",
+)
+def account_save(name: str, email: str | None, dry_run: bool, yes: bool) -> None:
+    """Snapshot the current credentials under NAME for later rotation.
+
+    \b
+    Example:
+      $ sac account save work
+      $ sac account save work --email me@example.com
+    """
+    _ = yes  # accepted for API consistency; no prompt is currently shown.
+    if dry_run:
+        click.echo(
+            f"[dry-run] would save account '{name}' (email={email or 'auto-detect'})"
+        )
+        return
     import shutil
     from pathlib import Path
-    from ..account_store import save_account, _store_path
+
+    from ..account_store import _store_path, save_account
 
     home = Path.home()
     store = _store_path(None, home)
@@ -67,13 +94,33 @@ def account_save(name: str, email: str | None) -> None:
 
 
 @account.command("list")
-def account_list() -> None:
-    """List all stored accounts."""
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Emit a JSON array on stdout instead of human prose.",
+)
+def account_list(as_json: bool) -> None:
+    """List all stored accounts.
+
+    \b
+    Example:
+      $ sac account list
+      $ sac account list --json
+    """
+    import json as _json
+
     from ..account_store import list_accounts
 
     accounts = list_accounts()
+    if as_json:
+        click.echo(_json.dumps(accounts, ensure_ascii=False))
+        return
     if not accounts:
-        click.echo("No accounts stored. Use: scitex-agent-container account save <name>")
+        click.echo(
+            "No accounts stored. Use: scitex-agent-container account save <name>"
+        )
         return
     for acct in accounts:
         email = acct.get("email_address") or "(no email)"
@@ -82,10 +129,38 @@ def account_list() -> None:
 
 @account.command("delete")
 @click.argument("name")
-def account_delete(name: str) -> None:
-    """Remove a stored account."""
+@click.option(
+    "--dry-run",
+    "dry_run",
+    is_flag=True,
+    default=False,
+    help="Print what would be deleted without removing anything.",
+)
+@click.option(
+    "-y",
+    "--yes",
+    "yes",
+    is_flag=True,
+    default=False,
+    help="Skip the confirmation prompt.",
+)
+def account_delete(name: str, dry_run: bool, yes: bool) -> None:
+    """Remove a stored account.
+
+    \b
+    Example:
+      $ sac account delete work
+      $ sac account delete work --dry-run
+      $ sac account delete work --yes
+    """
     from ..account_store import delete_account
 
+    if dry_run:
+        click.echo(f"[dry-run] would delete account '{name}'")
+        return
+    if not yes and not click.confirm(f"Delete account '{name}'?", default=False):
+        click.echo("Aborted.")
+        return
     if delete_account(name):
         click.echo(f"Deleted account '{name}'")
     else:
@@ -96,7 +171,12 @@ def account_delete(name: str) -> None:
 @account.command("switch")
 @click.argument("name")
 def account_switch(name: str) -> None:
-    """Switch active credentials to a stored account."""
+    """Switch active credentials to a stored account.
+
+    \b
+    Example:
+      $ sac account switch work
+    """
     from ..account_store import switch_account
 
     result = switch_account(name)
@@ -158,6 +238,7 @@ def quota_watch(
       scitex-agent-container quota-watch --daemon
     """
     from pathlib import Path
+
     from ..quota_watch import check_and_rotate, run_loop, survival_mode_check
 
     if once or dry_run:
