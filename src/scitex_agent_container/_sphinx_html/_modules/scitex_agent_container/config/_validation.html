@@ -599,18 +599,39 @@
 <span class="c1"># All spec keys read by load_v3, parsers, or a2a/_server.py.</span>
 <span class="c1"># Unknown keys are rejected at parse time so typos surface at boot.</span>
 <span class="c1"># Intentional extension data belongs under spec.extensions.</span>
-<span class="n">_KNOWN_SPEC_KEYS</span> <span class="o">=</span> <span class="nb">frozenset</span><span class="p">({</span>
-    <span class="s2">&quot;runtime&quot;</span><span class="p">,</span> <span class="s2">&quot;model&quot;</span><span class="p">,</span> <span class="s2">&quot;workdir&quot;</span><span class="p">,</span> <span class="s2">&quot;python-venv&quot;</span><span class="p">,</span> <span class="s2">&quot;env&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;screen&quot;</span><span class="p">,</span> <span class="s2">&quot;container&quot;</span><span class="p">,</span> <span class="s2">&quot;claude&quot;</span><span class="p">,</span> <span class="s2">&quot;health&quot;</span><span class="p">,</span> <span class="s2">&quot;watchdog&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;restart&quot;</span><span class="p">,</span> <span class="s2">&quot;hooks&quot;</span><span class="p">,</span> <span class="s2">&quot;telegram&quot;</span><span class="p">,</span> <span class="s2">&quot;remote&quot;</span><span class="p">,</span> <span class="s2">&quot;slurm&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;skills&quot;</span><span class="p">,</span> <span class="s2">&quot;startup_commands&quot;</span><span class="p">,</span> <span class="s2">&quot;startup&quot;</span><span class="p">,</span> <span class="s2">&quot;context_management&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;listen&quot;</span><span class="p">,</span> <span class="s2">&quot;extensions&quot;</span><span class="p">,</span> <span class="s2">&quot;mcp_servers&quot;</span><span class="p">,</span> <span class="s2">&quot;multiplexer&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;host&quot;</span><span class="p">,</span> <span class="s2">&quot;hosts&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;session&quot;</span><span class="p">,</span>         <span class="c1"># shortcut alias for spec.claude.session</span>
-    <span class="s2">&quot;scheduling&quot;</span><span class="p">,</span>      <span class="c1"># rejected with a specific actionable message below</span>
-    <span class="s2">&quot;a2a&quot;</span><span class="p">,</span>             <span class="c1"># A2A sidecar config read by a2a/_server.py</span>
-    <span class="s2">&quot;orochi&quot;</span><span class="p">,</span>          <span class="c1"># Orochi-specific extension namespace</span>
-<span class="p">})</span>
+<span class="n">_KNOWN_SPEC_KEYS</span> <span class="o">=</span> <span class="nb">frozenset</span><span class="p">(</span>
+    <span class="p">{</span>
+        <span class="s2">&quot;runtime&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;model&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;workdir&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;python-venv&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;env&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;screen&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;container&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;claude&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;health&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;watchdog&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;restart&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;hooks&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;telegram&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;remote&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;slurm&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;skills&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;startup_commands&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;startup&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;context_management&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;listen&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;extensions&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;mcp_servers&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;multiplexer&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;host&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;hosts&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;session&quot;</span><span class="p">,</span>  <span class="c1"># shortcut alias for spec.claude.session</span>
+        <span class="s2">&quot;scheduling&quot;</span><span class="p">,</span>  <span class="c1"># rejected with a specific actionable message below</span>
+        <span class="s2">&quot;a2a&quot;</span><span class="p">,</span>  <span class="c1"># A2A sidecar config read by a2a/_server.py</span>
+        <span class="s2">&quot;orochi&quot;</span><span class="p">,</span>  <span class="c1"># Orochi-specific extension namespace</span>
+    <span class="p">}</span>
+<span class="p">)</span>
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">validate_raw</span><span class="p">(</span><span class="n">raw</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
@@ -669,7 +690,12 @@
 
         <span class="c1"># spec.runtime</span>
         <span class="n">runtime</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;runtime&quot;</span><span class="p">)</span>
-        <span class="n">valid_runtimes</span> <span class="o">=</span> <span class="p">(</span><span class="s2">&quot;claude-code&quot;</span><span class="p">,</span> <span class="s2">&quot;cursor&quot;</span><span class="p">,</span> <span class="s2">&quot;aider&quot;</span><span class="p">,</span> <span class="s2">&quot;slurm&quot;</span><span class="p">,</span> <span class="s2">&quot;slurm-tenant&quot;</span><span class="p">)</span>
+        <span class="n">valid_runtimes</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="s2">&quot;claude-code&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;claude-session&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;slurm&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;slurm-tenant&quot;</span><span class="p">,</span>
+        <span class="p">)</span>
         <span class="k">if</span> <span class="n">runtime</span> <span class="ow">and</span> <span class="n">runtime</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">valid_runtimes</span><span class="p">:</span>
             <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
                 <span class="sa">f</span><span class="s2">&quot;spec.runtime must be one of </span><span class="si">{</span><span class="n">valid_runtimes</span><span class="si">}</span><span class="s2">, got &#39;</span><span class="si">{</span><span class="n">runtime</span><span class="si">}</span><span class="s2">&#39;&quot;</span>
@@ -678,9 +704,9 @@
         <span class="c1"># container.runtime</span>
         <span class="n">container</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;container&quot;</span><span class="p">,</span> <span class="p">{})</span> <span class="ow">or</span> <span class="p">{}</span>
         <span class="n">cr</span> <span class="o">=</span> <span class="n">container</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;runtime&quot;</span><span class="p">)</span>
-        <span class="k">if</span> <span class="n">cr</span> <span class="ow">and</span> <span class="n">cr</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;none&quot;</span><span class="p">,</span> <span class="s2">&quot;docker&quot;</span><span class="p">,</span> <span class="s2">&quot;apptainer&quot;</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">cr</span> <span class="ow">and</span> <span class="n">cr</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;none&quot;</span><span class="p">,</span> <span class="s2">&quot;docker&quot;</span><span class="p">,</span> <span class="s2">&quot;podman&quot;</span><span class="p">,</span> <span class="s2">&quot;apptainer&quot;</span><span class="p">):</span>
             <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                <span class="sa">f</span><span class="s2">&quot;spec.container.runtime must be none|docker|apptainer, got &#39;</span><span class="si">{</span><span class="n">cr</span><span class="si">}</span><span class="s2">&#39;&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;spec.container.runtime must be none|docker|podman|apptainer, got &#39;</span><span class="si">{</span><span class="n">cr</span><span class="si">}</span><span class="s2">&#39;&quot;</span>
             <span class="p">)</span>
 
         <span class="c1"># container.mount_host_claude (opt-in; default False)</span>
@@ -776,9 +802,13 @@
     <span class="k">try</span><span class="p">:</span>
         <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">path</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
             <span class="n">raw</span> <span class="o">=</span> <span class="n">yaml</span><span class="o">.</span><span class="n">safe_load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
-    <span class="k">except</span> <span class="ne">FileNotFoundError</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: file may not exist on first use)</span>
+    <span class="k">except</span> <span class="p">(</span>
+        <span class="ne">FileNotFoundError</span>
+    <span class="p">):</span>  <span class="c1"># stx-allow: fallback (reason: file may not exist on first use)</span>
         <span class="k">return</span> <span class="p">[</span><span class="sa">f</span><span class="s2">&quot;File not found: </span><span class="si">{</span><span class="n">path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">]</span>
-    <span class="k">except</span> <span class="n">yaml</span><span class="o">.</span><span class="n">YAMLError</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: expected failure — see inline comment)</span>
+    <span class="k">except</span> <span class="p">(</span>
+        <span class="n">yaml</span><span class="o">.</span><span class="n">YAMLError</span>
+    <span class="p">)</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: expected failure — see inline comment)</span>
         <span class="k">return</span> <span class="p">[</span><span class="sa">f</span><span class="s2">&quot;YAML parse error: </span><span class="si">{</span><span class="n">exc</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">]</span>
 
     <span class="k">return</span> <span class="n">validate_raw</span><span class="p">(</span><span class="n">raw</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">path</span><span class="p">))</span></div>
