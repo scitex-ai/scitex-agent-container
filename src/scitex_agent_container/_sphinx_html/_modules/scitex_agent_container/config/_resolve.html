@@ -594,6 +594,35 @@
 
 <span class="n">_ENV_VAR</span> <span class="o">=</span> <span class="s2">&quot;SCITEX_AGENT_CONTAINER_YAML_DIRS&quot;</span>
 
+<span class="c1"># Retained for ``runtimes/claude_session.py``; project-local discovery</span>
+<span class="c1"># itself delegates to ``scitex_config._ecosystem.local_state``.</span>
+<span class="n">_PROJECT_LOCAL_MAX_DEPTH</span> <span class="o">=</span> <span class="mi">10</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_project_local_dirs</span><span class="p">(</span><span class="n">start</span><span class="p">:</span> <span class="n">Path</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">Path</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return ``[&lt;scope&gt;/agents]`` for the closest project scope, or [].</span>
+
+<span class="sd">    Uses ``scitex_config._ecosystem.local_state.find_project_scope`` —</span>
+<span class="sd">    walks upward from ``start`` (default: cwd) looking for a git repo</span>
+<span class="sd">    that contains ``.scitex/agent-container/``. This matches the</span>
+<span class="sd">    ecosystem-wide convention (slurm scripts, hpc reservations, etc.</span>
+<span class="sd">    all use the same scope resolution) so per-package state lands in</span>
+<span class="sd">    one predictable place per repo.</span>
+
+<span class="sd">    The git boundary is deliberate: it provides an unambiguous</span>
+<span class="sd">    &quot;this is a project&quot; marker. Users who want project scope without</span>
+<span class="sd">    git can simply ``git init``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">scitex_config._ecosystem</span><span class="w"> </span><span class="kn">import</span> <span class="n">local_state</span>
+    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: scitex-config is an optional dep — degrade to no project-local discovery rather than break sac install)</span>
+        <span class="k">return</span> <span class="p">[]</span>
+    <span class="n">scope</span> <span class="o">=</span> <span class="n">local_state</span><span class="o">.</span><span class="n">find_project_scope</span><span class="p">(</span><span class="s2">&quot;agent-container&quot;</span><span class="p">,</span> <span class="n">start</span><span class="o">=</span><span class="n">start</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">scope</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">[]</span>
+    <span class="n">agents</span> <span class="o">=</span> <span class="n">scope</span> <span class="o">/</span> <span class="s2">&quot;agents&quot;</span>
+    <span class="k">return</span> <span class="p">[</span><span class="n">agents</span><span class="p">]</span> <span class="k">if</span> <span class="n">agents</span><span class="o">.</span><span class="n">is_dir</span><span class="p">()</span> <span class="k">else</span> <span class="p">[]</span>
+
 
 <span class="k">def</span><span class="w"> </span><span class="nf">_resolve_host</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Return hostname using SCITEX_AGENT_CONTAINER_HOSTNAME or SCITEX_OROCHI_HOSTNAME or gethostname.&quot;&quot;&quot;</span>
@@ -615,7 +644,11 @@
 <span class="k">def</span><span class="w"> </span><span class="nf">_search_dirs</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="n">Path</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="n">Path</span><span class="p">],</span> <span class="n">List</span><span class="p">[</span><span class="n">Path</span><span class="p">]]:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Return (primary_dir, env_dirs, fleet_dirs) with ~ expansion.</span>
 
-<span class="sd">    Search order:</span>
+<span class="sd">    Search order (highest priority first):</span>
+<span class="sd">      0. **Project-local** — first ``.scitex/agent-container/agents/``</span>
+<span class="sd">         found by walking upward from cwd. Surfaces in ``env_dirs``</span>
+<span class="sd">         (prepended) so checked-in test agents and CI fixtures win</span>
+<span class="sd">         over stale globals.</span>
 <span class="sd">      1. ``~/.scitex/agent-container/agents/`` — sac&#39;s own install root.</span>
 <span class="sd">      2. ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` — plugin port for external</span>
 <span class="sd">         orchestrators to extend the search scope without touching sac.</span>
@@ -629,6 +662,11 @@
     <span class="n">primary</span> <span class="o">=</span> <span class="n">home</span> <span class="o">/</span> <span class="s2">&quot;.scitex&quot;</span> <span class="o">/</span> <span class="s2">&quot;agent-container&quot;</span> <span class="o">/</span> <span class="s2">&quot;agents&quot;</span>
     <span class="n">env_raw</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">_ENV_VAR</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
     <span class="n">env_dirs</span> <span class="o">=</span> <span class="p">[</span><span class="n">Path</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">expanduser</span><span class="p">(</span><span class="n">p</span><span class="p">))</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">env_raw</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;:&quot;</span><span class="p">)</span> <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">strip</span><span class="p">()]</span>
+    <span class="c1"># Project-local takes priority OVER the home install root: prepend</span>
+    <span class="c1"># it as the highest-priority entry. Returned via the env_dirs slot</span>
+    <span class="c1"># but inserted before the existing primary check at the call site</span>
+    <span class="c1"># below by ordering primary AFTER it in resolve_config().</span>
+    <span class="n">env_dirs</span> <span class="o">=</span> <span class="n">_project_local_dirs</span><span class="p">()</span> <span class="o">+</span> <span class="n">env_dirs</span>
 
     <span class="n">host</span> <span class="o">=</span> <span class="n">_resolve_host</span><span class="p">()</span>
     <span class="n">fleet_roots</span> <span class="o">=</span> <span class="p">[</span>
@@ -662,6 +700,9 @@
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Resolve agent name or path to a config file path.</span>
 
 <span class="sd">    Search order for short names (no slash, no .yaml/.yml suffix):</span>
+<span class="sd">      0. **Project-local** — first ``.scitex/agent-container/agents/``</span>
+<span class="sd">         found walking upward from cwd. Highest priority so checked-in</span>
+<span class="sd">         test agents and CI fixtures override globals.</span>
 <span class="sd">      1. ~/.scitex/agent-container/agents/&lt;name&gt;.yaml  (sac install root)</span>
 <span class="sd">      2. $SCITEX_AGENT_CONTAINER_YAML_DIRS (colon-separated extra dirs)</span>
 <span class="sd">      3. Fleet layout — for each root in</span>
@@ -678,11 +719,20 @@
         <span class="k">raise</span> <span class="ne">FileNotFoundError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Config file not found: </span><span class="si">{</span><span class="n">name_or_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 
     <span class="n">primary</span><span class="p">,</span> <span class="n">env_dirs</span><span class="p">,</span> <span class="n">fleet_dirs</span> <span class="o">=</span> <span class="n">_search_dirs</span><span class="p">()</span>
+    <span class="c1"># Split env_dirs into the project-local prefix (added by</span>
+    <span class="c1"># ``_search_dirs``) and the operator-supplied extension.</span>
+    <span class="n">project_local_dirs</span> <span class="o">=</span> <span class="n">_project_local_dirs</span><span class="p">()</span>
+    <span class="n">operator_env_dirs</span> <span class="o">=</span> <span class="n">env_dirs</span><span class="p">[</span><span class="nb">len</span><span class="p">(</span><span class="n">project_local_dirs</span><span class="p">)</span> <span class="p">:]</span>
 
+    <span class="c1"># Order: project-local → primary (~/.scitex…) → env → fleet.</span>
+    <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="n">project_local_dirs</span><span class="p">:</span>
+        <span class="n">hit</span> <span class="o">=</span> <span class="n">_try_dir</span><span class="p">(</span><span class="n">d</span><span class="p">,</span> <span class="n">name_or_path</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">hit</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">hit</span>
     <span class="n">hit</span> <span class="o">=</span> <span class="n">_try_dir</span><span class="p">(</span><span class="n">primary</span><span class="p">,</span> <span class="n">name_or_path</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">hit</span><span class="p">:</span>
         <span class="k">return</span> <span class="n">hit</span>
-    <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="n">env_dirs</span><span class="p">:</span>
+    <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="n">operator_env_dirs</span><span class="p">:</span>
         <span class="n">hit</span> <span class="o">=</span> <span class="n">_try_dir</span><span class="p">(</span><span class="n">d</span><span class="p">,</span> <span class="n">name_or_path</span><span class="p">)</span>
         <span class="k">if</span> <span class="n">hit</span><span class="p">:</span>
             <span class="k">return</span> <span class="n">hit</span>
@@ -691,16 +741,20 @@
         <span class="k">if</span> <span class="n">hit</span><span class="p">:</span>
             <span class="k">return</span> <span class="n">hit</span>
 
+    <span class="n">project_lines</span> <span class="o">=</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;  </span><span class="si">{</span><span class="n">d</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">name_or_path</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">name_or_path</span><span class="si">}</span><span class="s2">.yaml&quot;</span> <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="n">project_local_dirs</span>
+    <span class="p">)</span>
     <span class="n">env_line</span> <span class="o">=</span> <span class="p">(</span>
         <span class="sa">f</span><span class="s2">&quot;  (env $</span><span class="si">{</span><span class="n">_ENV_VAR</span><span class="si">}</span><span class="s2">: &quot;</span>
-        <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="s1">&#39;, &#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">d</span><span class="p">)</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">d</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="n">env_dirs</span><span class="p">)</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">env_dirs</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">&#39;&lt;unset&gt;&#39;</span><span class="si">}</span><span class="s2">)&quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="s1">&#39;, &#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">d</span><span class="p">)</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">d</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="n">operator_env_dirs</span><span class="p">)</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">operator_env_dirs</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">&#39;&lt;unset&gt;&#39;</span><span class="si">}</span><span class="s2">)&quot;</span>
     <span class="p">)</span>
     <span class="n">fleet_lines</span> <span class="o">=</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span>
         <span class="sa">f</span><span class="s2">&quot;  </span><span class="si">{</span><span class="n">d</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">name_or_path</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">name_or_path</span><span class="si">}</span><span class="s2">.yaml&quot;</span> <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="n">fleet_dirs</span>
     <span class="p">)</span>
     <span class="k">raise</span> <span class="ne">FileNotFoundError</span><span class="p">(</span>
         <span class="sa">f</span><span class="s2">&quot;Agent &#39;</span><span class="si">{</span><span class="n">name_or_path</span><span class="si">}</span><span class="s2">&#39; not found. Searched:</span><span class="se">\n</span><span class="s2">&quot;</span>
-        <span class="sa">f</span><span class="s2">&quot;  </span><span class="si">{</span><span class="n">primary</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">name_or_path</span><span class="si">}</span><span class="s2">.yaml</span><span class="se">\n</span><span class="s2">&quot;</span>
+        <span class="o">+</span> <span class="p">(</span><span class="n">project_lines</span> <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="k">if</span> <span class="n">project_lines</span> <span class="k">else</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+        <span class="o">+</span> <span class="sa">f</span><span class="s2">&quot;  </span><span class="si">{</span><span class="n">primary</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">name_or_path</span><span class="si">}</span><span class="s2">.yaml</span><span class="se">\n</span><span class="s2">&quot;</span>
         <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">env_line</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span>
         <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">fleet_lines</span><span class="si">}</span><span class="s2">&quot;</span>
     <span class="p">)</span></div>

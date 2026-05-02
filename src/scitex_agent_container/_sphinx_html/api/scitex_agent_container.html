@@ -2032,7 +2032,10 @@ the bare <code class="docutils literal notranslate"><span class="pre">raw_name</
 </dd>
 </dl>
 <dl>
-<dt>Search order for short names (no slash, no .yaml/.yml suffix):</dt><dd><ol class="arabic">
+<dt>Search order for short names (no slash, no .yaml/.yml suffix):</dt><dd><ol class="arabic" start="0">
+<li><p><strong>Project-local</strong> — first <code class="docutils literal notranslate"><span class="pre">.scitex/agent-container/agents/</span></code>
+found walking upward from cwd. Highest priority so checked-in
+test agents and CI fixtures override globals.</p></li>
 <li><p>~/.scitex/agent-container/agents/&lt;name&gt;.yaml  (sac install root)</p></li>
 <li><p>$SCITEX_AGENT_CONTAINER_YAML_DIRS (colon-separated extra dirs)</p></li>
 <li><p>Fleet layout — for each root in
