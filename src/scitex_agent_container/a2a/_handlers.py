@@ -198,6 +198,18 @@ def handle_claude_session(agent_name: str, user_text: str) -> str:
             "(`pip install claude-agent-sdk`)."
         ) from exc
 
+    # Auth bridge: the SDK only reads ANTHROPIC_API_KEY (or falls back to
+    # ~/.claude/.credentials.json on personal machines). Headless contexts
+    # (Spartan SLURM, CI, cron) won't have the credentials file, so bridge
+    # from the sac-namespaced env vars exposed by the secrets bash file.
+    # OAuth preferred (Pro/Max plan, no per-call charge); API key fallback.
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        bridged = os.environ.get(
+            "SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY_OAUTH"
+        ) or os.environ.get("SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY")
+        if bridged:
+            os.environ["ANTHROPIC_API_KEY"] = bridged
+
     system = os.environ.get("SAC_A2A_CLAUDE_SYSTEM", CLAUDE_DEFAULT_SYSTEM)
     model = os.environ.get("SAC_A2A_CLAUDE_MODEL")
     mcp_servers, workdir = _agent_mcp_servers_and_cwd(agent_name)
