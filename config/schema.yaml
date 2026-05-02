@@ -12,7 +12,7 @@ metadata:
     key: value
 
 spec:
-  runtime: string                  # Required. One of: claude-code, cursor, aider
+  runtime: string                  # Required. One of: claude-code, slurm, slurm-tenant
   model: string                    # Optional. Model identifier (e.g., opus, sonnet, opus[1m])
   workdir: string                  # Optional. Working directory (default: ~/proj). Supports ~
 

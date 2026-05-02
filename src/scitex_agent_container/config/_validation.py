@@ -13,18 +13,39 @@ _KNOWN_TOP_LEVEL_KEYS = frozenset({"apiVersion", "kind", "metadata", "spec"})
 # All spec keys read by load_v3, parsers, or a2a/_server.py.
 # Unknown keys are rejected at parse time so typos surface at boot.
 # Intentional extension data belongs under spec.extensions.
-_KNOWN_SPEC_KEYS = frozenset({
-    "runtime", "model", "workdir", "python-venv", "env",
-    "screen", "container", "claude", "health", "watchdog",
-    "restart", "hooks", "telegram", "remote", "slurm",
-    "skills", "startup_commands", "startup", "context_management",
-    "listen", "extensions", "mcp_servers", "multiplexer",
-    "host", "hosts",
-    "session",         # shortcut alias for spec.claude.session
-    "scheduling",      # rejected with a specific actionable message below
-    "a2a",             # A2A sidecar config read by a2a/_server.py
-    "orochi",          # Orochi-specific extension namespace
-})
+_KNOWN_SPEC_KEYS = frozenset(
+    {
+        "runtime",
+        "model",
+        "workdir",
+        "python-venv",
+        "env",
+        "screen",
+        "container",
+        "claude",
+        "health",
+        "watchdog",
+        "restart",
+        "hooks",
+        "telegram",
+        "remote",
+        "slurm",
+        "skills",
+        "startup_commands",
+        "startup",
+        "context_management",
+        "listen",
+        "extensions",
+        "mcp_servers",
+        "multiplexer",
+        "host",
+        "hosts",
+        "session",  # shortcut alias for spec.claude.session
+        "scheduling",  # rejected with a specific actionable message below
+        "a2a",  # A2A sidecar config read by a2a/_server.py
+        "orochi",  # Orochi-specific extension namespace
+    }
+)
 
 
 def validate_raw(raw: dict, path: str) -> list[str]:
@@ -83,7 +104,7 @@ def validate_raw(raw: dict, path: str) -> list[str]:
 
         # spec.runtime
         runtime = spec.get("runtime")
-        valid_runtimes = ("claude-code", "cursor", "aider", "slurm", "slurm-tenant")
+        valid_runtimes = ("claude-code", "slurm", "slurm-tenant")
         if runtime and runtime not in valid_runtimes:
             errors.append(
                 f"spec.runtime must be one of {valid_runtimes}, got '{runtime}'"
@@ -188,9 +209,13 @@ def validate_config(path: str | Path) -> list[str]:
     try:
         with open(path) as f:
             raw = yaml.safe_load(f)
-    except FileNotFoundError:  # stx-allow: fallback (reason: file may not exist on first use)
+    except (
+        FileNotFoundError
+    ):  # stx-allow: fallback (reason: file may not exist on first use)
         return [f"File not found: {path}"]
-    except yaml.YAMLError as exc:  # stx-allow: fallback (reason: expected failure — see inline comment)
+    except (
+        yaml.YAMLError
+    ) as exc:  # stx-allow: fallback (reason: expected failure — see inline comment)
         return [f"YAML parse error: {exc}"]
 
     return validate_raw(raw, str(path))

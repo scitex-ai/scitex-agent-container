@@ -88,9 +88,7 @@ def _errors(raw: dict) -> list[str]:
 
 
 def _write_and_validate(data: dict) -> list[str]:
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".yaml", delete=False
-    ) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         yaml.safe_dump(data, f)
         path = f.name
     result = validate_contributor_spec(path)
@@ -238,9 +236,7 @@ class TestSpecRuntime:
         errors = _errors(raw)
         assert any("runtime" in e for e in errors)
 
-    @pytest.mark.parametrize(
-        "runtime", ["claude-code", "cursor", "aider", "slurm", "slurm-tenant"]
-    )
+    @pytest.mark.parametrize("runtime", ["claude-code", "slurm", "slurm-tenant"])
     def test_valid_runtimes(self, runtime):
         raw = _set(VALID_CONTRIBUTOR_SPEC, ["spec", "runtime"], runtime)
         errors = _errors(raw)
@@ -254,7 +250,9 @@ class TestSpecRuntime:
 
 class TestSpecHost:
     def test_host_as_list(self):
-        raw = _set(VALID_CONTRIBUTOR_SPEC, ["spec", "host"], ["spartan", "spartan-bm149"])
+        raw = _set(
+            VALID_CONTRIBUTOR_SPEC, ["spec", "host"], ["spartan", "spartan-bm149"]
+        )
         assert _errors(raw) == []
 
     def test_host_as_string(self):
@@ -397,9 +395,7 @@ class TestValidateContributorSpecFile:
         assert any("not found" in e.lower() for e in errors)
 
     def test_invalid_yaml_syntax(self):
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".yaml", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             f.write("key: [\nunot closed")
             path = f.name
         errors = validate_contributor_spec(path)
@@ -407,7 +403,10 @@ class TestValidateContributorSpecFile:
         assert any("YAML" in e or "parse" in e.lower() for e in errors)
 
     def test_real_agent_spec_is_valid(self):
-        spec_path = Path.home() / ".scitex/orochi/shared/agents/c-sac-spec-template-validate/c-sac-spec-template-validate.yaml"
+        spec_path = (
+            Path.home()
+            / ".scitex/orochi/shared/agents/c-sac-spec-template-validate/c-sac-spec-template-validate.yaml"
+        )
         if not spec_path.exists():
             pytest.skip(f"Agent spec not found: {spec_path}")
         errors = validate_contributor_spec(spec_path)

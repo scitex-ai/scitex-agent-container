@@ -16,10 +16,10 @@ tags: [scitex-agent-container, scitex-package]
 
 > **Interfaces:** Python ⭐⭐ · CLI ⭐⭐⭐ (primary) · MCP ⭐ · Skills ⭐⭐ · Hook — · HTTP —
 
-Declarative lifecycle management for AI coding agents (Claude Code,
-Cursor, Aider). Define an agent in YAML, launch it in a
-tmux (default) or screen session locally or on a remote host via SSH,
-and observe it through a rich non-agentic status surface.
+Declarative lifecycle management for AI coding agents (Claude Code).
+Define an agent in YAML, launch it in a tmux (default) or screen
+session locally or on a remote host via SSH, and observe it through a
+rich non-agentic status surface.
 
 ## What the package ships
 
