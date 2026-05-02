@@ -175,7 +175,6 @@ def test_run_module_handles_sigterm(tmp_path: Path) -> None:
     assert hb["state"] in (runner.STATE_STOPPING, runner.STATE_IDLE)
 
 
-
 # ---------------------------------------------------------------------------
 # Tiny in-process stand-ins that match the ducktype the runner expects
 # ---------------------------------------------------------------------------
@@ -227,6 +226,17 @@ class _StubClient:
         type(self).interrupt_calls += 1
 
 
+class _StubHookMatcher:
+    """Captures registered hook callbacks per event class."""
+
+    instances: list["_StubHookMatcher"] = []
+
+    def __init__(self, *, hooks: list, matcher: str | None = None) -> None:
+        self.hooks = hooks
+        self.matcher = matcher
+        type(self).instances.append(self)
+
+
 def _patch_sdk(monkeypatch) -> types.ModuleType:
     """Insert a fake ``claude_agent_sdk`` module exposing the names the
     runner imports."""
@@ -235,6 +245,8 @@ def _patch_sdk(monkeypatch) -> types.ModuleType:
     mod.ClaudeSDKClient = _StubClient  # type: ignore[attr-defined]
     mod.ResultMessage = _StubResult  # type: ignore[attr-defined]
     mod.TextBlock = _StubText  # type: ignore[attr-defined]
+    mod.HookMatcher = _StubHookMatcher  # type: ignore[attr-defined]
+    _StubHookMatcher.instances = []
     mod.UserMessage = type(
         "UserMessage", (), {}
     )  # unused in this test  # type: ignore[attr-defined]
@@ -382,3 +394,129 @@ def test_conversation_records_error_when_sdk_missing(
     # Last row must be the structured error envelope.
     assert rows[-1]["type"] == "error"
     assert rows[-1]["kind"] == "sdk_missing"
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 — quota accumulator, hook bridge
+# ---------------------------------------------------------------------------
+
+
+class TestQuotaAccumulator:
+    def test_zeros_when_absent(self, tmp_path: Path) -> None:
+        totals = runner.read_quota(tmp_path)
+        assert totals == {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "turns": 0,
+        }
+
+    def test_accumulate_sums_and_increments_turns(self, tmp_path: Path) -> None:
+        runner.accumulate_quota(
+            tmp_path,
+            {
+                "input_tokens": 10,
+                "output_tokens": 50,
+                "cache_creation_input_tokens": 33000,
+                "cache_read_input_tokens": 0,
+            },
+        )
+        runner.accumulate_quota(
+            tmp_path,
+            {"input_tokens": 5, "output_tokens": 12, "cache_read_input_tokens": 200},
+        )
+        totals = runner.read_quota(tmp_path)
+        assert totals["input_tokens"] == 15
+        assert totals["output_tokens"] == 62
+        assert totals["cache_creation_input_tokens"] == 33000
+        assert totals["cache_read_input_tokens"] == 200
+        assert totals["turns"] == 2
+
+    def test_none_usage_is_a_noop(self, tmp_path: Path) -> None:
+        runner.accumulate_quota(tmp_path, None)
+        assert not (tmp_path / "quota.json").exists()
+        assert runner.read_quota(tmp_path)["turns"] == 0
+
+
+class TestHookBridge:
+    """The runner's hooks dict must register a callback per SDK event
+    class, and each callback must forward its payload to event_log
+    with the right kind + fields."""
+
+    def test_hooks_dict_has_four_event_classes(self) -> None:
+        hooks = runner._build_event_log_hooks("alpha", _StubHookMatcher)
+        assert set(hooks) == {"PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop"}
+        # Each event class registers exactly one matcher with one callback.
+        for matchers in hooks.values():
+            assert len(matchers) == 1
+            assert len(matchers[0].hooks) == 1
+
+    def test_pretool_callback_forwards_to_event_log(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured: list[tuple] = []
+
+        def _spy(agent: str, kind: str, payload: dict, *, root=None) -> None:
+            captured.append((agent, kind, payload))
+
+        from scitex_agent_container import event_log
+
+        monkeypatch.setattr(event_log, "append_event", _spy)
+        hooks = runner._build_event_log_hooks("alpha", _StubHookMatcher)
+        cb = hooks["PreToolUse"][0].hooks[0]
+        asyncio.run(
+            cb(
+                {"tool_name": "Bash", "tool_input": {"command": "ls"}},
+                "use-1",
+                None,
+            )
+        )
+        assert captured == [
+            ("alpha", "pretool", {"tool_name": "Bash", "tool_input": {"command": "ls"}})
+        ]
+
+    def test_prompt_and_stop_callbacks_route_correctly(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured: list[tuple] = []
+
+        def _spy(agent: str, kind: str, payload: dict, *, root=None) -> None:
+            captured.append((kind, payload))
+
+        from scitex_agent_container import event_log
+
+        monkeypatch.setattr(event_log, "append_event", _spy)
+        hooks = runner._build_event_log_hooks("alpha", _StubHookMatcher)
+        prompt_cb = hooks["UserPromptSubmit"][0].hooks[0]
+        stop_cb = hooks["Stop"][0].hooks[0]
+        asyncio.run(prompt_cb({"prompt": "hi"}, None, None))
+        asyncio.run(stop_cb({"stop_hook_active": True}, None, None))
+        assert ("prompt", {"prompt": "hi"}) in captured
+        assert ("stop", {"stop_hook_active": True}) in captured
+
+
+def test_conversation_accumulates_quota_and_registers_hooks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end: a single SDK turn populates quota.json and the
+    HookMatcher stub captures four registered hook entries (one per
+    SDK event class)."""
+    _patch_sdk(monkeypatch)
+    _patch_options(monkeypatch)
+    state_dir = tmp_path / "alpha"
+    asyncio.run(
+        runner._run_conversation(
+            "alpha",
+            state_dir,
+            pid=1,
+            mission="go",
+            resume_session_id=None,
+            stop=asyncio.Event(),
+        )
+    )
+    quota = runner.read_quota(state_dir)
+    assert quota["turns"] == 1
+    assert quota["output_tokens"] == 7  # _StubResult usage above
+    # Four HookMatcher instances created (one per event class).
+    assert len(_StubHookMatcher.instances) == 4

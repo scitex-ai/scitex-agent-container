@@ -136,13 +136,18 @@ class ClaudeSessionRuntime(RuntimeBase):
         return pid is not None and _pid_alive(pid)
 
     def logs(self, config: AgentConfig, lines: int = 50) -> str:
-        """Phase 1: only the latest heartbeat is available — return that.
+        """Return the last ``lines`` of the session transcript, prettified.
 
-        Phase 2 will tail ``session.jsonl`` (the assistant message
-        stream) here.
+        Reads ``session.jsonl`` (one JSON object per turn event) and
+        renders a compact human-readable view: the user mission, each
+        assistant chunk, and a closing ``[result]`` summary with
+        accumulated token totals. Falls back to the latest heartbeat
+        if the agent hasn't started a conversation yet.
         """
-        _ = lines
         state_dir = _runner.state_dir_for(config.name)
+        rendered = _format_session_tail(state_dir, lines)
+        if rendered:
+            return rendered
         hb = _runner.read_heartbeat(state_dir)
         if hb is None:
             return "(no heartbeat yet)"
@@ -160,6 +165,60 @@ class ClaudeSessionRuntime(RuntimeBase):
                 pass
             except OSError:  # stx-allow: fallback (reason: cleanup must not raise)
                 pass
+
+
+def _format_session_tail(state_dir, max_lines: int) -> str:
+    """Render the tail of ``session.jsonl`` as a compact human view.
+
+    Returns the empty string if the file is absent (caller falls back to
+    the heartbeat). Each record renders as a single line keyed by type:
+
+      [user]      mission text
+      [assistant] streamed chunk
+      [result]    session=<sid>  in/out/cache totals
+      [error]     kind  detail
+      [user_echo] (verbatim repr trimmed in the runner)
+    """
+    import json as _json
+
+    transcript = state_dir / "session.jsonl"
+    if not transcript.is_file():
+        return ""
+    try:
+        with transcript.open(encoding="utf-8") as fh:
+            raw = fh.readlines()[-max_lines:]
+    except OSError:
+        return ""
+    out: list[str] = []
+    for line in raw:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = _json.loads(line)
+        except _json.JSONDecodeError:
+            continue
+        kind = rec.get("type", "?")
+        if kind == "user":
+            out.append(f"[user]      {rec.get('text', '')}")
+        elif kind == "assistant":
+            out.append(f"[assistant] {rec.get('text', '')}")
+        elif kind == "result":
+            usage = rec.get("usage") or {}
+            out.append(
+                f"[result]    session={rec.get('session_id', '?')}  "
+                f"in={usage.get('input_tokens', 0)} "
+                f"out={usage.get('output_tokens', 0)} "
+                f"cache_w={usage.get('cache_creation_input_tokens', 0)} "
+                f"cache_r={usage.get('cache_read_input_tokens', 0)}"
+            )
+        elif kind == "error":
+            out.append(f"[error]     {rec.get('kind', '?')}: {rec.get('detail', '')}")
+        elif kind == "user_echo":
+            out.append(f"[user_echo] {rec.get('raw', '')}")
+        else:
+            out.append(f"[{kind}]      {_json.dumps(rec, ensure_ascii=False)[:200]}")
+    return "\n".join(out)
 
 
 def _first_mission(config: AgentConfig) -> str | None:

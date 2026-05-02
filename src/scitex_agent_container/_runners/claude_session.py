@@ -36,6 +36,7 @@ import signal
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +129,51 @@ async def _heartbeat_loop(
             write_heartbeat(state_dir, pid=pid, state=STATE_IDLE)
 
 
+def _quota_path(state_dir: Path) -> Path:
+    return state_dir / "quota.json"
+
+
+def read_quota(state_dir: Path) -> dict:
+    """Return the persisted quota totals, or a zeroed dict if absent."""
+    p = _quota_path(state_dir)
+    if not p.is_file():
+        return {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "turns": 0,
+        }
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def accumulate_quota(state_dir: Path, usage: dict | None) -> dict:
+    """Add one ``ResultMessage.usage`` block to the running totals.
+
+    Returns the new totals. Atomic via tmp+rename so a concurrent
+    ``sac show-status`` reader never sees a partial write.
+    """
+    if not usage:
+        return read_quota(state_dir)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    totals = read_quota(state_dir)
+    for key in (
+        "input_tokens",
+        "output_tokens",
+        "cache_creation_input_tokens",
+        "cache_read_input_tokens",
+    ):
+        totals[key] = int(totals.get(key, 0)) + int(usage.get(key, 0) or 0)
+    totals["turns"] = int(totals.get("turns", 0)) + 1
+    tmp = state_dir / "quota.json.tmp"
+    tmp.write_text(json.dumps(totals), encoding="utf-8")
+    tmp.replace(_quota_path(state_dir))
+    return totals
+
+
 def write_session_id(state_dir: Path, session_id: str) -> None:
     """Persist the SDK session id so a respawn can resume."""
     state_dir.mkdir(parents=True, exist_ok=True)
@@ -180,8 +226,18 @@ async def _run_conversation(
             TextBlock,
             UserMessage,
         )
-    except ImportError as exc:  # stx-allow: fallback (reason: optional dep at runtime)
-        logger.error("claude-agent-sdk not installed: %s", exc)
+    except Exception as exc:  # stx-allow: fallback (reason: optional dep import + transient init failures must downgrade to a recorded error, not crash the runner)
+        logger.error("claude-agent-sdk import failed: %s", exc)
+        append_session_message(
+            state_dir,
+            {"type": "error", "kind": "sdk_missing", "detail": str(exc)},
+        )
+        return
+
+    try:
+        from claude_agent_sdk import HookMatcher
+    except Exception as exc:  # stx-allow: fallback (reason: same SDK surface as above)
+        logger.error("claude-agent-sdk hook surface unavailable: %s", exc)
         append_session_message(
             state_dir,
             {"type": "error", "kind": "sdk_missing", "detail": str(exc)},
@@ -189,6 +245,8 @@ async def _run_conversation(
         return
 
     from ..runtimes._sdk_common import SDKCommonError, build_sdk_options
+
+    hooks = _build_event_log_hooks(name, HookMatcher)
 
     write_heartbeat(state_dir, pid=pid, state=STATE_WORKING)
     append_session_message(state_dir, {"type": "user", "text": mission})
@@ -198,6 +256,7 @@ async def _run_conversation(
             name,
             permission_mode="bypassPermissions",
             resume=resume_session_id,
+            hooks=hooks,
         )
     except SDKCommonError as exc:
         logger.error("could not build sdk options: %s", exc)
@@ -231,12 +290,14 @@ async def _run_conversation(
                 sid = getattr(msg, "session_id", None)
                 if sid:
                     write_session_id(state_dir, sid)
+                usage = getattr(msg, "usage", None)
+                accumulate_quota(state_dir, usage)
                 append_session_message(
                     state_dir,
                     {
                         "type": "result",
                         "session_id": sid,
-                        "usage": getattr(msg, "usage", None),
+                        "usage": usage,
                     },
                 )
                 break
@@ -253,6 +314,70 @@ async def _run_conversation(
     finally:
         if not stop.is_set():
             write_heartbeat(state_dir, pid=pid, state=STATE_IDLE)
+
+
+def _build_event_log_hooks(agent_name: str, hook_matcher_cls: Any) -> dict:
+    """Wire SDK hook callbacks into ``event_log.append_event``.
+
+    The CLI runtime publishes the same event vocabulary today via
+    ``sac record-hook-event`` invoked from
+    ``.claude/settings.local.json``. By bridging here we keep the
+    downstream schema (``pretool`` / ``posttool`` / ``prompt`` /
+    ``stop`` records, same fields) identical so existing consumers
+    (``sac show-status``, ``event_log.summarize``, fleet dashboards)
+    work unchanged.
+
+    Hook callbacks are *async no-ops* on the wire: they return ``{}``
+    to the SDK and never block. ``append_event`` is itself swallowed-
+    failures, so a misbehaving hook cannot kill the agent.
+    """
+    from ..event_log import append_event
+
+    async def _on_pretool(payload, _tool_use_id, _ctx):
+        append_event(
+            agent_name,
+            "pretool",
+            {
+                "tool_name": payload.get("tool_name", ""),
+                "tool_input": payload.get("tool_input") or {},
+            },
+        )
+        return {}
+
+    async def _on_posttool(payload, _tool_use_id, _ctx):
+        append_event(
+            agent_name,
+            "posttool",
+            {
+                "tool_name": payload.get("tool_name", ""),
+                "tool_input": payload.get("tool_input") or {},
+                "tool_response": payload.get("tool_response"),
+            },
+        )
+        return {}
+
+    async def _on_prompt(payload, _tool_use_id, _ctx):
+        append_event(
+            agent_name,
+            "prompt",
+            {"prompt": payload.get("prompt", "")},
+        )
+        return {}
+
+    async def _on_stop(payload, _tool_use_id, _ctx):
+        append_event(
+            agent_name,
+            "stop",
+            {"stop_hook_active": bool(payload.get("stop_hook_active"))},
+        )
+        return {}
+
+    return {
+        "PreToolUse": [hook_matcher_cls(hooks=[_on_pretool])],
+        "PostToolUse": [hook_matcher_cls(hooks=[_on_posttool])],
+        "UserPromptSubmit": [hook_matcher_cls(hooks=[_on_prompt])],
+        "Stop": [hook_matcher_cls(hooks=[_on_stop])],
+    }
 
 
 def _safe_repr(value: object) -> str:

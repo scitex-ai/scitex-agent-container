@@ -81,6 +81,33 @@ class TestLogs:
         out = rt.logs(_config())  # type: ignore[arg-type]
         assert "idle" in out
 
+    def test_session_jsonl_renders_human_view(self, state_root: Path) -> None:
+        sd = state_root / "alpha"
+        runner.append_session_message(sd, {"type": "user", "text": "do X"})
+        runner.append_session_message(sd, {"type": "assistant", "text": "doing"})
+        runner.append_session_message(
+            sd,
+            {
+                "type": "result",
+                "session_id": "sess-1",
+                "usage": {"input_tokens": 3, "output_tokens": 5},
+            },
+        )
+        out = ClaudeSessionRuntime().logs(_config())  # type: ignore[arg-type]
+        assert "[user]" in out and "do X" in out
+        assert "[assistant]" in out and "doing" in out
+        assert "[result]" in out and "sess-1" in out and "out=5" in out
+
+    def test_session_tail_respects_lines_arg(self, state_root: Path) -> None:
+        sd = state_root / "alpha"
+        for i in range(5):
+            runner.append_session_message(
+                sd, {"type": "assistant", "text": f"chunk-{i}"}
+            )
+        out = ClaudeSessionRuntime().logs(_config(), lines=2)  # type: ignore[arg-type]
+        assert "chunk-3" in out and "chunk-4" in out
+        assert "chunk-0" not in out
+
 
 class TestPidAlive:
     def test_self_alive(self) -> None:
