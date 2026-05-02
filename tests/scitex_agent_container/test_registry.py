@@ -16,11 +16,21 @@ def registry(tmp_path):
     print(
         f"[CI-DEBUG] Registry={Registry!r} module={Registry.__module__} "
         f"file={getattr(sys.modules.get(Registry.__module__), '__file__', '?')} "
-        f"init={Registry.__init__!r}",
+        f"init={Registry.__init__!r} "
+        f"new={Registry.__new__!r} "
+        f"call={type(Registry).__call__!r} "
+        f"meta={type(Registry)!r} "
+        f"mro={Registry.__mro__!r}",
         file=sys.stderr,
         flush=True,
     )
-    return Registry(registry_dir=tmp_path / "registry")
+    # Try positional first to isolate kwarg vs args issue.
+    try:
+        return Registry(tmp_path / "registry")
+    except TypeError as e:
+        print(f"[CI-DEBUG] positional also failed: {e}", file=sys.stderr, flush=True)
+        # Fallback to original failure path so test still surfaces normally.
+        return Registry(registry_dir=tmp_path / "registry")
 
 
 class TestRegistry:
