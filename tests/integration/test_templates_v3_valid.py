@@ -83,6 +83,7 @@ def test_minimal_templates_cover_expected_patterns():
         "ssh.yaml",
         "ssh-slurm.yaml",
         "mcp.yaml",
+        "claude-session.yaml",
     }
     actual = {p.name for p in TEMPLATES_DIR.glob("*.yaml")}
     assert actual == expected, f"template set drifted: {actual ^ expected}"

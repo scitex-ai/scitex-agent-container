@@ -209,6 +209,7 @@ async def _run_conversation(
     mission: str,
     resume_session_id: str | None,
     stop: asyncio.Event,
+    print_stream: bool = False,
 ) -> None:
     """Drive a single mission turn against ClaudeSDKClient.
 
@@ -279,6 +280,12 @@ async def _run_conversation(
                         append_session_message(
                             state_dir, {"type": "assistant", "text": block.text}
                         )
+                        if print_stream:
+                            # Foreground mode: mirror assistant text to
+                            # stdout so the operator sees streaming output
+                            # without tailing session.jsonl.
+                            sys.stdout.write(block.text)
+                            sys.stdout.flush()
             elif isinstance(msg, UserMessage):
                 # Tool-result echo from the SDK; record so transcripts
                 # can render the full turn structure later.
@@ -393,6 +400,7 @@ async def run(
     tick_seconds: float = DEFAULT_TICK_SECONDS,
     mission: str | None = None,
     resume_session_id: str | None = None,
+    print_stream: bool = False,
 ) -> int:
     """Run the daemon loop until SIGTERM / SIGINT.
 
@@ -440,7 +448,13 @@ async def run(
             mission=mission,
             resume_session_id=resume_session_id,
             stop=stop,
+            print_stream=print_stream,
         )
+        if print_stream:
+            # Foreground mode: when the conversation ends, exit cleanly
+            # rather than parking in IDLE waiting for SIGTERM. The
+            # operator's terminal is freed for the next command.
+            return 0
 
     try:
         await stop.wait()
@@ -492,6 +506,16 @@ def _parse_argv(argv: list[str] | None = None) -> argparse.Namespace:
             "session_id state file). Forwarded to ClaudeAgentOptions(resume=...)."
         ),
     )
+    p.add_argument(
+        "--print-stream",
+        action="store_true",
+        help=(
+            "Mirror assistant message chunks to stdout as they arrive, "
+            "and exit when the turn completes. Used by --foreground "
+            "starts so the operator sees streaming output without "
+            "having to tail session.jsonl."
+        ),
+    )
     return p.parse_args(argv)
 
 
@@ -505,6 +529,7 @@ def main(argv: list[str] | None = None) -> int:
             tick_seconds=args.tick_seconds,
             mission=args.mission,
             resume_session_id=args.resume_session_id,
+            print_stream=args.print_stream,
         )
     )
 

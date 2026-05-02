@@ -38,9 +38,13 @@ class ClaudeSessionRuntime(RuntimeBase):
         no_preflight: bool = False,
         force: bool = False,
         dry_run: bool = False,
+        foreground: bool = False,
     ) -> bool:
-        """Spawn the runner detached. Returns True if PID lands within ~3 s."""
-        _ = no_preflight  # Phase 1: no preflight checks beyond is_running.
+        """Spawn the runner. In daemon mode, returns True once the PID
+        file lands. In foreground mode, blocks until the conversation
+        completes (or the operator hits Ctrl+C) and returns True iff
+        the runner exited cleanly."""
+        _ = no_preflight  # no preflight checks beyond is_running.
         state_dir = _runner.state_dir_for(config.name)
 
         if force and self.is_running(config):
@@ -73,6 +77,28 @@ class ClaudeSessionRuntime(RuntimeBase):
         prior_sid = _runner.read_session_id(state_dir)
         if prior_sid:
             argv.extend(["--resume-session-id", prior_sid])
+
+        if foreground:
+            # Foreground mode: inherit the caller's stdio so SDK output
+            # streams to the terminal, no detach, and block until the
+            # runner exits. The runner's --print-stream flag mirrors
+            # assistant chunks to stdout in real time.
+            argv.append("--print-stream")
+            proc = subprocess.Popen(argv, close_fds=True)
+            try:
+                rc = proc.wait()
+            except KeyboardInterrupt:
+                # Cooperative shutdown: SIGTERM the runner, wait for it
+                # to flush its STOPPING heartbeat, then re-raise so the
+                # outer CLI can render its own farewell.
+                proc.send_signal(signal.SIGTERM)
+                try:
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    proc.send_signal(signal.SIGKILL)
+                raise
+            return rc == 0
+
         proc = subprocess.Popen(
             argv,
             stdout=subprocess.DEVNULL,

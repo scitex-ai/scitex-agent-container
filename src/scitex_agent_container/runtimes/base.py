@@ -17,6 +17,7 @@ class RuntimeBase(ABC):
         no_preflight: bool = False,
         force: bool = False,
         dry_run: bool = False,
+        foreground: bool = False,
     ) -> bool:
         """Start an agent. Returns True on success.
 
@@ -28,6 +29,12 @@ class RuntimeBase(ABC):
         workspace (CLAUDE.md, .mcp.json, .env, settings.json) but to
         skip launching the multiplexer / agent process. Runtimes that
         cannot meaningfully dry-run should raise ``NotImplementedError``.
+
+        ``foreground=True`` instructs the runtime to keep the agent
+        attached to the caller's terminal (no detach, stdio inherited)
+        and block until the agent exits. Runtimes that have no
+        meaningful foreground mode (e.g. screen / tmux runtimes whose
+        whole point is detachment) ignore this flag.
         """
         ...
 

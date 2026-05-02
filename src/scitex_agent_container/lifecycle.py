@@ -106,6 +106,7 @@ def agent_start(
     session_override: str | None = None,
     resume_id_override: str | None = None,
     dry_run: bool = False,
+    foreground: bool = False,
 ) -> bool:
     """Start an agent from a YAML config file.
 
@@ -205,7 +206,12 @@ def agent_start(
     # Config-level no_preflight overrides CLI flag
     if config.remote.no_preflight:
         no_preflight = True
-    success = runtime.start(config, no_preflight=no_preflight, force=force)
+    success = runtime.start(
+        config,
+        no_preflight=no_preflight,
+        force=force,
+        foreground=foreground,
+    )
     if not success:
         raise RuntimeError(f"Failed to start agent '{config.name}'")
 

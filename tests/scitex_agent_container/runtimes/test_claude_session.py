@@ -191,6 +191,36 @@ class TestArgvComposition:
             captured["argv"][captured["argv"].index("--mission") + 1] == "Hello mission"
         )
 
+    def test_foreground_mode_inherits_stdio_and_blocks(self, state_root: Path) -> None:
+        from scitex_agent_container.runtimes import claude_session as adapter
+
+        cfg = _config(startup_commands=[_startup("hi")])
+        captured: dict = {}
+
+        class _FakePopen:
+            def __init__(self, argv, **kw):
+                captured["argv"] = argv
+                captured["kwargs"] = kw
+                self.pid = 1234
+
+            def wait(self):
+                return 0
+
+            def send_signal(self, _s):
+                pass
+
+        with patch.object(adapter.subprocess, "Popen", _FakePopen):
+            ok = adapter.ClaudeSessionRuntime().start(cfg, foreground=True)  # type: ignore[arg-type]
+        assert ok is True
+        # Foreground => no stdout/stderr/stdin redirection (those keys must
+        # be absent so subprocess inherits the caller's tty).
+        assert "stdout" not in captured["kwargs"]
+        assert "stderr" not in captured["kwargs"]
+        assert "stdin" not in captured["kwargs"]
+        assert "start_new_session" not in captured["kwargs"]
+        # Runner gets --print-stream so it mirrors assistant chunks.
+        assert "--print-stream" in captured["argv"]
+
     def test_existing_session_id_triggers_resume(self, state_root: Path) -> None:
         from scitex_agent_container.runtimes import claude_session as adapter
 

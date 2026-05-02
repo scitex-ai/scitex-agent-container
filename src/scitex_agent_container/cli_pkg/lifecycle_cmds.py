@@ -205,6 +205,19 @@ def _discover_all_agents() -> list[str]:
     help="Skip confirmation prompt (currently a no-op; reserved for future "
     "interactive confirmations).",
 )
+@click.option(
+    "--foreground",
+    "foreground",
+    is_flag=True,
+    default=False,
+    help=(
+        "Run the agent attached to this terminal (no detach) and stream "
+        "assistant output to stdout. Only meaningful for the "
+        "claude-session runtime; ignored elsewhere. Single-target only — "
+        "passing --foreground with multiple targets or a directory is an "
+        "error."
+    ),
+)
 def start(
     targets: tuple[str, ...],
     no_preflight: bool,
@@ -214,6 +227,7 @@ def start(
     dry_run: bool,
     as_json: bool,
     yes: bool,
+    foreground: bool,
 ) -> None:
     """Start one or more agents from YAML definitions.
 
@@ -250,6 +264,13 @@ def start(
         click.echo(
             "Error: --resume / --session cannot be combined with directory "
             "targets (they would apply the same value to every agent).",
+            err=True,
+        )
+        sys.exit(2)
+    if foreground and (is_bulk or len(single_targets) > 1):
+        click.echo(
+            "Error: --foreground only works with a single agent target — "
+            "the runner takes over the terminal until it exits.",
             err=True,
         )
         sys.exit(2)
@@ -379,6 +400,7 @@ def start(
                 dry_run=dry_run,
                 session_override=session_mode,
                 resume_id_override=resume_id,
+                foreground=foreground,
             )
             if as_json:
                 _emit_json(

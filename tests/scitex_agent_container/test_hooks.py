@@ -167,7 +167,7 @@ def test_agent_start_invokes_pre_and_post(monkeypatch, tmp_path):
         def is_running(self, c):
             return False
 
-        def start(self, c, no_preflight=False, force=False):
+        def start(self, c, no_preflight=False, force=False, **_kw):
             return True
 
     class _Registry:
