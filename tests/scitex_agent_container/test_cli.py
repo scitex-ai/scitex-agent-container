@@ -81,7 +81,8 @@ class TestCLI:
 
     def test_cleanup(self):
         runner = CliRunner()
-        result = runner.invoke(main, ["cleanup"])
+        # cleanup now confirms by default; pass --yes for non-interactive runs.
+        result = runner.invoke(main, ["cleanup", "--yes"])
         assert result.exit_code == 0
 
     def test_version(self):
