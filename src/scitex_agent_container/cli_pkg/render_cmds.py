@@ -22,6 +22,11 @@ def render_sbatch(name_or_path: str) -> None:
     Suitable for piping into a file and submitting manually, or for CI
     linting. Emits to stdout regardless of whether sbatch is installed
     on the current host.
+
+    \b
+    Example:
+      $ sac render-sbatch head-spartan
+      $ sac render-sbatch head-spartan > head-spartan.sbatch
     """
     config_path = resolve_config(name_or_path)
     cfg = load_config(config_path)
@@ -46,6 +51,11 @@ def render_attach(name_or_path: str, job_id: str | None) -> None:
 
     Requires a live SLURM allocation. If ``--job-id`` is not given, reads
     the recorded jobid from sac's slurm state file.
+
+    \b
+    Example:
+      $ sac render-attach head-spartan
+      $ sac render-attach head-spartan --job-id 12345678
     """
     config_path = resolve_config(name_or_path)
     cfg = load_config(config_path)

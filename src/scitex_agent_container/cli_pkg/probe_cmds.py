@@ -12,7 +12,12 @@ import sys
 
 import click
 
-from ..network_probe import DEFAULT_HUB_HOST, DEFAULT_HUB_PORT, DEFAULT_HUB_URL, run_and_log
+from ..network_probe import (
+    DEFAULT_HUB_HOST,
+    DEFAULT_HUB_PORT,
+    DEFAULT_HUB_URL,
+    run_and_log,
+)
 
 
 @click.command("probe-network")
@@ -78,6 +83,11 @@ def probe_network(
     logs: when the fleet's SSH probe to this host fails, we have a
     timestamp-aligned ``probes`` record from inside WSL proving which
     layer actually broke (DNS vs LAN vs hub-reach vs TLS).
+
+    \b
+    Example:
+      $ sac probe-network --agent head-ywata-note-win
+      $ sac probe-network --quiet --exit-nonzero-on-fail
     """
     effective_agent = (
         agent

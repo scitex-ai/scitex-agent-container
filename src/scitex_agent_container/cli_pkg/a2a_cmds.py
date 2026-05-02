@@ -81,7 +81,13 @@ def a2a_serve(
     handler: str,
     verbose: bool,
 ) -> None:
-    """Serve A2A endpoints for the given agent YAMLs (foreground)."""
+    """Serve A2A endpoints for the given agent YAMLs (foreground).
+
+    \b
+    Example:
+      $ sac a2a serve ~/.scitex/agent-container/agents/foo/foo.yaml
+      $ sac a2a serve foo.yaml bar.yaml --port 8001
+    """
     if verbose:
         logging.basicConfig(
             level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
@@ -125,7 +131,13 @@ def a2a_doctor(
     timeout: float,
     as_json: bool,
 ) -> None:
-    """Probe an agent's A2A AgentCard endpoint and report health."""
+    """Probe an agent's A2A AgentCard endpoint and report health.
+
+    \b
+    Example:
+      $ sac a2a doctor ~/.scitex/agent-container/agents/foo/foo.yaml
+      $ sac a2a doctor foo.yaml --json
+    """
     v3 = yaml.safe_load(agent_yaml.read_text()) or {}
     name = (v3.get("metadata") or {}).get("name") or agent_yaml.stem
     a2a_block = (v3.get("spec") or {}).get("a2a") or {}
@@ -168,7 +180,9 @@ def a2a_doctor(
             "card_url": body.get("url"),
         }
         _emit(result, as_json)
-    except urllib.error.HTTPError as exc:  # stx-allow: fallback (reason: expected failure — see inline comment)
+    except (
+        urllib.error.HTTPError
+    ) as exc:  # stx-allow: fallback (reason: expected failure — see inline comment)
         _emit(
             {
                 "ok": False,
@@ -179,7 +193,11 @@ def a2a_doctor(
             as_json,
         )
         sys.exit(1)
-    except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:  # stx-allow: fallback (reason: malformed JSON tolerated)
+    except (
+        urllib.error.URLError,
+        OSError,
+        json.JSONDecodeError,
+    ) as exc:  # stx-allow: fallback (reason: malformed JSON tolerated)
         _emit(
             {
                 "ok": False,

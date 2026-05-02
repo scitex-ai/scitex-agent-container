@@ -45,7 +45,13 @@ def snapshot(
     session: str | None,
     terse: bool,
 ) -> None:
-    """Take a self-snapshot for AGENT and print it as JSON."""
+    """Take a self-snapshot for AGENT and print it as JSON.
+
+    \b
+    Example:
+      $ sac snapshot head-ywata-note-win
+      $ sac snapshot head-ywata-note-win --with-diff
+    """
     # stx-allow: fallback (reason: CLI command must emit a JSON error and exit cleanly rather than printing a raw traceback)
     try:
         snap = take_snapshot(agent, session=session, with_diff=with_diff)

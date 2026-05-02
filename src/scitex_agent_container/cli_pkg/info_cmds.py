@@ -42,6 +42,11 @@ def find(
 
     Searches agent definition files for those whose ``capabilities`` label
     includes the given value. Useful for routing tasks to the right agent.
+
+    \b
+    Example:
+      $ sac find HPC
+      $ sac find GPU --json
     """
     if search_dir is None:
         search_dir = "."
@@ -112,7 +117,13 @@ def find(
     help="Number of log lines to show.",
 )
 def logs(name: str, lines: int) -> None:
-    """Show recent agent output."""
+    """Show recent agent output.
+
+    \b
+    Example:
+      $ sac logs head-ywata-note-win
+      $ sac logs head-ywata-note-win -n 200
+    """
     # stx-allow: fallback (reason: agent_logs reads from multiplexer or log files that may be absent if the agent was never started; error is reported and CLI exits with code 1)
     try:
         output = agent_logs(name, lines)
@@ -128,7 +139,12 @@ def logs(name: str, lines: int) -> None:
 @click.command()
 @click.argument("name")
 def attach(name: str) -> None:
-    """Attach to an agent's multiplexer session."""
+    """Attach to an agent's multiplexer session.
+
+    \b
+    Example:
+      $ sac attach head-ywata-note-win
+    """
     registry = Registry()
     entry = registry.get(name)
     if entry is None:
@@ -192,7 +208,13 @@ def attach(name: str) -> None:
 def list_python_apis(
     ctx: click.Context, verbose: int, max_depth: int, as_json: bool
 ) -> None:
-    """List all public Python APIs of scitex-agent-container."""
+    """List all public Python APIs of scitex-agent-container.
+
+    \b
+    Example:
+      $ sac list-python-apis
+      $ sac list-python-apis -v
+    """
     module = importlib.import_module("scitex_agent_container")
     tree = get_api_tree(module, max_depth=max_depth, docstring=(verbose >= 1))
 
@@ -218,7 +240,10 @@ def list_python_apis(
             if obj and callable(obj):
                 try:
                     sig = str(inspect.signature(obj))
-                except (ValueError, TypeError):  # stx-allow: fallback (reason: type coercion or format mismatch)
+                except (
+                    ValueError,
+                    TypeError,
+                ):  # stx-allow: fallback (reason: type coercion or format mismatch)
                     sig = "()"
                 click.echo(f"{indent}[{t}] {name}{sig}")
             else:

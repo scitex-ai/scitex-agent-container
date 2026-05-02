@@ -86,10 +86,15 @@ def _format_claude_account_block(meta: dict) -> list[str]:
     "Implies --json. Reduces per-agent payload ~18x.",
 )
 @click.pass_context
-def status(
-    ctx: click.Context, name: str | None, as_json: bool, terse: bool
-) -> None:
-    """Show agent status (one agent or all)."""
+def status(ctx: click.Context, name: str | None, as_json: bool, terse: bool) -> None:
+    """Show agent status (one agent or all).
+
+    \b
+    Example:
+      $ sac status
+      $ sac status head-ywata-note-win
+      $ sac status --json
+    """
     use_json = _json_flag(ctx, as_json) or terse
     registry = Registry()
 
@@ -131,7 +136,10 @@ def status(
     else:
         try:
             claude_account = read_credentials_metadata()
-        except (OSError, json_mod.JSONDecodeError):  # stx-allow: fallback (reason: malformed JSON tolerated)
+        except (
+            OSError,
+            json_mod.JSONDecodeError,
+        ):  # stx-allow: fallback (reason: malformed JSON tolerated)
             claude_account = {}
         # RuntimeError from _check_no_secrets() is a load-bearing alarm
         # that a token just leaked; intentionally propagate.
@@ -180,7 +188,14 @@ def list_agents(
     capability: str | None,
     machine: str | None,
 ) -> None:
-    """List all registered agents."""
+    """List all registered agents.
+
+    \b
+    Example:
+      $ sac list
+      $ sac list --json
+      $ sac list --capability HPC
+    """
     use_json = _json_flag(ctx, as_json)
     registry = Registry()
     if use_json:
@@ -200,7 +215,13 @@ def list_agents(
 )
 @click.pass_context
 def health(ctx: click.Context, name: str, as_json: bool) -> None:
-    """Run a health check on an agent."""
+    """Run a health check on an agent.
+
+    \b
+    Example:
+      $ sac health head-ywata-note-win
+      $ sac health head-ywata-note-win --json
+    """
     use_json = _json_flag(ctx, as_json)
     registry = Registry()
     entry = registry.get(name)
@@ -271,7 +292,13 @@ def _detect_agent_state(content: str) -> str:
 )
 @click.pass_context
 def check_agent(ctx: click.Context, name: str, as_json: bool) -> None:
-    """Check live state of an agent by capturing pane content."""
+    """Check live state of an agent by capturing pane content.
+
+    \b
+    Example:
+      $ sac inspect head-ywata-note-win
+      $ sac inspect head-ywata-note-win --json
+    """
     use_json = _json_flag(ctx, as_json)
     registry = Registry()
     entry = registry.get(name)

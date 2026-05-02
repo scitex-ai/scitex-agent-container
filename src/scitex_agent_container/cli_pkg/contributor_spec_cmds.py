@@ -90,7 +90,7 @@ def _derive_branch_short(name: str) -> str:
     """Strip common c-sac- prefix to get a branch slug."""
     for prefix in ("c-sac-", "c-"):
         if name.startswith(prefix):
-            return name[len(prefix):]
+            return name[len(prefix) :]
     return name
 
 
@@ -146,11 +146,9 @@ def contributor_spec(
     (produced by chunk A: c-sac-spec-template-jinja) and writes
     ~/.scitex/orochi/shared/agents/<name>/<name>.yaml.
 
+    \b
     Example:
-
-        sac contributor-spec \\
-            --name c-sac-my-feature \\
-            --port 19200 \\
+      $ sac contributor-spec --name c-sac-my-feature --port 19200 \\
             --target-repo scitex-agent-container \\
             --task "Implement X in scitex-agent-container"
     """

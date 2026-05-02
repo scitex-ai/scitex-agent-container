@@ -129,6 +129,12 @@ def recall(
 
     JSONL can be a full path or a bare session id (auto-resolved against
     ``~/.claude/projects/*/``).
+
+    \b
+    Example:
+      $ sac recall <session-id>
+      $ sac recall head-ywata-note-win:<session-id>
+      $ sac recall <session-id> --since 1h --role user
     """
     path = _resolve_jsonl(jsonl)
     stats = collect_stats(path)
@@ -174,7 +180,9 @@ def _parse_iso(s: str) -> datetime:
         raw = raw[:-1] + "+00:00"
     try:
         dt = datetime.fromisoformat(raw)
-    except ValueError as exc:  # stx-allow: fallback (reason: type coercion or format mismatch)
+    except (
+        ValueError
+    ) as exc:  # stx-allow: fallback (reason: type coercion or format mismatch)
         raise click.ClickException(f"invalid ISO timestamp: {s!r} ({exc})")
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
