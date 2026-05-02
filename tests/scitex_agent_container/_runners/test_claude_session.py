@@ -15,8 +15,6 @@ import sys
 import time
 from pathlib import Path
 
-import pytest
-
 from scitex_agent_container._runners import claude_session as runner
 
 # ---------------------------------------------------------------------------
@@ -85,35 +83,42 @@ class TestHeartbeatIO:
 
 
 class TestHeartbeatLoop:
-    @pytest.mark.asyncio
-    async def test_first_write_is_immediate(self, tmp_path: Path) -> None:
-        stop = asyncio.Event()
-        task = asyncio.create_task(
-            runner._heartbeat_loop(
-                tmp_path, pid=os.getpid(), tick_seconds=10.0, stop=stop
-            )
-        )
-        # Give the loop one event-loop tick to write the first heartbeat.
-        await asyncio.sleep(0.05)
-        assert runner.read_heartbeat(tmp_path) is not None
-        stop.set()
-        await task
+    """Drive the async loop via ``asyncio.run`` so the test stays
+    plugin-free (no pytest-asyncio dependency)."""
 
-    @pytest.mark.asyncio
-    async def test_subsequent_ticks_refresh_ts(self, tmp_path: Path) -> None:
-        stop = asyncio.Event()
-        task = asyncio.create_task(
-            runner._heartbeat_loop(
-                tmp_path, pid=os.getpid(), tick_seconds=0.05, stop=stop
+    def test_first_write_is_immediate(self, tmp_path: Path) -> None:
+        async def _scenario() -> None:
+            stop = asyncio.Event()
+            task = asyncio.create_task(
+                runner._heartbeat_loop(
+                    tmp_path, pid=os.getpid(), tick_seconds=10.0, stop=stop
+                )
             )
-        )
-        await asyncio.sleep(0.02)
-        first = runner.read_heartbeat(tmp_path)
-        await asyncio.sleep(0.12)  # at least 2 more ticks
-        second = runner.read_heartbeat(tmp_path)
-        stop.set()
-        await task
-        assert first is not None and second is not None
+            await asyncio.sleep(0.05)
+            assert runner.read_heartbeat(tmp_path) is not None
+            stop.set()
+            await task
+
+        asyncio.run(_scenario())
+
+    def test_subsequent_ticks_refresh_ts(self, tmp_path: Path) -> None:
+        async def _scenario() -> tuple[dict, dict]:
+            stop = asyncio.Event()
+            task = asyncio.create_task(
+                runner._heartbeat_loop(
+                    tmp_path, pid=os.getpid(), tick_seconds=0.05, stop=stop
+                )
+            )
+            await asyncio.sleep(0.02)
+            first = runner.read_heartbeat(tmp_path)
+            await asyncio.sleep(0.12)  # at least 2 more ticks
+            second = runner.read_heartbeat(tmp_path)
+            stop.set()
+            await task
+            assert first is not None and second is not None
+            return first, second
+
+        first, second = asyncio.run(_scenario())
         assert second["ts"] > first["ts"]
 
 
@@ -122,7 +127,6 @@ class TestHeartbeatLoop:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.timeout(15)
 def test_run_module_handles_sigterm(tmp_path: Path) -> None:
     """Spawn the runner as a child process; SIGTERM; expect clean exit."""
     proc = subprocess.Popen(

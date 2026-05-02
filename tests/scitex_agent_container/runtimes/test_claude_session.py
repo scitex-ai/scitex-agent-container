@@ -91,7 +91,6 @@ class TestPidAlive:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.timeout(20)
 class TestStartStopE2E:
     def test_start_spawns_runner_and_stop_kills_it(
         self, state_root: Path, monkeypatch

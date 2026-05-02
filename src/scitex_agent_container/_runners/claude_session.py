@@ -128,17 +128,157 @@ async def _heartbeat_loop(
             write_heartbeat(state_dir, pid=pid, state=STATE_IDLE)
 
 
+def write_session_id(state_dir: Path, session_id: str) -> None:
+    """Persist the SDK session id so a respawn can resume."""
+    state_dir.mkdir(parents=True, exist_ok=True)
+    tmp = state_dir / "session_id.tmp"
+    tmp.write_text(session_id, encoding="utf-8")
+    tmp.replace(state_dir / "session_id")
+
+
+def read_session_id(state_dir: Path) -> str | None:
+    """Return the persisted session id, or None if absent."""
+    p = state_dir / "session_id"
+    if not p.is_file():
+        return None
+    try:
+        return p.read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
+def append_session_message(state_dir: Path, payload: dict) -> None:
+    """Append one JSON-line record to session.jsonl."""
+    state_dir.mkdir(parents=True, exist_ok=True)
+    enriched = {"ts": time.time(), **payload}
+    with (state_dir / "session.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(enriched, ensure_ascii=False) + "\n")
+
+
+async def _run_conversation(
+    name: str,
+    state_dir: Path,
+    *,
+    pid: int,
+    mission: str,
+    resume_session_id: str | None,
+    stop: asyncio.Event,
+) -> None:
+    """Drive a single mission turn against ClaudeSDKClient.
+
+    Streams every assistant chunk into ``session.jsonl`` and persists
+    the session id once the turn completes so a respawn can resume.
+    Returns when the SDK emits the closing ``ResultMessage``, when the
+    caller cancels via ``stop``, or on any SDK error (logged + recorded
+    to session.jsonl).
+    """
+    try:
+        from claude_agent_sdk import (
+            AssistantMessage,
+            ClaudeSDKClient,
+            ResultMessage,
+            TextBlock,
+            UserMessage,
+        )
+    except ImportError as exc:  # stx-allow: fallback (reason: optional dep at runtime)
+        logger.error("claude-agent-sdk not installed: %s", exc)
+        append_session_message(
+            state_dir,
+            {"type": "error", "kind": "sdk_missing", "detail": str(exc)},
+        )
+        return
+
+    from ..runtimes._sdk_common import SDKCommonError, build_sdk_options
+
+    write_heartbeat(state_dir, pid=pid, state=STATE_WORKING)
+    append_session_message(state_dir, {"type": "user", "text": mission})
+
+    try:
+        options = build_sdk_options(
+            name,
+            permission_mode="bypassPermissions",
+            resume=resume_session_id,
+        )
+    except SDKCommonError as exc:
+        logger.error("could not build sdk options: %s", exc)
+        append_session_message(
+            state_dir,
+            {"type": "error", "kind": "options", "detail": str(exc)},
+        )
+        return
+
+    async def _drive(client: "ClaudeSDKClient") -> None:
+        await client.query(mission)
+        async for msg in client.receive_response():
+            if stop.is_set():
+                # Graceful: ask the SDK to stop in-flight work.
+                await client.interrupt()
+                break
+            if isinstance(msg, AssistantMessage):
+                for block in msg.content:
+                    if isinstance(block, TextBlock):
+                        append_session_message(
+                            state_dir, {"type": "assistant", "text": block.text}
+                        )
+            elif isinstance(msg, UserMessage):
+                # Tool-result echo from the SDK; record so transcripts
+                # can render the full turn structure later.
+                append_session_message(
+                    state_dir,
+                    {"type": "user_echo", "raw": _safe_repr(msg)},
+                )
+            elif isinstance(msg, ResultMessage):
+                sid = getattr(msg, "session_id", None)
+                if sid:
+                    write_session_id(state_dir, sid)
+                append_session_message(
+                    state_dir,
+                    {
+                        "type": "result",
+                        "session_id": sid,
+                        "usage": getattr(msg, "usage", None),
+                    },
+                )
+                break
+
+    try:
+        async with ClaudeSDKClient(options=options) as client:
+            await _drive(client)
+    except Exception as exc:  # stx-allow: fallback (reason: SDK surface is broad; runner must always reach the IDLE / STOPPING phases)
+        logger.exception("claude-session conversation failed for %s", name)
+        append_session_message(
+            state_dir,
+            {"type": "error", "kind": "sdk_runtime", "detail": str(exc)},
+        )
+    finally:
+        if not stop.is_set():
+            write_heartbeat(state_dir, pid=pid, state=STATE_IDLE)
+
+
+def _safe_repr(value: object) -> str:
+    """Bounded repr so a runaway tool-result blob can't bloat session.jsonl."""
+    s = repr(value)
+    return s if len(s) <= 1024 else s[:1024] + "…"
+
+
 async def run(
     name: str,
     *,
     state_root: Path | None = None,
     tick_seconds: float = DEFAULT_TICK_SECONDS,
+    mission: str | None = None,
+    resume_session_id: str | None = None,
 ) -> int:
     """Run the daemon loop until SIGTERM / SIGINT.
 
     Returns the exit code (0 on clean shutdown). Idempotent re-entry is
     *not* attempted — the adapter is responsible for ensuring at most
     one runner per name.
+
+    If ``mission`` is given, the runner drives one SDK conversation turn
+    against it (Phase 2 happy path); afterward it idles awaiting
+    SIGTERM. With no mission, the runner just heartbeats — useful for
+    lifecycle correctness checks and for hand-driven manual sessions.
     """
     state_dir = state_dir_for(name, state_root)
     state_dir.mkdir(parents=True, exist_ok=True)
@@ -167,6 +307,16 @@ async def run(
         _heartbeat_loop(state_dir, pid=pid, tick_seconds=tick_seconds, stop=stop),
     )
 
+    if mission:
+        await _run_conversation(
+            name,
+            state_dir,
+            pid=pid,
+            mission=mission,
+            resume_session_id=resume_session_id,
+            stop=stop,
+        )
+
     try:
         await stop.wait()
     finally:
@@ -183,7 +333,7 @@ async def run(
 def _parse_argv(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="python -m scitex_agent_container._runners.claude_session",
-        description="claude-session runtime daemon (Phase 1: heartbeat only).",
+        description="claude-session runtime daemon.",
     )
     p.add_argument("--name", required=True, help="Agent name (state-dir leaf).")
     p.add_argument(
@@ -198,6 +348,25 @@ def _parse_argv(argv: list[str] | None = None) -> argparse.Namespace:
         default=DEFAULT_TICK_SECONDS,
         help="Heartbeat interval in seconds (default: 10).",
     )
+    p.add_argument(
+        "--mission",
+        type=str,
+        default=None,
+        help=(
+            "Initial user prompt. With this flag the runner drives one "
+            "SDK conversation turn and then idles awaiting SIGTERM. "
+            "Without it the runner just heartbeats."
+        ),
+    )
+    p.add_argument(
+        "--resume-session-id",
+        type=str,
+        default=None,
+        help=(
+            "Resume a prior SDK session (UUID from a previous run's "
+            "session_id state file). Forwarded to ClaudeAgentOptions(resume=...)."
+        ),
+    )
     return p.parse_args(argv)
 
 
@@ -209,6 +378,8 @@ def main(argv: list[str] | None = None) -> int:
             args.name,
             state_root=args.state_root,
             tick_seconds=args.tick_seconds,
+            mission=args.mission,
+            resume_session_id=args.resume_session_id,
         )
     )
 
