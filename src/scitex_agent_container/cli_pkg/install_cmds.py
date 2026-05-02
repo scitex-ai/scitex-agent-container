@@ -30,22 +30,24 @@ _SHARED_DIRS = [
 ]
 
 _CRON_SCRIPT_NAME = "post-merge-pull.sh"
-_CRON_SCRIPT_DEST = Path("~/.scitex/orochi/shared/cron").expanduser() / _CRON_SCRIPT_NAME
-_CRON_LOG_PATTERN = "~/.scitex/orochi/shared/logs/post-merge-pull.$(hostname -s).cron.log"
+_CRON_SCRIPT_DEST = (
+    Path("~/.scitex/orochi/shared/cron").expanduser() / _CRON_SCRIPT_NAME
+)
+_CRON_LOG_PATTERN = (
+    "~/.scitex/orochi/shared/logs/post-merge-pull.$(hostname -s).cron.log"
+)
 
 _CRON_MARKER = "post-merge-pull"
 
 
 def _cron_line() -> str:
-    return (
-        f"* * * * * {_CRON_SCRIPT_DEST} "
-        f">> {_CRON_LOG_PATTERN} 2>&1"
-    )
+    return f"* * * * * {_CRON_SCRIPT_DEST} >> {_CRON_LOG_PATTERN} 2>&1"
 
 
 # ---------------------------------------------------------------------------
 # install group
 # ---------------------------------------------------------------------------
+
 
 @click.group("install")
 def install_group() -> None:
@@ -55,6 +57,7 @@ def install_group() -> None:
 # ---------------------------------------------------------------------------
 # sac install --boot
 # ---------------------------------------------------------------------------
+
 
 @install_group.command("boot")
 @click.option(
@@ -199,6 +202,7 @@ def _find_sac_src() -> Path:
     """Return the root directory of the scitex-agent-container package."""
     try:
         import scitex_agent_container as _pkg
+
         pkg_path = Path(_pkg.__file__).parent
         # Walk up to pyproject.toml
         for parent in [pkg_path, pkg_path.parent, pkg_path.parent.parent]:
@@ -212,7 +216,8 @@ def _find_sac_src() -> Path:
 def _deploy_cron_script(dry_run: bool, tag: str) -> None:
     """Copy bundled post-merge-pull.sh to the shared cron dir."""
     dest = _CRON_SCRIPT_DEST
-    dest.parent.mkdir(parents=True, exist_ok=True)
+    if not dry_run:
+        dest.parent.mkdir(parents=True, exist_ok=True)
 
     # Locate the bundled script via package resources.
     try:
@@ -244,6 +249,7 @@ def _deploy_cron_script(dry_run: bool, tag: str) -> None:
 # sac install-post-merge-cron
 # ---------------------------------------------------------------------------
 
+
 @click.command("install-post-merge-cron")
 @click.option(
     "--dry-run",
@@ -271,9 +277,7 @@ def install_post_merge_cron(dry_run: bool, uninstall: bool) -> None:
     cron_line = _cron_line()
 
     # Read current crontab.
-    result = subprocess.run(
-        ["crontab", "-l"], capture_output=True, text=True
-    )
+    result = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
     if result.returncode not in (0, 1):
         console.print(f"[red]Error reading crontab:[/red] {result.stderr.strip()}")
         sys.exit(1)
@@ -284,7 +288,9 @@ def install_post_merge_cron(dry_run: bool, uninstall: bool) -> None:
 
     if uninstall:
         if not already_present:
-            console.print("[dim]No post-merge-pull entry in crontab — nothing to remove.[/dim]")
+            console.print(
+                "[dim]No post-merge-pull entry in crontab — nothing to remove.[/dim]"
+            )
             return
         new_lines = [l for l in lines if _CRON_MARKER not in l]
         _write_crontab(new_lines)
@@ -299,9 +305,7 @@ def install_post_merge_cron(dry_run: bool, uninstall: bool) -> None:
         return
 
     if already_present:
-        console.print(
-            "[dim]post-merge-pull already in crontab — no-op.[/dim]"
-        )
+        console.print("[dim]post-merge-pull already in crontab — no-op.[/dim]")
         return
 
     # Ensure cron script is executable.
