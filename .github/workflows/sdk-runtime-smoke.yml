@@ -1,0 +1,117 @@
+name: SDK runtime smoke
+
+# End-to-end smoke test for the claude-session runtime.
+#
+# Spawns the in-repo sdk-test agent against a real claude-agent-sdk
+# call and asserts the assistant produces the expected exact-string
+# output. Distinct from haiku-integration.yml (which exercises the
+# legacy `claude` CLI path with its tmux + auto-accept stack and
+# can't pass on a vanilla runner because of the first-run OAuth
+# requirement). The SDK reads ANTHROPIC_API_KEY directly so a clean
+# GH runner is sufficient — no browser OAuth, no ~/.claude/ seeding.
+#
+# Triggers:
+#   * push to develop / main — gates merges with a real-network proof
+#     that the SDK runtime works end-to-end.
+#   * pull_request — same proof for incoming work, but only when the
+#     PR is internal (forks can't read the secret; we skip cleanly).
+#   * workflow_dispatch — manual rerun.
+#   * cron (daily 07:00 UTC) — catches upstream SDK breakage between
+#     code changes.
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sdk-smoke:
+    # Forks can't read repo secrets — skip rather than fail with a
+    # spurious "missing key" error message.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    env:
+      # Token form (sk-ant-oat* OAuth or sk-ant-api*) is bridged into
+      # ANTHROPIC_API_KEY by scitex_agent_container.runtimes._sdk_common.
+      # The OAuth form keeps us on the flat-rate plan; the API-key
+      # form is the last-resort fallback.
+      SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY_OAUTH: ${{ secrets.SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY_OAUTH }}
+      SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY: ${{ secrets.SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY }}
+
+    steps:
+      - name: Fail early if neither auth secret is set
+        run: |
+          if [ -z "$SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY_OAUTH" ] && \
+             [ -z "$SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY" ]; then
+            echo "::error::Neither SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY_OAUTH" \
+                  "nor SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY is set."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Verify project-local discovery picks up sdk-test
+        # Read-only sanity check before paying the SDK call: the
+        # project-scope walk MUST resolve the in-repo agent. If this
+        # fails the smoke step below would hit a confusing
+        # "agent not found" later.
+        run: |
+          python - <<'PY'
+          from scitex_agent_container.config._resolve import resolve_config
+          path = resolve_config("sdk-test")
+          print("resolved:", path)
+          assert ".scitex/agent-container/agents/sdk-test/sdk-test.yaml" in path, path
+          PY
+
+      - name: Run sdk-test in foreground
+        # Captures stdout to a file so the next step can grep the
+        # exact-string assertion. The runner exits 0 once the SDK
+        # returns the closing ResultMessage.
+        run: |
+          set -euo pipefail
+          sac start sdk-test --foreground 2>&1 | tee smoke-out.txt
+          echo "----"
+          if ! grep -q "sdk-runtime-ok" smoke-out.txt; then
+            echo "::error::expected 'sdk-runtime-ok' in stdout, got:"
+            cat smoke-out.txt
+            exit 1
+          fi
+
+      - name: Show transcript + quota for visibility
+        if: always()
+        run: |
+          echo "=== session.jsonl ==="
+          cat .scitex/agent-container/runtime/sdk-test/session.jsonl || true
+          echo "=== quota.json ==="
+          cat .scitex/agent-container/runtime/sdk-test/quota.json || true
+          echo "=== heartbeat.json ==="
+          cat .scitex/agent-container/runtime/sdk-test/heartbeat.json || true
+
+      - name: Upload transcript artifact on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-runtime-state-${{ github.run_id }}
+          path: |
+            .scitex/agent-container/runtime/sdk-test/
+            smoke-out.txt
+          if-no-files-found: ignore
