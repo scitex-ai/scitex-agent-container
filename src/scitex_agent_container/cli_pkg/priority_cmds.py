@@ -10,10 +10,10 @@ handover. ``singleton-reconcile`` sweeps all locally registered agents and
 initiates handover for any that should yield.
 
 Usage:
-    sac priority-check <config-or-agent-name>
-    sac priority-check proj-neurovista --current-host nas --json
-    sac singleton-reconcile
-    sac singleton-reconcile --execute  # actually trigger SSH start + local stop
+    sac check-priority <config-or-agent-name>
+    sac check-priority proj-neurovista --current-host nas --json
+    sac reconcile-singletons
+    sac reconcile-singletons --execute  # actually trigger SSH start + local stop
 """
 
 from __future__ import annotations
@@ -156,7 +156,7 @@ def _priority_report(
     }
 
 
-@click.command("priority-check")
+@click.command("check-priority")
 @click.argument("config_path")
 @click.option(
     "--current-host",
@@ -186,8 +186,8 @@ def priority_check(
 
     \b
     Example:
-      $ sac priority-check proj-neurovista
-      $ sac priority-check proj-neurovista --json
+      $ sac check-priority proj-neurovista
+      $ sac check-priority proj-neurovista --json
     """
     # stx-allow: fallback (reason: config path may not exist or resolve to a valid YAML; CLI exits with code 2 to signal a usage/config error to healer callers)
     try:
@@ -271,7 +271,7 @@ def _ssh_start_agent(host: str, agent_name: str) -> bool:
         return False
 
 
-@click.command("singleton-reconcile")
+@click.command("reconcile-singletons")
 @click.option(
     "--execute",
     is_flag=True,
@@ -293,7 +293,43 @@ def _ssh_start_agent(host: str, agent_name: str) -> bool:
     default=False,
     help="Output machine-readable JSON.",
 )
-def singleton_reconcile(execute: bool, current_host: str, as_json: bool) -> None:
+@click.option(
+    "--dry-run",
+    "dry_run",
+    is_flag=True,
+    default=False,
+    help="Force dry-run (already the default unless --execute is passed).",
+)
+@click.option(
+    "-y",
+    "--yes",
+    "yes",
+    is_flag=True,
+    default=False,
+    help="Skip confirmation prompts (currently a no-op; reserved).",
+)
+def singleton_reconcile(
+    execute: bool, current_host: str, as_json: bool, dry_run: bool, yes: bool
+) -> None:
+    """Reconcile singleton agent placement across the fleet.
+
+    \b
+    Note:
+      --dry-run is implied by default; --execute is the only flag that opts
+      into mutating behaviour. --yes is accepted for API consistency.
+
+    \b
+    Example:
+      $ sac reconcile-singletons
+      $ sac reconcile-singletons --execute
+      $ sac reconcile-singletons --json
+    """
+    _ = dry_run
+    _ = yes
+    return _singleton_reconcile_body(execute, current_host, as_json)
+
+
+def _singleton_reconcile_body(execute: bool, current_host: str, as_json: bool) -> None:
     """Reconcile singleton agent placement across the fleet.
 
     Sweeps all locally registered agents. For each singleton whose YAML
@@ -311,9 +347,9 @@ def singleton_reconcile(execute: bool, current_host: str, as_json: bool) -> None
 
     \b
     Example:
-      $ sac singleton-reconcile
-      $ sac singleton-reconcile --execute
-      $ sac singleton-reconcile --json
+      $ sac reconcile-singletons
+      $ sac reconcile-singletons --execute
+      $ sac reconcile-singletons --json
     """
     from ..config._host import resolve_hostname
     from ..lifecycle import agent_stop

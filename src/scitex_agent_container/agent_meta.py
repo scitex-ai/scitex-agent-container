@@ -1,7 +1,7 @@
 """Rich agent metadata collection (claude-hud-style).
 
 Canonical source of truth for the metadata payload that is:
-  1. Emitted by ``scitex-agent-container status <name> --json``.
+  1. Emitted by ``scitex-agent-container show-status <name> --json``.
   2. POSTed by the MCP sidecar heartbeat to ``/api/agents/register/``.
 
 Ported 2026-04-12 from the pre-restructure
@@ -636,7 +636,7 @@ def collect_rich(
     mcp_servers = _parse_mcp_servers(workdir)
 
     # ---- hook-captured tool / prompt log ----------------------------
-    # Populated by `scitex-agent-container hook-event` entries wired into
+    # Populated by `scitex-agent-container ingest-hook-event` entries wired into
     # the agent's .claude/settings.local.json. Non-agentic: pure ring-
     # buffer read.
     # stx-allow: fallback (reason: event_log DB may not exist on agents that

@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
-# Whitelist used by ``scitex-agent-container status --json --terse``.
+# Whitelist used by ``scitex-agent-container show-status --json --terse``.
 # Superset of what ``scripts/fleet-watch/probe_remote.sh`` extracts via
 # ``jq -r``. Do not remove entries without coordinating with head-nas.
 #
@@ -92,7 +92,7 @@ TERSE_STATUS_FIELDS: tuple[str, ...] = (
     "machine",
 )
 
-# Whitelist used by ``scitex-agent-container snapshot --json --terse``.
+# Whitelist used by ``scitex-agent-container take-snapshot --json --terse``.
 TERSE_SNAPSHOT_FIELDS: tuple[str, ...] = (
     "agent",
     "timestamp",

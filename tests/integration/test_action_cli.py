@@ -98,7 +98,7 @@ class TestQueryCommand:
 class TestStatsCommand:
     def test_stats_prints_group_rows(self, root):
         _seed(root)
-        result = CliRunner().invoke(actions_cli, ["stats"])
+        result = CliRunner().invoke(actions_cli, ["show-stats"])
         assert result.exit_code == 0
         # Header present and both actions represented.
         assert "action" in result.output
@@ -108,14 +108,14 @@ class TestStatsCommand:
 
     def test_stats_filter_by_agent(self, root):
         _seed(root)
-        result = CliRunner().invoke(actions_cli, ["stats", "--agent", "alpha"])
+        result = CliRunner().invoke(actions_cli, ["show-stats", "--agent", "alpha"])
         assert result.exit_code == 0
         assert "nonce-probe" in result.output
         assert "compact" not in result.output  # beta's action absent
 
     def test_stats_json_is_list_of_dicts(self, root):
         _seed(root)
-        result = CliRunner().invoke(actions_cli, ["stats", "--json"])
+        result = CliRunner().invoke(actions_cli, ["show-stats", "--json"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert isinstance(data, list)
@@ -178,14 +178,14 @@ class TestRunCommandErrors:
 
     def test_unknown_agent_exits_nonzero(self, root):
         result = CliRunner().invoke(
-            actions_cli, ["run", "nonce-probe", "does-not-exist"]
+            actions_cli, ["exec", "nonce-probe", "does-not-exist"]
         )
         assert result.exit_code == 2
         assert "not found" in result.output.lower()
 
     def test_rejects_unknown_action_name(self, root):
         """Click enforces the action_name choice set."""
-        result = CliRunner().invoke(actions_cli, ["run", "bogus-action", "alpha"])
+        result = CliRunner().invoke(actions_cli, ["exec", "bogus-action", "alpha"])
         assert result.exit_code != 0
         assert (
             "Invalid value" in result.output

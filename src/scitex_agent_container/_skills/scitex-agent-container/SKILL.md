@@ -52,7 +52,7 @@ and observe it through a rich non-agentic status surface.
 - [12_wsl-connectivity.md](12_wsl-connectivity.md) — WSL connectivity notes
 
 ### Reference
-- [13_observability.md](13_observability.md) — `sac status` JSON contract
+- [13_observability.md](13_observability.md) — `sac show-status` JSON contract
 - [14_pane-actions.md](14_pane-actions.md) — Typed pane-mediated operations
 
 ### Lessons
@@ -67,6 +67,6 @@ and observe it through a rich non-agentic status surface.
 ```bash
 pip install scitex-agent-container
 sac start my-agent.yaml
-sac status my-agent --json | jq .pane_state
+sac show-status my-agent --json | jq .pane_state
 sac attach my-agent           # Ctrl-B D to detach
 ```

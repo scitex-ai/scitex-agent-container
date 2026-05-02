@@ -100,7 +100,7 @@ scitex-agent-container start my-agent
 ```bash
 sac start <agent-yaml>      # launch declared agent in tmux/screen with auto-accept + watchdog
 sac stop <agent>            # graceful stop
-sac status                  # live state of every pane
+sac show-status                  # live state of every pane
 sac deploy <host>           # SSH-deploy fleet to remote host
 sac --help-recursive        # full subcommand tree
 ```
@@ -168,8 +168,8 @@ v2 auto-derives from `metadata.name`: workdir, session name, env vars (CLAUDE_AG
 ```bash
 scitex-agent-container start my-agent.yaml
 scitex-agent-container inspect my-agent         # Live state detection
-scitex-agent-container status my-agent
-scitex-agent-container logs my-agent -n 100
+scitex-agent-container show-status my-agent
+scitex-agent-container show-logs my-agent -n 100
 scitex-agent-container attach my-agent          # Ctrl-B D to detach (tmux)
 ```
 
@@ -301,14 +301,14 @@ scitex-agent-container restart <name|yaml>
 
 # Inspection
 scitex-agent-container inspect <name> [--json]   # Live pane state detection
-scitex-agent-container status [name] [--json]   # Rich status dict (see below)
+scitex-agent-container show-status [name] [--json]   # Rich status dict (see below)
 scitex-agent-container list [--json] [--capability X] [--machine Y]
-scitex-agent-container logs <name> [-n LINES]
-scitex-agent-container health <name> [--json]
+scitex-agent-container show-logs <name> [-n LINES]
+scitex-agent-container check-health <name> [--json]
 scitex-agent-container attach <name>
 
 # Hook event ingestor (wired from Claude Code hooks, see below)
-scitex-agent-container hook-event <pretool|posttool|prompt|stop|other>
+scitex-agent-container ingest-hook-event <pretool|posttool|prompt|stop|other>
 
 # Pane actions (see "Pane Actions" below)
 scitex-agent-container actions run <nonce-probe|compact> <agent> [--json]
@@ -325,7 +325,7 @@ scitex-agent-container validate <config.yaml>
 scitex-agent-container check <config.yaml>
 
 # Maintenance
-scitex-agent-container cleanup
+scitex-agent-container clean-registry
 ```
 
 ## Rich Status (`status <name> --json`)
@@ -359,7 +359,7 @@ Every field is best-effort: failures leave the default value (`""`,
 `0`, `[]`) rather than raising.
 
 ```bash
-scitex-agent-container status my-agent --json | jq '.pane_state, .recent_tools[-3:]'
+scitex-agent-container show-status my-agent --json | jq '.pane_state, .recent_tools[-3:]'
 ```
 
 ## Claude Code Hook Integration
@@ -378,16 +378,16 @@ Wire it in the agent workspace's `.claude/settings.local.json`:
 {
   "hooks": {
     "PreToolUse":       [{"matcher": "", "hooks": [
-      {"type": "command", "command": "scitex-agent-container hook-event pretool"}
+      {"type": "command", "command": "scitex-agent-container ingest-hook-event pretool"}
     ]}],
     "PostToolUse":      [{"matcher": "", "hooks": [
-      {"type": "command", "command": "scitex-agent-container hook-event posttool"}
+      {"type": "command", "command": "scitex-agent-container ingest-hook-event posttool"}
     ]}],
     "UserPromptSubmit": [{"matcher": "", "hooks": [
-      {"type": "command", "command": "scitex-agent-container hook-event prompt"}
+      {"type": "command", "command": "scitex-agent-container ingest-hook-event prompt"}
     ]}],
     "Stop":             [{"matcher": "", "hooks": [
-      {"type": "command", "command": "scitex-agent-container hook-event stop"}
+      {"type": "command", "command": "scitex-agent-container ingest-hook-event stop"}
     ]}]
   }
 }

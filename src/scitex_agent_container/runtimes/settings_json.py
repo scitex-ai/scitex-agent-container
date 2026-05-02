@@ -61,7 +61,7 @@ _HOOKS_CONFIG = {
             "hooks": [
                 {
                     "type": "command",
-                    "command": "scitex-agent-container hook-event pretool",
+                    "command": "scitex-agent-container ingest-hook-event pretool",
                 }
             ],
         }
@@ -72,7 +72,7 @@ _HOOKS_CONFIG = {
             "hooks": [
                 {
                     "type": "command",
-                    "command": "scitex-agent-container hook-event posttool",
+                    "command": "scitex-agent-container ingest-hook-event posttool",
                 }
             ],
         }
@@ -83,7 +83,7 @@ _HOOKS_CONFIG = {
             "hooks": [
                 {
                     "type": "command",
-                    "command": "scitex-agent-container hook-event prompt",
+                    "command": "scitex-agent-container ingest-hook-event prompt",
                 }
             ],
         }
@@ -94,7 +94,7 @@ _HOOKS_CONFIG = {
             "hooks": [
                 {
                     "type": "command",
-                    "command": "scitex-agent-container hook-event stop",
+                    "command": "scitex-agent-container ingest-hook-event stop",
                 }
             ],
         }
@@ -227,7 +227,7 @@ def setup_settings_json(config: AgentConfig, workdir: str) -> None:
 
     # Register sac-statusline as the statusLine command so the JSON payload
     # is persisted to ~/.scitex/agent-container/statusline/<agent>.json each
-    # turn. sac status prefers this authoritative source over the JSONL
+    # turn. sac show-status prefers this authoritative source over the JSONL
     # approximation (sac issue #52). No-op if claude-hud is absent — the
     # script falls back to a minimal echo.
     settings["statusLine"] = {"type": "command", "command": "sac-statusline"}

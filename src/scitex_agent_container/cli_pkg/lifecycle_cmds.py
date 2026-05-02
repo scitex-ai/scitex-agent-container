@@ -578,7 +578,7 @@ def restart(name: str, dry_run: bool, yes: bool) -> None:
         sys.exit(1)
 
 
-@click.command()
+@click.command(name="clean-registry")
 @click.option(
     "--dry-run",
     "dry_run",
@@ -599,8 +599,8 @@ def cleanup(dry_run: bool, yes: bool) -> None:
 
     \b
     Example:
-      $ sac cleanup
-      $ sac cleanup --dry-run
+      $ sac clean-registry
+      $ sac clean-registry --dry-run
     """
     registry = Registry()
     if dry_run:

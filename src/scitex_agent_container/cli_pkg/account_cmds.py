@@ -192,7 +192,7 @@ def account_switch(name: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-@click.command("quota-watch")
+@click.command("watch-quota")
 @click.option(
     "--threshold",
     default=80.0,
@@ -231,11 +231,11 @@ def quota_watch(
     \b
     Examples:
       # single check
-      scitex-agent-container quota-watch --once
+      scitex-agent-container watch-quota --once
       # foreground loop every 5 min
-      scitex-agent-container quota-watch
+      scitex-agent-container watch-quota
       # background daemon
-      scitex-agent-container quota-watch --daemon
+      scitex-agent-container watch-quota --daemon
     """
     from pathlib import Path
 

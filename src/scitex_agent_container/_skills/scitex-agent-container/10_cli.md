@@ -19,7 +19,7 @@ sac stop <name|yaml>             # Stop a running agent (or YAML path; resolves 
 sac stop --all                   # Stop every registered agent
 sac stop --force                 # Tolerate stale registry / ghost screen state
 sac restart <name>               # Stop then start
-sac cleanup                      # Remove stale registry entries (where the screen is already gone)
+sac clean-registry                      # Remove stale registry entries (where the screen is already gone)
 sac validate <config.yaml>       # Validate YAML against the v3 schema
 ```
 
@@ -30,12 +30,12 @@ sac list                         # All registered agents (table)
 sac list --json                  # Machine-readable
 sac list --capability X          # Filter by capability label
 sac list --machine Y             # Filter by machine label
-sac status [name]                # Rich status: pane state, hooks, listen ports, snapshot
-sac status [name] --json         # Same, JSON
+sac show-status [name]                # Rich status: pane state, hooks, listen ports, snapshot
+sac show-status [name] --json         # Same, JSON
 sac inspect <name>               # Live pane-state classification (idle/working/auth/...)
 sac inspect <name> --json        # Same, JSON
-sac logs <name> [-n LINES]       # Recent agent output (capture-pane / journalctl / tmux capture)
-sac health <name>                # Run a health check on an agent
+sac show-logs <name> [-n LINES]       # Recent agent output (capture-pane / journalctl / tmux capture)
+sac check-health <name>                # Run a health check on an agent
 sac attach <name>                # Attach to the agent's multiplexer session (Ctrl-B D to detach)
 sac find <capability>            # Find agents with a specific capability label across YAML roots
 ```
@@ -61,7 +61,7 @@ Auto-launch is wired via `spec.a2a.port` — `sac start` spawns the A2A server a
 ## Build & deployment
 
 ```bash
-sac build                        # Build container base image
+sac build-image                        # Build container base image
 sac check <yaml>                 # Run preflight checks (SSH reachability, claude on PATH, …)
 sac probe-network                # Probe WSL → fleet-hub connectivity (todo#457)
 ```
@@ -74,9 +74,9 @@ sac actions query --agent X --limit 5 # Query the host-wide attempt log
 sac actions stats --agent X --since 1h # Aggregate stats
 sac actions purge                     # Purge the attempt log
 sac account                           # Manage stored Claude Code accounts (rotation)
-sac quota-watch                       # Monitor quota and auto-rotate credentials
-sac snapshot                          # Take a self-snapshot for AGENT, print as JSON
-sac hook-event                        # Append a Claude Code hook event to the per-agent ring buffer
+sac watch-quota                       # Monitor quota and auto-rotate credentials
+sac take-snapshot                          # Take a self-snapshot for AGENT, print as JSON
+sac ingest-hook-event                        # Append a Claude Code hook event to the per-agent ring buffer
 ```
 
 ## Discoverability

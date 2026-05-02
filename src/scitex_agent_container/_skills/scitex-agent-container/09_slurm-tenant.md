@@ -60,7 +60,7 @@ sac start --all                   # or all yamls at once
 ```bash
 sac list                          # tenants appear alongside other agents
 sac attach dev-helper             # srun --pty + tmux attach on the compute node
-sac logs dev-helper -n 100        # tmux capture-pane via srun --overlap
+sac show-logs dev-helper -n 100        # tmux capture-pane via srun --overlap
 sac stop dev-helper               # kills the tmux session — does NOT release the allocation
 sac stop --all                    # stops every tenant; reservation still alive
 ```
@@ -84,7 +84,7 @@ SLURM's cgroup terminates *every process in a step's cgroup* when the step ends.
 1. Looks up the Reservation by `spec.slurm.reservation` (raises if not booked or not booked with `tmux_server`).
 2. Reads `extras.tmux_server` from the lease state file → socket name (typically `sac`).
 3. Runs `tmux -L <socket> new-session -d -s sac-<agent-name> '<claude command>'` via `Reservation.exec()` (which is `ssh <host> 'bash -lc "srun --jobid=<X> --overlap <cmd>"'`).
-4. Writes a sac registry entry so `sac list` / `sac stop` / `sac logs` / `sac attach` route correctly.
+4. Writes a sac registry entry so `sac list` / `sac stop` / `sac show-logs` / `sac attach` route correctly.
 
 ### What `sac stop` does for a tenant
 
@@ -109,7 +109,7 @@ This was the design constraint after the 2026-04-26 IT Security ruling on Sparta
 | `runtime: slurm-tenant requires spec.slurm.reservation` | yaml is missing the `reservation` field |
 | `reservation 'foo' was not booked with tmux_server set` | re-book with `--tmux-server sac` |
 | Tenant session disappears within seconds | reservation booked WITHOUT `--tmux-server`. Run `scitex-hpc reservations get <name>` and check `"extras": {"tmux_server": "sac"}` |
-| `sac attach` exits immediately | session was killed externally; check `sac logs` for crash trace |
+| `sac attach` exits immediately | session was killed externally; check `sac show-logs` for crash trace |
 | Stale `job_id` after walltime auto-resubmit | run `scitex-hpc reservations refresh <name>` |
 
 ## See also

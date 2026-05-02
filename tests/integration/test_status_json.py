@@ -312,7 +312,7 @@ def test_status_terse_context_management_null_when_disabled() -> None:
 
 def test_terse_status_is_heartbeat_safe() -> None:
     """lead msg#16005 contract: scitex-orochi's heartbeat pusher shells
-    out to ``scitex-agent-container status <name> --terse --json`` and
+    out to ``scitex-agent-container show-status <name> --terse --json`` and
     forwards the parsed dict verbatim as ``sac_status`` on
     ``POST /api/agents/register/``.
 

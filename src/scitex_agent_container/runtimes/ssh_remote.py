@@ -438,7 +438,7 @@ class SSHRemote:
         """Get logs from remote agent."""
         result = SSHRemote.run(
             config,
-            f"scitex-agent-container logs {config.name} -n {lines}",
+            f"scitex-agent-container show-logs {config.name} -n {lines}",
             timeout=60,
         )
         if result.returncode != 0:

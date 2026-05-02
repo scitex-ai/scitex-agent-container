@@ -53,7 +53,7 @@ Quick Example
     scitex-agent-container list
 
     # Inspect live pane state / rich status
-    scitex-agent-container status my-agent --json
+    scitex-agent-container show-status my-agent --json
 
     # Stop an agent
     scitex-agent-container stop my-agent

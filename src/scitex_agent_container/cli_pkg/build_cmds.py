@@ -153,7 +153,7 @@ def validate(config_path: str) -> None:
         sys.exit(1)
 
 
-@click.command()
+@click.command(name="build-image")
 @click.option(
     "--runtime",
     type=click.Choice(["docker", "apptainer"]),
@@ -185,9 +185,9 @@ def build(runtime: str, image: str, dry_run: bool, yes: bool) -> None:
 
     \b
     Example:
-      $ sac build
-      $ sac build --runtime apptainer
-      $ sac build --dry-run
+      $ sac build-image
+      $ sac build-image --runtime apptainer
+      $ sac build-image --dry-run
     """
     if dry_run:
         click.echo(f"[dry-run] would build {runtime} image '{image}'")

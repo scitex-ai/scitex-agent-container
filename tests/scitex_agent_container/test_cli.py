@@ -61,7 +61,7 @@ class TestCLI:
 
     def test_status_no_agents(self):
         runner = CliRunner()
-        result = runner.invoke(main, ["list", "--json"])
+        result = runner.invoke(main, ["list-agents", "--json"])
         assert result.exit_code == 0
 
     def test_stop_nonexistent(self):
@@ -71,18 +71,18 @@ class TestCLI:
 
     def test_health_nonexistent(self):
         runner = CliRunner()
-        result = runner.invoke(main, ["health", "nonexistent-agent"])
+        result = runner.invoke(main, ["check-health", "nonexistent-agent"])
         assert result.exit_code != 0
 
     def test_logs_nonexistent(self):
         runner = CliRunner()
-        result = runner.invoke(main, ["logs", "nonexistent-agent"])
+        result = runner.invoke(main, ["show-logs", "nonexistent-agent"])
         assert result.exit_code != 0
 
     def test_cleanup(self):
         runner = CliRunner()
         # cleanup now confirms by default; pass --yes for non-interactive runs.
-        result = runner.invoke(main, ["cleanup", "--yes"])
+        result = runner.invoke(main, ["clean-registry", "--yes"])
         assert result.exit_code == 0
 
     def test_version(self):
@@ -93,7 +93,7 @@ class TestCLI:
 
     def test_list_json_empty(self):
         runner = CliRunner()
-        result = runner.invoke(main, ["list", "--json"])
+        result = runner.invoke(main, ["list-agents", "--json"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert isinstance(data, list)
@@ -107,14 +107,14 @@ class TestCLI:
 
     def test_status_json_nonexistent(self):
         runner = CliRunner()
-        result = runner.invoke(main, ["status", "nonexistent", "--json"])
+        result = runner.invoke(main, ["show-status", "nonexistent", "--json"])
         assert result.exit_code != 0
         data = json.loads(result.output)
         assert "error" in data
 
     def test_health_json_nonexistent(self):
         runner = CliRunner()
-        result = runner.invoke(main, ["health", "nonexistent", "--json"])
+        result = runner.invoke(main, ["check-health", "nonexistent", "--json"])
         assert result.exit_code != 0
         data = json.loads(result.output)
         assert "error" in data
@@ -146,13 +146,13 @@ class TestCLI:
     def test_list_with_capability_filter(self):
         """The --capability flag should be accepted even with no agents."""
         runner = CliRunner()
-        result = runner.invoke(main, ["list", "--capability", "gpu"])
+        result = runner.invoke(main, ["list-agents", "--capability", "gpu"])
         assert result.exit_code == 0
 
     def test_list_with_machine_filter(self):
         """The --machine flag should be accepted even with no agents."""
         runner = CliRunner()
-        result = runner.invoke(main, ["list", "--machine", "spartan"])
+        result = runner.invoke(main, ["list-agents", "--machine", "spartan"])
         assert result.exit_code == 0
 
     def test_find_in_directory(self):

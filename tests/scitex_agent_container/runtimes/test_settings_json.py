@@ -30,15 +30,15 @@ def test_hooks_always_injected_when_settings_written(tmp_path):
 
 
 def test_hook_commands_match_hook_event_kinds(tmp_path):
-    """Each hook kind points at the right ``scitex-agent-container hook-event`` sub-command."""
+    """Each hook kind points at the right ``scitex-agent-container ingest-hook-event`` sub-command."""
     cfg = _make_cfg("--dangerously-skip-permissions")
     setup_settings_json(cfg, str(tmp_path))
     hooks = json.loads(_settings_path(tmp_path).read_text())["hooks"]
     expected = {
-        "PreToolUse": "scitex-agent-container hook-event pretool",
-        "PostToolUse": "scitex-agent-container hook-event posttool",
-        "UserPromptSubmit": "scitex-agent-container hook-event prompt",
-        "Stop": "scitex-agent-container hook-event stop",
+        "PreToolUse": "scitex-agent-container ingest-hook-event pretool",
+        "PostToolUse": "scitex-agent-container ingest-hook-event posttool",
+        "UserPromptSubmit": "scitex-agent-container ingest-hook-event prompt",
+        "Stop": "scitex-agent-container ingest-hook-event stop",
     }
     for kind, cmd in expected.items():
         assert kind in hooks, f"missing hook kind: {kind}"

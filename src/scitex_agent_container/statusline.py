@@ -2,7 +2,7 @@
 
 Claude Code calls this command on each status-line update, piping a JSON payload
 via stdin that contains context usage, rate-limits, model info, and session
-details. We tee the payload to a per-agent JSON file so ``sac status`` can
+details. We tee the payload to a per-agent JSON file so ``sac show-status`` can
 report authoritative context data instead of the 1M-token JSONL approximation.
 
 If claude-hud is installed, display is delegated to it. Otherwise a minimal

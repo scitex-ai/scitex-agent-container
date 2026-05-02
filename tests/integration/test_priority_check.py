@@ -1,4 +1,4 @@
-"""Tests for sac priority-check command (priority_cmds.py)."""
+"""Tests for sac check-priority command (priority_cmds.py)."""
 
 from __future__ import annotations
 
@@ -132,7 +132,7 @@ def test_cli_json_output_stay(tmp_path, monkeypatch):
     )
     path = _write_agent_yaml(tmp_path, ["spartan", "nas"])
     runner = CliRunner()
-    result = runner.invoke(main, ["priority-check", path, "--current-host", "spartan", "--json"])
+    result = runner.invoke(main, ["check-priority", path, "--current-host", "spartan", "--json"])
     assert result.exit_code == 0
     data = json.loads(result.output)
     assert data["should_yield"] is False
@@ -146,7 +146,7 @@ def test_cli_json_output_yield(tmp_path, monkeypatch):
     )
     path = _write_agent_yaml(tmp_path, ["spartan", "nas"])
     runner = CliRunner()
-    result = runner.invoke(main, ["priority-check", path, "--current-host", "nas", "--json"])
+    result = runner.invoke(main, ["check-priority", path, "--current-host", "nas", "--json"])
     assert result.exit_code == 1
     data = json.loads(result.output)
     assert data["should_yield"] is True
@@ -174,7 +174,7 @@ def test_singleton_reconcile_no_registered_agents(monkeypatch):
 
     monkeypatch.setattr(Registry, "list_all", lambda self: [])
     runner = CliRunner()
-    result = runner.invoke(main, ["singleton-reconcile", "--json"])
+    result = runner.invoke(main, ["reconcile-singletons", "--json"])
     assert result.exit_code == 0
     assert json.loads(result.output) == []
 
@@ -194,7 +194,7 @@ def test_singleton_reconcile_stay_when_on_preferred(monkeypatch, tmp_path):
     runner = CliRunner()
     result = runner.invoke(
         main,
-        ["singleton-reconcile", "--current-host", "nas", "--json"],
+        ["reconcile-singletons", "--current-host", "nas", "--json"],
     )
     assert result.exit_code == 0
     data = json.loads(result.output)
@@ -218,7 +218,7 @@ def test_singleton_reconcile_yield_recommended_dryrun(monkeypatch, tmp_path):
     runner = CliRunner()
     result = runner.invoke(
         main,
-        ["singleton-reconcile", "--current-host", "nas", "--json"],
+        ["reconcile-singletons", "--current-host", "nas", "--json"],
     )
     assert result.exit_code == 1
     data = json.loads(result.output)
@@ -250,7 +250,7 @@ def test_singleton_reconcile_execute_success(monkeypatch, tmp_path):
     runner = CliRunner()
     result = runner.invoke(
         main,
-        ["singleton-reconcile", "--execute", "--current-host", "nas", "--json"],
+        ["reconcile-singletons", "--execute", "--current-host", "nas", "--json"],
     )
     assert result.exit_code == 0
     data = json.loads(result.output)
@@ -277,7 +277,7 @@ def test_singleton_reconcile_execute_remote_fail(monkeypatch, tmp_path):
     runner = CliRunner()
     result = runner.invoke(
         main,
-        ["singleton-reconcile", "--execute", "--current-host", "nas", "--json"],
+        ["reconcile-singletons", "--execute", "--current-host", "nas", "--json"],
     )
     assert result.exit_code != 0
     data = json.loads(result.output)

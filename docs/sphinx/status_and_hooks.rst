@@ -9,14 +9,14 @@ agent itself.
 Rich Status
 -----------
 
-``scitex-agent-container status <name> --json`` emits a dict suitable
+``scitex-agent-container show-status <name> --json`` emits a dict suitable
 for dashboards or fleet monitors. It merges the registry entry with
 fields collected by ``agent_meta.collect_rich()`` and
 ``event_log.summarize()``.
 
 .. code-block:: bash
 
-    scitex-agent-container status my-agent --json
+    scitex-agent-container show-status my-agent --json
 
 Selected fields:
 
@@ -93,7 +93,7 @@ All fields are best-effort. Any failure leaves the default value
 Claude Code Hook Integration
 ----------------------------
 
-``scitex-agent-container hook-event <kind>`` is designed to be called
+``scitex-agent-container ingest-hook-event <kind>`` is designed to be called
 from Claude Code's hook configuration. It reads the Claude Code hook
 payload from stdin and appends a compact JSON record to a per-agent
 ring-buffer at ``$XDG_DATA_HOME/.scitex/agent-container/events/<agent>.jsonl``
@@ -106,16 +106,16 @@ Wire it into the agent workspace's ``.claude/settings.local.json``:
     {
       "hooks": {
         "PreToolUse":       [{"matcher": "", "hooks": [
-          {"type": "command", "command": "scitex-agent-container hook-event pretool"}
+          {"type": "command", "command": "scitex-agent-container ingest-hook-event pretool"}
         ]}],
         "PostToolUse":      [{"matcher": "", "hooks": [
-          {"type": "command", "command": "scitex-agent-container hook-event posttool"}
+          {"type": "command", "command": "scitex-agent-container ingest-hook-event posttool"}
         ]}],
         "UserPromptSubmit": [{"matcher": "", "hooks": [
-          {"type": "command", "command": "scitex-agent-container hook-event prompt"}
+          {"type": "command", "command": "scitex-agent-container ingest-hook-event prompt"}
         ]}],
         "Stop":             [{"matcher": "", "hooks": [
-          {"type": "command", "command": "scitex-agent-container hook-event stop"}
+          {"type": "command", "command": "scitex-agent-container ingest-hook-event stop"}
         ]}]
       }
     }
@@ -145,7 +145,7 @@ orchestrator (scitex-orochi, a custom hub, etc.). ``status --json``
 emits a self-describing dict; consumers wrap it themselves. For
 example, scitex-orochi's ``heartbeat-push`` command:
 
-1. Shells out to ``scitex-agent-container status <name> --json``.
+1. Shells out to ``scitex-agent-container show-status <name> --json``.
 2. Reshapes the payload into its own hub schema.
 3. POSTs to its ``/api/agents/register/`` endpoint.
 

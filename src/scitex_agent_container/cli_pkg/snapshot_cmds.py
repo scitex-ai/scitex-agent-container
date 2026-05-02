@@ -10,7 +10,7 @@ import click
 from ..snapshot import take_snapshot
 
 
-@click.command(name="snapshot")
+@click.command(name="take-snapshot")
 @click.option("--agent", "agent", required=True, help="Agent name to snapshot.")
 @click.option(
     "--json",
@@ -49,8 +49,8 @@ def snapshot(
 
     \b
     Example:
-      $ sac snapshot head-ywata-note-win
-      $ sac snapshot head-ywata-note-win --with-diff
+      $ sac take-snapshot head-ywata-note-win
+      $ sac take-snapshot head-ywata-note-win --with-diff
     """
     # stx-allow: fallback (reason: CLI command must emit a JSON error and exit cleanly rather than printing a raw traceback)
     try:

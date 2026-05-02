@@ -155,6 +155,11 @@ from .a2a_cmds import a2a as a2a_group  # noqa: E402
 
 main.add_command(a2a_group)
 
+# MCP introspection group — empty by design (audit §1a requires this surface).
+from .mcp_cmds import mcp as mcp_group  # noqa: E402
+
+main.add_command(mcp_group)
+
 
 if __name__ == "__main__":
     main()

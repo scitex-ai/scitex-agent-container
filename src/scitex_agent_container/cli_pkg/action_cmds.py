@@ -44,7 +44,7 @@ def _json_echo(obj: Any) -> None:
 # ── run ─────────────────────────────────────────────────────────────────────
 
 
-@actions_cli.command("run")
+@actions_cli.command("exec")
 @click.argument("action_name", type=click.Choice(sorted(_ACTION_FACTORIES.keys())))
 @click.argument("agent", type=str)
 @click.option(
@@ -264,7 +264,7 @@ def query_cmd(
 # ── stats ───────────────────────────────────────────────────────────────────
 
 
-@actions_cli.command("stats")
+@actions_cli.command("show-stats")
 @click.option("--agent", type=str, default=None)
 @click.option(
     "--since",

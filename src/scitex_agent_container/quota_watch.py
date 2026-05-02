@@ -5,8 +5,8 @@ is exceeded. Designed to run as a background loop in tmux or as a launchd
 daemon.
 
 Usage:
-    scitex-agent-container quota-watch [--threshold 80] [--interval 300]
-    scitex-agent-container quota-watch --daemon   # detach, write to log
+    scitex-agent-container watch-quota [--threshold 80] [--interval 300]
+    scitex-agent-container watch-quota --daemon   # detach, write to log
 """
 
 from __future__ import annotations

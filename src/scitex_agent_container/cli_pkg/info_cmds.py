@@ -108,7 +108,7 @@ def find(
     console.print(table)
 
 
-@click.command()
+@click.command(name="show-logs")
 @click.argument("name")
 @click.option(
     "--lines",
@@ -116,24 +116,39 @@ def find(
     default=50,
     help="Number of log lines to show.",
 )
-def logs(name: str, lines: int) -> None:
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Emit captured log lines as a JSON array.",
+)
+def logs(name: str, lines: int, as_json: bool) -> None:
     """Show recent agent output.
 
     \b
     Example:
-      $ sac logs head-ywata-note-win
-      $ sac logs head-ywata-note-win -n 200
+      $ sac show-logs head-ywata-note-win
+      $ sac show-logs head-ywata-note-win -n 200
+      $ sac show-logs head-ywata-note-win --json
     """
     # stx-allow: fallback (reason: agent_logs reads from multiplexer or log files that may be absent if the agent was never started; error is reported and CLI exits with code 1)
     try:
         output = agent_logs(name, lines)
-        if output:
-            console.print(output)
-        else:
-            console.print("[dim]No log output captured.[/dim]")
     except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-        console.print(f"[red]Error: {exc}[/red]")
+        if as_json:
+            click.echo(json_mod.dumps({"error": str(exc), "lines": []}))
+        else:
+            console.print(f"[red]Error: {exc}[/red]")
         sys.exit(1)
+    if as_json:
+        captured = (output or "").splitlines()
+        click.echo(json_mod.dumps({"name": name, "lines": captured}))
+        return
+    if output:
+        console.print(output)
+    else:
+        console.print("[dim]No log output captured.[/dim]")
 
 
 @click.command()

@@ -49,7 +49,7 @@ def _cron_line() -> str:
 # ---------------------------------------------------------------------------
 
 
-@click.group("install")
+@click.group("installation")
 def install_group() -> None:
     """Bootstrap and install helpers for a new fleet host."""
 

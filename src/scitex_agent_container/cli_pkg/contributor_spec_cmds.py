@@ -94,7 +94,7 @@ def _derive_branch_short(name: str) -> str:
     return name
 
 
-@click.command("contributor-spec")
+@click.command("render-contributor-spec")
 @click.option("--name", required=True, help="Agent name (e.g. c-sac-my-feature).")
 @click.option("--port", required=True, type=int, help="A2A port number.")
 @click.option(
@@ -148,7 +148,7 @@ def contributor_spec(
 
     \b
     Example:
-      $ sac contributor-spec --name c-sac-my-feature --port 19200 \\
+      $ sac render-contributor-spec --name c-sac-my-feature --port 19200 \\
             --target-repo scitex-agent-container \\
             --task "Implement X in scitex-agent-container"
     """

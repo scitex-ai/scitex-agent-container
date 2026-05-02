@@ -68,7 +68,7 @@ def _format_claude_account_block(meta: dict) -> list[str]:
     ]
 
 
-@click.command()
+@click.command(name="show-status")
 @click.argument("name", required=False)
 @click.option(
     "--json",
@@ -91,9 +91,9 @@ def status(ctx: click.Context, name: str | None, as_json: bool, terse: bool) -> 
 
     \b
     Example:
-      $ sac status
-      $ sac status head-ywata-note-win
-      $ sac status --json
+      $ sac show-status
+      $ sac show-status head-ywata-note-win
+      $ sac show-status --json
     """
     use_json = _json_flag(ctx, as_json) or terse
     registry = Registry()
@@ -161,7 +161,7 @@ def status(ctx: click.Context, name: str | None, as_json: bool, terse: bool) -> 
                     console.print(line)
 
 
-@click.command(name="list")
+@click.command(name="list-agents")
 @click.option(
     "--json",
     "as_json",
@@ -204,7 +204,7 @@ def list_agents(
         print_agent_list(registry, capability=capability, machine=machine)
 
 
-@click.command()
+@click.command(name="check-health")
 @click.argument("name")
 @click.option(
     "--json",
@@ -219,8 +219,8 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
 
     \b
     Example:
-      $ sac health head-ywata-note-win
-      $ sac health head-ywata-note-win --json
+      $ sac check-health head-ywata-note-win
+      $ sac check-health head-ywata-note-win --json
     """
     use_json = _json_flag(ctx, as_json)
     registry = Registry()
