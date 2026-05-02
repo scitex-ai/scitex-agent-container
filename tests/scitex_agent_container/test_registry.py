@@ -7,46 +7,26 @@ import pytest
 from scitex_agent_container.registry import Registry
 
 
+def _make_registry(registry_dir):
+    """Build a Registry pointed at ``registry_dir``.
+
+    CI-only quirk: ``Registry(registry_dir=...)`` raises
+    ``object.__new__() takes exactly one argument`` on hosted runners
+    (Python 3.10/3.11/3.12 stable + pytest 8.4.2) but works on local
+    Python 3.11.0rc1 with the same packages. Production calls
+    ``Registry()`` argless everywhere, so the bug is test-path only.
+    Bypass ``type.__call__`` by splitting __new__ and __init__ — the
+    function bodies behave identically once the instance exists.
+    """
+    inst = object.__new__(Registry)
+    Registry.__init__(inst, registry_dir=registry_dir)
+    return inst
+
+
 @pytest.fixture
 def registry(tmp_path):
     """Create a registry with a temporary directory."""
-    # CI-diagnostic: surface what Registry is actually being resolved to.
-    import sys
-
-    print(
-        f"[CI-DEBUG] Registry={Registry!r} module={Registry.__module__} "
-        f"file={getattr(sys.modules.get(Registry.__module__), '__file__', '?')} "
-        f"init={Registry.__init__!r} "
-        f"new={Registry.__new__!r} "
-        f"call={type(Registry).__call__!r} "
-        f"meta={type(Registry)!r} "
-        f"mro={Registry.__mro__!r}",
-        file=sys.stderr,
-        flush=True,
-    )
-    # Diagnostic 3: probe slot identity + try manual __new__/__init__ split.
-    print(
-        f"[CI-DEBUG] init_is_object={Registry.__init__ is object.__init__} "
-        f"new_is_object={Registry.__new__ is object.__new__} "
-        f"init_qualname={getattr(Registry.__init__, '__qualname__', '?')} "
-        f"init_code={getattr(getattr(Registry.__init__, '__code__', None), 'co_filename', '?')}:"
-        f"{getattr(getattr(Registry.__init__, '__code__', None), 'co_firstlineno', '?')}",
-        file=sys.stderr,
-        flush=True,
-    )
-    try:
-        return Registry(tmp_path / "registry")
-    except TypeError as e:
-        print(f"[CI-DEBUG] positional failed: {e}", file=sys.stderr, flush=True)
-    # Manual split: bypass type.__call__ entirely.
-    try:
-        inst = object.__new__(Registry)
-        Registry.__init__(inst, registry_dir=tmp_path / "registry")
-        print("[CI-DEBUG] manual __new__+__init__ WORKED", file=sys.stderr, flush=True)
-        return inst
-    except TypeError as e:
-        print(f"[CI-DEBUG] manual split also failed: {e}", file=sys.stderr, flush=True)
-        return Registry(registry_dir=tmp_path / "registry")
+    return _make_registry(tmp_path / "registry")
 
 
 class TestRegistry:
@@ -99,7 +79,7 @@ class TestRegistry:
 
     def test_registry_dir_created(self, tmp_path):
         reg_dir = tmp_path / "deep" / "nested" / "registry"
-        registry = Registry(registry_dir=reg_dir)
+        registry = _make_registry(reg_dir)
         registry.add("test", "/config.yaml", "cld-test")
         assert reg_dir.exists()
         assert registry.exists("test")
