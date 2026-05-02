@@ -104,7 +104,12 @@ def validate_raw(raw: dict, path: str) -> list[str]:
 
         # spec.runtime
         runtime = spec.get("runtime")
-        valid_runtimes = ("claude-code", "slurm", "slurm-tenant")
+        valid_runtimes = (
+            "claude-code",
+            "claude-session",
+            "slurm",
+            "slurm-tenant",
+        )
         if runtime and runtime not in valid_runtimes:
             errors.append(
                 f"spec.runtime must be one of {valid_runtimes}, got '{runtime}'"
