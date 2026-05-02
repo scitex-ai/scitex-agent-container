@@ -409,6 +409,7 @@
 <li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.agent_meta._classify_pane_state"><code class="docutils literal notranslate"><span class="pre">_classify_pane_state()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.agent_meta._config_candidates"><code class="docutils literal notranslate"><span class="pre">_config_candidates()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.agent_meta._parse_mcp_servers"><code class="docutils literal notranslate"><span class="pre">_parse_mcp_servers()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.agent_meta._read_sdk_session_state"><code class="docutils literal notranslate"><span class="pre">_read_sdk_session_state()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.agent_meta.collect_rich"><code class="docutils literal notranslate"><span class="pre">collect_rich()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.agent_meta._collect_action_summary_fields"><code class="docutils literal notranslate"><span class="pre">_collect_action_summary_fields()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#design-rules">Design rules</a></li>
@@ -627,7 +628,9 @@
             <span class="o">==</span> <span class="mi">0</span>
         <span class="p">):</span>
             <span class="k">return</span> <span class="s2">&quot;tmux&quot;</span>
-    <span class="k">except</span> <span class="ne">FileNotFoundError</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: file may not exist on first use)</span>
+    <span class="k">except</span> <span class="p">(</span>
+        <span class="ne">FileNotFoundError</span>
+    <span class="p">):</span>  <span class="c1"># stx-allow: fallback (reason: file may not exist on first use)</span>
         <span class="k">pass</span>
     <span class="k">try</span><span class="p">:</span>
         <span class="n">r</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
@@ -637,7 +640,9 @@
         <span class="p">)</span>
         <span class="k">if</span> <span class="n">session</span> <span class="ow">in</span> <span class="n">r</span><span class="o">.</span><span class="n">stdout</span><span class="p">:</span>
             <span class="k">return</span> <span class="s2">&quot;screen&quot;</span>
-    <span class="k">except</span> <span class="ne">FileNotFoundError</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: file may not exist on first use)</span>
+    <span class="k">except</span> <span class="p">(</span>
+        <span class="ne">FileNotFoundError</span>
+    <span class="p">):</span>  <span class="c1"># stx-allow: fallback (reason: file may not exist on first use)</span>
         <span class="k">pass</span>
     <span class="k">return</span> <span class="s2">&quot;&quot;</span></div>
 
@@ -1040,6 +1045,52 @@
     <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: catch-all safety net — see inline comment for context)</span>
         <span class="k">pass</span>
     <span class="k">return</span> <span class="n">pid</span><span class="p">,</span> <span class="n">ppid</span>
+
+
+<div class="viewcode-block" id="_read_sdk_session_state">
+<a class="viewcode-back" href="../../api/scitex_agent_container.html#scitex_agent_container.agent_meta._read_sdk_session_state">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">_read_sdk_session_state</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">workdir</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Surface ``runtime: claude-session`` state on the status JSON.</span>
+
+<span class="sd">    Returns ``None`` for agents that aren&#39;t using the SDK runtime</span>
+<span class="sd">    (heartbeat file absent). For SDK agents, returns a dict with the</span>
+<span class="sd">    persisted session id, accumulated per-turn token totals, and the</span>
+<span class="sd">    latest heartbeat state. Best-effort: any IO / parse failure</span>
+<span class="sd">    yields ``None`` so non-SDK agents never see this field populated</span>
+<span class="sd">    and SDK agents on transient state-dir glitches degrade silently.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">._runners</span><span class="w"> </span><span class="kn">import</span> <span class="n">claude_session</span> <span class="k">as</span> <span class="n">_runner</span>
+    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: import path may differ in tests / partial installs — collect_rich is best-effort)</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="c1"># Try the project-local state root first (matches the runtime</span>
+    <span class="c1"># adapter&#39;s _project_runtime_root logic — keeps the read symmetric</span>
+    <span class="c1"># with the write path).</span>
+    <span class="c1"># Walk from cwd, NOT workdir: ``workdir`` may point at a /tmp</span>
+    <span class="c1"># scratch dir while the agent&#39;s YAML lives under a project-scope</span>
+    <span class="c1"># repo. cwd is what discovery already uses on ``sac start``, so</span>
+    <span class="c1"># the read here stays symmetric with the write.</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">scitex_config._ecosystem</span><span class="w"> </span><span class="kn">import</span> <span class="n">local_state</span>
+
+        <span class="n">scope</span> <span class="o">=</span> <span class="n">local_state</span><span class="o">.</span><span class="n">find_project_scope</span><span class="p">(</span><span class="s2">&quot;agent-container&quot;</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: scitex-config optional)</span>
+        <span class="n">scope</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="n">state_dir</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="p">(</span><span class="n">scope</span> <span class="o">/</span> <span class="s2">&quot;runtime&quot;</span> <span class="o">/</span> <span class="n">name</span><span class="p">)</span> <span class="k">if</span> <span class="n">scope</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">_runner</span><span class="o">.</span><span class="n">state_dir_for</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+    <span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="p">(</span><span class="n">state_dir</span> <span class="o">/</span> <span class="s2">&quot;heartbeat.json&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">is_file</span><span class="p">():</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">&quot;session_id&quot;</span><span class="p">:</span> <span class="n">_runner</span><span class="o">.</span><span class="n">read_session_id</span><span class="p">(</span><span class="n">state_dir</span><span class="p">),</span>
+        <span class="s2">&quot;quota&quot;</span><span class="p">:</span> <span class="n">_runner</span><span class="o">.</span><span class="n">read_quota</span><span class="p">(</span><span class="n">state_dir</span><span class="p">),</span>
+        <span class="s2">&quot;heartbeat&quot;</span><span class="p">:</span> <span class="n">_runner</span><span class="o">.</span><span class="n">read_heartbeat</span><span class="p">(</span><span class="n">state_dir</span><span class="p">),</span>
+        <span class="s2">&quot;state_dir&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">state_dir</span><span class="p">),</span>
+    <span class="p">}</span></div>
+
 
 
 <div class="viewcode-block" id="collect_rich">
@@ -1454,6 +1505,14 @@
         <span class="c1"># the agent is actually running under a different model alias.</span>
         <span class="s2">&quot;model_transcript&quot;</span><span class="p">:</span> <span class="n">model</span><span class="p">,</span>
         <span class="s2">&quot;version&quot;</span><span class="p">:</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;SCITEX_AGENT_CONTAINER_META_VERSION&quot;</span><span class="p">,</span> <span class="s2">&quot;0.2&quot;</span><span class="p">),</span>
+        <span class="c1"># ---- claude-session runtime fields ------------------------------</span>
+        <span class="c1"># ``None`` for non-SDK agents; a dict for claude-session agents</span>
+        <span class="c1"># exposing the SDK session id, accumulated per-turn token totals</span>
+        <span class="c1"># (read from ``runtime/&lt;name&gt;/quota.json``), and the latest</span>
+        <span class="c1"># heartbeat state. Lets ``sac show-status --json`` give parity</span>
+        <span class="c1"># surface to the claude-code runtime without conflating the</span>
+        <span class="c1"># rate-limit fields below (which come from a different source).</span>
+        <span class="s2">&quot;sdk_session&quot;</span><span class="p">:</span> <span class="n">_read_sdk_session_state</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">workdir</span><span class="p">),</span>
         <span class="c1"># ---- Claude quota fields ----------------------------------------</span>
         <span class="s2">&quot;quota_5h_used_pct&quot;</span><span class="p">:</span> <span class="n">quota_5h_used_pct</span><span class="p">,</span>
         <span class="s2">&quot;quota_7d_used_pct&quot;</span><span class="p">:</span> <span class="n">quota_7d_used_pct</span><span class="p">,</span>
@@ -1520,9 +1579,13 @@
         <span class="c1"># rotation can produce false positives).</span>
         <span class="s2">&quot;open_agent_calls_count&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">_event_summary</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;open_agent_calls&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="p">[]),</span>
         <span class="s2">&quot;oldest_open_agent_age_s&quot;</span><span class="p">:</span> <span class="nb">max</span><span class="p">(</span>
-            <span class="p">(</span><span class="n">c</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;age_seconds&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="mi">0</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="p">(</span><span class="n">_event_summary</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;open_agent_calls&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="p">[])),</span>
+            <span class="p">(</span>
+                <span class="n">c</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;age_seconds&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="mi">0</span>
+                <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="p">(</span><span class="n">_event_summary</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;open_agent_calls&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="p">[])</span>
+            <span class="p">),</span>
             <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
-        <span class="p">)</span> <span class="ow">or</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="ow">or</span> <span class="kc">None</span><span class="p">,</span>
         <span class="s2">&quot;background_tasks&quot;</span><span class="p">:</span> <span class="n">_event_summary</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;background_tasks&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="p">[],</span>
         <span class="s2">&quot;tool_counts&quot;</span><span class="p">:</span> <span class="n">_event_summary</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;counts&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="p">{},</span>
         <span class="c1"># Functional-heartbeat shortcuts — top-level so consumers don&#39;t</span>

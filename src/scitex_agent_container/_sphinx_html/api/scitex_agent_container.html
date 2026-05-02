@@ -411,6 +411,7 @@
 <li class="toctree-l3"><a class="reference internal" href="#scitex_agent_container.agent_meta._classify_pane_state"><code class="docutils literal notranslate"><span class="pre">_classify_pane_state()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="#scitex_agent_container.agent_meta._config_candidates"><code class="docutils literal notranslate"><span class="pre">_config_candidates()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="#scitex_agent_container.agent_meta._parse_mcp_servers"><code class="docutils literal notranslate"><span class="pre">_parse_mcp_servers()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scitex_agent_container.agent_meta._read_sdk_session_state"><code class="docutils literal notranslate"><span class="pre">_read_sdk_session_state()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="#scitex_agent_container.agent_meta.collect_rich"><code class="docutils literal notranslate"><span class="pre">collect_rich()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="#scitex_agent_container.agent_meta._collect_action_summary_fields"><code class="docutils literal notranslate"><span class="pre">_collect_action_summary_fields()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="#design-rules">Design rules</a></li>
@@ -2518,6 +2519,23 @@ endpoint without exposing query-string secrets.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Return type<span class="colon">:</span></dt>
 <dd class="field-odd"><p><span class="sphinx_autodoc_typehints-type"><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#list" title="(in Python v3.14)"><code class="xref py py-class docutils literal notranslate"><span class="pre">list</span></code></a>[<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#dict" title="(in Python v3.14)"><code class="xref py py-class docutils literal notranslate"><span class="pre">dict</span></code></a>[<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><code class="xref py py-class docutils literal notranslate"><span class="pre">str</span></code></a>, <a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><code class="xref py py-data docutils literal notranslate"><span class="pre">Any</span></code></a>]]</span></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scitex_agent_container.agent_meta._read_sdk_session_state">
+<span class="sig-prename descclassname"><span class="pre">scitex_agent_container.agent_meta.</span></span><span class="sig-name descname"><span class="pre">_read_sdk_session_state</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">name</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">workdir</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scitex_agent_container/agent_meta.html#_read_sdk_session_state"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scitex_agent_container.agent_meta._read_sdk_session_state" title="Link to this definition"></a></dt>
+<dd><p>Surface <code class="docutils literal notranslate"><span class="pre">runtime:</span> <span class="pre">claude-session</span></code> state on the status JSON.</p>
+<p>Returns <code class="docutils literal notranslate"><span class="pre">None</span></code> for agents that aren’t using the SDK runtime
+(heartbeat file absent). For SDK agents, returns a dict with the
+persisted session id, accumulated per-turn token totals, and the
+latest heartbeat state. Best-effort: any IO / parse failure
+yields <code class="docutils literal notranslate"><span class="pre">None</span></code> so non-SDK agents never see this field populated
+and SDK agents on transient state-dir glitches degrade silently.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><span class="sphinx_autodoc_typehints-type"><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#dict" title="(in Python v3.14)"><code class="xref py py-class docutils literal notranslate"><span class="pre">dict</span></code></a> | <a class="reference external" href="https://docs.python.org/3/library/constants.html#None" title="(in Python v3.14)"><code class="xref py py-obj docutils literal notranslate"><span class="pre">None</span></code></a></span></p>
 </dd>
 </dl>
 </dd></dl>
