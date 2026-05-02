@@ -18,7 +18,6 @@ from ..lifecycle import (
     agent_restart,
     agent_start,
     agent_stop,
-    agent_stop_all,
 )
 from ..registry import Registry
 from ._helpers import console
@@ -149,16 +148,7 @@ def _discover_all_agents() -> list[str]:
 
 
 @click.command()
-@click.argument("targets", type=str, nargs=-1)
-@click.option(
-    "--all",
-    "start_all",
-    is_flag=True,
-    default=False,
-    help="Start every agent under ~/.scitex/agent-container/agents/ "
-    "(+ $SCITEX_AGENT_CONTAINER_YAML_DIRS). Equivalent to passing those "
-    "directories as targets — kept for backward compatibility.",
-)
+@click.argument("targets", type=str, nargs=-1, required=True)
 @click.option(
     "--no-preflight",
     is_flag=True,
@@ -217,7 +207,6 @@ def _discover_all_agents() -> list[str]:
 )
 def start(
     targets: tuple[str, ...],
-    start_all: bool,
     no_preflight: bool,
     force: bool,
     resume_id: str | None,
@@ -237,8 +226,7 @@ def start(
       $ sac start foo
       $ sac start ~/.scitex/agent-container/agents/foo/foo.yaml
       $ sac start foo bar baz
-      $ sac start ~/.scitex/agent-container/agents/   # whole dir
-      $ sac start --all                                # legacy bulk
+      $ sac start ~/.scitex/agent-container/agents/   # whole dir = bulk
     """
     import json as _json
 
@@ -256,12 +244,12 @@ def start(
                 bulk_yamls_from_dirs.append(yp)
         else:
             single_targets.append(t)
-    is_bulk = start_all or bool(bulk_yamls_from_dirs)
+    is_bulk = bool(bulk_yamls_from_dirs)
 
     if (resume_id or session_mode) and is_bulk:
         click.echo(
-            "Error: --resume / --session cannot be combined with bulk start "
-            "(--all or directory targets — they would apply the same value to every agent).",
+            "Error: --resume / --session cannot be combined with directory "
+            "targets (they would apply the same value to every agent).",
             err=True,
         )
         sys.exit(2)
@@ -274,21 +262,9 @@ def start(
     if resume_id and session_mode is None:
         session_mode = "resume"
 
-    if not targets and not start_all:
-        click.echo(
-            "Error: provide one or more TARGETs (yaml path, agent name, or directory) "
-            "or use --all.\n"
-            "  sac start <config.yaml>\n"
-            "  sac start <agent-name> [<agent-name> ...]\n"
-            "  sac start <agents-dir>\n"
-            "  sac start --all",
-            err=True,
-        )
-        sys.exit(2)
-
-    # Bulk path: --all OR directory targets.
-    if start_all or bulk_yamls_from_dirs:
-        yamls = _discover_all_agents() if start_all else bulk_yamls_from_dirs
+    # Bulk path: directory targets.
+    if bulk_yamls_from_dirs:
+        yamls = bulk_yamls_from_dirs
         if not yamls:
             console.print(
                 "[dim]No agents found in "
@@ -461,15 +437,7 @@ def start(
 
 
 @click.command()
-@click.argument("targets", type=str, nargs=-1)
-@click.option(
-    "--all",
-    "stop_all",
-    is_flag=True,
-    default=False,
-    help="Stop every agent in the registry. Equivalent to passing the agents "
-    "directories as targets — kept for backward compatibility.",
-)
+@click.argument("targets", type=str, nargs=-1, required=True)
 @click.option(
     "--force",
     "force",
@@ -494,7 +462,6 @@ def start(
 )
 def stop(
     targets: tuple[str, ...],
-    stop_all: bool,
     force: bool,
     dry_run: bool,
     yes: bool,
@@ -508,8 +475,7 @@ def stop(
     Example:
       $ sac stop foo
       $ sac stop foo bar baz
-      $ sac stop ~/.scitex/agent-container/agents/   # whole dir
-      $ sac stop --all                                # legacy bulk
+      $ sac stop ~/.scitex/agent-container/agents/   # whole dir = bulk
       $ sac stop foo --dry-run
     """
     # Classify targets: directory targets expand to all <name>/<name>.yaml
@@ -524,49 +490,18 @@ def stop(
         else:
             single_targets.append(t)
 
-    if not targets and not stop_all:
-        click.echo(
-            "Error: provide one or more TARGETs (agent name, yaml path, or directory) "
-            "or use --all.\n"
-            "  sac stop <name>\n"
-            "  sac stop <name> [<name> ...]\n"
-            "  sac stop <agents-dir>\n"
-            "  sac stop --all",
-            err=True,
-        )
-        sys.exit(2)
-
     if dry_run:
-        if stop_all:
-            click.echo("[dry-run] would stop all registered agents")
-        else:
-            for t in single_targets:
-                click.echo(f"[dry-run] would stop agent '{t}'")
-            for yp in bulk_yamls_from_dirs:
-                click.echo(f"[dry-run] would stop agent at '{yp}'")
+        for t in single_targets:
+            click.echo(f"[dry-run] would stop agent '{t}'")
+        for yp in bulk_yamls_from_dirs:
+            click.echo(f"[dry-run] would stop agent at '{yp}'")
         return
 
-    # Bulk path: --all
-    if stop_all:
-        if not yes and not click.confirm("Stop ALL registered agents?", default=True):
+    # Confirm bulk before stopping when directory targets resolved to ≥2 yamls.
+    if len(bulk_yamls_from_dirs) > 1 and not yes:
+        if not click.confirm(f"Stop {len(bulk_yamls_from_dirs)} agents?", default=True):
             click.echo("Aborted.")
-            if not single_targets and not bulk_yamls_from_dirs:
-                return
-        else:
-            results = agent_stop_all(force=force)
-            if not results:
-                console.print("[dim]No agents in registry.[/dim]")
-            else:
-                any_failure = False
-                for agent_name, ok, msg in results:
-                    if ok:
-                        console.print(f"[green]✓ {agent_name}[/green]: {msg}")
-                    else:
-                        any_failure = True
-                        console.print(f"[red]✗ {agent_name}[/red]: {msg}")
-                if any_failure and not force:
-                    sys.exit(1)
-            if not single_targets and not bulk_yamls_from_dirs:
+            if not single_targets:
                 return
 
     # Bulk-from-dir-targets path
