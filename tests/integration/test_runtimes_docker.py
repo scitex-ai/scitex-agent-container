@@ -37,7 +37,7 @@ _CI_KEY_SET = bool(os.environ.get("SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY")
 # per-function with ``@pytest.mark.docker_smoke`` + skipif; the fast
 # unit tests at the bottom run unconditionally.
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE = REPO_ROOT / "config" / "examples" / "newbie-docker.yaml"
 TEST_IMAGE = "scitex-agent-container:test"
 AGENT_IMAGE = "scitex-agent-container:latest"
