@@ -40,7 +40,9 @@ def detect_multiplexer(session: str) -> str:
             == 0
         ):
             return "tmux"
-    except FileNotFoundError:  # stx-allow: fallback (reason: file may not exist on first use)
+    except (
+        FileNotFoundError
+    ):  # stx-allow: fallback (reason: file may not exist on first use)
         pass
     try:
         r = subprocess.run(
@@ -50,7 +52,9 @@ def detect_multiplexer(session: str) -> str:
         )
         if session in r.stdout:
             return "screen"
-    except FileNotFoundError:  # stx-allow: fallback (reason: file may not exist on first use)
+    except (
+        FileNotFoundError
+    ):  # stx-allow: fallback (reason: file may not exist on first use)
         pass
     return ""
 
@@ -431,6 +435,49 @@ def _pids_from_session(session: str, multiplexer: str) -> tuple[int, int]:
     except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         pass
     return pid, ppid
+
+
+def _read_sdk_session_state(name: str, workdir: str) -> dict | None:
+    """Surface ``runtime: claude-session`` state on the status JSON.
+
+    Returns ``None`` for agents that aren't using the SDK runtime
+    (heartbeat file absent). For SDK agents, returns a dict with the
+    persisted session id, accumulated per-turn token totals, and the
+    latest heartbeat state. Best-effort: any IO / parse failure
+    yields ``None`` so non-SDK agents never see this field populated
+    and SDK agents on transient state-dir glitches degrade silently.
+    """
+    try:
+        from ._runners import claude_session as _runner
+    except Exception:  # stx-allow: fallback (reason: import path may differ in tests / partial installs — collect_rich is best-effort)
+        return None
+
+    # Try the project-local state root first (matches the runtime
+    # adapter's _project_runtime_root logic — keeps the read symmetric
+    # with the write path).
+    # Walk from cwd, NOT workdir: ``workdir`` may point at a /tmp
+    # scratch dir while the agent's YAML lives under a project-scope
+    # repo. cwd is what discovery already uses on ``sac start``, so
+    # the read here stays symmetric with the write.
+    try:
+        from scitex_config._ecosystem import local_state
+
+        scope = local_state.find_project_scope("agent-container")
+    except Exception:  # stx-allow: fallback (reason: scitex-config optional)
+        scope = None
+
+    state_dir = (
+        (scope / "runtime" / name) if scope is not None else _runner.state_dir_for(name)
+    )
+    if not (state_dir / "heartbeat.json").is_file():
+        return None
+
+    return {
+        "session_id": _runner.read_session_id(state_dir),
+        "quota": _runner.read_quota(state_dir),
+        "heartbeat": _runner.read_heartbeat(state_dir),
+        "state_dir": str(state_dir),
+    }
 
 
 def collect_rich(
@@ -843,6 +890,14 @@ def collect_rich(
         # the agent is actually running under a different model alias.
         "model_transcript": model,
         "version": os.environ.get("SCITEX_AGENT_CONTAINER_META_VERSION", "0.2"),
+        # ---- claude-session runtime fields ------------------------------
+        # ``None`` for non-SDK agents; a dict for claude-session agents
+        # exposing the SDK session id, accumulated per-turn token totals
+        # (read from ``runtime/<name>/quota.json``), and the latest
+        # heartbeat state. Lets ``sac show-status --json`` give parity
+        # surface to the claude-code runtime without conflating the
+        # rate-limit fields below (which come from a different source).
+        "sdk_session": _read_sdk_session_state(name, workdir),
         # ---- Claude quota fields ----------------------------------------
         "quota_5h_used_pct": quota_5h_used_pct,
         "quota_7d_used_pct": quota_7d_used_pct,
@@ -909,9 +964,13 @@ def collect_rich(
         # rotation can produce false positives).
         "open_agent_calls_count": len(_event_summary.get("open_agent_calls") or []),
         "oldest_open_agent_age_s": max(
-            (c.get("age_seconds") or 0 for c in (_event_summary.get("open_agent_calls") or [])),
+            (
+                c.get("age_seconds") or 0
+                for c in (_event_summary.get("open_agent_calls") or [])
+            ),
             default=None,
-        ) or None,
+        )
+        or None,
         "background_tasks": _event_summary.get("background_tasks") or [],
         "tool_counts": _event_summary.get("counts") or {},
         # Functional-heartbeat shortcuts — top-level so consumers don't
