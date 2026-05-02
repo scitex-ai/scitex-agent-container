@@ -149,13 +149,15 @@ def _discover_all_agents() -> list[str]:
 
 
 @click.command()
-@click.argument("config_path", type=str, required=False)
+@click.argument("targets", type=str, nargs=-1)
 @click.option(
     "--all",
     "start_all",
     is_flag=True,
     default=False,
-    help="Start all agents in ~/.scitex/agent-container/agents/ (+ $SCITEX_AGENT_CONTAINER_YAML_DIRS).",
+    help="Start every agent under ~/.scitex/agent-container/agents/ "
+    "(+ $SCITEX_AGENT_CONTAINER_YAML_DIRS). Equivalent to passing those "
+    "directories as targets — kept for backward compatibility.",
 )
 @click.option(
     "--no-preflight",
@@ -214,7 +216,7 @@ def _discover_all_agents() -> list[str]:
     "interactive confirmations).",
 )
 def start(
-    config_path: str | None,
+    targets: tuple[str, ...],
     start_all: bool,
     no_preflight: bool,
     force: bool,
@@ -224,23 +226,42 @@ def start(
     as_json: bool,
     yes: bool,
 ) -> None:
-    """Start an agent from a YAML definition, or --all to start every agent.
+    """Start one or more agents from YAML definitions.
+
+    Each TARGET is either a YAML path, an agent name (resolved against the
+    standard search paths), or a directory containing ``<name>/<name>.yaml``
+    agent layouts. Multiple targets may be given.
 
     \b
     Example:
+      $ sac start foo
       $ sac start ~/.scitex/agent-container/agents/foo/foo.yaml
-      $ sac start --all
-      $ sac start foo --dry-run
+      $ sac start foo bar baz
+      $ sac start ~/.scitex/agent-container/agents/   # whole dir
+      $ sac start --all                                # legacy bulk
     """
     import json as _json
 
     def _emit_json(payload: dict) -> None:
         click.echo(_json.dumps(payload, ensure_ascii=False))
 
-    if (resume_id or session_mode) and start_all:
+    # Classify targets: directory targets expand to all <name>/<name>.yaml
+    # under them; non-directory targets are paths or agent names.
+    single_targets: list[str] = []
+    bulk_yamls_from_dirs: list[str] = []
+    for t in targets:
+        p = Path(t).expanduser()
+        if p.is_dir():
+            for _name, yp in _iter_agent_yamls(p):
+                bulk_yamls_from_dirs.append(yp)
+        else:
+            single_targets.append(t)
+    is_bulk = start_all or bool(bulk_yamls_from_dirs)
+
+    if (resume_id or session_mode) and is_bulk:
         click.echo(
-            "Error: --resume / --session cannot be combined with --all "
-            "(they would apply the same value to every agent).",
+            "Error: --resume / --session cannot be combined with bulk start "
+            "(--all or directory targets — they would apply the same value to every agent).",
             err=True,
         )
         sys.exit(2)
@@ -253,177 +274,201 @@ def start(
     if resume_id and session_mode is None:
         session_mode = "resume"
 
-    if start_all:
-        yamls = _discover_all_agents()
+    if not targets and not start_all:
+        click.echo(
+            "Error: provide one or more TARGETs (yaml path, agent name, or directory) "
+            "or use --all.\n"
+            "  sac start <config.yaml>\n"
+            "  sac start <agent-name> [<agent-name> ...]\n"
+            "  sac start <agents-dir>\n"
+            "  sac start --all",
+            err=True,
+        )
+        sys.exit(2)
+
+    # Bulk path: --all OR directory targets.
+    if start_all or bulk_yamls_from_dirs:
+        yamls = _discover_all_agents() if start_all else bulk_yamls_from_dirs
         if not yamls:
             console.print(
                 "[dim]No agents found in "
                 "~/.scitex/agent-container/agents/ or $SCITEX_AGENT_CONTAINER_YAML_DIRS[/dim]"
             )
+            if not single_targets:
+                return
+        else:
+            if not yes and not click.confirm(
+                f"Start {len(yamls)} agents?", default=True
+            ):
+                click.echo("Aborted.")
+                if not single_targets:
+                    return
+            else:
+                try:
+                    current_host = resolve_hostname()
+                except RuntimeError:  # stx-allow: fallback (reason: runtime state error — handled gracefully)
+                    current_host = ""
+                console.print(f"[blue]Starting {len(yamls)} agents...[/blue]")
+                for yaml_path in yamls:
+                    # stx-allow: fallback (reason: one agent's config parse or launch failure must not abort the remaining agents in a bulk start; printing FAILED and continuing is the correct bulk-safe behavior)
+                    try:
+                        config = load_config(yaml_path)
+                        skip = _singleton_skip_reason(config, current_host)
+                        if skip:
+                            console.print(
+                                f"  [yellow]SKIP[/yellow] {config.name}: {skip}"
+                            )
+                            continue
+                        location = (
+                            f"REMOTE: {config.remote.host}"
+                            if config.remote.is_remote
+                            else "LOCAL"
+                        )
+                        console.print(
+                            f"  [blue]{config.name}[/blue] ({location})...",
+                            end=" ",
+                        )
+                        agent_start(
+                            yaml_path,
+                            no_preflight=no_preflight,
+                            force=force,
+                            dry_run=dry_run,
+                        )
+                        console.print(
+                            "[green]DRY-RUN OK[/green]"
+                            if dry_run
+                            else "[green]OK[/green]"
+                        )
+                    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+                        console.print(f"[red]FAILED: {exc}[/red]")
+        if not single_targets:
             return
-        if not yes and not click.confirm(f"Start {len(yamls)} agents?", default=True):
-            click.echo("Aborted.")
-            return
+
+    # Per-target single-start loop.
+    any_error = False
+    for target_idx, raw_target in enumerate(single_targets):
+        if target_idx > 0 and not as_json:
+            console.print()  # blank line between agents
+
+        # stx-allow: fallback (reason: config resolution, YAML parse, or agent_start can raise on misconfiguration or launch failure; catching here gives a clean error message and continues to the next target)
         try:
-            current_host = resolve_hostname()
-        except (
-            RuntimeError
-        ):  # stx-allow: fallback (reason: runtime state error — handled gracefully)
-            current_host = ""
-        console.print(f"[blue]Starting {len(yamls)} agents...[/blue]")
-        for yaml_path in yamls:
-            # stx-allow: fallback (reason: one agent's config parse or launch failure must not abort the remaining agents in a bulk --all start; printing FAILED and continuing is the correct bulk-safe behavior)
+            config_path = resolve_config(raw_target)
+            config = load_config(config_path)
             try:
-                config = load_config(yaml_path)
-                skip = _singleton_skip_reason(config, current_host)
-                if skip:
-                    console.print(f"  [yellow]SKIP[/yellow] {config.name}: {skip}")
-                    continue
-                location = (
-                    f"REMOTE: {config.remote.host}"
-                    if config.remote.is_remote
-                    else "LOCAL"
-                )
+                current_host = resolve_hostname()
+            except (
+                RuntimeError
+            ):  # stx-allow: fallback (reason: runtime state error — handled gracefully)
+                current_host = ""
+            skip = _singleton_skip_reason(config, current_host)
+            if skip:
+                if as_json:
+                    _emit_json(
+                        {
+                            "name": config.name,
+                            "status": "skipped",
+                            "reason": skip,
+                            "dry_run": dry_run,
+                        }
+                    )
+                else:
+                    console.print(f"[yellow]Skipping '{config.name}': {skip}[/yellow]")
+                continue
+            location = (
+                f"REMOTE: {config.remote.host}" if config.remote.is_remote else "LOCAL"
+            )
+            if not as_json:
                 console.print(
-                    f"  [blue]{config.name}[/blue] ({location})...",
-                    end=" ",
+                    f"[blue]{'Dry-running' if dry_run else 'Starting'} agent "
+                    f"'{config.name}' (runtime: {config.runtime}, {location})...[/blue]"
                 )
-                agent_start(
-                    yaml_path,
-                    no_preflight=no_preflight,
-                    force=force,
-                    dry_run=dry_run,
-                )
-                console.print(
-                    "[green]DRY-RUN OK[/green]" if dry_run else "[green]OK[/green]"
-                )
-            except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-                console.print(f"[red]FAILED: {exc}[/red]")
-        return
-
-    if not config_path:
-        click.echo(
-            "Error: provide a CONFIG_PATH or use --all.\n"
-            "  scitex-agent-container start <config.yaml>\n"
-            "  scitex-agent-container start --all",
-            err=True,
-        )
-        sys.exit(2)
-
-    # stx-allow: fallback (reason: config resolution, YAML parse, or agent_start can raise on misconfiguration or launch failure; catching here gives a clean error message and non-zero exit rather than an unhandled traceback)
-    try:
-        config_path = resolve_config(config_path)
-        config = load_config(config_path)
-        try:
-            current_host = resolve_hostname()
-        except (
-            RuntimeError
-        ):  # stx-allow: fallback (reason: runtime state error — handled gracefully)
-            current_host = ""
-        skip = _singleton_skip_reason(config, current_host)
-        if skip:
+                if no_preflight:
+                    console.print(
+                        "[dim]Preflight checks skipped (--no-preflight)[/dim]"
+                    )
+                if force:
+                    console.print(
+                        "[dim]Force mode: stopping any existing instance first[/dim]"
+                    )
+                if session_mode:
+                    console.print(
+                        f"[dim]Session override: claude.session = {session_mode}"
+                        + (f", resume_id = {resume_id}" if resume_id else "")
+                        + "[/dim]"
+                    )
+            agent_start(
+                config_path,
+                no_preflight=no_preflight,
+                force=force,
+                dry_run=dry_run,
+                session_override=session_mode,
+                resume_id_override=resume_id,
+            )
             if as_json:
                 _emit_json(
                     {
                         "name": config.name,
-                        "status": "skipped",
-                        "reason": skip,
+                        "status": "dry_run_ok" if dry_run else "started",
+                        "runtime": config.runtime,
+                        "location": location.lower(),
+                        "workdir": config.expanded_workdir,
                         "dry_run": dry_run,
                     }
                 )
             else:
-                console.print(f"[yellow]Skipping '{config.name}': {skip}[/yellow]")
-            return
-        location = (
-            f"REMOTE: {config.remote.host}" if config.remote.is_remote else "LOCAL"
-        )
-        if not as_json:
-            console.print(
-                f"[blue]{'Dry-running' if dry_run else 'Starting'} agent "
-                f"'{config.name}' (runtime: {config.runtime}, {location})...[/blue]"
-            )
-            if no_preflight:
-                console.print("[dim]Preflight checks skipped (--no-preflight)[/dim]")
-            if force:
-                console.print(
-                    "[dim]Force mode: stopping any existing instance first[/dim]"
+                verb = (
+                    "dry-run prepared the workspace for"
+                    if dry_run
+                    else "started successfully ["
                 )
-            if session_mode:
+                tail = "" if dry_run else f"[{location}]"
                 console.print(
-                    f"[dim]Session override: claude.session = {session_mode}"
-                    + (f", resume_id = {resume_id}" if resume_id else "")
-                    + "[/dim]"
+                    f"[green]Agent '{config.name}' {verb}{tail}[/green]"
+                    if dry_run
+                    else f"[green]Agent '{config.name}' started successfully [{location}][/green]"
                 )
-        agent_start(
-            config_path,
-            no_preflight=no_preflight,
-            force=force,
-            dry_run=dry_run,
-            session_override=session_mode,
-            resume_id_override=resume_id,
-        )
-        if as_json:
-            _emit_json(
-                {
-                    "name": config.name,
-                    "status": "dry_run_ok" if dry_run else "started",
-                    "runtime": config.runtime,
-                    "location": location.lower(),
-                    "workdir": config.expanded_workdir,
-                    "dry_run": dry_run,
-                }
-            )
-        else:
-            verb = (
-                "dry-run prepared the workspace for"
-                if dry_run
-                else "started successfully ["
-            )
-            tail = "" if dry_run else f"[{location}]"
-            console.print(
-                f"[green]Agent '{config.name}' {verb}{tail}[/green]"
-                if dry_run
-                else f"[green]Agent '{config.name}' started successfully [{location}][/green]"
-            )
-            if (
-                not dry_run
-                and not config.claude.auto_accept
-                and any(
-                    df in f
-                    for f in config.claude.flags
-                    for df in (
-                        "--dangerously-skip-permissions",
-                        "--dangerously-load-development-channels",
+                if (
+                    not dry_run
+                    and not config.claude.auto_accept
+                    and any(
+                        df in f
+                        for f in config.claude.flags
+                        for df in (
+                            "--dangerously-skip-permissions",
+                            "--dangerously-load-development-channels",
+                        )
                     )
+                ):
+                    console.print(
+                        f"[yellow]auto_accept: false — manual TUI acceptance required on {config.remote.host or 'local'}[/yellow]"
+                    )
+        except Exception as exc:
+            any_error = True
+            if as_json:
+                _emit_json(
+                    {
+                        "name": raw_target,
+                        "status": "error",
+                        "error": str(exc),
+                        "dry_run": dry_run,
+                    }
                 )
-            ):
-                console.print(
-                    f"[yellow]auto_accept: false — manual TUI acceptance required on {config.remote.host or 'local'}[/yellow]"
-                )
-    except Exception as exc:
-        if as_json:
-            _emit_json(
-                {
-                    "name": config_path,
-                    "status": "error",
-                    "error": str(exc),
-                    "dry_run": dry_run,
-                }
-            )
-        else:
-            console.print(f"[red]Error: {exc}[/red]")
-            traceback.print_exc()
+            else:
+                console.print(f"[red]Error ({raw_target}): {exc}[/red]")
+                traceback.print_exc()
+    if any_error:
         sys.exit(1)
 
 
 @click.command()
-@click.argument("name", required=False)
+@click.argument("targets", type=str, nargs=-1)
 @click.option(
     "--all",
     "stop_all",
     is_flag=True,
     default=False,
-    help="Stop every agent in the registry.",
+    help="Stop every agent in the registry. Equivalent to passing the agents "
+    "directories as targets — kept for backward compatibility.",
 )
 @click.option(
     "--force",
@@ -445,63 +490,112 @@ def start(
     "yes",
     is_flag=True,
     default=False,
-    help="Skip confirmation prompt (only used by --all to confirm bulk stop).",
+    help="Skip confirmation prompt for bulk stop.",
 )
 def stop(
-    name: str | None, stop_all: bool, force: bool, dry_run: bool, yes: bool
+    targets: tuple[str, ...],
+    stop_all: bool,
+    force: bool,
+    dry_run: bool,
+    yes: bool,
 ) -> None:
-    """Stop a running agent (or --all).
+    """Stop one or more running agents.
+
+    Each TARGET is an agent name, a YAML path, or a directory containing
+    ``<name>/<name>.yaml`` agent layouts. Multiple targets may be given.
 
     \b
     Example:
       $ sac stop foo
-      $ sac stop --all
+      $ sac stop foo bar baz
+      $ sac stop ~/.scitex/agent-container/agents/   # whole dir
+      $ sac stop --all                                # legacy bulk
       $ sac stop foo --dry-run
     """
-    if not stop_all and not name:
+    # Classify targets: directory targets expand to all <name>/<name>.yaml
+    # under them; non-directory targets are agent names or YAML paths.
+    single_targets: list[str] = []
+    bulk_yamls_from_dirs: list[str] = []
+    for t in targets:
+        p = Path(t).expanduser()
+        if p.is_dir():
+            for _name, yp in _iter_agent_yamls(p):
+                bulk_yamls_from_dirs.append(yp)
+        else:
+            single_targets.append(t)
+
+    if not targets and not stop_all:
         click.echo(
-            "Error: provide a NAME or use --all.\n"
-            "  scitex-agent-container stop <name>\n"
-            "  scitex-agent-container stop --all",
+            "Error: provide one or more TARGETs (agent name, yaml path, or directory) "
+            "or use --all.\n"
+            "  sac stop <name>\n"
+            "  sac stop <name> [<name> ...]\n"
+            "  sac stop <agents-dir>\n"
+            "  sac stop --all",
             err=True,
         )
         sys.exit(2)
 
     if dry_run:
-        target = "all registered agents" if stop_all else f"agent '{name}'"
-        click.echo(f"[dry-run] would stop {target}")
+        if stop_all:
+            click.echo("[dry-run] would stop all registered agents")
+        else:
+            for t in single_targets:
+                click.echo(f"[dry-run] would stop agent '{t}'")
+            for yp in bulk_yamls_from_dirs:
+                click.echo(f"[dry-run] would stop agent at '{yp}'")
         return
 
+    # Bulk path: --all
     if stop_all:
         if not yes and not click.confirm("Stop ALL registered agents?", default=True):
             click.echo("Aborted.")
-            return
-        results = agent_stop_all(force=force)
-        if not results:
-            console.print("[dim]No agents in registry.[/dim]")
-            return
-        any_failure = False
-        for agent_name, ok, msg in results:
-            if ok:
-                console.print(f"[green]✓ {agent_name}[/green]: {msg}")
+            if not single_targets and not bulk_yamls_from_dirs:
+                return
+        else:
+            results = agent_stop_all(force=force)
+            if not results:
+                console.print("[dim]No agents in registry.[/dim]")
             else:
-                any_failure = True
-                console.print(f"[red]✗ {agent_name}[/red]: {msg}")
-        if any_failure and not force:
-            sys.exit(1)
-        return
+                any_failure = False
+                for agent_name, ok, msg in results:
+                    if ok:
+                        console.print(f"[green]✓ {agent_name}[/green]: {msg}")
+                    else:
+                        any_failure = True
+                        console.print(f"[red]✗ {agent_name}[/red]: {msg}")
+                if any_failure and not force:
+                    sys.exit(1)
+            if not single_targets and not bulk_yamls_from_dirs:
+                return
 
-    # stx-allow: fallback (reason: config resolution or agent_stop can raise if the agent is not in the registry or the session is already gone; error message + sys.exit(1) is cleaner than an unhandled traceback)
-    try:
-        # Accept either agent name or YAML path
-        if "/" in name or name.endswith((".yaml", ".yml")):  # type: ignore[union-attr]
-            config_path = resolve_config(name)  # type: ignore[arg-type]
-            config = load_config(config_path)
-            name = config.name
-        agent_stop(name, force=force)  # type: ignore[arg-type]
-        console.print(f"[green]Agent '{name}' stopped[/green]")
-    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-        console.print(f"[red]Error: {exc}[/red]")
+    # Bulk-from-dir-targets path
+    any_error = False
+    for yaml_path in bulk_yamls_from_dirs:
+        try:
+            config = load_config(yaml_path)
+            agent_stop(config.name, force=force)
+            console.print(f"[green]Agent '{config.name}' stopped[/green]")
+        except Exception as exc:  # stx-allow: fallback (reason: one stop failure must not abort the remaining bulk stops)
+            any_error = True
+            console.print(f"[red]Error ({yaml_path}): {exc}[/red]")
+
+    # Per-target single-stop loop
+    for raw_target in single_targets:
+        # stx-allow: fallback (reason: config resolution or agent_stop can raise if the agent is not in the registry or the session is already gone)
+        try:
+            name: str = raw_target
+            if "/" in name or name.endswith((".yaml", ".yml")):
+                config_path = resolve_config(name)
+                config = load_config(config_path)
+                name = config.name
+            agent_stop(name, force=force)
+            console.print(f"[green]Agent '{name}' stopped[/green]")
+        except Exception as exc:
+            any_error = True
+            console.print(f"[red]Error ({raw_target}): {exc}[/red]")
+
+    if any_error:
         sys.exit(1)
 
 
