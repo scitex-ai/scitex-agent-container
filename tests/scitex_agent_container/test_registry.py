@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import tempfile
-from pathlib import Path
-
 import pytest
 
 from scitex_agent_container.registry import Registry
@@ -13,6 +10,16 @@ from scitex_agent_container.registry import Registry
 @pytest.fixture
 def registry(tmp_path):
     """Create a registry with a temporary directory."""
+    # CI-diagnostic: surface what Registry is actually being resolved to.
+    import sys
+
+    print(
+        f"[CI-DEBUG] Registry={Registry!r} module={Registry.__module__} "
+        f"file={getattr(sys.modules.get(Registry.__module__), '__file__', '?')} "
+        f"init={Registry.__init__!r}",
+        file=sys.stderr,
+        flush=True,
+    )
     return Registry(registry_dir=tmp_path / "registry")
 
 
