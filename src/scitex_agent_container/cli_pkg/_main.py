@@ -26,7 +26,6 @@ from .lifecycle_cmds import (
     stop,
     stop_auto_accept,
 )
-from .install_cmds import install_group, install_post_merge_cron
 from .priority_cmds import priority_check, singleton_reconcile
 from .probe_cmds import probe_network
 from .recall_cmds import recall
@@ -35,8 +34,18 @@ from .snapshot_cmds import snapshot
 from .status_cmds import check_agent, health, list_agents, status
 
 
-@click.group(cls=HelpRecursiveGroup, invoke_without_command=True)
-@click.version_option(package_name="scitex-agent-container")
+@click.group(
+    cls=HelpRecursiveGroup,
+    invoke_without_command=True,
+    context_settings={"help_option_names": ["-h", "--help"]},
+)
+@click.version_option(
+    None,
+    "-V",
+    "--version",
+    package_name="scitex-agent-container",
+    prog_name="scitex-agent-container",
+)
 @click.option(
     "--help-recursive",
     is_flag=True,
@@ -52,7 +61,20 @@ from .status_cmds import check_agent, health, list_agents, status
 )
 @click.pass_context
 def main(ctx: click.Context, help_recursive: bool, as_json: bool) -> None:
-    """SciTeX Agent Container -- Declarative agent management."""
+    """SciTeX Agent Container -- Declarative agent management.
+
+    \b
+    Config resolution order:
+      1. positional CONFIG path / agent name argument (where applicable)
+      2. ``$SCITEX_AGENT_CONTAINER_CONFIG``
+      3. ``~/.scitex/agent-container/agents/<name>/<name>.yaml``
+
+    \b
+    Example:
+      $ sac --version
+      $ sac list
+      $ sac start ~/.scitex/agent-container/agents/foo/foo.yaml
+    """
     ctx.ensure_object(dict)
     if as_json:
         ctx.obj["json"] = True

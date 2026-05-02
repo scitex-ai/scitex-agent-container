@@ -21,6 +21,10 @@ def check(config_path: str) -> None:
     Verifies that all dependencies (SSH, screen, python, etc.) are
     available before starting the agent. Useful for debugging deployment
     failures.
+
+    \b
+    Example:
+      $ sac check ~/.scitex/agent-container/agents/foo/foo.yaml
     """
     # stx-allow: fallback (reason: config file may not exist or contain invalid YAML; CLI exits with code 1 to signal preflight failure)
     try:
@@ -78,7 +82,9 @@ def check(config_path: str) -> None:
             else:
                 all_ok = False
                 console.print(f"  {'python:':30s} [red]FAIL[/red]")
-        except FileNotFoundError:  # stx-allow: fallback (reason: file may not exist on first use)
+        except (
+            FileNotFoundError
+        ):  # stx-allow: fallback (reason: file may not exist on first use)
             all_ok = False
             console.print(f"  {'python:':30s} [red]FAIL (python3 not found)[/red]")
 
@@ -131,7 +137,12 @@ def check(config_path: str) -> None:
 @click.command()
 @click.argument("config_path", type=str)
 def validate(config_path: str) -> None:
-    """Validate a YAML config file."""
+    """Validate a YAML config file.
+
+    \b
+    Example:
+      $ sac validate ~/.scitex/agent-container/agents/foo/foo.yaml
+    """
     errors = validate_config(config_path)
     if not errors:
         console.print(f"[green]Config is valid: {config_path}[/green]")
@@ -154,8 +165,36 @@ def validate(config_path: str) -> None:
     default="scitex-agent-container:latest",
     help="Image name/tag.",
 )
-def build(runtime: str, image: str) -> None:
-    """Build container base image."""
+@click.option(
+    "--dry-run",
+    "dry_run",
+    is_flag=True,
+    default=False,
+    help="Print what would be built without invoking the container runtime.",
+)
+@click.option(
+    "-y",
+    "--yes",
+    "yes",
+    is_flag=True,
+    default=False,
+    help="Skip confirmation prompt.",
+)
+def build(runtime: str, image: str, dry_run: bool, yes: bool) -> None:
+    """Build container base image.
+
+    \b
+    Example:
+      $ sac build
+      $ sac build --runtime apptainer
+      $ sac build --dry-run
+    """
+    if dry_run:
+        click.echo(f"[dry-run] would build {runtime} image '{image}'")
+        return
+    if not yes and not click.confirm(f"Build {runtime} image '{image}'?", default=True):
+        click.echo("Aborted.")
+        return
     containers_dir = Path(__file__).resolve().parent.parent.parent.parent / "containers"
 
     if runtime == "docker":
