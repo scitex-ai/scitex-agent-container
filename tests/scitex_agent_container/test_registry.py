@@ -24,12 +24,28 @@ def registry(tmp_path):
         file=sys.stderr,
         flush=True,
     )
-    # Try positional first to isolate kwarg vs args issue.
+    # Diagnostic 3: probe slot identity + try manual __new__/__init__ split.
+    print(
+        f"[CI-DEBUG] init_is_object={Registry.__init__ is object.__init__} "
+        f"new_is_object={Registry.__new__ is object.__new__} "
+        f"init_qualname={getattr(Registry.__init__, '__qualname__', '?')} "
+        f"init_code={getattr(getattr(Registry.__init__, '__code__', None), 'co_filename', '?')}:"
+        f"{getattr(getattr(Registry.__init__, '__code__', None), 'co_firstlineno', '?')}",
+        file=sys.stderr,
+        flush=True,
+    )
     try:
         return Registry(tmp_path / "registry")
     except TypeError as e:
-        print(f"[CI-DEBUG] positional also failed: {e}", file=sys.stderr, flush=True)
-        # Fallback to original failure path so test still surfaces normally.
+        print(f"[CI-DEBUG] positional failed: {e}", file=sys.stderr, flush=True)
+    # Manual split: bypass type.__call__ entirely.
+    try:
+        inst = object.__new__(Registry)
+        Registry.__init__(inst, registry_dir=tmp_path / "registry")
+        print("[CI-DEBUG] manual __new__+__init__ WORKED", file=sys.stderr, flush=True)
+        return inst
+    except TypeError as e:
+        print(f"[CI-DEBUG] manual split also failed: {e}", file=sys.stderr, flush=True)
         return Registry(registry_dir=tmp_path / "registry")
 
 
