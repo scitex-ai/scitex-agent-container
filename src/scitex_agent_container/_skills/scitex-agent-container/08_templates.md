@@ -18,7 +18,7 @@ Both are validated by `tests/test_templates_v3_valid.py`. The SLURM template add
 | Template | Runtime | Distinguishing key |
 |---|---|---|
 | `local.yaml` | `claude-code` | no container, no remote |
-| `docker.yaml` | `claude-code` | `container.runtime: docker` |
+| `docker.yaml` | `claude-code` | `container.runtime: docker` (`podman` also accepted) |
 | `apptainer.yaml` | `claude-code` | `container.runtime: apptainer`, `image: *.sif` |
 | `ssh.yaml` | `claude-code` | `remote.host: ...` |
 | `ssh-slurm.yaml` | `slurm` | `slurm.{partition,time_limit,hooks}` |

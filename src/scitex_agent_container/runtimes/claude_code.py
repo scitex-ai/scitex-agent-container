@@ -16,7 +16,11 @@ from .base import RuntimeBase
 from .claude_md import cleanup_claude_md, setup_claude_md
 from .mcp_config import cleanup_mcp_config, setup_mcp_config
 from .onboarding import ensure_project_onboarding
-from .settings_json import cleanup_settings_json, ensure_global_settings_json, setup_settings_json
+from .settings_json import (
+    cleanup_settings_json,
+    ensure_global_settings_json,
+    setup_settings_json,
+)
 from .src_files import (  # noqa: F401
     cleanup_src_claude_md,
     cleanup_src_env,
@@ -456,7 +460,9 @@ class ClaudeCodeRuntime(RuntimeBase):
                     config.name,
                     path,
                 )
-            except OSError:  # stx-allow: fallback (reason: file system operation failure)
+            except (
+                OSError
+            ):  # stx-allow: fallback (reason: file system operation failure)
                 logger.exception(
                     "Failed to write boot capture for %s to %s",
                     config.name,
@@ -572,9 +578,12 @@ class ClaudeCodeRuntime(RuntimeBase):
         if config.container.runtime != "none":
             from .apptainer import ApptainerRuntime
             from .docker import DockerRuntime
+            from .podman import PodmanRuntime
 
             if config.container.runtime == "docker":
                 return DockerRuntime().start(config)
+            elif config.container.runtime == "podman":
+                return PodmanRuntime().start(config)
             elif config.container.runtime == "apptainer":
                 return ApptainerRuntime().start(config)
 
@@ -586,7 +595,9 @@ class ClaudeCodeRuntime(RuntimeBase):
         # (SCITEX_OROCHI_A2A_TOKEN_PATH, etc.) reach the agent process.
         # config.env exports follow and take precedence over .env values.
         env_file = Path(workdir) / ".env"
-        env_source = f"if [ -f '{env_file}' ]; then set -a; source '{env_file}'; set +a; fi"
+        env_source = (
+            f"if [ -f '{env_file}' ]; then set -a; source '{env_file}'; set +a; fi"
+        )
         env_exports = env_source + ("\n" + env_exports if env_exports else "")
 
         # Pre-populate ~/.claude.json projects entry so the agent skips
@@ -650,9 +661,12 @@ class ClaudeCodeRuntime(RuntimeBase):
         if config.container.runtime != "none":
             from .apptainer import ApptainerRuntime
             from .docker import DockerRuntime
+            from .podman import PodmanRuntime
 
             if config.container.runtime == "docker":
                 return DockerRuntime().stop(config)
+            elif config.container.runtime == "podman":
+                return PodmanRuntime().stop(config)
             elif config.container.runtime == "apptainer":
                 return ApptainerRuntime().stop(config)
 
@@ -683,6 +697,10 @@ class ClaudeCodeRuntime(RuntimeBase):
             from .docker import DockerRuntime
 
             return DockerRuntime().is_running(config)
+        elif config.container.runtime == "podman":
+            from .podman import PodmanRuntime
+
+            return PodmanRuntime().is_running(config)
         elif config.container.runtime == "apptainer":
             from .apptainer import ApptainerRuntime
 
@@ -699,6 +717,10 @@ class ClaudeCodeRuntime(RuntimeBase):
             from .docker import DockerRuntime
 
             return DockerRuntime().logs(config, lines)
+        elif config.container.runtime == "podman":
+            from .podman import PodmanRuntime
+
+            return PodmanRuntime().logs(config, lines)
         elif config.container.runtime == "apptainer":
             from .apptainer import ApptainerRuntime
 

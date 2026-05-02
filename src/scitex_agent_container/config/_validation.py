@@ -118,9 +118,9 @@ def validate_raw(raw: dict, path: str) -> list[str]:
         # container.runtime
         container = spec.get("container", {}) or {}
         cr = container.get("runtime")
-        if cr and cr not in ("none", "docker", "apptainer"):
+        if cr and cr not in ("none", "docker", "podman", "apptainer"):
             errors.append(
-                f"spec.container.runtime must be none|docker|apptainer, got '{cr}'"
+                f"spec.container.runtime must be none|docker|podman|apptainer, got '{cr}'"
             )
 
         # container.mount_host_claude (opt-in; default False)

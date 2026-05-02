@@ -12,7 +12,16 @@ from .base import RuntimeBase
 
 
 class DockerRuntime(RuntimeBase):
-    """Runtime for running agents inside Docker containers."""
+    """Runtime for running agents inside Docker containers.
+
+    Subclass and override :attr:`BIN` for OCI-compatible alternatives
+    (e.g. ``PodmanRuntime``). The CLI surfaces of docker and podman
+    overlap on every command this adapter calls, so the only thing
+    that needs to change is the binary name.
+    """
+
+    #: Container engine binary. Subclasses override (e.g. ``"podman"``).
+    BIN: str = "docker"
 
     def _container_name(self, config: AgentConfig) -> str:
         return f"sac-{config.name}"
@@ -94,14 +103,14 @@ class DockerRuntime(RuntimeBase):
 
         # Remove existing container if present
         subprocess.run(
-            ["docker", "rm", "-f", container_name],
+            [self.BIN, "rm", "-f", container_name],
             capture_output=True,
             check=False,
         )
 
         args = self._build_docker_args(config)
         result = subprocess.run(
-            ["docker"] + args,
+            [self.BIN] + args,
             capture_output=True,
             text=True,
         )
@@ -116,10 +125,10 @@ class DockerRuntime(RuntimeBase):
         """Stop and remove a Docker container."""
         container_name = self._container_name(config)
         subprocess.run(
-            ["docker", "stop", container_name], capture_output=True, check=False
+            [self.BIN, "stop", container_name], capture_output=True, check=False
         )
         subprocess.run(
-            ["docker", "rm", container_name], capture_output=True, check=False
+            [self.BIN, "rm", container_name], capture_output=True, check=False
         )
         return True
 
@@ -127,7 +136,7 @@ class DockerRuntime(RuntimeBase):
         """Check if the Docker container is running."""
         container_name = self._container_name(config)
         result = subprocess.run(
-            ["docker", "ps", "--format", "{{.Names}}"],
+            [self.BIN, "ps", "--format", "{{.Names}}"],
             capture_output=True,
             text=True,
         )
@@ -137,19 +146,25 @@ class DockerRuntime(RuntimeBase):
         """Get logs from the Docker container."""
         container_name = self._container_name(config)
         result = subprocess.run(
-            ["docker", "logs", "--tail", str(lines), container_name],
+            [self.BIN, "logs", "--tail", str(lines), container_name],
             capture_output=True,
             text=True,
         )
         return result.stdout + result.stderr
 
-    @staticmethod
+    @classmethod
     def build_image(
-        image: str = "scitex-agent-container:latest", context: str = "."
+        cls,
+        image: str = "scitex-agent-container:latest",
+        context: str = ".",
     ) -> bool:
-        """Build a Docker image from the containers/ directory."""
+        """Build a container image from the given context.
+
+        Uses the subclass's :attr:`BIN` (so ``PodmanRuntime.build_image``
+        invokes ``podman build``).
+        """
         result = subprocess.run(
-            ["docker", "build", "-t", image, context],
+            [cls.BIN, "build", "-t", image, context],
             text=True,
         )
         return result.returncode == 0
