@@ -51,9 +51,9 @@ Lifecycle:
 .. code-block:: bash
 
     sac start head-spartan/head-spartan.yaml   # submits sbatch on the SLURM submission host
-    sac status head-spartan                    # squeue + tmux pane state
+    sac show-status head-spartan                    # squeue + tmux pane state
     sac attach head-spartan                    # srun --pty + tmux attach on the compute node
-    sac logs head-spartan -n 100               # tmux capture-pane via srun --overlap
+    sac show-logs head-spartan -n 100               # tmux capture-pane via srun --overlap
     sac stop head-spartan                      # scancel + clear local state
 
 The ``slurm.hooks.pre_agent`` script is *sourced* (not exec'd) inside
@@ -140,7 +140,7 @@ Step 4 — operate them
 
     sac list                          # registry view; tenants show alongside other agents
     sac attach dev-helper             # srun --pty + tmux -L sac attach -t sac-dev-helper
-    sac logs dev-helper -n 100        # tmux capture-pane via srun --overlap
+    sac show-logs dev-helper -n 100        # tmux capture-pane via srun --overlap
     sac stop dev-helper               # tmux kill-session (does NOT release the allocation)
     sac stop --all                    # kill every tenant; reservation still alive
 
@@ -204,5 +204,5 @@ Troubleshooting
   ``scitex-hpc reservations get <name>`` and check
   ``"extras": {"tmux_server": "sac"}`` is set.
 * ``sac attach`` exits immediately — same as above; or the session
-  was killed externally. Run ``sac logs`` first to see whether the
+  was killed externally. Run ``sac show-logs`` first to see whether the
   process inside crashed.

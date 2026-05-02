@@ -100,7 +100,7 @@ Status integration
 
 ``agent_meta.collect_rich()`` folds the latest
 ``action_store.summarize()`` into the status payload, so
-``scitex-agent-container status <name> --json`` exposes action history
+``scitex-agent-container show-status <name> --json`` exposes action history
 alongside the pane / hook fields. See :doc:`status_and_hooks` for the
 six new fields.
 

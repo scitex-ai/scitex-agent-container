@@ -45,8 +45,8 @@ Quickstart
 
     scitex-agent-container start my-agent/my-agent.yaml
     scitex-agent-container inspect my-agent
-    scitex-agent-container status my-agent --json
-    scitex-agent-container logs my-agent -n 100
+    scitex-agent-container show-status my-agent --json
+    scitex-agent-container show-logs my-agent -n 100
     scitex-agent-container attach my-agent      # Ctrl-B D to detach (tmux)
 
 4. (Optional) Wire Claude Code hooks so ``status --json`` can surface

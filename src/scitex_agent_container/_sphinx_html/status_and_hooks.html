@@ -593,11 +593,11 @@ consumer observe what an agent is doing without adding code to the
 agent itself.</p>
 <section id="rich-status">
 <h2>Rich Status<a class="headerlink" href="#rich-status" title="Link to this heading"></a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">scitex-agent-container</span> <span class="pre">status</span> <span class="pre">&lt;name&gt;</span> <span class="pre">--json</span></code> emits a dict suitable
+<p><code class="docutils literal notranslate"><span class="pre">scitex-agent-container</span> <span class="pre">show-status</span> <span class="pre">&lt;name&gt;</span> <span class="pre">--json</span></code> emits a dict suitable
 for dashboards or fleet monitors. It merges the registry entry with
 fields collected by <code class="docutils literal notranslate"><span class="pre">agent_meta.collect_rich()</span></code> and
 <code class="docutils literal notranslate"><span class="pre">event_log.summarize()</span></code>.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>scitex-agent-container<span class="w"> </span>status<span class="w"> </span>my-agent<span class="w"> </span>--json
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>scitex-agent-container<span class="w"> </span>show-status<span class="w"> </span>my-agent<span class="w"> </span>--json
 </pre></div>
 </div>
 <p>Selected fields:</p>
@@ -660,7 +660,7 @@ suitable for dashboards.</p>
 </section>
 <section id="claude-code-hook-integration">
 <h2>Claude Code Hook Integration<a class="headerlink" href="#claude-code-hook-integration" title="Link to this heading"></a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">scitex-agent-container</span> <span class="pre">hook-event</span> <span class="pre">&lt;kind&gt;</span></code> is designed to be called
+<p><code class="docutils literal notranslate"><span class="pre">scitex-agent-container</span> <span class="pre">ingest-hook-event</span> <span class="pre">&lt;kind&gt;</span></code> is designed to be called
 from Claude Code’s hook configuration. It reads the Claude Code hook
 payload from stdin and appends a compact JSON record to a per-agent
 ring-buffer at <code class="docutils literal notranslate"><span class="pre">$XDG_DATA_HOME/.scitex/agent-container/events/&lt;agent&gt;.jsonl</span></code>
@@ -669,16 +669,16 @@ ring-buffer at <code class="docutils literal notranslate"><span class="pre">$XDG
 <div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
 <span class="w">  </span><span class="nt">&quot;hooks&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nt">&quot;PreToolUse&quot;</span><span class="p">:</span><span class="w">       </span><span class="p">[{</span><span class="nt">&quot;matcher&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;hooks&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<span class="w">      </span><span class="p">{</span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;command&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;command&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;scitex-agent-container hook-event pretool&quot;</span><span class="p">}</span>
+<span class="w">      </span><span class="p">{</span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;command&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;command&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;scitex-agent-container ingest-hook-event pretool&quot;</span><span class="p">}</span>
 <span class="w">    </span><span class="p">]}],</span>
 <span class="w">    </span><span class="nt">&quot;PostToolUse&quot;</span><span class="p">:</span><span class="w">      </span><span class="p">[{</span><span class="nt">&quot;matcher&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;hooks&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<span class="w">      </span><span class="p">{</span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;command&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;command&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;scitex-agent-container hook-event posttool&quot;</span><span class="p">}</span>
+<span class="w">      </span><span class="p">{</span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;command&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;command&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;scitex-agent-container ingest-hook-event posttool&quot;</span><span class="p">}</span>
 <span class="w">    </span><span class="p">]}],</span>
 <span class="w">    </span><span class="nt">&quot;UserPromptSubmit&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">&quot;matcher&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;hooks&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<span class="w">      </span><span class="p">{</span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;command&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;command&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;scitex-agent-container hook-event prompt&quot;</span><span class="p">}</span>
+<span class="w">      </span><span class="p">{</span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;command&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;command&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;scitex-agent-container ingest-hook-event prompt&quot;</span><span class="p">}</span>
 <span class="w">    </span><span class="p">]}],</span>
 <span class="w">    </span><span class="nt">&quot;Stop&quot;</span><span class="p">:</span><span class="w">             </span><span class="p">[{</span><span class="nt">&quot;matcher&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;hooks&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<span class="w">      </span><span class="p">{</span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;command&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;command&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;scitex-agent-container hook-event stop&quot;</span><span class="p">}</span>
+<span class="w">      </span><span class="p">{</span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;command&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;command&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;scitex-agent-container ingest-hook-event stop&quot;</span><span class="p">}</span>
 <span class="w">    </span><span class="p">]}]</span>
 <span class="w">  </span><span class="p">}</span>
 <span class="p">}</span>
@@ -707,7 +707,7 @@ orchestrator (scitex-orochi, a custom hub, etc.). <code class="docutils literal 
 emits a self-describing dict; consumers wrap it themselves. For
 example, scitex-orochi’s <code class="docutils literal notranslate"><span class="pre">heartbeat-push</span></code> command:</p>
 <ol class="arabic simple">
-<li><p>Shells out to <code class="docutils literal notranslate"><span class="pre">scitex-agent-container</span> <span class="pre">status</span> <span class="pre">&lt;name&gt;</span> <span class="pre">--json</span></code>.</p></li>
+<li><p>Shells out to <code class="docutils literal notranslate"><span class="pre">scitex-agent-container</span> <span class="pre">show-status</span> <span class="pre">&lt;name&gt;</span> <span class="pre">--json</span></code>.</p></li>
 <li><p>Reshapes the payload into its own hub schema.</p></li>
 <li><p>POSTs to its <code class="docutils literal notranslate"><span class="pre">/api/agents/register/</span></code> endpoint.</p></li>
 </ol>
