@@ -183,9 +183,9 @@ class AutoResponseScheduler:
         Returns the list of :class:`ActionAttempt` records produced
         (possibly empty).
         """
-        from .action_base import run_action
-        from .actions.compact import CompactAction
-        from .actions.nonce_probe import NonceProbeAction
+        from ..action_base import run_action
+        from ..actions.compact import CompactAction
+        from ..actions.nonce_probe import NonceProbeAction
 
         now = self._time()
         attempts: list[Any] = []

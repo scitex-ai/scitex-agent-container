@@ -28,7 +28,7 @@ class TestRespond:
         return sent_keys, dmed, send_fn, dm_fn
 
     def test_compose_pending_unsent_sends_enter(self):
-        from scitex_agent_container.auto_accept import respond
+        from scitex_agent_container.auto.accept import respond
 
         sent, dmed, sfn, dfn = self._make_calls()
         result = respond("agent1", "compose_pending_unsent", "", send_fn=sfn, dm_fn=dfn)
@@ -37,7 +37,7 @@ class TestRespond:
         assert dmed == []
 
     def test_y_n_prompt_with_yes_option_sends_keys(self):
-        from scitex_agent_container.auto_accept import respond
+        from scitex_agent_container.auto.accept import respond
 
         sent, dmed, sfn, dfn = self._make_calls()
         pane = "Do you want to proceed?\n[1] Yes\n[2] No"
@@ -48,7 +48,7 @@ class TestRespond:
         assert dmed == []
 
     def test_y_n_prompt_without_yes_option_is_noop(self):
-        from scitex_agent_container.auto_accept import respond
+        from scitex_agent_container.auto.accept import respond
 
         sent, dmed, sfn, dfn = self._make_calls()
         pane = "Do you want to proceed?\n[1] No\n[2] Cancel"
@@ -57,7 +57,7 @@ class TestRespond:
         assert sent == []
 
     def test_auth_error_escalates_to_mgr_auth(self):
-        from scitex_agent_container.auto_accept import respond
+        from scitex_agent_container.auto.accept import respond
 
         sent, dmed, sfn, dfn = self._make_calls()
         result = respond("agent1", "auth_error", "", send_fn=sfn, dm_fn=dfn)
@@ -66,7 +66,7 @@ class TestRespond:
         assert any(ch == "mgr-auth" for ch, _ in dmed)
 
     def test_limit_reached_escalates_to_healer(self):
-        from scitex_agent_container.auto_accept import respond
+        from scitex_agent_container.auto.accept import respond
 
         sent, dmed, sfn, dfn = self._make_calls()
         result = respond("agent1", "limit_reached", "", send_fn=sfn, dm_fn=dfn)
@@ -75,7 +75,7 @@ class TestRespond:
         assert any(ch == "healer" for ch, _ in dmed)
 
     def test_unknown_state_is_noop(self):
-        from scitex_agent_container.auto_accept import respond
+        from scitex_agent_container.auto.accept import respond
 
         sent, dmed, sfn, dfn = self._make_calls()
         result = respond("agent1", "unknown", "", send_fn=sfn, dm_fn=dfn)
@@ -84,7 +84,7 @@ class TestRespond:
         assert dmed == []
 
     def test_running_state_is_noop(self):
-        from scitex_agent_container.auto_accept import respond
+        from scitex_agent_container.auto.accept import respond
 
         sent, dmed, sfn, dfn = self._make_calls()
         result = respond("agent1", "running", "", send_fn=sfn, dm_fn=dfn)
@@ -99,7 +99,7 @@ class TestRespond:
 
 class TestYNVerification:
     def _respond(self, pane):
-        from scitex_agent_container.auto_accept import respond
+        from scitex_agent_container.auto.accept import respond
 
         sent = []
         result = respond(
@@ -145,7 +145,7 @@ class TestYNVerification:
 
 class TestThrottle:
     def test_second_call_within_5s_is_noop(self):
-        from scitex_agent_container.auto_accept_daemon import run_daemon
+        from scitex_agent_container.auto.daemon import run_daemon
 
         calls: list[str] = []
         sleeps: list[float] = []
@@ -170,8 +170,8 @@ class TestThrottle:
                 import signal as _sig
                 _os.kill(_os.getpid(), _sig.SIGTERM)
 
-        with patch("scitex_agent_container.auto_accept_daemon.write_pid"):
-            with patch("scitex_agent_container.auto_accept_daemon.clear_pid"):
+        with patch("scitex_agent_container.auto.daemon.write_pid"):
+            with patch("scitex_agent_container.auto.daemon.clear_pid"):
                 run_daemon(
                     "test-agent",
                     tick_s=1.0,
@@ -196,7 +196,7 @@ class TestThrottle:
 
 class TestDaemonTick:
     def test_daemon_stops_on_sigterm(self):
-        from scitex_agent_container.auto_accept_daemon import run_daemon
+        from scitex_agent_container.auto.daemon import run_daemon
 
         iterations = []
 
@@ -220,8 +220,8 @@ class TestDaemonTick:
                 import signal as _sig
                 _os.kill(_os.getpid(), _sig.SIGTERM)
 
-        with patch("scitex_agent_container.auto_accept_daemon.write_pid"):
-            with patch("scitex_agent_container.auto_accept_daemon.clear_pid"):
+        with patch("scitex_agent_container.auto.daemon.write_pid"):
+            with patch("scitex_agent_container.auto.daemon.clear_pid"):
                 run_daemon(
                     "test-daemon",
                     tick_s=60.0,

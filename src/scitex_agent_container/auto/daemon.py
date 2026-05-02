@@ -86,9 +86,9 @@ def run_daemon(
         respond_fn:   respond(name, state, pane_text) -> bool
         sleep_fn:     time.sleep override
     """
-    from .agent_meta import _classify_pane_state as _classify
-    from .auto_accept import respond as _respond
-    from .runtimes.pane_capture import pane_capture as _capture
+    from ..agent_meta import _classify_pane_state as _classify
+    from ..runtimes.pane_capture import pane_capture as _capture
+    from .accept import respond as _respond
 
     cap = capture_fn or (lambda n: _capture(n))
     clf = classify_fn or _classify
@@ -121,7 +121,12 @@ def run_daemon(
                 now = time.monotonic()
 
                 if not state_changed:
-                    logger.debug("[%s] state=%s unchanged — sleeping %ss", name, state, unchanged_wait_s)
+                    logger.debug(
+                        "[%s] state=%s unchanged — sleeping %ss",
+                        name,
+                        state,
+                        unchanged_wait_s,
+                    )
                     slp(unchanged_wait_s)
                     continue
 
@@ -133,7 +138,9 @@ def run_daemon(
                         remaining = min_send_interval_s - elapsed_since_send
                         logger.debug(
                             "[%s] throttle: last send was %.1fs ago — waiting %.1fs",
-                            name, elapsed_since_send, remaining,
+                            name,
+                            elapsed_since_send,
+                            remaining,
                         )
                         slp(remaining)
                         continue
@@ -164,9 +171,9 @@ def send_accept_once(
     respond_fn: Callable[[str, str, str], bool] | None = None,
 ) -> tuple[str, bool]:
     """One-shot: capture → classify → respond. Returns (state, sent)."""
-    from .agent_meta import _classify_pane_state as _classify
-    from .auto_accept import respond as _respond
-    from .runtimes.pane_capture import pane_capture as _capture
+    from ..agent_meta import _classify_pane_state as _classify
+    from ..runtimes.pane_capture import pane_capture as _capture
+    from .accept import respond as _respond
 
     cap = capture_fn or (lambda n: _capture(n))
     clf = classify_fn or _classify

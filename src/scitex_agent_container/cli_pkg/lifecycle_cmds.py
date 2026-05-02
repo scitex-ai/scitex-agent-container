@@ -655,7 +655,7 @@ def send_accept(agent: str, dry_run: bool, yes: bool) -> None:
     if dry_run:
         click.echo(f"[dry-run] would send accept action for agent '{agent}'")
         return
-    from ..auto_accept_daemon import send_accept_once
+    from ..auto.daemon import send_accept_once
 
     state, sent = send_accept_once(agent)
     if sent:
@@ -704,7 +704,7 @@ def start_auto_accept(agent: str, tick_s: float, dry_run: bool, yes: bool) -> No
         return
     import multiprocessing
 
-    from ..auto_accept_daemon import read_pid, run_daemon
+    from ..auto.daemon import read_pid, run_daemon
 
     existing = read_pid(agent)
     if existing:
@@ -767,7 +767,7 @@ def stop_auto_accept(agent: str, dry_run: bool, yes: bool) -> None:
     import os as _os
     import signal
 
-    from ..auto_accept_daemon import clear_pid, read_pid
+    from ..auto.daemon import clear_pid, read_pid
 
     pid = read_pid(agent)
     if pid is None:

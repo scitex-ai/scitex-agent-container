@@ -13,7 +13,7 @@ from typing import List, Optional
 from scitex_agent_container.action_base import (
     ActionContext,
 )
-from scitex_agent_container.auto_response import (
+from scitex_agent_container.auto.response import (
     AutoResponsePolicy,
     AutoResponseScheduler,
     SchedulerState,
