@@ -432,13 +432,31 @@ def start(
     default=False,
     help="Tolerate stale registry, missing configs, and hook failures.",
 )
-def stop(name: str | None, stop_all: bool, force: bool) -> None:
+@click.option(
+    "--dry-run",
+    "dry_run",
+    is_flag=True,
+    default=False,
+    help="Print which agent(s) would be stopped without sending the kill.",
+)
+@click.option(
+    "-y",
+    "--yes",
+    "yes",
+    is_flag=True,
+    default=False,
+    help="Skip confirmation prompt (only used by --all to confirm bulk stop).",
+)
+def stop(
+    name: str | None, stop_all: bool, force: bool, dry_run: bool, yes: bool
+) -> None:
     """Stop a running agent (or --all).
 
     \b
     Example:
       $ sac stop foo
       $ sac stop --all
+      $ sac stop foo --dry-run
     """
     if not stop_all and not name:
         click.echo(
@@ -449,7 +467,15 @@ def stop(name: str | None, stop_all: bool, force: bool) -> None:
         )
         sys.exit(2)
 
+    if dry_run:
+        target = "all registered agents" if stop_all else f"agent '{name}'"
+        click.echo(f"[dry-run] would stop {target}")
+        return
+
     if stop_all:
+        if not yes and not click.confirm("Stop ALL registered agents?", default=True):
+            click.echo("Aborted.")
+            return
         results = agent_stop_all(force=force)
         if not results:
             console.print("[dim]No agents in registry.[/dim]")

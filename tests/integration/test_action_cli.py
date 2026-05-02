@@ -153,7 +153,9 @@ class TestPurgeCommand:
             },
             root=root,
         )
-        result = CliRunner().invoke(actions_cli, ["purge", "--days", "30", "--json"])
+        result = CliRunner().invoke(
+            actions_cli, ["purge", "--days", "30", "--json", "-y"]
+        )
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data == {"deleted": 1}
@@ -163,7 +165,9 @@ class TestPurgeCommand:
 
     def test_purge_no_old_rows_reports_zero(self, root):
         _seed(root)
-        result = CliRunner().invoke(actions_cli, ["purge", "--days", "30", "--json"])
+        result = CliRunner().invoke(
+            actions_cli, ["purge", "--days", "30", "--json", "-y"]
+        )
         assert result.exit_code == 0
         assert json.loads(result.output) == {"deleted": 0}
 
