@@ -200,7 +200,7 @@ class TestValidateConfig:
             "metadata": {"name": "test"},
             "spec": {
                 "runtime": "claude-code",
-                "container": {"runtime": "podman"},
+                "container": {"runtime": "kubernetes"},
             },
         }
         path = _write_config(data)
