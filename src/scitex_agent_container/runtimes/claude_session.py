@@ -63,6 +63,16 @@ class ClaudeSessionRuntime(RuntimeBase):
             "--name",
             config.name,
         ]
+        # Mission: first non-empty ``spec.startup_commands[*].command`` —
+        # mirrors how contributor-spec.yaml.j2 lays out the agent's task.
+        mission = _first_mission(config)
+        if mission:
+            argv.extend(["--mission", mission])
+        # Auto-resume: if a previous run persisted a session id, hand it to
+        # the SDK so the new turn picks up where the old one left off.
+        prior_sid = _runner.read_session_id(state_dir)
+        if prior_sid:
+            argv.extend(["--resume-session-id", prior_sid])
         proc = subprocess.Popen(
             argv,
             stdout=subprocess.DEVNULL,
@@ -150,6 +160,22 @@ class ClaudeSessionRuntime(RuntimeBase):
                 pass
             except OSError:  # stx-allow: fallback (reason: cleanup must not raise)
                 pass
+
+
+def _first_mission(config: AgentConfig) -> str | None:
+    """First non-empty ``spec.startup_commands[*].command``, or None.
+
+    Mirrors how the contributor-spec template lays out an agent's task:
+    a single ``startup_commands:`` list whose first entry's ``command``
+    is the agent's mission prompt. ``delay`` is ignored — the SDK
+    runtime needs a one-shot prompt to seed the conversation, not a
+    timed sequence of typed-in commands like the CLI runtime expects.
+    """
+    for entry in getattr(config, "startup_commands", []) or []:
+        cmd = (getattr(entry, "command", "") or "").strip()
+        if cmd:
+            return cmd
+    return None
 
 
 def _pid_alive(pid: int) -> bool:

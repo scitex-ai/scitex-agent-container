@@ -24,8 +24,12 @@ def state_root(tmp_path: Path, monkeypatch) -> Path:
     return tmp_path
 
 
-def _config(name: str = "alpha") -> SimpleNamespace:
-    return SimpleNamespace(name=name)
+def _config(name: str = "alpha", *, startup_commands=None) -> SimpleNamespace:
+    return SimpleNamespace(name=name, startup_commands=startup_commands or [])
+
+
+def _startup(command: str, delay: int = 0) -> SimpleNamespace:
+    return SimpleNamespace(command=command, delay=delay)
 
 
 # ---------------------------------------------------------------------------
@@ -114,3 +118,68 @@ class TestStartStopE2E:
         finally:
             assert rt.stop(cfg) is True  # type: ignore[arg-type]
         assert rt.is_running(cfg) is False  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# argv composition (no subprocess) — verify mission + resume forwarding
+# ---------------------------------------------------------------------------
+
+
+class TestArgvComposition:
+    def test_no_mission_means_no_mission_arg(self, state_root: Path) -> None:
+        from scitex_agent_container.runtimes import claude_session as adapter
+
+        cfg = _config(startup_commands=[])
+        captured: dict = {}
+
+        class _FakePopen:
+            def __init__(self, argv, **kw):
+                captured["argv"] = argv
+                self.pid = 999_999_999  # dead pid; start() will time out
+
+            def poll(self):
+                return 1
+
+        with patch.object(adapter.subprocess, "Popen", _FakePopen):
+            adapter.ClaudeSessionRuntime().start(cfg)  # type: ignore[arg-type]
+        assert "--mission" not in captured["argv"]
+
+    def test_mission_from_first_startup_command(self, state_root: Path) -> None:
+        from scitex_agent_container.runtimes import claude_session as adapter
+
+        cfg = _config(startup_commands=[_startup(""), _startup("Hello mission")])
+        captured: dict = {}
+
+        class _FakePopen:
+            def __init__(self, argv, **kw):
+                captured["argv"] = argv
+                self.pid = 999_999_999
+
+            def poll(self):
+                return 1
+
+        with patch.object(adapter.subprocess, "Popen", _FakePopen):
+            adapter.ClaudeSessionRuntime().start(cfg)  # type: ignore[arg-type]
+        assert (
+            captured["argv"][captured["argv"].index("--mission") + 1] == "Hello mission"
+        )
+
+    def test_existing_session_id_triggers_resume(self, state_root: Path) -> None:
+        from scitex_agent_container.runtimes import claude_session as adapter
+
+        runner.write_session_id(state_root / "alpha", "prev-uuid")
+        cfg = _config(startup_commands=[_startup("go")])
+        captured: dict = {}
+
+        class _FakePopen:
+            def __init__(self, argv, **kw):
+                captured["argv"] = argv
+                self.pid = 999_999_999
+
+            def poll(self):
+                return 1
+
+        with patch.object(adapter.subprocess, "Popen", _FakePopen):
+            adapter.ClaudeSessionRuntime().start(cfg)  # type: ignore[arg-type]
+        argv = captured["argv"]
+        assert argv[argv.index("--resume-session-id") + 1] == "prev-uuid"
