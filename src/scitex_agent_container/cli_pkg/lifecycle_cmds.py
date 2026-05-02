@@ -95,6 +95,9 @@ def _discover_all_agents() -> list[str]:
     """Find all agent YAML files in the sac install root and shared-host layout.
 
     Search locations (earlier wins on name collision):
+      0. **Project-local** — first ``.scitex/agent-container/agents/``
+         found walking upward from cwd. Highest priority so checked-in
+         test agents and CI fixtures override globals.
       1. ``~/.scitex/agent-container/agents/<name>/<name>.yaml`` (sac root)
       2. ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` (plugin-port colon-separated dirs)
       3. ``~/.scitex/orochi/<HOST>/agents/`` (host-specific override)
@@ -109,12 +112,17 @@ def _discover_all_agents() -> list[str]:
     """
     from pathlib import Path
 
+    from ..config._resolve import _project_local_dirs
+
     # name -> yaml path; later writes are ignored (earlier = higher priority).
     found: dict[str, str] = {}
 
     home = Path.home()
     primary = home / ".scitex" / "agent-container" / "agents"
-    search_dirs: list[Path] = [primary]
+    # Project-local first (so an in-repo test agent wins over a stale
+    # global with the same name), then home root, then env-port.
+    search_dirs: list[Path] = list(_project_local_dirs())
+    search_dirs.append(primary)
 
     env_raw = os.environ.get("SCITEX_AGENT_CONTAINER_YAML_DIRS", "")
     for p in env_raw.split(":"):

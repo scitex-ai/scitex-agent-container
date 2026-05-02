@@ -69,9 +69,17 @@ def _cfg(
 @pytest.fixture
 def isolated_state(monkeypatch, tmp_path):
     """Isolate slurm state dir so tests don't collide with each other or
-    with a real fleet on the developer's machine."""
+    with a real fleet on the developer's machine.
+
+    Also chdirs into ``tmp_path`` so ``local_state.runtime_path`` (which
+    walks upward looking for a project-scope ``.scitex/agent-container/``
+    inside a git repo) finds nothing and falls back to home-scope —
+    matching what these tests assume when they assert on
+    ``$HOME/.scitex/agent-container/runtime/...`` paths.
+    """
     state_dir = tmp_path / "slurm-state"
     monkeypatch.setenv("SCITEX_AGENT_CONTAINER_SLURM_STATE_DIR", str(state_dir))
+    monkeypatch.chdir(tmp_path)
     yield state_dir
 
 

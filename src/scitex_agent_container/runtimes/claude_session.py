@@ -21,6 +21,7 @@ import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 from .._runners import claude_session as _runner
 from ..config import AgentConfig
@@ -45,7 +46,15 @@ class ClaudeSessionRuntime(RuntimeBase):
         completes (or the operator hits Ctrl+C) and returns True iff
         the runner exited cleanly."""
         _ = no_preflight  # no preflight checks beyond is_running.
-        state_dir = _runner.state_dir_for(config.name)
+        # If the YAML lives under a project-local
+        # ``.scitex/agent-container/agents/`` tree, route runtime state
+        # to the matching ``runtime/`` sibling so per-agent state lands
+        # inside the same repo (CI snapshots, hand-testing without
+        # polluting ~/.scitex). Otherwise fall back to the runner's
+        # default (~/.scitex/agent-container/runtime/).
+        project_runtime = _project_runtime_root(config)
+        state_root_override = project_runtime if project_runtime else None
+        state_dir = _runner.state_dir_for(config.name, root=state_root_override)
 
         if force and self.is_running(config):
             self.stop(config)
@@ -67,6 +76,8 @@ class ClaudeSessionRuntime(RuntimeBase):
             "--name",
             config.name,
         ]
+        if state_root_override:
+            argv.extend(["--state-root", str(state_root_override)])
         # Mission: first non-empty ``spec.startup_commands[*].command`` —
         # mirrors how contributor-spec.yaml.j2 lays out the agent's task.
         mission = _first_mission(config)
@@ -122,9 +133,13 @@ class ClaudeSessionRuntime(RuntimeBase):
             time.sleep(0.05)
         return False
 
+    def _state_dir(self, config: AgentConfig) -> Path:
+        """Per-agent state dir: project-local if available, else default."""
+        return _runner.state_dir_for(config.name, root=_project_runtime_root(config))
+
     def stop(self, config: AgentConfig) -> bool:
         """SIGTERM the runner; fall back to SIGKILL after 5 s."""
-        state_dir = _runner.state_dir_for(config.name)
+        state_dir = self._state_dir(config)
         pid = _runner.read_pid(state_dir)
         if pid is None:
             return True  # nothing to stop
@@ -157,7 +172,7 @@ class ClaudeSessionRuntime(RuntimeBase):
 
     def is_running(self, config: AgentConfig) -> bool:
         """True if the recorded PID exists and the process is alive."""
-        state_dir = _runner.state_dir_for(config.name)
+        state_dir = self._state_dir(config)
         pid = _runner.read_pid(state_dir)
         return pid is not None and _pid_alive(pid)
 
@@ -170,7 +185,7 @@ class ClaudeSessionRuntime(RuntimeBase):
         accumulated token totals. Falls back to the latest heartbeat
         if the agent hasn't started a conversation yet.
         """
-        state_dir = _runner.state_dir_for(config.name)
+        state_dir = self._state_dir(config)
         rendered = _format_session_tail(state_dir, lines)
         if rendered:
             return rendered
@@ -245,6 +260,28 @@ def _format_session_tail(state_dir, max_lines: int) -> str:
         else:
             out.append(f"[{kind}]      {_json.dumps(rec, ensure_ascii=False)[:200]}")
     return "\n".join(out)
+
+
+def _project_runtime_root(config: AgentConfig) -> "Path | None":
+    """If the agent's YAML lives under a project-scope
+    ``.scitex/agent-container/`` tree (a git repo with that subdir),
+    return the sibling ``runtime/`` so per-agent state lands inside
+    the same repo. Otherwise None.
+
+    Delegates to ``scitex_config._ecosystem.local_state.find_project_scope``
+    — same convention used by the slurm runtime, scitex-hpc, etc.
+    In-repo test agents get in-repo state, keeping ``~/.scitex``
+    clean and letting CI snapshot transcripts as build artifacts.
+    """
+    src = getattr(config, "config_path", "") or ""
+    if not src:
+        return None
+    try:
+        from scitex_config._ecosystem import local_state
+    except Exception:  # stx-allow: fallback (reason: scitex-config optional; degrade to home-scope state)
+        return None
+    scope = local_state.find_project_scope("agent-container", start=Path(src).parent)
+    return (scope / "runtime") if scope is not None else None
 
 
 def _first_mission(config: AgentConfig) -> str | None:

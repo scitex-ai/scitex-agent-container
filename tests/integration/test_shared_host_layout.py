@@ -20,10 +20,18 @@ import yaml
 
 @pytest.fixture
 def fake_home(monkeypatch, tmp_path):
-    """Redirect ~ to tmp_path and reset env overrides for determinism."""
+    """Redirect ~ to tmp_path and reset env overrides for determinism.
+
+    Also chdirs into ``tmp_path`` so the project-local agent discovery
+    (added 2026-05-03 in config/_resolve.py::_project_local_dirs) walks
+    upward from a clean dir with no ``.scitex/agent-container/agents/``
+    marker — keeping these synthetic-fixture tests insulated from the
+    in-repo sdk-test agent.
+    """
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("SCITEX_AGENT_CONTAINER_YAML_DIRS", raising=False)
     monkeypatch.setenv("SCITEX_AGENT_CONTAINER_HOSTNAME", "ywata-note-win")
+    monkeypatch.chdir(tmp_path)
     return tmp_path
 
 

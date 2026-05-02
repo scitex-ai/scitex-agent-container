@@ -8,6 +8,35 @@ from typing import List, Tuple
 
 _ENV_VAR = "SCITEX_AGENT_CONTAINER_YAML_DIRS"
 
+# Retained for ``runtimes/claude_session.py``; project-local discovery
+# itself delegates to ``scitex_config._ecosystem.local_state``.
+_PROJECT_LOCAL_MAX_DEPTH = 10
+
+
+def _project_local_dirs(start: Path | None = None) -> List[Path]:
+    """Return ``[<scope>/agents]`` for the closest project scope, or [].
+
+    Uses ``scitex_config._ecosystem.local_state.find_project_scope`` —
+    walks upward from ``start`` (default: cwd) looking for a git repo
+    that contains ``.scitex/agent-container/``. This matches the
+    ecosystem-wide convention (slurm scripts, hpc reservations, etc.
+    all use the same scope resolution) so per-package state lands in
+    one predictable place per repo.
+
+    The git boundary is deliberate: it provides an unambiguous
+    "this is a project" marker. Users who want project scope without
+    git can simply ``git init``.
+    """
+    try:
+        from scitex_config._ecosystem import local_state
+    except Exception:  # stx-allow: fallback (reason: scitex-config is an optional dep — degrade to no project-local discovery rather than break sac install)
+        return []
+    scope = local_state.find_project_scope("agent-container", start=start)
+    if scope is None:
+        return []
+    agents = scope / "agents"
+    return [agents] if agents.is_dir() else []
+
 
 def _resolve_host() -> str:
     """Return hostname using SCITEX_AGENT_CONTAINER_HOSTNAME or SCITEX_OROCHI_HOSTNAME or gethostname."""
@@ -29,7 +58,11 @@ def _resolve_host() -> str:
 def _search_dirs() -> Tuple[Path, List[Path], List[Path]]:
     """Return (primary_dir, env_dirs, fleet_dirs) with ~ expansion.
 
-    Search order:
+    Search order (highest priority first):
+      0. **Project-local** — first ``.scitex/agent-container/agents/``
+         found by walking upward from cwd. Surfaces in ``env_dirs``
+         (prepended) so checked-in test agents and CI fixtures win
+         over stale globals.
       1. ``~/.scitex/agent-container/agents/`` — sac's own install root.
       2. ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` — plugin port for external
          orchestrators to extend the search scope without touching sac.
@@ -43,6 +76,11 @@ def _search_dirs() -> Tuple[Path, List[Path], List[Path]]:
     primary = home / ".scitex" / "agent-container" / "agents"
     env_raw = os.environ.get(_ENV_VAR, "")
     env_dirs = [Path(os.path.expanduser(p)) for p in env_raw.split(":") if p.strip()]
+    # Project-local takes priority OVER the home install root: prepend
+    # it as the highest-priority entry. Returned via the env_dirs slot
+    # but inserted before the existing primary check at the call site
+    # below by ordering primary AFTER it in resolve_config().
+    env_dirs = _project_local_dirs() + env_dirs
 
     host = _resolve_host()
     fleet_roots = [
@@ -74,6 +112,9 @@ def resolve_config(name_or_path: str) -> str:
     """Resolve agent name or path to a config file path.
 
     Search order for short names (no slash, no .yaml/.yml suffix):
+      0. **Project-local** — first ``.scitex/agent-container/agents/``
+         found walking upward from cwd. Highest priority so checked-in
+         test agents and CI fixtures override globals.
       1. ~/.scitex/agent-container/agents/<name>.yaml  (sac install root)
       2. $SCITEX_AGENT_CONTAINER_YAML_DIRS (colon-separated extra dirs)
       3. Fleet layout — for each root in
@@ -90,11 +131,20 @@ def resolve_config(name_or_path: str) -> str:
         raise FileNotFoundError(f"Config file not found: {name_or_path}")
 
     primary, env_dirs, fleet_dirs = _search_dirs()
+    # Split env_dirs into the project-local prefix (added by
+    # ``_search_dirs``) and the operator-supplied extension.
+    project_local_dirs = _project_local_dirs()
+    operator_env_dirs = env_dirs[len(project_local_dirs) :]
 
+    # Order: project-local → primary (~/.scitex…) → env → fleet.
+    for d in project_local_dirs:
+        hit = _try_dir(d, name_or_path)
+        if hit:
+            return hit
     hit = _try_dir(primary, name_or_path)
     if hit:
         return hit
-    for d in env_dirs:
+    for d in operator_env_dirs:
         hit = _try_dir(d, name_or_path)
         if hit:
             return hit
@@ -103,16 +153,20 @@ def resolve_config(name_or_path: str) -> str:
         if hit:
             return hit
 
+    project_lines = "\n".join(
+        f"  {d}/{name_or_path}/{name_or_path}.yaml" for d in project_local_dirs
+    )
     env_line = (
         f"  (env ${_ENV_VAR}: "
-        f"{', '.join(str(d) for d in env_dirs) if env_dirs else '<unset>'})"
+        f"{', '.join(str(d) for d in operator_env_dirs) if operator_env_dirs else '<unset>'})"
     )
     fleet_lines = "\n".join(
         f"  {d}/{name_or_path}/{name_or_path}.yaml" for d in fleet_dirs
     )
     raise FileNotFoundError(
         f"Agent '{name_or_path}' not found. Searched:\n"
-        f"  {primary}/{name_or_path}.yaml\n"
+        + (project_lines + "\n" if project_lines else "")
+        + f"  {primary}/{name_or_path}.yaml\n"
         f"{env_line}\n"
         f"{fleet_lines}"
     )
