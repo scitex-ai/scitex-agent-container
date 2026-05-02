@@ -29,6 +29,6 @@ jobs:
         # Fast fail-fast: catches schema / dataclass drift in YAML
         # templates before paying for the full suite. Mirrors the
         # rationale in 06_skills_05_quality-checklist.md.
-        run: pytest tests/test_templates_v3_valid.py -q
+        run: pytest tests/integration/test_templates_v3_valid.py -q
       - name: Run tests
         run: pytest tests/
