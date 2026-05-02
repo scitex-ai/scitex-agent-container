@@ -20,6 +20,10 @@ def _get_runtime(config: AgentConfig):
     """Return the appropriate runtime for the config."""
     if config.runtime == "claude-code":
         return ClaudeCodeRuntime()
+    if config.runtime == "claude-session":
+        from .runtimes.claude_session import ClaudeSessionRuntime
+
+        return ClaudeSessionRuntime()
     if config.runtime == "slurm":
         return SlurmRuntime()
     if config.runtime == "slurm-tenant":
