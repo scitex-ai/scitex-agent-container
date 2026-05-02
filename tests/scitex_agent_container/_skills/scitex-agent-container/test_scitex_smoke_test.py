@@ -1,8 +1,9 @@
 """Smoke test for the scitex_smoke_test.py skill artifact."""
+
 from pathlib import Path
 
 SCRIPT = (
-    Path(__file__).resolve().parents[3]
+    Path(__file__).resolve().parents[4]
     / "src"
     / "scitex_agent_container"
     / "_skills"
