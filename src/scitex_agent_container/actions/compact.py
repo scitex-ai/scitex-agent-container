@@ -31,7 +31,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from .._lifecycle.liveness_probe import pane_is_busy
-from ..action_base import ActionContext, PaneAction
+from .._state.action_base import ActionContext, PaneAction
 
 # Tail window carried into the attempt log for forensic readers.
 # Compacts don't need the huge window a nonce probe needs because

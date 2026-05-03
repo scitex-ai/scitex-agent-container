@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from scitex_agent_container.recall import (
+from scitex_agent_container._state.recall import (
     Entry,
     collect_stats,
     filter_entries,

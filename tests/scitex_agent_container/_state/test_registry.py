@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from scitex_agent_container.registry import Registry
+from scitex_agent_container._state.registry import Registry
 
 
 def _make_registry(registry_dir):

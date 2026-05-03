@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from scitex_agent_container.action_store import (
+from scitex_agent_container._state.action_store import (
     DEFAULT_DB_FILENAME,
     DEFAULT_SNAPSHOT_MAX_CHARS,
     OUTCOMES,

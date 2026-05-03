@@ -10,7 +10,7 @@ from pathlib import Path
 
 from ..config import AgentConfig, load_config, resolve_config
 from ..hooks import run_hook
-from ..registry import Registry
+from .._state.registry import Registry
 from ..runtimes.claude_code import ClaudeCodeRuntime
 from ..runtimes.slurm import SlurmRuntime
 from .health import health_monitor
@@ -476,7 +476,7 @@ def agent_status(name: str, registry: Registry | None = None) -> dict:
     # Snapshot block — cheap read from cache (todo#286). Never re-gathers.
     # stx-allow: fallback (reason: snapshot module may not yet exist or cache may be absent on first run; None snapshot is valid initial state)
     try:
-        from ..snapshot import read_latest
+        from .._state.snapshot import read_latest
 
         latest = read_latest(name)
         if latest is not None:
@@ -495,7 +495,7 @@ def agent_status(name: str, registry: Registry | None = None) -> dict:
     # command rather than duplicating the logic in TypeScript.
     # stx-allow: fallback (reason: agent_meta requires psutil and an active tmux session; metadata enrichment is optional and must never break status)
     try:
-        from ..agent_meta import collect_rich
+        from .._state.agent_meta import collect_rich
 
         workdir = config.expanded_workdir if config else _fallback_workdir(name)
         session = entry.get("screen", "") or (config.screen_name if config else name)

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from scitex_agent_container.action_base import (
+from scitex_agent_container._state.action_base import (
     ActionContext,
     ActionOutcome,
     run_action,

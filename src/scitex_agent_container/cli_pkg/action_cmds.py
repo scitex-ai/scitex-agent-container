@@ -18,11 +18,11 @@ from typing import Any, Optional
 
 import click
 
-from .. import action_store
-from ..action_base import ActionContext, ActionOutcome, run_action
+from .._state import action_store
+from .._state.action_base import ActionContext, ActionOutcome, run_action
+from .._state.registry import Registry
 from ..actions.compact import CompactAction
 from ..actions.nonce_probe import NonceProbeAction
-from ..registry import Registry
 
 # Mapping of CLI action name to the constructor. Extend by appending
 # one line when a new PaneAction subclass is added.

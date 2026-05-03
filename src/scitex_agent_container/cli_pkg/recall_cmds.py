@@ -12,7 +12,7 @@ from pathlib import Path
 
 import click
 
-from ..recall import (
+from .._state.recall import (
     collect_stats,
     filter_entries,
     format_entry,

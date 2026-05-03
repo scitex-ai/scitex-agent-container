@@ -33,7 +33,7 @@ from pathlib import Path
 
 import click
 
-from ..event_log import append_event
+from .._state.event_log import append_event
 
 
 def _resolve_agent(flag: str) -> str:

@@ -86,7 +86,7 @@ def run_daemon(
         respond_fn:   respond(name, state, pane_text) -> bool
         sleep_fn:     time.sleep override
     """
-    from ..agent_meta import _classify_pane_state as _classify
+    from .._state.agent_meta import _classify_pane_state as _classify
     from ..runtimes.pane_capture import pane_capture as _capture
     from .accept import respond as _respond
 
@@ -171,7 +171,7 @@ def send_accept_once(
     respond_fn: Callable[[str, str, str], bool] | None = None,
 ) -> tuple[str, bool]:
     """One-shot: capture → classify → respond. Returns (state, sent)."""
-    from ..agent_meta import _classify_pane_state as _classify
+    from .._state.agent_meta import _classify_pane_state as _classify
     from ..runtimes.pane_capture import pane_capture as _capture
     from .accept import respond as _respond
 

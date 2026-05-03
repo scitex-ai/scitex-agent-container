@@ -19,14 +19,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from scitex_agent_container.action_base import (
+from scitex_agent_container._state.action_base import (
     ActionAttempt,
     ActionContext,
     ActionOutcome,
     PaneAction,
     run_action,
 )
-from scitex_agent_container.action_store import query
+from scitex_agent_container._state.action_store import query
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 

@@ -57,7 +57,7 @@ def account_save(name: str, email: str | None, dry_run: bool, yes: bool) -> None
     import shutil
     from pathlib import Path
 
-    from ..account_store import _store_path, save_account
+    from .._state.account_store import _store_path, save_account
 
     home = Path.home()
     store = _store_path(None, home)
@@ -111,7 +111,7 @@ def account_list(as_json: bool) -> None:
     """
     import json as _json
 
-    from ..account_store import list_accounts
+    from .._state.account_store import list_accounts
 
     accounts = list_accounts()
     if as_json:
@@ -153,7 +153,7 @@ def account_delete(name: str, dry_run: bool, yes: bool) -> None:
       $ sac account delete work --dry-run
       $ sac account delete work --yes
     """
-    from ..account_store import delete_account
+    from .._state.account_store import delete_account
 
     if dry_run:
         click.echo(f"[dry-run] would delete account '{name}'")
@@ -177,7 +177,7 @@ def account_switch(name: str) -> None:
     Example:
       $ sac account switch work
     """
-    from ..account_store import switch_account
+    from .._state.account_store import switch_account
 
     result = switch_account(name)
     if result["success"]:

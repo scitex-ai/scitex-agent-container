@@ -7,7 +7,7 @@ import sys
 
 import click
 
-from ..snapshot import take_snapshot
+from .._state.snapshot import take_snapshot
 
 
 @click.command(name="take-snapshot")

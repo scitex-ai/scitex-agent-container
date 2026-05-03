@@ -151,7 +151,7 @@ def resolve_agent_workspace(agent_name: str) -> tuple[dict, str | None]:
     ``${VAR}`` references resolved.
     """
     try:
-        from scitex_agent_container.registry import Registry
+        from scitex_agent_container._state.registry import Registry
     except ImportError:  # stx-allow: fallback (reason: optional dep at runtime)
         return {}, None
 

@@ -109,7 +109,7 @@ class _FakeRegistry:
 class TestResolveWorkspace:
     def test_unknown_agent_returns_empty(self, monkeypatch):
         monkeypatch.setattr(
-            "scitex_agent_container.registry.Registry",
+            "scitex_agent_container._state.registry.Registry",
             lambda: _FakeRegistry(None),
         )
         assert resolve_agent_workspace("nope") == ({}, None)
@@ -118,7 +118,7 @@ class TestResolveWorkspace:
         ws = tmp_path / "ws"
         ws.mkdir()
         monkeypatch.setattr(
-            "scitex_agent_container.registry.Registry",
+            "scitex_agent_container._state.registry.Registry",
             lambda: _FakeRegistry({"config": "cfg.yaml"}),
         )
         monkeypatch.setattr(
@@ -144,7 +144,7 @@ class TestResolveWorkspace:
         )
         monkeypatch.setenv("MY_TOKEN", "tk-123")
         monkeypatch.setattr(
-            "scitex_agent_container.registry.Registry",
+            "scitex_agent_container._state.registry.Registry",
             lambda: _FakeRegistry({"config": "cfg.yaml"}),
         )
         monkeypatch.setattr(
@@ -169,7 +169,7 @@ class TestResolveWorkspace:
         )
         monkeypatch.delenv("UNSET_VAR", raising=False)
         monkeypatch.setattr(
-            "scitex_agent_container.registry.Registry",
+            "scitex_agent_container._state.registry.Registry",
             lambda: _FakeRegistry({"config": "cfg.yaml"}),
         )
         monkeypatch.setattr(
@@ -184,7 +184,7 @@ class TestResolveWorkspace:
         ws.mkdir()
         (ws / ".mcp.json").write_text("{not valid json")
         monkeypatch.setattr(
-            "scitex_agent_container.registry.Registry",
+            "scitex_agent_container._state.registry.Registry",
             lambda: _FakeRegistry({"config": "cfg.yaml"}),
         )
         monkeypatch.setattr(
@@ -215,7 +215,7 @@ class TestBuildOptions:
             json.dumps({"mcpServers": {"stx": {"command": "scitex"}}})
         )
         monkeypatch.setattr(
-            "scitex_agent_container.registry.Registry",
+            "scitex_agent_container._state.registry.Registry",
             lambda: _FakeRegistry({"config": "cfg.yaml"}),
         )
         monkeypatch.setattr(
@@ -242,7 +242,7 @@ class TestBuildOptions:
         monkeypatch.setattr(_sdk_common, "_CRED_FILE", cred)
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         monkeypatch.setattr(
-            "scitex_agent_container.registry.Registry",
+            "scitex_agent_container._state.registry.Registry",
             lambda: _FakeRegistry(None),
         )
         opts = build_sdk_options("nope", extra={"continue_conversation": True})

@@ -224,7 +224,7 @@ def test_compact_dispatcher_invokes_on_compact(monkeypatch):
 
 
 def test_snapshot_on_diff_invoked_when_has_diff(monkeypatch, tmp_path):
-    from scitex_agent_container import snapshot
+    from scitex_agent_container._state import snapshot
 
     monkeypatch.setenv("SCITEX_AGENT_CACHE_DIR", str(tmp_path))
 

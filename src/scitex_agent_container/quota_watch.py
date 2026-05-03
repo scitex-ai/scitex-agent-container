@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 
 from .claude_usage import fetch_usage
-from .account_store import list_accounts, switch_account
+from ._state.account_store import list_accounts, switch_account
 from .credentials import read_credentials_metadata
 
 logger = logging.getLogger(__name__)

@@ -1,4 +1,4 @@
-"""Tests for scitex_agent_container.snapshot (todo#286)."""
+"""Tests for scitex_agent_container._state.snapshot (todo#286)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from scitex_agent_container import snapshot as snap_mod
+from scitex_agent_container._state import snapshot as snap_mod
 
 
 @pytest.fixture(autouse=True)

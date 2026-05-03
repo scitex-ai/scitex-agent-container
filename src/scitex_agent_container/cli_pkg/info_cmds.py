@@ -13,7 +13,7 @@ from rich.table import Table
 
 from .._lifecycle.lifecycle import agent_logs
 from ..config import load_config
-from ..registry import Registry
+from .._state.registry import Registry
 from ._api_tree import get_api_tree
 from ._helpers import _json_flag, console
 

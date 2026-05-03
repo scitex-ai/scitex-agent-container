@@ -43,8 +43,8 @@ from scitex_agent_container._lifecycle.lifecycle import (
     agent_status,
     agent_stop,
 )
+from scitex_agent_container._state.registry import Registry
 from scitex_agent_container.config import AgentConfig, load_config, validate_config
-from scitex_agent_container.registry import Registry
 
 __all__ = [
     "__version__",

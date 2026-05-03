@@ -25,7 +25,7 @@ def build_event_log_hooks(agent_name: str, hook_matcher_cls: Any) -> dict:
     the callback forwards the SDK payload's relevant fields to
     ``event_log.append_event`` under the matching legacy ``kind``.
     """
-    from ..event_log import append_event
+    from .._state.event_log import append_event
 
     async def _on_pretool(payload, _tool_use_id, _ctx):
         append_event(

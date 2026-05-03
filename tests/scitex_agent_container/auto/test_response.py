@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from scitex_agent_container.action_base import (
+from scitex_agent_container._state.action_base import (
     ActionContext,
 )
 from scitex_agent_container.auto.response import (
@@ -171,7 +171,7 @@ class TestShouldCompact:
 class TestSchedulerTick:
     def test_first_tick_below_threshold_probes_only(self, tmp_path, monkeypatch):
         """Context below compact threshold -> only the probe fires."""
-        from scitex_agent_container import action_store
+        from scitex_agent_container._state import action_store
 
         monkeypatch.setattr(action_store, "DEFAULT_ROOT", tmp_path)
         clk = _FakeClock(t0=1000.0)
@@ -196,7 +196,7 @@ class TestSchedulerTick:
         assert mux.text_submits[0][1].startswith("Repeat ")
 
     def test_over_threshold_compacts_then_probes(self, tmp_path, monkeypatch):
-        from scitex_agent_container import action_store
+        from scitex_agent_container._state import action_store
 
         monkeypatch.setattr(action_store, "DEFAULT_ROOT", tmp_path)
         clk = _FakeClock(t0=1000.0)
@@ -222,7 +222,7 @@ class TestSchedulerTick:
 
     def test_second_tick_within_intervals_fires_nothing(self, tmp_path, monkeypatch):
         """Back-to-back ticks inside both intervals must not re-fire."""
-        from scitex_agent_container import action_store
+        from scitex_agent_container._state import action_store
 
         monkeypatch.setattr(action_store, "DEFAULT_ROOT", tmp_path)
         clk = _FakeClock(t0=1000.0)
@@ -249,7 +249,7 @@ class TestSchedulerTick:
 
     def test_state_records_timestamps_per_fired_action(self, tmp_path, monkeypatch):
         """After a successful tick, state reflects when each fired."""
-        from scitex_agent_container import action_store
+        from scitex_agent_container._state import action_store
 
         monkeypatch.setattr(action_store, "DEFAULT_ROOT", tmp_path)
         clk = _FakeClock(t0=500.0)
@@ -271,7 +271,7 @@ class TestSchedulerTick:
 
 class TestRunForever:
     def test_stop_after_s_terminates_loop(self, tmp_path, monkeypatch):
-        from scitex_agent_container import action_store
+        from scitex_agent_container._state import action_store
 
         monkeypatch.setattr(action_store, "DEFAULT_ROOT", tmp_path)
         clk = _FakeClock(t0=0.0)

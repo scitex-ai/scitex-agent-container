@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from scitex_agent_container import agent_meta
+from scitex_agent_container._state import agent_meta
 from scitex_agent_container._runners import claude_session as runner
 
 

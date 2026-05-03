@@ -491,7 +491,7 @@ class TestHookBridge:
         def _spy(agent: str, kind: str, payload: dict, *, root=None) -> None:
             captured.append((agent, kind, payload))
 
-        from scitex_agent_container import event_log
+        from scitex_agent_container._state import event_log
 
         monkeypatch.setattr(event_log, "append_event", _spy)
         hooks = runner._build_event_log_hooks("alpha", _StubHookMatcher)
@@ -515,7 +515,7 @@ class TestHookBridge:
         def _spy(agent: str, kind: str, payload: dict, *, root=None) -> None:
             captured.append((kind, payload))
 
-        from scitex_agent_container import event_log
+        from scitex_agent_container._state import event_log
 
         monkeypatch.setattr(event_log, "append_event", _spy)
         hooks = runner._build_event_log_hooks("alpha", _StubHookMatcher)

@@ -183,7 +183,7 @@ class AutoResponseScheduler:
         Returns the list of :class:`ActionAttempt` records produced
         (possibly empty).
         """
-        from ..action_base import run_action
+        from .._state.action_base import run_action
         from ..actions.compact import CompactAction
         from ..actions.nonce_probe import NonceProbeAction
 

@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-from .context_manager import fetch_agent_meta, get_sensor
+from ..context_manager import fetch_agent_meta, get_sensor
 
 # Keys from agent_meta.py we surface in snapshots / status --json.
 # `pane_tail` and `pane_tail_block` carry the last N lines of the agent's
@@ -566,7 +566,7 @@ def snapshot_tick(
     if agent_config is not None and snap.get("has_diff"):
         # stx-allow: fallback (reason: hook dispatch is best-effort; failure must not disrupt the snapshot cycle)
         try:
-            from .hooks import run_hook
+            from ..hooks import run_hook
 
             commands = (getattr(agent_config, "hooks", {}) or {}).get(
                 "on_diff", []

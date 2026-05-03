@@ -19,7 +19,7 @@ from .._lifecycle.lifecycle import (
 )
 from ..config import AgentConfig, load_config, resolve_config
 from ..config._host import resolve_hostname
-from ..registry import Registry
+from .._state.registry import Registry
 from ._helpers import console
 
 _SKIP_DIR_NAMES = {"legacy-agents", "shared", "GITIGNORED"}

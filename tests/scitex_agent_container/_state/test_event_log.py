@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from scitex_agent_container.event_log import (
+from scitex_agent_container._state.event_log import (
     DEFAULT_CAP_LINES,
     _preview_tool_input,
     append_event,

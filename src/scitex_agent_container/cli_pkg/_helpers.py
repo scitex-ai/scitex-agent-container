@@ -9,7 +9,7 @@ from rich.console import Console
 from rich.table import Table
 
 from ..config import load_config
-from ..registry import Registry
+from .._state.registry import Registry
 
 console = Console()
 

@@ -7,7 +7,7 @@ import time
 import traceback
 
 from ..config import AgentConfig
-from ..registry import Registry
+from .._state.registry import Registry
 
 
 def health_check(config: AgentConfig) -> tuple[bool, str]:

@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .claude_usage import fetch_usage
+from ..claude_usage import fetch_usage
 
 
 def detect_multiplexer(session: str) -> str:
@@ -448,7 +448,7 @@ def _read_sdk_session_state(name: str, workdir: str) -> dict | None:
     and SDK agents on transient state-dir glitches degrade silently.
     """
     try:
-        from ._runners import claude_session as _runner
+        from .._runners import claude_session as _runner
     except Exception:  # stx-allow: fallback (reason: import path may differ in tests / partial installs — collect_rich is best-effort)
         return None
 
@@ -509,7 +509,7 @@ def collect_rich(
     # stx-allow: fallback (reason: statusline module is optional; import or
     # read failure falls back to JSONL approximation — collect_rich is best-effort)
     try:
-        from .statusline import read_statusline_json
+        from ..statusline import read_statusline_json
 
         _sl = read_statusline_json(name) or {}
     except Exception:
@@ -705,7 +705,7 @@ def collect_rich(
     # stx-allow: fallback (reason: resolve_hostname reads a YAML that may be
     # absent on unconfigured hosts — raw gethostname is an acceptable fallback)
     try:
-        from .config._host import resolve_hostname
+        from ..config._host import resolve_hostname
 
         machine = resolve_hostname()
     except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
@@ -766,7 +766,7 @@ def collect_rich(
     # stx-allow: fallback (reason: credentials file absent on freshly
     # provisioned agents — account_email stays None until auth completes)
     try:
-        from .credentials import read_credentials_metadata
+        from ..credentials import read_credentials_metadata
 
         _cred = read_credentials_metadata()
         account_email = _cred.get("email_address")

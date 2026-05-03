@@ -33,7 +33,7 @@ from .._lifecycle.liveness_probe import (
     pane_has_nonce_echo,
     pane_is_busy,
 )
-from ..action_base import ActionContext, PaneAction
+from .._state.action_base import ActionContext, PaneAction
 
 # How much of the pane we carry forward for the completion check.
 # Claude Code's TUI prints the user prompt + the response in the
