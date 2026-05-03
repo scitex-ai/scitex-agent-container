@@ -47,7 +47,13 @@ def skills_group() -> None:
 @skills_group.command(name="list")
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
 def skills_list(as_json: bool) -> None:
-    """List skill files bundled with this package."""
+    """List skill files bundled with this package.
+
+    \b
+    Example:
+      $ sac skills list
+      $ sac skills list --json
+    """
     root = _skills_root()
     files = _list_skill_files(root)
     if as_json:
@@ -70,8 +76,15 @@ def skills_list(as_json: bool) -> None:
 
 @skills_group.command(name="get")
 @click.argument("name")
-def skills_get(name: str) -> None:
-    """Print the contents of a skill file by NAME (e.g. `01_installation`)."""
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def skills_get(name: str, as_json: bool) -> None:
+    """Print the contents of a skill file by NAME (e.g. `01_installation`).
+
+    \b
+    Example:
+      $ sac skills get 01_installation
+      $ sac skills get 02_quick-start --json
+    """
     root = _skills_root()
     target_stem = name[:-3] if name.endswith(".md") else name
     match = next((p for p in _list_skill_files(root) if p.stem == target_stem), None)
@@ -80,6 +93,20 @@ def skills_get(name: str) -> None:
         available = ", ".join(p.stem for p in _list_skill_files(root)[:8])
         click.echo(f"available: {available}…", err=True)
         raise SystemExit(1)
+    if as_json:
+        import json as _json
+
+        click.echo(
+            _json.dumps(
+                {
+                    "name": match.stem,
+                    "path": str(match),
+                    "content": match.read_text(encoding="utf-8"),
+                },
+                indent=2,
+            )
+        )
+        return
     click.echo(match.read_text(encoding="utf-8"))
 
 
@@ -102,8 +129,13 @@ def skills_get(name: str) -> None:
     help="Also expose at ~/.claude/skills/scitex/ for Claude Code consumers.",
 )
 @click.option("--dry-run", is_flag=True, help="Preview without copying/linking.")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt.")
 def skills_install(
-    dest: str | None, no_link: bool, claude_symlink: bool, dry_run: bool
+    dest: str | None,
+    no_link: bool,
+    claude_symlink: bool,
+    dry_run: bool,
+    yes: bool,
 ) -> None:
     """Install this package's skills into a target directory.
 
@@ -114,7 +146,14 @@ def skills_install(
 
     Use --claude-symlink to also expose at ~/.claude/skills/scitex/ for
     Claude Code's skill loader.
+
+    \b
+    Example:
+      $ sac skills install
+      $ sac skills install --claude-symlink
+      $ sac skills install --no-link --dest /tmp/sac-skills
     """
+    del yes  # accepted for §2 compliance; install is non-interactive
     src = _skills_root().resolve()
     if not src.is_dir():
         click.echo(f"no skills directory at {src}", err=True)
