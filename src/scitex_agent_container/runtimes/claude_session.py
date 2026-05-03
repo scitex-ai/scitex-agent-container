@@ -88,6 +88,13 @@ class ClaudeSessionRuntime(RuntimeBase):
         prior_sid = _runner.read_session_id(state_dir)
         if prior_sid:
             argv.extend(["--resume-session-id", prior_sid])
+        # Inbound HTTP turn endpoint: when ``spec.a2a.port`` is set the
+        # runner serves POST /v1/turn so external producers (telegram,
+        # other agents, ops) can drive new turns into the live SDK
+        # session without restarting.
+        a2a_host, a2a_port = _read_a2a_endpoint(config)
+        if a2a_port is not None:
+            argv.extend(["--a2a-port", str(a2a_port), "--a2a-host", a2a_host])
 
         if foreground:
             # Foreground mode: inherit the caller's stdio so SDK output
@@ -298,6 +305,41 @@ def _first_mission(config: AgentConfig) -> str | None:
         if cmd:
             return cmd
     return None
+
+
+def _read_a2a_endpoint(config: AgentConfig) -> tuple[str, int | None]:
+    """Read ``spec.a2a.{host,port}`` from the agent YAML.
+
+    Returns ``(host, port)`` or ``(host, None)`` if the block is absent
+    or ``port`` is unset. Defaults host to ``127.0.0.1`` so an agent
+    YAML that only specifies ``port`` stays loopback-only.
+    """
+    config_path = getattr(config, "config_path", None)
+    if not config_path:
+        return ("127.0.0.1", None)
+    yaml_path = Path(config_path)
+    if not yaml_path.is_file():
+        return ("127.0.0.1", None)
+    try:
+        import yaml
+
+        v3 = yaml.safe_load(yaml_path.read_text()) or {}
+    except (
+        OSError,
+        Exception,
+    ):  # stx-allow: fallback (reason: malformed YAML degrades to no inbound port — runner still heartbeats)
+        return ("127.0.0.1", None)
+    spec = v3.get("spec") or {}
+    a2a = spec.get("a2a") or {}
+    if not isinstance(a2a, dict):
+        return ("127.0.0.1", None)
+    port = a2a.get("port")
+    if not isinstance(port, int) or port <= 0:
+        return ("127.0.0.1", None)
+    host = a2a.get("host", "127.0.0.1")
+    if not isinstance(host, str) or not host.strip():
+        host = "127.0.0.1"
+    return (host, port)
 
 
 def _pid_alive(pid: int) -> bool:

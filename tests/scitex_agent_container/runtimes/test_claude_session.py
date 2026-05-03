@@ -248,3 +248,56 @@ class TestArgvComposition:
             adapter.ClaudeSessionRuntime().start(cfg)  # type: ignore[arg-type]
         argv = captured["argv"]
         assert argv[argv.index("--resume-session-id") + 1] == "prev-uuid"
+
+    def test_a2a_port_forwarded_when_yaml_declares_it(
+        self, state_root: Path, tmp_path: Path
+    ) -> None:
+        """spec.a2a.port in YAML → runner argv gets --a2a-port + --a2a-host."""
+        from scitex_agent_container.runtimes import claude_session as adapter
+
+        yaml_path = tmp_path / "agent.yaml"
+        yaml_path.write_text(
+            "apiVersion: scitex-agent-container/v3\n"
+            "kind: Agent\n"
+            "metadata:\n  name: alpha\n"
+            "spec:\n"
+            "  runtime: claude-session\n"
+            "  a2a:\n    port: 18888\n    host: 0.0.0.0\n"
+        )
+        cfg = SimpleNamespace(
+            name="alpha", startup_commands=[], config_path=str(yaml_path)
+        )
+        captured: dict = {}
+
+        class _FakePopen:
+            def __init__(self, argv, **kw):
+                captured["argv"] = argv
+                self.pid = 999_999_999
+
+            def poll(self):
+                return 1
+
+        with patch.object(adapter.subprocess, "Popen", _FakePopen):
+            adapter.ClaudeSessionRuntime().start(cfg)  # type: ignore[arg-type]
+        argv = captured["argv"]
+        assert argv[argv.index("--a2a-port") + 1] == "18888"
+        assert argv[argv.index("--a2a-host") + 1] == "0.0.0.0"
+
+    def test_no_a2a_port_when_yaml_omits_it(self, state_root: Path) -> None:
+        """No spec.a2a block → no --a2a-port in argv."""
+        from scitex_agent_container.runtimes import claude_session as adapter
+
+        cfg = _config(startup_commands=[])
+        captured: dict = {}
+
+        class _FakePopen:
+            def __init__(self, argv, **kw):
+                captured["argv"] = argv
+                self.pid = 999_999_999
+
+            def poll(self):
+                return 1
+
+        with patch.object(adapter.subprocess, "Popen", _FakePopen):
+            adapter.ClaudeSessionRuntime().start(cfg)  # type: ignore[arg-type]
+        assert "--a2a-port" not in captured["argv"]

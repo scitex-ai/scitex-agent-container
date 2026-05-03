@@ -278,6 +278,8 @@ async def run(
     mission: str | None = None,
     resume_session_id: str | None = None,
     print_stream: bool = False,
+    a2a_host: str = "127.0.0.1",
+    a2a_port: int | None = None,
 ) -> int:
     """Run the daemon loop until SIGTERM / SIGINT.
 
@@ -321,6 +323,14 @@ async def run(
 
     inbox: asyncio.Queue = make_inbox()
     convo_task: asyncio.Task | None = None
+    http_task: asyncio.Task | None = None
+
+    if a2a_port is not None:
+        from ._session_http import serve_inbound
+
+        http_task = asyncio.create_task(
+            serve_inbound(inbox, host=a2a_host, port=a2a_port, stop=stop),
+        )
 
     if mission:
         # Seed the inbox with the mission turn. exit_after=True only for
@@ -373,6 +383,21 @@ async def run(
                     asyncio.CancelledError,
                     Exception,
                 ):  # stx-allow: fallback (reason: SDK surface is broad)
+                    pass
+        if http_task is not None and not http_task.done():
+            try:
+                await asyncio.wait_for(http_task, timeout=5.0)
+            except (
+                asyncio.TimeoutError,
+                asyncio.CancelledError,
+            ):  # stx-allow: fallback (reason: must stop cleanly even if uvicorn hangs)
+                http_task.cancel()
+                try:
+                    await http_task
+                except (
+                    asyncio.CancelledError,
+                    Exception,
+                ):  # stx-allow: fallback (reason: defensive cleanup)
                     pass
         hb_task.cancel()
         try:
@@ -427,6 +452,22 @@ def _parse_argv(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     p.add_argument(
+        "--a2a-port",
+        type=int,
+        default=None,
+        help=(
+            "If set, serve an HTTP inbound-turn endpoint on this port. "
+            'POST /v1/turn with {"text": "..."} drops the prompt onto '
+            "the runner's persistent SDK conversation and returns the reply."
+        ),
+    )
+    p.add_argument(
+        "--a2a-host",
+        type=str,
+        default="127.0.0.1",
+        help="Bind address for --a2a-port (default: 127.0.0.1, loopback only).",
+    )
+    p.add_argument(
         "--print-stream",
         action="store_true",
         help=(
@@ -450,6 +491,8 @@ def main(argv: list[str] | None = None) -> int:
             mission=args.mission,
             resume_session_id=args.resume_session_id,
             print_stream=args.print_stream,
+            a2a_host=args.a2a_host,
+            a2a_port=args.a2a_port,
         )
     )
 
