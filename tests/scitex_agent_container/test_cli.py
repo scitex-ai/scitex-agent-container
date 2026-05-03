@@ -61,7 +61,7 @@ class TestCLI:
 
     def test_status_no_agents(self):
         runner = CliRunner()
-        result = runner.invoke(main, ["list-agents", "--json"])
+        result = runner.invoke(main, ["agent", "list", "--json"])
         assert result.exit_code == 0
 
     def test_stop_nonexistent(self):
@@ -71,18 +71,18 @@ class TestCLI:
 
     def test_health_nonexistent(self):
         runner = CliRunner()
-        result = runner.invoke(main, ["check-health", "nonexistent-agent"])
+        result = runner.invoke(main, ["agent", "health", "nonexistent-agent"])
         assert result.exit_code != 0
 
     def test_logs_nonexistent(self):
         runner = CliRunner()
-        result = runner.invoke(main, ["show-logs", "nonexistent-agent"])
+        result = runner.invoke(main, ["agent", "logs", "nonexistent-agent"])
         assert result.exit_code != 0
 
     def test_cleanup(self):
         runner = CliRunner()
         # cleanup now confirms by default; pass --yes for non-interactive runs.
-        result = runner.invoke(main, ["clean-registry", "--yes"])
+        result = runner.invoke(main, ["registry", "clean", "--yes"])
         assert result.exit_code == 0
 
     def test_version(self):
@@ -93,7 +93,7 @@ class TestCLI:
 
     def test_list_json_empty(self):
         runner = CliRunner()
-        result = runner.invoke(main, ["list-agents", "--json"])
+        result = runner.invoke(main, ["agent", "list", "--json"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert isinstance(data, list)
@@ -107,14 +107,14 @@ class TestCLI:
 
     def test_status_json_nonexistent(self):
         runner = CliRunner()
-        result = runner.invoke(main, ["show-status", "nonexistent", "--json"])
+        result = runner.invoke(main, ["agent", "status", "nonexistent", "--json"])
         assert result.exit_code != 0
         data = json.loads(result.output)
         assert "error" in data
 
     def test_health_json_nonexistent(self):
         runner = CliRunner()
-        result = runner.invoke(main, ["check-health", "nonexistent", "--json"])
+        result = runner.invoke(main, ["agent", "health", "nonexistent", "--json"])
         assert result.exit_code != 0
         data = json.loads(result.output)
         assert "error" in data
@@ -146,13 +146,13 @@ class TestCLI:
     def test_list_with_capability_filter(self):
         """The --capability flag should be accepted even with no agents."""
         runner = CliRunner()
-        result = runner.invoke(main, ["list-agents", "--capability", "gpu"])
+        result = runner.invoke(main, ["agent", "list", "--capability", "gpu"])
         assert result.exit_code == 0
 
     def test_list_with_machine_filter(self):
         """The --machine flag should be accepted even with no agents."""
         runner = CliRunner()
-        result = runner.invoke(main, ["list-agents", "--machine", "spartan"])
+        result = runner.invoke(main, ["agent", "list", "--machine", "spartan"])
         assert result.exit_code == 0
 
     def test_find_in_directory(self):
@@ -179,7 +179,7 @@ class TestCLI:
                 yaml.safe_dump(config_with_caps, f)
 
             runner = CliRunner()
-            result = runner.invoke(main, ["find", "gpu", "--dir", tmpdir, "--json"])
+            result = runner.invoke(main, ["agent", "find", "gpu", "--dir", tmpdir, "--json"])
             assert result.exit_code == 0
             data = json.loads(result.output)
             assert len(data) == 1
@@ -190,7 +190,7 @@ class TestCLI:
         """check command should run preflight checks on a local agent."""
         path = _write_config(VALID_CONFIG)
         runner = CliRunner()
-        result = runner.invoke(main, ["check", path])
+        result = runner.invoke(main, ["agent", "check", path])
         # Should succeed on a local machine that has python and screen
         # Even if screen is missing, the command itself should not crash
         assert "Checking" in result.output
@@ -210,7 +210,7 @@ class TestCLI:
         }
         path = _write_config(remote_config)
         runner = CliRunner()
-        result = runner.invoke(main, ["check", path])
+        result = runner.invoke(main, ["agent", "check", path])
         assert result.exit_code != 0
         assert "SSH connection" in result.output
         assert "FAIL" in result.output
@@ -242,7 +242,7 @@ class TestCLI:
                 yaml.safe_dump(config_no_match, f)
 
             runner = CliRunner()
-            result = runner.invoke(main, ["find", "gpu", "--dir", tmpdir])
+            result = runner.invoke(main, ["agent", "find", "gpu", "--dir", tmpdir])
             assert result.exit_code == 0
             assert "No agents found" in result.output
 

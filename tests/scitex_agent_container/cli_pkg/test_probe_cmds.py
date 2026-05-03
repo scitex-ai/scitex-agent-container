@@ -36,7 +36,7 @@ class TestProbeNetworkCLI:
         runner = CliRunner()
         result = runner.invoke(
             main,
-            ["probe-network", "--agent", "test-agent", "--quiet"],
+            ["network", "probe", "--agent", "test-agent", "--quiet"],
         )
         assert result.exit_code == 0, result.output
         path = tmp_path / "test-agent.jsonl"
@@ -49,7 +49,7 @@ class TestProbeNetworkCLI:
         monkeypatch.setattr(np, "run_all_probes", _fake_all_ok)
         monkeypatch.setattr(np, "DEFAULT_LOG_ROOT", tmp_path)
         runner = CliRunner()
-        result = runner.invoke(main, ["probe-network", "--agent", "a"])
+        result = runner.invoke(main, ["network", "probe", "--agent", "a"])
         assert result.exit_code == 0
         payload = json.loads(result.output)
         assert payload["ok"] is True
@@ -61,7 +61,7 @@ class TestProbeNetworkCLI:
         result = runner.invoke(
             main,
             [
-                "probe-network",
+                "network", "probe",
                 "--agent",
                 "a",
                 "--quiet",
@@ -79,6 +79,6 @@ class TestProbeNetworkCLI:
         monkeypatch.setattr(np, "DEFAULT_LOG_ROOT", tmp_path)
         monkeypatch.setenv("SCITEX_OROCHI_AGENT", "head-ywata-note-win")
         runner = CliRunner()
-        result = runner.invoke(main, ["probe-network", "--quiet"])
+        result = runner.invoke(main, ["network", "probe", "--quiet"])
         assert result.exit_code == 0
         assert (tmp_path / "head-ywata-note-win.jsonl").exists()

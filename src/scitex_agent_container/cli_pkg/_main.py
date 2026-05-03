@@ -10,12 +10,16 @@ from __future__ import annotations
 import click
 
 from ._helpers import HelpRecursiveGroup, deprecated_alias
+from .a2a_cmds import a2a as a2a_group
 from .account_cmds import account, quota_watch
 from .action_cmds import actions_cli
+from .agent_group import agent_group
 from .auto_accept_group import auto_accept_group
 from .build_cmds import build, check, validate
 from .contributor_spec_cmds import contributor_spec
+from .event_group import event_group
 from .hook_cmds import hook_event
+from .image_group import image_group
 from .info_cmds import attach, find, list_python_apis, logs
 from .install_cmds import install_group, install_post_merge_cron
 from .lifecycle_cmds import (
@@ -27,60 +31,30 @@ from .lifecycle_cmds import (
     stop,
     stop_auto_accept,
 )
+from .mcp_cmds import mcp as mcp_group
+from .network_group import network_group
+from .peer_cmds import peer_group
 from .priority_cmds import priority_check, singleton_reconcile
 from .probe_cmds import probe_network
+from .quota_group import quota_group
 from .recall_cmds import recall
+from .registry_group import registry_group
 from .render_cmds import render_attach, render_sbatch
 from .snapshot_cmds import snapshot
 from .status_cmds import check_agent, health, list_agents, status
+from .template_group import template_group
 
-# Domain categories for ``sac --help``. Anything not listed here drops
-# into a final "Other" section. Mirrors the scitex-dev CLI grouping UX.
-#
-# Sections marked "(claude-code only)" are pane-mediated operations on the
-# tmux/screen multiplexer used by ``runtime: claude-code``; they don't
-# apply to ``runtime: claude-session`` (SDK) agents, which have no
-# multiplexer session and use ``--foreground`` / ``POST /v1/turn`` instead.
+# ---------------------------------------------------------------------------
+# Help categories — clean noun-group surface
+# ---------------------------------------------------------------------------
 COMMAND_CATEGORIES = [
-    ("Lifecycle", ["start", "stop", "restart", "validate"]),
-    (
-        "Status / introspection",
-        [
-            "show-status",
-            "list-agents",
-            "show-logs",
-            "check",
-            "check-health",
-            "check-priority",
-            "find",
-            "recall",
-        ],
-    ),
-    (
-        "Render / spec",
-        ["render-sbatch", "render-attach", "render-contributor-spec"],
-    ),
-    ("Account / quota", ["account", "watch-quota"]),
-    ("Actions / events", ["actions", "ingest-hook-event"]),
-    ("Registry", ["clean-registry", "reconcile-singletons"]),
-    (
-        "Install / build",
-        ["installation", "build-image", "install-post-merge-cron"],
-    ),
-    ("Network", ["probe-network"]),
-    ("Interface", ["a2a", "mcp", "peer", "list-python-apis"]),
-    (
-        "Pane operations (claude-code only)",
-        [
-            "attach",
-            "inspect",
-            "take-snapshot",
-            "auto-accept",
-            "send-accept",
-            "start-auto-accept",
-            "stop-auto-accept",
-        ],
-    ),
+    ("Agent", ["agent"]),
+    ("Lifecycle (multiplexer)", ["auto-accept"]),
+    ("Account & Quota", ["account", "quota"]),
+    ("Network & Peer", ["network", "peer", "a2a"]),
+    ("Registry & Events", ["registry", "event", "actions"]),
+    ("Build & Install", ["image", "installation", "template"]),
+    ("Introspection", ["mcp", "list-python-apis"]),
 ]
 
 
@@ -126,8 +100,8 @@ def main(ctx: click.Context, help_recursive: bool, as_json: bool) -> None:
     \b
     Example:
       $ sac --version
-      $ sac list-agents
-      $ sac start ~/.scitex/agent-container/agents/foo/foo.yaml
+      $ sac agent list
+      $ sac agent start ~/.scitex/agent-container/agents/foo/foo.yaml
     """
     ctx.ensure_object(dict)
     if as_json:
@@ -139,90 +113,107 @@ def main(ctx: click.Context, help_recursive: bool, as_json: bool) -> None:
         click.echo(ctx.get_help())
 
 
-# Lifecycle
-main.add_command(start)
-main.add_command(stop)
-main.add_command(restart)
-main.add_command(cleanup)
+# ---------------------------------------------------------------------------
+# Noun-groups (the new clean surface)
+# ---------------------------------------------------------------------------
+main.add_command(agent_group)
+main.add_command(registry_group)
+main.add_command(event_group)
+main.add_command(quota_group)
+main.add_command(network_group)
+main.add_command(image_group)
+main.add_command(template_group)
 
-# Auto-accept noun-group (send / start / stop) — valid noun-group: every
-# leaf is a real verb per general/03_interface_02_cli/06_noun-verb-catalog.md.
+main.add_command(install_group)  # registered as "install"
+# Add cron sub-verb on the install group (renamed leaf; keeps the
+# old top-level ``install-post-merge-cron`` alias working).
+install_group.add_command(
+    click.Command(
+        name="setup-cron",
+        callback=install_post_merge_cron.callback,
+        params=list(install_post_merge_cron.params),
+        help=install_post_merge_cron.help,
+        short_help=install_post_merge_cron.short_help,
+        epilog=install_post_merge_cron.epilog,
+    )
+)
+
+# Already-noun-group surfaces
 main.add_command(auto_accept_group)
-main.add_command(deprecated_alias(send_accept, new_path="sac auto-accept send"))
-main.add_command(deprecated_alias(start_auto_accept, new_path="sac auto-accept start"))
-main.add_command(deprecated_alias(stop_auto_accept, new_path="sac auto-accept stop"))
+main.add_command(account)
+main.add_command(actions_cli)
+main.add_command(a2a_group)
+main.add_command(mcp_group)
+main.add_command(peer_group)
 
-# Status / listing — flat verb-noun compounds (per audit §1: leaves must be
-# verbs; "status", "logs", "snapshot" are nouns and only work as compound
-# leaves like "show-status").
-main.add_command(status)  # registered as "show-status"
-main.add_command(list_agents)  # registered as "list-agents"
-main.add_command(health)  # registered as "check-health"
-main.add_command(check_agent)  # registered as "inspect"
-main.add_command(snapshot)  # registered as "take-snapshot"
-
-# Info / introspection
-main.add_command(find)
-main.add_command(logs)  # registered as "show-logs"
-main.add_command(attach)
+# Standard introspection (top-level by convention)
 main.add_command(list_python_apis)
 
-# Build / validation
-main.add_command(check)  # bare verb with required positional (audit §1 exception)
-main.add_command(validate)
-main.add_command(build)
 
-# Account management and quota monitoring
-main.add_command(account)
-main.add_command(quota_watch)
+# ---------------------------------------------------------------------------
+# Deprecation aliases — preserve every old top-level command name so
+# existing scripts, generated settings.json hook lines, and tests keep
+# working. Hidden from --help so the new surface is uncluttered.
+# ---------------------------------------------------------------------------
+def _hidden_alias(cmd: click.Command, *, new_path: str, name: str | None = None):
+    alias = deprecated_alias(cmd, new_path=new_path)
+    if name is not None:
+        alias.name = name
+    alias.hidden = True
+    return alias
 
-# Claude Code hook event ingestor
-main.add_command(hook_event)
 
-# Recall: read back a previous session's jsonl (post-crash recovery,
-# context inspection without --continue).
-main.add_command(recall)
+# Lifecycle
+main.add_command(_hidden_alias(start, new_path="sac agent start"))
+main.add_command(_hidden_alias(stop, new_path="sac agent stop"))
+main.add_command(_hidden_alias(restart, new_path="sac agent restart"))
+main.add_command(_hidden_alias(validate, new_path="sac agent validate"))
+main.add_command(_hidden_alias(check, new_path="sac agent check"))
 
-# Action subsystem: run PaneActions, query attempts, aggregate stats.
-main.add_command(actions_cli)
+# Auto-accept (already grouped — keep historical flat aliases)
+main.add_command(_hidden_alias(send_accept, new_path="sac auto-accept send"))
+main.add_command(_hidden_alias(start_auto_accept, new_path="sac auto-accept start"))
+main.add_command(_hidden_alias(stop_auto_accept, new_path="sac auto-accept stop"))
 
-# Render ports — flat verb-noun compounds (per audit §1: "render" is itself
-# a verb in the catalog and cannot be a group name).
-main.add_command(render_sbatch)
-main.add_command(render_attach)
-main.add_command(contributor_spec)  # registered as "render-contributor-spec"
+# Status / introspection
+main.add_command(_hidden_alias(status, new_path="sac agent status"))
+main.add_command(_hidden_alias(list_agents, new_path="sac agent list"))
+main.add_command(_hidden_alias(health, new_path="sac agent health"))
+main.add_command(_hidden_alias(check_agent, new_path="sac agent inspect"))
+main.add_command(_hidden_alias(snapshot, new_path="sac agent take-snapshot"))
+main.add_command(_hidden_alias(find, new_path="sac agent find"))
+main.add_command(_hidden_alias(logs, new_path="sac agent logs"))
+main.add_command(_hidden_alias(attach, new_path="sac agent attach"))
+main.add_command(_hidden_alias(recall, new_path="sac agent recall"))
+main.add_command(_hidden_alias(priority_check, new_path="sac agent check-priority"))
 
-# Connectivity probe (todo#457): fleet-facing WSL ↔ hub liveness.
-main.add_command(probe_network)
+# Render / template
+main.add_command(_hidden_alias(render_sbatch, new_path="sac template render-sbatch"))
+main.add_command(_hidden_alias(render_attach, new_path="sac template render-attach"))
+main.add_command(
+    _hidden_alias(contributor_spec, new_path="sac template render-contributor-spec")
+)
 
-# Singleton priority check: reports whether this host should yield to a
-# higher-priority reachable host (building block for healer reconciler, #250).
-main.add_command(priority_check)  # registered as "check-priority"
+# Quota
+main.add_command(_hidden_alias(quota_watch, new_path="sac quota watch"))
 
-# Singleton reconciliation: sweep all local registered agents and yield any
-# that have a higher-priority reachable host. Closes the automation gap in #250.
-main.add_command(singleton_reconcile)
+# Hook events
+main.add_command(_hidden_alias(hook_event, new_path="sac event ingest"))
 
-# Install helpers: host bootstrap + cron installer.
-main.add_command(install_group)
-main.add_command(install_post_merge_cron)
+# Registry
+main.add_command(_hidden_alias(cleanup, new_path="sac registry clean"))
+main.add_command(_hidden_alias(singleton_reconcile, new_path="sac registry reconcile"))
 
-# A2A protocol — generic agent-to-agent surface (no fleet deps).
-from .a2a_cmds import a2a as a2a_group  # noqa: E402
+# Build / image
+main.add_command(_hidden_alias(build, new_path="sac image build"))
 
-main.add_command(a2a_group)
+# Network
+main.add_command(_hidden_alias(probe_network, new_path="sac network probe"))
 
-# MCP introspection group — empty by design (audit §1a requires this surface).
-from .mcp_cmds import mcp as mcp_group  # noqa: E402
-
-main.add_command(mcp_group)
-
-# Peer noun-group — outbound A2A calls into other agents' /v1/turn.
-# Mirrors scitex_agent_container._network.peer Python surface. Valid noun-group:
-# leaves "post-turn" and "resolve-url" are verb-compound leaves (verb at head).
-from .peer_cmds import peer_group  # noqa: E402
-
-main.add_command(peer_group)
+# Install
+main.add_command(
+    _hidden_alias(install_post_merge_cron, new_path="sac installation setup-cron")
+)
 
 
 if __name__ == "__main__":
