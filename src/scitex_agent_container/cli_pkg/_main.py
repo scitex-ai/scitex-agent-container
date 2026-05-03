@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import click
 
-from ._helpers import HelpRecursiveGroup
+from ._helpers import HelpRecursiveGroup, deprecated_alias
 from .account_cmds import account, quota_watch
 from .action_cmds import actions_cli
 from .build_cmds import build, check, validate
@@ -30,6 +30,7 @@ from .priority_cmds import priority_check, singleton_reconcile
 from .probe_cmds import probe_network
 from .recall_cmds import recall
 from .render_cmds import render_attach, render_sbatch
+from .render_group import render_group
 from .snapshot_cmds import snapshot
 from .status_cmds import check_agent, health, list_agents, status
 
@@ -128,12 +129,15 @@ main.add_command(recall)
 # Action subsystem: run PaneActions, query attempts, aggregate stats.
 main.add_command(actions_cli)
 
-# Render ports: emit sbatch/attach text for external consumers.
-main.add_command(render_sbatch)
-main.add_command(render_attach)
+# Render noun-group (sbatch / attach / contributor-spec).
+main.add_command(render_group)
 
-# Contributor spec generation (chunk B of ZOO#01 spec-template).
-main.add_command(contributor_spec)
+# Deprecation aliases — old top-level forms still work but warn to stderr.
+main.add_command(deprecated_alias(render_sbatch, new_path="sac render sbatch"))
+main.add_command(deprecated_alias(render_attach, new_path="sac render attach"))
+main.add_command(
+    deprecated_alias(contributor_spec, new_path="sac render contributor-spec")
+)
 
 # Connectivity probe (todo#457): fleet-facing WSL ↔ hub liveness.
 main.add_command(probe_network)

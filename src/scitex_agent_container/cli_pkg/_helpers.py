@@ -14,6 +14,37 @@ from ..registry import Registry
 console = Console()
 
 
+def deprecated_alias(cmd: click.Command, *, new_path: str) -> click.Command:
+    """Wrap ``cmd`` so invoking it prints a deprecation warning to stderr.
+
+    ``new_path`` is the user-facing replacement (e.g. ``"sac render sbatch"``);
+    it appears verbatim in the warning. The wrapped command keeps the same
+    name, params, and behaviour — only side effect is the stderr line.
+    """
+    original_callback = cmd.callback
+    if original_callback is None:
+        raise ValueError(f"deprecated_alias: command {cmd.name!r} has no callback")
+
+    _orig = original_callback
+
+    def _callback(*args, **kwargs):
+        click.echo(
+            f"warning: '{cmd.name}' is deprecated; use '{new_path}' instead. "
+            "(alias will be removed in a future release.)",
+            err=True,
+        )
+        return _orig(*args, **kwargs)
+
+    return click.Command(
+        name=cmd.name,
+        callback=_callback,
+        params=list(cmd.params),
+        help=(cmd.help or "") + f"\n\n[DEPRECATED] Use ``{new_path}`` instead.",
+        short_help=cmd.short_help,
+        epilog=cmd.epilog,
+    )
+
+
 def _json_flag(ctx: click.Context, local: bool) -> bool:
     """Return True if JSON output requested via local flag or top-level --json."""
     return local or bool((ctx.obj or {}).get("json", False))
@@ -62,6 +93,7 @@ def _probe_remote(cfg) -> bool | None:
     # None signals "liveness unknown" which callers convert to status="unknown")
     try:
         from ..runtimes.claude_code import ClaudeCodeRuntime
+
         return ClaudeCodeRuntime().is_running(cfg)
     except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         return None
@@ -95,7 +127,8 @@ def get_agent_list_data(
     and ``liveness_unknown=True`` so JSON consumers can surface a
     soft-warning rather than treating unreachable remotes as offline.
     """
-    from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FuturesTimeout
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as _FuturesTimeout
 
     from ..runtimes.screen import ScreenManager
     from ..runtimes.tmux import TmuxManager
@@ -187,9 +220,7 @@ def get_agent_list_data(
                 # stx-allow: fallback (reason: per-probe SSH or runtime
                 # exception maps to None = "liveness unknown", not "stopped")
                 try:
-                    probe_results[idx] = future.result(
-                        timeout=remote_probe_timeout_s
-                    )
+                    probe_results[idx] = future.result(timeout=remote_probe_timeout_s)
                 except _FuturesTimeout:  # stx-allow: fallback (reason: expected failure — see inline comment)
                     probe_results[idx] = None
                     future.cancel()
