@@ -31,12 +31,12 @@ sac list                         # All registered agents (table)
 sac list --json                  # Machine-readable
 sac list --capability X          # Filter by capability label
 sac list --machine Y             # Filter by machine label
-sac show-status [name]                # Rich status: pane state, hooks, listen ports, snapshot
-sac show-status [name] --json         # Same, JSON
-sac inspect <name>               # Live pane-state classification (idle/working/auth/...)
-sac inspect <name> --json        # Same, JSON
-sac show-logs <name> [-n LINES]       # Recent agent output (capture-pane / journalctl / tmux capture)
-sac check-health <name>                # Run a health check on an agent
+sac agent status [name]                # Rich status: pane state, hooks, listen ports, snapshot
+sac agent status [name] --json         # Same, JSON
+sac agent inspect <name>               # Live pane-state classification (idle/working/auth/...)
+sac agent inspect <name> --json        # Same, JSON
+sac agent logs <name> [-n LINES]       # Recent agent output (capture-pane / journalctl / tmux capture)
+sac check health <name>                # Run a health check on an agent
 sac attach <name>                # Attach to the agent's multiplexer session (Ctrl-B D to detach)
 sac find <capability>            # Find agents with a specific capability label across YAML roots
 ```
@@ -44,8 +44,8 @@ sac find <capability>            # Find agents with a specific capability label 
 ## SLURM
 
 ```bash
-sac render-sbatch <yaml>         # Print the sbatch wrapper text (debug; doesn't submit)
-sac render-attach <name>         # Print the srun --pty command that reattaches
+sac render sbatch <yaml>         # Print the sbatch wrapper text (debug; doesn't submit)
+sac render attach <name>         # Print the srun --pty command that reattaches
 ```
 
 For multi-tenant SLURM (`runtime: slurm-tenant`), see `09_slurm-tenant.md` and the companion `scitex-hpc reservations` CLI.
@@ -76,7 +76,7 @@ sac actions stats --agent X --since 1h # Aggregate stats
 sac actions purge                     # Purge the attempt log
 sac account                           # Manage stored Claude Code accounts (rotation)
 sac watch-quota                       # Monitor quota and auto-rotate credentials
-sac take-snapshot                          # Take a self-snapshot for AGENT, print as JSON
+sac agent snapshot                          # Take a self-snapshot for AGENT, print as JSON
 sac ingest-hook-event                        # Append a Claude Code hook event to the per-agent ring buffer
 ```
 

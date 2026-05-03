@@ -1,13 +1,13 @@
 ---
 description: |
   [TOPIC] Observability contract
-  [DETAILS] How `sac show-status <name> --json` merges registry + agent_meta + event_log into a single best-effort blob that downstream orchestrators (e.g. scitex-orochi) consume without direct coupling — every field has a defaul....
+  [DETAILS] How `sac agent status <name> --json` merges registry + agent_meta + event_log into a single best-effort blob that downstream orchestrators (e.g. scitex-orochi) consume without direct coupling — every field has a defaul....
 tags: [scitex-agent-container-observability, observability]
 ---
 
 # Observability contract
 
-`sac show-status <name> --json` produces a single JSON blob by merging three
+`sac agent status <name> --json` produces a single JSON blob by merging three
 sources:
 
 1. **Registry entry** — what was recorded at `sac start` time (name,
@@ -43,4 +43,4 @@ This means:
 ## See also
 
 - README "Rich Status" table — full field list with types and meanings.
-- [10_cli.md](10_cli.md) — `sac show-status` invocation and flags.
+- [10_cli.md](10_cli.md) — `sac agent status` invocation and flags.

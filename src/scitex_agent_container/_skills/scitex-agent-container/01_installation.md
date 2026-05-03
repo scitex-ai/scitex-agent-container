@@ -58,7 +58,7 @@ export SAC_RUNNER_PREFIX="conda run -n agent-env"                  # conda env
 
 ```bash
 sac --version
-sac list-agents             # registered agents (empty on a fresh install)
+sac agent list             # registered agents (empty on a fresh install)
 sac mcp list-tools          # confirms package internals importable
 ```
 
