@@ -21,7 +21,14 @@ def isolated_runtime(monkeypatch, tmp_path):
     tmp_path so ``find_project_scope`` walks up from a dir without a
     repo marker — forcing collect_rich to fall through to the
     home-scope state_dir, which we've redirected here."""
+    # Two sources of truth post-split (2026-05-03): the runner re-exports
+    # DEFAULT_STATE_ROOT from _session_state. ``state_dir_for`` reads the
+    # latter at call time, so we have to patch both for the override to
+    # take effect.
+    from scitex_agent_container._runners import _session_state
+
     monkeypatch.setattr(runner, "DEFAULT_STATE_ROOT", tmp_path)
+    monkeypatch.setattr(_session_state, "DEFAULT_STATE_ROOT", tmp_path)
     monkeypatch.chdir(tmp_path)
     return tmp_path
 

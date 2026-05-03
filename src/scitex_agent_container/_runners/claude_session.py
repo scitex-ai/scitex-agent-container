@@ -1,204 +1,100 @@
-"""Long-lived runner for the ``claude-session`` runtime (Phase 1).
+"""Long-lived runner for the ``runtime: claude-session`` agent path.
 
-This is the **daemon skeleton**. It establishes the lifecycle pattern
-(state-dir layout, atomic PID file, signal handling, heartbeat) without
-yet driving any SDK conversation — Phase 2 replaces the placeholder
-loop body with the actual ``ClaudeSDKClient`` multi-turn loop.
+This module owns the **lifecycle**: PID file write, SIGTERM/SIGINT
+handling, the heartbeat side-task, the SDK conversation, and clean
+shutdown. The IO surface (state-dir paths, atomic file writes,
+heartbeat / quota helpers) lives in :mod:`._session_state`. The hook
+bridge to ``event_log`` lives in :mod:`._session_hooks`. This file
+re-exports the public names from those siblings so existing
+consumers (``runtimes/claude_session.py``, ``agent_meta.py``, the
+test suite) keep their ``runner.write_pid(...)`` / ``runner.read_quota(...)``
+call shapes.
 
-Layout (per agent ``<name>``):
+State layout (per agent ``<name>``) — see ``_session_state`` for details:
 
     $SCITEX_AGENT_CONTAINER_RUNTIME_DIR / <name> /
         pid                      one line, the runner's own PID
-        heartbeat.json           {ts, pid, state}; rewritten every TICK_S
-        session.jsonl            (Phase 2) one JSON object per assistant chunk
-
-Defaults to ``~/.scitex/agent-container/runtime/`` if the env var is
-unset. Matches the convention already used by ``runtimes/ssh_remote.py``
-for the remote-deploy path.
+        heartbeat.json           {ts, pid, state}; refreshed every TICK_S
+        session.jsonl            one JSON object per turn event
+        session_id               persisted SDK session id (resume marker)
+        quota.json               accumulated per-turn token totals
 
 Invocation:
 
     python -m scitex_agent_container._runners.claude_session \\
-        --name <agent> [--state-root <dir>] [--tick-seconds N]
+        --name <agent>
+        [--state-root <dir>]
+        [--tick-seconds N]
+        [--mission "<prompt>"]
+        [--resume-session-id <uuid>]
+        [--print-stream]
 
 The runtime adapter (``runtimes/claude_session.py``) is the only sane
-caller; humans should use ``sac start`` instead.
+caller; humans should use ``sac start [--foreground]`` instead.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import logging
 import os
 import signal
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
+# Re-export the IO surface so callers keep using `runner.write_pid(...)`
+# etc. unchanged after the split.
+from ._session_state import (
+    DEFAULT_STATE_ROOT,
+    DEFAULT_TICK_SECONDS,
+    STATE_IDLE,
+    STATE_STARTING,
+    STATE_STOPPING,
+    STATE_WORKING,
+    accumulate_quota,
+    append_session_message,
+    read_heartbeat,
+    read_pid,
+    read_quota,
+    read_session_id,
+    state_dir_for,
+    write_heartbeat,
+    write_pid,
+    write_session_id,
+)
+from ._session_state import (
+    heartbeat_loop as _heartbeat_loop,
+)
+
 logger = logging.getLogger(__name__)
 
-DEFAULT_STATE_ROOT = Path(
-    os.environ.get(
-        "SCITEX_AGENT_CONTAINER_RUNTIME_DIR",
-        str(Path.home() / ".scitex" / "agent-container" / "runtime"),
-    )
-)
-DEFAULT_TICK_SECONDS = 10.0
-
-# State-machine vocabulary used by both the runner and the runtime
-# adapter's ``status`` surface. Keep tight: each value must mean exactly
-# one thing to ``sac show-status`` consumers.
-STATE_STARTING = "starting"
-STATE_IDLE = "idle"
-STATE_WORKING = "working"
-STATE_STOPPING = "stopping"
-
-
-def state_dir_for(name: str, root: Path | None = None) -> Path:
-    """Return ``<state-root>/<name>``. Does not create."""
-    return (root or DEFAULT_STATE_ROOT) / name
-
-
-def write_pid(state_dir: Path, pid: int) -> None:
-    """Write the runner's PID atomically.
-
-    Atomic via tmp + rename so a crash mid-write never leaves a
-    half-formed file (``sac show-status`` reads this concurrently).
-    """
-    state_dir.mkdir(parents=True, exist_ok=True)
-    tmp = state_dir / "pid.tmp"
-    tmp.write_text(f"{pid}\n", encoding="utf-8")
-    tmp.replace(state_dir / "pid")
+__all__ = [
+    "DEFAULT_STATE_ROOT",
+    "DEFAULT_TICK_SECONDS",
+    "STATE_IDLE",
+    "STATE_STARTING",
+    "STATE_STOPPING",
+    "STATE_WORKING",
+    "accumulate_quota",
+    "append_session_message",
+    "main",
+    "read_heartbeat",
+    "read_pid",
+    "read_quota",
+    "read_session_id",
+    "run",
+    "state_dir_for",
+    "write_heartbeat",
+    "write_pid",
+    "write_session_id",
+]
 
 
-def read_pid(state_dir: Path) -> int | None:
-    """Return the recorded PID, or None if absent / unreadable."""
-    p = state_dir / "pid"
-    if not p.is_file():
-        return None
-    try:
-        return int(p.read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
-        return None
-
-
-def write_heartbeat(state_dir: Path, *, pid: int, state: str) -> None:
-    """Atomically write the heartbeat snapshot."""
-    state_dir.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "ts": time.time(),
-        "pid": pid,
-        "state": state,
-    }
-    tmp = state_dir / "heartbeat.json.tmp"
-    tmp.write_text(json.dumps(payload), encoding="utf-8")
-    tmp.replace(state_dir / "heartbeat.json")
-
-
-def read_heartbeat(state_dir: Path) -> dict | None:
-    """Return the latest heartbeat dict, or None if absent / corrupt."""
-    p = state_dir / "heartbeat.json"
-    if not p.is_file():
-        return None
-    try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-
-
-async def _heartbeat_loop(
-    state_dir: Path,
-    *,
-    pid: int,
-    tick_seconds: float,
-    stop: asyncio.Event,
-) -> None:
-    """Write heartbeat every ``tick_seconds`` until ``stop`` is set.
-
-    First write happens immediately so consumers see the runner alive
-    without waiting a full tick.
-    """
-    write_heartbeat(state_dir, pid=pid, state=STATE_IDLE)
-    while not stop.is_set():
-        try:
-            await asyncio.wait_for(stop.wait(), timeout=tick_seconds)
-        except asyncio.TimeoutError:
-            write_heartbeat(state_dir, pid=pid, state=STATE_IDLE)
-
-
-def _quota_path(state_dir: Path) -> Path:
-    return state_dir / "quota.json"
-
-
-def read_quota(state_dir: Path) -> dict:
-    """Return the persisted quota totals, or a zeroed dict if absent."""
-    p = _quota_path(state_dir)
-    if not p.is_file():
-        return {
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "cache_creation_input_tokens": 0,
-            "cache_read_input_tokens": 0,
-            "turns": 0,
-        }
-    try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-
-def accumulate_quota(state_dir: Path, usage: dict | None) -> dict:
-    """Add one ``ResultMessage.usage`` block to the running totals.
-
-    Returns the new totals. Atomic via tmp+rename so a concurrent
-    ``sac show-status`` reader never sees a partial write.
-    """
-    if not usage:
-        return read_quota(state_dir)
-    state_dir.mkdir(parents=True, exist_ok=True)
-    totals = read_quota(state_dir)
-    for key in (
-        "input_tokens",
-        "output_tokens",
-        "cache_creation_input_tokens",
-        "cache_read_input_tokens",
-    ):
-        totals[key] = int(totals.get(key, 0)) + int(usage.get(key, 0) or 0)
-    totals["turns"] = int(totals.get("turns", 0)) + 1
-    tmp = state_dir / "quota.json.tmp"
-    tmp.write_text(json.dumps(totals), encoding="utf-8")
-    tmp.replace(_quota_path(state_dir))
-    return totals
-
-
-def write_session_id(state_dir: Path, session_id: str) -> None:
-    """Persist the SDK session id so a respawn can resume."""
-    state_dir.mkdir(parents=True, exist_ok=True)
-    tmp = state_dir / "session_id.tmp"
-    tmp.write_text(session_id, encoding="utf-8")
-    tmp.replace(state_dir / "session_id")
-
-
-def read_session_id(state_dir: Path) -> str | None:
-    """Return the persisted session id, or None if absent."""
-    p = state_dir / "session_id"
-    if not p.is_file():
-        return None
-    try:
-        return p.read_text(encoding="utf-8").strip() or None
-    except OSError:
-        return None
-
-
-def append_session_message(state_dir: Path, payload: dict) -> None:
-    """Append one JSON-line record to session.jsonl."""
-    state_dir.mkdir(parents=True, exist_ok=True)
-    enriched = {"ts": time.time(), **payload}
-    with (state_dir / "session.jsonl").open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(enriched, ensure_ascii=False) + "\n")
+# ---------------------------------------------------------------------------
+# SDK conversation
+# ---------------------------------------------------------------------------
 
 
 async def _run_conversation(
@@ -211,7 +107,7 @@ async def _run_conversation(
     stop: asyncio.Event,
     print_stream: bool = False,
 ) -> None:
-    """Drive a single mission turn against ClaudeSDKClient.
+    """Drive a single mission turn against ``ClaudeSDKClient``.
 
     Streams every assistant chunk into ``session.jsonl`` and persists
     the session id once the turn completes so a respawn can resume.
@@ -246,8 +142,9 @@ async def _run_conversation(
         return
 
     from ..runtimes._sdk_common import SDKCommonError, build_sdk_options
+    from ._session_hooks import build_event_log_hooks
 
-    hooks = _build_event_log_hooks(name, HookMatcher)
+    hooks = build_event_log_hooks(name, HookMatcher)
 
     write_heartbeat(state_dir, pid=pid, state=STATE_WORKING)
     append_session_message(state_dir, {"type": "user", "text": mission})
@@ -323,74 +220,23 @@ async def _run_conversation(
             write_heartbeat(state_dir, pid=pid, state=STATE_IDLE)
 
 
-def _build_event_log_hooks(agent_name: str, hook_matcher_cls: Any) -> dict:
-    """Wire SDK hook callbacks into ``event_log.append_event``.
-
-    The CLI runtime publishes the same event vocabulary today via
-    ``sac record-hook-event`` invoked from
-    ``.claude/settings.local.json``. By bridging here we keep the
-    downstream schema (``pretool`` / ``posttool`` / ``prompt`` /
-    ``stop`` records, same fields) identical so existing consumers
-    (``sac show-status``, ``event_log.summarize``, fleet dashboards)
-    work unchanged.
-
-    Hook callbacks are *async no-ops* on the wire: they return ``{}``
-    to the SDK and never block. ``append_event`` is itself swallowed-
-    failures, so a misbehaving hook cannot kill the agent.
-    """
-    from ..event_log import append_event
-
-    async def _on_pretool(payload, _tool_use_id, _ctx):
-        append_event(
-            agent_name,
-            "pretool",
-            {
-                "tool_name": payload.get("tool_name", ""),
-                "tool_input": payload.get("tool_input") or {},
-            },
-        )
-        return {}
-
-    async def _on_posttool(payload, _tool_use_id, _ctx):
-        append_event(
-            agent_name,
-            "posttool",
-            {
-                "tool_name": payload.get("tool_name", ""),
-                "tool_input": payload.get("tool_input") or {},
-                "tool_response": payload.get("tool_response"),
-            },
-        )
-        return {}
-
-    async def _on_prompt(payload, _tool_use_id, _ctx):
-        append_event(
-            agent_name,
-            "prompt",
-            {"prompt": payload.get("prompt", "")},
-        )
-        return {}
-
-    async def _on_stop(payload, _tool_use_id, _ctx):
-        append_event(
-            agent_name,
-            "stop",
-            {"stop_hook_active": bool(payload.get("stop_hook_active"))},
-        )
-        return {}
-
-    return {
-        "PreToolUse": [hook_matcher_cls(hooks=[_on_pretool])],
-        "PostToolUse": [hook_matcher_cls(hooks=[_on_posttool])],
-        "UserPromptSubmit": [hook_matcher_cls(hooks=[_on_prompt])],
-        "Stop": [hook_matcher_cls(hooks=[_on_stop])],
-    }
-
-
 def _safe_repr(value: object) -> str:
     """Bounded repr so a runaway tool-result blob can't bloat session.jsonl."""
     s = repr(value)
     return s if len(s) <= 1024 else s[:1024] + "…"
+
+
+# Backwards-compat shim: tests + agent_meta call ``runner._build_event_log_hooks``
+# directly. Re-route to the new home so the rename doesn't break them.
+def _build_event_log_hooks(agent_name: str, hook_matcher_cls: Any) -> dict:
+    from ._session_hooks import build_event_log_hooks
+
+    return build_event_log_hooks(agent_name, hook_matcher_cls)
+
+
+# ---------------------------------------------------------------------------
+# Daemon lifecycle (signal handling, heartbeat side-task, mission turn)
+# ---------------------------------------------------------------------------
 
 
 async def run(
@@ -409,9 +255,9 @@ async def run(
     one runner per name.
 
     If ``mission`` is given, the runner drives one SDK conversation turn
-    against it (Phase 2 happy path); afterward it idles awaiting
-    SIGTERM. With no mission, the runner just heartbeats — useful for
-    lifecycle correctness checks and for hand-driven manual sessions.
+    against it; afterward it idles awaiting SIGTERM. With no mission,
+    the runner just heartbeats — useful for lifecycle correctness
+    checks and for hand-driven manual sessions.
     """
     state_dir = state_dir_for(name, state_root)
     state_dir.mkdir(parents=True, exist_ok=True)
@@ -467,6 +313,11 @@ async def run(
         # Final heartbeat so consumers see the clean stop.
         write_heartbeat(state_dir, pid=pid, state=STATE_STOPPING)
     return 0
+
+
+# ---------------------------------------------------------------------------
+# CLI entry
+# ---------------------------------------------------------------------------
 
 
 def _parse_argv(argv: list[str] | None = None) -> argparse.Namespace:

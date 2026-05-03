@@ -19,8 +19,16 @@ from scitex_agent_container.runtimes.claude_session import (
 
 @pytest.fixture
 def state_root(tmp_path: Path, monkeypatch) -> Path:
-    """Redirect the runner's default state root into tmp_path."""
+    """Redirect the runner's default state root into tmp_path.
+
+    Two sources of truth post-split (2026-05-03): the runner re-exports
+    DEFAULT_STATE_ROOT from _session_state and ``state_dir_for`` reads
+    the latter at call time. Patch both.
+    """
+    from scitex_agent_container._runners import _session_state
+
     monkeypatch.setattr(runner, "DEFAULT_STATE_ROOT", tmp_path)
+    monkeypatch.setattr(_session_state, "DEFAULT_STATE_ROOT", tmp_path)
     return tmp_path
 
 
