@@ -102,19 +102,24 @@ async def _run_conversation(
     state_dir: Path,
     *,
     pid: int,
-    mission: str,
+    inbox: "asyncio.Queue",
     resume_session_id: str | None,
     stop: asyncio.Event,
     print_stream: bool = False,
 ) -> None:
-    """Drive a single mission turn against ``ClaudeSDKClient``.
+    """Drive an inbox-driven conversation against ``ClaudeSDKClient``.
 
-    Streams every assistant chunk into ``session.jsonl`` and persists
-    the session id once the turn completes so a respawn can resume.
-    Returns when the SDK emits the closing ``ResultMessage``, when the
-    caller cancels via ``stop``, or on any SDK error (logged + recorded
-    to session.jsonl).
+    Holds one ``ClaudeSDKClient`` open for the lifetime of the runner
+    and drains turn envelopes from ``inbox`` serially: per turn it
+    calls ``client.query(text)``, drains ``receive_response()`` into
+    ``session.jsonl``, and resolves the envelope's response future
+    with the concatenated assistant reply.
+
+    Exits when a ``ShutdownEnvelope`` arrives, when ``stop`` is set, or
+    on any SDK error (logged + recorded to session.jsonl).
     """
+    from ._session_inbox import ShutdownEnvelope, TurnEnvelope
+
     try:
         from claude_agent_sdk import (
             AssistantMessage,
@@ -129,6 +134,7 @@ async def _run_conversation(
             state_dir,
             {"type": "error", "kind": "sdk_missing", "detail": str(exc)},
         )
+        _drain_failed_inbox(inbox, RuntimeError(f"sdk import: {exc}"))
         return
 
     try:
@@ -139,15 +145,13 @@ async def _run_conversation(
             state_dir,
             {"type": "error", "kind": "sdk_missing", "detail": str(exc)},
         )
+        _drain_failed_inbox(inbox, RuntimeError(f"sdk hooks: {exc}"))
         return
 
     from ..runtimes._sdk_common import SDKCommonError, build_sdk_options
     from ._session_hooks import build_event_log_hooks
 
     hooks = build_event_log_hooks(name, HookMatcher)
-
-    write_heartbeat(state_dir, pid=pid, state=STATE_WORKING)
-    append_session_message(state_dir, {"type": "user", "text": mission})
 
     try:
         options = build_sdk_options(
@@ -162,62 +166,89 @@ async def _run_conversation(
             state_dir,
             {"type": "error", "kind": "options", "detail": str(exc)},
         )
+        _drain_failed_inbox(inbox, exc)
         return
 
-    async def _drive(client: "ClaudeSDKClient") -> None:
-        await client.query(mission)
-        async for msg in client.receive_response():
-            if stop.is_set():
-                # Graceful: ask the SDK to stop in-flight work.
-                await client.interrupt()
-                break
-            if isinstance(msg, AssistantMessage):
-                for block in msg.content:
-                    if isinstance(block, TextBlock):
-                        append_session_message(
-                            state_dir, {"type": "assistant", "text": block.text}
-                        )
-                        if print_stream:
-                            # Foreground mode: mirror assistant text to
-                            # stdout so the operator sees streaming output
-                            # without tailing session.jsonl.
-                            sys.stdout.write(block.text)
-                            sys.stdout.flush()
-            elif isinstance(msg, UserMessage):
-                # Tool-result echo from the SDK; record so transcripts
-                # can render the full turn structure later.
-                append_session_message(
-                    state_dir,
-                    {"type": "user_echo", "raw": _safe_repr(msg)},
-                )
-            elif isinstance(msg, ResultMessage):
-                sid = getattr(msg, "session_id", None)
-                if sid:
-                    write_session_id(state_dir, sid)
-                usage = getattr(msg, "usage", None)
-                accumulate_quota(state_dir, usage)
-                append_session_message(
-                    state_dir,
-                    {
-                        "type": "result",
-                        "session_id": sid,
-                        "usage": usage,
-                    },
-                )
-                break
+    async def _drive_turn(client: "ClaudeSDKClient", env: TurnEnvelope) -> None:
+        write_heartbeat(state_dir, pid=pid, state=STATE_WORKING)
+        append_session_message(state_dir, {"type": "user", "text": env.text})
+        chunks: list[str] = []
+        try:
+            await client.query(env.text)
+            async for msg in client.receive_response():
+                if stop.is_set():
+                    await client.interrupt()
+                    break
+                if isinstance(msg, AssistantMessage):
+                    for block in msg.content:
+                        if isinstance(block, TextBlock):
+                            chunks.append(block.text)
+                            append_session_message(
+                                state_dir,
+                                {"type": "assistant", "text": block.text},
+                            )
+                            if print_stream:
+                                sys.stdout.write(block.text)
+                                sys.stdout.flush()
+                elif isinstance(msg, UserMessage):
+                    append_session_message(
+                        state_dir,
+                        {"type": "user_echo", "raw": _safe_repr(msg)},
+                    )
+                elif isinstance(msg, ResultMessage):
+                    sid = getattr(msg, "session_id", None)
+                    if sid:
+                        write_session_id(state_dir, sid)
+                    usage = getattr(msg, "usage", None)
+                    accumulate_quota(state_dir, usage)
+                    append_session_message(
+                        state_dir,
+                        {"type": "result", "session_id": sid, "usage": usage},
+                    )
+                    break
+        finally:
+            if not env.response.done():
+                env.response.set_result("".join(chunks))
+            if not stop.is_set():
+                write_heartbeat(state_dir, pid=pid, state=STATE_IDLE)
 
     try:
         async with ClaudeSDKClient(options=options) as client:
-            await _drive(client)
+            while True:
+                env = await inbox.get()
+                if isinstance(env, ShutdownEnvelope):
+                    break
+                if not isinstance(env, TurnEnvelope):
+                    continue
+                # Drive the turn unconditionally; the in-turn loop checks
+                # ``stop`` and calls ``client.interrupt()`` so a SIGTERM
+                # mid-stream still aborts cleanly.
+                await _drive_turn(client, env)
+                if env.exit_after:
+                    stop.set()
+                    break
+                if stop.is_set():
+                    break
     except Exception as exc:  # stx-allow: fallback (reason: SDK surface is broad; runner must always reach the IDLE / STOPPING phases)
         logger.exception("claude-session conversation failed for %s", name)
         append_session_message(
             state_dir,
             {"type": "error", "kind": "sdk_runtime", "detail": str(exc)},
         )
-    finally:
-        if not stop.is_set():
-            write_heartbeat(state_dir, pid=pid, state=STATE_IDLE)
+        _drain_failed_inbox(inbox, exc)
+
+
+def _drain_failed_inbox(inbox: "asyncio.Queue", exc: BaseException) -> None:
+    """Resolve any pending turn futures with the failure so producers don't hang."""
+    from ._session_inbox import TurnEnvelope
+
+    while not inbox.empty():
+        try:
+            env = inbox.get_nowait()
+        except asyncio.QueueEmpty:
+            break
+        if isinstance(env, TurnEnvelope) and not env.response.done():
+            env.response.set_exception(exc)
 
 
 def _safe_repr(value: object) -> str:
@@ -286,25 +317,63 @@ async def run(
         _heartbeat_loop(state_dir, pid=pid, tick_seconds=tick_seconds, stop=stop),
     )
 
+    from ._session_inbox import ShutdownEnvelope, TurnEnvelope, make_inbox
+
+    inbox: asyncio.Queue = make_inbox()
+    convo_task: asyncio.Task | None = None
+
     if mission:
-        await _run_conversation(
-            name,
-            state_dir,
-            pid=pid,
-            mission=mission,
-            resume_session_id=resume_session_id,
-            stop=stop,
-            print_stream=print_stream,
+        # Seed the inbox with the mission turn. exit_after=True only for
+        # foreground (--print-stream) mode so the runner exits when done.
+        mission_env = TurnEnvelope(
+            text=mission,
+            response=loop.create_future(),
+            exit_after=print_stream,
+        )
+        await inbox.put(mission_env)
+        convo_task = asyncio.create_task(
+            _run_conversation(
+                name,
+                state_dir,
+                pid=pid,
+                inbox=inbox,
+                resume_session_id=resume_session_id,
+                stop=stop,
+                print_stream=print_stream,
+            )
         )
         if print_stream:
-            # Foreground mode: when the conversation ends, exit cleanly
-            # rather than parking in IDLE waiting for SIGTERM. The
-            # operator's terminal is freed for the next command.
+            # Foreground mode: wait for mission turn to complete, then exit.
+            try:
+                await convo_task
+            finally:
+                hb_task.cancel()
+                try:
+                    await hb_task
+                except asyncio.CancelledError:
+                    pass
+                write_heartbeat(state_dir, pid=pid, state=STATE_STOPPING)
             return 0
 
     try:
         await stop.wait()
     finally:
+        if convo_task is not None and not convo_task.done():
+            await inbox.put(ShutdownEnvelope())
+            try:
+                await asyncio.wait_for(convo_task, timeout=5.0)
+            except (
+                asyncio.TimeoutError,
+                asyncio.CancelledError,
+            ):  # stx-allow: fallback (reason: runner must always reach STOPPING phase even if SDK hangs)
+                convo_task.cancel()
+                try:
+                    await convo_task
+                except (
+                    asyncio.CancelledError,
+                    Exception,
+                ):  # stx-allow: fallback (reason: SDK surface is broad)
+                    pass
         hb_task.cancel()
         try:
             await hb_task

@@ -21,6 +21,26 @@ from typing import Any
 import pytest
 
 from scitex_agent_container._runners import claude_session as runner
+from scitex_agent_container._runners._session_inbox import (
+    ShutdownEnvelope,
+    TurnEnvelope,
+    make_inbox,
+)
+
+
+async def _seed_inbox(mission: str):
+    """Build an inbox seeded with one mission turn followed by Shutdown.
+
+    Returns ``(inbox, response_future)`` so tests can await the future
+    after ``_run_conversation`` returns.
+    """
+    inbox = make_inbox()
+    loop = asyncio.get_running_loop()
+    fut = loop.create_future()
+    await inbox.put(TurnEnvelope(text=mission, response=fut))
+    await inbox.put(ShutdownEnvelope())
+    return inbox, fut
+
 
 # ---------------------------------------------------------------------------
 # state-dir helpers
@@ -281,16 +301,18 @@ def test_conversation_writes_assistant_messages_and_session_id(
     _patch_options(monkeypatch)
     state_dir = tmp_path / "alpha"
 
-    asyncio.run(
-        runner._run_conversation(
+    async def _scenario():
+        inbox, _fut = await _seed_inbox("say hello")
+        await runner._run_conversation(
             "alpha",
             state_dir,
             pid=1,
-            mission="say hello",
+            inbox=inbox,
             resume_session_id=None,
             stop=asyncio.Event(),
         )
-    )
+
+    asyncio.run(_scenario())
 
     # Session id was persisted from ResultMessage.session_id.
     assert runner.read_session_id(state_dir) == "sess-xyz"
@@ -316,16 +338,19 @@ def test_conversation_forwards_resume_session_id_to_options(
 ) -> None:
     _patch_sdk(monkeypatch)
     _patch_options(monkeypatch)
-    asyncio.run(
-        runner._run_conversation(
+
+    async def _scenario():
+        inbox, _fut = await _seed_inbox("resume me")
+        await runner._run_conversation(
             "alpha",
             tmp_path / "alpha",
             pid=1,
-            mission="resume me",
+            inbox=inbox,
             resume_session_id="prev-sid",
             stop=asyncio.Event(),
         )
-    )
+
+    asyncio.run(_scenario())
     assert _StubClient.last_options.resume == "prev-sid"  # type: ignore[attr-defined]
     assert _StubClient.last_options.permission_mode == "bypassPermissions"  # type: ignore[attr-defined]
 
@@ -342,16 +367,19 @@ def test_conversation_calls_interrupt_when_stop_is_set(
     _patch_options(monkeypatch)
     stop = asyncio.Event()
     stop.set()  # signal stop *before* the conversation starts
-    asyncio.run(
-        runner._run_conversation(
+
+    async def _scenario():
+        inbox, _fut = await _seed_inbox("long task")
+        await runner._run_conversation(
             "alpha",
             tmp_path / "alpha",
             pid=1,
-            mission="long task",
+            inbox=inbox,
             resume_session_id=None,
             stop=stop,
         )
-    )
+
+    asyncio.run(_scenario())
     # The runner should ask the SDK to interrupt at least once.
     assert _StubClient.interrupt_calls >= 1
 
@@ -377,16 +405,19 @@ def test_conversation_records_error_when_sdk_missing(
 
     monkeypatch.setattr(builtins, "__import__", _fake_import)
     state_dir = tmp_path / "alpha"
-    asyncio.run(
-        runner._run_conversation(
+
+    async def _scenario():
+        inbox, _fut = await _seed_inbox("x")
+        await runner._run_conversation(
             "alpha",
             state_dir,
             pid=1,
-            mission="x",
+            inbox=inbox,
             resume_session_id=None,
             stop=asyncio.Event(),
         )
-    )
+
+    asyncio.run(_scenario())
     rows = [
         json.loads(line)
         for line in (state_dir / "session.jsonl").read_text().splitlines()
@@ -505,16 +536,19 @@ def test_conversation_accumulates_quota_and_registers_hooks(
     _patch_sdk(monkeypatch)
     _patch_options(monkeypatch)
     state_dir = tmp_path / "alpha"
-    asyncio.run(
-        runner._run_conversation(
+
+    async def _scenario():
+        inbox, _fut = await _seed_inbox("go")
+        await runner._run_conversation(
             "alpha",
             state_dir,
             pid=1,
-            mission="go",
+            inbox=inbox,
             resume_session_id=None,
             stop=asyncio.Event(),
         )
-    )
+
+    asyncio.run(_scenario())
     quota = runner.read_quota(state_dir)
     assert quota["turns"] == 1
     assert quota["output_tokens"] == 7  # _StubResult usage above
