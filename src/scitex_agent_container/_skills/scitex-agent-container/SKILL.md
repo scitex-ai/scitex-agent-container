@@ -37,6 +37,13 @@ rich non-agentic status surface.
 
 ## Sub-skills
 
+### Onboarding & interfaces
+- [01_installation.md](01_installation.md) — pip install + auth + per-host hook
+- [02_quick-start.md](02_quick-start.md) — first agent in 30 seconds
+- [03_python-api.md](03_python-api.md) — programmatic surface (`agent_start`, `peer.post_turn`, ...)
+- [04_cli-reference.md](04_cli-reference.md) — every `sac` subcommand
+- [06_http-api.md](06_http-api.md) — `POST /v1/turn` wire format (set `spec.a2a.port` to enable)
+
 ### Core
 - [01_config-v3.md](01_config-v3.md) — v3 config format (current); v2+`metadata.name` rejected
 - [02_multiplexer.md](02_multiplexer.md) — tmux vs screen
@@ -65,7 +72,7 @@ rich non-agentic status surface.
 
 ## Environment
 
-- [30_env-vars.md](30_env-vars.md) — `SCITEX_*` env vars read at runtime
+- [20_env-vars.md](20_env-vars.md) — `SCITEX_*` env vars read at runtime
 
 ## 30-second start
 

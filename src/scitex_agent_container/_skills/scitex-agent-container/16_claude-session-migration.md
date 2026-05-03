@@ -75,32 +75,11 @@ Goal: run the SDK version *alongside* the live one and compare.
    sac start $SANDBOX
    ```
 
-2. Compare quota over a typical workload window (run both for the
-   same wall-clock period against the same kind of prompts, then):
-
-   ```bash
-   echo "=== legacy (claude-code) ==="
-   sac show-status $AGENT --json | jq '{quota_5h_used_pct, quota_7d_used_pct}'
-   echo "=== SDK (claude-session) ==="
-   sac show-status $SANDBOX --json | jq '.sdk_session.quota'
-   ```
-
-   The SDK side reports cumulative tokens; the legacy side reports
-   percentage of plan. They're not directly comparable, but a 10x
-   difference in either direction is a red flag.
-
-3. Compare event_log activity:
-
-   ```bash
-   diff <(sac show-status $AGENT --json | jq .event_log) \
-        <(sac show-status $SANDBOX --json | jq .event_log)
-   ```
-
-   Hooks should fire at roughly the same rate — same tool-use pattern,
-   same prompt frequency.
-
-4. If anything diverges meaningfully, stop the sandbox and flag for
-   investigation. Don't proceed to cutover.
+2. Compare quota + event_log between the two over the same wall-clock
+   window (`sac show-status $AGENT --json` legacy vs `--json | jq
+   .sdk_session.quota` SDK; `sac show-status ... | jq .event_log` for
+   hook-firing rate). A 10× divergence in either direction is a red
+   flag — stop the sandbox and investigate before cutover.
 
 ## Phase 3 — controlled cutover
 
