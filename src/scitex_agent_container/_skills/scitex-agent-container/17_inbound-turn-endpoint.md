@@ -72,3 +72,31 @@ The runner's argv `--a2a-port`/`--a2a-host` is set automatically by `runtimes/cl
 - `src/scitex_agent_container/_runners/_session_inbox.py` — `TurnEnvelope` / `ShutdownEnvelope` / `make_inbox()`
 - `src/scitex_agent_container/_runners/claude_session.py::_run_conversation` — drains the inbox into the persistent `ClaudeSDKClient`
 - `tests/scitex_agent_container/_runners/test__session_http.py` — round-trip + 400 + health smoke tests
+
+## Remote launch via `_remote_launch.render_remote_launch`
+
+For running the SDK runner on a remote host, sac provides a generic bash-script generator that sources a per-host hook before exec. The package stays generic; per-host quirks (Spartan module loads, NAS PATH overrides, etc.) live in private `~/.scitex/agent-container/hosts/$(hostname).sh` on the remote.
+
+```python
+from scitex_agent_container._runners._remote_launch import render_remote_launch
+
+script = render_remote_launch(
+    runner_argv=["python", "-m", "scitex_agent_container._runners.claude_session",
+                 "--name", "my-agent", "--a2a-port", "18888"],
+    agent_name="my-agent",
+    state_root="/tmp/runtime",
+    detach=True,  # setsid + nohup; emits the runner PID on stdout
+)
+# Pipe over ssh:
+#   ssh -o BatchMode=yes <host> 'bash -l -s' <<< "$script"
+# The login shell ensures Lmod / pyenv / venv-PATH from .bashrc is loaded
+# *before* the per-host hook runs.
+```
+
+The script:
+
+1. (if `state_root` given) `export SCITEX_AGENT_CONTAINER_RUNTIME_DIR=...`
+2. Source `~/.scitex/agent-container/hosts/$(hostname).sh` if it exists (silent skip otherwise)
+3. exec the runner (foreground) or `setsid nohup ... &` (detached) with output redirected to `runner.log`
+
+**Always invoke remote with `bash -l -s` (login shell)** so the user's `.bashrc` loads (Lmod, venv PATH, etc.) before the hook runs. Tested 2026-05-03 on `spartan-bm198`: hook does `module load GCCcore/11.3.0 OpenSSL/1.1; unset SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY` → SDK runner round-trips a turn against the OAuth in `~/.claude/.credentials.json`.
