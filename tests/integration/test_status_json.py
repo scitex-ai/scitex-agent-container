@@ -179,7 +179,7 @@ def test_fallback_workdir_uses_sac_workspace_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Returns ~/.scitex/orochi/runtime/workspaces/<id> (orochi-runtime-layout)."""
-    from scitex_agent_container.lifecycle import _fallback_workdir
+    from scitex_agent_container._lifecycle.lifecycle import _fallback_workdir
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     result = _fallback_workdir("some-agent")
@@ -196,7 +196,7 @@ def test_fallback_workdir_uses_sac_workspace_root(
 def test_agent_status_includes_rich_fields(
     fake_workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from scitex_agent_container import lifecycle
+    from scitex_agent_container._lifecycle import lifecycle
 
     class _FakeEntry(dict):
         pass
@@ -217,7 +217,9 @@ def test_agent_status_includes_rich_fields(
     monkeypatch.setattr(Path, "home", lambda: fake_workspace.parent.parent)
     # The fallback workdir lifecycle computes:
     #   ~/.scitex/orochi/runtime/workspaces/<name> (orochi-runtime-layout)
-    target = fake_workspace.parent.parent / ".scitex" / "orochi" / "runtime" / "workspaces"
+    target = (
+        fake_workspace.parent.parent / ".scitex" / "orochi" / "runtime" / "workspaces"
+    )
     target.mkdir(parents=True, exist_ok=True)
     link = target / "fake-agent"
     if not link.exists():
@@ -362,9 +364,9 @@ def test_terse_status_is_heartbeat_safe() -> None:
     # (1) Flat dict, JSON-primitive leaves only.
     for k, v in terse.items():
         assert isinstance(k, str), f"non-string key {k!r}"
-        assert v is None or isinstance(
-            v, (str, int, float, bool)
-        ), f"non-primitive value for {k}: {type(v).__name__}"
+        assert v is None or isinstance(v, (str, int, float, bool)), (
+            f"non-primitive value for {k}: {type(v).__name__}"
+        )
 
     # (2) Every whitelist key present.
     assert set(terse.keys()) == set(TERSE_STATUS_FIELDS)
@@ -539,7 +541,7 @@ def test_status_full_unaffected_by_terse_flag_absence(
     fake_workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Default status (no --terse) still emits every rich field."""
-    from scitex_agent_container import lifecycle
+    from scitex_agent_container._lifecycle import lifecycle
 
     class _FakeEntry(dict):
         pass

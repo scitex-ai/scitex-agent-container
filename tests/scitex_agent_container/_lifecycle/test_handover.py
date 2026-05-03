@@ -17,7 +17,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from scitex_agent_container import _handover
+from scitex_agent_container._lifecycle import handover as _handover
 
 
 def _write_spec(path: Path, body: dict) -> Path:

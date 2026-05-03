@@ -255,7 +255,7 @@ def test_context_manager_falls_back_to_pane_parser_when_meta_none():
 def test_agent_status_includes_context_management(monkeypatch, tmp_path):
     """``agent_status`` exposes live sensor percent for fleet_watch.sh."""
     from scitex_agent_container import context_manager as cm_mod
-    from scitex_agent_container import lifecycle
+    from scitex_agent_container._lifecycle import lifecycle
     from scitex_agent_container.config import (
         AgentConfig,
         ContextManagementConfig,

@@ -351,8 +351,8 @@ def _singleton_reconcile_body(execute: bool, current_host: str, as_json: bool) -
       $ sac reconcile-singletons --execute
       $ sac reconcile-singletons --json
     """
+    from .._lifecycle.lifecycle import agent_stop
     from ..config._host import resolve_hostname
-    from ..lifecycle import agent_stop
     from ..registry import Registry
 
     if not current_host:

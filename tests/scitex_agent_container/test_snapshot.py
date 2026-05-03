@@ -143,7 +143,7 @@ def test_snapshot_pids_sidecar_alive_for_thread():
 
 
 def test_status_exposes_snapshot_from_cache(tmp_path, monkeypatch):
-    from scitex_agent_container import lifecycle
+    from scitex_agent_container._lifecycle import lifecycle
     from scitex_agent_container.config import AgentConfig
 
     ws = tmp_path / "ws"

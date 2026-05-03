@@ -6,8 +6,8 @@ import subprocess
 import time
 import traceback
 
-from .config import AgentConfig
-from .registry import Registry
+from ..config import AgentConfig
+from ..registry import Registry
 
 
 def health_check(config: AgentConfig) -> tuple[bool, str]:
@@ -40,7 +40,7 @@ def _check_a2a_card(config: AgentConfig) -> tuple[bool, str]:
     import urllib.error
     import urllib.request
 
-    from .runtimes.a2a_sidecar import _read_a2a_block
+    from ..runtimes.a2a_sidecar import _read_a2a_block
 
     a2a = _read_a2a_block(config)
     if a2a is None:
@@ -53,11 +53,19 @@ def _check_a2a_card(config: AgentConfig) -> tuple[bool, str]:
     try:
         with urllib.request.urlopen(url, timeout=5) as resp:
             data = json.loads(resp.read())
-    except urllib.error.HTTPError as exc:  # stx-allow: fallback (reason: expected failure — see inline comment)
+    except (
+        urllib.error.HTTPError
+    ) as exc:  # stx-allow: fallback (reason: expected failure — see inline comment)
         return False, f"unhealthy: AgentCard HTTP {exc.code} from {url}"
-    except (urllib.error.URLError, OSError) as exc:  # stx-allow: fallback (reason: file system operation failure)
+    except (
+        urllib.error.URLError,
+        OSError,
+    ) as exc:  # stx-allow: fallback (reason: file system operation failure)
         return False, f"unhealthy: AgentCard unreachable at {url}: {exc}"
-    except (ValueError, json.JSONDecodeError) as exc:  # stx-allow: fallback (reason: malformed JSON tolerated)
+    except (
+        ValueError,
+        json.JSONDecodeError,
+    ) as exc:  # stx-allow: fallback (reason: malformed JSON tolerated)
         return False, f"unhealthy: AgentCard malformed JSON: {exc}"
 
     elapsed_ms = int((time.time() - t0) * 1000)
@@ -71,7 +79,7 @@ def _check_a2a_card(config: AgentConfig) -> tuple[bool, str]:
 
 def _check_session_alive(config: AgentConfig) -> tuple[bool, str]:
     """Check if a multiplexer session exists locally."""
-    from .runtimes.multiplexer import get_multiplexer
+    from ..runtimes.multiplexer import get_multiplexer
 
     mux = get_multiplexer(config)
     if mux.exists(config.screen_name):

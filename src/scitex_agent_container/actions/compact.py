@@ -30,8 +30,8 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from .._lifecycle.liveness_probe import pane_is_busy
 from ..action_base import ActionContext, PaneAction
-from ..liveness_probe import pane_is_busy
 
 # Tail window carried into the attempt log for forensic readers.
 # Compacts don't need the huge window a nonce probe needs because
@@ -127,5 +127,8 @@ def _coerce_float(value: Any) -> Optional[float]:
         return None
     try:
         return float(value)
-    except (TypeError, ValueError):  # stx-allow: fallback (reason: type coercion or format mismatch)
+    except (
+        TypeError,
+        ValueError,
+    ):  # stx-allow: fallback (reason: type coercion or format mismatch)
         return None

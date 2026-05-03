@@ -40,7 +40,9 @@ def parse_context_percent(pane_text: str) -> float | None:
         for match in _PERCENT_RE.finditer(line):
             try:
                 value = float(match.group(1))
-            except ValueError:  # stx-allow: fallback (reason: type coercion or format mismatch)
+            except (
+                ValueError
+            ):  # stx-allow: fallback (reason: type coercion or format mismatch)
                 continue
             if 0.0 <= value <= 100.0:
                 return value
@@ -64,7 +66,11 @@ def fetch_agent_meta(
     the ``script_path`` argument (argument wins). If neither is set,
     returns None without invoking anything.
     """
-    explicit = script_path or os.environ.get(_AGENT_META_ENV) or os.environ.get("SCITEX_AGENT_META_SCRIPT")
+    explicit = (
+        script_path
+        or os.environ.get(_AGENT_META_ENV)
+        or os.environ.get("SCITEX_AGENT_META_SCRIPT")
+    )
     path = explicit if explicit else _DEFAULT_AGENT_META_SCRIPT
     resolved = str(Path(path).expanduser())
     try:
@@ -86,7 +92,10 @@ def fetch_agent_meta(
         data = (
             json.loads(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else None
         )
-    except (json.JSONDecodeError, IndexError):  # stx-allow: fallback (reason: malformed JSON tolerated)
+    except (
+        json.JSONDecodeError,
+        IndexError,
+    ):  # stx-allow: fallback (reason: malformed JSON tolerated)
         return None
     if not isinstance(data, dict):
         return None
@@ -310,7 +319,7 @@ def default_dispatcher(strategy: str, agent_config: AgentConfig | None) -> None:
         return
 
     if strategy == "restart":
-        from .lifecycle import agent_restart
+        from ._lifecycle.lifecycle import agent_restart
 
         _fire_hook(
             agent_config,

@@ -12,13 +12,13 @@ from pathlib import Path
 
 import click
 
-from ..config import AgentConfig, load_config, resolve_config
-from ..config._host import resolve_hostname
-from ..lifecycle import (
+from .._lifecycle.lifecycle import (
     agent_restart,
     agent_start,
     agent_stop,
 )
+from ..config import AgentConfig, load_config, resolve_config
+from ..config._host import resolve_hostname
 from ..registry import Registry
 from ._helpers import console
 

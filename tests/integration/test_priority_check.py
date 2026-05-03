@@ -258,7 +258,7 @@ def test_singleton_reconcile_execute_success(monkeypatch, tmp_path):
     )
     stopped = []
     monkeypatch.setattr(
-        "scitex_agent_container.lifecycle.agent_stop",
+        "scitex_agent_container._lifecycle.lifecycle.agent_stop",
         lambda name: stopped.append(name),
     )
     runner = CliRunner()

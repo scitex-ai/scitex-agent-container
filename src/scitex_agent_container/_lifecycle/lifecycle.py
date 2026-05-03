@@ -8,12 +8,12 @@ import time
 import traceback
 from pathlib import Path
 
-from .config import AgentConfig, load_config, resolve_config
+from ..config import AgentConfig, load_config, resolve_config
+from ..hooks import run_hook
+from ..registry import Registry
+from ..runtimes.claude_code import ClaudeCodeRuntime
+from ..runtimes.slurm import SlurmRuntime
 from .health import health_monitor
-from .hooks import run_hook
-from .registry import Registry
-from .runtimes.claude_code import ClaudeCodeRuntime
-from .runtimes.slurm import SlurmRuntime
 
 
 def _get_runtime(config: AgentConfig):
@@ -21,13 +21,13 @@ def _get_runtime(config: AgentConfig):
     if config.runtime == "claude-code":
         return ClaudeCodeRuntime()
     if config.runtime == "claude-session":
-        from .runtimes.claude_session import ClaudeSessionRuntime
+        from ..runtimes.claude_session import ClaudeSessionRuntime
 
         return ClaudeSessionRuntime()
     if config.runtime == "slurm":
         return SlurmRuntime()
     if config.runtime == "slurm-tenant":
-        from .runtimes.slurm_tenant import SlurmTenantRuntime
+        from ..runtimes.slurm_tenant import SlurmTenantRuntime
 
         return SlurmTenantRuntime()
     raise ValueError(f"Unsupported runtime: {config.runtime}")
@@ -185,7 +185,7 @@ def agent_start(
     # is supposed to read it back when wiring up the orochi WS connect
     # (FR-E). ``hydrate_from_hub`` is pre-start so the agent's boot-time
     # skill can pick up the snapshot before claude actually launches.
-    from . import _handover as _h
+    from . import handover as _h
 
     _h.ensure_instance_uuid(config)
     try:
@@ -230,7 +230,7 @@ def agent_start(
     if config.context_management.enabled:
         # stx-allow: fallback (reason: context_manager sensor spawn may fail if tmux is unavailable; agent has already started and a sensor failure must not abort it)
         try:
-            from .context_manager import start_sensor
+            from ..context_manager import start_sensor
 
             start_sensor(config)
         except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
@@ -308,7 +308,7 @@ def agent_stop(
     # hub outage. The sentinel is a marker; the agent's own pre_stop
     # hook is the right place for richer state (transcript, memory).
     try:
-        from . import _handover as _h
+        from . import handover as _h
 
         _h.push_pre_stop_snapshot(config)
     except Exception:
@@ -449,7 +449,7 @@ def agent_status(name: str, registry: Registry | None = None) -> dict:
     # (todo#285). ``None`` when the feature is unconfigured or noop so
     # consumers can distinguish "disabled" from "0%".
     if config and config.context_management.enabled:
-        from .context_manager import get_sensor
+        from ..context_manager import get_sensor
 
         sensor = get_sensor(name)
         result["context_management"] = {
@@ -465,7 +465,7 @@ def agent_status(name: str, registry: Registry | None = None) -> dict:
     # truth used by the dashboard when it's available.
     # stx-allow: fallback (reason: context_manager module may be unimported or sensor absent; agent_meta is optional enrichment and None is acceptable)
     try:
-        from .context_manager import get_sensor as _gs
+        from ..context_manager import get_sensor as _gs
 
         _live = _gs(name)
         if _live is not None and _live.last_meta is not None:
@@ -476,7 +476,7 @@ def agent_status(name: str, registry: Registry | None = None) -> dict:
     # Snapshot block — cheap read from cache (todo#286). Never re-gathers.
     # stx-allow: fallback (reason: snapshot module may not yet exist or cache may be absent on first run; None snapshot is valid initial state)
     try:
-        from .snapshot import read_latest
+        from ..snapshot import read_latest
 
         latest = read_latest(name)
         if latest is not None:
@@ -495,7 +495,7 @@ def agent_status(name: str, registry: Registry | None = None) -> dict:
     # command rather than duplicating the logic in TypeScript.
     # stx-allow: fallback (reason: agent_meta requires psutil and an active tmux session; metadata enrichment is optional and must never break status)
     try:
-        from .agent_meta import collect_rich
+        from ..agent_meta import collect_rich
 
         workdir = config.expanded_workdir if config else _fallback_workdir(name)
         session = entry.get("screen", "") or (config.screen_name if config else name)

@@ -36,7 +36,7 @@ from typing import Any
 
 import yaml
 
-from . import hub_client
+from .. import hub_client
 
 logger = logging.getLogger(__name__)
 

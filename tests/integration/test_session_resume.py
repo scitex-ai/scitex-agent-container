@@ -183,7 +183,7 @@ class TestAgentStartOverrides:
         return _StubRuntime()
 
     def test_session_override_mutates_config(self, tmp_path):
-        from scitex_agent_container import lifecycle
+        from scitex_agent_container._lifecycle import lifecycle
         from scitex_agent_container.registry import Registry
 
         yaml = tmp_path / "agent.yaml"

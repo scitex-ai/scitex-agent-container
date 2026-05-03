@@ -5,9 +5,7 @@ from __future__ import annotations
 import subprocess
 from unittest.mock import MagicMock
 
-import pytest
-
-from scitex_agent_container.ready_state import wait_for_ready
+from scitex_agent_container._lifecycle.ready_state import wait_for_ready
 
 
 class FakeClock:
@@ -65,12 +63,7 @@ def _run(
     return ok, cap, clock
 
 
-READY_PANE = (
-    "Welcome to Claude Code!\n"
-    "cwd: /tmp\n"
-    "\n"
-    "> "
-)
+READY_PANE = "Welcome to Claude Code!\ncwd: /tmp\n\n> "
 
 
 def test_empty_ready_patterns_skips_wait():

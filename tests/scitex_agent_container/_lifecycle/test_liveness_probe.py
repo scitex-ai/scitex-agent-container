@@ -12,7 +12,7 @@ from typing import Iterable
 
 import pytest
 
-from scitex_agent_container.liveness_probe import (
+from scitex_agent_container._lifecycle.liveness_probe import (
     DEFAULT_BUSY_MARKERS,
     ProbeState,
     classify_probe,

@@ -434,7 +434,7 @@ class ClaudeCodeRuntime(RuntimeBase):
         Legacy configs without ``spec.startup.ready_patterns`` always
         return True immediately (fire-and-hope preserved).
         """
-        from ..ready_state import wait_for_ready
+        from .._lifecycle.ready_state import wait_for_ready
 
         startup = getattr(config, "startup", None)
         patterns = [p.regex for p in getattr(startup, "ready_patterns", []) or []]

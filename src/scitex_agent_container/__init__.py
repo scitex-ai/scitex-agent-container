@@ -36,14 +36,14 @@ except (
                     break
 
 from scitex_agent_container import peer
-from scitex_agent_container.config import AgentConfig, load_config, validate_config
-from scitex_agent_container.lifecycle import (
+from scitex_agent_container._lifecycle.lifecycle import (
     agent_logs,
     agent_restart,
     agent_start,
     agent_status,
     agent_stop,
 )
+from scitex_agent_container.config import AgentConfig, load_config, validate_config
 from scitex_agent_container.registry import Registry
 
 __all__ = [

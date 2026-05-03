@@ -640,13 +640,13 @@ class TestRuntime:
 
 class TestRuntimeRegistration:
     def test_lifecycle_dispatches_to_slurm_runtime(self):
-        from scitex_agent_container.lifecycle import _get_runtime
+        from scitex_agent_container._lifecycle.lifecycle import _get_runtime
 
         rt = _get_runtime(AgentConfig(name="x", runtime="slurm"))
         assert isinstance(rt, SlurmRuntime)
 
     def test_unknown_runtime_still_raises(self):
-        from scitex_agent_container.lifecycle import _get_runtime
+        from scitex_agent_container._lifecycle.lifecycle import _get_runtime
 
         with pytest.raises(ValueError):
             _get_runtime(AgentConfig(name="x", runtime="bogus"))

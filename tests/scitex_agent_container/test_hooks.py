@@ -144,7 +144,7 @@ def test_run_hook_empty_commands_noop(monkeypatch):
 
 
 def test_agent_start_invokes_pre_and_post(monkeypatch, tmp_path):
-    from scitex_agent_container import lifecycle
+    from scitex_agent_container._lifecycle import lifecycle
 
     calls: list[tuple[str, list[str]]] = []
 
@@ -288,7 +288,7 @@ def _load(tmp_path: Path, extra: str = ""):
 
 
 def _status_for(monkeypatch, tmp_path, extra):
-    from scitex_agent_container import lifecycle
+    from scitex_agent_container._lifecycle import lifecycle
 
     cfg = _load(tmp_path, extra)
 

@@ -11,8 +11,8 @@ from pathlib import Path
 import click
 from rich.table import Table
 
+from .._lifecycle.lifecycle import agent_logs
 from ..config import load_config
-from ..lifecycle import agent_logs
 from ..registry import Registry
 from ._api_tree import get_api_tree
 from ._helpers import _json_flag, console

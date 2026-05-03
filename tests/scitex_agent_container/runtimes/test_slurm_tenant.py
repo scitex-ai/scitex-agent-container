@@ -14,8 +14,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from scitex_agent_container._lifecycle.lifecycle import _get_runtime
 from scitex_agent_container.config import AgentConfig, ClaudeSpec, SlurmSpec
-from scitex_agent_container.lifecycle import _get_runtime
 from scitex_agent_container.runtimes.slurm_tenant import SlurmTenantRuntime
 
 # ---------------------------------------------------------------------------
@@ -319,9 +319,7 @@ spec:
 
 
 class TestAttach:
-    def test_attach_invokes_reservation_attach_with_tmux_command(
-        self, fake_scitex_hpc
-    ):
+    def test_attach_invokes_reservation_attach_with_tmux_command(self, fake_scitex_hpc):
         fake_scitex_hpc.attach.return_value = 0
         rt = SlurmTenantRuntime()
         rc = rt.attach(_cfg(name="dev-helper"))
@@ -362,7 +360,9 @@ class TestBuildClaudeCommand:
         assert "server:scitex-orochi" in cmd
         # The bundle should NOT appear quoted as a single token:
         # shlex.join('a b') -> "'a b'", which is the bug we're fixing.
-        assert "'--dangerously-load-development-channels server:scitex-orochi'" not in cmd
+        assert (
+            "'--dangerously-load-development-channels server:scitex-orochi'" not in cmd
+        )
 
     def test_already_split_flag_pair_stays_intact(self):
         rt = SlurmTenantRuntime()
@@ -415,9 +415,7 @@ class TestStartProvisionsWorkspace:
         assert called["settings"] == cfg.expanded_workdir
         assert called["claude_md"] == cfg.expanded_workdir
 
-    def test_start_cds_into_workspace_before_claude(
-        self, fake_scitex_hpc, monkeypatch
-    ):
+    def test_start_cds_into_workspace_before_claude(self, fake_scitex_hpc, monkeypatch):
         from scitex_agent_container.runtimes import slurm_tenant as st_mod
 
         # Stub setup helpers so the test stays in-memory.
@@ -477,9 +475,7 @@ class TestEnvPrefix:
         prefix = SlurmTenantRuntime()._build_env_prefix(cfg)
         assert "ANTHROPIC_API_KEY='${ANTHROPIC_API_KEY2}'" in prefix
 
-    def test_env_prefix_lands_in_tmux_command(
-        self, fake_scitex_hpc, monkeypatch
-    ):
+    def test_env_prefix_lands_in_tmux_command(self, fake_scitex_hpc, monkeypatch):
         from scitex_agent_container.runtimes import slurm_tenant as st_mod
 
         for name in (
