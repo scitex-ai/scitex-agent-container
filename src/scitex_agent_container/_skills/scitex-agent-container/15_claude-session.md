@@ -69,6 +69,41 @@ sac start my-agent --foreground
 `--foreground` is single-target only; multi-target / directory targets
 are rejected since the runner takes over the terminal.
 
+## Inbound-turn HTTP endpoint
+
+Long-living agents accept new turns over HTTP. Add `spec.a2a.port` to
+the YAML and the runner serves `POST /v1/turn` colocated with the SDK
+conversation — no sidecar process, no restart, the turn lands on the
+same `ClaudeSDKClient` so context (resume id, accumulated quota) is
+preserved across turns.
+
+```yaml
+spec:
+  runtime: claude-session
+  a2a:
+    port: 18888         # host: 127.0.0.1 by default
+```
+
+Wire format (loopback-only unless ``host`` overridden):
+
+```bash
+curl -sX POST http://127.0.0.1:18888/v1/turn \
+  -H 'Content-Type: application/json' \
+  -d '{"text": "summarize today\u0027s commits", "exit_after": false}'
+# → {"reply": "...", "exit_after": false}
+
+curl http://127.0.0.1:18888/health
+# → {"status": "ok"}
+```
+
+Turn semantics: serial, not interleaved — a new POST waits until the
+previous turn's `receive_response()` drains. Per-turn timeout is 600 s
+(504 if the SDK hangs). `exit_after=true` tells the runner to shut down
+after that turn — useful for one-shot CI smokes.
+
+A2A JSON-RPC compat (`message/send`) lands in a follow-up; for now the
+plain `/v1/turn` endpoint is the supported wire surface.
+
 ## State layout
 
 Per-agent state lives at `<scope>/runtime/<name>/`:
