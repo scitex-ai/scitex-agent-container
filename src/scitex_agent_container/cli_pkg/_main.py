@@ -34,9 +34,51 @@ from .render_cmds import render_attach, render_sbatch
 from .snapshot_cmds import snapshot
 from .status_cmds import check_agent, health, list_agents, status
 
+# Domain categories for ``sac --help``. Anything not listed here drops
+# into a final "Other" section. Mirrors the scitex-dev CLI grouping UX.
+COMMAND_CATEGORIES = [
+    ("Lifecycle", ["start", "stop", "restart", "attach", "validate"]),
+    (
+        "Status / introspection",
+        [
+            "show-status",
+            "list-agents",
+            "show-logs",
+            "inspect",
+            "take-snapshot",
+            "check",
+            "check-health",
+            "check-priority",
+            "find",
+            "recall",
+        ],
+    ),
+    (
+        "Auto-accept",
+        ["auto-accept", "send-accept", "start-auto-accept", "stop-auto-accept"],
+    ),
+    (
+        "Render / spec",
+        ["render-sbatch", "render-attach", "render-contributor-spec"],
+    ),
+    ("Account / quota", ["account", "watch-quota"]),
+    ("Actions / events", ["actions", "ingest-hook-event"]),
+    ("Registry", ["clean-registry", "reconcile-singletons"]),
+    (
+        "Install / build",
+        ["installation", "build-image", "install-post-merge-cron"],
+    ),
+    ("Network", ["probe-network"]),
+    ("Interface", ["a2a", "mcp", "peer", "list-python-apis"]),
+]
+
+
+class _CategorizedHelpGroup(HelpRecursiveGroup):
+    command_categories = COMMAND_CATEGORIES
+
 
 @click.group(
-    cls=HelpRecursiveGroup,
+    cls=_CategorizedHelpGroup,
     invoke_without_command=True,
     context_settings={"help_option_names": ["-h", "--help"]},
 )

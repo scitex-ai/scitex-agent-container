@@ -51,10 +51,52 @@ def _json_flag(ctx: click.Context, local: bool) -> bool:
 
 
 class HelpRecursiveGroup(click.Group):
-    """Click group that supports --help-recursive to dump every subcommand."""
+    """Click group that supports --help-recursive to dump every subcommand.
 
-    def format_help(self, ctx, formatter):
-        super().format_help(ctx, formatter)
+    Subclasses may set ``command_categories`` to a list of
+    ``(section_title, [command_name, ...])`` pairs; if set, ``--help``
+    output is grouped into sections in that order, with anything
+    unlisted dropping into a final "Other" section. Mirrors scitex-dev's
+    ``CategorizedGroup`` UX.
+    """
+
+    command_categories: list[tuple[str, list[str]]] = []
+
+    def format_commands(self, ctx, formatter):
+        if not self.command_categories:
+            super().format_commands(ctx, formatter)
+            return
+
+        commands: dict[str, click.Command] = {}
+        for subcommand in self.list_commands(ctx):
+            cmd = self.get_command(ctx, subcommand)
+            if cmd is not None and not cmd.hidden:
+                commands[subcommand] = cmd
+
+        if not commands:
+            return
+
+        displayed: set[str] = set()
+        for category_name, category_commands in self.command_categories:
+            category_items = []
+            for name in category_commands:
+                if name in commands and name not in displayed:
+                    cmd = commands[name]
+                    help_text = cmd.get_short_help_str(limit=formatter.width)
+                    category_items.append((name, help_text))
+                    displayed.add(name)
+            if category_items:
+                with formatter.section(category_name):
+                    formatter.write_dl(category_items)
+
+        uncategorized = [
+            (name, commands[name].get_short_help_str(limit=formatter.width))
+            for name in sorted(commands.keys())
+            if name not in displayed
+        ]
+        if uncategorized:
+            with formatter.section("Other"):
+                formatter.write_dl(uncategorized)
 
     def get_help_recursive(self, ctx) -> str:
         """Return help text for all commands recursively."""
