@@ -55,6 +55,10 @@ dependencies = [
     # auto runtime/ seed creation). Per scitex-python skill
     # 01_arch_06_local-state-directories.md.
     "scitex-config>=0.3.0",
+    # Shared Click helpers — CategorizedGroup for `sac --help` grouping
+    # (per general/03_interface_02_cli §6 help-format rule). Light dep:
+    # only pulls scitex-config + newb + tomli.
+    "scitex-dev>=0.11.1",
 ]
 
 [project.optional-dependencies]

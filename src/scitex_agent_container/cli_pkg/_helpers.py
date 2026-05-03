@@ -50,53 +50,30 @@ def _json_flag(ctx: click.Context, local: bool) -> bool:
     return local or bool((ctx.obj or {}).get("json", False))
 
 
-class HelpRecursiveGroup(click.Group):
-    """Click group that supports --help-recursive to dump every subcommand.
+from scitex_dev.click_helpers import CategorizedGroup
 
-    Subclasses may set ``command_categories`` to a list of
-    ``(section_title, [command_name, ...])`` pairs; if set, ``--help``
-    output is grouped into sections in that order, with anything
-    unlisted dropping into a final "Other" section. Mirrors scitex-dev's
-    ``CategorizedGroup`` UX.
+
+class HelpRecursiveGroup(CategorizedGroup):
+    """Click group that supports --help-recursive AND categorized commands.
+
+    Inherits categorization from `scitex_dev.click_helpers.CategorizedGroup`
+    (per general/03_interface_02_cli §6). Subclasses set
+    `COMMAND_CATEGORIES` (or the historical alias `command_categories` —
+    see :meth:`__init_subclass__`) to opt into grouping; otherwise the
+    output falls through to Click's default flat list.
+
+    Adds the `--help-recursive` machinery on top.
     """
 
-    command_categories: list[tuple[str, list[str]]] = []
-
-    def format_commands(self, ctx, formatter):
-        if not self.command_categories:
-            super().format_commands(ctx, formatter)
-            return
-
-        commands: dict[str, click.Command] = {}
-        for subcommand in self.list_commands(ctx):
-            cmd = self.get_command(ctx, subcommand)
-            if cmd is not None and not cmd.hidden:
-                commands[subcommand] = cmd
-
-        if not commands:
-            return
-
-        displayed: set[str] = set()
-        for category_name, category_commands in self.command_categories:
-            category_items = []
-            for name in category_commands:
-                if name in commands and name not in displayed:
-                    cmd = commands[name]
-                    help_text = cmd.get_short_help_str(limit=formatter.width)
-                    category_items.append((name, help_text))
-                    displayed.add(name)
-            if category_items:
-                with formatter.section(category_name):
-                    formatter.write_dl(category_items)
-
-        uncategorized = [
-            (name, commands[name].get_short_help_str(limit=formatter.width))
-            for name in sorted(commands.keys())
-            if name not in displayed
-        ]
-        if uncategorized:
-            with formatter.section("Other"):
-                formatter.write_dl(uncategorized)
+    # Backwards-compat alias: older sac code sets `command_categories` on
+    # subclasses. Map it onto the canonical `COMMAND_CATEGORIES` slot at
+    # subclass creation time so both names work.
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        if "command_categories" in cls.__dict__ and not cls.__dict__.get(
+            "COMMAND_CATEGORIES"
+        ):
+            cls.COMMAND_CATEGORIES = tuple(cls.__dict__["command_categories"])
 
     def get_help_recursive(self, ctx) -> str:
         """Return help text for all commands recursively."""

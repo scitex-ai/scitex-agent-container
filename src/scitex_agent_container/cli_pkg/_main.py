@@ -36,26 +36,25 @@ from .status_cmds import check_agent, health, list_agents, status
 
 # Domain categories for ``sac --help``. Anything not listed here drops
 # into a final "Other" section. Mirrors the scitex-dev CLI grouping UX.
+#
+# Sections marked "(claude-code only)" are pane-mediated operations on the
+# tmux/screen multiplexer used by ``runtime: claude-code``; they don't
+# apply to ``runtime: claude-session`` (SDK) agents, which have no
+# multiplexer session and use ``--foreground`` / ``POST /v1/turn`` instead.
 COMMAND_CATEGORIES = [
-    ("Lifecycle", ["start", "stop", "restart", "attach", "validate"]),
+    ("Lifecycle", ["start", "stop", "restart", "validate"]),
     (
         "Status / introspection",
         [
             "show-status",
             "list-agents",
             "show-logs",
-            "inspect",
-            "take-snapshot",
             "check",
             "check-health",
             "check-priority",
             "find",
             "recall",
         ],
-    ),
-    (
-        "Auto-accept",
-        ["auto-accept", "send-accept", "start-auto-accept", "stop-auto-accept"],
     ),
     (
         "Render / spec",
@@ -70,6 +69,18 @@ COMMAND_CATEGORIES = [
     ),
     ("Network", ["probe-network"]),
     ("Interface", ["a2a", "mcp", "peer", "list-python-apis"]),
+    (
+        "Pane operations (claude-code only)",
+        [
+            "attach",
+            "inspect",
+            "take-snapshot",
+            "auto-accept",
+            "send-accept",
+            "start-auto-accept",
+            "stop-auto-accept",
+        ],
+    ),
 ]
 
 
