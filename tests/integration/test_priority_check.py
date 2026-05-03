@@ -131,7 +131,7 @@ def test_cli_json_output_stay(tmp_path, monkeypatch):
     path = _write_agent_yaml(tmp_path, ["spartan", "nas"])
     runner = CliRunner()
     result = runner.invoke(
-        main, ["check", "priority", path, "--current-host", "spartan", "--json"]
+        main, ["check-priority", path, "--current-host", "spartan", "--json"]
     )
     assert result.exit_code == 0
     data = json.loads(result.output)
@@ -147,7 +147,7 @@ def test_cli_json_output_yield(tmp_path, monkeypatch):
     path = _write_agent_yaml(tmp_path, ["spartan", "nas"])
     runner = CliRunner()
     result = runner.invoke(
-        main, ["check", "priority", path, "--current-host", "nas", "--json"]
+        main, ["check-priority", path, "--current-host", "nas", "--json"]
     )
     assert result.exit_code == 1
     data = json.loads(result.output)

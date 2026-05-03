@@ -12,10 +12,8 @@ import click
 from ._helpers import HelpRecursiveGroup, deprecated_alias
 from .account_cmds import account, quota_watch
 from .action_cmds import actions_cli
-from .agent_group import agent_group
 from .auto_accept_group import auto_accept_group
-from .build_cmds import build, validate
-from .check_group import check_group
+from .build_cmds import build, check, validate
 from .contributor_spec_cmds import contributor_spec
 from .hook_cmds import hook_event
 from .info_cmds import attach, find, list_python_apis, logs
@@ -33,7 +31,6 @@ from .priority_cmds import priority_check, singleton_reconcile
 from .probe_cmds import probe_network
 from .recall_cmds import recall
 from .render_cmds import render_attach, render_sbatch
-from .render_group import render_group
 from .snapshot_cmds import snapshot
 from .status_cmds import check_agent, health, list_agents, status
 
@@ -76,7 +73,7 @@ def main(ctx: click.Context, help_recursive: bool, as_json: bool) -> None:
     \b
     Example:
       $ sac --version
-      $ sac list
+      $ sac list-agents
       $ sac start ~/.scitex/agent-container/agents/foo/foo.yaml
     """
     ctx.ensure_object(dict)
@@ -95,34 +92,30 @@ main.add_command(stop)
 main.add_command(restart)
 main.add_command(cleanup)
 
-# Auto-accept noun-group (send / start / stop).
+# Auto-accept noun-group (send / start / stop) — valid noun-group: every
+# leaf is a real verb per general/03_interface_02_cli/06_noun-verb-catalog.md.
 main.add_command(auto_accept_group)
 main.add_command(deprecated_alias(send_accept, new_path="sac auto-accept send"))
 main.add_command(deprecated_alias(start_auto_accept, new_path="sac auto-accept start"))
 main.add_command(deprecated_alias(stop_auto_accept, new_path="sac auto-accept stop"))
 
-# Agent noun-group (list / status / logs / inspect / snapshot).
-main.add_command(agent_group)
-main.add_command(deprecated_alias(status, new_path="sac agent status"))
-main.add_command(deprecated_alias(list_agents, new_path="sac agent list"))
-main.add_command(deprecated_alias(check_agent, new_path="sac agent inspect"))
-main.add_command(deprecated_alias(snapshot, new_path="sac agent snapshot"))
-main.add_command(deprecated_alias(logs, new_path="sac agent logs"))
+# Status / listing — flat verb-noun compounds (per audit §1: leaves must be
+# verbs; "status", "logs", "snapshot" are nouns and only work as compound
+# leaves like "show-status").
+main.add_command(status)  # registered as "show-status"
+main.add_command(list_agents)  # registered as "list-agents"
+main.add_command(health)  # registered as "check-health"
+main.add_command(check_agent)  # registered as "inspect"
+main.add_command(snapshot)  # registered as "take-snapshot"
 
-# Check noun-group (preflight / health / priority).
-# Note: bare ``check <yaml>`` (legacy) collides with the group name; users
-# now must call ``sac check preflight <yaml>`` explicitly. Other deprecated
-# names (``check-health``, ``check-priority``) keep working.
-main.add_command(check_group)
-main.add_command(deprecated_alias(health, new_path="sac check health"))
-main.add_command(deprecated_alias(priority_check, new_path="sac check priority"))
-
-# Info / introspection (no group — single-purpose, valid as flat verb+positional).
+# Info / introspection
 main.add_command(find)
+main.add_command(logs)  # registered as "show-logs"
 main.add_command(attach)
 main.add_command(list_python_apis)
 
 # Build / validation
+main.add_command(check)  # bare verb with required positional (audit §1 exception)
 main.add_command(validate)
 main.add_command(build)
 
@@ -140,22 +133,18 @@ main.add_command(recall)
 # Action subsystem: run PaneActions, query attempts, aggregate stats.
 main.add_command(actions_cli)
 
-# Render noun-group (sbatch / attach / contributor-spec).
-main.add_command(render_group)
-
-# Deprecation aliases — old top-level forms still work but warn to stderr.
-main.add_command(deprecated_alias(render_sbatch, new_path="sac render sbatch"))
-main.add_command(deprecated_alias(render_attach, new_path="sac render attach"))
-main.add_command(
-    deprecated_alias(contributor_spec, new_path="sac render contributor-spec")
-)
+# Render ports — flat verb-noun compounds (per audit §1: "render" is itself
+# a verb in the catalog and cannot be a group name).
+main.add_command(render_sbatch)
+main.add_command(render_attach)
+main.add_command(contributor_spec)  # registered as "render-contributor-spec"
 
 # Connectivity probe (todo#457): fleet-facing WSL ↔ hub liveness.
 main.add_command(probe_network)
 
 # Singleton priority check: reports whether this host should yield to a
 # higher-priority reachable host (building block for healer reconciler, #250).
-main.add_command(priority_check)
+main.add_command(priority_check)  # registered as "check-priority"
 
 # Singleton reconciliation: sweep all local registered agents and yield any
 # that have a higher-priority reachable host. Closes the automation gap in #250.
@@ -176,7 +165,8 @@ from .mcp_cmds import mcp as mcp_group  # noqa: E402
 main.add_command(mcp_group)
 
 # Peer noun-group — outbound A2A calls into other agents' /v1/turn.
-# Mirrors scitex_agent_container.peer Python surface.
+# Mirrors scitex_agent_container.peer Python surface. Valid noun-group:
+# leaves "post-turn" and "resolve-url" are verb-compound leaves (verb at head).
 from .peer_cmds import peer_group  # noqa: E402
 
 main.add_command(peer_group)

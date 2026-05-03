@@ -68,7 +68,7 @@ def claude_yaml(tmp_path: Path) -> Path:
 class TestRenderSbatch:
     def test_emits_hardened_sbatch_text(self, slurm_yaml: Path) -> None:
         runner = CliRunner()
-        result = runner.invoke(main, ["render", "sbatch", str(slurm_yaml)])
+        result = runner.invoke(main, ["render-sbatch", str(slurm_yaml)])
         assert result.exit_code == 0, result.output
         assert result.output.startswith("#!/bin/bash\n")
         assert "#SBATCH --partition=sapphire" in result.output
@@ -81,7 +81,7 @@ class TestRenderSbatch:
 
     def test_rejects_non_slurm_runtime(self, claude_yaml: Path) -> None:
         runner = CliRunner()
-        result = runner.invoke(main, ["render", "sbatch", str(claude_yaml)])
+        result = runner.invoke(main, ["render-sbatch", str(claude_yaml)])
         assert result.exit_code != 0
         assert "requires runtime: slurm" in result.output
 
@@ -98,7 +98,7 @@ class TestRenderAttach:
         monkeypatch.setenv("SCITEX_AGENT_CONTAINER_SLURM_STATE_DIR", str(state_dir))
 
         runner = CliRunner()
-        result = runner.invoke(main, ["render", "attach", str(slurm_yaml)])
+        result = runner.invoke(main, ["render-attach", str(slurm_yaml)])
         assert result.exit_code == 0, result.output
         assert "srun --jobid=54321" in result.output
         assert "--pty" in result.output
@@ -124,6 +124,6 @@ class TestRenderAttach:
 
     def test_rejects_non_slurm_runtime(self, claude_yaml: Path) -> None:
         runner = CliRunner()
-        result = runner.invoke(main, ["render", "attach", str(claude_yaml)])
+        result = runner.invoke(main, ["render-attach", str(claude_yaml)])
         assert result.exit_code != 0
         assert "requires runtime: slurm" in result.output

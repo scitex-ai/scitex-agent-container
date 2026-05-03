@@ -76,8 +76,8 @@ Goal: run the SDK version *alongside* the live one and compare.
    ```
 
 2. Compare quota + event_log between the two over the same wall-clock
-   window (`sac agent status $AGENT --json` legacy vs `--json | jq
-   .sdk_session.quota` SDK; `sac agent status ... | jq .event_log` for
+   window (`sac show-status $AGENT --json` legacy vs `--json | jq
+   .sdk_session.quota` SDK; `sac show-status ... | jq .event_log` for
    hook-firing rate). A 10× divergence in either direction is a red
    flag — stop the sandbox and investigate before cutover.
 
@@ -89,7 +89,7 @@ Goal: flip the live YAML, keep the legacy one stoppable as fallback.
    SDK side:
 
    ```bash
-   LIVE_SID=$(sac agent status $AGENT --json | jq -r .session_id)
+   LIVE_SID=$(sac show-status $AGENT --json | jq -r .session_id)
    echo "live session id: $LIVE_SID"
    ```
 
@@ -124,8 +124,8 @@ Goal: flip the live YAML, keep the legacy one stoppable as fallback.
 3. Verify the runtime swap landed and the agent answered the mission:
 
    ```bash
-   sac agent status $AGENT --json | jq '.runtime, .sdk_session.heartbeat.state'
-   sac agent logs $AGENT
+   sac show-status $AGENT --json | jq '.runtime, .sdk_session.heartbeat.state'
+   sac show-logs $AGENT
    ```
 
 4. Stop the parallel sandbox now that the live agent is on SDK:
@@ -140,7 +140,7 @@ Goal: flip the live YAML, keep the legacy one stoppable as fallback.
 Don't drop the legacy backup yet. Keep `~/.scitex/orochi/shared/agents/$AGENT/$AGENT.yaml.bak`
 in place for at least one minor-version cycle. Watch:
 
-- `sac agent status $AGENT --json` heartbeat state stays in
+- `sac show-status $AGENT --json` heartbeat state stays in
   `idle / working` (not stuck in `starting` or `stopping`).
 - `event_log.summarize($AGENT)` still produces sensible counts.
 - Quota burn rate (`sdk_session.quota.turns`) tracks workload
@@ -153,7 +153,7 @@ sac stop $AGENT
 mv ~/.scitex/orochi/shared/agents/$AGENT/$AGENT.yaml.bak \
    ~/.scitex/orochi/shared/agents/$AGENT/$AGENT.yaml
 sac start $AGENT
-sac agent status $AGENT --json | jq .runtime  # back to claude-code
+sac show-status $AGENT --json | jq .runtime  # back to claude-code
 ```
 
 The SDK runtime never deletes the legacy CLI's
@@ -182,6 +182,6 @@ OAuth on every host.
 - `sdk_session.quota.turns` increments over a 1 h window
 - `event_log.summarize($AGENT).hook_event_counts` shows
   `pretool / posttool / prompt / stop` (Python hooks bridged)
-- `sac agent logs $AGENT` renders recent assistant turns
+- `sac show-logs $AGENT` renders recent assistant turns
 - `$AGENT.yaml.bak` still in place for rollback
 - `restart`, `health`, `a2a`, `orochi` blocks carried over verbatim

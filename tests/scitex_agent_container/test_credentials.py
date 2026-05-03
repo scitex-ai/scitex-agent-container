@@ -236,7 +236,7 @@ def test_status_json_contains_claude_account(
         # Registry dir lives under HOME — keep it empty so no agents listed.
     }
     result = subprocess.run(
-        [sys.executable, "-m", "scitex_agent_container", "agent", "status", "--json"],
+        [sys.executable, "-m", "scitex_agent_container", "show-status", "--json"],
         capture_output=True,
         text=True,
         env=env,

@@ -12,8 +12,8 @@ The SDK-native counterpart to the legacy `claude-code` runtime. Where
 the TUI, `claude-session` drives `claude-agent-sdk` from a Python runner —
 no terminal multiplexer, no auto-accept handlers, no permission prompts.
 
-Same lifecycle CLI surface (`sac start`, `sac stop`, `sac agent status`,
-`sac agent logs`); flip a single YAML key.
+Same lifecycle CLI surface (`sac start`, `sac stop`, `sac show-status`,
+`sac show-logs`); flip a single YAML key.
 
 ## Why use it
 
@@ -25,7 +25,7 @@ Same lifecycle CLI surface (`sac start`, `sac stop`, `sac agent status`,
 | Resume | `claude --resume <uuid>` | `ClaudeAgentOptions(resume=...)` (auto-loaded from `state_dir/session_id`) |
 | Quota | poll `claude usage` daemon | accumulated from per-turn `usage` blocks in the SDK message stream |
 | Auth | env / `~/.claude/.credentials.json` | env / `~/.claude/.credentials.json` (same — flat-rate OAuth by default) |
-| Human attach | `tmux attach` | `--foreground` / `sac agent logs` |
+| Human attach | `tmux attach` | `--foreground` / `sac show-logs` |
 
 ## Minimal YAML
 
@@ -55,8 +55,8 @@ not a timed sequence.
 
 ```bash
 sac start my-agent          # detach, returns once PID file lands
-sac agent status my-agent    # heartbeat + sdk_session block
-sac agent logs my-agent      # rendered transcript from session.jsonl
+sac show-status my-agent    # heartbeat + sdk_session block
+sac show-logs my-agent      # rendered transcript from session.jsonl
 sac stop my-agent
 ```
 
@@ -126,7 +126,7 @@ fall-through to API-key billing.
 
 ## Status JSON addition
 
-`sac agent status <name> --json` carries an `sdk_session` field for
+`sac show-status <name> --json` carries an `sdk_session` field for
 agents on this runtime:
 
 ```json

@@ -1,7 +1,7 @@
 ---
 description: |
   [TOPIC] First agent in 30 seconds
-  [DETAILS] Minimal YAML + sac start + sac agent status + sac stop. Two flavors: local SDK agent and remote agent on mba/spartan via ssh.
+  [DETAILS] Minimal YAML + sac start + sac show-status + sac stop. Two flavors: local SDK agent and remote agent on mba/spartan via ssh.
 tags: [scitex-agent-container-quick-start]
 ---
 
@@ -41,12 +41,12 @@ spec:
 
 ```bash
 sac start worker                    # daemon mode (returns once runner writes its PID)
-sac agent status worker              # heartbeat + sdk_session block
+sac show-status worker              # heartbeat + sdk_session block
 curl -sX POST http://127.0.0.1:18888/v1/turn \
      -H 'Content-Type: application/json' \
      -d '{"text": "what is 2+2?"}'
 # → {"reply": "4", "exit_after": false}
-sac agent logs worker                # rendered transcript
+sac show-logs worker                # rendered transcript
 sac stop worker                     # graceful SIGTERM
 ```
 
@@ -66,8 +66,8 @@ spec:
 
 ```bash
 sac start head-mba                  # ssh → render bash → runner survives ssh disconnect
-sac agent status head-mba           # ssh-reads remote state
-sac agent logs head-mba             # ssh-tails remote session.jsonl
+sac show-status head-mba           # ssh-reads remote state
+sac show-logs head-mba             # ssh-tails remote session.jsonl
 sac stop head-mba                   # ssh + SIGTERM remote pid
 ```
 
