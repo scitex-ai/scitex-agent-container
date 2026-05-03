@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from scitex_agent_container import agent_meta
+from scitex_agent_container._state import agent_meta
 
 # ---------------------------------------------------------------------------
 # collect_rich — unit tests with fake workspace, no live tmux required

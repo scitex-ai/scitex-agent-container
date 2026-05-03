@@ -15,7 +15,7 @@ from urllib import error as urlerror
 
 import pytest
 
-from scitex_agent_container import hub_client
+from scitex_agent_container._network import hub_client
 
 
 class _FakeResp:

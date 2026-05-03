@@ -81,7 +81,7 @@ def account_save(name: str, email: str | None, dry_run: bool, yes: bool) -> None
         # Try to read from current credentials
         # stx-allow: fallback (reason: reading existing email from credentials is best-effort; account save must still succeed without it)
         try:
-            from ..credentials import read_credentials_metadata
+            from .._account.credentials import read_credentials_metadata
 
             m = read_credentials_metadata(home=home)
             if m.get("email_address"):
@@ -239,7 +239,7 @@ def quota_watch(
     """
     from pathlib import Path
 
-    from ..quota_watch import check_and_rotate, run_loop, survival_mode_check
+    from .._account.quota_watch import check_and_rotate, run_loop, survival_mode_check
 
     if once or dry_run:
         result = check_and_rotate(threshold=threshold, dry_run=dry_run)

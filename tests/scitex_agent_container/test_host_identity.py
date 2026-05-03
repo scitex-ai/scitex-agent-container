@@ -7,7 +7,7 @@ import os as _os
 import pytest
 import yaml
 
-from scitex_agent_container import host_identity as hi
+from scitex_agent_container._network import host_identity as hi
 from scitex_agent_container.config import AgentConfig
 from scitex_agent_container.config._types import RemoteSpec
 

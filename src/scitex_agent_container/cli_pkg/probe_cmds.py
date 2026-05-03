@@ -12,7 +12,7 @@ import sys
 
 import click
 
-from ..network_probe import (
+from .._network.probe import (
     DEFAULT_HUB_HOST,
     DEFAULT_HUB_PORT,
     DEFAULT_HUB_URL,

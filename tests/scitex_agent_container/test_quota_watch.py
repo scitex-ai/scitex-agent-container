@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from scitex_agent_container.quota_watch import check_and_rotate
+from scitex_agent_container._account.quota_watch import check_and_rotate
 
 
 # ---------------------------------------------------------------------------
@@ -60,7 +60,7 @@ def test_ok_no_rotation(tmp_path):
     }
 
     with patch(
-        "scitex_agent_container.quota_watch.fetch_usage", return_value=usage_ok
+        "scitex_agent_container._account.quota_watch.fetch_usage", return_value=usage_ok
     ):
         result = check_and_rotate(threshold=80.0, home=home)
 
@@ -82,7 +82,7 @@ def test_no_accounts_alert(tmp_path):
     }
 
     with patch(
-        "scitex_agent_container.quota_watch.fetch_usage", return_value=usage_high
+        "scitex_agent_container._account.quota_watch.fetch_usage", return_value=usage_high
     ):
         result = check_and_rotate(threshold=80.0, store_dir=store, home=home)
 
@@ -106,7 +106,7 @@ def test_dry_run_rotation(tmp_path):
     }
 
     with patch(
-        "scitex_agent_container.quota_watch.fetch_usage", return_value=usage_high
+        "scitex_agent_container._account.quota_watch.fetch_usage", return_value=usage_high
     ):
         result = check_and_rotate(
             threshold=80.0, store_dir=store, home=home, dry_run=True
@@ -128,7 +128,7 @@ def test_error_handled(tmp_path):
     }
 
     with patch(
-        "scitex_agent_container.quota_watch.fetch_usage", return_value=usage_error
+        "scitex_agent_container._account.quota_watch.fetch_usage", return_value=usage_error
     ):
         result = check_and_rotate(threshold=80.0, home=home)
 
@@ -155,7 +155,7 @@ def test_actual_rotation(tmp_path):
     }
 
     with patch(
-        "scitex_agent_container.quota_watch.fetch_usage", return_value=usage_high
+        "scitex_agent_container._account.quota_watch.fetch_usage", return_value=usage_high
     ):
         result = check_and_rotate(threshold=80.0, store_dir=store, home=home)
 
@@ -176,7 +176,7 @@ def test_warning_level(tmp_path):
     }
 
     with patch(
-        "scitex_agent_container.quota_watch.fetch_usage", return_value=usage_warn
+        "scitex_agent_container._account.quota_watch.fetch_usage", return_value=usage_warn
     ):
         result = check_and_rotate(threshold=80.0, home=home)
 
@@ -186,7 +186,7 @@ def test_warning_level(tmp_path):
 
 def test_select_next_skips_current(tmp_path):
     """_select_next_account should skip account matching current email."""
-    from scitex_agent_container.quota_watch import _select_next_account
+    from scitex_agent_container._account.quota_watch import _select_next_account
 
     accounts = [
         {"name": "a", "email_address": "a@x.com", "quota_5h_used_pct": 50.0},
@@ -198,7 +198,7 @@ def test_select_next_skips_current(tmp_path):
 
 def test_select_next_returns_none_when_only_one(tmp_path):
     """_select_next_account returns None when only the current account is stored."""
-    from scitex_agent_container.quota_watch import _select_next_account
+    from scitex_agent_container._account.quota_watch import _select_next_account
 
     accounts = [{"name": "only", "email_address": "only@x.com"}]
     result = _select_next_account(accounts, current_email="only@x.com")

@@ -110,7 +110,7 @@ def resolve_peer_url(agent_name: str) -> str:
     callers still reach it through the ssh control plane — no LAN
     exposure required, no DNS resolution needed for ssh aliases.
     """
-    from .config._resolve import resolve_config
+    from ..config._resolve import resolve_config
 
     try:
         yaml_path = resolve_config(agent_name)

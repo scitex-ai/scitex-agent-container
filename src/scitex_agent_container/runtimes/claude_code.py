@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 from ..config import AgentConfig
-from ..host_identity import is_local_host
+from .._network.host_identity import is_local_host
 from .a2a_sidecar import start_sidecar as _a2a_start_sidecar
 from .a2a_sidecar import stop_sidecar as _a2a_stop_sidecar
 from .base import RuntimeBase

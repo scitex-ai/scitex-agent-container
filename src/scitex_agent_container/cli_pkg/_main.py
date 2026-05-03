@@ -218,7 +218,7 @@ from .mcp_cmds import mcp as mcp_group  # noqa: E402
 main.add_command(mcp_group)
 
 # Peer noun-group — outbound A2A calls into other agents' /v1/turn.
-# Mirrors scitex_agent_container.peer Python surface. Valid noun-group:
+# Mirrors scitex_agent_container._network.peer Python surface. Valid noun-group:
 # leaves "post-turn" and "resolve-url" are verb-compound leaves (verb at head).
 from .peer_cmds import peer_group  # noqa: E402
 

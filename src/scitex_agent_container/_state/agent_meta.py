@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ..claude_usage import fetch_usage
+from .._account.claude_usage import fetch_usage
 
 
 def detect_multiplexer(session: str) -> str:
@@ -766,7 +766,7 @@ def collect_rich(
     # stx-allow: fallback (reason: credentials file absent on freshly
     # provisioned agents — account_email stays None until auth completes)
     try:
-        from ..credentials import read_credentials_metadata
+        from .._account.credentials import read_credentials_metadata
 
         _cred = read_credentials_metadata()
         account_email = _cred.get("email_address")

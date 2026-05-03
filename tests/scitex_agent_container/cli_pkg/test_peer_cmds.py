@@ -23,7 +23,7 @@ class TestPeerGroup:
         the reply."""
         runner = CliRunner()
         with patch(
-            "scitex_agent_container.peer.post_turn", return_value="echo:hi"
+            "scitex_agent_container._network.peer.post_turn", return_value="echo:hi"
         ) as fake:
             result = runner.invoke(peer_group, ["post-turn", "alpha", "hi"])
         assert result.exit_code == 0
@@ -35,7 +35,7 @@ class TestPeerGroup:
         import json
 
         runner = CliRunner()
-        with patch("scitex_agent_container.peer.post_turn", return_value="ok"):
+        with patch("scitex_agent_container._network.peer.post_turn", return_value="ok"):
             result = runner.invoke(peer_group, ["post-turn", "alpha", "hi", "--json"])
         assert result.exit_code == 0
         body = json.loads(result.output)
@@ -43,11 +43,11 @@ class TestPeerGroup:
 
     def test_post_turn_peer_error_exits_2(self) -> None:
         """PeerError surfaces as exit code 2 + error message."""
-        from scitex_agent_container.peer import PeerError
+        from scitex_agent_container._network.peer import PeerError
 
         runner = CliRunner()
         with patch(
-            "scitex_agent_container.peer.post_turn",
+            "scitex_agent_container._network.peer.post_turn",
             side_effect=PeerError("boom"),
         ):
             result = runner.invoke(peer_group, ["post-turn", "alpha", "hi"])
@@ -58,7 +58,7 @@ class TestPeerGroup:
     def test_resolve_url_prints_url(self) -> None:
         runner = CliRunner()
         with patch(
-            "scitex_agent_container.peer.resolve_peer_url",
+            "scitex_agent_container._network.peer.resolve_peer_url",
             return_value="ssh://mba:18888/v1/turn",
         ):
             result = runner.invoke(peer_group, ["resolve-url", "head-mba"])

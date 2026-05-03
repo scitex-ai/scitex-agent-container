@@ -11,7 +11,7 @@ from rich.table import Table
 from .._lifecycle.health import health_check
 from .._lifecycle.lifecycle import agent_status
 from ..config import load_config
-from ..credentials import read_credentials_metadata
+from .._account.credentials import read_credentials_metadata
 from .._state.registry import Registry
 from ._helpers import _json_flag, console, print_agent_list, print_agent_list_json
 

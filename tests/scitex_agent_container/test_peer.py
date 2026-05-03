@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from scitex_agent_container.peer import (
+from scitex_agent_container._network.peer import (
     PeerError,
     _read_yaml_endpoints,
     post_turn_to_url,
@@ -70,7 +70,7 @@ class TestResolvePeerUrl:
 
         monkeypatch.setattr(_resolve, "resolve_config", lambda name: str(agent_yaml))
         # Re-import so peer.resolve_peer_url picks the patched lookup.
-        from scitex_agent_container import peer as _peer
+        from scitex_agent_container._network import peer as _peer
 
         # peer.resolve_peer_url imports lazily, so monkeypatch survives.
         url = _peer.resolve_peer_url("alpha")

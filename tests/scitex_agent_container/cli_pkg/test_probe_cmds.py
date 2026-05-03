@@ -7,7 +7,7 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-from scitex_agent_container import network_probe as np
+from scitex_agent_container._network import probe as np
 from scitex_agent_container.cli import main
 
 

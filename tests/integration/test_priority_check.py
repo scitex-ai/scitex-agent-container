@@ -172,7 +172,7 @@ def test_cli_missing_config_exits_2(tmp_path):
 
 def test_singleton_reconcile_no_registered_agents(monkeypatch):
     """When registry is empty, reconcile exits 0 and returns empty list."""
-    from scitex_agent_container.registry import Registry
+    from scitex_agent_container._state.registry import Registry
 
     monkeypatch.setattr(Registry, "list_all", lambda self: [])
     runner = CliRunner()
@@ -183,7 +183,7 @@ def test_singleton_reconcile_no_registered_agents(monkeypatch):
 
 def test_singleton_reconcile_stay_when_on_preferred(monkeypatch, tmp_path):
     """Agent already on highest-priority host → stay, exit 0."""
-    from scitex_agent_container.registry import Registry
+    from scitex_agent_container._state.registry import Registry
 
     path = _write_agent_yaml(tmp_path, ["nas", "mba"])
     monkeypatch.setattr(
@@ -211,7 +211,7 @@ def test_singleton_reconcile_stay_when_on_preferred(monkeypatch, tmp_path):
 
 def test_singleton_reconcile_yield_recommended_dryrun(monkeypatch, tmp_path):
     """Higher-priority host reachable → yield-recommended, exit 1 (dry-run)."""
-    from scitex_agent_container.registry import Registry
+    from scitex_agent_container._state.registry import Registry
 
     path = _write_agent_yaml(tmp_path, ["spartan", "nas"])
     monkeypatch.setattr(
@@ -238,7 +238,7 @@ def test_singleton_reconcile_yield_recommended_dryrun(monkeypatch, tmp_path):
 
 def test_singleton_reconcile_execute_success(monkeypatch, tmp_path):
     """--execute: remote start succeeds and local stop called → exit 0."""
-    from scitex_agent_container.registry import Registry
+    from scitex_agent_container._state.registry import Registry
 
     path = _write_agent_yaml(tmp_path, ["spartan", "nas"])
     monkeypatch.setattr(
@@ -274,7 +274,7 @@ def test_singleton_reconcile_execute_success(monkeypatch, tmp_path):
 
 def test_singleton_reconcile_execute_remote_fail(monkeypatch, tmp_path):
     """--execute: remote start fails → remote-start-failed, exit non-zero."""
-    from scitex_agent_container.registry import Registry
+    from scitex_agent_container._state.registry import Registry
 
     path = _write_agent_yaml(tmp_path, ["spartan", "nas"])
     monkeypatch.setattr(

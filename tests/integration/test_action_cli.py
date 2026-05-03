@@ -14,7 +14,7 @@ import json
 import pytest
 from click.testing import CliRunner
 
-from scitex_agent_container import action_store
+from scitex_agent_container._state import action_store
 from scitex_agent_container.cli_pkg.action_cmds import actions_cli
 
 

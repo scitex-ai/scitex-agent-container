@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from scitex_agent_container.agent_meta import _parse_mcp_servers
+from scitex_agent_container._state.agent_meta import _parse_mcp_servers
 
 # ---------------------------------------------------------------------------
 # 1. MCP-server parser
@@ -157,7 +157,7 @@ def test_rotation_log_writes_one_line_per_change(
     workdir = tmp_path / "workspace"
     workdir.mkdir()
 
-    from scitex_agent_container.agent_meta import collect_rich
+    from scitex_agent_container._state.agent_meta import collect_rich
 
     collect_rich(name="agent-x", workdir=str(workdir), session="agent-x")
     collect_rich(name="agent-x", workdir=str(workdir), session="agent-x")
@@ -225,7 +225,7 @@ def test_rotation_log_skipped_without_email(
     workdir = tmp_path / "workspace"
     workdir.mkdir()
 
-    from scitex_agent_container.agent_meta import collect_rich
+    from scitex_agent_container._state.agent_meta import collect_rich
 
     collect_rich(name="agent-y", workdir=str(workdir), session="agent-y")
 
@@ -263,7 +263,7 @@ def test_collect_rich_exposes_plan_and_plugins(
         {"mcpServers": {"scitex-orochi": {"type": "stdio", "command": "bun"}}},
     )
 
-    from scitex_agent_container.agent_meta import collect_rich
+    from scitex_agent_container._state.agent_meta import collect_rich
 
     payload = collect_rich(name="agent-z", workdir=str(workdir), session="agent-z")
 

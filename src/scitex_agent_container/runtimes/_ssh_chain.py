@@ -7,7 +7,7 @@ re-implements hop logic.
 
 from __future__ import annotations
 
-from ..host_identity import is_local_host
+from .._network.host_identity import is_local_host
 
 
 def skip_local_hops(hops: list[str]) -> list[str]:

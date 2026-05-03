@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from scitex_agent_container import network_probe as np
+from scitex_agent_container._network import probe as np
 
 
 # ── probe_dns ────────────────────────────────────────────────────────────────

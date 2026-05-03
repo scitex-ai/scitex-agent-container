@@ -35,7 +35,6 @@ except (
                     __version__ = _line.split("=")[1].strip().strip('"')
                     break
 
-from scitex_agent_container import peer
 from scitex_agent_container._lifecycle.lifecycle import (
     agent_logs,
     agent_restart,
@@ -43,6 +42,7 @@ from scitex_agent_container._lifecycle.lifecycle import (
     agent_status,
     agent_stop,
 )
+from scitex_agent_container._network import peer
 from scitex_agent_container._state.registry import Registry
 from scitex_agent_container.config import AgentConfig, load_config, validate_config
 

@@ -1,6 +1,6 @@
 """``sac peer`` noun-group — outbound A2A calls into other agents' /v1/turn.
 
-Mirrors the Python surface in :mod:`scitex_agent_container.peer`. Two
+Mirrors the Python surface in :mod:`scitex_agent_container._network.peer`. Two
 verbs today:
 
 * ``sac peer post-turn <agent> "<text>"`` — send one user turn to a
@@ -66,7 +66,7 @@ def peer_post_turn(
         sac peer post-turn head-mba "..." --exit-after
         sac peer post-turn worker "ping" --json | jq -r .reply
     """
-    from scitex_agent_container.peer import PeerError, post_turn
+    from scitex_agent_container._network.peer import PeerError, post_turn
 
     try:
         reply = post_turn(agent_name, text, exit_after=exit_after, timeout_s=timeout_s)
@@ -92,7 +92,7 @@ def peer_resolve_url(agent_name: str) -> None:
         $ sac peer resolve-url head-mba
         ssh://mba:18890/v1/turn
     """
-    from scitex_agent_container.peer import PeerError, resolve_peer_url
+    from scitex_agent_container._network.peer import PeerError, resolve_peer_url
 
     try:
         url = resolve_peer_url(agent_name)

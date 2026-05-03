@@ -1,4 +1,4 @@
-"""Tests for scitex_agent_container.credentials.read_credentials_metadata."""
+"""Tests for scitex_agent_container._account.credentials.read_credentials_metadata."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from scitex_agent_container.credentials import (
+from scitex_agent_container._account.credentials import (
     _FORBIDDEN_SUBSTRINGS,
     _all_safe_keys,
     _derive_plan_label,

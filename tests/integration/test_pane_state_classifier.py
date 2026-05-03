@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-from scitex_agent_container.agent_meta import _classify_pane_state
+from scitex_agent_container._state.agent_meta import _classify_pane_state
 
 
 # ----------------------------------------------------------------------

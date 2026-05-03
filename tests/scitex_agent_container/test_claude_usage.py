@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from scitex_agent_container.claude_usage import (
+from scitex_agent_container._account.claude_usage import (
     _CACHE_TTL_SECONDS,
     _EMPTY_RESULT,
     fetch_usage,
