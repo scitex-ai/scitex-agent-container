@@ -20,3 +20,7 @@ docs/to_claude/
 .venv
 logs/
 .scitex/clew/
+
+# Sphinx-generated AST cache — not part of the published HTML
+# (CI in docs.yml strips this before committing _sphinx_html/)
+_sphinx_html/.doctrees/

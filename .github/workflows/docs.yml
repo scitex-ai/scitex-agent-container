@@ -36,6 +36,13 @@ jobs:
         run: |
           rm -rf src/scitex_agent_container/_sphinx_html
           cp -rf docs/sphinx/_build/html src/scitex_agent_container/_sphinx_html
+          # ``.doctrees/`` is Sphinx's internal pickled-AST cache —
+          # not part of the published HTML. The binary
+          # ``environment.pickle`` is what made every release's
+          # sync-main fast-forward fail with merge conflicts on
+          # develop ↔ main. Strip it before committing so the two
+          # branches never carry divergent binaries.
+          rm -rf src/scitex_agent_container/_sphinx_html/.doctrees
           touch src/scitex_agent_container/_sphinx_html/.nojekyll
 
       - name: Commit refreshed HTML if it changed
