@@ -283,6 +283,71 @@ class TestArgvComposition:
         assert argv[argv.index("--a2a-port") + 1] == "18888"
         assert argv[argv.index("--a2a-host") + 1] == "0.0.0.0"
 
+    def test_remote_host_dispatches_via_ssh_in_foreground(
+        self, state_root: Path
+    ) -> None:
+        """When spec.remote.host is set + --foreground, build an ssh+bash -l -s
+        command and pipe the rendered launch script to its stdin."""
+        from scitex_agent_container.runtimes import claude_session as adapter
+
+        cfg_remote = SimpleNamespace(
+            hops=[],
+            host="some-remote-host",
+            user="alice",
+            key="",
+            port=22,
+            timeout=60,
+            login_shell=True,
+            no_preflight=False,
+            is_remote=True,
+        )
+        cfg = SimpleNamespace(
+            name="my-agent",
+            startup_commands=[],
+            remote=cfg_remote,
+        )
+        captured: dict = {}
+
+        class _FakePopen:
+            def __init__(self, argv, **kw):
+                captured["argv"] = argv
+                captured["kwargs"] = kw
+                self.pid = 12345
+                # Capture writes to stdin so the test can assert
+                # the script content piped over.
+                import io
+
+                self.stdin = io.BytesIO()
+                # Stash the buffer on captured so we can read it
+                # after .close() — io.BytesIO.close() throws away,
+                # so override close to no-op for the test.
+                self.stdin.close = lambda: captured.update(
+                    script=self.stdin.getvalue().decode("utf-8")
+                )
+
+            def wait(self):
+                return 0
+
+            def send_signal(self, _s):
+                pass
+
+        with patch.object(adapter.subprocess, "Popen", _FakePopen):
+            ok = adapter.ClaudeSessionRuntime().start(cfg, foreground=True)  # type: ignore[arg-type]
+        assert ok is True
+        argv = captured["argv"]
+        # Real ssh command, ending in bash -l -s
+        assert argv[0] == "ssh"
+        assert "alice@some-remote-host" in argv
+        assert argv[-3:] == ["bash", "-l", "-s"]
+        # Piped script sources the per-host hook and exec's the runner
+        script = captured["script"]
+        assert '[ -f "$_sac_hook" ] && . "$_sac_hook"' in script
+        assert (
+            "exec python3 -m scitex_agent_container._runners.claude_session" in script
+        )
+        assert "--name my-agent" in script
+        assert "--print-stream" in script
+
     def test_no_a2a_port_when_yaml_omits_it(self, state_root: Path) -> None:
         """No spec.a2a block → no --a2a-port in argv."""
         from scitex_agent_container.runtimes import claude_session as adapter

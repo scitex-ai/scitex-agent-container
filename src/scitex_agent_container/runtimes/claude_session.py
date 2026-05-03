@@ -102,7 +102,18 @@ class ClaudeSessionRuntime(RuntimeBase):
             # runner exits. The runner's --print-stream flag mirrors
             # assistant chunks to stdout in real time.
             argv.append("--print-stream")
-            proc = subprocess.Popen(argv, close_fds=True)
+            remote = getattr(config, "remote", None)
+            if remote is not None and getattr(remote, "is_remote", False):
+                # Layer 1: dispatch the runner over ssh. The remote-launch
+                # helper renders a bash script that sources the per-host
+                # hook (~/.scitex/agent-container/hosts/$(hostname).sh) and
+                # exec's the runner. We pipe via `bash -l -s` so the
+                # remote login shell sources .bashrc (Lmod, venv PATH,
+                # etc.) before the hook runs. Daemon mode + lifecycle
+                # over ssh is Layer 2 work.
+                proc = _ssh_foreground_dispatch(config, argv)
+            else:
+                proc = subprocess.Popen(argv, close_fds=True)
             try:
                 rc = proc.wait()
             except KeyboardInterrupt:
@@ -305,6 +316,73 @@ def _first_mission(config: AgentConfig) -> str | None:
         if cmd:
             return cmd
     return None
+
+
+def _ssh_foreground_dispatch(
+    config: AgentConfig, runner_argv: list[str]
+) -> subprocess.Popen:
+    """Spawn the runner on a remote host via ssh, foreground-streaming.
+
+    Renders a bash script via ``_remote_launch.render_remote_launch`` and
+    pipes it to ``ssh <host> 'bash -l -s'``. The ssh subprocess inherits
+    the caller's stdio so the runner's ``--print-stream`` chunks land on
+    the operator's terminal in real time.
+
+    Layer 1 of the remote-agent rollout for orochi consumption: the
+    minimum to spawn one remote runner. Daemon-mode + ``is_running`` /
+    ``stop`` / ``logs`` over ssh land in Layer 2.
+    """
+    from .._runners._remote_launch import render_remote_launch
+
+    # Replace the local Python interpreter with a portable invocation
+    # so the remote host's PATH (set by .bashrc + per-host hook) picks
+    # the right `python`. The runner module is invoked via `-m` against
+    # whatever Python the remote venv resolves.
+    remote_argv = list(runner_argv)
+    if remote_argv and remote_argv[0] == sys.executable:
+        remote_argv[0] = "python3"
+
+    script = render_remote_launch(
+        runner_argv=remote_argv,
+        agent_name=config.name,
+        state_root=None,  # remote uses its own SCITEX_AGENT_CONTAINER_RUNTIME_DIR
+        detach=False,  # foreground — exec the runner, stream stdio back via ssh
+    )
+
+    # Build the ssh command. We use the chain (hops) form when set;
+    # fall back to plain {user@host} otherwise. ``bash -l -s`` ensures
+    # the remote login shell sources .bashrc (Lmod, pyenv, venv PATH)
+    # before the per-host hook fires.
+    ssh_cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15"]
+    if config.remote.hops:
+        from ._ssh_chain import render_ssh_chain, skip_local_hops
+
+        ssh_cmd.extend(render_ssh_chain(skip_local_hops(config.remote.hops)))
+    else:
+        if config.remote.key:
+            ssh_cmd.extend(["-i", config.remote.key])
+        if config.remote.port != 22:
+            ssh_cmd.extend(["-p", str(config.remote.port)])
+        target = (
+            f"{config.remote.user}@{config.remote.host}"
+            if config.remote.user
+            else config.remote.host
+        )
+        ssh_cmd.append(target)
+    ssh_cmd.extend(["bash", "-l", "-s"])
+
+    proc = subprocess.Popen(
+        ssh_cmd,
+        stdin=subprocess.PIPE,
+        close_fds=True,
+        # stdout / stderr inherit so streaming reaches the terminal
+    )
+    # Pipe the script body and close stdin so the remote bash exec's
+    # immediately. wait() is called by the caller.
+    if proc.stdin is not None:
+        proc.stdin.write(script.encode("utf-8"))
+        proc.stdin.close()
+    return proc
 
 
 def _read_a2a_endpoint(config: AgentConfig) -> tuple[str, int | None]:
