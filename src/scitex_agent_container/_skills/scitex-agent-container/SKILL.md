@@ -45,7 +45,8 @@ rich non-agentic status surface.
 - [07_a2a-protocol.md](07_a2a-protocol.md) — Native A2A protocol (`sac a2a serve`)
 - [08_templates.md](08_templates.md) — Six pattern templates + real-world examples
 - [09_slurm-tenant.md](09_slurm-tenant.md) — `runtime: slurm-tenant` for shared HPC allocations
-- [15_claude-session.md](15_claude-session.md) — `runtime: claude-session` SDK-native runtime (no tmux)
+- [15_claude-session.md](15_claude-session.md) — `runtime: claude-session` SDK-native runtime
+- [16_claude-session-migration.md](16_claude-session-migration.md) — Migrating an agent to claude-session
 
 ### Workflows
 - [10_cli.md](10_cli.md) — CLI commands and Python API
