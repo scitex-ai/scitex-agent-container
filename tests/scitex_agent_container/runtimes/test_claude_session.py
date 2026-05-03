@@ -344,7 +344,8 @@ class TestArgvComposition:
         script = captured["script"]
         assert '[ -f "$_sac_hook" ] && . "$_sac_hook"' in script
         assert (
-            "exec python3 -m scitex_agent_container._runners.claude_session" in script
+            "exec ${SAC_RUNNER_PREFIX:-} python3 -m scitex_agent_container._runners.claude_session"
+            in script
         )
         assert "--name my-agent" in script
         assert "--print-stream" in script

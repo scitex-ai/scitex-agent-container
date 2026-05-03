@@ -101,3 +101,23 @@ The script:
 3. exec the runner (foreground) or `setsid nohup ... &` (detached) with output redirected to `runner.log`
 
 **Always invoke remote with `bash -l -s` (login shell)** so the user's `.bashrc` loads (Lmod, venv PATH, etc.) before the hook runs. Tested 2026-05-03 on `spartan-bm198`: hook does `module load GCCcore/11.3.0 OpenSSL/1.1; unset SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY` → SDK runner round-trips a turn against the OAuth in `~/.claude/.credentials.json`.
+
+### `SAC_RUNNER_PREFIX` — generic launcher hook
+
+The launch script honors `${SAC_RUNNER_PREFIX:-}` immediately before the runner argv. Per-host hooks can set this to wrap the runner with **anything**:
+
+```bash
+# ~/.scitex/agent-container/hosts/spartan-bm198.hpc.unimelb.edu.au.sh
+# Spartan: re-exec the runner inside an existing SLURM allocation
+module load GCCcore/11.3.0 OpenSSL/1.1 slurm/default
+unset SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY
+if [ -z "$SLURM_JOB_ID" ]; then
+    JOBID=$(squeue --me -h -n head-spartan -o "%i" | head -1)
+    [ -n "$JOBID" ] && export SAC_RUNNER_PREFIX="srun --jobid=$JOBID --overlap"
+fi
+
+# OR: for an apptainer-pinned runner version (any host)
+# export SAC_RUNNER_PREFIX="apptainer exec --bind $HOME/proj:$HOME/proj \"$HOME/scitex-images/sac-0.13.sif\""
+```
+
+This keeps SLURM, apptainer, container-runtime, conda-env-activation, etc. as **user-side concerns** — sac stays generic. The package ships a single env-var honor; users compose their own dispatch. Live-verified 2026-05-03 against `spartan-bm198`: same `sac start` command works on plain ssh hosts and Spartan compute nodes simultaneously.

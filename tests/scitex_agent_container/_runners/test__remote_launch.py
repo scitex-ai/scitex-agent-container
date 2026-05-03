@@ -23,7 +23,7 @@ class TestRenderRemoteLaunch:
         )
         assert out.startswith("#!/usr/bin/env bash\n")
         assert (
-            "exec python -m scitex_agent_container._runners.claude_session --name x"
+            "exec ${SAC_RUNNER_PREFIX:-} python -m scitex_agent_container._runners.claude_session --name x"
             in out
         )
         # Per-host hook source is always rendered (silent skip if absent).
@@ -84,3 +84,15 @@ class TestRenderRemoteLaunch:
             detach=False,
         )
         assert "$(hostname).sh" in out
+
+    def test_runner_prefix_env_is_honored(self) -> None:
+        """$SAC_RUNNER_PREFIX is expanded before the runner cmd so
+        per-host hooks can wrap with srun / apptainer / etc."""
+        for detach in (True, False):
+            out = render_remote_launch(
+                runner_argv=["python", "-m", "x"],
+                agent_name="x",
+                detach=detach,
+            )
+            assert "${SAC_RUNNER_PREFIX:-}" in out
+            assert "${SAC_RUNNER_PREFIX:-} python -m x" in out

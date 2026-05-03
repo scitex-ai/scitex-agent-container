@@ -88,19 +88,27 @@ def render_remote_launch(
         # (gives a fresh session leader so the runner doesn't die when
         # the parent ssh exits); fall back to nohup alone otherwise.
         # `&` + ssh-disconnect reparents the child to init either way.
+        #
+        # ``${SAC_RUNNER_PREFIX:-}`` lets the per-host hook prepend an
+        # arbitrary launcher (e.g. ``srun --jobid=$JOBID --overlap``
+        # for Spartan co-residency, or ``apptainer exec ... <SIF>``
+        # for SIF-pinned versions). When unset the prefix expands to
+        # nothing and the runner exec's directly.
         lines.extend(
             [
                 f'mkdir -p "$(dirname {log})"',
                 "if command -v setsid >/dev/null 2>&1; then",
-                f"  setsid nohup {cmd} >>{log} 2>&1 < /dev/null &",
+                f"  setsid nohup ${{SAC_RUNNER_PREFIX:-}} {cmd} >>{log} 2>&1 < /dev/null &",
                 "else",
-                f"  nohup {cmd} >>{log} 2>&1 < /dev/null &",
+                f"  nohup ${{SAC_RUNNER_PREFIX:-}} {cmd} >>{log} 2>&1 < /dev/null &",
                 "fi",
                 "echo $!",
             ]
         )
     else:
-        lines.append(f"exec {cmd}")
+        # ``${SAC_RUNNER_PREFIX:-}`` honored in foreground mode too so
+        # the same per-host hook works for ``sac start --foreground``.
+        lines.append(f"exec ${{SAC_RUNNER_PREFIX:-}} {cmd}")
     return "\n".join(lines) + "\n"
 
 
