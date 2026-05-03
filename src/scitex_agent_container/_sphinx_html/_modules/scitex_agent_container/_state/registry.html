@@ -5,7 +5,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>scitex_agent_container.config._host &mdash; scitex-agent-container v0.13.0</title>
+  <title>scitex_agent_container._state.registry &mdash; scitex-agent-container v0.13.0</title>
       <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
       <link rel="stylesheet" type="text/css" href="../../../_static/copybutton.css?v=76b2166b" />
@@ -463,8 +463,7 @@
   <ul class="wy-breadcrumbs">
       <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
           <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
-          <li class="breadcrumb-item"><a href="../config.html">scitex_agent_container.config</a></li>
-      <li class="breadcrumb-item active">scitex_agent_container.config._host</li>
+      <li class="breadcrumb-item active">scitex_agent_container._state.registry</li>
       <li class="wy-breadcrumbs-aside">
       </li>
   </ul>
@@ -473,144 +472,153 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
            <div itemprop="articleBody">
              
-  <h1>Source code for scitex_agent_container.config._host</h1><div class="highlight"><pre>
-<span></span><span class="sd">&quot;&quot;&quot;Hostname resolution and ${HOSTNAME} substitution for agent YAMLs.</span>
-
-<span class="sd">Uses ``${SCITEX_AGENT_CONTAINER_HOSTNAME:-$(hostname -s)}`` as the canonical</span>
-<span class="sd">hostname (env var wins, short hostname is the fallback). Shared agent</span>
-<span class="sd">definitions may reference ``${HOSTNAME}`` or ``${SCITEX_OROCHI_HOSTNAME}``</span>
-<span class="sd">so the same YAML can be launched on every host without drift.</span>
-
-<span class="sd">Design constraints:</span>
-<span class="sd">* Missing vars are a loud error (no silent empty string).</span>
-<span class="sd">* Substitution happens after YAML parse, before dataclass construction, so</span>
-<span class="sd">  every string field is covered (metadata labels, env values, hook command</span>
-<span class="sd">  strings, scheduling.preferred-host, etc.).</span>
-<span class="sd">* Only ``${HOSTNAME}`` and ``${SCITEX_OROCHI_HOSTNAME}`` are substituted by</span>
-<span class="sd">  this module — other ``${...}`` placeholders are left alone for downstream</span>
-<span class="sd">  processors (e.g. MCP interpolation, consumer-defined env resolution) to handle.</span>
-<span class="sd">&quot;&quot;&quot;</span>
+  <h1>Source code for scitex_agent_container._state.registry</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;Agent registry -- track running agents via JSON files in a temp directory.&quot;&quot;&quot;</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
 
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">socket</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">datetime</span><span class="p">,</span> <span class="n">timezone</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
 
-<span class="n">_HOSTNAME_TOKENS</span> <span class="o">=</span> <span class="p">(</span><span class="s2">&quot;HOSTNAME&quot;</span><span class="p">,</span> <span class="s2">&quot;SCITEX_OROCHI_HOSTNAME&quot;</span><span class="p">)</span>
-<span class="n">_PLACEHOLDER_RE</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\$\{(&quot;</span> <span class="o">+</span> <span class="s2">&quot;|&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">_HOSTNAME_TOKENS</span><span class="p">)</span> <span class="o">+</span> <span class="sa">r</span><span class="s2">&quot;)\}&quot;</span><span class="p">)</span>
-
-<span class="c1"># Declarative host identity map. Check shared/config.yaml first (fleet layout),</span>
-<span class="c1"># then fall back to agent-container/config.yaml (sac install root).</span>
-<span class="n">_CONFIG_PATH_FLEET</span> <span class="o">=</span> <span class="n">Path</span><span class="o">.</span><span class="n">home</span><span class="p">()</span> <span class="o">/</span> <span class="s2">&quot;.scitex&quot;</span> <span class="o">/</span> <span class="s2">&quot;orochi&quot;</span> <span class="o">/</span> <span class="s2">&quot;shared&quot;</span> <span class="o">/</span> <span class="s2">&quot;config.yaml&quot;</span>
-<span class="n">_CONFIG_PATH_SAC</span> <span class="o">=</span> <span class="n">Path</span><span class="o">.</span><span class="n">home</span><span class="p">()</span> <span class="o">/</span> <span class="s2">&quot;.scitex&quot;</span> <span class="o">/</span> <span class="s2">&quot;agent-container&quot;</span> <span class="o">/</span> <span class="s2">&quot;config.yaml&quot;</span>
-<span class="n">_CONFIG_PATH</span> <span class="o">=</span> <span class="n">_CONFIG_PATH_FLEET</span> <span class="k">if</span> <span class="n">_CONFIG_PATH_FLEET</span><span class="o">.</span><span class="n">exists</span><span class="p">()</span> <span class="k">else</span> <span class="n">_CONFIG_PATH_SAC</span>
+<span class="n">REGISTRY_DIR</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span>
+    <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
+        <span class="s2">&quot;SCITEX_AGENT_CONTAINER_REGISTRY_DIR&quot;</span><span class="p">,</span>
+        <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">expanduser</span><span class="p">(</span><span class="s2">&quot;~/.scitex/agent-container/registry&quot;</span><span class="p">),</span>
+    <span class="p">)</span>
+<span class="p">)</span>
 
 
-<span class="k">def</span><span class="w"> </span><span class="nf">_load_hostname_aliases</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Read ``spec.hostname_aliases`` from ``shared/config.yaml``.</span>
+<div class="viewcode-block" id="Registry">
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.Registry">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">Registry</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;File-based registry for tracking running agent instances.&quot;&quot;&quot;</span>
 
-<span class="sd">    Returns an empty dict if the file is missing, unparseable, lacks the</span>
-<span class="sd">    section, or the map isn&#39;t a dict. Never raises — hostname resolution</span>
-<span class="sd">    must still succeed via the identity fallback on a bare host.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-    <span class="k">if</span> <span class="ow">not</span> <span class="n">_CONFIG_PATH</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
-        <span class="k">return</span> <span class="p">{}</span>
-    <span class="k">try</span><span class="p">:</span>
-        <span class="kn">import</span><span class="w"> </span><span class="nn">yaml</span>  <span class="c1"># PyYAML ships with the container; same import sac uses.</span>
-    <span class="k">except</span> <span class="ne">ImportError</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: optional dependency not installed)</span>
-        <span class="k">return</span> <span class="p">{}</span>
-    <span class="c1"># stx-allow: fallback (reason: malformed YAML config must not break hostname resolution; empty aliases dict is the safe default)</span>
-    <span class="k">try</span><span class="p">:</span>
-        <span class="n">data</span> <span class="o">=</span> <span class="n">yaml</span><span class="o">.</span><span class="n">safe_load</span><span class="p">(</span><span class="n">_CONFIG_PATH</span><span class="o">.</span><span class="n">read_text</span><span class="p">())</span> <span class="ow">or</span> <span class="p">{}</span>
-    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: catch-all safety net — see inline comment for context)</span>
-        <span class="k">return</span> <span class="p">{}</span>
-    <span class="n">aliases</span> <span class="o">=</span> <span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;spec&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;hostname_aliases&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="p">{}</span>
-    <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">aliases</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
-        <span class="k">return</span> <span class="p">{}</span>
-    <span class="k">return</span> <span class="p">{</span><span class="nb">str</span><span class="p">(</span><span class="n">k</span><span class="p">):</span> <span class="nb">str</span><span class="p">(</span><span class="n">v</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">aliases</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span>
+<div class="viewcode-block" id="Registry.__init__">
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.Registry.__init__">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">registry_dir</span><span class="p">:</span> <span class="n">Path</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dir</span> <span class="o">=</span> <span class="n">registry_dir</span> <span class="ow">or</span> <span class="n">REGISTRY_DIR</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dir</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span></div>
 
 
-<div class="viewcode-block" id="resolve_hostname">
-<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.resolve_hostname">[docs]</a>
-<span class="k">def</span><span class="w"> </span><span class="nf">resolve_hostname</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the canonical host label for this machine.</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_path</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Path</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">dir</span> <span class="o">/</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">.json&quot;</span>
 
-<span class="sd">    Resolution order (first non-empty wins):</span>
-<span class="sd">      1. ``SCITEX_AGENT_CONTAINER_HOSTNAME`` env var (manual override).</span>
-<span class="sd">      2. ``SCITEX_OROCHI_HOSTNAME`` env var.</span>
-<span class="sd">      3. ``hostname_aliases[short hostname]`` from</span>
-<span class="sd">         ``shared/config.yaml`` or ``~/.scitex/agent-container/config.yaml``.</span>
-<span class="sd">      4. ``socket.gethostname()`` short form (identity fallback).</span>
-
-<span class="sd">    Raises:</span>
-<span class="sd">        RuntimeError: If none of the sources produces a non-empty value. This</span>
-<span class="sd">            should be practically impossible (``gethostname()`` returns</span>
-<span class="sd">            something on any configured box) but is handled loudly rather</span>
-<span class="sd">            than returning the empty string.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-    <span class="n">env</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;SCITEX_AGENT_CONTAINER_HOSTNAME&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
-    <span class="k">if</span> <span class="n">env</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">env</span>
-    <span class="n">env</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;SCITEX_OROCHI_HOSTNAME&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
-    <span class="k">if</span> <span class="n">env</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">env</span>
-    <span class="n">hn</span> <span class="o">=</span> <span class="n">socket</span><span class="o">.</span><span class="n">gethostname</span><span class="p">()</span>
-    <span class="n">short</span> <span class="o">=</span> <span class="n">hn</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;.&quot;</span><span class="p">,</span> <span class="mi">1</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span> <span class="k">if</span> <span class="n">hn</span> <span class="k">else</span> <span class="s2">&quot;&quot;</span>
-    <span class="n">aliases</span> <span class="o">=</span> <span class="n">_load_hostname_aliases</span><span class="p">()</span>
-    <span class="k">if</span> <span class="n">short</span> <span class="ow">and</span> <span class="n">short</span> <span class="ow">in</span> <span class="n">aliases</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">aliases</span><span class="p">[</span><span class="n">short</span><span class="p">]</span>
-    <span class="k">if</span> <span class="n">short</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">short</span>
-    <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
-        <span class="s2">&quot;Cannot resolve hostname: SCITEX_AGENT_CONTAINER_HOSTNAME and &quot;</span>
-        <span class="s2">&quot;SCITEX_OROCHI_HOSTNAME unset, socket.gethostname() empty, &quot;</span>
-        <span class="s2">&quot;no config.yaml alias applicable.&quot;</span>
-    <span class="p">)</span></div>
+<div class="viewcode-block" id="Registry.add">
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.Registry.add">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">add</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">config_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">screen_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">pid</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Register an agent as running.&quot;&quot;&quot;</span>
+        <span class="n">data</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="n">name</span><span class="p">,</span>
+            <span class="s2">&quot;config&quot;</span><span class="p">:</span> <span class="n">config_path</span><span class="p">,</span>
+            <span class="s2">&quot;pid&quot;</span><span class="p">:</span> <span class="n">pid</span> <span class="ow">or</span> <span class="n">os</span><span class="o">.</span><span class="n">getpid</span><span class="p">(),</span>
+            <span class="s2">&quot;started_at&quot;</span><span class="p">:</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">(</span><span class="n">timezone</span><span class="o">.</span><span class="n">utc</span><span class="p">)</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s2">&quot;%Y-%m-</span><span class="si">%d</span><span class="s2">T%H:%M:%SZ&quot;</span><span class="p">),</span>
+            <span class="s2">&quot;screen&quot;</span><span class="p">:</span> <span class="n">screen_name</span><span class="p">,</span>
+        <span class="p">}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dir</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_path</span><span class="p">(</span><span class="n">name</span><span class="p">),</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="n">json</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">f</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span></div>
 
 
-
-<span class="k">def</span><span class="w"> </span><span class="nf">_substitute_string</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">hostname</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Replace ${HOSTNAME} / ${SCITEX_OROCHI_HOSTNAME} occurrences in a string.</span>
-
-<span class="sd">    Other ``${...}`` placeholders are preserved as-is so downstream code</span>
-<span class="sd">    (e.g. mcp interpolation) keeps working.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">_repl</span><span class="p">(</span><span class="n">match</span><span class="p">:</span> <span class="s2">&quot;re.Match[str]&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-        <span class="c1"># hostname always resolves — resolve_hostname() has already succeeded</span>
-        <span class="c1"># or raised. The placeholder set is closed, so we don&#39;t need to</span>
-        <span class="c1"># handle &quot;missing var&quot; inside the callback.</span>
-        <span class="k">return</span> <span class="n">hostname</span>
-
-    <span class="k">return</span> <span class="n">_PLACEHOLDER_RE</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="n">_repl</span><span class="p">,</span> <span class="n">value</span><span class="p">)</span>
+<div class="viewcode-block" id="Registry.remove">
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.Registry.remove">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">remove</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Remove an agent from the registry.&quot;&quot;&quot;</span>
+        <span class="n">path</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_path</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
+            <span class="n">path</span><span class="o">.</span><span class="n">unlink</span><span class="p">()</span></div>
 
 
-<div class="viewcode-block" id="substitute_hostnames">
-<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.substitute_hostnames">[docs]</a>
-<span class="k">def</span><span class="w"> </span><span class="nf">substitute_hostnames</span><span class="p">(</span><span class="n">obj</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">hostname</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Recursively walk a dict/list/str and substitute hostname placeholders.</span>
+<div class="viewcode-block" id="Registry.get">
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.Registry.get">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">get</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Get registry entry for an agent, or None if not found.&quot;&quot;&quot;</span>
+        <span class="n">path</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_path</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
+            <span class="k">return</span> <span class="kc">None</span>
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">path</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span></div>
 
-<span class="sd">    Non-string leaves (int, bool, None) are returned unchanged. The walk is</span>
-<span class="sd">    pure-functional — the input is not mutated; a new structure is returned.</span>
 
-<span class="sd">    Args:</span>
-<span class="sd">        obj: YAML-parsed structure (dict/list/scalar).</span>
-<span class="sd">        hostname: Override hostname (for tests). If None, calls</span>
-<span class="sd">            ``resolve_hostname()``.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-    <span class="k">if</span> <span class="n">hostname</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="n">hostname</span> <span class="o">=</span> <span class="n">resolve_hostname</span><span class="p">()</span>
+<div class="viewcode-block" id="Registry.list_all">
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.Registry.list_all">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">list_all</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;List all registered agents.&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">dir</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
+            <span class="k">return</span> <span class="p">[]</span>
+        <span class="n">entries</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">path</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dir</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s2">&quot;*.json&quot;</span><span class="p">)):</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">path</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+                    <span class="n">entries</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">))</span>
+            <span class="k">except</span> <span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">JSONDecodeError</span><span class="p">,</span> <span class="ne">OSError</span><span class="p">):</span>  <span class="c1"># stx-allow: fallback (reason: malformed JSON tolerated)</span>
+                <span class="k">continue</span>
+        <span class="k">return</span> <span class="n">entries</span></div>
 
-    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
-        <span class="k">return</span> <span class="n">_substitute_string</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="n">hostname</span><span class="p">)</span>
-    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
-        <span class="k">return</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">substitute_hostnames</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="n">hostname</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">obj</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span>
-    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="nb">list</span><span class="p">):</span>
-        <span class="k">return</span> <span class="p">[</span><span class="n">substitute_hostnames</span><span class="p">(</span><span class="n">item</span><span class="p">,</span> <span class="n">hostname</span><span class="p">)</span> <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">obj</span><span class="p">]</span>
-    <span class="k">return</span> <span class="n">obj</span></div>
+
+<div class="viewcode-block" id="Registry.exists">
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.Registry.exists">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">exists</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Check if an agent is registered.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_path</span><span class="p">(</span><span class="n">name</span><span class="p">)</span><span class="o">.</span><span class="n">exists</span><span class="p">()</span></div>
+
+
+<div class="viewcode-block" id="Registry.cleanup_stale">
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.Registry.cleanup_stale">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">cleanup_stale</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Remove entries whose multiplexer sessions no longer exist.</span>
+
+<span class="sd">        Probes tmux first (tmux has-session), then screen (-ls).  An entry is</span>
+<span class="sd">        removed only when the session is absent from *both* multiplexers.  This</span>
+<span class="sd">        makes cleanup safe on mixed fleets where agents may run under either</span>
+<span class="sd">        tmux or GNU screen.</span>
+
+<span class="sd">        Returns count removed.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="kn">import</span><span class="w"> </span><span class="nn">subprocess</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">dir</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
+            <span class="k">return</span> <span class="mi">0</span>
+
+        <span class="k">def</span><span class="w"> </span><span class="nf">_tmux_alive</span><span class="p">(</span><span class="n">session</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+            <span class="n">r</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
+                <span class="p">[</span><span class="s2">&quot;tmux&quot;</span><span class="p">,</span> <span class="s2">&quot;has-session&quot;</span><span class="p">,</span> <span class="s2">&quot;-t&quot;</span><span class="p">,</span> <span class="n">session</span><span class="p">],</span>
+                <span class="n">capture_output</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="k">return</span> <span class="n">r</span><span class="o">.</span><span class="n">returncode</span> <span class="o">==</span> <span class="mi">0</span>
+
+        <span class="k">def</span><span class="w"> </span><span class="nf">_screen_alive</span><span class="p">(</span><span class="n">session</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+            <span class="n">r</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
+                <span class="p">[</span><span class="s2">&quot;screen&quot;</span><span class="p">,</span> <span class="s2">&quot;-ls&quot;</span><span class="p">,</span> <span class="n">session</span><span class="p">],</span>
+                <span class="n">capture_output</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+                <span class="n">text</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="k">return</span> <span class="n">session</span> <span class="ow">in</span> <span class="n">r</span><span class="o">.</span><span class="n">stdout</span>
+
+        <span class="n">cleaned</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">for</span> <span class="n">path</span> <span class="ow">in</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dir</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s2">&quot;*.json&quot;</span><span class="p">)):</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">path</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+                    <span class="n">data</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+                <span class="n">session_name</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;screen&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">session_name</span><span class="p">:</span>
+                    <span class="k">continue</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">_tmux_alive</span><span class="p">(</span><span class="n">session_name</span><span class="p">)</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">_screen_alive</span><span class="p">(</span><span class="n">session_name</span><span class="p">):</span>
+                    <span class="n">path</span><span class="o">.</span><span class="n">unlink</span><span class="p">()</span>
+                    <span class="n">cleaned</span> <span class="o">+=</span> <span class="mi">1</span>
+            <span class="k">except</span> <span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">JSONDecodeError</span><span class="p">,</span> <span class="ne">OSError</span><span class="p">):</span>  <span class="c1"># stx-allow: fallback (reason: malformed JSON tolerated)</span>
+                <span class="n">path</span><span class="o">.</span><span class="n">unlink</span><span class="p">(</span><span class="n">missing_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+                <span class="n">cleaned</span> <span class="o">+=</span> <span class="mi">1</span>
+
+        <span class="k">return</span> <span class="n">cleaned</span></div>
+</div>
 
 </pre></div>
 

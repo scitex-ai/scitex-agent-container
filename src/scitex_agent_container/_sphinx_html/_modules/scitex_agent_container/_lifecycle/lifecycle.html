@@ -5,7 +5,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>scitex_agent_container.config._host &mdash; scitex-agent-container v0.13.0</title>
+  <title>scitex_agent_container._lifecycle.lifecycle &mdash; scitex-agent-container v0.13.0</title>
       <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
       <link rel="stylesheet" type="text/css" href="../../../_static/copybutton.css?v=76b2166b" />
@@ -463,8 +463,7 @@
   <ul class="wy-breadcrumbs">
       <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
           <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
-          <li class="breadcrumb-item"><a href="../config.html">scitex_agent_container.config</a></li>
-      <li class="breadcrumb-item active">scitex_agent_container.config._host</li>
+      <li class="breadcrumb-item active">scitex_agent_container._lifecycle.lifecycle</li>
       <li class="wy-breadcrumbs-aside">
       </li>
   </ul>
@@ -473,144 +472,549 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
            <div itemprop="articleBody">
              
-  <h1>Source code for scitex_agent_container.config._host</h1><div class="highlight"><pre>
-<span></span><span class="sd">&quot;&quot;&quot;Hostname resolution and ${HOSTNAME} substitution for agent YAMLs.</span>
-
-<span class="sd">Uses ``${SCITEX_AGENT_CONTAINER_HOSTNAME:-$(hostname -s)}`` as the canonical</span>
-<span class="sd">hostname (env var wins, short hostname is the fallback). Shared agent</span>
-<span class="sd">definitions may reference ``${HOSTNAME}`` or ``${SCITEX_OROCHI_HOSTNAME}``</span>
-<span class="sd">so the same YAML can be launched on every host without drift.</span>
-
-<span class="sd">Design constraints:</span>
-<span class="sd">* Missing vars are a loud error (no silent empty string).</span>
-<span class="sd">* Substitution happens after YAML parse, before dataclass construction, so</span>
-<span class="sd">  every string field is covered (metadata labels, env values, hook command</span>
-<span class="sd">  strings, scheduling.preferred-host, etc.).</span>
-<span class="sd">* Only ``${HOSTNAME}`` and ``${SCITEX_OROCHI_HOSTNAME}`` are substituted by</span>
-<span class="sd">  this module — other ``${...}`` placeholders are left alone for downstream</span>
-<span class="sd">  processors (e.g. MCP interpolation, consumer-defined env resolution) to handle.</span>
-<span class="sd">&quot;&quot;&quot;</span>
+  <h1>Source code for scitex_agent_container._lifecycle.lifecycle</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;Agent lifecycle management -- start, stop, restart, status.&quot;&quot;&quot;</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
 
-<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">socket</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">subprocess</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">threading</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">traceback</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
 
-<span class="n">_HOSTNAME_TOKENS</span> <span class="o">=</span> <span class="p">(</span><span class="s2">&quot;HOSTNAME&quot;</span><span class="p">,</span> <span class="s2">&quot;SCITEX_OROCHI_HOSTNAME&quot;</span><span class="p">)</span>
-<span class="n">_PLACEHOLDER_RE</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\$\{(&quot;</span> <span class="o">+</span> <span class="s2">&quot;|&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">_HOSTNAME_TOKENS</span><span class="p">)</span> <span class="o">+</span> <span class="sa">r</span><span class="s2">&quot;)\}&quot;</span><span class="p">)</span>
-
-<span class="c1"># Declarative host identity map. Check shared/config.yaml first (fleet layout),</span>
-<span class="c1"># then fall back to agent-container/config.yaml (sac install root).</span>
-<span class="n">_CONFIG_PATH_FLEET</span> <span class="o">=</span> <span class="n">Path</span><span class="o">.</span><span class="n">home</span><span class="p">()</span> <span class="o">/</span> <span class="s2">&quot;.scitex&quot;</span> <span class="o">/</span> <span class="s2">&quot;orochi&quot;</span> <span class="o">/</span> <span class="s2">&quot;shared&quot;</span> <span class="o">/</span> <span class="s2">&quot;config.yaml&quot;</span>
-<span class="n">_CONFIG_PATH_SAC</span> <span class="o">=</span> <span class="n">Path</span><span class="o">.</span><span class="n">home</span><span class="p">()</span> <span class="o">/</span> <span class="s2">&quot;.scitex&quot;</span> <span class="o">/</span> <span class="s2">&quot;agent-container&quot;</span> <span class="o">/</span> <span class="s2">&quot;config.yaml&quot;</span>
-<span class="n">_CONFIG_PATH</span> <span class="o">=</span> <span class="n">_CONFIG_PATH_FLEET</span> <span class="k">if</span> <span class="n">_CONFIG_PATH_FLEET</span><span class="o">.</span><span class="n">exists</span><span class="p">()</span> <span class="k">else</span> <span class="n">_CONFIG_PATH_SAC</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">..config</span><span class="w"> </span><span class="kn">import</span> <span class="n">AgentConfig</span><span class="p">,</span> <span class="n">load_config</span><span class="p">,</span> <span class="n">resolve_config</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">..hooks</span><span class="w"> </span><span class="kn">import</span> <span class="n">run_hook</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.._state.registry</span><span class="w"> </span><span class="kn">import</span> <span class="n">Registry</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">..runtimes.claude_code</span><span class="w"> </span><span class="kn">import</span> <span class="n">ClaudeCodeRuntime</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">..runtimes.slurm</span><span class="w"> </span><span class="kn">import</span> <span class="n">SlurmRuntime</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.health</span><span class="w"> </span><span class="kn">import</span> <span class="n">health_monitor</span>
 
 
-<span class="k">def</span><span class="w"> </span><span class="nf">_load_hostname_aliases</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Read ``spec.hostname_aliases`` from ``shared/config.yaml``.</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_get_runtime</span><span class="p">(</span><span class="n">config</span><span class="p">:</span> <span class="n">AgentConfig</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the appropriate runtime for the config.&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">config</span><span class="o">.</span><span class="n">runtime</span> <span class="o">==</span> <span class="s2">&quot;claude-code&quot;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">ClaudeCodeRuntime</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">config</span><span class="o">.</span><span class="n">runtime</span> <span class="o">==</span> <span class="s2">&quot;claude-session&quot;</span><span class="p">:</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">..runtimes.claude_session</span><span class="w"> </span><span class="kn">import</span> <span class="n">ClaudeSessionRuntime</span>
 
-<span class="sd">    Returns an empty dict if the file is missing, unparseable, lacks the</span>
-<span class="sd">    section, or the map isn&#39;t a dict. Never raises — hostname resolution</span>
-<span class="sd">    must still succeed via the identity fallback on a bare host.</span>
+        <span class="k">return</span> <span class="n">ClaudeSessionRuntime</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">config</span><span class="o">.</span><span class="n">runtime</span> <span class="o">==</span> <span class="s2">&quot;slurm&quot;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">SlurmRuntime</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">config</span><span class="o">.</span><span class="n">runtime</span> <span class="o">==</span> <span class="s2">&quot;slurm-tenant&quot;</span><span class="p">:</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">..runtimes.slurm_tenant</span><span class="w"> </span><span class="kn">import</span> <span class="n">SlurmTenantRuntime</span>
+
+        <span class="k">return</span> <span class="n">SlurmTenantRuntime</span><span class="p">()</span>
+    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Unsupported runtime: </span><span class="si">{</span><span class="n">config</span><span class="o">.</span><span class="n">runtime</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_fallback_workdir</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the workdir path used when the agent&#39;s YAML can&#39;t be loaded.</span>
+
+<span class="sd">    Canonical 2026-04-17 layout: ``~/.scitex/orochi/runtime/workspaces/&lt;id&gt;/``.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
-    <span class="k">if</span> <span class="ow">not</span> <span class="n">_CONFIG_PATH</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
-        <span class="k">return</span> <span class="p">{}</span>
+    <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="n">Path</span><span class="o">.</span><span class="n">home</span><span class="p">()</span> <span class="o">/</span> <span class="s2">&quot;.scitex&quot;</span> <span class="o">/</span> <span class="s2">&quot;orochi&quot;</span> <span class="o">/</span> <span class="s2">&quot;runtime&quot;</span> <span class="o">/</span> <span class="s2">&quot;workspaces&quot;</span> <span class="o">/</span> <span class="n">name</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_fire_forget_hook</span><span class="p">(</span>
+    <span class="n">agent_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">hook_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">commands</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+    <span class="n">context</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Invoke ``run_hook`` (non-blocking, handles URL + shell entries).</span>
+
+<span class="sd">    Called alongside the legacy synchronous ``_run_hooks`` path so</span>
+<span class="sd">    existing YAML pipes/redirects keep working unchanged while</span>
+<span class="sd">    external tools (orochi etc.) can additionally plug in via</span>
+<span class="sd">    ``http(s)://`` URLs. The legacy path filters out URL entries to</span>
+<span class="sd">    avoid double-dispatch of the same side-effect.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># stx-allow: fallback (reason: hook dispatch is fire-and-forget; a URL hook failing must never crash the caller)</span>
     <span class="k">try</span><span class="p">:</span>
-        <span class="kn">import</span><span class="w"> </span><span class="nn">yaml</span>  <span class="c1"># PyYAML ships with the container; same import sac uses.</span>
-    <span class="k">except</span> <span class="ne">ImportError</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: optional dependency not installed)</span>
-        <span class="k">return</span> <span class="p">{}</span>
-    <span class="c1"># stx-allow: fallback (reason: malformed YAML config must not break hostname resolution; empty aliases dict is the safe default)</span>
-    <span class="k">try</span><span class="p">:</span>
-        <span class="n">data</span> <span class="o">=</span> <span class="n">yaml</span><span class="o">.</span><span class="n">safe_load</span><span class="p">(</span><span class="n">_CONFIG_PATH</span><span class="o">.</span><span class="n">read_text</span><span class="p">())</span> <span class="ow">or</span> <span class="p">{}</span>
-    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: catch-all safety net — see inline comment for context)</span>
-        <span class="k">return</span> <span class="p">{}</span>
-    <span class="n">aliases</span> <span class="o">=</span> <span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;spec&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;hostname_aliases&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="p">{}</span>
-    <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">aliases</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
-        <span class="k">return</span> <span class="p">{}</span>
-    <span class="k">return</span> <span class="p">{</span><span class="nb">str</span><span class="p">(</span><span class="n">k</span><span class="p">):</span> <span class="nb">str</span><span class="p">(</span><span class="n">v</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">aliases</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span>
+        <span class="n">run_hook</span><span class="p">(</span><span class="n">agent_name</span><span class="p">,</span> <span class="n">hook_name</span><span class="p">,</span> <span class="nb">list</span><span class="p">(</span><span class="n">commands</span> <span class="ow">or</span> <span class="p">[]),</span> <span class="n">context</span><span class="o">=</span><span class="n">context</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>  <span class="c1"># pragma: no cover  # stx-allow: fallback (reason: hook dispatch safety net — hook crashes must not propagate to caller)</span>
+        <span class="kn">import</span><span class="w"> </span><span class="nn">sys</span>
+
+        <span class="nb">print</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;[WARN] run_hook </span><span class="si">{</span><span class="n">hook_name</span><span class="si">}</span><span class="s2"> dispatch failed for </span><span class="si">{</span><span class="n">agent_name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+            <span class="n">file</span><span class="o">=</span><span class="n">sys</span><span class="o">.</span><span class="n">stderr</span><span class="p">,</span>
+        <span class="p">)</span>
 
 
-<div class="viewcode-block" id="resolve_hostname">
-<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.resolve_hostname">[docs]</a>
-<span class="k">def</span><span class="w"> </span><span class="nf">resolve_hostname</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the canonical host label for this machine.</span>
-
-<span class="sd">    Resolution order (first non-empty wins):</span>
-<span class="sd">      1. ``SCITEX_AGENT_CONTAINER_HOSTNAME`` env var (manual override).</span>
-<span class="sd">      2. ``SCITEX_OROCHI_HOSTNAME`` env var.</span>
-<span class="sd">      3. ``hostname_aliases[short hostname]`` from</span>
-<span class="sd">         ``shared/config.yaml`` or ``~/.scitex/agent-container/config.yaml``.</span>
-<span class="sd">      4. ``socket.gethostname()`` short form (identity fallback).</span>
-
-<span class="sd">    Raises:</span>
-<span class="sd">        RuntimeError: If none of the sources produces a non-empty value. This</span>
-<span class="sd">            should be practically impossible (``gethostname()`` returns</span>
-<span class="sd">            something on any configured box) but is handled loudly rather</span>
-<span class="sd">            than returning the empty string.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-    <span class="n">env</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;SCITEX_AGENT_CONTAINER_HOSTNAME&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
-    <span class="k">if</span> <span class="n">env</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">env</span>
-    <span class="n">env</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;SCITEX_OROCHI_HOSTNAME&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
-    <span class="k">if</span> <span class="n">env</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">env</span>
-    <span class="n">hn</span> <span class="o">=</span> <span class="n">socket</span><span class="o">.</span><span class="n">gethostname</span><span class="p">()</span>
-    <span class="n">short</span> <span class="o">=</span> <span class="n">hn</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;.&quot;</span><span class="p">,</span> <span class="mi">1</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span> <span class="k">if</span> <span class="n">hn</span> <span class="k">else</span> <span class="s2">&quot;&quot;</span>
-    <span class="n">aliases</span> <span class="o">=</span> <span class="n">_load_hostname_aliases</span><span class="p">()</span>
-    <span class="k">if</span> <span class="n">short</span> <span class="ow">and</span> <span class="n">short</span> <span class="ow">in</span> <span class="n">aliases</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">aliases</span><span class="p">[</span><span class="n">short</span><span class="p">]</span>
-    <span class="k">if</span> <span class="n">short</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">short</span>
-    <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
-        <span class="s2">&quot;Cannot resolve hostname: SCITEX_AGENT_CONTAINER_HOSTNAME and &quot;</span>
-        <span class="s2">&quot;SCITEX_OROCHI_HOSTNAME unset, socket.gethostname() empty, &quot;</span>
-        <span class="s2">&quot;no config.yaml alias applicable.&quot;</span>
-    <span class="p">)</span></div>
-
-
-
-<span class="k">def</span><span class="w"> </span><span class="nf">_substitute_string</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">hostname</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Replace ${HOSTNAME} / ${SCITEX_OROCHI_HOSTNAME} occurrences in a string.</span>
-
-<span class="sd">    Other ``${...}`` placeholders are preserved as-is so downstream code</span>
-<span class="sd">    (e.g. mcp interpolation) keeps working.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">_repl</span><span class="p">(</span><span class="n">match</span><span class="p">:</span> <span class="s2">&quot;re.Match[str]&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-        <span class="c1"># hostname always resolves — resolve_hostname() has already succeeded</span>
-        <span class="c1"># or raised. The placeholder set is closed, so we don&#39;t need to</span>
-        <span class="c1"># handle &quot;missing var&quot; inside the callback.</span>
-        <span class="k">return</span> <span class="n">hostname</span>
-
-    <span class="k">return</span> <span class="n">_PLACEHOLDER_RE</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="n">_repl</span><span class="p">,</span> <span class="n">value</span><span class="p">)</span>
-
-
-<div class="viewcode-block" id="substitute_hostnames">
-<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.substitute_hostnames">[docs]</a>
-<span class="k">def</span><span class="w"> </span><span class="nf">substitute_hostnames</span><span class="p">(</span><span class="n">obj</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">hostname</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Recursively walk a dict/list/str and substitute hostname placeholders.</span>
-
-<span class="sd">    Non-string leaves (int, bool, None) are returned unchanged. The walk is</span>
-<span class="sd">    pure-functional — the input is not mutated; a new structure is returned.</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_run_hooks</span><span class="p">(</span><span class="n">hooks</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">extra_env</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Execute a list of shell hook commands.</span>
 
 <span class="sd">    Args:</span>
-<span class="sd">        obj: YAML-parsed structure (dict/list/scalar).</span>
-<span class="sd">        hostname: Override hostname (for tests). If None, calls</span>
-<span class="sd">            ``resolve_hostname()``.</span>
+<span class="sd">        hooks: Shell commands to execute.</span>
+<span class="sd">        extra_env: Additional env vars passed to hook subprocesses</span>
+<span class="sd">            (e.g., SCITEX_AGENT_CONTAINER_CONFIG_PATH, SCITEX_AGENT_CONTAINER_SCREEN_NAME, SCITEX_AGENT_CONTAINER_NAME).</span>
 <span class="sd">    &quot;&quot;&quot;</span>
-    <span class="k">if</span> <span class="n">hostname</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="n">hostname</span> <span class="o">=</span> <span class="n">resolve_hostname</span><span class="p">()</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
 
-    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
-        <span class="k">return</span> <span class="n">_substitute_string</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="n">hostname</span><span class="p">)</span>
-    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
-        <span class="k">return</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">substitute_hostnames</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="n">hostname</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">obj</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span>
-    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="nb">list</span><span class="p">):</span>
-        <span class="k">return</span> <span class="p">[</span><span class="n">substitute_hostnames</span><span class="p">(</span><span class="n">item</span><span class="p">,</span> <span class="n">hostname</span><span class="p">)</span> <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">obj</span><span class="p">]</span>
-    <span class="k">return</span> <span class="n">obj</span></div>
+    <span class="n">env</span> <span class="o">=</span> <span class="p">{</span><span class="o">**</span><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">,</span> <span class="o">**</span><span class="p">(</span><span class="n">extra_env</span> <span class="ow">or</span> <span class="p">{})}</span>
+    <span class="k">for</span> <span class="n">hook</span> <span class="ow">in</span> <span class="n">hooks</span><span class="p">:</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">hook</span><span class="p">:</span>
+            <span class="k">continue</span>
+        <span class="c1"># URL entries are handled by the new fire-and-forget path</span>
+        <span class="c1"># (see _fire_forget_hook / hooks.run_hook). Skip them here to</span>
+        <span class="c1"># avoid trying to ``sh -c &quot;https://...&quot;``.</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">hook</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="ow">and</span> <span class="n">hook</span><span class="o">.</span><span class="n">startswith</span><span class="p">((</span><span class="s2">&quot;http://&quot;</span><span class="p">,</span> <span class="s2">&quot;https://&quot;</span><span class="p">)):</span>
+            <span class="k">continue</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
+            <span class="n">hook</span><span class="p">,</span> <span class="n">shell</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">capture_output</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">text</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">env</span><span class="o">=</span><span class="n">env</span>
+        <span class="p">)</span>
+        <span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">returncode</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="c1"># Log but don&#39;t fail</span>
+            <span class="kn">import</span><span class="w"> </span><span class="nn">sys</span>
+
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[WARN] Hook failed: </span><span class="si">{</span><span class="n">hook</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">file</span><span class="o">=</span><span class="n">sys</span><span class="o">.</span><span class="n">stderr</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">stderr</span><span class="p">:</span>
+                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;       </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">stderr</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">file</span><span class="o">=</span><span class="n">sys</span><span class="o">.</span><span class="n">stderr</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="agent_start">
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.agent_start">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">agent_start</span><span class="p">(</span>
+    <span class="n">config_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">registry</span><span class="p">:</span> <span class="n">Registry</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">no_preflight</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">force</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">session_override</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">resume_id_override</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">dry_run</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">foreground</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Start an agent from a YAML config file.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        config_path: Path to the YAML agent definition.</span>
+<span class="sd">        registry: Optional registry instance.</span>
+<span class="sd">        no_preflight: If True, skip SSH preflight checks (useful for slow hosts).</span>
+<span class="sd">        force: If True and the agent is already running, stop it first</span>
+<span class="sd">            and then start fresh. Also tolerates stale registry entries</span>
+<span class="sd">            and ghost screens (via force-stop).</span>
+<span class="sd">        session_override: If set, override config.claude.session for this</span>
+<span class="sd">            start invocation (one of continue-or-new | continue | new | resume).</span>
+<span class="sd">        resume_id_override: If set, override config.claude.resume_id. Pass</span>
+<span class="sd">            with session_override=&quot;resume&quot; to launch ``claude --resume &lt;id&gt;``</span>
+<span class="sd">            without editing the YAML.</span>
+<span class="sd">        dry_run: If True, materialize the workspace files but skip the</span>
+<span class="sd">            multiplexer / Claude Code launch and registry registration.</span>
+<span class="sd">            Hooks (pre_start / post_start) are also skipped.</span>
+
+<span class="sd">    Returns True on success, False on failure.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">config_path</span> <span class="o">=</span> <span class="n">resolve_config</span><span class="p">(</span><span class="n">config_path</span><span class="p">)</span>
+    <span class="n">registry</span> <span class="o">=</span> <span class="n">registry</span> <span class="ow">or</span> <span class="n">Registry</span><span class="p">()</span>
+    <span class="n">config</span> <span class="o">=</span> <span class="n">load_config</span><span class="p">(</span><span class="n">config_path</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">session_override</span><span class="p">:</span>
+        <span class="n">config</span><span class="o">.</span><span class="n">claude</span><span class="o">.</span><span class="n">session</span> <span class="o">=</span> <span class="n">session_override</span>
+    <span class="k">if</span> <span class="n">resume_id_override</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">config</span><span class="o">.</span><span class="n">claude</span><span class="o">.</span><span class="n">resume_id</span> <span class="o">=</span> <span class="n">resume_id_override</span>
+    <span class="n">runtime</span> <span class="o">=</span> <span class="n">_get_runtime</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+
+    <span class="c1"># Already running?</span>
+    <span class="k">if</span> <span class="n">registry</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">name</span><span class="p">)</span> <span class="ow">and</span> <span class="n">runtime</span><span class="o">.</span><span class="n">is_running</span><span class="p">(</span><span class="n">config</span><span class="p">):</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">force</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">dry_run</span><span class="p">:</span>
+                <span class="c1"># Allow dry-run to inspect the planned workspace even</span>
+                <span class="c1"># while the live agent is running — the prep does not</span>
+                <span class="c1"># touch the live tmux session.</span>
+                <span class="k">pass</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Agent &#39;</span><span class="si">{</span><span class="n">config</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&#39; is already running&quot;</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">agent_stop</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">registry</span><span class="o">=</span><span class="n">registry</span><span class="p">,</span> <span class="n">force</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+            <span class="c1"># Small grace period so the screen is fully torn down before we</span>
+            <span class="c1"># try to create a new one with the same name.</span>
+            <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">force</span> <span class="ow">and</span> <span class="n">registry</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">name</span><span class="p">):</span>
+        <span class="c1"># Registry says it exists but runtime says not running — stale entry.</span>
+        <span class="n">agent_stop</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">registry</span><span class="o">=</span><span class="n">registry</span><span class="p">,</span> <span class="n">force</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="c1"># Hook env vars — let hooks know about the agent context</span>
+    <span class="n">hook_env</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s2">&quot;SCITEX_AGENT_CONTAINER_CONFIG_PATH&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="n">config_path</span><span class="p">)</span><span class="o">.</span><span class="n">resolve</span><span class="p">()),</span>
+        <span class="s2">&quot;SCITEX_AGENT_CONTAINER_SCREEN_NAME&quot;</span><span class="p">:</span> <span class="n">config</span><span class="o">.</span><span class="n">screen_name</span><span class="p">,</span>
+        <span class="s2">&quot;SCITEX_AGENT_CONTAINER_NAME&quot;</span><span class="p">:</span> <span class="n">config</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
+    <span class="p">}</span>
+
+    <span class="k">if</span> <span class="n">dry_run</span><span class="p">:</span>
+        <span class="c1"># Materialize the workspace via the runtime&#39;s dry-run path; skip</span>
+        <span class="c1"># hooks, registry, context-manager, health monitor.</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">runtime</span><span class="o">.</span><span class="n">start</span><span class="p">(</span>
+                <span class="n">config</span><span class="p">,</span> <span class="n">no_preflight</span><span class="o">=</span><span class="n">no_preflight</span><span class="p">,</span> <span class="n">force</span><span class="o">=</span><span class="n">force</span><span class="p">,</span> <span class="n">dry_run</span><span class="o">=</span><span class="kc">True</span>
+            <span class="p">)</span>
+        <span class="k">except</span> <span class="ne">TypeError</span><span class="p">:</span>
+            <span class="c1"># Older runtimes without dry_run support — fail loudly so</span>
+            <span class="c1"># the caller knows this runtime can&#39;t dry-run.</span>
+            <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;runtime </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">runtime</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2"> does not support --dry-run&quot;</span>
+            <span class="p">)</span>
+
+    <span class="c1"># ZOO#12 — lead-state-handover plumbing. All three calls are</span>
+    <span class="c1"># best-effort: missing token / 404 / network errors must NOT block</span>
+    <span class="c1"># agent_start. ``ensure_instance_uuid`` writes</span>
+    <span class="c1"># ``SCITEX_AGENT_INSTANCE_UUID`` into ``config.env`` so the runtime&#39;s</span>
+    <span class="c1"># ``_build_env_exports`` (claude_code.py) propagates it; the runtime</span>
+    <span class="c1"># is supposed to read it back when wiring up the orochi WS connect</span>
+    <span class="c1"># (FR-E). ``hydrate_from_hub`` is pre-start so the agent&#39;s boot-time</span>
+    <span class="c1"># skill can pick up the snapshot before claude actually launches.</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">.</span><span class="w"> </span><span class="kn">import</span> <span class="n">handover</span> <span class="k">as</span> <span class="n">_h</span>
+
+    <span class="n">_h</span><span class="o">.</span><span class="n">ensure_instance_uuid</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">_h</span><span class="o">.</span><span class="n">hydrate_from_hub</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+        <span class="c1"># Defensive: hub_client already swallows transport errors, but</span>
+        <span class="c1"># in case of a serialization bug here, never let agent_start</span>
+        <span class="c1"># die because of a snapshot fetch.</span>
+        <span class="n">traceback</span><span class="o">.</span><span class="n">print_exc</span><span class="p">()</span>
+
+    <span class="c1"># Pre-start hooks</span>
+    <span class="n">_run_hooks</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">hooks</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;pre_start&quot;</span><span class="p">,</span> <span class="p">[]),</span> <span class="n">extra_env</span><span class="o">=</span><span class="n">hook_env</span><span class="p">)</span>
+    <span class="n">_fire_forget_hook</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="s2">&quot;pre_start&quot;</span><span class="p">,</span> <span class="n">config</span><span class="o">.</span><span class="n">hooks</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;pre_start&quot;</span><span class="p">,</span> <span class="p">[]))</span>
+
+    <span class="c1"># Start — pass ``force`` through so remote dispatchers (SSHRemote)</span>
+    <span class="c1"># can relay ``--force`` to the remote CLI and skip its own</span>
+    <span class="c1"># already-running check.</span>
+    <span class="c1"># Config-level no_preflight overrides CLI flag</span>
+    <span class="k">if</span> <span class="n">config</span><span class="o">.</span><span class="n">remote</span><span class="o">.</span><span class="n">no_preflight</span><span class="p">:</span>
+        <span class="n">no_preflight</span> <span class="o">=</span> <span class="kc">True</span>
+    <span class="n">success</span> <span class="o">=</span> <span class="n">runtime</span><span class="o">.</span><span class="n">start</span><span class="p">(</span>
+        <span class="n">config</span><span class="p">,</span>
+        <span class="n">no_preflight</span><span class="o">=</span><span class="n">no_preflight</span><span class="p">,</span>
+        <span class="n">force</span><span class="o">=</span><span class="n">force</span><span class="p">,</span>
+        <span class="n">foreground</span><span class="o">=</span><span class="n">foreground</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">success</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Failed to start agent &#39;</span><span class="si">{</span><span class="n">config</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&#39;&quot;</span><span class="p">)</span>
+
+    <span class="c1"># Register</span>
+    <span class="n">registry</span><span class="o">.</span><span class="n">add</span><span class="p">(</span>
+        <span class="n">name</span><span class="o">=</span><span class="n">config</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
+        <span class="n">config_path</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="n">config_path</span><span class="p">)</span><span class="o">.</span><span class="n">resolve</span><span class="p">()),</span>
+        <span class="n">screen_name</span><span class="o">=</span><span class="n">config</span><span class="o">.</span><span class="n">screen_name</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Post-start hooks</span>
+    <span class="n">_run_hooks</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">hooks</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;post_start&quot;</span><span class="p">,</span> <span class="p">[]),</span> <span class="n">extra_env</span><span class="o">=</span><span class="n">hook_env</span><span class="p">)</span>
+    <span class="n">_fire_forget_hook</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="s2">&quot;post_start&quot;</span><span class="p">,</span> <span class="n">config</span><span class="o">.</span><span class="n">hooks</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;post_start&quot;</span><span class="p">,</span> <span class="p">[]))</span>
+
+    <span class="c1"># Start context-management sensor in background if enabled</span>
+    <span class="k">if</span> <span class="n">config</span><span class="o">.</span><span class="n">context_management</span><span class="o">.</span><span class="n">enabled</span><span class="p">:</span>
+        <span class="c1"># stx-allow: fallback (reason: context_manager sensor spawn may fail if tmux is unavailable; agent has already started and a sensor failure must not abort it)</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="kn">from</span><span class="w"> </span><span class="nn">..context_manager</span><span class="w"> </span><span class="kn">import</span> <span class="n">start_sensor</span>
+
+            <span class="n">start_sensor</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: catch-all safety net — see inline comment for context)</span>
+            <span class="kn">import</span><span class="w"> </span><span class="nn">sys</span>
+
+            <span class="nb">print</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;[WARN] context_manager failed to start for </span><span class="si">{</span><span class="n">config</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+                <span class="n">file</span><span class="o">=</span><span class="n">sys</span><span class="o">.</span><span class="n">stderr</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="n">traceback</span><span class="o">.</span><span class="n">print_exc</span><span class="p">()</span>
+
+    <span class="c1"># Start health monitor in background if enabled</span>
+    <span class="k">if</span> <span class="n">config</span><span class="o">.</span><span class="n">health</span><span class="o">.</span><span class="n">enabled</span><span class="p">:</span>
+        <span class="n">thread</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Thread</span><span class="p">(</span>
+            <span class="n">target</span><span class="o">=</span><span class="n">health_monitor</span><span class="p">,</span>
+            <span class="n">args</span><span class="o">=</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">registry</span><span class="p">,</span> <span class="k">lambda</span> <span class="n">c</span><span class="p">:</span> <span class="n">_get_runtime</span><span class="p">(</span><span class="n">c</span><span class="p">)</span><span class="o">.</span><span class="n">start</span><span class="p">(</span><span class="n">c</span><span class="p">)),</span>
+            <span class="n">daemon</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">thread</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
+
+    <span class="c1"># ZOO#12 FR-B — priority-failback poller. No-op when the spec lacks</span>
+    <span class="c1"># a ``priority_list``; otherwise polls the hub every 60 s and steps</span>
+    <span class="c1"># aside (snapshot push + SIGTERM) when a higher-priority host is</span>
+    <span class="c1"># healthy. Daemon thread, dies with the process.</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">_h</span><span class="o">.</span><span class="n">start_failback_poller</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+        <span class="n">traceback</span><span class="o">.</span><span class="n">print_exc</span><span class="p">()</span>
+
+    <span class="k">return</span> <span class="kc">True</span></div>
+
+
+
+<div class="viewcode-block" id="agent_stop">
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.agent_stop">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">agent_stop</span><span class="p">(</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">registry</span><span class="p">:</span> <span class="n">Registry</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">force</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Stop a running agent by name.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        name: Agent name.</span>
+<span class="sd">        registry: Optional registry instance.</span>
+<span class="sd">        force: If True, do not fail when the agent is missing from the</span>
+<span class="sd">            registry or when hooks/runtime.stop() raise; wipe stale</span>
+<span class="sd">            state and return True. Useful for bulk cleanup.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">registry</span> <span class="o">=</span> <span class="n">registry</span> <span class="ow">or</span> <span class="n">Registry</span><span class="p">()</span>
+    <span class="n">entry</span> <span class="o">=</span> <span class="n">registry</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">entry</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">force</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">True</span>
+        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Agent &#39;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">&#39; not found in registry&quot;</span><span class="p">)</span>
+
+    <span class="c1"># stx-allow: fallback (reason: YAML file may have been deleted while the agent was registered; force-stop must succeed even without a config)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">config</span> <span class="o">=</span> <span class="n">load_config</span><span class="p">(</span><span class="n">entry</span><span class="p">[</span><span class="s2">&quot;config&quot;</span><span class="p">])</span>
+    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: catch-all safety net — see inline comment for context)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">force</span><span class="p">:</span>
+            <span class="k">raise</span>
+        <span class="c1"># Config gone — just nuke the registry entry</span>
+        <span class="n">registry</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+        <span class="k">return</span> <span class="kc">True</span>
+
+    <span class="n">runtime</span> <span class="o">=</span> <span class="n">_get_runtime</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+
+    <span class="n">hook_env</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s2">&quot;SCITEX_AGENT_CONTAINER_CONFIG_PATH&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="n">entry</span><span class="p">[</span><span class="s2">&quot;config&quot;</span><span class="p">])</span><span class="o">.</span><span class="n">resolve</span><span class="p">()),</span>
+        <span class="s2">&quot;SCITEX_AGENT_CONTAINER_SCREEN_NAME&quot;</span><span class="p">:</span> <span class="n">config</span><span class="o">.</span><span class="n">screen_name</span><span class="p">,</span>
+        <span class="s2">&quot;SCITEX_AGENT_CONTAINER_NAME&quot;</span><span class="p">:</span> <span class="n">config</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
+    <span class="p">}</span>
+
+    <span class="c1"># ZOO#12 FR-A — push a sentinel snapshot to the hub right before</span>
+    <span class="c1"># the agent stops, so a future agent_start (here or on a different</span>
+    <span class="c1"># host) can hydrate. Best-effort: never block the stop path on a</span>
+    <span class="c1"># hub outage. The sentinel is a marker; the agent&#39;s own pre_stop</span>
+    <span class="c1"># hook is the right place for richer state (transcript, memory).</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">.</span><span class="w"> </span><span class="kn">import</span> <span class="n">handover</span> <span class="k">as</span> <span class="n">_h</span>
+
+        <span class="n">_h</span><span class="o">.</span><span class="n">push_pre_stop_snapshot</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+        <span class="n">traceback</span><span class="o">.</span><span class="n">print_exc</span><span class="p">()</span>
+
+    <span class="c1"># Pre-stop hooks</span>
+    <span class="c1"># stx-allow: fallback (reason: hook commands may reference paths or env vars absent at stop time; force-stop must continue regardless)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">_run_hooks</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">hooks</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;pre_stop&quot;</span><span class="p">,</span> <span class="p">[]),</span> <span class="n">extra_env</span><span class="o">=</span><span class="n">hook_env</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: catch-all safety net — see inline comment for context)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">force</span><span class="p">:</span>
+            <span class="k">raise</span>
+    <span class="n">_fire_forget_hook</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="s2">&quot;pre_stop&quot;</span><span class="p">,</span> <span class="n">config</span><span class="o">.</span><span class="n">hooks</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;pre_stop&quot;</span><span class="p">,</span> <span class="p">[]))</span>
+
+    <span class="c1"># stx-allow: fallback (reason: tmux/screen session may already be dead; force-stop should still proceed to clean up registry)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">runtime</span><span class="o">.</span><span class="n">stop</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: catch-all safety net — see inline comment for context)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">force</span><span class="p">:</span>
+            <span class="k">raise</span>
+
+    <span class="c1"># Post-stop hooks</span>
+    <span class="c1"># stx-allow: fallback (reason: post-stop hooks are best-effort notification; a failed hook must not prevent registry cleanup)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">_run_hooks</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">hooks</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;post_stop&quot;</span><span class="p">,</span> <span class="p">[]),</span> <span class="n">extra_env</span><span class="o">=</span><span class="n">hook_env</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: catch-all safety net — see inline comment for context)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">force</span><span class="p">:</span>
+            <span class="k">raise</span>
+    <span class="n">_fire_forget_hook</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="s2">&quot;post_stop&quot;</span><span class="p">,</span> <span class="n">config</span><span class="o">.</span><span class="n">hooks</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;post_stop&quot;</span><span class="p">,</span> <span class="p">[]))</span>
+
+    <span class="n">registry</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+    <span class="k">return</span> <span class="kc">True</span></div>
+
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">agent_stop_all</span><span class="p">(</span>
+    <span class="n">registry</span><span class="p">:</span> <span class="n">Registry</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">force</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">bool</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Stop every agent in the registry.</span>
+
+<span class="sd">    Returns a list of ``(name, success, message)`` tuples, one per agent.</span>
+<span class="sd">    With ``force=True``, continues through errors so a partial failure</span>
+<span class="sd">    doesn&#39;t block cleanup of the rest.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">registry</span> <span class="o">=</span> <span class="n">registry</span> <span class="ow">or</span> <span class="n">Registry</span><span class="p">()</span>
+    <span class="n">results</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">bool</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">entry</span> <span class="ow">in</span> <span class="n">registry</span><span class="o">.</span><span class="n">list_all</span><span class="p">():</span>
+        <span class="n">name</span> <span class="o">=</span> <span class="n">entry</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;name&quot;</span><span class="p">,</span> <span class="s2">&quot;?&quot;</span><span class="p">)</span>
+        <span class="c1"># stx-allow: fallback (reason: stopping one agent may fail due to a missing config or dead session; other agents in the registry should still be stopped)</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">agent_stop</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">registry</span><span class="o">=</span><span class="n">registry</span><span class="p">,</span> <span class="n">force</span><span class="o">=</span><span class="n">force</span><span class="p">)</span>
+            <span class="n">results</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">name</span><span class="p">,</span> <span class="kc">True</span><span class="p">,</span> <span class="s2">&quot;stopped&quot;</span><span class="p">))</span>
+        <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: catch-all safety net — see inline comment for context)</span>
+            <span class="n">results</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">name</span><span class="p">,</span> <span class="kc">False</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">exc</span><span class="p">)))</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">force</span><span class="p">:</span>
+                <span class="k">break</span>
+    <span class="k">return</span> <span class="n">results</span>
+
+
+<div class="viewcode-block" id="agent_restart">
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.agent_restart">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">agent_restart</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">registry</span><span class="p">:</span> <span class="n">Registry</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Restart an agent by name.&quot;&quot;&quot;</span>
+    <span class="n">registry</span> <span class="o">=</span> <span class="n">registry</span> <span class="ow">or</span> <span class="n">Registry</span><span class="p">()</span>
+    <span class="n">entry</span> <span class="o">=</span> <span class="n">registry</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">entry</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Agent &#39;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">&#39; not found in registry&quot;</span><span class="p">)</span>
+
+    <span class="n">config_path</span> <span class="o">=</span> <span class="n">entry</span><span class="p">[</span><span class="s2">&quot;config&quot;</span><span class="p">]</span>
+    <span class="n">agent_stop</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">registry</span><span class="p">)</span>
+    <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">agent_start</span><span class="p">(</span><span class="n">config_path</span><span class="p">,</span> <span class="n">registry</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="agent_status">
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.agent_status">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">agent_status</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">registry</span><span class="p">:</span> <span class="n">Registry</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Get detailed status for an agent.&quot;&quot;&quot;</span>
+    <span class="n">registry</span> <span class="o">=</span> <span class="n">registry</span> <span class="ow">or</span> <span class="n">Registry</span><span class="p">()</span>
+    <span class="n">entry</span> <span class="o">=</span> <span class="n">registry</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">entry</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Agent &#39;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">&#39; not found in registry&quot;</span><span class="p">)</span>
+
+    <span class="c1"># stx-allow: fallback (reason: YAML or runtime may be unavailable; status should degrade to stopped=False rather than raise)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">config</span> <span class="o">=</span> <span class="n">load_config</span><span class="p">(</span><span class="n">entry</span><span class="p">[</span><span class="s2">&quot;config&quot;</span><span class="p">])</span>
+        <span class="n">runtime</span> <span class="o">=</span> <span class="n">_get_runtime</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+        <span class="n">running</span> <span class="o">=</span> <span class="n">runtime</span><span class="o">.</span><span class="n">is_running</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: catch-all safety net — see inline comment for context)</span>
+        <span class="n">traceback</span><span class="o">.</span><span class="n">print_exc</span><span class="p">()</span>
+        <span class="n">running</span> <span class="o">=</span> <span class="kc">False</span>
+        <span class="n">config</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="n">result</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="n">name</span><span class="p">,</span>
+        <span class="s2">&quot;config&quot;</span><span class="p">:</span> <span class="n">entry</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;config&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">),</span>
+        <span class="s2">&quot;screen&quot;</span><span class="p">:</span> <span class="n">entry</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;screen&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">),</span>
+        <span class="s2">&quot;started_at&quot;</span><span class="p">:</span> <span class="n">entry</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;started_at&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">),</span>
+        <span class="s2">&quot;status&quot;</span><span class="p">:</span> <span class="s2">&quot;running&quot;</span> <span class="k">if</span> <span class="n">running</span> <span class="k">else</span> <span class="s2">&quot;stopped&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="n">config</span><span class="o">.</span><span class="n">model</span> <span class="k">if</span> <span class="n">config</span> <span class="k">else</span> <span class="s2">&quot;unknown&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;runtime&quot;</span><span class="p">:</span> <span class="n">config</span><span class="o">.</span><span class="n">runtime</span> <span class="k">if</span> <span class="n">config</span> <span class="k">else</span> <span class="s2">&quot;unknown&quot;</span><span class="p">,</span>
+    <span class="p">}</span>
+    <span class="k">if</span> <span class="n">config</span> <span class="ow">and</span> <span class="n">config</span><span class="o">.</span><span class="n">remote</span><span class="o">.</span><span class="n">is_remote</span><span class="p">:</span>
+        <span class="n">result</span><span class="p">[</span><span class="s2">&quot;remote&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">remote</span><span class="o">.</span><span class="n">host</span>
+
+    <span class="c1"># Hook-points / listen / extensions plumbing (todo#286 Phase 4).</span>
+    <span class="c1"># Counts are exposed so consumers can see what&#39;s wired up; command</span>
+    <span class="c1"># bodies are intentionally NOT echoed to avoid leaking URLs or</span>
+    <span class="c1"># secrets through status --json.</span>
+    <span class="k">if</span> <span class="n">config</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">hooks</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">hooks</span> <span class="ow">or</span> <span class="p">{}</span>
+        <span class="n">result</span><span class="p">[</span><span class="s2">&quot;hooks_configured&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="n">key</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">hooks</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="p">[])</span> <span class="ow">or</span> <span class="p">[])</span>
+            <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="p">(</span>
+                <span class="s2">&quot;pre_start&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;post_start&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;pre_stop&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;post_stop&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;on_compact&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;on_restart&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;on_diff&quot;</span><span class="p">,</span>
+            <span class="p">)</span>
+        <span class="p">}</span>
+        <span class="n">result</span><span class="p">[</span><span class="s2">&quot;listen&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="p">{</span>
+                <span class="s2">&quot;port&quot;</span><span class="p">:</span> <span class="n">lp</span><span class="o">.</span><span class="n">port</span><span class="p">,</span>
+                <span class="s2">&quot;proto&quot;</span><span class="p">:</span> <span class="n">lp</span><span class="o">.</span><span class="n">proto</span><span class="p">,</span>
+                <span class="s2">&quot;path&quot;</span><span class="p">:</span> <span class="n">lp</span><span class="o">.</span><span class="n">path</span><span class="p">,</span>
+                <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="n">lp</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
+                <span class="s2">&quot;owner&quot;</span><span class="p">:</span> <span class="n">lp</span><span class="o">.</span><span class="n">owner</span><span class="p">,</span>
+            <span class="p">}</span>
+            <span class="k">for</span> <span class="n">lp</span> <span class="ow">in</span> <span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">listen</span> <span class="ow">or</span> <span class="p">[])</span>
+        <span class="p">]</span>
+        <span class="c1"># Opaque pass-through — echoed verbatim.</span>
+        <span class="n">result</span><span class="p">[</span><span class="s2">&quot;extensions&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">extensions</span> <span class="ow">or</span> <span class="p">{})</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">result</span><span class="p">[</span><span class="s2">&quot;hooks_configured&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="n">result</span><span class="p">[</span><span class="s2">&quot;listen&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">result</span><span class="p">[</span><span class="s2">&quot;extensions&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="c1"># Surface context-management state for fleet_watch.sh / NAS orchestrator</span>
+    <span class="c1"># (todo#285). ``None`` when the feature is unconfigured or noop so</span>
+    <span class="c1"># consumers can distinguish &quot;disabled&quot; from &quot;0%&quot;.</span>
+    <span class="k">if</span> <span class="n">config</span> <span class="ow">and</span> <span class="n">config</span><span class="o">.</span><span class="n">context_management</span><span class="o">.</span><span class="n">enabled</span><span class="p">:</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">..context_manager</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_sensor</span>
+
+        <span class="n">sensor</span> <span class="o">=</span> <span class="n">get_sensor</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+        <span class="n">result</span><span class="p">[</span><span class="s2">&quot;context_management&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;percent&quot;</span><span class="p">:</span> <span class="n">sensor</span><span class="o">.</span><span class="n">last_percent</span> <span class="k">if</span> <span class="n">sensor</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+            <span class="s2">&quot;strategy&quot;</span><span class="p">:</span> <span class="n">config</span><span class="o">.</span><span class="n">context_management</span><span class="o">.</span><span class="n">strategy</span><span class="p">,</span>
+            <span class="s2">&quot;trigger_at_percent&quot;</span><span class="p">:</span> <span class="n">config</span><span class="o">.</span><span class="n">context_management</span><span class="o">.</span><span class="n">trigger_at_percent</span><span class="p">,</span>
+        <span class="p">}</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">result</span><span class="p">[</span><span class="s2">&quot;context_management&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="c1"># Expose the full agent_meta dict from the live sensor if present</span>
+    <span class="c1"># (todo#285 Phase 2b). This is the transcript-derived source of</span>
+    <span class="c1"># truth used by the dashboard when it&#39;s available.</span>
+    <span class="c1"># stx-allow: fallback (reason: context_manager module may be unimported or sensor absent; agent_meta is optional enrichment and None is acceptable)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">..context_manager</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_sensor</span> <span class="k">as</span> <span class="n">_gs</span>
+
+        <span class="n">_live</span> <span class="o">=</span> <span class="n">_gs</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">_live</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">_live</span><span class="o">.</span><span class="n">last_meta</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">result</span><span class="p">[</span><span class="s2">&quot;agent_meta&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">_live</span><span class="o">.</span><span class="n">last_meta</span>
+    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: catch-all safety net — see inline comment for context)</span>
+        <span class="k">pass</span>
+
+    <span class="c1"># Snapshot block — cheap read from cache (todo#286). Never re-gathers.</span>
+    <span class="c1"># stx-allow: fallback (reason: snapshot module may not yet exist or cache may be absent on first run; None snapshot is valid initial state)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">.._state.snapshot</span><span class="w"> </span><span class="kn">import</span> <span class="n">read_latest</span>
+
+        <span class="n">latest</span> <span class="o">=</span> <span class="n">read_latest</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">latest</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">result</span><span class="p">[</span><span class="s2">&quot;snapshot&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+                <span class="s2">&quot;timestamp&quot;</span><span class="p">:</span> <span class="n">latest</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;timestamp&quot;</span><span class="p">),</span>
+                <span class="s2">&quot;has_diff&quot;</span><span class="p">:</span> <span class="n">latest</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;has_diff&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">),</span>
+                <span class="s2">&quot;diff_fields&quot;</span><span class="p">:</span> <span class="n">latest</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;diff_fields&quot;</span><span class="p">,</span> <span class="p">[]),</span>
+            <span class="p">}</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">result</span><span class="p">[</span><span class="s2">&quot;snapshot&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: catch-all safety net — see inline comment for context)</span>
+        <span class="n">result</span><span class="p">[</span><span class="s2">&quot;snapshot&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="c1"># Enrich with claude-hud-style metadata. Canonical source for the</span>
+    <span class="c1"># Agents-tab dashboard; the MCP sidecar heartbeat shells out to this</span>
+    <span class="c1"># command rather than duplicating the logic in TypeScript.</span>
+    <span class="c1"># stx-allow: fallback (reason: agent_meta requires psutil and an active tmux session; metadata enrichment is optional and must never break status)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">.._state.agent_meta</span><span class="w"> </span><span class="kn">import</span> <span class="n">collect_rich</span>
+
+        <span class="n">workdir</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">expanded_workdir</span> <span class="k">if</span> <span class="n">config</span> <span class="k">else</span> <span class="n">_fallback_workdir</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+        <span class="n">session</span> <span class="o">=</span> <span class="n">entry</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;screen&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">screen_name</span> <span class="k">if</span> <span class="n">config</span> <span class="k">else</span> <span class="n">name</span><span class="p">)</span>
+        <span class="n">rich</span> <span class="o">=</span> <span class="n">collect_rich</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="n">name</span><span class="p">,</span> <span class="n">workdir</span><span class="o">=</span><span class="n">workdir</span><span class="p">,</span> <span class="n">session</span><span class="o">=</span><span class="n">session</span><span class="p">)</span>
+        <span class="c1"># Prefer transcript-derived started_at only if the registry</span>
+        <span class="c1"># doesn&#39;t have one.</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">result</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;started_at&quot;</span><span class="p">)</span> <span class="ow">and</span> <span class="n">rich</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;started_at_transcript&quot;</span><span class="p">):</span>
+            <span class="n">result</span><span class="p">[</span><span class="s2">&quot;started_at&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">rich</span><span class="p">[</span><span class="s2">&quot;started_at_transcript&quot;</span><span class="p">]</span>
+        <span class="n">rich</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;started_at_transcript&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="n">rich</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;model_transcript&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="c1"># Never let rich overwrite the canonical registry/config fields.</span>
+        <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">rich</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="n">result</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="n">k</span><span class="p">,</span> <span class="n">v</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: catch-all safety net — see inline comment for context)</span>
+        <span class="c1"># Never let metadata collection break status.</span>
+        <span class="k">pass</span>
+
+    <span class="k">return</span> <span class="n">result</span></div>
+
+
+
+<div class="viewcode-block" id="agent_logs">
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.agent_logs">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">agent_logs</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">lines</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">50</span><span class="p">,</span> <span class="n">registry</span><span class="p">:</span> <span class="n">Registry</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Get recent logs from an agent.&quot;&quot;&quot;</span>
+    <span class="n">registry</span> <span class="o">=</span> <span class="n">registry</span> <span class="ow">or</span> <span class="n">Registry</span><span class="p">()</span>
+    <span class="n">entry</span> <span class="o">=</span> <span class="n">registry</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">entry</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Agent &#39;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">&#39; not found in registry&quot;</span><span class="p">)</span>
+
+    <span class="n">config</span> <span class="o">=</span> <span class="n">load_config</span><span class="p">(</span><span class="n">entry</span><span class="p">[</span><span class="s2">&quot;config&quot;</span><span class="p">])</span>
+    <span class="n">runtime</span> <span class="o">=</span> <span class="n">_get_runtime</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">runtime</span><span class="o">.</span><span class="n">logs</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">lines</span><span class="p">)</span></div>
 
 </pre></div>
 
