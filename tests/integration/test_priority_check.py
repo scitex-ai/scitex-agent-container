@@ -5,12 +5,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
 from click.testing import CliRunner
 
 from scitex_agent_container.cli_pkg._main import main
 from scitex_agent_container.cli_pkg.priority_cmds import _priority_report, _probe_ssh
-
 
 # ---------------------------------------------------------------------------
 # _probe_ssh unit tests
@@ -132,7 +130,9 @@ def test_cli_json_output_stay(tmp_path, monkeypatch):
     )
     path = _write_agent_yaml(tmp_path, ["spartan", "nas"])
     runner = CliRunner()
-    result = runner.invoke(main, ["check-priority", path, "--current-host", "spartan", "--json"])
+    result = runner.invoke(
+        main, ["check", "priority", path, "--current-host", "spartan", "--json"]
+    )
     assert result.exit_code == 0
     data = json.loads(result.output)
     assert data["should_yield"] is False
@@ -146,7 +146,9 @@ def test_cli_json_output_yield(tmp_path, monkeypatch):
     )
     path = _write_agent_yaml(tmp_path, ["spartan", "nas"])
     runner = CliRunner()
-    result = runner.invoke(main, ["check-priority", path, "--current-host", "nas", "--json"])
+    result = runner.invoke(
+        main, ["check", "priority", path, "--current-host", "nas", "--json"]
+    )
     assert result.exit_code == 1
     data = json.loads(result.output)
     assert data["should_yield"] is True
@@ -184,9 +186,13 @@ def test_singleton_reconcile_stay_when_on_preferred(monkeypatch, tmp_path):
     from scitex_agent_container.registry import Registry
 
     path = _write_agent_yaml(tmp_path, ["nas", "mba"])
-    monkeypatch.setattr(Registry, "list_all", lambda self: [
-        {"name": "test-agent", "config": path, "screen": "test-agent"},
-    ])
+    monkeypatch.setattr(
+        Registry,
+        "list_all",
+        lambda self: [
+            {"name": "test-agent", "config": path, "screen": "test-agent"},
+        ],
+    )
     monkeypatch.setattr(
         "scitex_agent_container.cli_pkg.priority_cmds._probe_ssh",
         lambda h: False,
@@ -208,9 +214,13 @@ def test_singleton_reconcile_yield_recommended_dryrun(monkeypatch, tmp_path):
     from scitex_agent_container.registry import Registry
 
     path = _write_agent_yaml(tmp_path, ["spartan", "nas"])
-    monkeypatch.setattr(Registry, "list_all", lambda self: [
-        {"name": "test-agent", "config": path, "screen": "test-agent"},
-    ])
+    monkeypatch.setattr(
+        Registry,
+        "list_all",
+        lambda self: [
+            {"name": "test-agent", "config": path, "screen": "test-agent"},
+        ],
+    )
     monkeypatch.setattr(
         "scitex_agent_container.cli_pkg.priority_cmds._probe_ssh",
         lambda h: True,  # spartan reachable
@@ -231,9 +241,13 @@ def test_singleton_reconcile_execute_success(monkeypatch, tmp_path):
     from scitex_agent_container.registry import Registry
 
     path = _write_agent_yaml(tmp_path, ["spartan", "nas"])
-    monkeypatch.setattr(Registry, "list_all", lambda self: [
-        {"name": "test-agent", "config": path, "screen": "test-agent"},
-    ])
+    monkeypatch.setattr(
+        Registry,
+        "list_all",
+        lambda self: [
+            {"name": "test-agent", "config": path, "screen": "test-agent"},
+        ],
+    )
     monkeypatch.setattr(
         "scitex_agent_container.cli_pkg.priority_cmds._probe_ssh",
         lambda h: True,
@@ -263,9 +277,13 @@ def test_singleton_reconcile_execute_remote_fail(monkeypatch, tmp_path):
     from scitex_agent_container.registry import Registry
 
     path = _write_agent_yaml(tmp_path, ["spartan", "nas"])
-    monkeypatch.setattr(Registry, "list_all", lambda self: [
-        {"name": "test-agent", "config": path, "screen": "test-agent"},
-    ])
+    monkeypatch.setattr(
+        Registry,
+        "list_all",
+        lambda self: [
+            {"name": "test-agent", "config": path, "screen": "test-agent"},
+        ],
+    )
     monkeypatch.setattr(
         "scitex_agent_container.cli_pkg.priority_cmds._probe_ssh",
         lambda h: True,

@@ -12,7 +12,10 @@ import click
 from ._helpers import HelpRecursiveGroup, deprecated_alias
 from .account_cmds import account, quota_watch
 from .action_cmds import actions_cli
-from .build_cmds import build, check, validate
+from .agent_group import agent_group
+from .auto_accept_group import auto_accept_group
+from .build_cmds import build, validate
+from .check_group import check_group
 from .contributor_spec_cmds import contributor_spec
 from .hook_cmds import hook_event
 from .info_cmds import attach, find, list_python_apis, logs
@@ -92,26 +95,34 @@ main.add_command(stop)
 main.add_command(restart)
 main.add_command(cleanup)
 
-# Auto-accept
-main.add_command(send_accept)
-main.add_command(start_auto_accept)
-main.add_command(stop_auto_accept)
+# Auto-accept noun-group (send / start / stop).
+main.add_command(auto_accept_group)
+main.add_command(deprecated_alias(send_accept, new_path="sac auto-accept send"))
+main.add_command(deprecated_alias(start_auto_accept, new_path="sac auto-accept start"))
+main.add_command(deprecated_alias(stop_auto_accept, new_path="sac auto-accept stop"))
 
-# Status / listing
-main.add_command(status)
-main.add_command(list_agents)  # registered as 'list'
-main.add_command(health)
-main.add_command(check_agent)  # registered as 'inspect'
-main.add_command(snapshot)
+# Agent noun-group (list / status / logs / inspect / snapshot).
+main.add_command(agent_group)
+main.add_command(deprecated_alias(status, new_path="sac agent status"))
+main.add_command(deprecated_alias(list_agents, new_path="sac agent list"))
+main.add_command(deprecated_alias(check_agent, new_path="sac agent inspect"))
+main.add_command(deprecated_alias(snapshot, new_path="sac agent snapshot"))
+main.add_command(deprecated_alias(logs, new_path="sac agent logs"))
 
-# Info / introspection
+# Check noun-group (preflight / health / priority).
+# Note: bare ``check <yaml>`` (legacy) collides with the group name; users
+# now must call ``sac check preflight <yaml>`` explicitly. Other deprecated
+# names (``check-health``, ``check-priority``) keep working.
+main.add_command(check_group)
+main.add_command(deprecated_alias(health, new_path="sac check health"))
+main.add_command(deprecated_alias(priority_check, new_path="sac check priority"))
+
+# Info / introspection (no group — single-purpose, valid as flat verb+positional).
 main.add_command(find)
-main.add_command(logs)
 main.add_command(attach)
-main.add_command(list_python_apis)  # registered as 'list-python-apis'
+main.add_command(list_python_apis)
 
 # Build / validation
-main.add_command(check)
 main.add_command(validate)
 main.add_command(build)
 
