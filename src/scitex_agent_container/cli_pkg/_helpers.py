@@ -8,8 +8,8 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from ..config import load_config
 from .._state.registry import Registry
+from ..config import load_config
 
 console = Console()
 
@@ -50,7 +50,46 @@ def _json_flag(ctx: click.Context, local: bool) -> bool:
     return local or bool((ctx.obj or {}).get("json", False))
 
 
-from scitex_dev.click_helpers import CategorizedGroup
+# Inline CategorizedGroup — historically lived in scitex_dev.click_helpers,
+# but pinning sac's runtime to a specific scitex-dev version made cross-repo
+# releases brittle. Owned locally now.
+class CategorizedGroup(click.Group):
+    """Click `Group` that renders `--help` commands under named sections.
+
+    Subclass and set ``COMMAND_CATEGORIES`` as a class attribute. Categories
+    are ``(section_name, [command_names])``; anything not listed falls into
+    a final ``Other`` section so nothing silently disappears.
+    """
+
+    COMMAND_CATEGORIES: list = []
+
+    def format_commands(self, ctx, formatter):
+        commands = {}
+        for subcommand in self.list_commands(ctx):
+            cmd = self.get_command(ctx, subcommand)
+            if cmd is not None and not cmd.hidden:
+                commands[subcommand] = cmd
+        if not commands:
+            return
+        displayed: set = set()
+        for section, names in self.COMMAND_CATEGORIES:
+            items = []
+            for name in names:
+                if name in commands and name not in displayed:
+                    cmd = commands[name]
+                    items.append((name, cmd.get_short_help_str(limit=formatter.width)))
+                    displayed.add(name)
+            if items:
+                with formatter.section(section):
+                    formatter.write_dl(items)
+        leftover = [
+            (n, commands[n].get_short_help_str(limit=formatter.width))
+            for n in sorted(commands)
+            if n not in displayed
+        ]
+        if leftover:
+            with formatter.section("Other"):
+                formatter.write_dl(leftover)
 
 
 class HelpRecursiveGroup(CategorizedGroup):

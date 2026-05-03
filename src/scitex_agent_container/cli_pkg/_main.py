@@ -40,6 +40,7 @@ from .quota_group import quota_group
 from .recall_cmds import recall
 from .registry_group import registry_group
 from .render_cmds import render_attach, render_sbatch
+from .skills_group import skills_group
 from .snapshot_cmds import snapshot
 from .status_cmds import check_agent, health, list_agents, status
 from .template_group import template_group
@@ -54,7 +55,7 @@ COMMAND_CATEGORIES = [
     ("Network & Peer", ["network", "peer", "a2a"]),
     ("Registry & Events", ["registry", "event", "actions"]),
     ("Build & Install", ["image", "installation", "template"]),
-    ("Introspection", ["mcp", "list-python-apis"]),
+    ("Introspection", ["mcp", "list-python-apis", "skills"]),
 ]
 
 
@@ -123,6 +124,7 @@ main.add_command(quota_group)
 main.add_command(network_group)
 main.add_command(image_group)
 main.add_command(template_group)
+main.add_command(skills_group)
 
 main.add_command(install_group)  # registered as "install"
 # Add cron sub-verb on the install group (renamed leaf; keeps the
