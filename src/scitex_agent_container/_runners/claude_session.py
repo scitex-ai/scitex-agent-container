@@ -332,15 +332,20 @@ async def run(
             serve_inbound(inbox, host=a2a_host, port=a2a_port, stop=stop),
         )
 
-    if mission:
-        # Seed the inbox with the mission turn. exit_after=True only for
-        # foreground (--print-stream) mode so the runner exits when done.
-        mission_env = TurnEnvelope(
-            text=mission,
-            response=loop.create_future(),
-            exit_after=print_stream,
-        )
-        await inbox.put(mission_env)
+    # Spawn the SDK conversation task whenever the inbox has a producer:
+    # mission seeds it with the boot prompt, or a2a_port lets HTTP feed
+    # turns. Without a producer, no SDK client is needed.
+    if mission or a2a_port is not None:
+        if mission:
+            # Seed the inbox with the mission turn. exit_after=True only
+            # for foreground (--print-stream) mode so the runner exits
+            # when done.
+            mission_env = TurnEnvelope(
+                text=mission,
+                response=loop.create_future(),
+                exit_after=print_stream,
+            )
+            await inbox.put(mission_env)
         convo_task = asyncio.create_task(
             _run_conversation(
                 name,
@@ -352,7 +357,7 @@ async def run(
                 print_stream=print_stream,
             )
         )
-        if print_stream:
+        if mission and print_stream:
             # Foreground mode: wait for mission turn to complete, then exit.
             try:
                 await convo_task

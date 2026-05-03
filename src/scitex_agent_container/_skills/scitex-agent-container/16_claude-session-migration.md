@@ -124,8 +124,14 @@ Goal: flip the live YAML, keep the legacy one stoppable as fallback.
 
    ```bash
    sac stop $AGENT
-   sed -i.bak "s/runtime: claude-code/runtime: claude-session/" \
-       ~/.scitex/orochi/shared/agents/$AGENT/$AGENT.yaml
+   YAML=~/.scitex/orochi/shared/agents/$AGENT/$AGENT.yaml
+   cp $YAML $YAML.bak
+   sed -i "s/runtime: claude-code/runtime: claude-session/" $YAML
+   # Drop the multiplexer line — claude-session has no terminal:
+   sed -i "/^[[:space:]]*multiplexer:/d" $YAML
+   # The existing spec.a2a.port (e.g. 19108 on handyman-sonnet) is
+   # automatically reused by the runner's in-process /v1/turn endpoint.
+   # No sidecar needed.
    # If you captured a session id and want to seed it (otherwise
    # sac auto-discovers from state_dir/session_id on the next run):
    if [ -n "$LIVE_SID" ]; then
@@ -177,13 +183,17 @@ across rollback works the other way too.
 ## Order of fleet rollout
 
 Per-agent — no flag day. Migrate in escalating-blast-radius order;
-soak each one for at least one release cycle before the next:
+soak each one for at least one release cycle before the next.
+**Pre-flight (2026-05-03):** SDK runtime smoke-tested end-to-end on
+WSL + mba (macOS arm64) + nas (Linux x86_64) + spartan-bm198 (RHEL9
+HPC compute). All passed; auth via `~/.claude/.credentials.json`
+OAuth on every host.
 
-1. `dev-helper` (local, no fleet duties)
+1. `handyman-haiku` / `handyman-sonnet` (local pool members; lowest blast radius)
 2. `head-ywata-note-win` (local head; SSH fallback)
-3. `telegrammer-ywata-note-win` (single inbound channel)
+3. `telegrammer-ywata-note-win` (single inbound channel; reuses existing `a2a.port`)
 4. `head-mba` / `head-nas` (remote, one at a time)
-5. `head-spartan` (SLURM-tenant; most moving parts — last)
+5. `head-spartan` (SLURM-tenant; most moving parts — last; remember `module load OpenSSL/1.1` + unset stale `SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY` on compute nodes)
 
 ## Audit checklist (run before declaring "migrated")
 

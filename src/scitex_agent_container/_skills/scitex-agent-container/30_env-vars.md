@@ -26,19 +26,36 @@ exact authoritative list, run the audit snippet at the bottom.
 
 ## Paths
 
+Canonical agent YAML location (fleet shared via dotfiles):
+`~/.scitex/orochi/shared/agents/<name>/<name>.yaml` — the dir-as-SSoT
+resolver walks per-host `<host>/agents/`, then `shared/agents/`, then
+`agents/`. See `01_config-v3.md` for the full search path.
+
 | Variable | Purpose | Default | Type |
 |---|---|---|---|
 | `SCITEX_AGENT_CONTAINER_CONFIG_PATH` | Path to the YAML config. | bundled | path |
 | `SCITEX_AGENT_CONTAINER_YAML_DIRS` | Extra dirs scanned for YAML overrides (colon-separated). | unset | string (paths) |
 | `SCITEX_AGENT_CONTAINER_REGISTRY_DIR` | Directory where the container registers its presence. | `~/.scitex/agent-container/registry` | path |
+| `SCITEX_AGENT_CONTAINER_RUNTIME_DIR` | Per-agent runtime state root for the claude-session runner (pid / heartbeat.json / session.jsonl / quota.json / session_id). | `~/.scitex/agent-container/runtime` | path |
 | `SCITEX_AGENT_CONTAINER_SLURM_STATE_DIR` | Directory for SLURM-job state handoff. | `~/.scitex/agent-container/slurm` | path |
 | `SCITEX_AGENT_CACHE_DIR` | Agent-local cache directory. | `~/.cache/scitex-agent` | path |
 
 ## Credentials
 
+Auth precedence (highest → lowest) in `runtimes/_sdk_common.py::provision_anthropic_auth`:
+
+1. `ANTHROPIC_API_KEY` already in env (caller pre-set; SDK uses it as-is).
+2. `~/.claude/.credentials.json` Pro/Max OAuth (preferred — no per-token billing).
+3. `SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY_OAUTH` (CI-only OAuth token).
+4. `SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY` (CI-only API key, last resort).
+
+**Spartan compute-node gotcha (2026-05-03):** the user's `~/.bash.d/secrets/` exports `SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY` from a stale value. The SDK auth resolver picks API key over OAuth, so the expired key shadows a working OAuth and you get "401 Invalid auth" or "Command failed exit 1". Fix: `unset SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY` in the wrapper that starts the runner on Spartan.
+
 | Variable | Purpose | Default | Type |
 |---|---|---|---|
-| `SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY` | Anthropic API key used only under CI. | `—` | string (required in CI) |
+| `ANTHROPIC_API_KEY` | Read directly by the SDK if pre-set. The runner does NOT export this; the SDK calls `claude` CLI which falls back to `~/.claude/.credentials.json` OAuth when this is unset. | `—` | string |
+| `SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY_OAUTH` | OAuth bearer token for CI runs (rotate from `~/.claude/.credentials.json` via `jq -r .claudeAiOauth.accessToken`). | `—` | string (CI) |
+| `SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY` | Anthropic pay-per-token API key (last-resort CI fallback; off-budget). | `—` | string (CI) |
 | `SCITEX_AGENT_CONTAINER_TELEGRAM_BOT_TOKEN` | Telegram bot token for agent bridge. | `—` | string |
 
 ## Context compaction

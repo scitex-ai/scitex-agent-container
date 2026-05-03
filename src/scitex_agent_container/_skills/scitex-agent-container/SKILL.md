@@ -47,6 +47,7 @@ rich non-agentic status surface.
 - [09_slurm-tenant.md](09_slurm-tenant.md) — `runtime: slurm-tenant` for shared HPC allocations
 - [15_claude-session.md](15_claude-session.md) — `runtime: claude-session` SDK-native runtime + `POST /v1/turn` inbound endpoint
 - [16_claude-session-migration.md](16_claude-session-migration.md) — Migrating an agent to claude-session
+- [17_inbound-turn-endpoint.md](17_inbound-turn-endpoint.md) — `POST /v1/turn` wire format + sidecar replacement
 
 ### Workflows
 - [10_cli.md](10_cli.md) — CLI commands and Python API
