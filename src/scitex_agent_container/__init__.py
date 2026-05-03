@@ -21,7 +21,9 @@ from importlib.metadata import version as _version
 
 try:
     __version__ = _version("scitex-agent-container")
-except _PackageNotFoundError:  # stx-allow: fallback (reason: expected failure — see inline comment)
+except (
+    _PackageNotFoundError
+):  # stx-allow: fallback (reason: expected failure — see inline comment)
     from pathlib import Path as _Path
 
     _pyproject = _Path(__file__).parent.parent.parent / "pyproject.toml"
@@ -33,6 +35,7 @@ except _PackageNotFoundError:  # stx-allow: fallback (reason: expected failure �
                     __version__ = _line.split("=")[1].strip().strip('"')
                     break
 
+from scitex_agent_container import peer
 from scitex_agent_container.config import AgentConfig, load_config, validate_config
 from scitex_agent_container.lifecycle import (
     agent_logs,
@@ -57,6 +60,9 @@ __all__ = [
     "agent_logs",
     # Registry
     "Registry",
+    # Submodules with coherent identity (per
+    # general/03_interface_01_python-api/08_submodule-exposure.md):
+    "peer",
 ]
 
 # EOF

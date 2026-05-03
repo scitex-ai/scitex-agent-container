@@ -160,6 +160,12 @@ from .mcp_cmds import mcp as mcp_group  # noqa: E402
 
 main.add_command(mcp_group)
 
+# Peer noun-group — outbound A2A calls into other agents' /v1/turn.
+# Mirrors scitex_agent_container.peer Python surface.
+from .peer_cmds import peer_group  # noqa: E402
+
+main.add_command(peer_group)
+
 
 if __name__ == "__main__":
     main()
