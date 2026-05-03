@@ -59,11 +59,12 @@ def render_remote_launch(
     or ``ssh <host> 'bash -l -c <quoted>'``.
     """
     cmd = " ".join(shlex.quote(a) for a in runner_argv)
-    log = (
-        str(log_path)
-        if log_path
-        else f"$HOME/.scitex/agent-container/runtime/{agent_name}/runner.log"
-    )
+    # Use double-quoted path so $HOME / $(hostname) expand at remote
+    # bash exec time. Don't shlex.quote — that would single-quote and
+    # disable expansion. The path values we accept are package-known,
+    # not user-supplied, so quoting injection isn't a risk.
+    log_default = f'"$HOME/.scitex/agent-container/runtime/{agent_name}/runner.log"'
+    log = f'"{log_path}"' if log_path else log_default
 
     lines: list[str] = [
         "#!/usr/bin/env bash",
@@ -82,11 +83,19 @@ def render_remote_launch(
         ]
     )
     if detach:
+        # Detach so the runner survives SSH session close. macOS has
+        # nohup but no setsid; Linux has both. Use setsid when available
+        # (gives a fresh session leader so the runner doesn't die when
+        # the parent ssh exits); fall back to nohup alone otherwise.
+        # `&` + ssh-disconnect reparents the child to init either way.
         lines.extend(
             [
-                f'mkdir -p "$(dirname {shlex.quote(log)})"',
-                # setsid + nohup so the runner survives SSH session close.
-                f"setsid nohup {cmd} >>{shlex.quote(log)} 2>&1 < /dev/null &",
+                f'mkdir -p "$(dirname {log})"',
+                "if command -v setsid >/dev/null 2>&1; then",
+                f"  setsid nohup {cmd} >>{log} 2>&1 < /dev/null &",
+                "else",
+                f"  nohup {cmd} >>{log} 2>&1 < /dev/null &",
+                "fi",
                 "echo $!",
             ]
         )

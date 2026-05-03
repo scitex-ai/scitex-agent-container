@@ -128,6 +128,14 @@ class ClaudeSessionRuntime(RuntimeBase):
                 raise
             return rc == 0
 
+        if _is_remote_config(config):
+            # Layer 2: daemon mode over ssh. Render the launch script
+            # in detach mode (setsid + nohup → emits remote PID on
+            # stdout) and pipe it via ssh; the remote PID returned tells
+            # us the runner survived ssh disconnection. Subsequent
+            # is_running / stop / logs ssh in to inspect remote state.
+            return _ssh_daemon_start(config, argv)
+
         proc = subprocess.Popen(
             argv,
             stdout=subprocess.DEVNULL,
@@ -157,6 +165,8 @@ class ClaudeSessionRuntime(RuntimeBase):
 
     def stop(self, config: AgentConfig) -> bool:
         """SIGTERM the runner; fall back to SIGKILL after 5 s."""
+        if _is_remote_config(config):
+            return _ssh_stop(config)
         state_dir = self._state_dir(config)
         pid = _runner.read_pid(state_dir)
         if pid is None:
@@ -190,6 +200,8 @@ class ClaudeSessionRuntime(RuntimeBase):
 
     def is_running(self, config: AgentConfig) -> bool:
         """True if the recorded PID exists and the process is alive."""
+        if _is_remote_config(config):
+            return _ssh_is_running(config)
         state_dir = self._state_dir(config)
         pid = _runner.read_pid(state_dir)
         return pid is not None and _pid_alive(pid)
@@ -203,6 +215,8 @@ class ClaudeSessionRuntime(RuntimeBase):
         accumulated token totals. Falls back to the latest heartbeat
         if the agent hasn't started a conversation yet.
         """
+        if _is_remote_config(config):
+            return _ssh_logs(config, lines)
         state_dir = self._state_dir(config)
         rendered = _format_session_tail(state_dir, lines)
         if rendered:
@@ -316,6 +330,202 @@ def _first_mission(config: AgentConfig) -> str | None:
         if cmd:
             return cmd
     return None
+
+
+# --- Layer 2: ssh lifecycle helpers ---------------------------------------
+
+
+def _is_remote_config(config: AgentConfig) -> bool:
+    """Defensive remote-detection that survives stub configs in tests."""
+    remote = getattr(config, "remote", None)
+    return remote is not None and getattr(remote, "is_remote", False)
+
+
+def _build_ssh_command(
+    config: AgentConfig, *, remote_cmd: str | None = None
+) -> list[str]:
+    """Build an ssh command to ``config.remote`` (no remote command appended).
+
+    If ``remote_cmd`` is given, append ``bash -l -c <remote_cmd>`` so the
+    remote login shell sources .bashrc; otherwise leave the trailing args
+    off so the caller can append e.g. ``bash -l -s`` for stdin-piping.
+    """
+    cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15"]
+    if config.remote.hops:
+        from ._ssh_chain import render_ssh_chain, skip_local_hops
+
+        cmd.extend(render_ssh_chain(skip_local_hops(config.remote.hops)))
+    else:
+        if config.remote.key:
+            cmd.extend(["-i", config.remote.key])
+        if config.remote.port != 22:
+            cmd.extend(["-p", str(config.remote.port)])
+        target = (
+            f"{config.remote.user}@{config.remote.host}"
+            if config.remote.user
+            else config.remote.host
+        )
+        cmd.append(target)
+    if remote_cmd is not None:
+        # ssh joins argv with spaces and passes the result to the remote
+        # shell as one big string, so a multi-token command argument to
+        # `bash -l -c` would get torn apart. Wrap the command in single
+        # quotes so ssh's join leaves it intact.
+        import shlex as _shlex
+
+        cmd.extend(["bash", "-l", "-c", _shlex.quote(remote_cmd)])
+    return cmd
+
+
+def _remote_state_path(name: str) -> str:
+    """Bash expression for the per-agent state dir on the remote.
+
+    Uses the remote's ``$HOME`` at runtime so we don't hard-code paths.
+    The runner default is ``~/.scitex/agent-container/runtime/<name>``
+    unless the per-host hook exports ``SCITEX_AGENT_CONTAINER_RUNTIME_DIR``.
+    """
+    return f'"$HOME/.scitex/agent-container/runtime/{name}"'
+
+
+def _ssh_exec_command(config: AgentConfig, remote_cmd: str, *, timeout: int = 30):
+    """Run a shell snippet on the remote in a login shell."""
+    return subprocess.run(
+        _build_ssh_command(config, remote_cmd=remote_cmd),
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+def _ssh_is_running(config: AgentConfig) -> bool:
+    """ssh + read remote pid file + ``kill -0`` on remote PID."""
+    state = _remote_state_path(config.name)
+    cmd = (
+        f"PID=$(cat {state}/pid 2>/dev/null) || exit 1; "
+        'kill -0 "$PID" 2>/dev/null && echo alive || exit 1'
+    )
+    try:
+        res = _ssh_exec_command(config, cmd, timeout=15)
+    except subprocess.TimeoutExpired:  # stx-allow: fallback (reason: ssh down → treat as not-running rather than crash status callers)
+        return False
+    return "alive" in (res.stdout or "")
+
+
+def _ssh_stop(config: AgentConfig) -> bool:
+    """ssh + SIGTERM the remote pid; SIGKILL after 5s; clean state dir."""
+    state = _remote_state_path(config.name)
+    cmd = (
+        f"PID=$(cat {state}/pid 2>/dev/null); "
+        '[ -z "$PID" ] && exit 0; '
+        'kill -TERM "$PID" 2>/dev/null; '
+        "for i in $(seq 1 50); do "
+        '  kill -0 "$PID" 2>/dev/null || break; '
+        "  sleep 0.1; "
+        "done; "
+        'kill -0 "$PID" 2>/dev/null && kill -KILL "$PID" 2>/dev/null; '
+        f"rm -f {state}/pid {state}/heartbeat.json 2>/dev/null; "
+        "echo done"
+    )
+    try:
+        res = _ssh_exec_command(config, cmd, timeout=20)
+    except (
+        subprocess.TimeoutExpired
+    ):  # stx-allow: fallback (reason: hung remote treated as stop-failed)
+        return False
+    return "done" in (res.stdout or "")
+
+
+def _ssh_logs(config: AgentConfig, lines: int) -> str:
+    """ssh + cat remote session.jsonl tail; render inline."""
+    state = _remote_state_path(config.name)
+    raw_tail = lines * 4
+    cmd = (
+        f"if [ -f {state}/session.jsonl ]; then "
+        f"  tail -n {raw_tail} {state}/session.jsonl; "
+        f"elif [ -f {state}/heartbeat.json ]; then "
+        f'  echo "===HEARTBEAT==="; cat {state}/heartbeat.json; '
+        f'else echo "===EMPTY==="; fi'
+    )
+    try:
+        res = _ssh_exec_command(config, cmd, timeout=15)
+    except subprocess.TimeoutExpired:
+        return f"(ssh timeout reading remote logs from {config.remote.host})"
+    text = res.stdout or ""
+    if "===EMPTY===" in text:
+        return "(no session.jsonl yet on remote)"
+    if text.startswith("===HEARTBEAT==="):
+        return text.replace("===HEARTBEAT===", "").strip()
+    import json as _json
+
+    out_lines: list[str] = []
+    kept = text.strip().split("\n")[-lines:]
+    for raw in kept:
+        try:
+            ev = _json.loads(raw)
+        except (ValueError, _json.JSONDecodeError):
+            continue
+        kind = ev.get("type", "?")
+        if kind == "user":
+            out_lines.append(f"[user] {ev.get('text', '')}")
+        elif kind == "assistant":
+            out_lines.append(f"[assistant] {ev.get('text', '')}")
+        elif kind == "result":
+            usage = ev.get("usage") or {}
+            out_lines.append(
+                f"[result] sess={ev.get('session_id', '?')} "
+                f"in={usage.get('input_tokens', 0)} "
+                f"out={usage.get('output_tokens', 0)}"
+            )
+        elif kind == "error":
+            out_lines.append(f"[error/{ev.get('kind', '?')}] {ev.get('detail', '')}")
+    return "\n".join(out_lines) if out_lines else "(no parseable events on remote)"
+
+
+def _ssh_daemon_start(config: AgentConfig, runner_argv: list[str]) -> bool:
+    """Launch the runner detached on the remote; verify pid file lands."""
+    from .._runners._remote_launch import render_remote_launch
+
+    remote_argv = list(runner_argv)
+    if remote_argv and remote_argv[0] == sys.executable:
+        remote_argv[0] = "python3"
+    script = render_remote_launch(
+        runner_argv=remote_argv,
+        agent_name=config.name,
+        state_root=None,
+        detach=True,
+    )
+    ssh_cmd = _build_ssh_command(config) + ["bash", "-l", "-s"]
+    try:
+        proc = subprocess.run(
+            ssh_cmd,
+            input=script,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        return False
+    if proc.returncode != 0:
+        return False
+    # The script's `echo $!` reports the bash subshell's last-backgrounded
+    # PID, which doesn't always equal the Python runner's getpid() once
+    # nohup/setsid + fork+exec land. Don't enforce match — just verify
+    # the runner wrote *some* pid file and a live process exists behind
+    # it. The runner writes its own canonical pid via getpid().
+    state = _remote_state_path(config.name)
+    check_cmd = (
+        "for i in $(seq 1 50); do "
+        f"  P=$(cat {state}/pid 2>/dev/null); "
+        '  if [ -n "$P" ] && kill -0 "$P" 2>/dev/null; then echo ok; exit 0; fi; '
+        "  sleep 0.1; "
+        "done; "
+        "echo nopid"
+    )
+    try:
+        check = _ssh_exec_command(config, check_cmd, timeout=15)
+    except subprocess.TimeoutExpired:
+        return False
+    return "ok" in (check.stdout or "")
 
 
 def _ssh_foreground_dispatch(

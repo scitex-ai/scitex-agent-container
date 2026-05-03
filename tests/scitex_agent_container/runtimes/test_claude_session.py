@@ -313,14 +313,9 @@ class TestArgvComposition:
                 captured["argv"] = argv
                 captured["kwargs"] = kw
                 self.pid = 12345
-                # Capture writes to stdin so the test can assert
-                # the script content piped over.
                 import io
 
                 self.stdin = io.BytesIO()
-                # Stash the buffer on captured so we can read it
-                # after .close() — io.BytesIO.close() throws away,
-                # so override close to no-op for the test.
                 self.stdin.close = lambda: captured.update(
                     script=self.stdin.getvalue().decode("utf-8")
                 )
@@ -331,7 +326,13 @@ class TestArgvComposition:
             def send_signal(self, _s):
                 pass
 
-        with patch.object(adapter.subprocess, "Popen", _FakePopen):
+        # Patch _ssh_is_running so the start() pre-check returns False
+        # without needing to mock subprocess.run shape; then patch Popen
+        # to capture the foreground ssh-pipe call we actually care about.
+        with (
+            patch.object(adapter, "_ssh_is_running", return_value=False),
+            patch.object(adapter.subprocess, "Popen", _FakePopen),
+        ):
             ok = adapter.ClaudeSessionRuntime().start(cfg, foreground=True)  # type: ignore[arg-type]
         assert ok is True
         argv = captured["argv"]
