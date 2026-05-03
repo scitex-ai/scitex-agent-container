@@ -73,6 +73,16 @@ def state_root(tmp_path: Path, monkeypatch) -> Path:
 
     monkeypatch.setattr(runner, "DEFAULT_STATE_ROOT", tmp_path)
     monkeypatch.setattr(_session_state, "DEFAULT_STATE_ROOT", tmp_path)
+    # Stub build_sdk_options so the conversation loop doesn't hit the
+    # real Anthropic auth resolver (which fails in CI without creds).
+    from types import SimpleNamespace
+
+    from scitex_agent_container.runtimes import _sdk_common
+
+    def _fake_build(name, **kw):
+        return SimpleNamespace(name=name, **kw)
+
+    monkeypatch.setattr(_sdk_common, "build_sdk_options", _fake_build)
     return tmp_path
 
 
