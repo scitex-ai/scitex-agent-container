@@ -1,7 +1,8 @@
 ---
-name: wsl-connectivity
-description: WSL ↔ Fleet-Hub Connectivity (todo#457) — see file body for details.
-tags: [scitex-agent-container, scitex-package]
+description: |
+  [TOPIC] WSL ↔ Fleet-Hub Connectivity (todo#457)
+  [DETAILS] WSL ↔ Fleet-Hub Connectivity (todo#457) — see file body for details..
+tags: [scitex-agent-container-wsl-connectivity]
 ---
 
 # WSL ↔ Fleet-Hub Connectivity (todo#457)

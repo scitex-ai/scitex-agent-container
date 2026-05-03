@@ -1,7 +1,8 @@
 ---
-name: claude-session-inbound-turn
-description: Reference for the in-runner HTTP inbound-turn endpoint served by the claude-session runtime when ``spec.a2a.port`` is declared. Wire format, semantics, curl examples, and how it differs from the legacy A2A sidecar.
-tags: [scitex-agent-container, claude-session, a2a, inbound]
+description: |
+  [TOPIC] Inbound-turn HTTP endpoint (`POST /v1/turn`)
+  [DETAILS] Reference for the in-runner HTTP inbound-turn endpoint served by the claude-session runtime when ``spec.a2a.port`` is declared. Wire format, semantics, curl examples, and how it differs from the legacy A2A sidecar..
+tags: [scitex-agent-container-inbound-turn-endpoint, claude-session, a2a, inbound]
 ---
 
 # Inbound-turn HTTP endpoint (`POST /v1/turn`)

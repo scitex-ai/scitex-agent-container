@@ -1,7 +1,8 @@
 ---
-name: templates
-description: Templates and Examples — see file body for details.
-tags: [scitex-agent-container, scitex-package]
+description: |
+  [TOPIC] Templates and Examples
+  [DETAILS] Templates and Examples — see file body for details..
+tags: [scitex-agent-container-templates]
 ---
 
 # Templates and Examples

@@ -1,7 +1,8 @@
 ---
-name: claude-session-migration
-description: Step-by-step recipe for migrating an existing claude-code agent (CLI runtime, tmux) to claude-session (SDK runtime, no tmux). Includes a parity-check phase, a controlled cutover with the original kept alongside as fallback, observability commands, and a tested rollback. Use when flipping a fleet agent from the legacy CLI runtime to the SDK runtime.
-tags: [scitex-agent-container, claude-session, migration, fleet]
+description: |
+  [TOPIC] Migrating an existing agent to `runtime: claude-session`
+  [DETAILS] Step-by-step recipe for migrating an existing claude-code agent (CLI runtime, tmux) to claude-session (SDK runtime, no tmux). Includes a parity-check phase, a controlled cutover with the original kept alongside as fal....
+tags: [scitex-agent-container-claude-session-migration, claude-session, migration, fleet]
 ---
 
 # Migrating an existing agent to `runtime: claude-session`

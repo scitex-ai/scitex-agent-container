@@ -1,7 +1,8 @@
 ---
-name: env-injection-ports
-description: Env-injection ports for agents — see file body for details.
-tags: [scitex-agent-container, scitex-package]
+description: |
+  [TOPIC] Env-injection ports for agents
+  [DETAILS] Env-injection ports for agents — see file body for details..
+tags: [scitex-agent-container-env-injection-ports]
 ---
 
 # Env-injection ports for agents

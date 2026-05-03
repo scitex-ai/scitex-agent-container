@@ -1,7 +1,8 @@
 ---
-name: observability-contract
-description: How `sac show-status <name> --json` merges registry + agent_meta + event_log into a single best-effort blob that downstream orchestrators (e.g. scitex-orochi) consume without direct coupling — every field has a default fallback so partial failures do not raise.
-tags: [scitex-agent-container, observability]
+description: |
+  [TOPIC] Observability contract
+  [DETAILS] How `sac show-status <name> --json` merges registry + agent_meta + event_log into a single best-effort blob that downstream orchestrators (e.g. scitex-orochi) consume without direct coupling — every field has a defaul....
+tags: [scitex-agent-container-observability, observability]
 ---
 
 # Observability contract

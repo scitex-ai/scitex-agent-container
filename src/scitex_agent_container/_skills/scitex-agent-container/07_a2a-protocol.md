@@ -1,7 +1,8 @@
 ---
-name: a2a-protocol
-description: A2A protocol — native sac surface — see file body for details.
-tags: [scitex-agent-container, scitex-package]
+description: |
+  [TOPIC] A2A protocol — native sac surface
+  [DETAILS] A2A protocol — native sac surface — see file body for details..
+tags: [scitex-agent-container-a2a-protocol]
 ---
 
 # A2A protocol — native sac surface

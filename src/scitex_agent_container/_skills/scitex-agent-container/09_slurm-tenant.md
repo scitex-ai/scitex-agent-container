@@ -1,7 +1,8 @@
 ---
-name: slurm-tenant
-description: SLURM tenant runtime — many agents in one allocation — see file body for details.
-tags: [scitex-agent-container, scitex-package]
+description: |
+  [TOPIC] SLURM tenant runtime — many agents in one allocation
+  [DETAILS] SLURM tenant runtime — many agents in one allocation — see file body for details..
+tags: [scitex-agent-container-slurm-tenant]
 ---
 
 # SLURM tenant runtime — many agents in one allocation

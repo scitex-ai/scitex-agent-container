@@ -1,7 +1,8 @@
 ---
-name: claude-session-runtime
-description: SDK-native agent runtime — drives claude-agent-sdk directly instead of running the claude CLI inside tmux. No TUI prompts, no auto-accept, no pane-state classifier. Project-local agent + state discovery so test fixtures live in the repo. Foreground mode streams assistant output to your terminal; daemon mode heartbeats and writes a transcript. Use when you want programmatic, debuggable, OAuth-flat-rate Claude execution without the CLI runtime's screen-scraping baggage.
-tags: [scitex-agent-container, claude-session, sdk]
+description: |
+  [TOPIC] `runtime: claude-session`
+  [DETAILS] SDK-native agent runtime — drives claude-agent-sdk directly instead of running the claude CLI inside tmux. No TUI prompts, no auto-accept, no pane-state classifier. Project-local agent + state discovery so test fixtur....
+tags: [scitex-agent-container-claude-session, claude-session, sdk]
 ---
 
 # `runtime: claude-session`

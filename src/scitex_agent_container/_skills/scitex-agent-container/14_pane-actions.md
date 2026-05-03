@@ -1,7 +1,8 @@
 ---
-name: pane-actions
-description: Typed, logged vocabulary for pane-mediated agent operations — each PaneAction subclass implements snapshot/precheck/send/is_complete and run_action records every attempt to the host-wide SQLite store at ~/.scitex/agent-container/actions.db with one of five outcome classifications.
-tags: [scitex-agent-container, pane-actions]
+description: |
+  [TOPIC] PaneActions
+  [DETAILS] Typed, logged vocabulary for pane-mediated agent operations — each PaneAction subclass implements snapshot/precheck/send/is_complete and run_action records every attempt to the host-wide SQLite store at ~/.scitex/agen....
+tags: [scitex-agent-container-pane-actions, pane-actions]
 ---
 
 # PaneActions

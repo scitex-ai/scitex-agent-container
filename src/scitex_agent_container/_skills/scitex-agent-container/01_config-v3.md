@@ -1,7 +1,8 @@
 ---
-name: agent-container-config-v3
-description: v3 YAML config format — apiVersion scitex-agent-container/v3, dir-as-SSoT (agent name from parent directory, not metadata.name), auto-derived fields, src_*.<ext> file deployment.
-tags: [scitex-agent-container, scitex-package]
+description: |
+  [TOPIC] v3 Config Format
+  [DETAILS] v3 YAML config format — apiVersion scitex-agent-container/v3, dir-as-SSoT (agent name from parent directory, not metadata.name), auto-derived fields, src_*.<ext> file deployment..
+tags: [scitex-agent-container-config-v3]
 ---
 
 # v3 Config Format
