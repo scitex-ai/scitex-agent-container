@@ -1,8 +1,8 @@
 ---
 name: scitex-agent-container
 description: |
-  [WHAT] Declarative YAML-based AI agent lifecycle management — define an agent in one YAML manifest (runtime, model, MCP, env, health, restart, remote SSH host) and `sac start` brings it up in tmux/screen with auto-accept TUI handling, SSH remote deployment, sbatch-based SLURM submission with walltime auto-resubmit, A2A protocol sidecar, and live pane-state inspection.
-  [WHEN] Use when the user asks to "launch a Claude Code agent", "spawn a fleet of coding agents", "manage agent lifecycle", "run an agent on a remote host / HPC", "submit an agent as a SLURM job", "auto-accept Claude permission prompts", "wire MCP servers into an agent", or mentions `sac start`, `scitex-agent-container`, agent YAML, fleet head/worker, head-mba / head-spartan / head-nas.
+  [WHAT] Declarative YAML-based AI agent lifecycle management — define an agent in one YAML manifest (runtime, model, MCP, env, health, restart, remote SSH host) and `sac agent start` brings it up in tmux/screen with auto-accept TUI handling, SSH remote deployment, sbatch-based SLURM submission with walltime auto-resubmit, A2A protocol sidecar, and live pane-state inspection.
+  [WHEN] Use when the user asks to "launch a Claude Code agent", "spawn a fleet of coding agents", "manage agent lifecycle", "run an agent on a remote host / HPC", "submit an agent as a SLURM job", "auto-accept Claude permission prompts", "wire MCP servers into an agent", or mentions `sac agent start`, `scitex-agent-container`, agent YAML, fleet head/worker, head-mba / head-spartan / head-nas.
   [HOW] `pip install scitex-agent-container` then `import scitex_agent_container`; see leaf skills for details.
 tags: [scitex-agent-container]
 primary_interface: cli
@@ -66,7 +66,7 @@ rich non-agentic status surface.
 - [12_wsl-connectivity.md](12_wsl-connectivity.md) — WSL connectivity notes
 
 ### Reference
-- [13_observability.md](13_observability.md) — `sac show-status` JSON contract
+- [13_observability.md](13_observability.md) — `sac agent status` JSON contract
 - [14_pane-actions.md](14_pane-actions.md) — Typed pane-mediated operations
 
 ### Lessons
@@ -80,7 +80,7 @@ rich non-agentic status surface.
 
 ```bash
 pip install scitex-agent-container
-sac start my-agent.yaml
-sac show-status my-agent --json | jq .pane_state
-sac attach my-agent           # Ctrl-B D to detach
+sac agent start my-agent.yaml
+sac agent status my-agent --json | jq .pane_state
+sac agent attach my-agent           # Ctrl-B D to detach
 ```

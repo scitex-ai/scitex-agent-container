@@ -23,7 +23,7 @@ Example YAML::
       claude:
         flags: [--dangerously-skip-permissions]
 
-Then ``sac start dev-helper`` runs ``claude`` in a fresh tmux session
+Then ``sac agent start dev-helper`` runs ``claude`` in a fresh tmux session
 inside the ``dev-pool`` reservation's allocation.
 """
 

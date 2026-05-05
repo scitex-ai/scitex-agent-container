@@ -267,7 +267,7 @@ class SchedulingSpec:
 
     ``mode`` controls effective-id composition and launch-skip behavior:
       * ``per-host`` (default): agent is started on every host that runs
-        ``sac start <name>``; the effective id is ``<metadata.name>-<HOST>``
+        ``sac agent start <name>``; the effective id is ``<metadata.name>-<HOST>``
         unless the name already ends with ``-<HOST>``.
       * ``singleton``: exactly one instance fleet-wide. The effective id
         stays as the bare ``<metadata.name>``. Only launched on

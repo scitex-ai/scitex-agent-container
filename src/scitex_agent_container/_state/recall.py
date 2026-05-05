@@ -1,6 +1,6 @@
 """Recall context from a Claude Code session jsonl.
 
-Used by ``sac recall <jsonl>`` to summarize a previous session — typically
+Used by ``sac agent recall <jsonl>`` to summarize a previous session — typically
 the dead transcript left behind after a host crash — so a fresh agent
 can re-read the salient state without paying the cost of a full
 ``--continue``.

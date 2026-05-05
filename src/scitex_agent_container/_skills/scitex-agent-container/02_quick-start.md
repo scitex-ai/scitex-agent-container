@@ -1,7 +1,7 @@
 ---
 description: |
   [TOPIC] First agent in 30 seconds
-  [DETAILS] Minimal YAML + sac start + sac show-status + sac stop. Two flavors: local SDK agent and remote agent on mba/spartan via ssh.
+  [DETAILS] Minimal YAML + sac agent start + sac agent status + sac agent stop. Two flavors: local SDK agent and remote agent on mba/spartan via ssh.
 tags: [scitex-agent-container-quick-start]
 ---
 
@@ -22,7 +22,7 @@ spec:
     - command: "Reply with the string 'hello-ok' and nothing else."
 EOF
 
-sac start hello --foreground       # streams assistant chunks to stdout, exits when done
+sac agent start hello --foreground       # streams assistant chunks to stdout, exits when done
 ```
 
 Expected: `hello-ok` appears in your terminal, runner exits with rc=0.
@@ -40,14 +40,14 @@ spec:
 ```
 
 ```bash
-sac start worker                    # daemon mode (returns once runner writes its PID)
-sac show-status worker              # heartbeat + sdk_session block
+sac agent start worker                    # daemon mode (returns once runner writes its PID)
+sac agent status worker              # heartbeat + sdk_session block
 curl -sX POST http://127.0.0.1:18888/v1/turn \
      -H 'Content-Type: application/json' \
      -d '{"text": "what is 2+2?"}'
 # → {"reply": "4", "exit_after": false}
-sac show-logs worker                # rendered transcript
-sac stop worker                     # graceful SIGTERM
+sac agent logs worker                # rendered transcript
+sac agent stop worker                     # graceful SIGTERM
 ```
 
 ## Remote agent on another host
@@ -65,10 +65,10 @@ spec:
 ```
 
 ```bash
-sac start head-mba                  # ssh → render bash → runner survives ssh disconnect
-sac show-status head-mba           # ssh-reads remote state
-sac show-logs head-mba             # ssh-tails remote session.jsonl
-sac stop head-mba                   # ssh + SIGTERM remote pid
+sac agent start head-mba                  # ssh → render bash → runner survives ssh disconnect
+sac agent status head-mba           # ssh-reads remote state
+sac agent logs head-mba             # ssh-tails remote session.jsonl
+sac agent stop head-mba                   # ssh + SIGTERM remote pid
 ```
 
 Drive a remote agent's `/v1/turn` from Python:

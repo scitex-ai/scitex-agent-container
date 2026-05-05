@@ -12,16 +12,16 @@ Both the long form `scitex-agent-container` and the short alias `sac` are entry 
 ## Lifecycle
 
 ```bash
-sac start <config.yaml>          # Submit/launch one agent from YAML (dir-as-SSoT)
-sac start --all                  # Start every agent under SCITEX_AGENT_CONTAINER_YAML_DIRS
-sac start --no-preflight         # Skip SSH preflight checks (HPC where module load is needed)
-sac start --force                # Stop existing instance first then start fresh
-sac stop <name|yaml>             # Stop a running agent (or YAML path; resolves to name)
-sac stop --all                   # Stop every registered agent
-sac stop --force                 # Tolerate stale registry / ghost screen state
-sac restart <name>               # Stop then start
-sac clean-registry                      # Remove stale registry entries (where the screen is already gone)
-sac validate <config.yaml>       # Validate YAML against the v3 schema
+sac agent start <config.yaml>          # Submit/launch one agent from YAML (dir-as-SSoT)
+sac agent start --all                  # Start every agent under SCITEX_AGENT_CONTAINER_YAML_DIRS
+sac agent start --no-preflight         # Skip SSH preflight checks (HPC where module load is needed)
+sac agent start --force                # Stop existing instance first then start fresh
+sac agent stop <name|yaml>             # Stop a running agent (or YAML path; resolves to name)
+sac agent stop --all                   # Stop every registered agent
+sac agent stop --force                 # Tolerate stale registry / ghost screen state
+sac agent restart <name>               # Stop then start
+sac registry clean                      # Remove stale registry entries (where the screen is already gone)
+sac agent validate <config.yaml>       # Validate YAML against the v3 schema
 ```
 
 ## Inspection
@@ -31,21 +31,21 @@ sac list                         # All registered agents (table)
 sac list --json                  # Machine-readable
 sac list --capability X          # Filter by capability label
 sac list --machine Y             # Filter by machine label
-sac show-status [name]                # Rich status: pane state, hooks, listen ports, snapshot
-sac show-status [name] --json         # Same, JSON
-sac inspect <name>               # Live pane-state classification (idle/working/auth/...)
-sac inspect <name> --json        # Same, JSON
-sac show-logs <name> [-n LINES]       # Recent agent output (capture-pane / journalctl / tmux capture)
-sac check-health <name>                # Run a health check on an agent
-sac attach <name>                # Attach to the agent's multiplexer session (Ctrl-B D to detach)
-sac find <capability>            # Find agents with a specific capability label across YAML roots
+sac agent status [name]                # Rich status: pane state, hooks, listen ports, snapshot
+sac agent status [name] --json         # Same, JSON
+sac agent inspect <name>               # Live pane-state classification (idle/working/auth/...)
+sac agent inspect <name> --json        # Same, JSON
+sac agent logs <name> [-n LINES]       # Recent agent output (capture-pane / journalctl / tmux capture)
+sac agent health <name>                # Run a health check on an agent
+sac agent attach <name>                # Attach to the agent's multiplexer session (Ctrl-B D to detach)
+sac agent find <capability>            # Find agents with a specific capability label across YAML roots
 ```
 
 ## SLURM
 
 ```bash
-sac render-sbatch <yaml>         # Print the sbatch wrapper text (debug; doesn't submit)
-sac render-attach <name>         # Print the srun --pty command that reattaches
+sac template render-sbatch <yaml>         # Print the sbatch wrapper text (debug; doesn't submit)
+sac template render-attach <name>         # Print the srun --pty command that reattaches
 ```
 
 For multi-tenant SLURM (`runtime: slurm-tenant`), see `09_slurm-tenant.md` and the companion `scitex-hpc reservations` CLI.
@@ -57,14 +57,14 @@ sac a2a serve <agent.yaml>...    # Foreground A2A server for one or more agents
 sac a2a doctor <agent.yaml>      # Probe an agent's AgentCard endpoint, report health
 ```
 
-Auto-launch is wired via `spec.a2a.port` — `sac start` spawns the A2A server as a sidecar subprocess after the multiplexer is up. See `07_a2a-protocol.md`.
+Auto-launch is wired via `spec.a2a.port` — `sac agent start` spawns the A2A server as a sidecar subprocess after the multiplexer is up. See `07_a2a-protocol.md`.
 
 ## Build & deployment
 
 ```bash
-sac build-image                        # Build container base image
-sac check <yaml>                 # Run preflight checks (SSH reachability, claude on PATH, …)
-sac probe-network                # Probe WSL → fleet-hub connectivity (todo#457)
+sac image build                        # Build container base image
+sac agent check <yaml>                 # Run preflight checks (SSH reachability, claude on PATH, …)
+sac network probe                # Probe WSL → fleet-hub connectivity (todo#457)
 ```
 
 ## Operational tools
@@ -75,9 +75,9 @@ sac actions query --agent X --limit 5 # Query the host-wide attempt log
 sac actions stats --agent X --since 1h # Aggregate stats
 sac actions purge                     # Purge the attempt log
 sac account                           # Manage stored Claude Code accounts (rotation)
-sac watch-quota                       # Monitor quota and auto-rotate credentials
-sac take-snapshot                          # Take a self-snapshot for AGENT, print as JSON
-sac ingest-hook-event                        # Append a Claude Code hook event to the per-agent ring buffer
+sac quota watch                       # Monitor quota and auto-rotate credentials
+sac agent take-snapshot                          # Take a self-snapshot for AGENT, print as JSON
+sac event ingest                        # Append a Claude Code hook event to the per-agent ring buffer
 ```
 
 ## Discoverability
@@ -106,7 +106,7 @@ The CLI is a thin wrapper over these — every command corresponds to a function
 
 ## Conventions
 
-- **Noun-verb subcommand structure** for grouped operations (`sac actions run`, `sac a2a serve`). Single-word commands are top-level (`sac start`, `sac stop`).
+- **Noun-verb subcommand structure** for grouped operations (`sac actions run`, `sac a2a serve`). Single-word commands are top-level (`sac agent start`, `sac agent stop`).
 - **`--json` always available** on inspection commands so dashboards can consume them.
 - **`--force` is universal** for destructive ops — never silently overwrites without it.
 - **Both `<name>` and `<yaml-path>` accepted** by `start`/`stop`/`restart`/`validate` — the CLI resolves yaml paths to agent names internally.

@@ -91,9 +91,9 @@ def status(ctx: click.Context, name: str | None, as_json: bool, terse: bool) -> 
 
     \b
     Example:
-      $ sac show-status
-      $ sac show-status head-ywata-note-win
-      $ sac show-status --json
+      $ sac agent status
+      $ sac agent status head-ywata-note-win
+      $ sac agent status --json
     """
     use_json = _json_flag(ctx, as_json) or terse
     registry = Registry()
@@ -219,8 +219,8 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
 
     \b
     Example:
-      $ sac check-health head-ywata-note-win
-      $ sac check-health head-ywata-note-win --json
+      $ sac agent health head-ywata-note-win
+      $ sac agent health head-ywata-note-win --json
     """
     use_json = _json_flag(ctx, as_json)
     registry = Registry()
@@ -296,8 +296,8 @@ def check_agent(ctx: click.Context, name: str, as_json: bool) -> None:
 
     \b
     Example:
-      $ sac inspect head-ywata-note-win
-      $ sac inspect head-ywata-note-win --json
+      $ sac agent inspect head-ywata-note-win
+      $ sac agent inspect head-ywata-note-win --json
     """
     use_json = _json_flag(ctx, as_json)
     registry = Registry()

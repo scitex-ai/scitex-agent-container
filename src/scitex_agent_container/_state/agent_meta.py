@@ -457,7 +457,7 @@ def _read_sdk_session_state(name: str, workdir: str) -> dict | None:
     # with the write path).
     # Walk from cwd, NOT workdir: ``workdir`` may point at a /tmp
     # scratch dir while the agent's YAML lives under a project-scope
-    # repo. cwd is what discovery already uses on ``sac start``, so
+    # repo. cwd is what discovery already uses on ``sac agent start``, so
     # the read here stays symmetric with the write.
     try:
         from scitex_config._ecosystem import local_state
@@ -894,7 +894,7 @@ def collect_rich(
         # ``None`` for non-SDK agents; a dict for claude-session agents
         # exposing the SDK session id, accumulated per-turn token totals
         # (read from ``runtime/<name>/quota.json``), and the latest
-        # heartbeat state. Lets ``sac show-status --json`` give parity
+        # heartbeat state. Lets ``sac agent status --json`` give parity
         # surface to the claude-code runtime without conflating the
         # rate-limit fields below (which come from a different source).
         "sdk_session": _read_sdk_session_state(name, workdir),

@@ -227,7 +227,7 @@ def setup_settings_json(config: AgentConfig, workdir: str) -> None:
 
     # Register sac-statusline as the statusLine command so the JSON payload
     # is persisted to ~/.scitex/agent-container/statusline/<agent>.json each
-    # turn. sac show-status prefers this authoritative source over the JSONL
+    # turn. sac agent status prefers this authoritative source over the JSONL
     # approximation (sac issue #52). No-op if claude-hud is absent — the
     # script falls back to a minimal echo.
     settings["statusLine"] = {"type": "command", "command": "sac-statusline"}

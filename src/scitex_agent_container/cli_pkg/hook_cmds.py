@@ -69,8 +69,8 @@ def hook_event(kind: str, agent_flag: str) -> None:
 
     \b
     Example:
-      $ echo '{"tool":"Read"}' | sac ingest-hook-event PreToolUse
-      $ echo '{}' | sac ingest-hook-event Stop --agent head-ywata-note-win
+      $ echo '{"tool":"Read"}' | sac event ingest PreToolUse
+      $ echo '{}' | sac event ingest Stop --agent head-ywata-note-win
     """
     # stx-allow: fallback (reason: hook handler must never crash the host agent; any error in stdin read, JSON parse, or event append is swallowed so the tool call is not aborted)
     try:

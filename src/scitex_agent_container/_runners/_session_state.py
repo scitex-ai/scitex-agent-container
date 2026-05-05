@@ -7,7 +7,7 @@ the runtime adapter, and the runner itself can all import without
 pulling in the SDK conversation loop.
 
 Atomic writes use the tmp + ``Path.replace`` pattern throughout so a
-concurrent reader (``sac show-status``) never sees a half-formed
+concurrent reader (``sac agent status``) never sees a half-formed
 file.
 """
 
@@ -29,7 +29,7 @@ DEFAULT_TICK_SECONDS = 10.0
 
 # State-machine vocabulary used by both the runner and the runtime
 # adapter's ``status`` surface. Keep tight: each value must mean exactly
-# one thing to ``sac show-status`` consumers.
+# one thing to ``sac agent status`` consumers.
 STATE_STARTING = "starting"
 STATE_IDLE = "idle"
 STATE_WORKING = "working"
@@ -144,7 +144,7 @@ def read_quota(state_dir: Path) -> dict:
 def accumulate_quota(state_dir: Path, usage: dict | None) -> dict:
     """Add one ``ResultMessage.usage`` block to the running totals.
 
-    Atomic via tmp+rename so a concurrent ``sac show-status`` reader
+    Atomic via tmp+rename so a concurrent ``sac agent status`` reader
     never sees a partial write. Returns the new totals.
     """
     if not usage:

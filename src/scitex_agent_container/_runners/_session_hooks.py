@@ -5,7 +5,7 @@ Wires Anthropic's hook event taxonomy
 to ``scitex_agent_container.event_log.append_event`` using the same
 record schema the legacy CLI runtime publishes via
 ``sac record-hook-event``. Keeping that schema identical means
-downstream consumers (``sac show-status``, ``event_log.summarize``,
+downstream consumers (``sac agent status``, ``event_log.summarize``,
 fleet dashboards) work unchanged when an agent flips runtimes.
 
 Hook callbacks are *async no-ops on the wire*: they return ``{}`` to
