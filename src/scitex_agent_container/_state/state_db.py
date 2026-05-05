@@ -496,6 +496,135 @@ def gc_dead_instances(
     return counters
 
 
+# ---------------------------------------------------------------------------
+# Cross-host export / import (F-CS14)
+#
+# Each host writes locally; orochi (a separate concern) pulls deltas
+# via ssh and aggregates them. sac never reaches out — orochi-agnostic
+# by design.
+#
+#   ssh <peer> sac db export --since <ts> --format json
+#
+# Wire format:
+#   {
+#     "schema": 1,
+#     "exported_at": "<iso>",
+#     "since": "<iso>" | null,
+#     "host": "<canonical>",   # the host that produced the dump
+#     "tables": {
+#       "definitions": [ {row}, ... ],
+#       "instances":   [ {row}, ... ],
+#       "heartbeats":  [ {row}, ... ],
+#       "events":      [ {row}, ... ],
+#       "attempts":    [ {row}, ... ]
+#     }
+#   }
+#
+# Filtering: each table picks a sensible "advance" column and emits
+# only rows where that column >= since (or all rows when since is None).
+# instances and definitions emit when *either* their start/seen
+# timestamp OR end timestamp is >= since — orochi needs both halves
+# of the lifecycle.
+# ---------------------------------------------------------------------------
+
+EXPORT_SCHEMA_VERSION = 1
+
+
+def _table_filter_clauses(since: str | None) -> dict[str, tuple[str, tuple]]:
+    """Per-table SQL fragments + params for ``--since`` filtering.
+
+    Returns ``{table: (sql_fragment, params)}``. Empty fragment means
+    "no filter; emit everything".
+    """
+    if since is None:
+        return {t: ("", ()) for t in KNOWN_TABLES}
+    return {
+        "definitions": ("WHERE first_seen_at >= ?", (since,)),
+        "instances": (
+            "WHERE started_at >= ? OR ended_at >= ?",
+            (since, since),
+        ),
+        "heartbeats": ("WHERE ts >= ?", (since,)),
+        "events": ("WHERE ts >= ?", (since,)),
+        "attempts": ("WHERE ts >= ?", (since,)),
+    }
+
+
+def export_state(
+    since: str | None = None,
+    db_path: Path | None = None,
+    host: str | None = None,
+) -> dict:
+    """Dump the registry tables (and ``attempts``) into a JSON-able dict.
+
+    Used by ``sac db export``; orochi consumes the result via
+    ``sac db import`` (or its own importer).
+
+    Args:
+        since: Optional ISO-8601 timestamp. Rows with their advance
+            column < since are omitted. ``None`` means full dump.
+        db_path: Override the state.db location (mostly for tests).
+        host: Canonical hostname to stamp into the dump header.
+            Defaults to ``_resolve_host(None)``.
+
+    Returns:
+        A dict matching the wire format documented above.
+    """
+    canonical_host = _resolve_host(host)
+    filters = _table_filter_clauses(since)
+    tables: dict[str, list[dict]] = {}
+    with open_db(db_path) as conn:
+        for table in KNOWN_TABLES:
+            where, params = filters[table]
+            sql = f"SELECT * FROM {table} {where}".strip()
+            rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
+            tables[table] = rows
+    return {
+        "schema": EXPORT_SCHEMA_VERSION,
+        "exported_at": now_iso(),
+        "since": since,
+        "host": canonical_host,
+        "tables": tables,
+    }
+
+
+def import_state(payload: dict, db_path: Path | None = None) -> dict[str, int]:
+    """Ingest a dict produced by :func:`export_state`.
+
+    Idempotent: rows are inserted with ``OR IGNORE`` on their PK
+    (uuid for definitions/instances; ``(instance_id, ts)`` for
+    heartbeats; integer rowid for events/attempts → events and
+    attempts use ``OR IGNORE`` keyed by their auto-id, so re-import
+    of an already-pulled delta is a no-op only if the source's
+    rowids haven't been recycled).
+
+    Returns ``{table: rows_inserted}``.
+    """
+    if not isinstance(payload, dict) or "tables" not in payload:
+        raise ValueError("import_state: payload missing 'tables' key")
+    schema = payload.get("schema")
+    if schema != EXPORT_SCHEMA_VERSION:
+        raise ValueError(
+            f"import_state: unsupported schema version {schema!r} "
+            f"(expected {EXPORT_SCHEMA_VERSION})"
+        )
+    tables = payload["tables"]
+    inserted: dict[str, int] = {t: 0 for t in KNOWN_TABLES}
+    with open_db(db_path) as conn:
+        for table in KNOWN_TABLES:
+            rows = tables.get(table, [])
+            if not rows:
+                continue
+            cols = list(rows[0].keys())
+            placeholders = ",".join("?" for _ in cols)
+            col_list = ",".join(cols)
+            sql = f"INSERT OR IGNORE INTO {table} ({col_list}) VALUES ({placeholders})"
+            for row in rows:
+                cur = conn.execute(sql, tuple(row.get(c) for c in cols))
+                inserted[table] += cur.rowcount
+    return inserted
+
+
 def import_legacy_registry(
     registry_dir: Path,
     db_path: Path | None = None,

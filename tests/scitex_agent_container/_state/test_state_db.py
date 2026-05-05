@@ -355,3 +355,141 @@ def test_db_tick_silent_zero_exit(db_path: Path):
     assert result.exit_code == 0
     # Tick is silent on success — no human-facing line.
     assert result.output == ""
+
+
+# ---------------------------------------------------------------------------
+# F-CS14 — export / import (cross-host orochi pull)
+# ---------------------------------------------------------------------------
+
+
+def test_export_state_emits_self_describing_payload(db_path: Path):
+    from scitex_agent_container._state.state_db import (
+        EXPORT_SCHEMA_VERSION,
+        export_state,
+        record_instance_start,
+    )
+
+    record_instance_start("polish-clew", host="src-host")
+    payload = export_state(host="src-host")
+
+    assert payload["schema"] == EXPORT_SCHEMA_VERSION
+    assert payload["host"] == "src-host"
+    assert payload["since"] is None
+    assert "exported_at" in payload
+    assert set(payload["tables"]) == set(KNOWN_TABLES)
+    assert len(payload["tables"]["instances"]) == 1
+    assert payload["tables"]["instances"][0]["name"] == "polish-clew"
+
+
+def test_export_state_filters_by_since(db_path: Path):
+    """Rows older than ``--since`` must be excluded."""
+    import time as _time
+
+    from scitex_agent_container._state.state_db import (
+        export_state,
+        record_instance_start,
+    )
+
+    record_instance_start("old", host="h")
+    # Sleep across a wall-clock-second boundary so since cuts cleanly.
+    _time.sleep(1.05)
+    cut = (
+        __import__("datetime")
+        .datetime.now(__import__("datetime").timezone.utc)
+        .strftime("%Y-%m-%dT%H:%M:%SZ")
+    )
+    _time.sleep(1.05)
+    record_instance_start("new", host="h")
+
+    payload = export_state(since=cut, host="h")
+    names = [r["name"] for r in payload["tables"]["instances"]]
+    assert names == ["new"], (
+        f"--since={cut!r} should drop 'old' but keep 'new'; got {names}"
+    )
+
+
+def test_import_state_round_trip_idempotent(
+    db_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Export from one db, import into a fresh db, re-import is a no-op."""
+    from scitex_agent_container._state.state_db import (
+        export_state,
+        record_instance_start,
+    )
+
+    # Source: write 2 rows.
+    iid1 = record_instance_start("a", host="src")
+    iid2 = record_instance_start("b", host="src")
+    payload = export_state(host="src")
+
+    # Sink: brand-new db (different env path).
+    sink = tmp_path / "sink.db"
+    monkeypatch.setenv("SCITEX_AGENT_CONTAINER_STATE_DB", str(sink))
+    import importlib
+
+    import scitex_agent_container._state.state_db as mod
+
+    importlib.reload(mod)
+
+    inserted = mod.import_state(payload)
+    assert inserted["instances"] == 2
+
+    # Re-import the same payload — every row already present → 0 inserts.
+    inserted_again = mod.import_state(payload)
+    assert inserted_again["instances"] == 0
+
+    # Sink contains exactly the source uuids.
+    with mod.open_db() as conn:
+        rows = sorted(
+            r["id"] for r in conn.execute("SELECT id FROM instances").fetchall()
+        )
+    assert rows == sorted([iid1, iid2])
+
+
+def test_import_state_rejects_wrong_schema(db_path: Path):
+    from scitex_agent_container._state.state_db import import_state
+
+    with pytest.raises(ValueError, match="schema"):
+        import_state({"schema": 999, "tables": {}})
+
+
+def test_db_export_via_cli_emits_json(db_path: Path):
+    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container.cli_pkg.db_group import db_export
+
+    record_instance_start("x", host="h")
+    runner = CliRunner()
+    result = runner.invoke(db_export, ["--host", "h"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["host"] == "h"
+    assert len(payload["tables"]["instances"]) == 1
+
+
+def test_db_import_via_cli_reads_stdin(
+    db_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """``sac db import -`` reads the dump from stdin."""
+    from scitex_agent_container._state.state_db import (
+        export_state,
+        record_instance_start,
+    )
+
+    record_instance_start("x", host="h")
+    payload = export_state(host="h")
+
+    # Switch DB to a fresh one; import via CLI from stdin.
+    monkeypatch.setenv("SCITEX_AGENT_CONTAINER_STATE_DB", str(tmp_path / "fresh.db"))
+    import importlib
+
+    import scitex_agent_container._state.state_db as mod
+
+    importlib.reload(mod)
+    from scitex_agent_container.cli_pkg.db_group import db_import
+
+    runner = CliRunner()
+    result = runner.invoke(db_import, ["-", "--json"], input=json.dumps(payload))
+    assert result.exit_code == 0, result.output
+    body = json.loads(result.output)
+    assert body["inserted"]["instances"] == 1
+    assert body["host"] == "h"

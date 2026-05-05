@@ -21,8 +21,10 @@ import click
 
 from .._state.state_db import (
     KNOWN_TABLES,
+    export_state,
     gc_dead_instances,
     import_legacy_registry,
+    import_state,
     open_db,
     table_counts,
 )
@@ -211,3 +213,90 @@ def db_tick(ctx: click.Context, heartbeat_stale_seconds: int) -> None:
     """
     del ctx
     gc_dead_instances(heartbeat_stale_seconds=heartbeat_stale_seconds)
+
+
+@db_group.command("export")
+@click.option(
+    "--since",
+    "since",
+    type=str,
+    default=None,
+    help="ISO-8601 timestamp; emit only rows newer than this. Omit for full dump.",
+)
+@click.option(
+    "--output",
+    "output",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Write JSON to this path; default stdout.",
+)
+@click.option(
+    "--host",
+    type=str,
+    default=None,
+    help="Stamp this canonical host into the dump header.",
+)
+def db_export(since: str | None, output: Path | None, host: str | None) -> None:
+    """Dump state.db rows as a JSON delta. Consumed by orochi.
+
+    Default emits to stdout so it can be piped over ssh:
+
+    \b
+      ssh peer sac db export --since "$last_seen" \\
+        | sac db import -
+
+    With ``--output FILE`` writes to FILE instead. The dump is
+    self-describing: includes ``schema``, ``exported_at``, ``since``,
+    ``host``, and per-table row arrays.
+    """
+    payload = export_state(since=since, host=host)
+    blob = json.dumps(payload, indent=2)
+    if output is None:
+        click.echo(blob)
+    else:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(blob)
+
+
+@db_group.command("import")
+@click.argument(
+    "input_path",
+    type=click.Path(dir_okay=False, exists=False, path_type=Path),
+    required=True,
+)
+@click.option("--json", "as_json", is_flag=True, help="Output report as JSON.")
+@click.pass_context
+def db_import(ctx: click.Context, input_path: Path, as_json: bool) -> None:
+    """Ingest a JSON dump produced by ``sac db export``.
+
+    Pass ``-`` to read from stdin (the canonical orochi-pull pattern).
+    Idempotent: rows already present (matched by primary key) are
+    silently skipped.
+    """
+    if str(input_path) == "-":
+        blob = click.get_text_stream("stdin").read()
+    else:
+        blob = input_path.read_text()
+    payload = json.loads(blob)
+    inserted = import_state(payload)
+    if _json_flag(ctx, as_json):
+        click.echo(
+            json.dumps(
+                {
+                    "source": str(input_path),
+                    "host": payload.get("host"),
+                    "since": payload.get("since"),
+                    "inserted": inserted,
+                },
+                indent=2,
+            )
+        )
+        return
+    total = sum(inserted.values())
+    src = payload.get("host", "?")
+    console.print(
+        f"[bold]sac db import[/bold]  from=[cyan]{src}[/cyan]  inserted={total}"
+    )
+    for table, n in inserted.items():
+        if n:
+            console.print(f"  {table:<14}  {n}")
