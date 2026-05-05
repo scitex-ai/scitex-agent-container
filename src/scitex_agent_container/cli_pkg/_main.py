@@ -18,9 +18,9 @@ from .auto_accept_group import auto_accept_group
 from .build_cmds import build, check, validate
 from .contributor_spec_cmds import contributor_spec
 from .db_group import db_group
-from .host_group import host_group
 from .event_group import event_group
 from .hook_cmds import hook_event
+from .host_group import host_group
 from .image_group import image_group
 from .info_cmds import attach, find, list_python_apis, logs
 from .install_cmds import install_group, install_post_merge_cron
@@ -226,5 +226,32 @@ main.add_command(
 )
 
 
-if __name__ == "__main__":
+def cli_entry_point() -> None:
+    """Console-script entry. Honours the global ``--on <peer>`` flag.
+
+    Click's group parser normally consumes ``--on`` during ``main``'s
+    own arg parsing, but the flag has to be honoured BEFORE the
+    subcommand is dispatched: ``sac --on spartan agent list`` must
+    run ``sac agent list`` on spartan, not locally. Pre-process
+    ``sys.argv`` here, dispatch via host_group.dispatch_remote when
+    the flag is present, and fall through to plain ``main()``
+    otherwise.
+    """
+    import sys
+
+    from .host_group import dispatch_remote, split_on_flag
+
+    # stx-allow: fallback (reason: a malformed --on value should still
+    # surface a useful error rather than crash the entry point)
+    try:
+        peer, rest = split_on_flag(sys.argv[1:])
+    except click.UsageError as exc:
+        click.echo(f"error: {exc.format_message()}", err=True)
+        sys.exit(2)
+    if peer is not None:
+        sys.exit(dispatch_remote(peer, rest))
     main()
+
+
+if __name__ == "__main__":
+    cli_entry_point()

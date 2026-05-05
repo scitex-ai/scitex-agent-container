@@ -86,8 +86,8 @@ docs = [
 ]
 
 [project.scripts]
-scitex-agent-container = "scitex_agent_container.cli:main"
-sac = "scitex_agent_container.cli:main"
+scitex-agent-container = "scitex_agent_container.cli:cli_entry_point"
+sac = "scitex_agent_container.cli:cli_entry_point"
 sac-statusline = "scitex_agent_container.statusline:main"
 
 [project.entry-points."scitex_dev.docs"]

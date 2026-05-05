@@ -122,6 +122,57 @@ def host_validate(ctx: click.Context, as_json: bool) -> None:
         raise SystemExit(1)
 
 
+def split_on_flag(argv: list[str]) -> tuple[str | None, list[str]]:
+    """If ``argv`` contains ``--on PEER`` (or ``--on=PEER``), strip the
+    flag and return ``(peer, remaining_argv)``. Otherwise ``(None, argv)``.
+
+    Used by the entry-point shim before Click parses anything: when the
+    user typed ``sac --on spartan agent list``, we want ``agent list``
+    to run on spartan with no further sac-side processing. Click
+    normally consumes ``--on`` during parsing of ``main``, but the
+    flag must be honoured BEFORE the subcommand is dispatched.
+    """
+    out: list[str] = []
+    peer: str | None = None
+    i = 0
+    while i < len(argv):
+        tok = argv[i]
+        if tok == "--on":
+            if i + 1 >= len(argv):
+                raise click.UsageError("--on requires a peer name")
+            peer = argv[i + 1]
+            i += 2
+            continue
+        if tok.startswith("--on="):
+            peer = tok.split("=", 1)[1]
+            i += 1
+            continue
+        out.append(tok)
+        i += 1
+    return peer, out
+
+
+def dispatch_remote(peer: str, argv: list[str], ssh_argv0: str = "sac") -> int:
+    """Run ``sac <argv>`` on ``peer`` via ssh; return the remote exit code.
+
+    Used when the entry point detects ``--on PEER`` in sys.argv. The
+    remote command is always ``sac <argv>`` — orchestrators rely on
+    that prefix so peers can be set up to alias ``sac`` to the right
+    binary path on hosts where it isn't on $PATH.
+    """
+    cfg = load()
+    if peer not in cfg.peers:
+        click.echo(
+            f"error: --on peer '{peer}' is not defined in {cfg.source_path}.\n"
+            f"Add it under peers: in sac.yaml, then re-run.",
+            err=True,
+        )
+        return 2
+    ssh_argv = build_ssh_argv(peer, [ssh_argv0, *argv], cfg.peers)
+    proc = subprocess.run(ssh_argv)
+    return proc.returncode
+
+
 @host_group.command(
     "exec",
     context_settings={

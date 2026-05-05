@@ -382,6 +382,89 @@ peers:
     assert body["remote_canonical"] == "mba"
 
 
+# ---------------------------------------------------------------------------
+# F-CS12 phase 3 — split_on_flag + dispatch_remote (--on global flag)
+# ---------------------------------------------------------------------------
+
+
+def test_split_on_flag_no_flag_is_passthrough():
+    from scitex_agent_container.cli_pkg.host_group import split_on_flag
+
+    peer, rest = split_on_flag(["agent", "list", "--json"])
+    assert peer is None
+    assert rest == ["agent", "list", "--json"]
+
+
+def test_split_on_flag_separated_form():
+    from scitex_agent_container.cli_pkg.host_group import split_on_flag
+
+    peer, rest = split_on_flag(["--on", "spartan", "agent", "list"])
+    assert peer == "spartan"
+    assert rest == ["agent", "list"]
+
+
+def test_split_on_flag_equals_form():
+    from scitex_agent_container.cli_pkg.host_group import split_on_flag
+
+    peer, rest = split_on_flag(["--on=mba", "db", "show"])
+    assert peer == "mba"
+    assert rest == ["db", "show"]
+
+
+def test_split_on_flag_missing_value_raises():
+    import click as _click
+
+    from scitex_agent_container.cli_pkg.host_group import split_on_flag
+
+    with pytest.raises(_click.UsageError):
+        split_on_flag(["--on"])
+
+
+def test_split_on_flag_keeps_other_flags():
+    from scitex_agent_container.cli_pkg.host_group import split_on_flag
+
+    peer, rest = split_on_flag(
+        ["--json", "--on", "spartan", "agent", "list", "--limit", "5"]
+    )
+    assert peer == "spartan"
+    assert rest == ["--json", "agent", "list", "--limit", "5"]
+
+
+def test_dispatch_remote_unknown_peer_returns_2(cfg_path: Path):
+    from scitex_agent_container.cli_pkg.host_group import dispatch_remote
+
+    rc = dispatch_remote("ghost", ["agent", "list"])
+    assert rc == 2
+
+
+def test_dispatch_remote_invokes_subprocess(cfg_path: Path, monkeypatch):
+    cfg_path.write_text(
+        """
+peers:
+  mba: { ssh: ywatanabe@mba.local }
+"""
+    )
+    seen = {}
+
+    class _Result:
+        returncode = 7
+
+    def _fake_run(argv, **kw):
+        seen["argv"] = argv
+        return _Result()
+
+    from scitex_agent_container.cli_pkg import host_group
+
+    monkeypatch.setattr(host_group.subprocess, "run", _fake_run)
+
+    rc = host_group.dispatch_remote("mba", ["agent", "list"])
+    assert rc == 7
+    # Remote command must always start with `sac`.
+    sep = seen["argv"].index("--")
+    assert seen["argv"][sep + 1] == "sac"
+    assert seen["argv"][sep + 2 :] == ["agent", "list"]
+
+
 def test_host_probe_reports_unreachable_on_nonzero_exit(cfg_path: Path, monkeypatch):
     cfg_path.write_text(
         """

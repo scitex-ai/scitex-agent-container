@@ -15,10 +15,17 @@ still work because ``main`` is re-exported here.
 
 from __future__ import annotations
 
-from .cli_pkg import main
+from .cli_pkg import cli_entry_point, main
 
-__all__ = ["main"]
+# Console-script entry: honours --on <peer> before Click parses the
+# subcommand (F-CS12 phase 3). Importers that did::
+#
+#     from scitex_agent_container.cli import main
+#
+# get the Click group unchanged. New code wanting transparent remote
+# dispatch should use ``cli_entry_point``.
+__all__ = ["cli_entry_point", "main"]
 
 
 if __name__ == "__main__":
-    main()
+    cli_entry_point()
