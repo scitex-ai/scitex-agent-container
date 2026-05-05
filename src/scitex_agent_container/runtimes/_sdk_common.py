@@ -111,27 +111,41 @@ def provision_anthropic_auth() -> str:
 
 
 def _write_oauth_credentials_file(access_token: str) -> None:
-    """Build a minimal ``~/.claude/.credentials.json`` from an OAuth
-    access token so the bundled CLI's credentials_file path picks it
-    up. Mode 0600 — never world-readable.
+    """Build a ``~/.claude/.credentials.json`` from an OAuth access
+    token so the bundled CLI's credentials_file path picks it up.
+    Mode 0600 — never world-readable.
 
-    The synthesised blob carries only ``accessToken`` plus a far-future
-    ``expiresAt`` so the SDK's TTL check passes. We don't have a
-    refresh token (operator passed only the access token via env), so
-    sessions long enough to need a refresh will fail; that's an
-    acceptable tradeoff for the smoke / short-lived agent use case.
+    Mirror of the file shape `claude /login` writes: full scopes
+    list, a near-future expiresAt (1 year), subscriptionType + a
+    plausible rateLimitTier. Missing fields cause the CLI to silently
+    treat the OAuth path as invalid and fall back to API-key billing
+    (manifesting as `Credit balance is too low`).
+
+    No refresh token — operator only passed the access token via env,
+    so sessions outliving the access token's real expiry will fail.
+    Acceptable for smoke / short-lived agent runs; long-running
+    operators should bind-mount their full ~/.claude/.credentials.json
+    instead.
     """
     import json
+    import time
 
     _CRED_FILE.parent.mkdir(parents=True, exist_ok=True)
+    one_year_ahead_ms = int((time.time() + 365 * 24 * 3600) * 1000)
     payload = {
         "claudeAiOauth": {
             "accessToken": access_token,
             "refreshToken": "",
-            # Year ~2200 — well beyond any practical sac runner lifetime.
-            "expiresAt": 7258118400000,
-            "scopes": ["user:inference", "user:profile"],
+            "expiresAt": one_year_ahead_ms,
+            "scopes": [
+                "user:file_upload",
+                "user:inference",
+                "user:mcp_servers",
+                "user:profile",
+                "user:sessions:claude_code",
+            ],
             "subscriptionType": "max",
+            "rateLimitTier": "default_claude_max_20x",
         }
     }
     _CRED_FILE.write_text(json.dumps(payload))
