@@ -215,40 +215,20 @@ def get_agent_list_data(
     from concurrent.futures import ThreadPoolExecutor
     from concurrent.futures import TimeoutError as _FuturesTimeout
 
-    from ..runtimes.screen import ScreenManager
-    from ..runtimes.tmux import TmuxManager
-
-    def _detect_multiplexer(session_name: str) -> str | None:
-        """Detect which multiplexer hosts a session. Tmux preferred."""
-        if not session_name or session_name == "?":
-            return None
-        # stx-allow: fallback (reason: tmux binary may be absent on the host;
-        # None fallthrough tries screen next rather than raising)
-        try:
-            if TmuxManager.exists(session_name):
-                return "tmux"
-        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-            pass
-        # stx-allow: fallback (reason: screen binary may be absent; None
-        # return means multiplexer is unknown, not an error)
-        try:
-            if ScreenManager.exists(session_name):
-                return "screen"
-        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-            pass
-        return None
-
     entries = registry.list_all()
 
-    # First pass: resolve configs + filter + identify remote probes to run.
+    # First pass: resolve configs + filter.
+    # F-CS17 stage 3b: there are no longer "remote" agents from sac's
+    # POV. Every agent is a container on this host. Cross-host work
+    # routes through F-CS12's ``sac --on <peer>`` which spawns a fresh
+    # sac on the remote host; the remote sac then reports its own
+    # local list. So this function probes every agent locally.
     prepared: list[dict] = []
-    remote_probes: dict[int, object] = {}
     for idx, entry in enumerate(entries):
         name = entry.get("name", "?")
         screen_name = entry.get("screen", "?")
         started = entry.get("started_at", "?")
         labels: dict[str, str] = {}
-        remote_host = ""
         config_path = entry.get("config")
         cfg = None
         if config_path:
@@ -257,8 +237,6 @@ def get_agent_list_data(
             try:
                 cfg = load_config(config_path)
                 labels = cfg.labels
-                if cfg.remote.is_remote:
-                    remote_host = cfg.remote.host
             except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                 pass
 
@@ -279,30 +257,27 @@ def get_agent_list_data(
             "screen_name": screen_name,
             "started": started,
             "labels": labels,
-            "remote_host": remote_host,
             "cfg": cfg,
         }
         prepared.append(prep)
-        if cfg and cfg.remote.is_remote:
-            remote_probes[prep["idx"]] = cfg
 
-    # Second pass: parallel local liveness probes with per-probe timeout.
-    # F-CS17 stage 3b: every probe is now local (each host's sac
-    # owns its own containers; cross-host queries route through
-    # F-CS12's ``sac --on <peer>`` which spawns a fresh sac on the
-    # remote host). The thread pool keeps the wall-clock cost of
-    # ``sac agent list`` low when many agents are registered.
+    # Second pass: parallel local liveness probes with per-probe
+    # timeout. The thread pool keeps the wall-clock cost low when many
+    # agents are registered (each probe is ``docker inspect`` and
+    # takes ~50ms-ish on a healthy host).
     #
     # Explicit shutdown(wait=False) instead of ``with ... as pool:``
     # so the context manager's __exit__ doesn't join all workers
     # (todo#254 regression: that would defeat the per-probe timeout).
     probe_results: dict[int, bool | None] = {}
-    if remote_probes:
+    probe_targets = [
+        (prep["idx"], prep["cfg"]) for prep in prepared if prep["cfg"] is not None
+    ]
+    if probe_targets:
         pool = ThreadPoolExecutor(max_workers=max_parallel_probes)
         try:
             future_to_idx = {
-                pool.submit(_probe_local, cfg): idx
-                for idx, cfg in remote_probes.items()
+                pool.submit(_probe_local, cfg): idx for idx, cfg in probe_targets
             }
             for future in list(future_to_idx):
                 idx = future_to_idx[future]
@@ -325,35 +300,28 @@ def get_agent_list_data(
         screen_name = prep["screen_name"]
         started = prep["started"]
         labels = prep["labels"]
-        remote_host = prep["remote_host"]
         cfg = prep["cfg"]
 
-        multiplexer: str | None = None
-        if not (cfg and cfg.remote.is_remote):
-            multiplexer = _detect_multiplexer(screen_name)
+        # ``multiplexer`` is the F-CS17 successor of the screen / tmux
+        # column: it now reports the container engine the agent runs
+        # on (docker / podman / apptainer), or None when the yaml is
+        # missing / unparseable. Backwards compat: existing JSON
+        # consumers still see a "multiplexer" key in each row.
+        multiplexer: str | None = (
+            getattr(cfg, "runtime", None) if cfg is not None else None
+        )
 
         liveness_unknown = False
-        # stx-allow: fallback (reason: ScreenManager.exists may raise if the
-        # screen binary is absent — liveness_unknown=True surfaces as "unknown"
-        # status rather than crashing the list command)
-        try:
-            if cfg and cfg.remote.is_remote:
-                probe = probe_results.get(prep["idx"])
-                if probe is None:
-                    is_running = False
-                    liveness_unknown = True
-                else:
-                    is_running = bool(probe)
-            else:
-                # _detect_multiplexer returned non-None iff either the tmux
-                # OR screen backend sees this session live — use it as the
-                # authoritative liveness signal. Previously this path
-                # hardcoded ScreenManager.exists(), which always returned
-                # False for tmux agents and reported them as stopped.
-                is_running = multiplexer is not None
-        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+        probe = probe_results.get(prep["idx"])
+        if cfg is None:
+            # Couldn't load the yaml — can't probe.
             is_running = False
             liveness_unknown = True
+        elif probe is None:
+            is_running = False
+            liveness_unknown = True
+        else:
+            is_running = bool(probe)
 
         status_val: str
         if liveness_unknown:
@@ -370,8 +338,6 @@ def get_agent_list_data(
         }
         if liveness_unknown:
             row["liveness_unknown"] = True
-        if remote_host:
-            row["remote"] = remote_host
         if labels:
             row["labels"] = labels
         results.append(row)
