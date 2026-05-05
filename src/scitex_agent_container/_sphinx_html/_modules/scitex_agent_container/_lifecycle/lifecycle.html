@@ -489,16 +489,31 @@
 <span class="kn">import</span><span class="w"> </span><span class="nn">traceback</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
 
+<span class="kn">from</span><span class="w"> </span><span class="nn">.._state.registry</span><span class="w"> </span><span class="kn">import</span> <span class="n">Registry</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">..config</span><span class="w"> </span><span class="kn">import</span> <span class="n">AgentConfig</span><span class="p">,</span> <span class="n">load_config</span><span class="p">,</span> <span class="n">resolve_config</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">..hooks</span><span class="w"> </span><span class="kn">import</span> <span class="n">run_hook</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">.._state.registry</span><span class="w"> </span><span class="kn">import</span> <span class="n">Registry</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">..runtimes.claude_code</span><span class="w"> </span><span class="kn">import</span> <span class="n">ClaudeCodeRuntime</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">..runtimes.slurm</span><span class="w"> </span><span class="kn">import</span> <span class="n">SlurmRuntime</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">.health</span><span class="w"> </span><span class="kn">import</span> <span class="n">health_monitor</span>
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">_get_runtime</span><span class="p">(</span><span class="n">config</span><span class="p">:</span> <span class="n">AgentConfig</span><span class="p">):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the appropriate runtime for the config.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the appropriate runtime for the config.</span>
+
+<span class="sd">    F-CS16 phase 2e.1: container engines (docker / podman) route</span>
+<span class="sd">    through :class:`ClaudeSessionRuntime`, which itself delegates to</span>
+<span class="sd">    ``ContainerRuntime`` via the phase 2c wiring. Apptainer falls</span>
+<span class="sd">    through to the SDK runner the same way (its dedicated</span>
+<span class="sd">    ContainerRuntime subclass lands later). Legacy claude-* / slurm*</span>
+<span class="sd">    runtimes keep their original dispatch until F-CS17 deletes them.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># F-CS16: container engines == new sdk-runner shape. Route to</span>
+    <span class="c1"># ClaudeSessionRuntime; it dispatches to ContainerRuntime</span>
+    <span class="c1"># internally (see runtimes.claude_session._container_runtime_for).</span>
+    <span class="k">if</span> <span class="n">config</span><span class="o">.</span><span class="n">runtime</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;docker&quot;</span><span class="p">,</span> <span class="s2">&quot;podman&quot;</span><span class="p">,</span> <span class="s2">&quot;apptainer&quot;</span><span class="p">):</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">..runtimes.claude_session</span><span class="w"> </span><span class="kn">import</span> <span class="n">ClaudeSessionRuntime</span>
+
+        <span class="k">return</span> <span class="n">ClaudeSessionRuntime</span><span class="p">()</span>
     <span class="k">if</span> <span class="n">config</span><span class="o">.</span><span class="n">runtime</span> <span class="o">==</span> <span class="s2">&quot;claude-code&quot;</span><span class="p">:</span>
         <span class="k">return</span> <span class="n">ClaudeCodeRuntime</span><span class="p">()</span>
     <span class="k">if</span> <span class="n">config</span><span class="o">.</span><span class="n">runtime</span> <span class="o">==</span> <span class="s2">&quot;claude-session&quot;</span><span class="p">:</span>

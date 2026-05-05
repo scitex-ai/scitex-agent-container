@@ -588,6 +588,79 @@
 
 <span class="n">_KNOWN_TOP_LEVEL_KEYS</span> <span class="o">=</span> <span class="nb">frozenset</span><span class="p">({</span><span class="s2">&quot;apiVersion&quot;</span><span class="p">,</span> <span class="s2">&quot;kind&quot;</span><span class="p">,</span> <span class="s2">&quot;metadata&quot;</span><span class="p">,</span> <span class="s2">&quot;spec&quot;</span><span class="p">})</span>
 
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_legacy_runtime_redirect</span><span class="p">(</span><span class="n">old</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">new</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">image</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Render the §5-style hard-error message for a renamed runtime.</span>
+
+<span class="sd">    Each legacy value names a specific replacement so a stale yaml</span>
+<span class="sd">    gets fixed in one pass:</span>
+
+<span class="sd">      spec.runtime: claude-session   -&gt;   spec.runtime: docker</span>
+<span class="sd">                                          spec.image:   scitex-agent-container:sdk-persistent</span>
+<span class="sd">                                          spec.dockerfile: ./containers/Dockerfile.sdk-persistent</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;spec.runtime: &#39;</span><span class="si">{</span><span class="n">old</span><span class="si">}</span><span class="s2">&#39; was renamed to spec.runtime: &#39;</span><span class="si">{</span><span class="n">new</span><span class="si">}</span><span class="s2">&#39;. &quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;Set:</span><span class="se">\n</span><span class="s2">&quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;  spec.runtime:    </span><span class="si">{</span><span class="n">new</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;  spec.image:      </span><span class="si">{</span><span class="n">image</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;  spec.dockerfile: ./containers/Dockerfile.sdk-persistent</span><span class="se">\n</span><span class="s2">&quot;</span>
+        <span class="s2">&quot;(F-CS16 phase 2e: sac is container-only; the old runtime &quot;</span>
+        <span class="s2">&quot;names are no longer accepted.)&quot;</span>
+    <span class="p">)</span>
+
+
+<span class="c1"># F-CS16 phase 2e — every legacy runtime value hard-errors with a</span>
+<span class="c1"># redirect that names the new shape. Mapping kept module-level so</span>
+<span class="c1"># tests can pin individual messages without re-deriving the dict.</span>
+<span class="n">_SDK_IMAGE</span> <span class="o">=</span> <span class="s2">&quot;scitex-agent-container:sdk-persistent&quot;</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">legacy_runtime_redirect_message</span><span class="p">(</span><span class="n">runtime</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the §5-style redirect text for a legacy runtime, or None.</span>
+
+<span class="sd">    Phase 2e.1 callers (lifecycle, dispatch helpers, error reporters)</span>
+<span class="sd">    use this to surface &quot;use ``runtime: docker`` + image + dockerfile&quot;</span>
+<span class="sd">    guidance even while the validator still accepts the legacy value.</span>
+<span class="sd">    F-CS17&#39;s sweep flips the validator itself to call this function</span>
+<span class="sd">    and append the result to ``errors``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">_LEGACY_RUNTIME_REDIRECTS</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">runtime</span><span class="p">)</span>
+
+
+<span class="n">_LEGACY_RUNTIME_REDIRECTS</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;claude-session&quot;</span><span class="p">:</span> <span class="n">_legacy_runtime_redirect</span><span class="p">(</span><span class="s2">&quot;claude-session&quot;</span><span class="p">,</span> <span class="s2">&quot;docker&quot;</span><span class="p">,</span> <span class="n">_SDK_IMAGE</span><span class="p">),</span>
+    <span class="s2">&quot;claude-sdk-persistent&quot;</span><span class="p">:</span> <span class="n">_legacy_runtime_redirect</span><span class="p">(</span>
+        <span class="s2">&quot;claude-sdk-persistent&quot;</span><span class="p">,</span> <span class="s2">&quot;docker&quot;</span><span class="p">,</span> <span class="n">_SDK_IMAGE</span>
+    <span class="p">),</span>
+    <span class="s2">&quot;claude-code&quot;</span><span class="p">:</span> <span class="p">(</span>
+        <span class="s2">&quot;spec.runtime: &#39;claude-code&#39; (CLI/TUI runtime) is no longer &quot;</span>
+        <span class="s2">&quot;supported by sac. The CLI/TUI path was removed in F-CS17. &quot;</span>
+        <span class="s2">&quot;Use the SDK runner instead:</span><span class="se">\n</span><span class="s2">&quot;</span>
+        <span class="s2">&quot;  spec.runtime:    docker</span><span class="se">\n</span><span class="s2">&quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;  spec.image:      </span><span class="si">{</span><span class="n">_SDK_IMAGE</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span>
+        <span class="s2">&quot;  spec.dockerfile: ./containers/Dockerfile.sdk-persistent&quot;</span>
+    <span class="p">),</span>
+    <span class="s2">&quot;claude-cli-tui&quot;</span><span class="p">:</span> <span class="p">(</span>
+        <span class="s2">&quot;spec.runtime: &#39;claude-cli-tui&#39; is no longer supported &quot;</span>
+        <span class="s2">&quot;(CLI/TUI runtime removed in F-CS17). Use:</span><span class="se">\n</span><span class="s2">&quot;</span>
+        <span class="s2">&quot;  spec.runtime:    docker</span><span class="se">\n</span><span class="s2">&quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;  spec.image:      </span><span class="si">{</span><span class="n">_SDK_IMAGE</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span>
+        <span class="s2">&quot;  spec.dockerfile: ./containers/Dockerfile.sdk-persistent&quot;</span>
+    <span class="p">),</span>
+    <span class="s2">&quot;slurm&quot;</span><span class="p">:</span> <span class="p">(</span>
+        <span class="s2">&quot;spec.runtime: &#39;slurm&#39; is no longer supported. Sac is a &quot;</span>
+        <span class="s2">&quot;container wrapper; HPC scheduling is the operator&#39;s &quot;</span>
+        <span class="s2">&quot;concern (submit your own sbatch and run &#39;sac agent start&#39; &quot;</span>
+        <span class="s2">&quot;inside the allocation). See F-CS16 design doc.&quot;</span>
+    <span class="p">),</span>
+    <span class="s2">&quot;slurm-tenant&quot;</span><span class="p">:</span> <span class="p">(</span>
+        <span class="s2">&quot;spec.runtime: &#39;slurm-tenant&#39; is no longer supported (see &quot;</span>
+        <span class="s2">&quot;the redirect for &#39;slurm&#39;). Submit sbatch yourself and &quot;</span>
+        <span class="s2">&quot;invoke &#39;sac agent start&#39; inside the allocation.&quot;</span>
+    <span class="p">),</span>
+<span class="p">}</span>
+
 <span class="c1"># All spec keys read by load_v3, parsers, or a2a/_server.py.</span>
 <span class="c1"># Unknown keys are rejected at parse time so typos surface at boot.</span>
 <span class="c1"># Intentional extension data belongs under spec.extensions.</span>
@@ -683,22 +756,25 @@
                 <span class="sa">f</span><span class="s2">&quot;known keys: </span><span class="si">{</span><span class="nb">sorted</span><span class="p">(</span><span class="n">_KNOWN_SPEC_KEYS</span><span class="p">)</span><span class="si">}</span><span class="s2">.&quot;</span>
             <span class="p">)</span>
 
-        <span class="c1"># spec.runtime</span>
+        <span class="c1"># spec.runtime — F-CS16 phase 2e.1.</span>
+        <span class="c1">#</span>
+        <span class="c1"># ``runtime`` is becoming the container engine: docker /</span>
+        <span class="c1"># podman / apptainer. Phase 2e.1 ships the redirect machinery</span>
+        <span class="c1"># (_LEGACY_RUNTIME_REDIRECTS + legacy_runtime_redirect_message</span>
+        <span class="c1"># below) without flipping the validator: legacy values still</span>
+        <span class="c1"># parse so the existing example yamls / template integration</span>
+        <span class="c1"># tests / contributor-spec fixtures keep working until F-CS17</span>
+        <span class="c1"># migrates them in one shot. The flip to hard-error happens</span>
+        <span class="c1"># alongside that sweep — the redirect strings are already</span>
+        <span class="c1"># written and tested here.</span>
         <span class="n">runtime</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;runtime&quot;</span><span class="p">)</span>
-        <span class="c1"># F-CS16 phase 2a: ``runtime`` is becoming the container engine</span>
-        <span class="c1"># selector. New canonical values are docker / podman / apptainer.</span>
-        <span class="c1"># Legacy values (claude-code, claude-cli-tui, claude-session,</span>
-        <span class="c1"># claude-sdk-persistent, slurm, slurm-tenant) still pass</span>
-        <span class="c1"># validation for one cycle so existing yamls don&#39;t break;</span>
-        <span class="c1"># F-CS16 phase 2e flips them to hard-error redirects.</span>
-        <span class="c1"># F-CS6 yaml-friendly aliases continue to normalise via</span>
-        <span class="c1"># normalize_runtime() at load time.</span>
         <span class="n">valid_runtimes</span> <span class="o">=</span> <span class="p">(</span>
             <span class="c1"># F-CS16 — container engines (canonical going forward).</span>
             <span class="s2">&quot;docker&quot;</span><span class="p">,</span>
             <span class="s2">&quot;podman&quot;</span><span class="p">,</span>
             <span class="s2">&quot;apptainer&quot;</span><span class="p">,</span>
-            <span class="c1"># Legacy — accepted for one cycle.</span>
+            <span class="c1"># Legacy — still accepted; F-CS17 sweep flips them to</span>
+            <span class="c1"># hard-errors via legacy_runtime_redirect_message().</span>
             <span class="s2">&quot;claude-code&quot;</span><span class="p">,</span>
             <span class="s2">&quot;claude-cli-tui&quot;</span><span class="p">,</span>
             <span class="s2">&quot;claude-session&quot;</span><span class="p">,</span>
