@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import click
 
-from ._helpers import HelpRecursiveGroup, deprecated_alias
+from ._helpers import HelpRecursiveGroup, renamed_redirect
 from .a2a_cmds import a2a as a2a_group
 from .account_cmds import account, quota_watch
 from .action_cmds import actions_cli
@@ -153,12 +153,15 @@ main.add_command(list_python_apis)
 
 
 # ---------------------------------------------------------------------------
-# Deprecation aliases — preserve every old top-level command name so
-# existing scripts, generated settings.json hook lines, and tests keep
-# working. Hidden from --help so the new surface is uncluttered.
+# Renamed-command redirects (F-CS13 / scitex CLI convention §5):
+# old top-level names still parse so the user gets a helpful redirect
+# message, but they hard-error (exit 2) instead of warn-then-run.
+# Hidden from --help so the new noun-verb surface is uncluttered.
+# Soft warnings let stale scripts persist indefinitely; hard errors
+# force the fix in one iteration.
 # ---------------------------------------------------------------------------
 def _hidden_alias(cmd: click.Command, *, new_path: str, name: str | None = None):
-    alias = deprecated_alias(cmd, new_path=new_path)
+    alias = renamed_redirect(cmd, new_path=new_path)
     if name is not None:
         alias.name = name
     alias.hidden = True

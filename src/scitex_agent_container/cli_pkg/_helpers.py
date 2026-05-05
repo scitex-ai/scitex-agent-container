@@ -14,32 +14,42 @@ from ..config import load_config
 console = Console()
 
 
-def deprecated_alias(cmd: click.Command, *, new_path: str) -> click.Command:
-    """Wrap ``cmd`` so invoking it prints a deprecation warning to stderr.
+def renamed_redirect(cmd: click.Command, *, new_path: str) -> click.Command:
+    """Wrap ``cmd`` so invoking the old name hard-errors with a redirect.
 
-    ``new_path`` is the user-facing replacement (e.g. ``"sac render sbatch"``);
-    it appears verbatim in the warning. The wrapped command keeps the same
-    name, params, and behaviour — only side effect is the stderr line.
+    Per scitex CLI convention §5: renamed commands MUST exit non-zero
+    with a redirect message, never silently warn-then-run. Soft warnings
+    let stale scripts persist indefinitely; hard errors force the fix
+    in one iteration.
+
+    The wrapped command keeps its own ``params`` so ``--help`` still
+    documents the surface the user invoked, but the callback is replaced:
+    invoking the renamed command prints a single-line redirect to stderr
+    and exits with code 2 (the convention's standard).
+
+    ``new_path`` is the user-facing replacement (e.g. ``"sac agent start"``);
+    it appears verbatim in the error. The original ``cmd.callback`` is
+    discarded — old paths no longer execute.
     """
-    original_callback = cmd.callback
-    if original_callback is None:
-        raise ValueError(f"deprecated_alias: command {cmd.name!r} has no callback")
-
-    _orig = original_callback
 
     def _callback(*args, **kwargs):
+        del args, kwargs
         click.echo(
-            f"warning: '{cmd.name}' is deprecated; use '{new_path}' instead. "
-            "(alias will be removed in a future release.)",
+            f"error: 'sac {cmd.name}' was renamed to '{new_path}'.\n"
+            f"Re-run with: {new_path}",
             err=True,
         )
-        return _orig(*args, **kwargs)
+        raise SystemExit(2)
 
     return click.Command(
         name=cmd.name,
         callback=_callback,
         params=list(cmd.params),
-        help=(cmd.help or "") + f"\n\n[DEPRECATED] Use ``{new_path}`` instead.",
+        help=(
+            (cmd.help or "")
+            + f"\n\n[RENAMED] Use ``{new_path}`` instead. The old form "
+            "exits with code 2."
+        ),
         short_help=cmd.short_help,
         epilog=cmd.epilog,
     )
