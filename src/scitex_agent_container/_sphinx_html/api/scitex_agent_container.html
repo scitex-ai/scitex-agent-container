@@ -1483,7 +1483,7 @@ sidecars are expected to exist. <code class="docutils literal notranslate"><span
 <dl class="simple">
 <dt><code class="docutils literal notranslate"><span class="pre">mode</span></code> controls effective-id composition and launch-skip behavior:</dt><dd><ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">per-host</span></code> (default): agent is started on every host that runs
-<code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">start</span> <span class="pre">&lt;name&gt;</span></code>; the effective id is <code class="docutils literal notranslate"><span class="pre">&lt;metadata.name&gt;-&lt;HOST&gt;</span></code>
+<code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agent</span> <span class="pre">start</span> <span class="pre">&lt;name&gt;</span></code>; the effective id is <code class="docutils literal notranslate"><span class="pre">&lt;metadata.name&gt;-&lt;HOST&gt;</span></code>
 unless the name already ends with <code class="docutils literal notranslate"><span class="pre">-&lt;HOST&gt;</span></code>.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">singleton</span></code>: exactly one instance fleet-wide. The effective id
 stays as the bare <code class="docutils literal notranslate"><span class="pre">&lt;metadata.name&gt;</span></code>. Only launched on

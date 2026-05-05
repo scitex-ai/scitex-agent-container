@@ -526,11 +526,11 @@ ever installed — compatible with HPC policies that forbid them
 </pre></div>
 </div>
 <p>Lifecycle:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>sac<span class="w"> </span>start<span class="w"> </span>head-spartan/head-spartan.yaml<span class="w">   </span><span class="c1"># submits sbatch on the SLURM submission host</span>
-sac<span class="w"> </span>show-status<span class="w"> </span>head-spartan<span class="w">                    </span><span class="c1"># squeue + tmux pane state</span>
-sac<span class="w"> </span>attach<span class="w"> </span>head-spartan<span class="w">                    </span><span class="c1"># srun --pty + tmux attach on the compute node</span>
-sac<span class="w"> </span>show-logs<span class="w"> </span>head-spartan<span class="w"> </span>-n<span class="w"> </span><span class="m">100</span><span class="w">               </span><span class="c1"># tmux capture-pane via srun --overlap</span>
-sac<span class="w"> </span>stop<span class="w"> </span>head-spartan<span class="w">                      </span><span class="c1"># scancel + clear local state</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>sac<span class="w"> </span>agent<span class="w"> </span>start<span class="w"> </span>head-spartan/head-spartan.yaml<span class="w">   </span><span class="c1"># submits sbatch on the SLURM submission host</span>
+sac<span class="w"> </span>agent<span class="w"> </span>status<span class="w"> </span>head-spartan<span class="w">                    </span><span class="c1"># squeue + tmux pane state</span>
+sac<span class="w"> </span>agent<span class="w"> </span>attach<span class="w"> </span>head-spartan<span class="w">                    </span><span class="c1"># srun --pty + tmux attach on the compute node</span>
+sac<span class="w"> </span>agent<span class="w"> </span>logs<span class="w"> </span>head-spartan<span class="w"> </span>-n<span class="w"> </span><span class="m">100</span><span class="w">               </span><span class="c1"># tmux capture-pane via srun --overlap</span>
+sac<span class="w"> </span>agent<span class="w"> </span>stop<span class="w"> </span>head-spartan<span class="w">                      </span><span class="c1"># scancel + clear local state</span>
 </pre></div>
 </div>
 <p>The <code class="docutils literal notranslate"><span class="pre">slurm.hooks.pre_agent</span></code> script is <em>sourced</em> (not exec’d) inside
@@ -587,26 +587,26 @@ layout (<code class="docutils literal notranslate"><span class="pre">&lt;name&gt
 </section>
 <section id="step-3-start-agents-into-the-allocation">
 <h3>Step 3 — start agents into the allocation<a class="headerlink" href="#step-3-start-agents-into-the-allocation" title="Link to this heading"></a></h3>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>sac<span class="w"> </span>start<span class="w"> </span>dev-helper.yaml<span class="w">         </span><span class="c1"># tmux session in dev-pool&#39;s allocation</span>
-sac<span class="w"> </span>start<span class="w"> </span>doc-builder.yaml<span class="w">        </span><span class="c1"># second session, same allocation</span>
-sac<span class="w"> </span>start<span class="w"> </span>test-runner.yaml<span class="w">        </span><span class="c1"># third, same allocation</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>sac<span class="w"> </span>agent<span class="w"> </span>start<span class="w"> </span>dev-helper.yaml<span class="w">         </span><span class="c1"># tmux session in dev-pool&#39;s allocation</span>
+sac<span class="w"> </span>agent<span class="w"> </span>start<span class="w"> </span>doc-builder.yaml<span class="w">        </span><span class="c1"># second session, same allocation</span>
+sac<span class="w"> </span>agent<span class="w"> </span>start<span class="w"> </span>test-runner.yaml<span class="w">        </span><span class="c1"># third, same allocation</span>
 </pre></div>
 </div>
-<p>Each <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">start</span></code> becomes one <code class="docutils literal notranslate"><span class="pre">tmux</span> <span class="pre">-L</span> <span class="pre">sac</span> <span class="pre">new-session</span></code> inside the
+<p>Each <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agent</span> <span class="pre">start</span></code> becomes one <code class="docutils literal notranslate"><span class="pre">tmux</span> <span class="pre">-L</span> <span class="pre">sac</span> <span class="pre">new-session</span></code> inside the
 existing reservation — no new <code class="docutils literal notranslate"><span class="pre">sbatch</span></code> is submitted. The whole
 operation is one ssh round-trip per agent.</p>
 <p>Or launch them all at once:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>sac<span class="w"> </span>start<span class="w"> </span>--all<span class="w">                   </span><span class="c1"># discovers all yamls, starts each</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>sac<span class="w"> </span>agent<span class="w"> </span>start<span class="w"> </span>--all<span class="w">                   </span><span class="c1"># discovers all yamls, starts each</span>
 </pre></div>
 </div>
 </section>
 <section id="step-4-operate-them">
 <h3>Step 4 — operate them<a class="headerlink" href="#step-4-operate-them" title="Link to this heading"></a></h3>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>sac<span class="w"> </span>list<span class="w">                          </span><span class="c1"># registry view; tenants show alongside other agents</span>
-sac<span class="w"> </span>attach<span class="w"> </span>dev-helper<span class="w">             </span><span class="c1"># srun --pty + tmux -L sac attach -t sac-dev-helper</span>
-sac<span class="w"> </span>show-logs<span class="w"> </span>dev-helper<span class="w"> </span>-n<span class="w"> </span><span class="m">100</span><span class="w">        </span><span class="c1"># tmux capture-pane via srun --overlap</span>
-sac<span class="w"> </span>stop<span class="w"> </span>dev-helper<span class="w">               </span><span class="c1"># tmux kill-session (does NOT release the allocation)</span>
-sac<span class="w"> </span>stop<span class="w"> </span>--all<span class="w">                    </span><span class="c1"># kill every tenant; reservation still alive</span>
+sac<span class="w"> </span>agent<span class="w"> </span>attach<span class="w"> </span>dev-helper<span class="w">             </span><span class="c1"># srun --pty + tmux -L sac agent attach -t sac-dev-helper</span>
+sac<span class="w"> </span>agent<span class="w"> </span>logs<span class="w"> </span>dev-helper<span class="w"> </span>-n<span class="w"> </span><span class="m">100</span><span class="w">        </span><span class="c1"># tmux capture-pane via srun --overlap</span>
+sac<span class="w"> </span>agent<span class="w"> </span>stop<span class="w"> </span>dev-helper<span class="w">               </span><span class="c1"># tmux kill-session (does NOT release the allocation)</span>
+sac<span class="w"> </span>agent<span class="w"> </span>stop<span class="w"> </span>--all<span class="w">                    </span><span class="c1"># kill every tenant; reservation still alive</span>
 </pre></div>
 </div>
 <p>Stopping a tenant only kills its tmux session; the reservation outlives
@@ -648,8 +648,8 @@ allocation:</p>
 <li><p>Change the agent’s yaml from <code class="docutils literal notranslate"><span class="pre">runtime:</span> <span class="pre">slurm</span></code> to
 <code class="docutils literal notranslate"><span class="pre">runtime:</span> <span class="pre">slurm-tenant</span></code> and replace the entire <code class="docutils literal notranslate"><span class="pre">slurm:</span></code> block
 with <code class="docutils literal notranslate"><span class="pre">slurm:</span> <span class="pre">{reservation:</span> <span class="pre">&lt;pool-name&gt;}</span></code>.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">stop</span></code> the old agent (or wait for its job to walltime-out).</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">start</span></code> the migrated yaml.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agent</span> <span class="pre">stop</span></code> the old agent (or wait for its job to walltime-out).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agent</span> <span class="pre">start</span></code> the migrated yaml.</p></li>
 </ol>
 <p>The agent runs in the same shell context (Python venv, env vars from
 <code class="docutils literal notranslate"><span class="pre">pre_agent</span></code> hook fragments — though tenants don’t get the
@@ -668,8 +668,8 @@ with <code class="docutils literal notranslate"><span class="pre">--tmux-server<
 reservation was booked without <code class="docutils literal notranslate"><span class="pre">--tmux-server</span></code>. Run
 <code class="docutils literal notranslate"><span class="pre">scitex-hpc</span> <span class="pre">reservations</span> <span class="pre">get</span> <span class="pre">&lt;name&gt;</span></code> and check
 <code class="docutils literal notranslate"><span class="pre">&quot;extras&quot;:</span> <span class="pre">{&quot;tmux_server&quot;:</span> <span class="pre">&quot;sac&quot;}</span></code> is set.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">attach</span></code> exits immediately — same as above; or the session
-was killed externally. Run <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">show-logs</span></code> first to see whether the
+<li><p><code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agent</span> <span class="pre">attach</span></code> exits immediately — same as above; or the session
+was killed externally. Run <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agent</span> <span class="pre">logs</span></code> first to see whether the
 process inside crashed.</p></li>
 </ul>
 </section>

@@ -15,7 +15,7 @@ Both directories are validated by ``tests/test_templates_v3_valid.py``.
 Every YAML must round-trip through ``load_config`` cleanly; the SLURM
 template additionally renders a valid sbatch script so YAML-key drift
 from ``SlurmSpec`` / ``SlurmHooks`` fails loudly in CI rather than at a
-user's first ``sac start``.
+user's first ``sac agent start``.
 
 Pattern Templates
 -----------------
