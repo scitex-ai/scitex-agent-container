@@ -52,12 +52,21 @@ ARG SAC_REF=develop
 #   * git           — pip install + project-local skill discovery
 #   * curl, ca-certificates — for outbound SDK API calls + pip
 #   * tini          — pid-1 reaper for clean SIGTERM handling
+#   * nodejs, npm   — claude-agent-sdk launches the `claude` Node CLI
+#                     for the JSON-line control protocol; without it
+#                     ClaudeSDKClient.connect() times out at
+#                     initialize.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git \
         curl \
         ca-certificates \
         tini \
+        nodejs \
+        npm \
     && rm -rf /var/lib/apt/lists/*
+
+# Claude Code Node CLI (the SDK shells out to this binary).
+RUN npm install -g @anthropic-ai/claude-code
 
 # claude-agent-sdk + scitex-agent-container itself.
 # Pinning the latter to the develop branch (override via --build-arg
