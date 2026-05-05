@@ -27,6 +27,7 @@ the container ID file at ``<state_dir>/container_id``.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -36,6 +37,51 @@ from .base import RuntimeBase
 
 DEFAULT_IMAGE = "scitex-agent-container:sdk-persistent"
 RUNNER_MODULE = "scitex_agent_container._runners.claude_session"
+
+
+def _operator_uid_gid() -> tuple[int, int]:
+    """Return ``(uid, gid)`` for the host operator. Used for ``--user``.
+
+    Posix only. On Windows / WSL the call returns ``(1000, 1000)`` as a
+    safe-ish default — the docker daemon there honours the flag the
+    same way, even if the numeric pair doesn't correspond to a real
+    host account.
+    """
+    try:
+        return os.getuid(), os.getgid()
+    except AttributeError:  # stx-allow: fallback (reason: no posix uids on windows)
+        return 1000, 1000
+
+
+def _image_exists_locally(engine: str, image: str) -> bool:
+    """``docker image inspect <image>`` returns 0 iff the image is local."""
+    result = subprocess.run(
+        [engine, "image", "inspect", image],
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
+
+
+def _build_image(
+    engine: str,
+    image: str,
+    dockerfile: Path,
+) -> bool:
+    """Run ``docker build -t <image> -f <dockerfile> <context>``.
+
+    Build context is the dockerfile's parent directory by convention —
+    sufficient for the F-CS16 yaml shape, where the Dockerfile lives
+    alongside the project files it COPYs (or doesn't COPY at all,
+    since runtime mounts handle most of that).
+    """
+    if not dockerfile.is_file():
+        return False
+    result = subprocess.run(
+        [engine, "build", "-t", image, "-f", str(dockerfile), str(dockerfile.parent)]
+    )
+    return result.returncode == 0
+
 
 # State-dir sidecar holding the live container ID (one line, no
 # trailing newline). Mirrors the existing pid-file pattern in
@@ -89,6 +135,15 @@ class ContainerRuntime(RuntimeBase):
                 (``-m <RUNNER_MODULE> --name <agent>``).
         """
         image = config.image or DEFAULT_IMAGE
+        # F-CS16 phase 2d — auto-pass --user $(id -u):$(id -g) so any
+        # files the runner writes through /work or /state are owned
+        # by the host operator, not root or UID 1000. The yaml can
+        # override (e.g. for an image that demands a specific account)
+        # by exporting SAC_USER=<spec> before invoking sac, but the
+        # default avoids the most common bind-mount permission trap.
+        uid, gid = _operator_uid_gid()
+        user_spec = os.environ.get("SAC_USER", f"{uid}:{gid}")
+
         argv: list[str] = [
             self.engine,
             "run",
@@ -96,6 +151,8 @@ class ContainerRuntime(RuntimeBase):
             "--rm",
             "--name",
             config.name,
+            "--user",
+            user_spec,
             "--mount",
             f"type=bind,src={Path(config.workdir).expanduser()},dst=/work",
             "--mount",
@@ -170,6 +227,13 @@ class ContainerRuntime(RuntimeBase):
 
         state_dir = self._state_dir(config)
         state_dir.mkdir(parents=True, exist_ok=True)
+
+        # F-CS16 phase 2d — auto-build when the image is missing AND
+        # the yaml declares a Dockerfile. dry_run skips this step;
+        # Q1=a from the design doc says "auto-build on missing", but
+        # dry-running shouldn't actually invoke `docker build`.
+        if not dry_run and not self._ensure_image_present(config):
+            return False
 
         # `--name` collisions: docker rejects on duplicate. force=True
         # stops the existing container first so the user gets fresh
@@ -251,6 +315,23 @@ class ContainerRuntime(RuntimeBase):
     # ------------------------------------------------------------------
     # internals
     # ------------------------------------------------------------------
+
+    def _ensure_image_present(self, config: AgentConfig) -> bool:
+        """Auto-build the image when missing locally (F-CS16 phase 2d).
+
+        Returns True iff the image is now available; False on any
+        unrecoverable error (build failed, no Dockerfile to build
+        from, etc.) so the caller can short-circuit ``start``.
+        """
+        image = config.image or DEFAULT_IMAGE
+        if _image_exists_locally(self.engine, image):
+            return True
+        # Image missing. Auto-build only if the yaml declared HOW.
+        dockerfile_str = (getattr(config, "dockerfile", "") or "").strip()
+        if not dockerfile_str:
+            return False
+        dockerfile = Path(dockerfile_str).expanduser().resolve()
+        return _build_image(self.engine, image, dockerfile)
 
     @staticmethod
     def _state_dir(config: AgentConfig) -> Path:

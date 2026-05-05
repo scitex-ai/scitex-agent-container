@@ -205,13 +205,12 @@ def test_start_writes_container_id_sidecar(
 ):
     rt = ContainerRuntime("docker")
     cfg = _config(tmp_path / "wd")
-    fake_run.queue(returncode=0, stdout="abc123\n")
+    # F-CS16 phase 2d adds an `image inspect` precheck before run.
+    fake_run.queue(returncode=0)  # image inspect: present
+    fake_run.queue(returncode=0, stdout="abc123\n")  # run
 
     assert rt.start(cfg) is True
-
-    # First call is `docker inspect` from is_running()? No — is_running
-    # short-circuits when the sidecar is missing. So the only call is
-    # `docker run ...`.
+    # `docker run` is invoked at least once.
     assert any(c[0] == "docker" and c[1] == "run" for c in fake_run.calls)
 
     # container_id sidecar written.
@@ -226,7 +225,8 @@ def test_start_returns_false_on_engine_failure(
 ):
     rt = ContainerRuntime("docker")
     cfg = _config(tmp_path / "wd")
-    fake_run.queue(returncode=1, stderr="error: image not found")
+    fake_run.queue(returncode=0)  # image inspect: present
+    fake_run.queue(returncode=1, stderr="error: launch failure")  # run
     assert rt.start(cfg) is False
     state_dir = rt._state_dir(cfg)
     assert not (state_dir / CONTAINER_ID_FILE).exists()
@@ -327,3 +327,143 @@ def test_dry_run_writes_argv_file(state_root: Path, tmp_path: Path, fake_run: _F
     argv_file = state_dir / "container_run.argv.txt"
     assert argv_file.is_file()
     assert "docker" in argv_file.read_text().splitlines()[0]
+
+
+# ---------------------------------------------------------------------------
+# F-CS16 phase 2d — auto-build + --user injection.
+# ---------------------------------------------------------------------------
+
+
+def test_build_run_argv_injects_user_flag(tmp_path: Path):
+    """--user $(id -u):$(id -g) appears by default."""
+    import os as _os
+
+    rt = ContainerRuntime("docker")
+    cfg = _config(tmp_path / "wd")
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path)
+    assert "--user" in argv
+    spec = argv[argv.index("--user") + 1]
+    expected = f"{_os.getuid()}:{_os.getgid()}"
+    assert spec == expected
+
+
+def test_build_run_argv_user_override_via_env(tmp_path, monkeypatch):
+    """SAC_USER overrides the auto-detected uid:gid."""
+    monkeypatch.setenv("SAC_USER", "claude:claude")
+    rt = ContainerRuntime("docker")
+    cfg = _config(tmp_path / "wd")
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path)
+    assert argv[argv.index("--user") + 1] == "claude:claude"
+
+
+def test_ensure_image_present_skips_when_image_already_local(
+    state_root: Path, tmp_path: Path, fake_run: _FakeRun
+):
+    """When `docker image inspect <image>` exits 0, no build runs."""
+    rt = ContainerRuntime("docker")
+    cfg = _config(tmp_path / "wd", image="local-image:already-here")
+    fake_run.queue(returncode=0)  # `docker image inspect` succeeds
+    assert rt._ensure_image_present(cfg) is True
+    cmds = [c[:3] for c in fake_run.calls]
+    assert cmds == [["docker", "image", "inspect"]]
+
+
+def test_ensure_image_present_auto_builds_from_dockerfile(
+    state_root: Path, tmp_path: Path, fake_run: _FakeRun
+):
+    """Image missing + dockerfile declared -> docker build runs."""
+    dockerfile = tmp_path / "ctx" / "Dockerfile.x"
+    dockerfile.parent.mkdir()
+    dockerfile.write_text("FROM python:3.11-slim\n")
+
+    rt = ContainerRuntime("docker")
+    cfg = _config(
+        tmp_path / "wd",
+        image="custom:x",
+        dockerfile=str(dockerfile),
+    )
+    # First call: docker image inspect → 1 (missing).
+    fake_run.queue(returncode=1)
+    # Second call: docker build → 0.
+    fake_run.queue(returncode=0)
+
+    assert rt._ensure_image_present(cfg) is True
+    assert fake_run.calls[0][:3] == ["docker", "image", "inspect"]
+    build_cmd = fake_run.calls[1]
+    assert build_cmd[:2] == ["docker", "build"]
+    assert "-t" in build_cmd
+    assert build_cmd[build_cmd.index("-t") + 1] == "custom:x"
+    assert "-f" in build_cmd
+    assert build_cmd[build_cmd.index("-f") + 1] == str(dockerfile.resolve())
+
+
+def test_ensure_image_present_returns_false_when_no_dockerfile(
+    state_root: Path, tmp_path: Path, fake_run: _FakeRun
+):
+    """Image missing + no dockerfile -> caller surfaces a clean error."""
+    rt = ContainerRuntime("docker")
+    cfg = _config(tmp_path / "wd", image="custom:y")
+    fake_run.queue(returncode=1)  # inspect: missing
+    assert rt._ensure_image_present(cfg) is False
+    # Only the inspect call ran — no build.
+    assert len(fake_run.calls) == 1
+
+
+def test_ensure_image_present_returns_false_when_build_fails(
+    state_root: Path, tmp_path: Path, fake_run: _FakeRun
+):
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text("FROM scratch\n")
+    rt = ContainerRuntime("docker")
+    cfg = _config(
+        tmp_path / "wd",
+        image="custom:z",
+        dockerfile=str(dockerfile),
+    )
+    fake_run.queue(returncode=1)  # inspect: missing
+    fake_run.queue(returncode=2)  # build: fail
+    assert rt._ensure_image_present(cfg) is False
+
+
+def test_start_builds_missing_image_before_run(
+    state_root: Path, tmp_path: Path, fake_run: _FakeRun
+):
+    """End-to-end: image missing + dockerfile declared, start() chains
+    inspect -> build -> run."""
+    dockerfile = tmp_path / "ctx" / "Dockerfile.x"
+    dockerfile.parent.mkdir()
+    dockerfile.write_text("FROM python:3.11-slim\n")
+
+    rt = ContainerRuntime("docker")
+    cfg = _config(
+        tmp_path / "wd",
+        image="custom:start",
+        dockerfile=str(dockerfile),
+    )
+    fake_run.queue(returncode=1)  # inspect: missing
+    fake_run.queue(returncode=0)  # build: ok
+    fake_run.queue(returncode=0, stdout="cid-abc\n")  # run
+
+    assert rt.start(cfg) is True
+    cmd_kinds = [c[:2] for c in fake_run.calls]
+    assert cmd_kinds == [
+        ["docker", "image"],
+        ["docker", "build"],
+        ["docker", "run"],
+    ]
+    state_dir = rt._state_dir(cfg)
+    assert (state_dir / CONTAINER_ID_FILE).read_text() == "cid-abc"
+
+
+def test_start_skips_image_check_in_dry_run(
+    state_root: Path, tmp_path: Path, fake_run: _FakeRun
+):
+    """Dry-run must NEVER trigger a real docker build/inspect."""
+    rt = ContainerRuntime("docker")
+    cfg = _config(
+        tmp_path / "wd",
+        image="custom:dry",
+        dockerfile=str(tmp_path / "Dockerfile"),
+    )
+    assert rt.start(cfg, dry_run=True) is True
+    assert fake_run.calls == []  # no docker invocation in dry-run
