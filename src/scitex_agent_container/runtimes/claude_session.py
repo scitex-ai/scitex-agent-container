@@ -145,6 +145,29 @@ def _warn_if_heavy_workdir_claude(config: AgentConfig) -> None:
     )
 
 
+# F-CS16 phase 2c — container engines that dispatch through
+# ContainerRuntime instead of the legacy bare-metal subprocess.Popen
+# path. ``apptainer`` is intentionally listed: when its dispatch
+# class lands (follow-up commit), this set short-circuits to it the
+# same way docker/podman go through ContainerRuntime.
+_CONTAINER_ENGINES: tuple[str, ...] = ("docker", "podman", "apptainer")
+
+
+def _container_runtime_for(config: AgentConfig):
+    """Return a ContainerRuntime instance for ``config.runtime``, or None.
+
+    Apptainer returns None for now — its runtime class is not yet
+    written; phase 2c only wires docker / podman. Callers fall back
+    to the bare-metal path when this returns None.
+    """
+    runtime = getattr(config, "runtime", "")
+    if runtime not in ("docker", "podman"):
+        return None
+    from .container import ContainerRuntime
+
+    return ContainerRuntime(engine=runtime)
+
+
 class ClaudeSessionRuntime(RuntimeBase):
     """Daemon-mode runtime backed by ``claude-agent-sdk`` (Phase 1: heartbeat only)."""
 
@@ -198,6 +221,26 @@ class ClaudeSessionRuntime(RuntimeBase):
         file lands. In foreground mode, blocks until the conversation
         completes (or the operator hits Ctrl+C) and returns True iff
         the runner exited cleanly."""
+        # F-CS16 phase 2c: when the yaml selects a container engine
+        # (runtime: docker | podman) hand off to ContainerRuntime
+        # straight away. The bare-metal subprocess path below stays
+        # for the legacy claude-session / claude-code values until
+        # phase 2e rejects them.
+        container_rt = _container_runtime_for(config)
+        if container_rt is not None:
+            # _setup_workspace still runs so CLAUDE.md is materialised
+            # before the container starts and the @-import chain works
+            # (F-CS1) — the file lives under <workdir>/.claude on the
+            # host; the bind-mount surfaces it inside the container.
+            self._setup_workspace(config)
+            return container_rt.start(
+                config,
+                no_preflight=no_preflight,
+                force=force,
+                dry_run=dry_run,
+                foreground=foreground,
+            )
+
         _ = no_preflight  # no preflight checks beyond is_running.
         # If the YAML lives under a project-local
         # ``.scitex/agent-container/agents/`` tree, route runtime state
@@ -340,6 +383,14 @@ class ClaudeSessionRuntime(RuntimeBase):
 
     def stop(self, config: AgentConfig) -> bool:
         """SIGTERM the runner; fall back to SIGKILL after 5 s."""
+        # F-CS16 phase 2c: container engines hand off entirely to
+        # ContainerRuntime; bare-metal SIGTERM doesn't apply.
+        container_rt = _container_runtime_for(config)
+        if container_rt is not None:
+            ok = container_rt.stop(config)
+            self._cleanup_workspace(config)
+            return ok
+
         if _is_remote_config(config):
             return _ssh_stop(config)
         state_dir = self._state_dir(config)
@@ -386,6 +437,12 @@ class ClaudeSessionRuntime(RuntimeBase):
 
     def is_running(self, config: AgentConfig) -> bool:
         """True if the recorded PID exists and the process is alive."""
+        # F-CS16 phase 2c: container engines have their own liveness
+        # signal (`docker inspect --format {{.State.Running}}`).
+        container_rt = _container_runtime_for(config)
+        if container_rt is not None:
+            return container_rt.is_running(config)
+
         if _is_remote_config(config):
             return _ssh_is_running(config)
         state_dir = self._state_dir(config)
@@ -401,6 +458,20 @@ class ClaudeSessionRuntime(RuntimeBase):
         accumulated token totals. Falls back to the latest heartbeat
         if the agent hasn't started a conversation yet.
         """
+        # F-CS16 phase 2c: prefer the formatted session.jsonl tail
+        # (it lives on the host via the /state bind-mount and renders
+        # the same way for either runtime). Fall through to
+        # ContainerRuntime.logs (`docker logs --tail N`) only when
+        # the transcript isn't there yet — typical for a brand-new
+        # container that hasn't completed its first turn.
+        container_rt = _container_runtime_for(config)
+        if container_rt is not None:
+            state_dir = self._state_dir(config)
+            rendered = _format_session_tail(state_dir, lines)
+            if rendered:
+                return rendered
+            return container_rt.logs(config, lines=lines)
+
         if _is_remote_config(config):
             return _ssh_logs(config, lines)
         state_dir = self._state_dir(config)

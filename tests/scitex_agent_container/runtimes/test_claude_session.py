@@ -697,6 +697,130 @@ class TestHeavyWorkdirClaudeWarning:
         # Should not raise, even though state.db has never been touched.
         cs._record_stop_best_effort(state_dir, "stopped")
 
+    # ------------------------------------------------------------------
+    # F-CS16 phase 2c — container dispatch wiring.
+    # ------------------------------------------------------------------
+
+    def test_container_runtime_for_returns_instance_for_docker_and_podman(
+        self, tmp_path
+    ):
+        from scitex_agent_container.config import AgentConfig
+        from scitex_agent_container.runtimes.claude_session import (
+            _container_runtime_for,
+        )
+
+        for engine in ("docker", "podman"):
+            cfg = AgentConfig(name="x", runtime=engine, workdir=str(tmp_path))
+            rt = _container_runtime_for(cfg)
+            assert rt is not None
+            assert rt.engine == engine
+
+    def test_container_runtime_for_returns_none_for_legacy(self, tmp_path):
+        from scitex_agent_container.config import AgentConfig
+        from scitex_agent_container.runtimes.claude_session import (
+            _container_runtime_for,
+        )
+
+        for legacy in ("claude-code", "claude-session", "slurm", ""):
+            cfg = AgentConfig(name="x", runtime=legacy, workdir=str(tmp_path))
+            assert _container_runtime_for(cfg) is None, (
+                f"legacy runtime {legacy!r} should not route to ContainerRuntime"
+            )
+
+    def test_container_runtime_for_returns_none_for_apptainer(self, tmp_path):
+        """Apptainer runtime class lands in a follow-up; helper still
+        returns None so callers fall through to bare-metal until then."""
+        from scitex_agent_container.config import AgentConfig
+        from scitex_agent_container.runtimes.claude_session import (
+            _container_runtime_for,
+        )
+
+        cfg = AgentConfig(name="x", runtime="apptainer", workdir=str(tmp_path))
+        assert _container_runtime_for(cfg) is None
+
+    def test_start_dispatches_to_container_runtime_for_docker(
+        self, tmp_path, monkeypatch
+    ):
+        from scitex_agent_container.config import AgentConfig
+        from scitex_agent_container.runtimes import claude_session as cs
+
+        seen = {}
+
+        class _Stub:
+            engine = "docker"
+
+            def start(self, config, **kw):
+                seen["start"] = (config.name, kw)
+                return True
+
+        monkeypatch.setattr(cs, "_container_runtime_for", lambda cfg: _Stub())
+        monkeypatch.setattr(
+            cs.ClaudeSessionRuntime, "_setup_workspace", lambda self, c: None
+        )
+
+        cfg = AgentConfig(name="capsule-01", runtime="docker", workdir=str(tmp_path))
+        assert cs.ClaudeSessionRuntime().start(cfg, dry_run=True) is True
+        assert seen["start"][0] == "capsule-01"
+        assert seen["start"][1]["dry_run"] is True
+
+    def test_stop_dispatches_to_container_runtime_for_docker(
+        self, tmp_path, monkeypatch
+    ):
+        from scitex_agent_container.config import AgentConfig
+        from scitex_agent_container.runtimes import claude_session as cs
+
+        seen = {}
+
+        class _Stub:
+            engine = "docker"
+
+            def stop(self, config):
+                seen["stop"] = config.name
+                return True
+
+        monkeypatch.setattr(cs, "_container_runtime_for", lambda cfg: _Stub())
+        monkeypatch.setattr(
+            cs.ClaudeSessionRuntime, "_cleanup_workspace", lambda self, c: None
+        )
+
+        cfg = AgentConfig(name="x", runtime="docker", workdir=str(tmp_path))
+        assert cs.ClaudeSessionRuntime().stop(cfg) is True
+        assert seen["stop"] == "x"
+
+    def test_is_running_dispatches_to_container_runtime_for_docker(
+        self, tmp_path, monkeypatch
+    ):
+        from scitex_agent_container.config import AgentConfig
+        from scitex_agent_container.runtimes import claude_session as cs
+
+        class _Stub:
+            engine = "docker"
+
+            def is_running(self, config):
+                return True
+
+        monkeypatch.setattr(cs, "_container_runtime_for", lambda cfg: _Stub())
+        cfg = AgentConfig(name="x", runtime="docker", workdir=str(tmp_path))
+        assert cs.ClaudeSessionRuntime().is_running(cfg) is True
+
+    def test_logs_falls_through_to_container_logs_when_no_session_yet(
+        self, tmp_path, monkeypatch
+    ):
+        """When there's no session.jsonl yet, container-mode logs come
+        from ``docker logs --tail N`` instead of the heartbeat dump."""
+        from scitex_agent_container.config import AgentConfig
+        from scitex_agent_container.runtimes import claude_session as cs
+
+        class _Stub:
+            engine = "docker"
+
+            def logs(self, config, lines=50):
+                return f"DOCKER LOGS lines={lines}"
+
+        monkeypatch.setattr(cs, "_container_runtime_for", lambda cfg: _Stub())
+        cfg = AgentConfig(name="x", runtime="docker", workdir=str(tmp_path))
+        assert cs.ClaudeSessionRuntime().logs(cfg, lines=12) == "DOCKER LOGS lines=12"
+
     def test_symlinks_are_not_followed(self, workdir, tmp_path, capsys, monkeypatch):
         """Symlinked targets must NOT inflate the size estimate."""
         from scitex_agent_container.runtimes import claude_session as cs
