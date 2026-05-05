@@ -140,6 +140,14 @@ def _load_newbie_config_with_override(
     return load_config(target)
 
 
+@pytest.mark.skip(
+    reason=(
+        "F-CS17: legacy DockerRuntime (CLI/TUI in docker) is slated "
+        "for deletion. The new ContainerRuntime (SDK in docker) is "
+        "tested in tests/scitex_agent_container/runtimes/test_container.py. "
+        "DockerRuntime + this test go in F-CS17 stage 3."
+    )
+)
 @pytest.mark.docker_smoke
 @pytest.mark.skipif(not _DOCKER_OK, reason="docker unavailable (CLI or daemon)")
 def test_start_and_stop_newbie_docker_agent(request, tmp_path, test_image):

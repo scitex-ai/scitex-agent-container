@@ -147,11 +147,11 @@ def test_normalize_runtime_warns_per_distinct_alias(capsys):
     assert "claude-sdk-persistent" in err
 
 
-def test_validate_raw_accepts_alias_runtime_during_phase_2e1():
-    """F-CS6's yaml-friendly aliases (claude-cli-tui /
-    claude-sdk-persistent) keep validating during phase 2e.1.
-    F-CS17's sweep flips them to hard-errors via
-    ``legacy_runtime_redirect_message``."""
+def test_validate_raw_rejects_f_cs6_aliases_after_f_cs17():
+    """F-CS17 stage 2 rejects every legacy / aliased runtime value.
+    F-CS6's yaml-friendly aliases (claude-cli-tui /
+    claude-sdk-persistent) hard-error alongside their canonical
+    forms — sac is container-only."""
     for alias in ("claude-cli-tui", "claude-sdk-persistent"):
         raw = {
             "apiVersion": "scitex-agent-container/v3",
@@ -159,7 +159,9 @@ def test_validate_raw_accepts_alias_runtime_during_phase_2e1():
             "spec": {"runtime": alias},
         }
         errors = validate_raw(raw, path="<test>")
-        assert not [e for e in errors if "spec.runtime" in e]
+        assert any("spec.runtime" in e and alias in e for e in errors), (
+            f"alias {alias!r} must hard-error with a redirect"
+        )
 
 
 def test_validate_raw_rejects_unknown_runtime():
@@ -309,20 +311,25 @@ def test_validate_raw_accepts_new_engine_runtime(engine):
         "slurm-tenant",
     ],
 )
-def test_validate_raw_still_accepts_legacy_runtime_during_phase_2e1(legacy):
-    """Phase 2e.1 ships the redirect machinery without flipping the
-    validator. Existing example yamls / template integration tests /
-    contributor-spec fixtures must keep parsing until F-CS17 migrates
-    them in lockstep with the validator flip."""
+def test_validate_raw_hard_errors_on_legacy_runtime(legacy):
+    """F-CS17 stage 2: legacy runtime values now hard-error with a
+    redirect that names the new shape. Phase 2e.1's grace period
+    is over — every yaml that still uses the old runtime values is
+    rejected at parse time."""
     raw = {
         "apiVersion": "scitex-agent-container/v3",
         "kind": "Agent",
         "spec": {"runtime": legacy},
     }
     errors = validate_raw(raw, path="<test>")
-    assert not [e for e in errors if "spec.runtime" in e], (
-        f"legacy runtime {legacy!r} must still parse during phase 2e.1"
-    )
+    runtime_errors = [e for e in errors if "spec.runtime" in e]
+    assert runtime_errors, f"legacy runtime {legacy!r} must now be rejected"
+    msg = runtime_errors[0]
+    assert legacy in msg
+    if legacy.startswith("slurm"):
+        assert "no longer supported" in msg
+    else:
+        assert "docker" in msg or "container" in msg.lower()
 
 
 @pytest.mark.parametrize(

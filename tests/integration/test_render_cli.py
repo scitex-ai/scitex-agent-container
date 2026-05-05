@@ -65,6 +65,14 @@ def claude_yaml(tmp_path: Path) -> Path:
     return p
 
 
+@pytest.mark.skip(
+    reason=(
+        "F-CS17: SLURM rendering is slated for deletion. The validator "
+        "now hard-errors on runtime: slurm; the render_sbatch / "
+        "render_attach helpers go in F-CS17 stage 3 alongside this "
+        "test class."
+    )
+)
 class TestRenderSbatch:
     def test_emits_hardened_sbatch_text(self, slurm_yaml: Path) -> None:
         runner = CliRunner()
@@ -86,6 +94,12 @@ class TestRenderSbatch:
         assert "requires runtime: slurm" in result.output
 
 
+@pytest.mark.skip(
+    reason=(
+        "F-CS17: SLURM rendering is slated for deletion. render_attach "
+        "/ render_sbatch helpers + the slurm runtime go in F-CS17 stage 3."
+    )
+)
 class TestRenderAttach:
     def test_emits_srun_pty_command_with_recorded_jobid(
         self, slurm_yaml: Path, tmp_path: Path, monkeypatch

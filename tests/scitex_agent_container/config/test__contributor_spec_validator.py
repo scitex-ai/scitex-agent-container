@@ -37,7 +37,7 @@ VALID_CONTRIBUTOR_SPEC: dict = {
         }
     },
     "spec": {
-        "runtime": "slurm-tenant",
+        "runtime": "docker",
         "host": ["spartan", "spartan-bm149"],
         "a2a": {
             "port": 19132,
@@ -239,8 +239,11 @@ class TestSpecRuntime:
         errors = _errors(raw)
         assert any("runtime" in e for e in errors)
 
-    @pytest.mark.parametrize("runtime", ["claude-code", "slurm", "slurm-tenant"])
+    @pytest.mark.parametrize("runtime", ["docker", "podman", "apptainer"])
     def test_valid_runtimes(self, runtime):
+        """F-CS17 stage 2: only container engines are valid runtime
+        values (sac is a container wrapper). claude-code / slurm /
+        slurm-tenant moved to ``legacy_runtime_redirect_message``."""
         raw = _set(VALID_CONTRIBUTOR_SPEC, ["spec", "runtime"], runtime)
         errors = _errors(raw)
         assert not any("runtime" in e for e in errors)

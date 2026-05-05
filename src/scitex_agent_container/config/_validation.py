@@ -274,33 +274,19 @@ def validate_raw(raw: dict, path: str) -> list[str]:
                 f"known keys: {sorted(_KNOWN_SPEC_KEYS)}."
             )
 
-        # spec.runtime — F-CS16 phase 2e.1.
+        # spec.runtime — F-CS17 stage 2.
         #
-        # ``runtime`` is becoming the container engine: docker /
-        # podman / apptainer. Phase 2e.1 ships the redirect machinery
-        # (_LEGACY_RUNTIME_REDIRECTS + legacy_runtime_redirect_message
-        # below) without flipping the validator: legacy values still
-        # parse so the existing example yamls / template integration
-        # tests / contributor-spec fixtures keep working until F-CS17
-        # migrates them in one shot. The flip to hard-error happens
-        # alongside that sweep — the redirect strings are already
-        # written and tested here.
+        # The migration's grace period (phase 2e.1) is over. Every
+        # legacy value now hard-errors with the redirect string from
+        # ``legacy_runtime_redirect_message`` — see the §5-style
+        # guidance there. Canonical engines (docker / podman /
+        # apptainer) remain the only accepted values.
         runtime = spec.get("runtime")
-        valid_runtimes = (
-            # F-CS16 — container engines (canonical going forward).
-            "docker",
-            "podman",
-            "apptainer",
-            # Legacy — still accepted; F-CS17 sweep flips them to
-            # hard-errors via legacy_runtime_redirect_message().
-            "claude-code",
-            "claude-cli-tui",
-            "claude-session",
-            "claude-sdk-persistent",
-            "slurm",
-            "slurm-tenant",
-        )
-        if runtime and runtime not in valid_runtimes:
+        valid_runtimes = ("docker", "podman", "apptainer")
+        legacy_msg = legacy_runtime_redirect_message(runtime or "")
+        if legacy_msg is not None:
+            errors.append(legacy_msg)
+        elif runtime and runtime not in valid_runtimes:
             errors.append(
                 f"spec.runtime must be one of {valid_runtimes}, got '{runtime}'"
             )

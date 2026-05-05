@@ -291,6 +291,13 @@ class TestConfigParsing:
         spec = SlurmSpec(reservation="dev-pool")
         assert spec.reservation == "dev-pool"
 
+    @pytest.mark.skip(
+        reason=(
+            "F-CS17: SLURM runtime is slated for deletion. The validator "
+            "now hard-errors on runtime: slurm-tenant; this round-trip "
+            "test goes in stage 3 alongside the slurm runtime modules."
+        )
+    )
     def test_yaml_parse_round_trip(self, tmp_path):
         from scitex_agent_container.config import load_config
 
