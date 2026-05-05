@@ -2,9 +2,42 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import yaml
+
+# Accepted shapes for ``spec.model`` (F-CS7).
+#
+# claude-agent-sdk silently rejects unknown aliases — the runner stays
+# alive, the heartbeat is fresh, but every turn returns 0 input tokens
+# and 0 output tokens because the SDK never makes the API call. Pin
+# the validation here so the failure surfaces at yaml-validate time
+# instead of as a hung-looking agent.
+#
+# Two acceptable shapes:
+#   1. Bare alias: ``opus`` / ``sonnet`` / ``haiku`` / ``inherit`` /
+#      ``default``, optionally with a context-suffix (``[1m]``).
+#   2. Full versioned form: ``claude-<family>-N-M`` with optional date
+#      tail (``-20251001``) and optional context-suffix.
+#
+# Reproduction (2026-05-05): ``claude-opus[1m]`` (abbreviated, missing
+# the version digits) was accepted by the YAML loader but silently
+# rejected by the SDK — every turn returned ``input_tokens=0``,
+# ``output_tokens=0``, ``iterations=[]``. Other peers using
+# ``claude-opus-4-7[1m]`` worked fine.
+_VALID_MODEL_RE = re.compile(
+    r"""
+    ^(?:
+        (?:opus|sonnet|haiku|inherit|default)
+        |
+        claude-(?:opus|sonnet|haiku)-\d+-\d+(?:-[a-z0-9]+)*
+    )
+    (?:\[[a-zA-Z0-9_]+\])?
+    $
+    """,
+    re.VERBOSE,
+)
 
 _VALID_API_VERSIONS = ("scitex-agent-container/v3",)
 
@@ -114,6 +147,30 @@ def validate_raw(raw: dict, path: str) -> list[str]:
             errors.append(
                 f"spec.runtime must be one of {valid_runtimes}, got '{runtime}'"
             )
+
+        # spec.model — F-CS7: validate against accepted SDK aliases /
+        # versioned forms. The SDK silently rejects unknown values
+        # (heartbeat fresh, every turn returns 0 tokens), so we surface
+        # bad strings at yaml-validate time. Empty / missing is allowed
+        # — runtime falls back to its default.
+        model = spec.get("model")
+        if model is not None:
+            if not isinstance(model, str):
+                errors.append(
+                    f"spec.model must be a string, got {type(model).__name__}"
+                )
+            elif model and not _VALID_MODEL_RE.match(model):
+                errors.append(
+                    f"spec.model '{model}' is not an accepted alias. "
+                    "Use a bare alias ('opus', 'sonnet', 'haiku', 'inherit', "
+                    "'default'), optionally with a context suffix like "
+                    "'opus[1m]'; OR the full versioned form "
+                    "'claude-<family>-N-M[-<tail>]' (e.g. 'claude-opus-4-7', "
+                    "'claude-opus-4-7[1m]', 'claude-haiku-4-5-20251001'). "
+                    "Abbreviated forms like 'claude-opus[1m]' are rejected "
+                    "by the SDK without raising — every turn returns 0 "
+                    "tokens."
+                )
 
         # container.runtime
         container = spec.get("container", {}) or {}
