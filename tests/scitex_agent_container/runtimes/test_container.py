@@ -1,0 +1,329 @@
+"""Tests for ``runtimes.container.ContainerRuntime`` (F-CS16 phase 2b).
+
+Two layers:
+
+  1. ``build_run_argv`` — pure function; render the right ``docker
+     run`` flags from an AgentConfig. No subprocess work; we exercise
+     workdir / state mount, env vars, env-files, --publish for a2a,
+     image fallback, runner argv default + override.
+
+  2. ``start`` / ``stop`` / ``is_running`` / ``logs`` — wired to
+     subprocess. Mocked via ``monkeypatch.setattr(subprocess, "run")``
+     so the tests stay hermetic; the assertions cover the argv shape,
+     the container_id sidecar lifecycle, and the read paths.
+"""
+
+from __future__ import annotations
+
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from scitex_agent_container.config import AgentConfig
+from scitex_agent_container.runtimes.container import (
+    CONTAINER_ID_FILE,
+    DEFAULT_IMAGE,
+    ContainerRuntime,
+)
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def state_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Redirect the runner's state-dir root so each test stays sandboxed."""
+    root = tmp_path / "runtime"
+    root.mkdir()
+    monkeypatch.setenv("SCITEX_AGENT_CONTAINER_RUNTIME_DIR", str(root))
+    # Reload the _session_state module so it picks up the env var. Some
+    # _runners.claude_session attributes cache the root; reload re-derives.
+    import importlib
+
+    import scitex_agent_container._runners._session_state as ss
+
+    importlib.reload(ss)
+    return root
+
+
+def _config(workdir: Path, **kw) -> AgentConfig:
+    """Minimal AgentConfig for the dispatch tests."""
+    return AgentConfig(
+        name=kw.pop("name", "alpha"),
+        runtime=kw.pop("runtime", "docker"),
+        workdir=str(workdir),
+        **kw,
+    )
+
+
+# ---------------------------------------------------------------------------
+# build_run_argv — pure
+# ---------------------------------------------------------------------------
+
+
+def test_build_run_argv_emits_default_image_and_basic_mounts(tmp_path: Path):
+    rt = ContainerRuntime("docker")
+    cfg = _config(tmp_path / "wd")
+    state = tmp_path / "state"
+    state.mkdir()
+
+    argv = rt.build_run_argv(cfg, state_dir=state)
+
+    # Engine + run + detach flags first.
+    assert argv[:4] == ["docker", "run", "--detach", "--rm"]
+    # Default image when spec.image is empty.
+    assert DEFAULT_IMAGE in argv
+    # Workdir bind mount points at /work; state bind mount at /state.
+    assert f"type=bind,src={tmp_path / 'wd'},dst=/work" in argv
+    assert f"type=bind,src={state},dst=/state" in argv
+    # SCITEX_AGENT_CONTAINER_STATE_DB env wired.
+    assert "SCITEX_AGENT_CONTAINER_STATE_DB=/state/state.db" in argv
+
+
+def test_build_run_argv_uses_spec_image_when_set(tmp_path: Path):
+    rt = ContainerRuntime("docker")
+    cfg = _config(tmp_path, image="clew-paper:capsule-01")
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path)
+    assert "clew-paper:capsule-01" in argv
+    assert DEFAULT_IMAGE not in argv
+
+
+def test_build_run_argv_passes_env_dict_as_separate_flags(tmp_path: Path):
+    rt = ContainerRuntime("docker")
+    cfg = _config(tmp_path, env={"CAPSULE_ID": "01", "PROJECT": "clew"})
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path)
+    # Each KEY=VAL is its own --env arg.
+    assert "CAPSULE_ID=01" in argv
+    assert "PROJECT=clew" in argv
+    # Both are preceded by --env (not collapsed).
+    assert argv.count("--env") >= 2
+
+
+def test_build_run_argv_threads_env_files(tmp_path: Path):
+    rt = ContainerRuntime("docker")
+    cfg = _config(tmp_path, env_files=[".envrc", "secrets.env"])
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path)
+    # --env-file appears once per file.
+    idxs = [i for i, a in enumerate(argv) if a == "--env-file"]
+    assert len(idxs) == 2
+    assert argv[idxs[0] + 1] == ".envrc"
+    assert argv[idxs[1] + 1] == "secrets.env"
+
+
+def test_build_run_argv_publishes_a2a_to_localhost(tmp_path: Path):
+    """a2a.port -> --publish 127.0.0.1:<port>:<port>.
+
+    Phase 2b's ContainerRuntime reads the port via
+    ``getattr(config.a2a, 'port', None)``. AgentConfig doesn't carry
+    an ``a2a`` field today (the port is read inline from the raw
+    yaml spec by other call sites — see runtimes.claude_session.
+    _read_a2a_endpoint). Stub the attribute on the instance so we
+    exercise the publish-flag branch without prematurely shaping
+    AgentConfig — the proper ``A2ASpec`` field lands in F-CS16
+    phase 2c when all agentic-sugar mounts get formalised.
+    """
+    rt = ContainerRuntime("docker")
+    cfg = _config(tmp_path)
+    object.__setattr__(cfg, "a2a", type("A", (), {"port": 8950})())
+
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path)
+    assert "--publish" in argv
+    pub = argv[argv.index("--publish") + 1]
+    assert pub == "127.0.0.1:8950:8950"
+    # Runner argv also gets the --a2a-port pair.
+    assert "--a2a-port" in argv
+    assert argv[argv.index("--a2a-port") + 1] == "8950"
+
+
+def test_build_run_argv_runner_argv_override(tmp_path: Path):
+    rt = ContainerRuntime("docker")
+    cfg = _config(tmp_path, name="beta")
+    custom = ["--name", "beta", "--mission", "smoke"]
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path, runner_argv=custom)
+    # The override appears at the tail (after the image).
+    assert argv[-len(custom) :] == custom
+    # Default --a2a-port pair must not creep in when caller supplies argv.
+    assert "--mission" in argv
+
+
+def test_build_run_argv_works_for_podman(tmp_path: Path):
+    rt = ContainerRuntime("podman")
+    cfg = _config(tmp_path)
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path)
+    assert argv[0] == "podman"
+
+
+def test_build_run_argv_rejects_unsupported_engine():
+    with pytest.raises(ValueError, match="apptainer"):
+        ContainerRuntime("apptainer")
+
+
+# ---------------------------------------------------------------------------
+# start / stop / is_running / logs — subprocess-mocked
+# ---------------------------------------------------------------------------
+
+
+class _FakeRun:
+    """Drop-in for ``subprocess.run`` that records argv + replays canned output."""
+
+    def __init__(self):
+        self.calls: list[list[str]] = []
+        self._next: list[subprocess.CompletedProcess] = []
+
+    def queue(self, returncode: int = 0, stdout: str = "", stderr: str = ""):
+        self._next.append(
+            subprocess.CompletedProcess(
+                args=[], returncode=returncode, stdout=stdout, stderr=stderr
+            )
+        )
+
+    def __call__(self, argv, *args, **kwargs):
+        self.calls.append(list(argv))
+        if self._next:
+            r = self._next.pop(0)
+            r.args = argv
+            return r
+        return subprocess.CompletedProcess(args=argv, returncode=0)
+
+
+@pytest.fixture
+def fake_run(monkeypatch: pytest.MonkeyPatch) -> _FakeRun:
+    fr = _FakeRun()
+    import scitex_agent_container.runtimes.container as cm
+
+    monkeypatch.setattr(cm.subprocess, "run", fr)
+    # shutil.which always returns a path so the engine-availability
+    # gate doesn't short-circuit start().
+    monkeypatch.setattr(cm.shutil, "which", lambda *_a, **_k: "/usr/bin/docker")
+    return fr
+
+
+def test_start_writes_container_id_sidecar(
+    state_root: Path, tmp_path: Path, fake_run: _FakeRun
+):
+    rt = ContainerRuntime("docker")
+    cfg = _config(tmp_path / "wd")
+    fake_run.queue(returncode=0, stdout="abc123\n")
+
+    assert rt.start(cfg) is True
+
+    # First call is `docker inspect` from is_running()? No — is_running
+    # short-circuits when the sidecar is missing. So the only call is
+    # `docker run ...`.
+    assert any(c[0] == "docker" and c[1] == "run" for c in fake_run.calls)
+
+    # container_id sidecar written.
+    state_dir = rt._state_dir(cfg)
+    cid_path = state_dir / CONTAINER_ID_FILE
+    assert cid_path.is_file()
+    assert cid_path.read_text() == "abc123"
+
+
+def test_start_returns_false_on_engine_failure(
+    state_root: Path, tmp_path: Path, fake_run: _FakeRun
+):
+    rt = ContainerRuntime("docker")
+    cfg = _config(tmp_path / "wd")
+    fake_run.queue(returncode=1, stderr="error: image not found")
+    assert rt.start(cfg) is False
+    state_dir = rt._state_dir(cfg)
+    assert not (state_dir / CONTAINER_ID_FILE).exists()
+
+
+def test_stop_runs_docker_stop_and_clears_sidecar(
+    state_root: Path, tmp_path: Path, fake_run: _FakeRun
+):
+    rt = ContainerRuntime("docker")
+    cfg = _config(tmp_path / "wd")
+    state_dir = rt._state_dir(cfg)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / CONTAINER_ID_FILE).write_text("abc123")
+    fake_run.queue(returncode=0)
+
+    assert rt.stop(cfg) is True
+    assert fake_run.calls[-1][:3] == ["docker", "stop", "abc123"]
+    assert not (state_dir / CONTAINER_ID_FILE).exists()
+
+
+def test_stop_succeeds_when_no_container_id(
+    state_root: Path, tmp_path: Path, fake_run: _FakeRun
+):
+    rt = ContainerRuntime("docker")
+    cfg = _config(tmp_path / "wd")
+    # No sidecar at all → stop returns True (idempotent), no engine call.
+    assert rt.stop(cfg) is True
+    assert fake_run.calls == []
+
+
+def test_is_running_true_when_inspect_returns_true(
+    state_root: Path, tmp_path: Path, fake_run: _FakeRun
+):
+    rt = ContainerRuntime("docker")
+    cfg = _config(tmp_path / "wd")
+    state_dir = rt._state_dir(cfg)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / CONTAINER_ID_FILE).write_text("abc123")
+    fake_run.queue(returncode=0, stdout="true\n")
+
+    assert rt.is_running(cfg) is True
+    assert fake_run.calls[-1][:2] == ["docker", "inspect"]
+
+
+def test_is_running_false_when_inspect_returns_false(
+    state_root: Path, tmp_path: Path, fake_run: _FakeRun
+):
+    rt = ContainerRuntime("docker")
+    cfg = _config(tmp_path / "wd")
+    state_dir = rt._state_dir(cfg)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / CONTAINER_ID_FILE).write_text("abc123")
+    fake_run.queue(returncode=0, stdout="false\n")
+    assert rt.is_running(cfg) is False
+
+
+def test_is_running_false_when_no_sidecar(
+    state_root: Path, tmp_path: Path, fake_run: _FakeRun
+):
+    rt = ContainerRuntime("docker")
+    cfg = _config(tmp_path / "wd")
+    assert rt.is_running(cfg) is False
+    assert fake_run.calls == []
+
+
+def test_logs_calls_docker_logs_with_tail(
+    state_root: Path, tmp_path: Path, fake_run: _FakeRun
+):
+    rt = ContainerRuntime("docker")
+    cfg = _config(tmp_path / "wd")
+    state_dir = rt._state_dir(cfg)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / CONTAINER_ID_FILE).write_text("abc123")
+    fake_run.queue(returncode=0, stdout="line1\nline2\n", stderr="")
+    out = rt.logs(cfg, lines=42)
+    assert "line1" in out and "line2" in out
+    cmd = fake_run.calls[-1]
+    assert cmd[:2] == ["docker", "logs"]
+    assert cmd[cmd.index("--tail") + 1] == "42"
+
+
+def test_logs_empty_when_no_container_id(
+    state_root: Path, tmp_path: Path, fake_run: _FakeRun
+):
+    rt = ContainerRuntime("docker")
+    cfg = _config(tmp_path / "wd")
+    assert rt.logs(cfg) == ""
+
+
+def test_dry_run_writes_argv_file(state_root: Path, tmp_path: Path, fake_run: _FakeRun):
+    """--dry-run captures the would-run argv to the state dir."""
+    rt = ContainerRuntime("docker")
+    cfg = _config(tmp_path / "wd")
+    assert rt.start(cfg, dry_run=True) is True
+    # No subprocess call when dry-running.
+    assert fake_run.calls == []
+    state_dir = rt._state_dir(cfg)
+    argv_file = state_dir / "container_run.argv.txt"
+    assert argv_file.is_file()
+    assert "docker" in argv_file.read_text().splitlines()[0]
