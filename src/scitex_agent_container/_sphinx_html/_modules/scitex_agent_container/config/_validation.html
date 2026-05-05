@@ -105,6 +105,7 @@
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.health"><code class="docutils literal notranslate"><span class="pre">AgentConfig.health</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.watchdog"><code class="docutils literal notranslate"><span class="pre">AgentConfig.watchdog</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.restart"><code class="docutils literal notranslate"><span class="pre">AgentConfig.restart</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.autonomous"><code class="docutils literal notranslate"><span class="pre">AgentConfig.autonomous</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.hooks"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hooks</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.listen"><code class="docutils literal notranslate"><span class="pre">AgentConfig.listen</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.extensions"><code class="docutils literal notranslate"><span class="pre">AgentConfig.extensions</span></code></a></li>
@@ -158,6 +159,7 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.health"><code class="docutils literal notranslate"><span class="pre">AgentConfig.health</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.watchdog"><code class="docutils literal notranslate"><span class="pre">AgentConfig.watchdog</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.restart"><code class="docutils literal notranslate"><span class="pre">AgentConfig.restart</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.autonomous"><code class="docutils literal notranslate"><span class="pre">AgentConfig.autonomous</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hooks"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hooks</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.listen"><code class="docutils literal notranslate"><span class="pre">AgentConfig.listen</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.extensions"><code class="docutils literal notranslate"><span class="pre">AgentConfig.extensions</span></code></a></li>
@@ -616,6 +618,7 @@
         <span class="s2">&quot;scheduling&quot;</span><span class="p">,</span>  <span class="c1"># rejected with a specific actionable message below</span>
         <span class="s2">&quot;a2a&quot;</span><span class="p">,</span>  <span class="c1"># A2A sidecar config read by a2a/_server.py</span>
         <span class="s2">&quot;orochi&quot;</span><span class="p">,</span>  <span class="c1"># Orochi-specific extension namespace</span>
+        <span class="s2">&quot;autonomous&quot;</span><span class="p">,</span>  <span class="c1"># F-CS3 — drive-until-done block</span>
     <span class="p">}</span>
 <span class="p">)</span>
 
@@ -798,6 +801,34 @@
                     <span class="sa">f</span><span class="s2">&quot;spec.hosts must be &#39;all&#39; or a list of strings; &quot;</span>
                     <span class="sa">f</span><span class="s2">&quot;got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">hosts_val</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span>
                 <span class="p">)</span>
+
+        <span class="c1"># spec.autonomous (F-CS3 phase 1) — drive-until-done.</span>
+        <span class="n">autonomous</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;autonomous&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">autonomous</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">autonomous</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
+                <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                    <span class="s2">&quot;spec.autonomous must be a mapping; got &quot;</span>
+                    <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">autonomous</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span>
+                <span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">drive_until</span> <span class="o">=</span> <span class="n">autonomous</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;drive_until&quot;</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">drive_until</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">drive_until</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
+                    <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;spec.autonomous.drive_until must be a string&quot;</span><span class="p">)</span>
+                <span class="k">elif</span> <span class="n">drive_until</span> <span class="o">==</span> <span class="s2">&quot;&quot;</span><span class="p">:</span>
+                    <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;spec.autonomous.drive_until must be non-empty&quot;</span><span class="p">)</span>
+                <span class="k">for</span> <span class="n">fld</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;max_turns&quot;</span><span class="p">,</span> <span class="s2">&quot;idle_kick_after_s&quot;</span><span class="p">):</span>
+                    <span class="n">val</span> <span class="o">=</span> <span class="n">autonomous</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">fld</span><span class="p">)</span>
+                    <span class="k">if</span> <span class="n">val</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                        <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">val</span><span class="p">,</span> <span class="nb">int</span><span class="p">)</span> <span class="ow">or</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">val</span><span class="p">,</span> <span class="nb">bool</span><span class="p">):</span>
+                            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;spec.autonomous.</span><span class="si">{</span><span class="n">fld</span><span class="si">}</span><span class="s2"> must be an integer&quot;</span><span class="p">)</span>
+                        <span class="k">elif</span> <span class="n">val</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
+                            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;spec.autonomous.</span><span class="si">{</span><span class="n">fld</span><span class="si">}</span><span class="s2"> must be &gt; 0&quot;</span><span class="p">)</span>
+                <span class="n">kick</span> <span class="o">=</span> <span class="n">autonomous</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;kick_text&quot;</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">kick</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">kick</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
+                    <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;spec.autonomous.kick_text must be a string&quot;</span><span class="p">)</span>
+                <span class="n">enabled</span> <span class="o">=</span> <span class="n">autonomous</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;enabled&quot;</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">enabled</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">enabled</span><span class="p">,</span> <span class="nb">bool</span><span class="p">):</span>
+                    <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;spec.autonomous.enabled must be a boolean&quot;</span><span class="p">)</span>
 
         <span class="c1"># Reject the old `scheduling:` block — replaced by host/hosts.</span>
         <span class="k">if</span> <span class="s2">&quot;scheduling&quot;</span> <span class="ow">in</span> <span class="n">spec</span><span class="p">:</span>
