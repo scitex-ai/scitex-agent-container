@@ -12,7 +12,6 @@ from .._state.registry import Registry
 from ..config import AgentConfig, load_config, resolve_config
 from ..hooks import run_hook
 from ..runtimes.claude_code import ClaudeCodeRuntime
-from ..runtimes.slurm import SlurmRuntime
 from .health import health_monitor
 
 
@@ -39,12 +38,6 @@ def _get_runtime(config: AgentConfig):
         from ..runtimes.claude_session import ClaudeSessionRuntime
 
         return ClaudeSessionRuntime()
-    if config.runtime == "slurm":
-        return SlurmRuntime()
-    if config.runtime == "slurm-tenant":
-        from ..runtimes.slurm_tenant import SlurmTenantRuntime
-
-        return SlurmTenantRuntime()
     raise ValueError(f"Unsupported runtime: {config.runtime}")
 
 

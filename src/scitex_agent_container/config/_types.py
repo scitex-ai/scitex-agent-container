@@ -106,28 +106,6 @@ class TelegramSpec:
 
 
 @dataclass
-class SlurmHooks:
-    """Plugin hook paths for the SLURM runtime.
-
-    Each field is a path to a shell fragment that is *sourced* (not exec'd)
-    by the sbatch wrapper. Hooks can export env vars that persist into the
-    agent process — this is exactly what e.g. Lmod module loads need.
-
-    Hook env vars (set by the wrapper before sourcing):
-        SAC_AGENT_ID, SAC_JOB_ID, SAC_WORKDIR, SAC_LOG_FILE, SAC_PHASE.
-
-    sac ships no default hooks; external orchestrators (orochi, etc.)
-    provide their own scripts and reference them from agent YAML.
-    """
-
-    pre_submit: str = ""
-    pre_agent: str = ""
-    walltime_signal: str = ""
-    post_agent: str = ""
-    attach: str = ""
-
-
-@dataclass
 class OrochiSpec:
     enabled: bool = False
     hosts: list[str] = field(default_factory=list)
@@ -135,66 +113,6 @@ class OrochiSpec:
     token_env: str = "SCITEX_OROCHI_TOKEN"
     channels: list[str] = field(default_factory=list)
     heartbeat_interval: int = 60
-
-
-@dataclass
-class SlurmHeartbeatSpec:
-    """Compute-node heartbeat daemon for the SLURM runtime.
-
-    On HPC clusters the host-level heartbeat pusher (systemd user timer,
-    launchd plist) runs on the *login node* and cannot see tmux sessions
-    living on the compute node the sbatch job landed on. Without a
-    compute-node-local pusher, the hub marks the agent dead five minutes
-    after the job starts (symptom: ``head-spartan`` alive in squeue but
-    red on the dashboard — lead msg#15654).
-
-    Fix: the sbatch wrapper spawns a lightweight background loop that
-    invokes ``command`` every ``interval_s`` seconds on the compute node
-    itself. When ``command`` is empty the loop is skipped (opt-in).
-
-    The command is expected to be a self-contained shell invocation of a
-    heartbeat pusher (e.g. ``python3 .../agent_meta.py --push``). The
-    wrapper exports ``SCITEX_OROCHI_AGENT`` / ``SCITEX_OROCHI_HOSTNAME``
-    via the ``pre_agent`` hook so the pushed payload registers with the
-    correct fleet identity.
-
-    Fields:
-        command:   Shell command line to run each tick. Empty disables.
-        interval_s: Seconds between ticks. 30 matches the login-node
-                   systemd timer cadence.
-        log_file:  Absolute path (with ``~`` expansion) for stderr/stdout
-                   capture. Defaults to ``<logs_dir>/<jobid>.heartbeat.log``
-                   when empty.
-    """
-
-    command: str = ""
-    interval_s: int = 30
-    log_file: str = ""
-
-
-@dataclass
-class SlurmSpec:
-    """SLURM runtime configuration parsed from agent YAML's ``spec.slurm``."""
-
-    partition: str = ""
-    time_limit: str = "1-00:00:00"
-    cpus_per_task: int = 1
-    mem: str = "4G"
-    nodes: int = 1
-    ntasks: int = 1
-    gres: str = ""
-    job_name: str = ""
-    signal: str = "B:USR1@3600"
-    auto_resubmit: bool = True
-    hold: str = "tail -f /dev/null"
-    logs_dir: str = "~/slurm_logs"
-    hooks: SlurmHooks = field(default_factory=SlurmHooks)
-    heartbeat: SlurmHeartbeatSpec = field(default_factory=SlurmHeartbeatSpec)
-    extra_directives: list[str] = field(default_factory=list)
-    # ``slurm-tenant`` runtime: name of the scitex-hpc Reservation lease
-    # this agent should join. Empty for the regular ``slurm`` runtime.
-    # Operator must `scitex-hpc reservations book <name> ...` first.
-    reservation: str = ""
 
 
 @dataclass
@@ -430,7 +348,6 @@ class AgentConfig:
     mcp_servers: dict[str, dict] = field(default_factory=dict)
     multiplexer: str = "tmux"  # "tmux" (default) or "screen"
     hosts_spec: HostsSpec = field(default_factory=HostsSpec)
-    slurm: SlurmSpec = field(default_factory=SlurmSpec)
     scheduling: SchedulingSpec = field(default_factory=SchedulingSpec)
     orochi: OrochiSpec = field(default_factory=OrochiSpec)
     config_path: str = ""

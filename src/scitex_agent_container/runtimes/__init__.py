@@ -16,7 +16,6 @@ from .claude_code import ClaudeCodeRuntime
 from .docker import DockerRuntime
 from .podman import PodmanRuntime
 from .screen import ScreenManager
-from .slurm import SlurmRuntime
 
 __all__ = [
     "ApptainerRuntime",
@@ -26,7 +25,6 @@ __all__ = [
     "PodmanRuntime",
     "RuntimeBase",
     "ScreenManager",
-    "SlurmRuntime",
 ]
 
 

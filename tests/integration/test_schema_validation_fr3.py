@@ -170,7 +170,6 @@ _KNOWN_SPEC_KEYS = frozenset(
         "hooks",
         "telegram",
         "remote",
-        "slurm",
         "skills",
         "startup_commands",
         "startup",

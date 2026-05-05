@@ -40,7 +40,6 @@ from .probe_cmds import probe_network
 from .quota_group import quota_group
 from .recall_cmds import recall
 from .registry_group import registry_group
-from .render_cmds import render_attach, render_sbatch
 from .skills_group import skills_group
 from .snapshot_cmds import snapshot
 from .status_cmds import check_agent, health, list_agents, status
@@ -195,8 +194,6 @@ main.add_command(_hidden_alias(recall, new_path="sac agent recall"))
 main.add_command(_hidden_alias(priority_check, new_path="sac agent check-priority"))
 
 # Render / template
-main.add_command(_hidden_alias(render_sbatch, new_path="sac template render-sbatch"))
-main.add_command(_hidden_alias(render_attach, new_path="sac template render-attach"))
 main.add_command(
     _hidden_alias(contributor_spec, new_path="sac template render-contributor-spec")
 )

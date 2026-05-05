@@ -26,9 +26,9 @@ metadata:
     branch_short: {{ branch_short }}
     capabilities: fork,clone,branch,commit,push,open-pr
 spec:
-  runtime: slurm-tenant
-  slurm:
-    reservation: fleet-pool
+  runtime: docker
+  image: scitex-agent-container:sdk-persistent
+  dockerfile: ./containers/Dockerfile.sdk-persistent
   model: sonnet
   multiplexer: tmux
   host:

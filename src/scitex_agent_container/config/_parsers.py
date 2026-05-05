@@ -18,9 +18,6 @@ from ._types import (
     RestartSpec,
     SchedulingSpec,
     SkillsSpec,
-    SlurmHeartbeatSpec,
-    SlurmHooks,
-    SlurmSpec,
     StartupCommand,
     StartupSpec,
     TelegramSpec,
@@ -225,48 +222,6 @@ def parse_telegram(spec: dict) -> TelegramSpec:
         allowed_users=[str(u) for u in (raw.get("allowed_users", []) or [])],
         auto_connect=raw.get("auto_connect", True),
         greeting=raw.get("greeting", ""),
-    )
-
-
-def parse_slurm(spec: dict) -> SlurmSpec:
-    """Parse ``spec.slurm`` block for the SLURM runtime.
-
-    Returns a default ``SlurmSpec`` if the block is absent — the spec is
-    still required at runtime when ``spec.runtime == 'slurm'``, but an
-    empty block is legal YAML and just means "use all defaults".
-    """
-    raw = spec.get("slurm", {}) or {}
-    hooks_raw = raw.get("hooks", {}) or {}
-    hooks = SlurmHooks(
-        pre_submit=str(hooks_raw.get("pre_submit", "") or ""),
-        pre_agent=str(hooks_raw.get("pre_agent", "") or ""),
-        walltime_signal=str(hooks_raw.get("walltime_signal", "") or ""),
-        post_agent=str(hooks_raw.get("post_agent", "") or ""),
-        attach=str(hooks_raw.get("attach", "") or ""),
-    )
-    hb_raw = raw.get("heartbeat", {}) or {}
-    heartbeat = SlurmHeartbeatSpec(
-        command=str(hb_raw.get("command", "") or ""),
-        interval_s=int(hb_raw.get("interval_s", 30) or 30),
-        log_file=str(hb_raw.get("log_file", "") or ""),
-    )
-    return SlurmSpec(
-        partition=str(raw.get("partition", "") or ""),
-        time_limit=str(raw.get("time_limit", "1-00:00:00") or "1-00:00:00"),
-        cpus_per_task=int(raw.get("cpus_per_task", 1) or 1),
-        mem=str(raw.get("mem", "4G") or "4G"),
-        nodes=int(raw.get("nodes", 1) or 1),
-        ntasks=int(raw.get("ntasks", 1) or 1),
-        gres=str(raw.get("gres", "") or ""),
-        job_name=str(raw.get("job_name", "") or ""),
-        signal=str(raw.get("signal", "B:USR1@3600") or "B:USR1@3600"),
-        auto_resubmit=bool(raw.get("auto_resubmit", True)),
-        hold=str(raw.get("hold", "tail -f /dev/null") or "tail -f /dev/null"),
-        logs_dir=str(raw.get("logs_dir", "~/slurm_logs") or "~/slurm_logs"),
-        hooks=hooks,
-        heartbeat=heartbeat,
-        extra_directives=[str(d) for d in (raw.get("extra_directives") or [])],
-        reservation=str(raw.get("reservation", "") or ""),
     )
 
 

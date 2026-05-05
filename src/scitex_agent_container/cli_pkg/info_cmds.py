@@ -174,18 +174,6 @@ def attach(name: str) -> None:
 
     config = load_config(entry["config"])
 
-    # slurm-tenant agents live inside a remote SLURM allocation's tmux server;
-    # route through the runtime's own attach() (uses srun --pty + tmux -L).
-    if config.runtime == "slurm-tenant":
-        from ..runtimes.slurm_tenant import SlurmTenantRuntime
-
-        console.print(
-            f"[blue]Attaching to slurm-tenant agent '{name}' "
-            f"(reservation={config.slurm.reservation}, Ctrl-B D to detach)[/blue]"
-        )
-        rc = SlurmTenantRuntime().attach(config)
-        sys.exit(rc)
-
     from ..runtimes.multiplexer import get_multiplexer
 
     mux = get_multiplexer(config)
