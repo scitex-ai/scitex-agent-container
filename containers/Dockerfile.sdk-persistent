@@ -52,27 +52,23 @@ ARG SAC_REF=develop
 #   * git           — pip install + project-local skill discovery
 #   * curl, ca-certificates — for outbound SDK API calls + pip
 #   * tini          — pid-1 reaper for clean SIGTERM handling
-#   * nodejs, npm   — claude-agent-sdk launches the `claude` Node CLI
-#                     for the JSON-line control protocol; without it
-#                     ClaudeSDKClient.connect() times out at
-#                     initialize.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git \
         curl \
         ca-certificates \
         tini \
-        nodejs \
-        npm \
     && rm -rf /var/lib/apt/lists/*
 
-# Claude Code Node CLI (the SDK shells out to this binary).
-RUN npm install -g @anthropic-ai/claude-code
-
-# claude-agent-sdk + scitex-agent-container itself.
-# Pinning the latter to the develop branch (override via --build-arg
-# SAC_REF=...) keeps image rebuilds deterministic from a single
-# commit. Editable install isn't useful here — host code is mounted
-# at runtime via /work, not into the package's site-packages.
+# claude-agent-sdk ships a bundled standalone `claude` ELF binary
+# at site-packages/claude_agent_sdk/_bundled/claude (~236MB), so
+# `pip install claude-agent-sdk` alone is enough — no Node runtime
+# required. SubprocessCLITransport._find_cli() prefers the bundled
+# binary first.
+#
+# scitex-agent-container itself: pinned to the develop branch
+# (override via --build-arg SAC_REF=...) for deterministic rebuilds
+# from a single commit. Editable install isn't useful here — host
+# code is mounted at runtime via /work, not into site-packages.
 RUN pip install --no-cache-dir \
         "claude-agent-sdk" \
         "git+https://github.com/ywatanabe1989/scitex-agent-container.git@${SAC_REF}"
