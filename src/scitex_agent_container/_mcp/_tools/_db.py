@@ -12,13 +12,13 @@ from ._helpers import invoke_cli_json, invoke_cli_text
 
 def register_db_tools(mcp) -> None:
     @mcp.tool()
-    def sac_db_show() -> dict[str, Any]:
+    def db_show() -> dict[str, Any]:
         """Print high-level state-db row counts (definitions, instances,
         heartbeats, events, attempts). Mirrors ``sac db show --json``."""
         return invoke_cli_json(["db", "show", "--json"])
 
     @mcp.tool()
-    def sac_db_query(
+    def db_query(
         table: str | None = None,
         agent: str | None = None,
         host: str | None = None,
@@ -36,7 +36,7 @@ def register_db_tools(mcp) -> None:
         return invoke_cli_json(argv)
 
     @mcp.tool()
-    def sac_db_clean(heartbeat_stale_seconds: int = 600) -> dict[str, Any]:
+    def db_clean(heartbeat_stale_seconds: int = 600) -> dict[str, Any]:
         """Sweep dead instances. Mirrors ``sac db clean --json``."""
         return invoke_cli_json(
             [
@@ -49,7 +49,7 @@ def register_db_tools(mcp) -> None:
         )
 
     @mcp.tool()
-    def sac_db_tick(heartbeat_stale_seconds: int = 600) -> dict[str, Any]:
+    def db_tick(heartbeat_stale_seconds: int = 600) -> dict[str, Any]:
         """One round of background reconciliation (clean + import legacy
         registry). Mirrors ``sac db tick``."""
         return invoke_cli_text(
@@ -57,7 +57,7 @@ def register_db_tools(mcp) -> None:
         )
 
     @mcp.tool()
-    def sac_db_migrate(force: bool = False) -> dict[str, Any]:
+    def db_migrate(force: bool = False) -> dict[str, Any]:
         """Pull legacy ``registry/*.json`` rows into the state-db. Idempotent.
         Mirrors ``sac db migrate``."""
         argv = ["db", "migrate"]
@@ -66,7 +66,7 @@ def register_db_tools(mcp) -> None:
         return invoke_cli_text(argv)
 
     @mcp.tool()
-    def sac_db_export(
+    def db_export(
         since: str | None = None, host: str | None = None
     ) -> dict[str, Any]:
         """Export state-db rows for cross-host pull. Mirrors
@@ -79,7 +79,7 @@ def register_db_tools(mcp) -> None:
         return invoke_cli_text(argv)
 
     @mcp.tool()
-    def sac_db_import(input_path: str) -> dict[str, Any]:
+    def db_import(input_path: str) -> dict[str, Any]:
         """Import state-db rows from a peer's ``db export`` blob.
         Mirrors ``sac db import <path> --json``."""
         return invoke_cli_json(["db", "import", input_path, "--json"])

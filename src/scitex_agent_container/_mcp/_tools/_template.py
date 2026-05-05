@@ -9,7 +9,7 @@ from ._helpers import invoke_cli_text
 
 def register_template_tools(mcp) -> None:
     @mcp.tool()
-    def sac_template_render_contributor_spec(
+    def template_render_contributor_spec(
         project: str,
         branch_kind: str = "feature",
         branch_short: str | None = None,

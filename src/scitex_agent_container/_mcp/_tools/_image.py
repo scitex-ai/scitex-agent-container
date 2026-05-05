@@ -9,7 +9,7 @@ from ._helpers import invoke_cli_text
 
 def register_image_tools(mcp) -> None:
     @mcp.tool()
-    def sac_image_build(
+    def image_build(
         runtime: str = "docker",
         target: str = "sdk-persistent",
         image: str | None = None,

@@ -45,7 +45,15 @@ def mcp() -> None:
     default=False,
     help="Print launch plan without starting.",
 )
-def mcp_start(use_http: bool, host: str, port: int, dry_run: bool) -> None:
+@click.option(
+    "-y",
+    "--yes",
+    "yes",
+    is_flag=True,
+    default=False,
+    help="Skip the (currently never-shown) confirm prompt; reserved for parity.",
+)
+def mcp_start(use_http: bool, host: str, port: int, dry_run: bool, yes: bool) -> None:
     """Start the scitex-agent-container MCP server.
 
     \b
@@ -54,6 +62,7 @@ def mcp_start(use_http: bool, host: str, port: int, dry_run: bool) -> None:
       $ sac mcp start --http --port 8970       # HTTP transport
       $ sac mcp start --dry-run
     """
+    del yes  # reserved
     transport = "http" if use_http else "stdio"
     if dry_run:
         click.echo(
@@ -171,14 +180,30 @@ def mcp_list_tools(as_json: bool) -> None:
     default=False,
     help="Print the Claude Code MCP config snippet.",
 )
-def mcp_install(claude_code: bool) -> None:
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Print install plan without writing anything (no-op today; reserved).",
+)
+@click.option(
+    "-y",
+    "--yes",
+    "yes",
+    is_flag=True,
+    default=False,
+    help="Skip the (currently never-shown) confirm prompt; reserved for parity.",
+)
+def mcp_install(claude_code: bool, dry_run: bool, yes: bool) -> None:
     """Show MCP installation instructions.
 
     \b
     Example:
       $ sac mcp install
       $ sac mcp install --claude-code
+      $ sac mcp install --dry-run
     """
+    del dry_run, yes  # `install` only prints today; flags reserved
     if claude_code:
         click.secho("Add to your Claude Code MCP config:", fg="cyan")
         click.echo()

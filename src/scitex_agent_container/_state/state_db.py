@@ -419,6 +419,7 @@ def gc_dead_instances(
     *,
     db_path: Path | None = None,
     heartbeat_stale_seconds: int = 300,
+    dry_run: bool = False,
 ) -> dict[str, int]:
     """Sweep instances whose runner is gone. Returns counters.
 
@@ -435,6 +436,9 @@ def gc_dead_instances(
 
     Cross-host instances are NOT swept (we have no liveness signal
     for them; F-CS12 will add ssh-based probing).
+
+    ``dry_run=True`` runs all three checks but emits zero UPDATE
+    statements — counters reflect what *would* be swept.
     """
     import socket
 
@@ -448,12 +452,20 @@ def gc_dead_instances(
         # 1. boot-epoch — applies to all hosts; if a row's started_at
         # precedes the current boot, the runner can't possibly be alive.
         if boot is not None:
-            cur = conn.execute(
-                "UPDATE instances SET ended_at=?, exit_reason='reboot-swept' "
-                "WHERE ended_at IS NULL AND host=? AND started_at < ?",
-                (boot, canonical_host, boot),
-            )
-            counters["reboot_swept"] = cur.rowcount
+            if dry_run:
+                cur = conn.execute(
+                    "SELECT COUNT(*) AS n FROM instances "
+                    "WHERE ended_at IS NULL AND host=? AND started_at < ?",
+                    (canonical_host, boot),
+                ).fetchone()
+                counters["reboot_swept"] = int(cur["n"]) if cur else 0
+            else:
+                cur = conn.execute(
+                    "UPDATE instances SET ended_at=?, exit_reason='reboot-swept' "
+                    "WHERE ended_at IS NULL AND host=? AND started_at < ?",
+                    (boot, canonical_host, boot),
+                )
+                counters["reboot_swept"] = cur.rowcount
 
         # 2. pid liveness — local rows only; remote requires ssh (F-CS12).
         rows = conn.execute(
@@ -472,10 +484,11 @@ def gc_dead_instances(
                 OSError,
                 ProcessLookupError,
             ):  # stx-allow: fallback (reason: see inline comment)
-                conn.execute(
-                    "UPDATE instances SET ended_at=?, exit_reason='crashed' WHERE id=?",
-                    (now_ts, row["id"]),
-                )
+                if not dry_run:
+                    conn.execute(
+                        "UPDATE instances SET ended_at=?, exit_reason='crashed' WHERE id=?",
+                        (now_ts, row["id"]),
+                    )
                 counters["crashed"] += 1
 
         # 3. heartbeat staleness — anything with a heartbeat_at older
@@ -497,11 +510,12 @@ def gc_dead_instances(
             ):  # stx-allow: fallback (reason: malformed timestamp tolerated)
                 continue
             if hb < stale_cutoff:
-                conn.execute(
-                    "UPDATE instances SET ended_at=?, exit_reason='gc-stale' "
-                    "WHERE id=?",
-                    (now_ts, row["id"]),
-                )
+                if not dry_run:
+                    conn.execute(
+                        "UPDATE instances SET ended_at=?, exit_reason='gc-stale' "
+                        "WHERE id=?",
+                        (now_ts, row["id"]),
+                    )
                 counters["gc_stale"] += 1
 
     # Suppress shadowing the canonical hostname helper.

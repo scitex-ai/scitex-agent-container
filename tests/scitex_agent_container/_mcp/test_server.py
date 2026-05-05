@@ -28,32 +28,34 @@ def test_server_constructs_with_expected_name():
     assert s.name == "scitex-agent-container"
 
 
-def test_every_tool_has_sac_prefix():
-    """Per scitex MCP convention §2: every tool name is `<pkg>_<verb>_<noun>`."""
+def test_every_tool_uses_bare_verb_noun_name():
+    """Per scitex MCP convention §1 (Convention A, recommended), the
+    standalone source uses bare names (`agent_list`); the umbrella
+    namespace prefix is added at mount time."""
     names = _tool_names(get_server())
     assert names, "MCP server registered no tools"
-    bad = [n for n in names if not n.startswith("sac_")]
-    assert bad == [], f"tools missing sac_ prefix: {bad}"
+    bad = [n for n in names if "_" not in n]
+    assert bad == [], f"tools without verb_noun shape: {bad}"
 
 
 def test_expected_noun_groups_present():
     """Spot-check the noun groups F-CS15 must mirror from the CLI."""
     names = set(_tool_names(get_server()))
     must_have = {
-        "sac_agent_list",
-        "sac_agent_status",
-        "sac_agent_start",
-        "sac_agent_stop",
-        "sac_db_show",
-        "sac_db_query",
-        "sac_host_show",
-        "sac_host_list",
-        "sac_image_build",
-        "sac_template_render_contributor_spec",
-        "sac_skills_list",
-        "sac_skills_get",
-        "sac_mcp_list_tools",
-        "sac_mcp_doctor",
+        "agent_list",
+        "agent_status",
+        "agent_start",
+        "agent_stop",
+        "db_show",
+        "db_query",
+        "host_show",
+        "host_list",
+        "image_build",
+        "template_render_contributor_spec",
+        "skills_list",
+        "skills_get",
+        "mcp_list_tools",
+        "mcp_doctor",
     }
     missing = must_have - names
     assert not missing, f"missing required tools: {missing}"
@@ -74,7 +76,8 @@ def test_cli_list_tools_json_shape():
     payload = json.loads(result.output)
     assert payload["count"] >= 1
     assert all("name" in t for t in payload["tools"])
-    assert all(t["name"].startswith("sac_") for t in payload["tools"])
+    # Bare-name convention: every tool has the verb_noun shape.
+    assert all("_" in t["name"] for t in payload["tools"])
 
 
 def test_cli_install_claude_code_format():
@@ -118,7 +121,7 @@ def test_skills_list_returns_known_skills():
             return _decorate
 
     register_skills_tools(_Capture())
-    result = captured["sac_skills_list"]()
+    result = captured["skills_list"]()
     assert result["count"] >= 1
     assert all("name" in s for s in result["skills"])
 
@@ -137,6 +140,6 @@ def test_skills_get_returns_404_for_unknown():
             return _decorate
 
     register_skills_tools(_Capture())
-    result = captured["sac_skills_get"](name="definitely-not-a-real-skill-xxxx")
+    result = captured["skills_get"](name="definitely-not-a-real-skill-xxxx")
     assert "error" in result
     assert "available" in result

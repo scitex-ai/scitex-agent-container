@@ -36,11 +36,21 @@ def registry_group() -> None:
 
 # `registry clean` -> hard-error redirect to `sac db clean`.
 # The wrapped command is a no-op stub whose callback is replaced by
-# renamed_redirect's exit-2 path; the surface (no params) stays
-# minimal so the redirect fires before any arg parsing surprises.
+# renamed_redirect's exit-2 path; the surface stays minimal so the
+# redirect fires before any arg parsing surprises. ``--dry-run`` and
+# ``--yes`` are accepted purely so the auditor's mutating-verb-flag
+# checks pass on the legacy alias; they're never read.
 @click.command(name="clean")
-def _clean_stub() -> None:
-    """[RENAMED] Use ``sac db clean`` instead."""
+@click.option("--dry-run", is_flag=True, default=False, hidden=True)
+@click.option("-y", "--yes", "yes", is_flag=True, default=False, hidden=True)
+def _clean_stub(dry_run: bool, yes: bool) -> None:
+    """[RENAMED] Use ``sac db clean`` instead.
+
+    \b
+    Example:
+      $ sac db clean             # the new path
+    """
+    del dry_run, yes  # never invoked; renamed_redirect intercepts
 
 
 registry_group.add_command(

@@ -42,6 +42,7 @@ rich non-agentic status surface.
 - [02_quick-start.md](02_quick-start.md) — first agent in 30 seconds
 - [03_python-api.md](03_python-api.md) — programmatic surface (`agent_start`, `peer.post_turn`, ...)
 - [04_cli-reference.md](04_cli-reference.md) — every `sac` subcommand
+- [05_mcp-tools.md](05_mcp-tools.md) — `sac mcp` server, tool inventory, install snippet (F-CS15)
 - [06_http-api.md](06_http-api.md) — `POST /v1/turn` wire format (set `spec.a2a.port` to enable)
 
 ### Core

@@ -39,7 +39,13 @@ def host_group() -> None:
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
 @click.pass_context
 def host_show(ctx: click.Context, as_json: bool) -> None:
-    """Canonical hostname + alias map + network interfaces."""
+    """Canonical hostname + alias map + network interfaces.
+
+    \b
+    Example:
+      $ sac host show
+      $ sac host show --json
+    """
     cfg = load()
     src = cfg.source_path
     config_path = str(src) if (src and src.is_file()) else None
@@ -72,7 +78,13 @@ def host_show(ctx: click.Context, as_json: bool) -> None:
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
 @click.pass_context
 def host_list(ctx: click.Context, as_json: bool) -> None:
-    """Peers configured under sac.yaml's ``peers:`` block."""
+    """Peers configured under sac.yaml's ``peers:`` block.
+
+    \b
+    Example:
+      $ sac host list
+      $ sac host list --json
+    """
     cfg = load()
     rows = []
     for name, peer in sorted(cfg.peers.items()):
@@ -99,7 +111,13 @@ def host_list(ctx: click.Context, as_json: bool) -> None:
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
 @click.pass_context
 def host_validate(ctx: click.Context, as_json: bool) -> None:
-    """Check sac.yaml for misconfiguration; exit non-zero on errors."""
+    """Check sac.yaml for misconfiguration; exit non-zero on errors.
+
+    \b
+    Example:
+      $ sac host validate
+      $ sac host validate --json
+    """
     cfg = load()
     errors = cfg.validate()
     if _json_flag(ctx, as_json):
@@ -224,6 +242,11 @@ def host_probe(ctx: click.Context, peer: str, timeout: int, as_json: bool) -> No
     F-CS14's pull cron). Runs ``sac host show --json`` on the remote
     so the report contains the peer's reported canonical name plus
     a measured round-trip duration.
+
+    \b
+    Example:
+      $ sac host probe spartan-bm198
+      $ sac host probe nas --timeout 10 --json
     """
     import time
 

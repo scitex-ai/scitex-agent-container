@@ -14,7 +14,7 @@ from typing import Any
 
 def register_skills_tools(mcp) -> None:
     @mcp.tool()
-    def sac_skills_list() -> dict[str, Any]:
+    def skills_list() -> dict[str, Any]:
         """Enumerate the markdown skill files this package ships under
         ``_skills/scitex-agent-container/``.
 
@@ -37,7 +37,7 @@ def register_skills_tools(mcp) -> None:
         return {"count": len(skills), "skills": skills}
 
     @mcp.tool()
-    def sac_skills_get(name: str) -> dict[str, Any]:
+    def skills_get(name: str) -> dict[str, Any]:
         """Return the full text of a sac skill file by stem name (e.g.
         ``"02_quick-start"``). Reverse of ``sac_skills_list``.
 

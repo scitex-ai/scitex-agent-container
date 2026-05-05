@@ -50,7 +50,13 @@ def db_group() -> None:
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
 @click.pass_context
 def db_show(ctx: click.Context, as_json: bool) -> None:
-    """Schema overview + per-table row counts."""
+    """Schema overview + per-table row counts.
+
+    \b
+    Example:
+      $ sac db show
+      $ sac db show --json
+    """
     counts = table_counts()
     payload = {"tables": counts, "known_tables": list(KNOWN_TABLES)}
     if _json_flag(ctx, as_json):
@@ -85,7 +91,14 @@ def db_query(
     where: str | None,
     as_json: bool,
 ) -> None:
-    """List rows from a known table, most recent first when possible."""
+    """List rows from a known table, most recent first when possible.
+
+    \b
+    Example:
+      $ sac db query --table=instances --limit=20
+      $ sac db query --table=heartbeats --where="agent='head-nas'"
+      $ sac db query --table=events --json
+    """
     sql = f"SELECT * FROM {table}"  # table is whitelisted via click.Choice
     if where:
         sql += f" WHERE {where}"
@@ -144,6 +157,12 @@ def db_migrate(
     represent state captured before the SQLite migration and are
     not running by definition. Idempotent: re-running skips rows
     that already exist (matched by name + host + started_at).
+
+    \b
+    Example:
+      $ sac db migrate
+      $ sac db migrate --registry-dir ~/.scitex/agent-container/registry
+      $ sac db migrate --host head-nas --json
     """
     if registry_dir is None:
         registry_dir = Path(
@@ -169,9 +188,29 @@ def db_migrate(
     default=300,
     help="Mark instance gc-stale when last_heartbeat_at is older than this.",
 )
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Report what would be swept without mutating state.db.",
+)
+@click.option(
+    "-y",
+    "--yes",
+    "yes",
+    is_flag=True,
+    default=False,
+    help="Skip the confirm prompt (currently always implicit; reserved).",
+)
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
 @click.pass_context
-def db_clean(ctx: click.Context, heartbeat_stale_seconds: int, as_json: bool) -> None:
+def db_clean(
+    ctx: click.Context,
+    heartbeat_stale_seconds: int,
+    dry_run: bool,
+    yes: bool,
+    as_json: bool,
+) -> None:
     """Sweep dead instances. Replaces ``sac registry clean``.
 
     Three checks (see _state.state_db.gc_dead_instances):
@@ -182,13 +221,25 @@ def db_clean(ctx: click.Context, heartbeat_stale_seconds: int, as_json: bool) ->
       3. Heartbeat staleness — rows whose last_heartbeat_at is
          older than ``--heartbeat-stale-seconds`` are marked
          ``gc-stale``.
+
+    \b
+    Example:
+      $ sac db clean
+      $ sac db clean --dry-run
+      $ sac db clean --heartbeat-stale-seconds 600 --json
     """
-    counters = gc_dead_instances(heartbeat_stale_seconds=heartbeat_stale_seconds)
+    del yes  # reserved; no prompt today
+    counters = gc_dead_instances(
+        heartbeat_stale_seconds=heartbeat_stale_seconds,
+        dry_run=dry_run,
+    )
     if _json_flag(ctx, as_json):
-        click.echo(json.dumps(counters, indent=2))
+        payload = {"dry_run": dry_run, **counters}
+        click.echo(json.dumps(payload, indent=2))
         return
     total = sum(counters.values())
-    console.print(f"[bold]sac db clean[/bold]  swept={total}")
+    label = "would-sweep" if dry_run else "swept"
+    console.print(f"[bold]sac db clean[/bold]  {label}={total}")
     for kind, n in counters.items():
         if n:
             console.print(f"  {kind:<14}  {n}")
@@ -210,6 +261,11 @@ def db_tick(ctx: click.Context, heartbeat_stale_seconds: int) -> None:
 
       * 0 — pass completed (zero or more rows swept).
       * non-zero — sweep raised; the operator should investigate.
+
+    \b
+    Example:
+      $ sac db tick
+      $ sac db tick --heartbeat-stale-seconds 600
     """
     del ctx
     gc_dead_instances(heartbeat_stale_seconds=heartbeat_stale_seconds)
@@ -236,7 +292,27 @@ def db_tick(ctx: click.Context, heartbeat_stale_seconds: int) -> None:
     default=None,
     help="Stamp this canonical host into the dump header.",
 )
-def db_export(since: str | None, output: Path | None, host: str | None) -> None:
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Compute the dump and print row counts only — no JSON / file write.",
+)
+@click.option(
+    "-y",
+    "--yes",
+    "yes",
+    is_flag=True,
+    default=False,
+    help="Skip the (currently never-shown) confirm prompt; reserved for parity.",
+)
+def db_export(
+    since: str | None,
+    output: Path | None,
+    host: str | None,
+    dry_run: bool,
+    yes: bool,
+) -> None:
     """Dump state.db rows as a JSON delta. Consumed by orochi.
 
     Default emits to stdout so it can be piped over ssh:
@@ -248,8 +324,29 @@ def db_export(since: str | None, output: Path | None, host: str | None) -> None:
     With ``--output FILE`` writes to FILE instead. The dump is
     self-describing: includes ``schema``, ``exported_at``, ``since``,
     ``host``, and per-table row arrays.
+
+    \b
+    Example:
+      $ sac db export
+      $ sac db export --since 2026-05-01T00:00:00Z --output dump.json
+      $ sac db export --dry-run
     """
+    del yes  # reserved
     payload = export_state(since=since, host=host)
+    if dry_run:
+        click.echo(
+            json.dumps(
+                {
+                    "host": payload.get("host"),
+                    "since": payload.get("since"),
+                    "row_counts": {
+                        k: len(v) for k, v in payload.get("tables", {}).items()
+                    },
+                },
+                indent=2,
+            )
+        )
+        return
     blob = json.dumps(payload, indent=2)
     if output is None:
         click.echo(blob)
@@ -264,20 +361,75 @@ def db_export(since: str | None, output: Path | None, host: str | None) -> None:
     type=click.Path(dir_okay=False, exists=False, path_type=Path),
     required=True,
 )
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Parse the dump and print would-insert counts; do NOT write to state.db.",
+)
+@click.option(
+    "-y",
+    "--yes",
+    "yes",
+    is_flag=True,
+    default=False,
+    help="Skip the (currently never-shown) confirm prompt; reserved for parity.",
+)
 @click.option("--json", "as_json", is_flag=True, help="Output report as JSON.")
 @click.pass_context
-def db_import(ctx: click.Context, input_path: Path, as_json: bool) -> None:
+def db_import(
+    ctx: click.Context,
+    input_path: Path,
+    dry_run: bool,
+    yes: bool,
+    as_json: bool,
+) -> None:
     """Ingest a JSON dump produced by ``sac db export``.
 
     Pass ``-`` to read from stdin (the canonical orochi-pull pattern).
     Idempotent: rows already present (matched by primary key) are
     silently skipped.
+
+    \b
+    Example:
+      $ sac db import dump.json
+      $ ssh peer sac db export | sac db import -
+      $ sac db import dump.json --dry-run --json
     """
+    del yes  # reserved
     if str(input_path) == "-":
         blob = click.get_text_stream("stdin").read()
     else:
         blob = input_path.read_text()
     payload = json.loads(blob)
+    if dry_run:
+        would_insert = {
+            table: len(rows) for table, rows in payload.get("tables", {}).items()
+        }
+        if _json_flag(ctx, as_json):
+            click.echo(
+                json.dumps(
+                    {
+                        "source": str(input_path),
+                        "host": payload.get("host"),
+                        "since": payload.get("since"),
+                        "dry_run": True,
+                        "would_insert": would_insert,
+                    },
+                    indent=2,
+                )
+            )
+            return
+        total = sum(would_insert.values())
+        src = payload.get("host", "?")
+        console.print(
+            f"[bold]sac db import[/bold] (dry-run)  from=[cyan]{src}[/cyan]  "
+            f"would-insert={total}"
+        )
+        for table, n in would_insert.items():
+            if n:
+                console.print(f"  {table:<14}  {n}")
+        return
     inserted = import_state(payload)
     if _json_flag(ctx, as_json):
         click.echo(
