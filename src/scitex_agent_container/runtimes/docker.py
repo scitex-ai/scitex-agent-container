@@ -157,14 +157,23 @@ class DockerRuntime(RuntimeBase):
         cls,
         image: str = "scitex-agent-container:latest",
         context: str = ".",
+        dockerfile: str | None = None,
     ) -> bool:
         """Build a container image from the given context.
 
         Uses the subclass's :attr:`BIN` (so ``PodmanRuntime.build_image``
         invokes ``podman build``).
+
+        Args:
+            image: ``-t`` tag for the built image.
+            context: build context dir (typically ``containers/``).
+            dockerfile: optional ``-f`` override; needed when the
+                ``containers/`` directory holds more than one
+                Dockerfile (F-CS16: cli-tui vs sdk-persistent).
         """
-        result = subprocess.run(
-            [cls.BIN, "build", "-t", image, context],
-            text=True,
-        )
+        argv = [cls.BIN, "build", "-t", image]
+        if dockerfile is not None:
+            argv += ["-f", dockerfile]
+        argv.append(context)
+        result = subprocess.run(argv, text=True)
         return result.returncode == 0

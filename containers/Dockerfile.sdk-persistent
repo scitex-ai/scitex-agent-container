@@ -1,0 +1,83 @@
+# scitex-agent-container — SDK-persistent runner image (F-CS16 phase 1).
+#
+# Hosts the Python long-lived runner that wraps `claude-agent-sdk`.
+# Does NOT install the Claude Code CLI — that's the sibling image
+# `Dockerfile` (CLI/TUI runtime).  The two images coexist; `sac
+# image build --target sdk-persistent` builds this one.
+#
+# Sac is a generic, declarative container wrapper for agents.
+# This Dockerfile bakes ONLY the runner; everything the agent
+# actually USES (skills, hooks, helper scripts, MCP server configs,
+# secrets) is injected at run-time via the standard container
+# primitives — ``--mount``, ``--env``, ``--env-file``, ``--network``.
+# Sac's value-add is the declarative yaml that describes the run +
+# the validation/lifecycle plumbing, NOT a new abstraction layer.
+#
+# ## Standard interfaces sac drives at run-time
+#
+# Bind-mounts (`docker run --mount`):
+#   * <workdir>          -> /work     (the agent's filesystem view)
+#   * <state_dir>        -> /state    (PID, heartbeat, session.jsonl,
+#                                      state.db writes — F-CS11)
+#   * ~/.claude/.credentials.json -> /home/agent/.claude/.credentials.json:ro
+#   * <skills_dir>       -> /sac/skills/    (CLAUDE.md @-imports — F-CS1)
+#   * <hooks_dir>        -> /sac/hooks/     (claude-agent-sdk hook scripts)
+#   * <scripts_dir>      -> /sac/scripts/   (helper executables on PATH)
+#   * <mcp_dir>          -> /sac/mcp/       (per-server config files)
+#
+#   These are normal docker bind-mounts; the yaml just declares
+#   *what* gets mounted *where*. Sac validates each entry (skill
+#   frontmatter, hook size/perms, etc.) before invoking docker.
+#
+# Environment (`docker run --env / --env-file`):
+#   * SCITEX_AGENT_CONTAINER_STATE_DB=/state/state.db
+#   * any spec.env.* entries from the yaml
+#   * spec.env_files entries (rendered through `--env-file`)
+#
+# Network (`docker run --network`):
+#   * When ``spec.a2a.port`` is set: ``--publish 127.0.0.1:<port>:<port>``
+#     keeps the inbound /v1/turn endpoint reachable from the host
+#     only. Peer-to-peer calls go through a shared docker network
+#     (default ``sac-fleet``) — no need to expose a port externally.
+#
+# Argv:
+#   ENTRYPOINT runs the SDK loop; argv from `sac agent start` is
+#   forwarded verbatim (e.g. --name foo --workdir /work --a2a-port 8950).
+
+FROM python:3.11-slim
+
+ARG SAC_REF=develop
+
+# OS-level deps:
+#   * git           — pip install + project-local skill discovery
+#   * curl, ca-certificates — for outbound SDK API calls + pip
+#   * tini          — pid-1 reaper for clean SIGTERM handling
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git \
+        curl \
+        ca-certificates \
+        tini \
+    && rm -rf /var/lib/apt/lists/*
+
+# claude-agent-sdk + scitex-agent-container itself.
+# Pinning the latter to the develop branch (override via --build-arg
+# SAC_REF=...) keeps image rebuilds deterministic from a single
+# commit. Editable install isn't useful here — host code is mounted
+# at runtime via /work, not into the package's site-packages.
+RUN pip install --no-cache-dir \
+        "claude-agent-sdk" \
+        "git+https://github.com/ywatanabe1989/scitex-agent-container.git@${SAC_REF}"
+
+# Run as a non-root user. The bind-mounts at runtime should be
+# chowned to UID/GID 1000 by the host (or use --user `id -u`:`id -g`
+# to match the host operator); the runner only needs read on the
+# credentials and read+write on /work and /state.
+RUN useradd -m -u 1000 -s /bin/bash agent
+USER agent
+WORKDIR /work
+
+# tini handles signal forwarding so `docker stop <id>` cleanly
+# triggers the runner's SIGTERM cooperative shutdown rather than
+# the 10s SIGKILL fallback.
+ENTRYPOINT ["/usr/bin/tini", "--", \
+            "python", "-m", "scitex_agent_container._runners.claude_session"]

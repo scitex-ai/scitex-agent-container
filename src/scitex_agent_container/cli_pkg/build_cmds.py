@@ -153,17 +153,45 @@ def validate(config_path: str) -> None:
         sys.exit(1)
 
 
+# F-CS16 phase 1: a second build target for the SDK-persistent runner.
+# Each yaml-runtime maps to one Dockerfile. Default stays cli-tui for
+# backwards compat until F-CS16 phase 2 flips the dispatch path.
+_TARGET_DOCKERFILES = {
+    "cli-tui": "Dockerfile",
+    "sdk-persistent": "Dockerfile.sdk-persistent",
+}
+
+# Map yaml ``spec.runtime`` to the build target name a yaml expects.
+# Keys cover both canonical names and the F-CS6 aliases.
+_RUNTIME_TO_TARGET = {
+    "claude-code": "cli-tui",
+    "claude-cli-tui": "cli-tui",
+    "claude-session": "sdk-persistent",
+    "claude-sdk-persistent": "sdk-persistent",
+}
+
+
 @click.command(name="build-image")
 @click.option(
     "--runtime",
     type=click.Choice(["docker", "apptainer"]),
     default="docker",
-    help="Container runtime to build for.",
+    help="Container engine to build for.",
+)
+@click.option(
+    "--target",
+    type=click.Choice(sorted(_TARGET_DOCKERFILES)),
+    default="cli-tui",
+    help=(
+        "Which image to build:\n"
+        "  cli-tui         — the Claude Code CLI runtime (default).\n"
+        "  sdk-persistent  — the SDK long-lived runner (F-CS16)."
+    ),
 )
 @click.option(
     "--image",
-    default="scitex-agent-container:latest",
-    help="Image name/tag.",
+    default=None,
+    help="Image name/tag (default: scitex-agent-container:<target>).",
 )
 @click.option(
     "--dry-run",
@@ -180,34 +208,57 @@ def validate(config_path: str) -> None:
     default=False,
     help="Skip confirmation prompt.",
 )
-def build(runtime: str, image: str, dry_run: bool, yes: bool) -> None:
+def build(
+    runtime: str,
+    target: str,
+    image: str | None,
+    dry_run: bool,
+    yes: bool,
+) -> None:
     """Build container base image.
 
     \b
     Example:
-      $ sac image build
+      $ sac image build                              # cli-tui (default)
+      $ sac image build --target sdk-persistent      # SDK runner image (F-CS16)
       $ sac image build --runtime apptainer
       $ sac image build --dry-run
     """
+    if image is None:
+        image = f"scitex-agent-container:{target}"
+
     if dry_run:
-        click.echo(f"[dry-run] would build {runtime} image '{image}'")
+        click.echo(f"[dry-run] would build {runtime} image '{image}' (target={target})")
         return
-    if not yes and not click.confirm(f"Build {runtime} image '{image}'?", default=True):
+    if not yes and not click.confirm(
+        f"Build {runtime} image '{image}' (target={target})?", default=True
+    ):
         click.echo("Aborted.")
         return
     containers_dir = Path(__file__).resolve().parent.parent.parent.parent / "containers"
+    dockerfile = containers_dir / _TARGET_DOCKERFILES[target]
 
     if runtime == "docker":
         from ..runtimes.docker import DockerRuntime
 
-        console.print(f"[blue]Building Docker image: {image}[/blue]")
-        success = DockerRuntime.build_image(image=image, context=str(containers_dir))
+        console.print(f"[blue]Building Docker image: {image} from {dockerfile}[/blue]")
+        success = DockerRuntime.build_image(
+            image=image,
+            context=str(containers_dir),
+            dockerfile=str(dockerfile),
+        )
         if success:
             console.print(f"[green]Docker image built: {image}[/green]")
         else:
             console.print("[red]Docker build failed[/red]")
             sys.exit(1)
     elif runtime == "apptainer":
+        if target == "sdk-persistent":
+            console.print(
+                "[red]Apptainer build for sdk-persistent is not wired yet "
+                "(F-CS16 phase 1 ships docker only).[/red]"
+            )
+            sys.exit(1)
         from ..runtimes.apptainer import ApptainerRuntime
 
         def_file = str(containers_dir / "apptainer.def")
@@ -219,3 +270,14 @@ def build(runtime: str, image: str, dry_run: bool, yes: bool) -> None:
         else:
             console.print("[red]Apptainer build failed[/red]")
             sys.exit(1)
+
+
+def target_for_runtime(runtime: str | None) -> str | None:
+    """Return the ``--target`` name for a yaml ``spec.runtime`` value.
+
+    Used by F-CS16 phase 2's container dispatch to pick the right
+    image when the yaml didn't specify ``spec.container.image`` itself.
+    Returns ``None`` for runtimes that don't map (slurm / slurm-tenant /
+    unknown).
+    """
+    return _RUNTIME_TO_TARGET.get(runtime or "")
