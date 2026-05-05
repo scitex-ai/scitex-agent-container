@@ -16,7 +16,6 @@ from ._parsers import (
     parse_hooks,
     parse_hosts_spec,
     parse_listen,
-    parse_orochi,
     parse_remote,
     parse_restart,
     parse_scheduling,
@@ -28,6 +27,7 @@ from ._parsers import (
     parse_watchdog,
 )
 from ._types import AgentConfig, HostsSpec, SchedulingSpec
+from ._validation import normalize_runtime
 
 # Default workdir layout: sac's own state root. Per-agent runtime state
 # (CLAUDE.md, .mcp.json, .claude/) lives at
@@ -274,7 +274,7 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
 
     return AgentConfig(
         name=name,
-        runtime=spec.get("runtime", "claude-code"),
+        runtime=normalize_runtime(spec.get("runtime")) or "claude-code",
         model=model,
         workdir=workdir,
         python_venv=_resolve_python_venv(spec.get("python-venv", "")),
@@ -374,7 +374,7 @@ def load_v2(raw: dict, path: Path) -> AgentConfig:
 
     return AgentConfig(
         name=name,
-        runtime=spec.get("runtime", "claude-code"),
+        runtime=normalize_runtime(spec.get("runtime")) or "claude-code",
         model=model,
         workdir=workdir,
         python_venv=_resolve_python_venv(spec.get("python-venv", "")),

@@ -2,10 +2,73 @@
 
 from __future__ import annotations
 
+import os
 import re
+import sys
 from pathlib import Path
 
 import yaml
+
+# F-CS6 — yaml-field rename for ``spec.runtime``.
+#
+# The internal codebase still keys dispatch on the original names
+# (``claude-code`` / ``claude-session``), so the new aliases are
+# normalised back to the canonical form at load time. A stderr
+# warning is emitted once per shell session per renamed value so
+# stale yamls keep working without a constant log nag.
+#
+# §5 of the scitex CLI conventions mandates HARD redirects, but that
+# rule governs CLI commands; yaml field values can't be atomically
+# rewritten across every host's checked-in agent definitions, so a
+# soft alias is the right level of breakage here.
+_RUNTIME_RENAMES = {
+    "claude-cli-tui": "claude-code",
+    "claude-sdk-persistent": "claude-session",
+}
+
+
+def _runtime_alias_warn_marker(old_name: str) -> Path:
+    """One marker file per shell session per renamed value.
+
+    Keying on PPID gives one warning per *interactive shell* — child
+    invocations from the same shell don't re-print. Matches the
+    pattern documented in scitex/general/03_interface_02_cli/
+    11_deprecation.md §5a.
+    """
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
+    user = os.environ.get("USER", "u")
+    ppid = os.environ.get("PPID", "0")
+    return Path(runtime_dir) / f"sac-runtime-rename-{user}-{ppid}-{old_name}.flag"
+
+
+def normalize_runtime(value: str | None) -> str | None:
+    """Return the canonical runtime value; warn on first use of an alias.
+
+    Accepts the new yaml-friendly aliases (``claude-cli-tui``,
+    ``claude-sdk-persistent``) and returns the long-standing internal
+    names (``claude-code``, ``claude-session``). Unknown / canonical
+    values pass through unchanged. ``None`` becomes ``None``.
+    """
+    if value is None:
+        return None
+    canonical = _RUNTIME_RENAMES.get(value)
+    if canonical is None:
+        return value
+    marker = _runtime_alias_warn_marker(value)
+    if not marker.exists():
+        try:
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.touch()
+        except OSError:  # stx-allow: fallback (reason: marker is best-effort; missing /tmp shouldn't block load)
+            pass
+        sys.stderr.write(
+            f"warning: spec.runtime: '{value}' is the new alias for "
+            f"'{canonical}'. Both work; the alias will become canonical "
+            "in a future major release. (F-CS6)\n"
+        )
+        sys.stderr.flush()
+    return canonical
+
 
 # Accepted shapes for ``spec.model`` (F-CS7).
 #
@@ -137,9 +200,15 @@ def validate_raw(raw: dict, path: str) -> list[str]:
 
         # spec.runtime
         runtime = spec.get("runtime")
+        # F-CS6: dual-accept the new yaml-friendly aliases alongside
+        # the canonical internal names. The aliases normalise back at
+        # load time (see normalize_runtime); validation just permits
+        # both shapes so a yaml using the new name doesn't fail audit.
         valid_runtimes = (
             "claude-code",
+            "claude-cli-tui",
             "claude-session",
+            "claude-sdk-persistent",
             "slurm",
             "slurm-tenant",
         )
