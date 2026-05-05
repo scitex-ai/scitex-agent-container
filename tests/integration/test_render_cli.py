@@ -40,7 +40,7 @@ _CLAUDE_YAML = dedent(
       labels:
         role: head
     spec:
-      runtime: claude-code
+      runtime: docker
       model: sonnet
     """
 )

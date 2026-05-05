@@ -14,7 +14,7 @@ from scitex_agent_container.cli import main
 VALID_CONFIG = {
     "apiVersion": "scitex-agent-container/v3",
     "kind": "Agent",
-    "spec": {"runtime": "claude-code", "model": "sonnet"},
+    "spec": {"runtime": "docker", "model": "sonnet"},
 }
 
 
@@ -169,7 +169,7 @@ class TestCLI:
                     "capabilities": "gpu,slurm,ml-training",
                 },
             },
-            "spec": {"runtime": "claude-code", "model": "sonnet"},
+            "spec": {"runtime": "docker", "model": "sonnet"},
         }
         import tempfile
 
@@ -238,7 +238,7 @@ class TestCLI:
                 "name": "basic-agent",
                 "labels": {"role": "head"},
             },
-            "spec": {"runtime": "claude-code"},
+            "spec": {"runtime": "docker"},
         }
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "basic.yaml"
@@ -285,7 +285,7 @@ class TestListJsonTimeoutBudget:
             """apiVersion: scitex-agent-container/v3
 kind: Agent
 spec:
-  runtime: claude-code
+  runtime: docker
   remote:
     host: fake-remote-host
     user: ywatanabe
@@ -298,7 +298,7 @@ spec:
             """apiVersion: scitex-agent-container/v3
 kind: Agent
 spec:
-  runtime: claude-code
+  runtime: docker
 """
         )
 
@@ -366,7 +366,7 @@ spec:
             """apiVersion: scitex-agent-container/v3
 kind: Agent
 spec:
-  runtime: claude-code
+  runtime: docker
   remote:
     host: fake-fast-host
     user: ywatanabe

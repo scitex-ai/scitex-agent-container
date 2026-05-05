@@ -44,7 +44,7 @@ def _write_agent_yaml(
     extra_labels: dict | None = None,
 ) -> Path:
     """Write a v3 YAML at <base>/<name>/<name>.yaml. Dir-as-SSoT."""
-    spec: dict = {"runtime": "claude-code", "model": "sonnet"}
+    spec: dict = {"runtime": "docker", "model": "sonnet"}
     if host is not None:
         spec["host"] = host
     if hosts is not None:
@@ -334,7 +334,7 @@ class TestEffectiveId:
                     role: head
                     machine: ${HOSTNAME}
                 spec:
-                  runtime: claude-code
+                  runtime: docker
                   hosts: all
                 """
             )
@@ -363,7 +363,7 @@ class TestEffectiveId:
                   labels:
                     role: lead
                 spec:
-                  runtime: claude-code
+                  runtime: docker
                   host:
                     - ywata-note-win
                     - mba
@@ -495,7 +495,7 @@ class TestHostsSpecValidation:
             {
                 "apiVersion": "scitex-agent-container/v3",
                 "kind": "Agent",
-                "spec": {"runtime": "claude-code", **spec_extra},
+                "spec": {"runtime": "docker", **spec_extra},
             },
             "test.yaml",
         )

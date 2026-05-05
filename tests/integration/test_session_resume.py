@@ -192,7 +192,7 @@ class TestAgentStartOverrides:
             "kind: Agent\n"
             "metadata:\n  labels: {role: test}\n"
             "spec:\n"
-            "  runtime: claude-code\n"
+            "  runtime: docker\n"
             "  claude:\n    session: continue-or-new\n"
         )
         captured: dict = {}

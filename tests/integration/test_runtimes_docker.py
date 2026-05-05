@@ -378,7 +378,7 @@ def _minimal_docker_config(tmp_path: Path, name: str, mount_host_claude: bool):
         "apiVersion": "scitex-agent-container/v3",
         "kind": "Agent",
         "spec": {
-            "runtime": "claude-code",
+            "runtime": "docker",
             "model": "sonnet",
             "container": {
                 "runtime": "docker",

@@ -18,7 +18,7 @@ _BASE = {
     "apiVersion": "scitex-agent-container/v3",
     "kind": "Agent",
     "spec": {
-        "runtime": "claude-session",
+        "runtime": "docker",
     },
 }
 
@@ -147,16 +147,19 @@ def test_normalize_runtime_warns_per_distinct_alias(capsys):
     assert "claude-sdk-persistent" in err
 
 
-def test_validate_raw_accepts_alias_runtime():
-    """spec.runtime: claude-cli-tui (or claude-sdk-persistent) must
-    pass validation in addition to the canonical names."""
-    raw = {
-        "apiVersion": "scitex-agent-container/v3",
-        "kind": "Agent",
-        "spec": {"runtime": "claude-sdk-persistent"},
-    }
-    errors = validate_raw(raw, path="<test>")
-    assert not [e for e in errors if "spec.runtime" in e]
+def test_validate_raw_accepts_alias_runtime_during_phase_2e1():
+    """F-CS6's yaml-friendly aliases (claude-cli-tui /
+    claude-sdk-persistent) keep validating during phase 2e.1.
+    F-CS17's sweep flips them to hard-errors via
+    ``legacy_runtime_redirect_message``."""
+    for alias in ("claude-cli-tui", "claude-sdk-persistent"):
+        raw = {
+            "apiVersion": "scitex-agent-container/v3",
+            "kind": "Agent",
+            "spec": {"runtime": alias},
+        }
+        errors = validate_raw(raw, path="<test>")
+        assert not [e for e in errors if "spec.runtime" in e]
 
 
 def test_validate_raw_rejects_unknown_runtime():
@@ -178,7 +181,7 @@ def _autonomous_spec(autonomous):
     return {
         "apiVersion": "scitex-agent-container/v3",
         "kind": "Agent",
-        "spec": {"runtime": "claude-session", "autonomous": autonomous},
+        "spec": {"runtime": "docker", "autonomous": autonomous},
     }
 
 
@@ -201,7 +204,7 @@ def test_autonomous_block_optional():
     raw = {
         "apiVersion": "scitex-agent-container/v3",
         "kind": "Agent",
-        "spec": {"runtime": "claude-session"},
+        "spec": {"runtime": "docker"},
     }
     errors = validate_raw(raw, path="<test>")
     assert not [e for e in errors if "spec.autonomous" in e]
@@ -295,25 +298,65 @@ def test_validate_raw_accepts_new_engine_runtime(engine):
     assert not [e for e in errors if "spec.runtime" in e]
 
 
-def test_validate_raw_still_accepts_legacy_runtime_for_one_cycle():
-    """Legacy values must keep parsing through F-CS16 phase 2e."""
-    for legacy in (
+@pytest.mark.parametrize(
+    "legacy",
+    [
         "claude-code",
         "claude-cli-tui",
         "claude-session",
         "claude-sdk-persistent",
         "slurm",
         "slurm-tenant",
-    ):
-        raw = {
-            "apiVersion": "scitex-agent-container/v3",
-            "kind": "Agent",
-            "spec": {"runtime": legacy},
-        }
-        errors = validate_raw(raw, path="<test>")
-        assert not [e for e in errors if "spec.runtime" in e], (
-            f"legacy runtime {legacy!r} must keep parsing during the migration"
-        )
+    ],
+)
+def test_validate_raw_still_accepts_legacy_runtime_during_phase_2e1(legacy):
+    """Phase 2e.1 ships the redirect machinery without flipping the
+    validator. Existing example yamls / template integration tests /
+    contributor-spec fixtures must keep parsing until F-CS17 migrates
+    them in lockstep with the validator flip."""
+    raw = {
+        "apiVersion": "scitex-agent-container/v3",
+        "kind": "Agent",
+        "spec": {"runtime": legacy},
+    }
+    errors = validate_raw(raw, path="<test>")
+    assert not [e for e in errors if "spec.runtime" in e], (
+        f"legacy runtime {legacy!r} must still parse during phase 2e.1"
+    )
+
+
+@pytest.mark.parametrize(
+    "legacy,expected",
+    [
+        ("claude-session", "docker"),
+        ("claude-sdk-persistent", "docker"),
+        ("claude-code", "docker"),
+        ("claude-cli-tui", "docker"),
+        ("slurm", "no longer supported"),
+        ("slurm-tenant", "no longer supported"),
+    ],
+)
+def test_legacy_runtime_redirect_message_returns_targeted_guidance(legacy, expected):
+    """The redirect helper hands callers a §5-style guidance string
+    even before the validator hard-errors (F-CS17 sweep). Each legacy
+    value names a specific replacement."""
+    from scitex_agent_container.config._validation import (
+        legacy_runtime_redirect_message,
+    )
+
+    msg = legacy_runtime_redirect_message(legacy)
+    assert msg is not None
+    assert legacy in msg
+    assert expected in msg
+
+
+def test_legacy_runtime_redirect_message_returns_none_for_canonical():
+    from scitex_agent_container.config._validation import (
+        legacy_runtime_redirect_message,
+    )
+
+    for canonical in ("docker", "podman", "apptainer", ""):
+        assert legacy_runtime_redirect_message(canonical) is None
 
 
 def test_validate_raw_accepts_top_level_image_field():

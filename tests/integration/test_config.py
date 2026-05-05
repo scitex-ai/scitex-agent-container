@@ -20,7 +20,7 @@ MINIMAL_CONFIG = {
     "apiVersion": "scitex-agent-container/v3",
     "kind": "Agent",
     "metadata": {"name": "test-agent"},
-    "spec": {"runtime": "claude-code"},
+    "spec": {"runtime": "docker"},
 }
 
 FULL_CONFIG = {
@@ -31,7 +31,7 @@ FULL_CONFIG = {
         "labels": {"role": "worker", "team": "dev"},
     },
     "spec": {
-        "runtime": "claude-code",
+        "runtime": "docker",
         "model": "opus",
         "workdir": "/tmp/test-workdir",
         "claude": {
@@ -97,7 +97,7 @@ class TestLoadConfig:
         path = _write_config(MINIMAL_CONFIG)
         config = load_config(path)
         assert config.name == "test-agent"
-        assert config.runtime == "claude-code"
+        assert config.runtime == "docker"
         assert config.model == "sonnet"  # default
         assert config.screen_name == "test-agent"  # auto-generated
         Path(path).unlink()
@@ -154,7 +154,7 @@ class TestLoadConfig:
                     "apiVersion": "scitex-agent-container/v3",
                     "kind": "Agent",
                     "metadata": {"name": "rejected-agent"},
-                    "spec": {"runtime": "claude-code"},
+                    "spec": {"runtime": "docker"},
                 }
             )
         )
@@ -199,7 +199,7 @@ class TestValidateConfig:
             "kind": "Agent",
             "metadata": {"name": "test"},
             "spec": {
-                "runtime": "claude-code",
+                "runtime": "docker",
                 "container": {"runtime": "kubernetes"},
             },
         }
@@ -214,7 +214,7 @@ class TestValidateConfig:
             "kind": "Agent",
             "metadata": {"name": "test"},
             "spec": {
-                "runtime": "claude-code",
+                "runtime": "docker",
                 "restart": {"policy": "maybe"},
             },
         }
@@ -238,7 +238,7 @@ class TestSkillsSpec:
             "kind": "Agent",
             "metadata": {"name": "skills-agent"},
             "spec": {
-                "runtime": "claude-code",
+                "runtime": "docker",
                 "skills": {
                     "required": ["quality-guards", "autonomous"],
                     "available": ["scitex", "code-review"],
@@ -257,7 +257,7 @@ class TestSkillsSpec:
             "kind": "Agent",
             "metadata": {"name": "partial-skills"},
             "spec": {
-                "runtime": "claude-code",
+                "runtime": "docker",
                 "skills": {
                     "required": ["speech"],
                 },
@@ -390,7 +390,7 @@ class TestRemoteSpec:
             "kind": "Agent",
             "metadata": {"name": "remote-agent"},
             "spec": {
-                "runtime": "claude-code",
+                "runtime": "docker",
                 "remote": {
                     "host": "mba",
                     "user": "testuser",
@@ -413,7 +413,7 @@ class TestRemoteSpec:
             "kind": "Agent",
             "metadata": {"name": "remote-full"},
             "spec": {
-                "runtime": "claude-code",
+                "runtime": "docker",
                 "remote": {
                     "host": "192.168.1.100",
                     "user": "deploy",
@@ -462,7 +462,7 @@ class TestRemoteSpec:
             "kind": "Agent",
             "metadata": {"name": "test-login-shell"},
             "spec": {
-                "runtime": "claude-code",
+                "runtime": "docker",
                 "remote": {
                     "host": "fast-host",
                     "user": "deploy",

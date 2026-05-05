@@ -16,14 +16,15 @@ from pathlib import Path
 import pytest
 import yaml
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _write_yaml(data: dict, name: str = "test-agent") -> Path:
     """Write YAML into dir-as-SSoT layout; strip metadata.name if present."""
     import copy
+
     data = copy.deepcopy(data)
     metadata = data.get("metadata") or {}
     metadata.pop("name", None)
@@ -41,7 +42,7 @@ def _write_yaml(data: dict, name: str = "test-agent") -> Path:
 _BASE = {
     "apiVersion": "scitex-agent-container/v3",
     "kind": "Agent",
-    "spec": {"runtime": "claude-code"},
+    "spec": {"runtime": "docker"},
 }
 
 
@@ -49,16 +50,22 @@ _BASE = {
 # 1 & 2 — unknown-field rejection
 # ---------------------------------------------------------------------------
 
+
 class TestUnknownFieldRejection:
     def test_unknown_spec_field_rejected(self):
         from scitex_agent_container.config import load_config
-        data = {**_BASE, "spec": {"runtime": "claude-code", "cardinality_enforced_at_hub": True}}
+
+        data = {
+            **_BASE,
+            "spec": {"runtime": "docker", "cardinality_enforced_at_hub": True},
+        }
         path = _write_yaml(data)
         with pytest.raises(ValueError, match="cardinality_enforced_at_hub"):
             load_config(path)
 
     def test_unknown_top_level_field_rejected(self):
         from scitex_agent_container.config import load_config
+
         data = {**_BASE, "stale_field": "oops"}
         path = _write_yaml(data)
         with pytest.raises(ValueError, match="stale_field"):
@@ -66,10 +73,11 @@ class TestUnknownFieldRejection:
 
     def test_known_spec_fields_accepted(self):
         from scitex_agent_container.config import load_config
+
         data = {
             **_BASE,
             "spec": {
-                "runtime": "claude-code",
+                "runtime": "docker",
                 "model": "sonnet",
                 "multiplexer": "tmux",
                 "a2a": {"port": 9999},
@@ -78,14 +86,15 @@ class TestUnknownFieldRejection:
         }
         path = _write_yaml(data)
         cfg = load_config(path)
-        assert cfg.runtime == "claude-code"
+        assert cfg.runtime == "docker"
 
     def test_validate_raw_returns_errors_for_unknown_spec(self):
         from scitex_agent_container.config._validation import validate_raw
+
         raw = {
             "apiVersion": "scitex-agent-container/v3",
             "kind": "Agent",
-            "spec": {"runtime": "claude-code", "bad_field": 1, "another_bad": 2},
+            "spec": {"runtime": "docker", "bad_field": 1, "another_bad": 2},
         }
         errors = validate_raw(raw, "test.yaml")
         messages = "\n".join(errors)
@@ -97,29 +106,33 @@ class TestUnknownFieldRejection:
 # 3 & 4 — labels.description → card.description
 # ---------------------------------------------------------------------------
 
+
 class TestLabelsDescription:
     def _v3(self, labels: dict) -> dict:
         return {
             "apiVersion": "scitex-agent-container/v3",
             "kind": "Agent",
             "metadata": {"labels": labels},
-            "spec": {"runtime": "claude-code"},
+            "spec": {"runtime": "docker"},
         }
 
     def test_explicit_description_used(self):
         from scitex_agent_container.a2a._card import project_card
+
         v3 = self._v3({"description": "My explicit agent description"})
         card = project_card("my-agent", v3, "http://localhost")
         assert card["description"] == "My explicit agent description"
 
     def test_role_fallback_when_no_description(self):
         from scitex_agent_container.a2a._card import project_card
+
         v3 = self._v3({"role": "researcher"})
         card = project_card("my-agent", v3, "http://localhost")
         assert card["description"] == "sac agent: my-agent (researcher)"
 
     def test_default_fallback_when_no_description_or_role(self):
         from scitex_agent_container.a2a._card import project_card
+
         v3 = self._v3({})
         card = project_card("my-agent", v3, "http://localhost")
         assert card["description"] == "sac agent: my-agent"
@@ -127,6 +140,7 @@ class TestLabelsDescription:
     def test_capabilities_no_longer_used_as_description(self):
         """The implicit capabilities[0] → description fallback is removed."""
         from scitex_agent_container.a2a._card import project_card
+
         v3 = self._v3({"capabilities": "search,index"})
         card = project_card("my-agent", v3, "http://localhost")
         # capabilities should NOT appear as the card description
@@ -140,14 +154,39 @@ class TestLabelsDescription:
 
 _SHARED_AGENTS_DIR = Path.home() / ".scitex" / "orochi" / "shared" / "agents"
 
-_KNOWN_SPEC_KEYS = frozenset({
-    "runtime", "model", "workdir", "python-venv", "env",
-    "screen", "container", "claude", "health", "watchdog",
-    "restart", "hooks", "telegram", "remote", "slurm",
-    "skills", "startup_commands", "startup", "context_management",
-    "listen", "extensions", "mcp_servers", "multiplexer",
-    "host", "hosts", "session", "scheduling", "a2a", "orochi",
-})
+_KNOWN_SPEC_KEYS = frozenset(
+    {
+        "runtime",
+        "model",
+        "workdir",
+        "python-venv",
+        "env",
+        "screen",
+        "container",
+        "claude",
+        "health",
+        "watchdog",
+        "restart",
+        "hooks",
+        "telegram",
+        "remote",
+        "slurm",
+        "skills",
+        "startup_commands",
+        "startup",
+        "context_management",
+        "listen",
+        "extensions",
+        "mcp_servers",
+        "multiplexer",
+        "host",
+        "hosts",
+        "session",
+        "scheduling",
+        "a2a",
+        "orochi",
+    }
+)
 
 
 def _classify_v3_yamls():
@@ -183,7 +222,9 @@ def test_valid_shared_agent_yaml_no_unknown_spec_fields(yaml_path):
 
     raw = yaml.safe_load(yaml_path.read_text())
     errors = validate_raw(raw, str(yaml_path))
-    unknown_errors = [e for e in errors if "Unknown spec field" in e or "Unknown top-level field" in e]
+    unknown_errors = [
+        e for e in errors if "Unknown spec field" in e or "Unknown top-level field" in e
+    ]
     assert not unknown_errors, f"Unexpected unknown-field errors: {unknown_errors}"
 
 

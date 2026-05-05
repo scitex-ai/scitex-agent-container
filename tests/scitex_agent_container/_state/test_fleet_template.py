@@ -18,7 +18,7 @@ apiVersion: scitex-agent-container/v3
 kind: Agent
 metadata: { labels: { project: ${PROJECT}, capsule: ${CAPSULE_ID} } }
 spec:
-  runtime: claude-session
+  runtime: docker
   workdir: /tmp/${name}-workdir
   startup_commands:
     - command: "Run capsule ${CAPSULE_ID} on ${PROJECT}."
@@ -69,7 +69,7 @@ def test_expand_rejects_unresolved_placeholder(tmp_path: Path):
 def test_expand_rejects_missing_name_column(tmp_path: Path):
     template = tmp_path / "t.yaml"
     csv_file = tmp_path / "f.csv"
-    _write(template, "spec: { runtime: claude-session }\n")
+    _write(template, "spec: { runtime: docker }\n")
     _write(csv_file, "PROJECT,CAPSULE_ID\np,c\n")
     with pytest.raises(ValueError, match="name"):
         expand_params_file(template, csv_file, tmp_path / "out")
@@ -78,7 +78,7 @@ def test_expand_rejects_missing_name_column(tmp_path: Path):
 def test_expand_rejects_duplicate_names(tmp_path: Path):
     template = tmp_path / "t.yaml"
     csv_file = tmp_path / "f.csv"
-    _write(template, "spec: { runtime: claude-session }\n")
+    _write(template, "spec: { runtime: docker }\n")
     _write(csv_file, "name\nfoo\nfoo\n")
     with pytest.raises(ValueError, match="duplicate"):
         expand_params_file(template, csv_file, tmp_path / "out")
@@ -87,7 +87,7 @@ def test_expand_rejects_duplicate_names(tmp_path: Path):
 def test_expand_skips_blank_rows(tmp_path: Path):
     template = tmp_path / "t.yaml"
     csv_file = tmp_path / "f.csv"
-    _write(template, "spec: { runtime: claude-session }\n")
+    _write(template, "spec: { runtime: docker }\n")
     _write(csv_file, "name\nfoo\n\nbar\n")
     paths = expand_params_file(template, csv_file, tmp_path / "out")
     assert [p.name for p in paths] == ["foo.yaml", "bar.yaml"]
@@ -96,7 +96,7 @@ def test_expand_skips_blank_rows(tmp_path: Path):
 def test_expand_overwrite_protects_by_default(tmp_path: Path):
     template = tmp_path / "t.yaml"
     csv_file = tmp_path / "f.csv"
-    _write(template, "spec: { runtime: claude-session }\n")
+    _write(template, "spec: { runtime: docker }\n")
     _write(csv_file, "name\nfoo\n")
     out = tmp_path / "out"
     expand_params_file(template, csv_file, out)
@@ -147,7 +147,7 @@ def test_start_params_file_expands_and_dry_runs(tmp_path: Path):
         template,
         "apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
-        "spec:\n  runtime: claude-session\n"
+        "spec:\n  runtime: docker\n"
         "  workdir: /tmp/${name}\n",
     )
     _write(csv_file, "name\nalpha\nbeta\n")
@@ -177,7 +177,7 @@ def test_start_params_file_expands_and_dry_runs(tmp_path: Path):
 def test_start_params_file_requires_single_target(tmp_path: Path):
     template = tmp_path / "t.yaml"
     csv_file = tmp_path / "f.csv"
-    _write(template, "spec: { runtime: claude-session }\n")
+    _write(template, "spec: { runtime: docker }\n")
     _write(csv_file, "name\nfoo\n")
 
     from click.testing import CliRunner

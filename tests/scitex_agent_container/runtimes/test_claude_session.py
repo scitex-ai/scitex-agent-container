@@ -261,7 +261,7 @@ class TestArgvComposition:
             "kind: Agent\n"
             "metadata:\n  name: alpha\n"
             "spec:\n"
-            "  runtime: claude-session\n"
+            "  runtime: docker\n"
             "  a2a:\n    port: 18888\n    host: 0.0.0.0\n"
         )
         cfg = SimpleNamespace(

@@ -8,16 +8,31 @@ import time
 import traceback
 from pathlib import Path
 
+from .._state.registry import Registry
 from ..config import AgentConfig, load_config, resolve_config
 from ..hooks import run_hook
-from .._state.registry import Registry
 from ..runtimes.claude_code import ClaudeCodeRuntime
 from ..runtimes.slurm import SlurmRuntime
 from .health import health_monitor
 
 
 def _get_runtime(config: AgentConfig):
-    """Return the appropriate runtime for the config."""
+    """Return the appropriate runtime for the config.
+
+    F-CS16 phase 2e.1: container engines (docker / podman) route
+    through :class:`ClaudeSessionRuntime`, which itself delegates to
+    ``ContainerRuntime`` via the phase 2c wiring. Apptainer falls
+    through to the SDK runner the same way (its dedicated
+    ContainerRuntime subclass lands later). Legacy claude-* / slurm*
+    runtimes keep their original dispatch until F-CS17 deletes them.
+    """
+    # F-CS16: container engines == new sdk-runner shape. Route to
+    # ClaudeSessionRuntime; it dispatches to ContainerRuntime
+    # internally (see runtimes.claude_session._container_runtime_for).
+    if config.runtime in ("docker", "podman", "apptainer"):
+        from ..runtimes.claude_session import ClaudeSessionRuntime
+
+        return ClaudeSessionRuntime()
     if config.runtime == "claude-code":
         return ClaudeCodeRuntime()
     if config.runtime == "claude-session":
