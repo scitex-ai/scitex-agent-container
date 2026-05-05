@@ -162,25 +162,24 @@ class ContainerRuntime(RuntimeBase):
             "SCITEX_AGENT_CONTAINER_STATE_DB=/state/state.db",
         ]
 
-        # Forward Anthropic auth that the SDK runner inside the container
-        # needs. Two formats coexist on CI runners:
-        #   * sk-ant-api-* — regular API key, valid via ANTHROPIC_API_KEY
-        #     env (pay-per-token).
-        #   * sk-ant-oat-* — Pro/Max OAuth access token; NOT valid as a
-        #     bare API key — the CLI expects it inside
-        #     ~/.claude/.credentials.json.
-        # The SDK's bundled `claude` binary times out at initialize when
-        # given an OAuth token via env. Prefer ANTHROPIC_API_KEY as
-        # already set, then the API-key form, then fall back to the
-        # OAuth bridge (which only works on hosts where ~/.claude is
-        # writable; in containers it usually isn't).
-        api_key = (
-            os.environ.get("ANTHROPIC_API_KEY")
-            or os.environ.get("SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY")
-            or os.environ.get("SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY_OAUTH")
-        )
-        if api_key:
-            argv += ["--env", f"ANTHROPIC_API_KEY={api_key}"]
+        # Forward Anthropic auth.
+        #
+        # Two distinct envs, two distinct intents:
+        #
+        # * ANTHROPIC_API_KEY — passed through verbatim only when the
+        #   operator set it explicitly on the host. Sac never synthesises
+        #   it, so the variable in the container reflects the operator's
+        #   own decision (matches the user's "only use ANTHROPIC_API_KEY
+        #   when user explicitly pass" rule).
+        #
+        # * SAC_ANTHROPIC_API_KEY — sac-namespaced handoff. The runner
+        #   (provision_anthropic_auth) translates it to ANTHROPIC_API_KEY
+        #   internally just before talking to the SDK. Forwarded as-is so
+        #   the runner does the bridge, not the host.
+        for auth_env in ("ANTHROPIC_API_KEY", "SAC_ANTHROPIC_API_KEY"):
+            val = os.environ.get(auth_env)
+            if val:
+                argv += ["--env", f"{auth_env}={val}"]
         # Also mount the operator's Pro/Max credentials file when it
         # exists (read-only). Same image runs as UID 1000, so the
         # credentials_file branch resolves at /home/agent/.claude/.

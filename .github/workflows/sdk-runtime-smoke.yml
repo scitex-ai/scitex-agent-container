@@ -40,20 +40,18 @@ jobs:
     timeout-minutes: 5
 
     env:
-      # Token form (sk-ant-oat* OAuth or sk-ant-api*) is bridged into
-      # ANTHROPIC_API_KEY by scitex_agent_container.runtimes._sdk_common.
-      # The OAuth form keeps us on the flat-rate plan; the API-key
-      # form is the last-resort fallback.
-      SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY_OAUTH: ${{ secrets.SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY_OAUTH }}
-      SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY: ${{ secrets.SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY }}
+      # Sac-namespaced auth handoff. The runner inside the container
+      # translates SAC_ANTHROPIC_API_KEY to ANTHROPIC_API_KEY at the
+      # SDK transport boundary (see _sdk_common.provision_anthropic_auth).
+      # Use the API-key form (sk-ant-api-*) because OAuth tokens
+      # (sk-ant-oat-*) aren't valid via a bare ANTHROPIC_API_KEY env.
+      SAC_ANTHROPIC_API_KEY: ${{ secrets.SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY }}
 
     steps:
-      - name: Fail early if neither auth secret is set
+      - name: Fail early if SAC_ANTHROPIC_API_KEY is unset
         run: |
-          if [ -z "$SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY_OAUTH" ] && \
-             [ -z "$SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY" ]; then
-            echo "::error::Neither SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY_OAUTH" \
-                  "nor SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY is set."
+          if [ -z "$SAC_ANTHROPIC_API_KEY" ]; then
+            echo "::error::SAC_ANTHROPIC_API_KEY is unset (CI secret missing?)."
             exit 1
           fi
 

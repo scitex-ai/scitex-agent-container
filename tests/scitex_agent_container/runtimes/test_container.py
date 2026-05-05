@@ -185,59 +185,57 @@ def test_build_run_argv_forwards_autonomous_block(tmp_path: Path):
     assert argv[argv.index("--autonomous-kick-text") + 1] == "keep going"
 
 
-def test_build_run_argv_prefers_anthropic_api_key_over_ci_aliases(
+def test_build_run_argv_forwards_anthropic_api_key_only_when_user_set(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """ANTHROPIC_API_KEY (already set) wins over the CI bridge envs."""
+    """ANTHROPIC_API_KEY is forwarded only when the operator set it
+    explicitly on the host."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-api-host")
-    monkeypatch.setenv("SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY", "sk-ant-api-ci")
-    monkeypatch.setenv(
-        "SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY_OAUTH", "sk-ant-oat-zzz"
-    )
+    monkeypatch.delenv("SAC_ANTHROPIC_API_KEY", raising=False)
     rt = ContainerRuntime("docker")
     cfg = _config(tmp_path)
     argv = rt.build_run_argv(cfg, state_dir=tmp_path)
     assert "ANTHROPIC_API_KEY=sk-ant-api-host" in argv
-    # The CI envs must NOT also be forwarded under their original names —
-    # the bundled `claude` binary only reads ANTHROPIC_API_KEY.
-    assert not any(a.startswith("SCITEX_AGENT_CONTAINER_CI_") for a in argv)
+    assert not any(a.startswith("SAC_ANTHROPIC_API_KEY=") for a in argv)
 
 
-def test_build_run_argv_falls_back_to_ci_api_key_then_oauth(
+def test_build_run_argv_forwards_sac_anthropic_api_key_unchanged(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """When ANTHROPIC_API_KEY is unset, prefer the CI api-key form
-    over the OAuth form (the OAuth token is invalid as a bare env API
-    key — see the comment in container.py)."""
+    """SAC_ANTHROPIC_API_KEY is forwarded as-is; the runner translates."""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.setenv("SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY", "sk-ant-api-ci")
-    monkeypatch.setenv(
-        "SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY_OAUTH", "sk-ant-oat-zzz"
-    )
+    monkeypatch.setenv("SAC_ANTHROPIC_API_KEY", "sk-ant-api-sac")
     rt = ContainerRuntime("docker")
     cfg = _config(tmp_path)
     argv = rt.build_run_argv(cfg, state_dir=tmp_path)
-    assert "ANTHROPIC_API_KEY=sk-ant-api-ci" in argv
-
-    # Now drop the api-key form too — must fall back to OAuth.
-    monkeypatch.delenv("SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY", raising=False)
-    argv = rt.build_run_argv(cfg, state_dir=tmp_path)
-    assert "ANTHROPIC_API_KEY=sk-ant-oat-zzz" in argv
+    assert "SAC_ANTHROPIC_API_KEY=sk-ant-api-sac" in argv
+    # ANTHROPIC_API_KEY must NOT be synthesized on the host — runner
+    # decides only when actually launching the SDK transport.
+    assert not any(a.startswith("ANTHROPIC_API_KEY=") for a in argv)
 
 
-def test_build_run_argv_skips_authenticate_env_when_unset(
+def test_build_run_argv_forwards_both_when_both_set(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    for v in (
-        "ANTHROPIC_API_KEY",
-        "SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY_OAUTH",
-        "SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY",
-    ):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-api-host")
+    monkeypatch.setenv("SAC_ANTHROPIC_API_KEY", "sk-ant-api-sac")
+    rt = ContainerRuntime("docker")
+    cfg = _config(tmp_path)
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path)
+    assert "ANTHROPIC_API_KEY=sk-ant-api-host" in argv
+    assert "SAC_ANTHROPIC_API_KEY=sk-ant-api-sac" in argv
+
+
+def test_build_run_argv_skips_auth_envs_when_unset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    for v in ("ANTHROPIC_API_KEY", "SAC_ANTHROPIC_API_KEY"):
         monkeypatch.delenv(v, raising=False)
     rt = ContainerRuntime("docker")
     cfg = _config(tmp_path)
     argv = rt.build_run_argv(cfg, state_dir=tmp_path)
     assert not any(a.startswith("ANTHROPIC_API_KEY=") for a in argv)
+    assert not any(a.startswith("SAC_ANTHROPIC_API_KEY=") for a in argv)
 
 
 def test_build_run_argv_skips_autonomous_when_disabled(tmp_path: Path):

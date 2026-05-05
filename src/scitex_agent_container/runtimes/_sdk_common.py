@@ -53,12 +53,11 @@ __all__ = [
 
 _CRED_FILE = Path.home() / ".claude" / ".credentials.json"
 
-# Fleet-namespaced env vars exposed by the secrets bash file. OAuth form
-# preferred (sk-ant-oat*, flat-rate Pro/Max); API-key form (sk-ant-api*,
-# pay-per-token) is the last-resort fallback so we never silently fall
-# off the flat-rate plan.
-_OAUTH_ENV = "SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY_OAUTH"
-_APIKEY_ENV = "SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY"
+# Sac-managed handoff env. The host sets SAC_ANTHROPIC_API_KEY (or sac
+# forwards it from the operator's env into the container); the runner
+# translates it to ANTHROPIC_API_KEY for the SDK transport. ANTHROPIC_API_KEY
+# itself is only honored when the user set it explicitly.
+_SAC_API_KEY_ENV = "SAC_ANTHROPIC_API_KEY"
 
 
 class SDKCommonError(RuntimeError):
@@ -76,16 +75,13 @@ def provision_anthropic_auth() -> str:
     Decision order (first applicable wins):
 
     1. ``ANTHROPIC_API_KEY`` already set in the environment → ``"env"``
-       (operator opted in; we don't second-guess).
+       (operator opted in explicitly; we don't second-guess).
     2. ``~/.claude/.credentials.json`` exists → ``"credentials_file"``
-       (the SDK will pick up the Pro/Max OAuth token automatically; we
-       leave the env clean so OAuth wins).
-    3. ``SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY_OAUTH`` set →
-       ``"bridged_oauth"`` (headless context with stored OAuth token,
-       still flat-rate).
-    4. ``SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY`` set →
-       ``"bridged_api_key"`` (last resort; pay-per-token — caller
-       should be auditable).
+       (Pro/Max OAuth token; SDK reads the file directly).
+    3. ``SAC_ANTHROPIC_API_KEY`` set → bridge to ANTHROPIC_API_KEY
+       (``"bridged_sac"``). This is the standard sac-managed path —
+       operator hands sac the key under a sac-namespaced var; sac
+       translates only when actually launching the SDK runner.
 
     Raises :class:`SDKCommonError` if none of the above apply.
 
@@ -97,18 +93,14 @@ def provision_anthropic_auth() -> str:
         return "env"
     if _CRED_FILE.is_file():
         return "credentials_file"
-    bridged = os.environ.get(_OAUTH_ENV)
+    bridged = os.environ.get(_SAC_API_KEY_ENV)
     if bridged:
         os.environ["ANTHROPIC_API_KEY"] = bridged
-        return "bridged_oauth"
-    bridged = os.environ.get(_APIKEY_ENV)
-    if bridged:
-        os.environ["ANTHROPIC_API_KEY"] = bridged
-        return "bridged_api_key"
+        return "bridged_sac"
     raise SDKCommonError(
-        "no Anthropic auth available — set ANTHROPIC_API_KEY, run a Pro/Max "
-        "claude /login (~/.claude/.credentials.json), or export "
-        f"{_OAUTH_ENV} / {_APIKEY_ENV}"
+        "no Anthropic auth available — set ANTHROPIC_API_KEY, run a "
+        "Pro/Max claude /login (~/.claude/.credentials.json), or export "
+        f"{_SAC_API_KEY_ENV}"
     )
 
 

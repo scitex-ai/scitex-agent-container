@@ -2,8 +2,7 @@
 
 Covers the three concerns the helper consolidates:
 
-  * auth-path selection (env / credentials_file / bridged_oauth /
-    bridged_api_key / failure)
+  * auth-path selection (env / credentials_file / bridged_sac / failure)
   * workspace + MCP-server resolution from the agent registry
   * ``ClaudeAgentOptions`` composition
 
@@ -28,8 +27,7 @@ from scitex_agent_container.runtimes._sdk_common import (
     resolve_agent_workspace,
 )
 
-_OAUTH = _sdk_common._OAUTH_ENV
-_APIKEY = _sdk_common._APIKEY_ENV
+_SAC_KEY = _sdk_common._SAC_API_KEY_ENV
 
 
 # ---------------------------------------------------------------------------
@@ -44,50 +42,31 @@ class TestProvisionAuth:
         monkeypatch.setattr(_sdk_common, "_CRED_FILE", tmp_path / ".credentials.json")
         assert provision_anthropic_auth() == "env"
 
-    def test_credentials_file_skips_env_bridge(self, monkeypatch, tmp_path):
+    def test_credentials_file_skips_sac_bridge(self, monkeypatch, tmp_path):
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         cred = tmp_path / ".credentials.json"
         cred.write_text('{"claudeAiOauth": {"accessToken": "tok"}}')
         monkeypatch.setattr(_sdk_common, "_CRED_FILE", cred)
-        # Even with bridge envs set, cred file wins so SDK can use OAuth.
-        monkeypatch.setenv(_OAUTH, "sk-ant-oat-bridge")
+        # Even with the sac bridge env set, cred file wins so SDK uses OAuth.
+        monkeypatch.setenv(_SAC_KEY, "sk-ant-api-sac")
         assert provision_anthropic_auth() == "credentials_file"
         # Critical: env was NOT mutated, OAuth path stays clean.
         import os
 
         assert "ANTHROPIC_API_KEY" not in os.environ
 
-    def test_bridge_oauth_when_no_credentials_file(self, monkeypatch, tmp_path):
+    def test_bridge_sac_when_no_credentials_file(self, monkeypatch, tmp_path):
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         monkeypatch.setattr(_sdk_common, "_CRED_FILE", tmp_path / "missing")
-        monkeypatch.setenv(_OAUTH, "sk-ant-oat-bridge")
-        assert provision_anthropic_auth() == "bridged_oauth"
+        monkeypatch.setenv(_SAC_KEY, "sk-ant-api-sac")
+        assert provision_anthropic_auth() == "bridged_sac"
         import os
 
-        assert os.environ.get("ANTHROPIC_API_KEY") == "sk-ant-oat-bridge"
-
-    def test_bridge_api_key_only_when_oauth_absent(self, monkeypatch, tmp_path):
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        monkeypatch.delenv(_OAUTH, raising=False)
-        monkeypatch.setattr(_sdk_common, "_CRED_FILE", tmp_path / "missing")
-        monkeypatch.setenv(_APIKEY, "sk-ant-api-bridge")
-        assert provision_anthropic_auth() == "bridged_api_key"
-
-    def test_oauth_preferred_over_api_key(self, monkeypatch, tmp_path):
-        """If both bridge envs are set, OAuth (flat-rate) wins."""
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        monkeypatch.setattr(_sdk_common, "_CRED_FILE", tmp_path / "missing")
-        monkeypatch.setenv(_OAUTH, "sk-ant-oat-bridge")
-        monkeypatch.setenv(_APIKEY, "sk-ant-api-bridge")
-        assert provision_anthropic_auth() == "bridged_oauth"
-        import os
-
-        assert os.environ.get("ANTHROPIC_API_KEY") == "sk-ant-oat-bridge"
+        assert os.environ.get("ANTHROPIC_API_KEY") == "sk-ant-api-sac"
 
     def test_no_auth_raises(self, monkeypatch, tmp_path):
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        monkeypatch.delenv(_OAUTH, raising=False)
-        monkeypatch.delenv(_APIKEY, raising=False)
+        monkeypatch.delenv(_SAC_KEY, raising=False)
         monkeypatch.setattr(_sdk_common, "_CRED_FILE", tmp_path / "missing")
         with pytest.raises(SDKCommonError):
             provision_anthropic_auth()
