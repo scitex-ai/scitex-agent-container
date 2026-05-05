@@ -245,10 +245,10 @@ def start(
 
     \b
     Example:
-      $ sac start foo
-      $ sac start ~/.scitex/agent-container/agents/foo/foo.yaml
-      $ sac start foo bar baz
-      $ sac start ~/.scitex/agent-container/agents/   # whole dir = bulk
+      $ sac agent start foo
+      $ sac agent start ~/.scitex/agent-container/agents/foo/foo.yaml
+      $ sac agent start foo bar baz
+      $ sac agent start ~/.scitex/agent-container/agents/   # whole dir = bulk
     """
     import json as _json
 
@@ -503,10 +503,10 @@ def stop(
 
     \b
     Example:
-      $ sac stop foo
-      $ sac stop foo bar baz
-      $ sac stop ~/.scitex/agent-container/agents/   # whole dir = bulk
-      $ sac stop foo --dry-run
+      $ sac agent stop foo
+      $ sac agent stop foo bar baz
+      $ sac agent stop ~/.scitex/agent-container/agents/   # whole dir = bulk
+      $ sac agent stop foo --dry-run
     """
     # Classify targets: directory targets expand to all <name>/<name>.yaml
     # under them; non-directory targets are agent names or YAML paths.
@@ -586,8 +586,8 @@ def restart(name: str, dry_run: bool, yes: bool) -> None:
 
     \b
     Example:
-      $ sac restart foo
-      $ sac restart foo --dry-run
+      $ sac agent restart foo
+      $ sac agent restart foo --dry-run
     """
     if dry_run:
         click.echo(f"[dry-run] would restart agent '{name}'")
@@ -629,8 +629,8 @@ def cleanup(dry_run: bool, yes: bool) -> None:
 
     \b
     Example:
-      $ sac clean-registry
-      $ sac clean-registry --dry-run
+      $ sac registry clean
+      $ sac registry clean --dry-run
     """
     registry = Registry()
     if dry_run:
@@ -678,8 +678,8 @@ def send_accept(agent: str, dry_run: bool, yes: bool) -> None:
 
     \b
     Example:
-      $ sac send-accept foo
-      $ sac send-accept foo --dry-run
+      $ sac auto-accept send foo
+      $ sac auto-accept send foo --dry-run
     """
     _ = yes  # accepted for API consistency; no prompt is currently shown.
     if dry_run:
@@ -723,8 +723,8 @@ def start_auto_accept(agent: str, tick_s: float, dry_run: bool, yes: bool) -> No
 
     \b
     Example:
-      $ sac start-auto-accept foo
-      $ sac start-auto-accept foo --tick 30
+      $ sac auto-accept start foo
+      $ sac auto-accept start foo --tick 30
     """
     _ = yes  # accepted for API consistency; no prompt is currently shown.
     if dry_run:
@@ -783,8 +783,8 @@ def stop_auto_accept(agent: str, dry_run: bool, yes: bool) -> None:
 
     \b
     Example:
-      $ sac stop-auto-accept foo
-      $ sac stop-auto-accept foo --dry-run
+      $ sac auto-accept stop foo
+      $ sac auto-accept stop foo --dry-run
     """
     if dry_run:
         click.echo(f"[dry-run] would stop auto-accept daemon for agent '{agent}'")

@@ -107,7 +107,7 @@ def render_remote_launch(
         )
     else:
         # ``${SAC_RUNNER_PREFIX:-}`` honored in foreground mode too so
-        # the same per-host hook works for ``sac start --foreground``.
+        # the same per-host hook works for ``sac agent start --foreground``.
         lines.append(f"exec ${{SAC_RUNNER_PREFIX:-}} {cmd}")
     return "\n".join(lines) + "\n"
 

@@ -148,7 +148,7 @@ def contributor_spec(
 
     \b
     Example:
-      $ sac render-contributor-spec --name c-sac-my-feature --port 19200 \\
+      $ sac template render-contributor-spec --name c-sac-my-feature --port 19200 \\
             --target-repo scitex-agent-container \\
             --task "Implement X in scitex-agent-container"
     """

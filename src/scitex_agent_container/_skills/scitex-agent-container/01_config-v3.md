@@ -78,7 +78,7 @@ You can override any of these by setting them explicitly in the YAML. The auto-d
 
 ## `src_*` file-deploy pipeline
 
-Sibling files named `src_<basename>` next to the agent YAML are materialized into the workspace at `sac start` time, with `${VAR}` and `${metadata.name}` interpolation:
+Sibling files named `src_<basename>` next to the agent YAML are materialized into the workspace at `sac agent start` time, with `${VAR}` and `${metadata.name}` interpolation:
 
 | Source | Destination | Mode |
 |---|---|---|
@@ -95,7 +95,7 @@ If you have legacy YAMLs:
 1. Change `apiVersion: scitex-agent-container/v2` → `apiVersion: scitex-agent-container/v3`.
 2. Delete the `metadata.name:` field. The agent name now comes from the parent directory; ensure the YAML lives at `<name>/<name>.yaml`.
 3. If your YAML was at a flat path like `~/.scitex/agent-container/agents/foo.yaml`, move it to `~/.scitex/agent-container/agents/foo/foo.yaml`.
-4. `sac validate <new-path>` to confirm it parses.
+4. `sac agent validate <new-path>` to confirm it parses.
 
 ## See also
 

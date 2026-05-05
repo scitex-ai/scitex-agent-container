@@ -17,7 +17,7 @@ tags: [scitex-agent-container-slurm-tenant]
 | **Many agents inside one allocation, one queue wait for the pool** | **`runtime: slurm-tenant`** |
 | Local agent (no SLURM) | `runtime: claude-code` |
 
-The tenant pattern eliminates per-agent queue wait. Once you've booked a reservation, each `sac start` becomes one ssh round-trip — the agent is running ~10 seconds later, not ~10 minutes.
+The tenant pattern eliminates per-agent queue wait. Once you've booked a reservation, each `sac agent start` becomes one ssh round-trip — the agent is running ~10 seconds later, not ~10 minutes.
 
 ## Workflow
 
@@ -51,19 +51,19 @@ Drop multiple yamls under `~/.scitex/agent-container/agents/<name>/<name>.yaml` 
 ### 3. Launch them
 
 ```bash
-sac start dev-helper.yaml         # tmux session in dev-pool's allocation
-sac start doc-builder.yaml        # second session, same allocation
-sac start --all                   # or all yamls at once
+sac agent start dev-helper.yaml         # tmux session in dev-pool's allocation
+sac agent start doc-builder.yaml        # second session, same allocation
+sac agent start --all                   # or all yamls at once
 ```
 
 ### 4. Operate
 
 ```bash
 sac list                          # tenants appear alongside other agents
-sac attach dev-helper             # srun --pty + tmux attach on the compute node
-sac show-logs dev-helper -n 100        # tmux capture-pane via srun --overlap
-sac stop dev-helper               # kills the tmux session — does NOT release the allocation
-sac stop --all                    # stops every tenant; reservation still alive
+sac agent attach dev-helper             # srun --pty + tmux attach on the compute node
+sac agent logs dev-helper -n 100        # tmux capture-pane via srun --overlap
+sac agent stop dev-helper               # kills the tmux session — does NOT release the allocation
+sac agent stop --all                    # stops every tenant; reservation still alive
 ```
 
 When the work is done, release the pool:
@@ -80,20 +80,20 @@ SLURM's cgroup terminates *every process in a step's cgroup* when the step ends.
 
 `scitex-hpc.Reservation.book(tmux_server="sac", ...)` solves this by wiring `tmux -L sac new-session -d -s _root 'sleep infinity'` into the sbatch script's hold body, so the tmux server is **the job's main process**. It lives in the job's primary cgroup and survives every `srun --overlap` step. Tenants connect via the same `-L sac` socket and their sessions are siblings of `_root`.
 
-### What `sac start` does for a tenant
+### What `sac agent start` does for a tenant
 
 1. Looks up the Reservation by `spec.slurm.reservation` (raises if not booked or not booked with `tmux_server`).
 2. Reads `extras.tmux_server` from the lease state file → socket name (typically `sac`).
 3. Runs `tmux -L <socket> new-session -d -s sac-<agent-name> '<claude command>'` via `Reservation.exec()` (which is `ssh <host> 'bash -lc "srun --jobid=<X> --overlap <cmd>"'`).
-4. Writes a sac registry entry so `sac list` / `sac stop` / `sac show-logs` / `sac attach` route correctly.
+4. Writes a sac registry entry so `sac list` / `sac agent stop` / `sac agent logs` / `sac agent attach` route correctly.
 
-### What `sac stop` does for a tenant
+### What `sac agent stop` does for a tenant
 
 `tmux kill-session -t sac-<agent-name>` via the same `srun --overlap` channel. **Does not** scancel the SLURM job — the reservation outlives its tenants. To free the allocation entirely, use `scitex-hpc reservations release <pool-name>` separately.
 
-### What `sac attach` does for a tenant
+### What `sac agent attach` does for a tenant
 
-`ssh -t <host> 'bash -lc "srun --jobid=<X> --pty bash -lc \"tmux -L sac attach -t sac-<agent-name>\""'`. Detach with the standard tmux prefix (Ctrl-B D).
+`ssh -t <host> 'bash -lc "srun --jobid=<X> --pty bash -lc \"tmux -L sac agent attach -t sac-<agent-name>\""'`. Detach with the standard tmux prefix (Ctrl-B D).
 
 ## Compatibility with HPC policies
 
@@ -110,7 +110,7 @@ This was the design constraint after the 2026-04-26 IT Security ruling on Sparta
 | `runtime: slurm-tenant requires spec.slurm.reservation` | yaml is missing the `reservation` field |
 | `reservation 'foo' was not booked with tmux_server set` | re-book with `--tmux-server sac` |
 | Tenant session disappears within seconds | reservation booked WITHOUT `--tmux-server`. Run `scitex-hpc reservations get <name>` and check `"extras": {"tmux_server": "sac"}` |
-| `sac attach` exits immediately | session was killed externally; check `sac show-logs` for crash trace |
+| `sac agent attach` exits immediately | session was killed externally; check `sac agent logs` for crash trace |
 | Stale `job_id` after walltime auto-resubmit | run `scitex-hpc reservations refresh <name>` |
 
 ## See also

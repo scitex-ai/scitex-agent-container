@@ -29,7 +29,7 @@
 
 | # | Problem | Solution |
 |---|---------|----------|
-| 1 | **Fragile per-agent scripts** — launching Claude Code means hand-rolling shell scripts for tmux, env vars, MCP configs, and auto-accept prompts, with no restart policy or health monitoring | **Declarative YAML manifest** — one file fully specifies runtime, model, MCP servers, env, health checks, and remote host; `sac start` brings the agent up in tmux/screen with auto-accept and a watchdog |
+| 1 | **Fragile per-agent scripts** — launching Claude Code means hand-rolling shell scripts for tmux, env vars, MCP configs, and auto-accept prompts, with no restart policy or health monitoring | **Declarative YAML manifest** — one file fully specifies runtime, model, MCP servers, env, health checks, and remote host; `sac agent start` brings the agent up in tmux/screen with auto-accept and a watchdog |
 | 2 | **No fleet story** — scaling from one agent to many across machines duplicates the same fragile scripts, with no SSH deploy, no presence, and no inter-agent comms | **Remote deploy + state inspection** — `sac` copies src files, installs the venv over SSH, and keeps a live view of every pane's state so the fleet behaves as one unit |
 
 ## Problem
@@ -98,9 +98,9 @@ scitex-agent-container start my-agent
 <br>
 
 ```bash
-sac start <agent-yaml>      # launch declared agent in tmux/screen with auto-accept + watchdog
-sac stop <agent>            # graceful stop
-sac show-status                  # live state of every pane
+sac agent start <agent-yaml>      # launch declared agent in tmux/screen with auto-accept + watchdog
+sac agent stop <agent>            # graceful stop
+sac agent status                  # live state of every pane
 sac deploy <host>           # SSH-deploy fleet to remote host
 sac --help-recursive        # full subcommand tree
 ```
@@ -209,9 +209,9 @@ spec:
 ```
 
 ```bash
-sac start head-spartan/head-spartan.yaml   # submits sbatch on the local SLURM submission host
-sac attach head-spartan                    # srun --pty + tmux attach on the compute node
-sac stop head-spartan                      # scancel + clear state
+sac agent start head-spartan/head-spartan.yaml   # submits sbatch on the local SLURM submission host
+sac agent attach head-spartan                    # srun --pty + tmux attach on the compute node
+sac agent stop head-spartan                      # scancel + clear state
 ```
 
 ## SLURM (multi-tenant — many agents on one allocation)
@@ -228,11 +228,11 @@ scitex-hpc reservations book dev-pool \
     --tmux-server sac --persistent
 
 # All day: launch agents into it
-sac start dev-helper.yaml         # tmux session in dev-pool's allocation
-sac start doc-builder.yaml        # second tmux session, same allocation
-sac start test-runner.yaml        # third, same allocation
+sac agent start dev-helper.yaml         # tmux session in dev-pool's allocation
+sac agent start doc-builder.yaml        # second tmux session, same allocation
+sac agent start test-runner.yaml        # third, same allocation
 
-sac attach dev-helper             # interactive on compute node
+sac agent attach dev-helper             # interactive on compute node
 
 # When done with the day's pool:
 scitex-hpc reservations release dev-pool

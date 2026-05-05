@@ -24,7 +24,7 @@ def check(config_path: str) -> None:
 
     \b
     Example:
-      $ sac check ~/.scitex/agent-container/agents/foo/foo.yaml
+      $ sac agent check ~/.scitex/agent-container/agents/foo/foo.yaml
     """
     # stx-allow: fallback (reason: config file may not exist or contain invalid YAML; CLI exits with code 1 to signal preflight failure)
     try:
@@ -141,7 +141,7 @@ def validate(config_path: str) -> None:
 
     \b
     Example:
-      $ sac validate ~/.scitex/agent-container/agents/foo/foo.yaml
+      $ sac agent validate ~/.scitex/agent-container/agents/foo/foo.yaml
     """
     errors = validate_config(config_path)
     if not errors:
@@ -185,9 +185,9 @@ def build(runtime: str, image: str, dry_run: bool, yes: bool) -> None:
 
     \b
     Example:
-      $ sac build-image
-      $ sac build-image --runtime apptainer
-      $ sac build-image --dry-run
+      $ sac image build
+      $ sac image build --runtime apptainer
+      $ sac image build --dry-run
     """
     if dry_run:
         click.echo(f"[dry-run] would build {runtime} image '{image}'")

@@ -45,8 +45,8 @@ def find(
 
     \b
     Example:
-      $ sac find HPC
-      $ sac find GPU --json
+      $ sac agent find HPC
+      $ sac agent find GPU --json
     """
     if search_dir is None:
         search_dir = "."
@@ -128,9 +128,9 @@ def logs(name: str, lines: int, as_json: bool) -> None:
 
     \b
     Example:
-      $ sac show-logs head-ywata-note-win
-      $ sac show-logs head-ywata-note-win -n 200
-      $ sac show-logs head-ywata-note-win --json
+      $ sac agent logs head-ywata-note-win
+      $ sac agent logs head-ywata-note-win -n 200
+      $ sac agent logs head-ywata-note-win --json
     """
     # stx-allow: fallback (reason: agent_logs reads from multiplexer or log files that may be absent if the agent was never started; error is reported and CLI exits with code 1)
     try:
@@ -162,7 +162,7 @@ def attach(name: str) -> None:
 
     \b
     Example:
-      $ sac attach head-ywata-note-win
+      $ sac agent attach head-ywata-note-win
     """
     registry = Registry()
     entry = registry.get(name)

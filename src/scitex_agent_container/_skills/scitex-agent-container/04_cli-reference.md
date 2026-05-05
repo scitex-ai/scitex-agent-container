@@ -22,33 +22,33 @@ Global flags:
 
 | Command | Purpose |
 |---|---|
-| `sac start <agent>` | Start the agent. Daemon by default; add `--foreground` to stream stdio + block. Honors `spec.remote.host` (ssh dispatch) and `spec.a2a.port` (HTTP inbound endpoint). |
-| `sac stop <agent>` | SIGTERM the runner; escalate to SIGKILL after 5 s. ssh-mediated for remote agents. |
-| `sac restart <agent>` | Stop + start, preserving session_id resume. |
-| `sac show-status [<agent>]` | Heartbeat + `sdk_session` block + last-action summary. With no arg, lists all registered agents. |
-| `sac show-logs <agent>` | Rendered transcript from `session.jsonl` (user / assistant / result events). ssh-tails remote logs. |
-| `sac attach <agent>` | (claude-code runtime only) Attach to the multiplexer session. |
+| `sac agent start <agent>` | Start the agent. Daemon by default; add `--foreground` to stream stdio + block. Honors `spec.remote.host` (ssh dispatch) and `spec.a2a.port` (HTTP inbound endpoint). |
+| `sac agent stop <agent>` | SIGTERM the runner; escalate to SIGKILL after 5 s. ssh-mediated for remote agents. |
+| `sac agent restart <agent>` | Stop + start, preserving session_id resume. |
+| `sac agent status [<agent>]` | Heartbeat + `sdk_session` block + last-action summary. With no arg, lists all registered agents. |
+| `sac agent logs <agent>` | Rendered transcript from `session.jsonl` (user / assistant / result events). ssh-tails remote logs. |
+| `sac agent attach <agent>` | (claude-code runtime only) Attach to the multiplexer session. |
 
-Multi-target: `sac start a b c` works for daemon mode; `--foreground` is single-target only.
+Multi-target: `sac agent start a b c` works for daemon mode; `--foreground` is single-target only.
 
 ## Introspection
 
 | Command | Purpose |
 |---|---|
-| `sac list-agents` | Registered agents on this host. |
-| `sac find <capability>` | Search agents by capability label. |
-| `sac inspect <agent>` | Live state: capture pane / heartbeat / quota. |
-| `sac check <agent>` | Preflight checks (SSH, screen, sac-on-remote, python, disk). |
-| `sac check-health <agent>` | Health-method poll (`multiplexer-alive` / `pane-prompt`). |
-| `sac check-priority` | Singleton priority across the fleet. |
+| `sac agent list` | Registered agents on this host. |
+| `sac agent find <capability>` | Search agents by capability label. |
+| `sac agent inspect <agent>` | Live state: capture pane / heartbeat / quota. |
+| `sac agent check <agent>` | Preflight checks (SSH, screen, sac-on-remote, python, disk). |
+| `sac agent health <agent>` | Health-method poll (`multiplexer-alive` / `pane-prompt`). |
+| `sac agent check-priority` | Singleton priority across the fleet. |
 
 ## Actions / events
 
 | Command | Purpose |
 |---|---|
 | `sac actions <action>` | Run / query / aggregate agent-action attempts. |
-| `sac ingest-hook-event` | Append a Claude Code hook event to the per-agent event log. |
-| `sac recall <agent>` | Summarize the agent's session.jsonl. |
+| `sac event ingest` | Append a Claude Code hook event to the per-agent event log. |
+| `sac agent recall <agent>` | Summarize the agent's session.jsonl. |
 
 ## `sac auto-accept` — Claude Code TUI handler
 
@@ -67,10 +67,10 @@ still work but print a stderr deprecation warning.
 
 | Command | Purpose |
 |---|---|
-| `sac probe-network` | WSL → fleet-hub connectivity probe. |
-| `sac render-attach <agent>` | Print the `srun --pty` command for `slurm-tenant` agents. |
-| `sac render-sbatch <agent>` | Print the sbatch wrapper for `runtime: slurm`. |
-| `sac render-contributor-spec` | Materialize a contributor agent spec from the v3 template. |
+| `sac network probe` | WSL → fleet-hub connectivity probe. |
+| `sac template render-attach <agent>` | Print the `srun --pty` command for `slurm-tenant` agents. |
+| `sac template render-sbatch <agent>` | Print the sbatch wrapper for `runtime: slurm`. |
+| `sac template render-contributor-spec` | Materialize a contributor agent spec from the v3 template. |
 
 ## A2A protocol
 
@@ -85,9 +85,9 @@ For `runtime: claude-session` agents the runner hosts `POST /v1/turn` itself —
 
 | Command | Purpose |
 |---|---|
-| `sac build-image` | Build the container base image (docker / podman / apptainer). |
+| `sac image build` | Build the container base image (docker / podman / apptainer). |
 | `sac installation` | Bootstrap helpers for a new fleet host. |
-| `sac install-post-merge-cron` | Add (or remove) the post-merge-pull crontab entry. |
+| `sac installation setup-cron` | Add (or remove) the post-merge-pull crontab entry. |
 
 ## Other
 
@@ -95,8 +95,8 @@ For `runtime: claude-session` agents the runner hosts `POST /v1/turn` itself —
 |---|---|
 | `sac mcp list-tools` | (no MCP servers bundled — sac agents spawn their own via `src_mcp.json`) |
 | `sac account` | Manage stored Claude Code accounts. |
-| `sac clean-registry` | Remove stale registry entries. |
-| `sac reconcile-singletons` | Reconcile singleton agent placement across the fleet. |
+| `sac registry clean` | Remove stale registry entries. |
+| `sac registry reconcile` | Reconcile singleton agent placement across the fleet. |
 | `sac list-python-apis` | Enumerate the public Python API. |
 
 ## See also

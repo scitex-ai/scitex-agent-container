@@ -16,7 +16,7 @@ A2A is a **protocol**; orochi is one **implementation** of a fleet hub on top of
 Concrete value:
 
 - **Standalone agent deploy** — `sac a2a serve agent.yaml` boots one A2A agent. Done.
-- **Protocol-aware health check** — sac check-health can hit an AgentCard endpoint (future).
+- **Protocol-aware health check** — sac agent health can hit an AgentCard endpoint (future).
 - **Swappable fleet implementations** — orochi is one consumer of sac-served A2A endpoints; another fleet hub can be too.
 
 ## CLI
@@ -30,7 +30,7 @@ sac a2a doctor <agent.yaml>    [--host H] [--port N] [--timeout 5.0] [--json]
 
 ## Auto-launch via `spec.a2a`
 
-When a v3 YAML declares `spec.a2a.port`, `sac start` spawns the A2A server as a sidecar subprocess after the multiplexer is up. PID lives at `{workdir}/a2a-sidecar.pid`, output at `{workdir}/a2a-sidecar.log`; `sac stop` SIGTERMs it via the PID file.
+When a v3 YAML declares `spec.a2a.port`, `sac agent start` spawns the A2A server as a sidecar subprocess after the multiplexer is up. PID lives at `{workdir}/a2a-sidecar.pid`, output at `{workdir}/a2a-sidecar.log`; `sac agent stop` SIGTERMs it via the PID file.
 
 ```yaml
 apiVersion: scitex-agent-container/v3

@@ -756,7 +756,7 @@ def _pid_alive(pid: int) -> bool:
     runner is its own session leader; if its caller forgets to reap
     it (e.g. a CLI that returns straight after ``start``), the PID
     file points at a zombie. We don't want ``is_running`` /
-    ``sac show-status`` to claim such processes are alive — explicitly
+    ``sac agent status`` to claim such processes are alive — explicitly
     detect and exclude them.
 
     Linux: parse ``/proc/<pid>/status`` and look for the ``State:`` line.

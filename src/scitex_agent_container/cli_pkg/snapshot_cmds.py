@@ -49,8 +49,8 @@ def snapshot(
 
     \b
     Example:
-      $ sac take-snapshot head-ywata-note-win
-      $ sac take-snapshot head-ywata-note-win --with-diff
+      $ sac agent take-snapshot head-ywata-note-win
+      $ sac agent take-snapshot head-ywata-note-win --with-diff
     """
     # stx-allow: fallback (reason: CLI command must emit a JSON error and exit cleanly rather than printing a raw traceback)
     try:

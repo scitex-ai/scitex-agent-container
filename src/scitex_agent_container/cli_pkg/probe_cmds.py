@@ -86,8 +86,8 @@ def probe_network(
 
     \b
     Example:
-      $ sac probe-network --agent head-ywata-note-win
-      $ sac probe-network --quiet --exit-nonzero-on-fail
+      $ sac network probe --agent head-ywata-note-win
+      $ sac network probe --quiet --exit-nonzero-on-fail
     """
     effective_agent = (
         agent

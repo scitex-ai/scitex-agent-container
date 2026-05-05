@@ -1,4 +1,4 @@
-"""``sac recall <jsonl>`` — summarize / read back a Claude Code session jsonl.
+"""``sac agent recall <jsonl>`` — summarize / read back a Claude Code session jsonl.
 
 Used after a host crash to reconstruct what the dead agent was doing
 without paying the cost of a full ``--continue`` resume.
@@ -132,9 +132,9 @@ def recall(
 
     \b
     Example:
-      $ sac recall <session-id>
-      $ sac recall head-ywata-note-win:<session-id>
-      $ sac recall <session-id> --since 1h --role user
+      $ sac agent recall <session-id>
+      $ sac agent recall head-ywata-note-win:<session-id>
+      $ sac agent recall <session-id> --since 1h --role user
     """
     path = _resolve_jsonl(jsonl)
     stats = collect_stats(path)

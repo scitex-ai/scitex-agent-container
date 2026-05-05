@@ -30,7 +30,7 @@ Invocation:
         [--print-stream]
 
 The runtime adapter (``runtimes/claude_session.py``) is the only sane
-caller; humans should use ``sac start [--foreground]`` instead.
+caller; humans should use ``sac agent start [--foreground]`` instead.
 """
 
 from __future__ import annotations

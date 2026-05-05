@@ -1,8 +1,8 @@
-"""Install commands: ``sac install --boot`` and ``sac install-post-merge-cron``.
+"""Install commands: ``sac install --boot`` and ``sac installation setup-cron``.
 
 Deliverables:
   * ``sac install --boot`` — first-time host bootstrap (venv, dirs, PATH)
-  * ``sac install-post-merge-cron`` — add/remove crontab entry for
+  * ``sac installation setup-cron`` — add/remove crontab entry for
     post-merge-pull.sh
 """
 
@@ -251,7 +251,7 @@ def _deploy_cron_script(dry_run: bool, tag: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# sac install-post-merge-cron
+# sac installation setup-cron
 # ---------------------------------------------------------------------------
 
 
@@ -285,9 +285,9 @@ def install_post_merge_cron(dry_run: bool, uninstall: bool, yes: bool) -> None:
 
     \b
     Example:
-      $ sac install-post-merge-cron
-      $ sac install-post-merge-cron --dry-run
-      $ sac install-post-merge-cron --uninstall
+      $ sac installation setup-cron
+      $ sac installation setup-cron --dry-run
+      $ sac installation setup-cron --uninstall
     """
     if not dry_run and not yes:
         action = "Remove" if uninstall else "Install"

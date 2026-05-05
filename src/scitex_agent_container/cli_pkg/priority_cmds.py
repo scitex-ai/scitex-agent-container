@@ -3,17 +3,17 @@
 Building blocks for the healer-driven singleton reconciler (scitex-orochi#250).
 
 When an agent declares ``spec.host: [spartan, nas, mba]``, it should run on the
-*highest-priority reachable* host, not just wherever ``sac start`` was called.
+*highest-priority reachable* host, not just wherever ``sac agent start`` was called.
 ``priority-check`` probes each higher-priority host (via a brief SSH connectivity
 check) and returns a JSON report so healer agents can decide whether to initiate
 handover. ``singleton-reconcile`` sweeps all locally registered agents and
 initiates handover for any that should yield.
 
 Usage:
-    sac check-priority <config-or-agent-name>
-    sac check-priority proj-neurovista --current-host nas --json
-    sac reconcile-singletons
-    sac reconcile-singletons --execute  # actually trigger SSH start + local stop
+    sac agent check-priority <config-or-agent-name>
+    sac agent check-priority proj-neurovista --current-host nas --json
+    sac registry reconcile
+    sac registry reconcile --execute  # actually trigger SSH start + local stop
 """
 
 from __future__ import annotations
@@ -186,8 +186,8 @@ def priority_check(
 
     \b
     Example:
-      $ sac check-priority proj-neurovista
-      $ sac check-priority proj-neurovista --json
+      $ sac agent check-priority proj-neurovista
+      $ sac agent check-priority proj-neurovista --json
     """
     # stx-allow: fallback (reason: config path may not exist or resolve to a valid YAML; CLI exits with code 2 to signal a usage/config error to healer callers)
     try:
@@ -239,11 +239,11 @@ def priority_check(
 # that have a higher-priority reachable host.  (scitex-orochi#250)
 # ---------------------------------------------------------------------------
 
-_SSH_START_TIMEOUT = 30  # seconds to wait for remote sac start
+_SSH_START_TIMEOUT = 30  # seconds to wait for remote sac agent start
 
 
 def _ssh_start_agent(host: str, agent_name: str) -> bool:
-    """SSH to *host* and run ``sac start <agent_name>`` in the background.
+    """SSH to *host* and run ``sac agent start <agent_name>`` in the background.
 
     Returns True if the remote command exited 0.
     """
@@ -258,7 +258,7 @@ def _ssh_start_agent(host: str, agent_name: str) -> bool:
         "-o",
         "LogLevel=ERROR",
         host,
-        f"sac start {agent_name}",
+        f"sac agent start {agent_name}",
     ]
     try:
         result = subprocess.run(
@@ -320,9 +320,9 @@ def singleton_reconcile(
 
     \b
     Example:
-      $ sac reconcile-singletons
-      $ sac reconcile-singletons --execute
-      $ sac reconcile-singletons --json
+      $ sac registry reconcile
+      $ sac registry reconcile --execute
+      $ sac registry reconcile --json
     """
     _ = dry_run
     _ = yes
@@ -347,9 +347,9 @@ def _singleton_reconcile_body(execute: bool, current_host: str, as_json: bool) -
 
     \b
     Example:
-      $ sac reconcile-singletons
-      $ sac reconcile-singletons --execute
-      $ sac reconcile-singletons --json
+      $ sac registry reconcile
+      $ sac registry reconcile --execute
+      $ sac registry reconcile --json
     """
     from .._lifecycle.lifecycle import agent_stop
     from ..config._host import resolve_hostname

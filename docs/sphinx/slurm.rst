@@ -50,11 +50,11 @@ Lifecycle:
 
 .. code-block:: bash
 
-    sac start head-spartan/head-spartan.yaml   # submits sbatch on the SLURM submission host
-    sac show-status head-spartan                    # squeue + tmux pane state
-    sac attach head-spartan                    # srun --pty + tmux attach on the compute node
-    sac show-logs head-spartan -n 100               # tmux capture-pane via srun --overlap
-    sac stop head-spartan                      # scancel + clear local state
+    sac agent start head-spartan/head-spartan.yaml   # submits sbatch on the SLURM submission host
+    sac agent status head-spartan                    # squeue + tmux pane state
+    sac agent attach head-spartan                    # srun --pty + tmux attach on the compute node
+    sac agent logs head-spartan -n 100               # tmux capture-pane via srun --overlap
+    sac agent stop head-spartan                      # scancel + clear local state
 
 The ``slurm.hooks.pre_agent`` script is *sourced* (not exec'd) inside
 the sbatch wrapper, so any env it sets persists into the agent
@@ -119,11 +119,11 @@ Step 3 — start agents into the allocation
 
 .. code-block:: bash
 
-    sac start dev-helper.yaml         # tmux session in dev-pool's allocation
-    sac start doc-builder.yaml        # second session, same allocation
-    sac start test-runner.yaml        # third, same allocation
+    sac agent start dev-helper.yaml         # tmux session in dev-pool's allocation
+    sac agent start doc-builder.yaml        # second session, same allocation
+    sac agent start test-runner.yaml        # third, same allocation
 
-Each ``sac start`` becomes one ``tmux -L sac new-session`` inside the
+Each ``sac agent start`` becomes one ``tmux -L sac new-session`` inside the
 existing reservation — no new ``sbatch`` is submitted. The whole
 operation is one ssh round-trip per agent.
 
@@ -131,7 +131,7 @@ Or launch them all at once:
 
 .. code-block:: bash
 
-    sac start --all                   # discovers all yamls, starts each
+    sac agent start --all                   # discovers all yamls, starts each
 
 Step 4 — operate them
 ^^^^^^^^^^^^^^^^^^^^^
@@ -139,10 +139,10 @@ Step 4 — operate them
 .. code-block:: bash
 
     sac list                          # registry view; tenants show alongside other agents
-    sac attach dev-helper             # srun --pty + tmux -L sac attach -t sac-dev-helper
-    sac show-logs dev-helper -n 100        # tmux capture-pane via srun --overlap
-    sac stop dev-helper               # tmux kill-session (does NOT release the allocation)
-    sac stop --all                    # kill every tenant; reservation still alive
+    sac agent attach dev-helper             # srun --pty + tmux -L sac agent attach -t sac-dev-helper
+    sac agent logs dev-helper -n 100        # tmux capture-pane via srun --overlap
+    sac agent stop dev-helper               # tmux kill-session (does NOT release the allocation)
+    sac agent stop --all                    # kill every tenant; reservation still alive
 
 Stopping a tenant only kills its tmux session; the reservation outlives
 its tenants. Releasing the reservation is a separate scitex-hpc CLI
@@ -183,8 +183,8 @@ allocation:
 2. Change the agent's yaml from ``runtime: slurm`` to
    ``runtime: slurm-tenant`` and replace the entire ``slurm:`` block
    with ``slurm: {reservation: <pool-name>}``.
-3. ``sac stop`` the old agent (or wait for its job to walltime-out).
-4. ``sac start`` the migrated yaml.
+3. ``sac agent stop`` the old agent (or wait for its job to walltime-out).
+4. ``sac agent start`` the migrated yaml.
 
 The agent runs in the same shell context (Python venv, env vars from
 ``pre_agent`` hook fragments — though tenants don't get the
@@ -203,6 +203,6 @@ Troubleshooting
   reservation was booked without ``--tmux-server``. Run
   ``scitex-hpc reservations get <name>`` and check
   ``"extras": {"tmux_server": "sac"}`` is set.
-* ``sac attach`` exits immediately — same as above; or the session
-  was killed externally. Run ``sac show-logs`` first to see whether the
+* ``sac agent attach`` exits immediately — same as above; or the session
+  was killed externally. Run ``sac agent logs`` first to see whether the
   process inside crashed.
