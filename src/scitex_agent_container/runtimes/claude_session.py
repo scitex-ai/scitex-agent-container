@@ -26,12 +26,51 @@ from pathlib import Path
 from .._runners import claude_session as _runner
 from ..config import AgentConfig
 from .base import RuntimeBase
+from .claude_md import cleanup_claude_md, setup_claude_md
 
 __all__ = ["ClaudeSessionRuntime"]
 
 
 class ClaudeSessionRuntime(RuntimeBase):
     """Daemon-mode runtime backed by ``claude-agent-sdk`` (Phase 1: heartbeat only)."""
+
+    def _setup_workspace(self, config: AgentConfig) -> None:
+        """Materialise CLAUDE.md before launching the SDK runner.
+
+        Mirrors what ``runtimes.claude_code.ClaudeCodeRuntime`` does for
+        the CLI runtime: writes ``<workdir>/.claude/CLAUDE.md`` with an
+        agent-container managed section that lists the agent's HARD
+        skills (``spec.skills.required[]`` → ``@<path>`` lines, eagerly
+        inlined by the SDK) and SOFT skills (``spec.skills.available[]``
+        → reference listing, agent reads on demand). See F-CS1.
+
+        Best-effort: skipped for remote configs (the workdir lives on
+        the remote host) and for stub configs that don't carry the full
+        AgentConfig surface (unit-test SimpleNamespace fixtures).
+        """
+        if _is_remote_config(config):
+            return
+        # Stub configs (e.g. SimpleNamespace in argv-composition tests)
+        # don't carry the full surface ``setup_claude_md`` walks. Detect
+        # via the structural attributes the helper actually touches.
+        required_attrs = ("expanded_workdir", "skills", "claude", "env", "labels")
+        if not all(hasattr(config, a) for a in required_attrs):
+            return
+        setup_claude_md(config, config.expanded_workdir)
+
+    def _cleanup_workspace(self, config: AgentConfig) -> None:
+        """Remove the agent-container CLAUDE.md section on stop.
+
+        Symmetric to ``_setup_workspace``. Same defensive guards: skip
+        on remote configs and on stub configs that don't carry the full
+        surface.
+        """
+        if _is_remote_config(config):
+            return
+        required_attrs = ("expanded_workdir", "skills", "claude", "env", "labels")
+        if not all(hasattr(config, a) for a in required_attrs):
+            return
+        cleanup_claude_md(config, config.expanded_workdir)
 
     def start(
         self,
@@ -64,7 +103,15 @@ class ClaudeSessionRuntime(RuntimeBase):
 
         if dry_run:
             state_dir.mkdir(parents=True, exist_ok=True)
+            # Materialise CLAUDE.md even in dry-run so callers can
+            # inspect what the SDK runner would see at session start.
+            self._setup_workspace(config)
             return True
+
+        # Materialise CLAUDE.md BEFORE spawning the SDK runner so the
+        # SDK's auto-load picks up `@-import` lines for required skills
+        # and the soft listing for available skills (F-CS1).
+        self._setup_workspace(config)
 
         # Detach via ``setsid`` so the runner survives the parent. Mirror
         # the pattern used by ``runtimes.auto.daemon.run_daemon`` (no
@@ -170,12 +217,17 @@ class ClaudeSessionRuntime(RuntimeBase):
         state_dir = self._state_dir(config)
         pid = _runner.read_pid(state_dir)
         if pid is None:
-            return True  # nothing to stop
+            # Nothing to kill, but still scrub the workspace section so
+            # a yaml that was never started but had setup_claude_md run
+            # (e.g. dry-run materialisation) leaves no orphan markers.
+            self._cleanup_workspace(config)
+            return True
 
         try:
             os.kill(pid, signal.SIGTERM)
         except ProcessLookupError:
             self._cleanup_state(state_dir)
+            self._cleanup_workspace(config)
             return True
         except PermissionError:
             return False
@@ -184,6 +236,7 @@ class ClaudeSessionRuntime(RuntimeBase):
         while time.time() < deadline:
             if not _pid_alive(pid):
                 self._cleanup_state(state_dir)
+                self._cleanup_workspace(config)
                 return True
             time.sleep(0.1)
 
@@ -195,6 +248,7 @@ class ClaudeSessionRuntime(RuntimeBase):
         time.sleep(0.2)
         if not _pid_alive(pid):
             self._cleanup_state(state_dir)
+            self._cleanup_workspace(config)
             return True
         return False
 
