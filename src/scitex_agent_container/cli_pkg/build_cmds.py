@@ -153,21 +153,17 @@ def validate(config_path: str) -> None:
         sys.exit(1)
 
 
-# F-CS16 phase 1: a second build target for the SDK-persistent runner.
-# Each yaml-runtime maps to one Dockerfile. Default stays cli-tui for
-# backwards compat until F-CS16 phase 2 flips the dispatch path.
+# F-CS17: only the SDK runner remains. cli-tui target was removed
+# along with the rest of the CLI/TUI surface in stage 3b.
 _TARGET_DOCKERFILES = {
-    "cli-tui": "Dockerfile",
     "sdk-persistent": "Dockerfile.sdk-persistent",
 }
 
-# Map yaml ``spec.runtime`` to the build target name a yaml expects.
-# Keys cover both canonical names and the F-CS6 aliases.
+# Container engines all map to sdk-persistent.
 _RUNTIME_TO_TARGET = {
-    "claude-code": "cli-tui",
-    "claude-cli-tui": "cli-tui",
-    "claude-session": "sdk-persistent",
-    "claude-sdk-persistent": "sdk-persistent",
+    "docker": "sdk-persistent",
+    "podman": "sdk-persistent",
+    "apptainer": "sdk-persistent",
 }
 
 
@@ -181,12 +177,8 @@ _RUNTIME_TO_TARGET = {
 @click.option(
     "--target",
     type=click.Choice(sorted(_TARGET_DOCKERFILES)),
-    default="cli-tui",
-    help=(
-        "Which image to build:\n"
-        "  cli-tui         — the Claude Code CLI runtime (default).\n"
-        "  sdk-persistent  — the SDK long-lived runner (F-CS16)."
-    ),
+    default="sdk-persistent",
+    help="Which image to build (only sdk-persistent supported).",
 )
 @click.option(
     "--image",
@@ -219,8 +211,7 @@ def build(
 
     \b
     Example:
-      $ sac image build                              # cli-tui (default)
-      $ sac image build --target sdk-persistent      # SDK runner image (F-CS16)
+      $ sac image build                              # sdk-persistent (default)
       $ sac image build --runtime apptainer
       $ sac image build --dry-run
     """
@@ -253,16 +244,10 @@ def build(
             console.print("[red]Docker build failed[/red]")
             sys.exit(1)
     elif runtime == "apptainer":
-        if target == "sdk-persistent":
-            console.print(
-                "[red]Apptainer build for sdk-persistent is not wired yet "
-                "(F-CS16 phase 1 ships docker only).[/red]"
-            )
-            sys.exit(1)
         from ..runtimes.apptainer import ApptainerRuntime
 
         def_file = str(containers_dir / "apptainer.def")
-        sif_path = str(containers_dir / "claude-code-container.sif")
+        sif_path = str(containers_dir / "scitex-agent-container.sif")
         console.print(f"[blue]Building Apptainer image: {sif_path}[/blue]")
         success = ApptainerRuntime.build_image(def_file=def_file, sif_path=sif_path)
         if success:

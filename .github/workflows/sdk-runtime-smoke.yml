@@ -82,24 +82,35 @@ jobs:
           assert ".scitex/agent-container/agents/sdk-test/sdk-test.yaml" in path, path
           PY
 
-      - name: Run sdk-test in foreground
-        # F-CS17 stage 3 in flight: sac is now container-only.
-        # 'sac agent start --foreground' uses 'docker run -it' which
-        # requires a TTY (CI runners don't have one) and needs the
-        # SDK image built first ('sac image build --target
-        # sdk-persistent'). The smoke step is paused while the
-        # container migration finishes; F-CS17 stage 3d will wire
-        # this back as a daemon-mode test that reads docker logs.
-        if: false
+      - name: Build sdk-persistent image
         run: |
           set -euo pipefail
-          sac agent start sdk-test --foreground 2>&1 | tee smoke-out.txt
-          echo "----"
-          if ! grep -q "sdk-runtime-ok" smoke-out.txt; then
-            echo "::error::expected 'sdk-runtime-ok' in stdout, got:"
-            cat smoke-out.txt
-            exit 1
-          fi
+          sac image build --target sdk-persistent --yes
+
+      - name: Run sdk-test as daemon and tail docker logs
+        run: |
+          set -euo pipefail
+          sac agent start sdk-test
+          # Wait up to 90s for the agent to print the expected token to
+          # docker logs. The container exits cleanly once the SDK reply
+          # arrives (restart policy: never), so we poll docker logs
+          # rather than re-attaching to a TTY.
+          deadline=$(( $(date +%s) + 90 ))
+          cid_file=.scitex/agent-container/runtime/sdk-test/container_id
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            if [ -f "$cid_file" ]; then
+              cid="$(cat "$cid_file")"
+              docker logs "$cid" >smoke-out.txt 2>&1 || true
+              if grep -q "sdk-runtime-ok" smoke-out.txt; then
+                echo "found sdk-runtime-ok"
+                exit 0
+              fi
+            fi
+            sleep 3
+          done
+          echo "::error::timed out waiting for 'sdk-runtime-ok'"
+          [ -f smoke-out.txt ] && cat smoke-out.txt
+          exit 1
 
       - name: Show transcript + quota for visibility
         if: always()
