@@ -67,8 +67,11 @@ def test_image():
     from scitex_agent_container.runtimes.docker import DockerRuntime
 
     context = str(REPO_ROOT / "containers")
+    dockerfile = str(REPO_ROOT / "containers" / "Dockerfile.sdk-persistent")
     if not _image_exists(TEST_IMAGE):
-        ok = DockerRuntime.build_image(image=TEST_IMAGE, context=context)
+        ok = DockerRuntime.build_image(
+            image=TEST_IMAGE, context=context, dockerfile=dockerfile
+        )
         if not ok or not _image_exists(TEST_IMAGE):
             pytest.fail(f"Failed to build {TEST_IMAGE} from {context}")
     return TEST_IMAGE
