@@ -140,6 +140,7 @@ _KNOWN_SPEC_KEYS = frozenset(
         "scheduling",  # rejected with a specific actionable message below
         "a2a",  # A2A sidecar config read by a2a/_server.py
         "orochi",  # Orochi-specific extension namespace
+        "autonomous",  # F-CS3 — drive-until-done block
     }
 )
 
@@ -322,6 +323,34 @@ def validate_raw(raw: dict, path: str) -> list[str]:
                     f"spec.hosts must be 'all' or a list of strings; "
                     f"got {type(hosts_val).__name__}"
                 )
+
+        # spec.autonomous (F-CS3 phase 1) — drive-until-done.
+        autonomous = spec.get("autonomous")
+        if autonomous is not None:
+            if not isinstance(autonomous, dict):
+                errors.append(
+                    "spec.autonomous must be a mapping; got "
+                    f"{type(autonomous).__name__}"
+                )
+            else:
+                drive_until = autonomous.get("drive_until")
+                if drive_until is not None and not isinstance(drive_until, str):
+                    errors.append("spec.autonomous.drive_until must be a string")
+                elif drive_until == "":
+                    errors.append("spec.autonomous.drive_until must be non-empty")
+                for fld in ("max_turns", "idle_kick_after_s"):
+                    val = autonomous.get(fld)
+                    if val is not None:
+                        if not isinstance(val, int) or isinstance(val, bool):
+                            errors.append(f"spec.autonomous.{fld} must be an integer")
+                        elif val <= 0:
+                            errors.append(f"spec.autonomous.{fld} must be > 0")
+                kick = autonomous.get("kick_text")
+                if kick is not None and not isinstance(kick, str):
+                    errors.append("spec.autonomous.kick_text must be a string")
+                enabled = autonomous.get("enabled")
+                if enabled is not None and not isinstance(enabled, bool):
+                    errors.append("spec.autonomous.enabled must be a boolean")
 
         # Reject the old `scheduling:` block — replaced by host/hosts.
         if "scheduling" in spec:

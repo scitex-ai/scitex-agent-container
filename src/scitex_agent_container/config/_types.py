@@ -59,6 +59,33 @@ class WatchdogSpec:
     resp_waiting: str = "/speak-and-call"
 
 
+# F-CS3 — autonomous drive-until-done.
+#
+# claude-session runners do ONE turn and idle by default; multi-turn
+# tasks have to wrap externally with a2a peer post-turn loops, and
+# every project ends up rewriting that scaffolding. The autonomous
+# block lets the runner natively:
+#
+#   1. Watch each assistant turn for a text match (``drive_until``);
+#      hitting it exits the runner with code 0.
+#   2. After ``idle_kick_after_s`` of no tool activity AND no match,
+#      post ``kick_text`` so the conversation keeps moving.
+#   3. Cap at ``max_turns`` to prevent runaway loops.
+#
+# Phase 1 (this dataclass + parser + validator) lands the schema so
+# yamls can author the contract today; the runner-side enforcement
+# (consume these fields in _runners.claude_session) lands in phase 2.
+# An ``enabled`` row authored under the schema before phase 2 ships
+# is harmless — the runner just ignores it for now.
+@dataclass
+class AutonomousSpec:
+    enabled: bool = False
+    drive_until: str = "DONE"
+    max_turns: int = 50
+    idle_kick_after_s: int = 120
+    kick_text: str = "Continue. Print DONE when finished."
+
+
 @dataclass
 class RestartSpec:
     policy: str = "never"  # never | on-failure | always
@@ -372,7 +399,9 @@ class AgentConfig:
     workdir: str = "~/proj"
     python_venv: str = ""  # resolved venv path (post _resolve_python_venv)
     env: dict[str, str] = field(default_factory=dict)
-    env_files: list[str] = field(default_factory=list)  # .env file paths (workspace-relative ok)
+    env_files: list[str] = field(
+        default_factory=list
+    )  # .env file paths (workspace-relative ok)
     screen_name: str = ""
     labels: dict[str, str] = field(default_factory=dict)
     container: ContainerSpec = field(default_factory=ContainerSpec)
@@ -380,6 +409,7 @@ class AgentConfig:
     health: HealthSpec = field(default_factory=HealthSpec)
     watchdog: WatchdogSpec = field(default_factory=WatchdogSpec)
     restart: RestartSpec = field(default_factory=RestartSpec)
+    autonomous: AutonomousSpec = field(default_factory=AutonomousSpec)
     hooks: dict[str, list[str]] = field(default_factory=dict)
     listen: list[ListenPort] = field(default_factory=list)
     extensions: Dict[str, Any] = field(default_factory=dict)

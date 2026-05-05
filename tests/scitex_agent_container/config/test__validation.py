@@ -167,3 +167,103 @@ def test_validate_raw_rejects_unknown_runtime():
     }
     errors = validate_raw(raw, path="<test>")
     assert any("spec.runtime" in e for e in errors)
+
+
+# ---------------------------------------------------------------------------
+# F-CS3 — autonomous spec block (phase 1: schema only)
+# ---------------------------------------------------------------------------
+
+
+def _autonomous_spec(autonomous):
+    return {
+        "apiVersion": "scitex-agent-container/v3",
+        "kind": "Agent",
+        "spec": {"runtime": "claude-session", "autonomous": autonomous},
+    }
+
+
+def test_autonomous_default_block_passes_validation():
+    raw = _autonomous_spec(
+        {
+            "enabled": True,
+            "drive_until": "DONE",
+            "max_turns": 50,
+            "idle_kick_after_s": 120,
+            "kick_text": "Continue. Print DONE when finished.",
+        }
+    )
+    errors = validate_raw(raw, path="<test>")
+    assert not [e for e in errors if "spec.autonomous" in e]
+
+
+def test_autonomous_block_optional():
+    """No autonomous block at all is fine — defaults apply at parse time."""
+    raw = {
+        "apiVersion": "scitex-agent-container/v3",
+        "kind": "Agent",
+        "spec": {"runtime": "claude-session"},
+    }
+    errors = validate_raw(raw, path="<test>")
+    assert not [e for e in errors if "spec.autonomous" in e]
+
+
+def test_autonomous_must_be_mapping():
+    raw = _autonomous_spec("not-a-dict")
+    errors = validate_raw(raw, path="<test>")
+    assert any("spec.autonomous must be a mapping" in e for e in errors)
+
+
+def test_autonomous_drive_until_must_be_nonempty_string():
+    errors = validate_raw(_autonomous_spec({"drive_until": ""}), path="<test>")
+    assert any("drive_until" in e and "non-empty" in e for e in errors)
+    errors = validate_raw(_autonomous_spec({"drive_until": 42}), path="<test>")
+    assert any("drive_until must be a string" in e for e in errors)
+
+
+def test_autonomous_max_turns_must_be_positive_int():
+    errors = validate_raw(_autonomous_spec({"max_turns": 0}), path="<test>")
+    assert any("max_turns must be > 0" in e for e in errors)
+    errors = validate_raw(_autonomous_spec({"max_turns": "fifty"}), path="<test>")
+    assert any("max_turns must be an integer" in e for e in errors)
+    errors = validate_raw(_autonomous_spec({"max_turns": True}), path="<test>")
+    # bool is a subclass of int — still rejected.
+    assert any("max_turns must be an integer" in e for e in errors)
+
+
+def test_autonomous_idle_kick_must_be_positive_int():
+    errors = validate_raw(_autonomous_spec({"idle_kick_after_s": -1}), path="<test>")
+    assert any("idle_kick_after_s must be > 0" in e for e in errors)
+
+
+def test_autonomous_enabled_must_be_bool():
+    errors = validate_raw(_autonomous_spec({"enabled": "yes"}), path="<test>")
+    assert any("enabled must be a boolean" in e for e in errors)
+
+
+def test_autonomous_parse_returns_defaults_when_missing():
+    from scitex_agent_container.config._parsers import parse_autonomous
+    from scitex_agent_container.config._types import AutonomousSpec
+
+    out = parse_autonomous({})
+    assert out == AutonomousSpec()
+
+
+def test_autonomous_parse_reads_full_block():
+    from scitex_agent_container.config._parsers import parse_autonomous
+
+    out = parse_autonomous(
+        {
+            "autonomous": {
+                "enabled": True,
+                "drive_until": "ALL DONE",
+                "max_turns": 7,
+                "idle_kick_after_s": 60,
+                "kick_text": "keep going",
+            }
+        }
+    )
+    assert out.enabled is True
+    assert out.drive_until == "ALL DONE"
+    assert out.max_turns == 7
+    assert out.idle_kick_after_s == 60
+    assert out.kick_text == "keep going"
