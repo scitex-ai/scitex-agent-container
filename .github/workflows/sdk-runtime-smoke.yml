@@ -88,7 +88,7 @@ jobs:
         # returns the closing ResultMessage.
         run: |
           set -euo pipefail
-          sac start sdk-test --foreground 2>&1 | tee smoke-out.txt
+          sac agent start sdk-test --foreground 2>&1 | tee smoke-out.txt
           echo "----"
           if ! grep -q "sdk-runtime-ok" smoke-out.txt; then
             echo "::error::expected 'sdk-runtime-ok' in stdout, got:"
