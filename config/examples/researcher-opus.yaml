@@ -20,7 +20,9 @@ metadata:
     team: research
 
 spec:
-  runtime: claude-code
+  runtime: docker
+  image: scitex-agent-container:sdk-persistent
+  dockerfile: ./containers/Dockerfile.sdk-persistent
   model: opus
   workdir: ~/proj
 

@@ -16,10 +16,11 @@ metadata:
     pattern: mcp
 
 spec:
-  runtime: claude-code
+  runtime: docker
+  image: scitex-agent-container:sdk-persistent
+  dockerfile: ./containers/Dockerfile.sdk-persistent
   model: sonnet
-  workdir: ~/.scitex/agent-container/workspaces/mcp
-  multiplexer: tmux
+  workdir: ~/proj/example
 
   claude:
     flags:

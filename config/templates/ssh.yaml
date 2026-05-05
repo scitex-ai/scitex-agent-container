@@ -1,18 +1,18 @@
-# ssh — claude-code agent deployed to a remote host via SSH.
+# ssh — agent that runs in a docker container on a remote host.
 #
-# Pattern: cross-machine fleet member. sac copies the YAML (plus
-# ``src_CLAUDE.md`` / ``src_mcp.json`` siblings if present) to
-# ``/tmp/`` on the remote host, then drives lifecycle over SSH.
+# Pattern: cross-machine fleet member. F-CS12 introduced
+# ``sac --on <peer> agent start <name>`` which ssh's into <peer>
+# and runs sac there. The remote sac sees this yaml as a normal
+# local invocation and does ``docker run`` on its own filesystem.
+# No sac-side ssh dispatch — that lives entirely in F-CS12's host
+# group.
 #
 # Requirements on the remote host:
-#   * tmux installed (``apt install tmux`` / ``brew install tmux``)
-#   * ``claude`` CLI on PATH (login shell takes care of this if your
-#     dotfiles set it up — keep ``login_shell: true``)
-#   * Python venv at ``spec.venv`` if specified
-#
-# For HPC login nodes that need ``module load`` before ``python3`` is
-# visible, set ``no_preflight: true`` and use the ``ssh-slurm`` template
-# instead.
+#   * docker (or podman) installed
+#   * sac itself installed (so ``sac --on host`` actually finds a
+#     remote sac to dispatch to)
+#   * an entry under ``peers:`` in ~/.scitex/agent-container/sac.yaml
+#     on the laptop pointing at this host
 
 apiVersion: scitex-agent-container/v3
 kind: Agent
@@ -22,19 +22,11 @@ metadata:
     pattern: ssh
 
 spec:
-  runtime: claude-code
+  runtime: docker
+  image: scitex-agent-container:sdk-persistent
+  dockerfile: ./containers/Dockerfile.sdk-persistent
   model: sonnet
-  workdir: ~/.scitex/agent-container/workspaces/ssh
-  multiplexer: tmux
-
-  remote:
-    host: example.host             # hostname or ~/.ssh/config alias
-    user: ywatanabe
-    # key: ~/.ssh/id_ed25519       # optional; leave blank to use ssh defaults
-    port: 22
-    timeout: 60
-    login_shell: true              # bash -l -c — needed for PATH on most hosts
-    no_preflight: false            # set true for HPC hosts that need module load
+  workdir: ~/proj/example
 
   claude:
     flags:

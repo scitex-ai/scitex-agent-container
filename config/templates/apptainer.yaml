@@ -1,9 +1,10 @@
-# apptainer — minimal claude-code agent inside an Apptainer (Singularity) container.
+# apptainer — claude-agent-sdk runner inside an Apptainer (Singularity) container.
 #
 # Pattern: containerized execution on hosts where Docker is unavailable
-# (HPC compute nodes, locked-down workstations). Pair with ``ssh-slurm``
-# when the SIF lives on a shared filesystem and the agent runs on a
-# compute node.
+# (HPC compute nodes, locked-down workstations). Submit your sbatch
+# script yourself and run ``sac agent start <name>`` inside the
+# allocation — sac is a container wrapper, not a scheduler (F-CS16
+# design call: SLURM is the operator's concern).
 
 apiVersion: scitex-agent-container/v3
 kind: Agent
@@ -13,15 +14,10 @@ metadata:
     pattern: apptainer
 
 spec:
-  runtime: claude-code
+  runtime: apptainer
+  image: ~/containers/scitex-agent-container.sif
   model: sonnet
-  workdir: ~/.scitex/agent-container/workspaces/apptainer
-  multiplexer: tmux
-
-  container:
-    runtime: apptainer
-    image: ~/containers/claude-code-container.sif   # absolute or ~-prefixed SIF path
-    mount_host_claude: false                        # opt-in
+  workdir: ~/proj/example
 
   claude:
     flags:

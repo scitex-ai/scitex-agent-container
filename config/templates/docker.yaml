@@ -1,8 +1,12 @@
-# docker — minimal claude-code agent inside a Docker container.
+# docker — minimal claude-agent-sdk runner inside a Docker container.
 #
 # Pattern: containerized local execution. Container is the isolation
-# boundary; ``mount_host_claude`` is opt-in so host identity does NOT
-# leak in by default.
+# boundary; whatever is bind-mounted from the host is what the agent
+# can see. Host identity is not auto-injected.
+#
+# F-CS16: ``runtime`` now names the container engine (docker / podman
+# / apptainer). The runner family is fixed (sdk-persistent), so there
+# is no separate selector.
 
 apiVersion: scitex-agent-container/v3
 kind: Agent
@@ -12,18 +16,11 @@ metadata:
     pattern: docker
 
 spec:
-  runtime: claude-code
+  runtime: docker
+  image: scitex-agent-container:sdk-persistent
+  dockerfile: ./containers/Dockerfile.sdk-persistent
   model: sonnet
-  workdir: ~/.scitex/agent-container/workspaces/docker
-  multiplexer: tmux                # tmux inside container -> capture-pane works
-
-  container:
-    runtime: docker
-    image: scitex-agent-container:latest
-    network: host                  # host | bridge | none
-    volumes:
-      - ~/proj:/workspace
-    mount_host_claude: false       # opt-in: set true to share host skills/MCP/memory
+  workdir: ~/proj/example
 
   claude:
     flags:

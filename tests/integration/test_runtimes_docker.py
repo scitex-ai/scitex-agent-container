@@ -134,7 +134,8 @@ def _load_newbie_config_with_override(
 
     raw = yaml.safe_load(TEMPLATE.read_text())
     if image is not None:
-        raw["spec"]["container"]["image"] = image
+        # F-CS16 phase 2a: image is now top-level, not nested.
+        raw["spec"]["image"] = image
     target.write_text(yaml.safe_dump(raw, sort_keys=False))
     return load_config(target)
 

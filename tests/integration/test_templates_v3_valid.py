@@ -3,15 +3,15 @@ must load clean under v3.
 
 Templates live in two places:
   * ``config/templates/`` — minimal pattern templates (one per pattern:
-    local, docker, apptainer, ssh, ssh-slurm, mcp). These are the
-    starting points users copy from.
+    docker, apptainer, ssh, mcp). These are the starting points users
+    copy from. F-CS17 deleted the ``local`` / ``claude-session`` /
+    ``ssh-slurm`` patterns: bare-metal and SLURM scheduling are no
+    longer supported (sac is a container wrapper; HPC scheduling
+    is the operator's concern).
   * ``config/examples/`` — concrete real-world configs (newbie-docker,
     researcher-opus). These document specific operator decisions.
 
-Both must round-trip through ``load_config`` cleanly. The SLURM and
-MCP templates additionally exercise runtime-specific rendering paths
-so YAML-key drift from ``SlurmSpec`` / ``McpServer`` dataclasses fails
-loudly here, not at the user's first ``sac start``.
+Both must round-trip through ``load_config`` cleanly.
 """
 
 from __future__ import annotations
@@ -52,7 +52,6 @@ def test_template_loads(tmp_path, src):
     cfg = load_config(target)
     assert cfg.name == agent_name
     assert cfg.health.method == "multiplexer-alive"
-    assert cfg.container.mount_host_claude in (True, False)
 
 
 @pytest.mark.parametrize(
@@ -70,20 +69,18 @@ def test_example_loads(tmp_path, src):
 
 
 # ---------------------------------------------------------------------------
-# Pattern coverage — each minimal template demonstrates a distinct pattern
+# Pattern coverage — each minimal template demonstrates a distinct pattern.
+# F-CS17: bare-metal local / claude-session / ssh-slurm patterns deleted.
 # ---------------------------------------------------------------------------
 
 
 def test_minimal_templates_cover_expected_patterns():
     """Catch accidental deletion / pattern drift in templates/."""
     expected = {
-        "local.yaml",
         "docker.yaml",
         "apptainer.yaml",
         "ssh.yaml",
-        "ssh-slurm.yaml",
         "mcp.yaml",
-        "claude-session.yaml",
     }
     actual = {p.name for p in TEMPLATES_DIR.glob("*.yaml")}
     assert actual == expected, f"template set drifted: {actual ^ expected}"
@@ -94,23 +91,15 @@ def test_minimal_templates_cover_expected_patterns():
 # ---------------------------------------------------------------------------
 
 
-def test_local_template_is_bare_metal(tmp_path):
-    from scitex_agent_container.config import load_config
-
-    target, _ = _instantiate(TEMPLATES_DIR / "local.yaml", tmp_path)
-    cfg = load_config(target)
-    assert cfg.runtime == "claude-code"
-    assert cfg.container.runtime == "none"
-    assert cfg.remote.is_remote is False
-
-
 def test_docker_template_uses_docker_runtime(tmp_path):
     from scitex_agent_container.config import load_config
 
     target, _ = _instantiate(TEMPLATES_DIR / "docker.yaml", tmp_path)
     cfg = load_config(target)
-    assert cfg.container.runtime == "docker"
-    assert cfg.container.mount_host_claude is False  # safe default
+    assert cfg.runtime == "docker"
+    assert cfg.image  # spec.image is non-empty (F-CS16 phase 2a)
+    assert "sdk-persistent" in cfg.image
+    assert cfg.dockerfile  # auto-build target declared
 
 
 def test_apptainer_template_uses_apptainer_runtime(tmp_path):
@@ -118,43 +107,21 @@ def test_apptainer_template_uses_apptainer_runtime(tmp_path):
 
     target, _ = _instantiate(TEMPLATES_DIR / "apptainer.yaml", tmp_path)
     cfg = load_config(target)
-    assert cfg.container.runtime == "apptainer"
-    assert cfg.container.image.endswith(".sif")
+    assert cfg.runtime == "apptainer"
+    # Apptainer images are .sif files; the template ships a sample path.
+    assert cfg.image.endswith(".sif")
 
 
-def test_ssh_template_has_remote_block(tmp_path):
+def test_ssh_template_loads_as_docker_runtime(tmp_path):
+    """F-CS17: the ``ssh`` pattern is no longer about sac-side SSH
+    dispatch — that's done by ``sac --on <peer>`` (F-CS12). This
+    template just shows what an agent yaml on a remote host looks
+    like; the engine is plain docker."""
     from scitex_agent_container.config import load_config
 
     target, _ = _instantiate(TEMPLATES_DIR / "ssh.yaml", tmp_path)
     cfg = load_config(target)
-    assert cfg.remote.is_remote is True
-    assert cfg.remote.host == "example.host"
-    assert cfg.remote.login_shell is True
-
-
-def test_ssh_slurm_template_renders_sbatch_script(tmp_path):
-    """SLURM template must round-trip into a valid sbatch script —
-    catches YAML-key drift from SlurmSpec / SlurmHooks."""
-    from scitex_agent_container.config import load_config
-    from scitex_agent_container.runtimes.slurm import (
-        REQUIRED_SHEBANG,
-        REQUIRED_STRICT_MODE,
-        REQUIRED_USR1_TRAP_MARKER,
-        render_sbatch_script,
-    )
-
-    target, agent_name = _instantiate(TEMPLATES_DIR / "ssh-slurm.yaml", tmp_path)
-    cfg = load_config(target)
-
-    assert cfg.runtime == "slurm"
-    assert cfg.slurm.auto_resubmit is True
-    assert cfg.slurm.signal == "B:USR1@3600"
-
-    script = render_sbatch_script(cfg)
-    assert script.startswith(REQUIRED_SHEBANG)
-    assert REQUIRED_STRICT_MODE in script
-    assert REQUIRED_USR1_TRAP_MARKER in script
-    assert f"#SBATCH --job-name={agent_name}" in script
+    assert cfg.runtime == "docker"
 
 
 def test_mcp_template_has_server_entry(tmp_path):

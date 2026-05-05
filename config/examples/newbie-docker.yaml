@@ -37,9 +37,11 @@ metadata:
     observability: external-only
 
 spec:
-  runtime: claude-code
+  runtime: docker
+  image: scitex-agent-container:sdk-persistent
+  dockerfile: ./containers/Dockerfile.sdk-persistent
   model: "claude-haiku-4-5-20251001"   # cheap-first (user decision 2026-04-23)
-  multiplexer: tmux                    # tmux inside container for capture-pane
+  workdir: ~/proj/example
 
   claude:
     flags:
@@ -50,17 +52,6 @@ spec:
 
   skills:
     required: []                        # zero skills — clean slate
-
-  container:
-    runtime: docker
-    image: scitex-agent-container:latest
-    network: bridge                     # API calls need internet; isolation is
-                                        # via empty HOME + mount_host_claude=false,
-                                        # not via network blocking. Using "none"
-                                        # caused ~3min/call (claude CLI retries
-                                        # blocked DNS); measured 2026-04-23.
-    volumes: []                         # minimal; NO host ~/.claude mount
-    mount_host_claude: false            # clean-slate: do not leak host identity
 
   restart:
     policy: never                       # disposable
