@@ -163,18 +163,24 @@ class ContainerRuntime(RuntimeBase):
         ]
 
         # Forward Anthropic auth that the SDK runner inside the container
-        # needs (provision_anthropic_auth checks these in order). Sac
-        # owns the runner, so this is a known-name passthrough rather
-        # than a generic env-leak: each var is only forwarded when set
-        # on the host.
-        for auth_env in (
-            "ANTHROPIC_API_KEY",
-            "SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY_OAUTH",
-            "SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY",
-        ):
-            val = os.environ.get(auth_env)
-            if val:
-                argv += ["--env", f"{auth_env}={val}"]
+        # needs. Two formats coexist on CI runners:
+        #   * sk-ant-api-* — regular API key, valid via ANTHROPIC_API_KEY
+        #     env (pay-per-token).
+        #   * sk-ant-oat-* — Pro/Max OAuth access token; NOT valid as a
+        #     bare API key — the CLI expects it inside
+        #     ~/.claude/.credentials.json.
+        # The SDK's bundled `claude` binary times out at initialize when
+        # given an OAuth token via env. Prefer ANTHROPIC_API_KEY as
+        # already set, then the API-key form, then fall back to the
+        # OAuth bridge (which only works on hosts where ~/.claude is
+        # writable; in containers it usually isn't).
+        api_key = (
+            os.environ.get("ANTHROPIC_API_KEY")
+            or os.environ.get("SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY")
+            or os.environ.get("SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY_OAUTH")
+        )
+        if api_key:
+            argv += ["--env", f"ANTHROPIC_API_KEY={api_key}"]
         # Also mount the operator's Pro/Max credentials file when it
         # exists (read-only). Same image runs as UID 1000, so the
         # credentials_file branch resolves at /home/agent/.claude/.
