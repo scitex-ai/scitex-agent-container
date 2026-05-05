@@ -177,8 +177,6 @@ class ContainerRuntime(RuntimeBase):
 
         argv += [image]
 
-        # Default runner argv mirrors what bare-metal start currently
-        # does for the daemon path (no --print-stream → not foreground).
         if runner_argv is None:
             runner_argv = [
                 "--name",
@@ -186,12 +184,36 @@ class ContainerRuntime(RuntimeBase):
                 "--state-root",
                 "/state",
             ]
+            # Forward the first startup_command as --mission so the SDK
+            # has a boot prompt. Without this the runner just heartbeats
+            # and 'docker logs' would never see assistant output.
+            cmds = list(getattr(config, "startup_commands", []) or [])
+            if cmds and getattr(cmds[0], "command", ""):
+                runner_argv += ["--mission", cmds[0].command]
+                # --print-stream mirrors assistant text to stdout so it
+                # lands in `docker logs`. With no autonomous block the
+                # runner exits cleanly after one turn (matches the
+                # smoke-test contract: image pulled, prompt seeded,
+                # reply printed, container removed via --rm).
+                runner_argv += ["--print-stream"]
             if a2a_port is not None:
                 runner_argv += [
                     "--a2a-port",
                     str(a2a_port),
                     "--a2a-host",
                     "0.0.0.0",
+                ]
+            # F-CS3 phase 2: forward autonomous spec to the runner.
+            auto = getattr(config, "autonomous", None)
+            if auto is not None and getattr(auto, "enabled", False):
+                runner_argv += [
+                    "--autonomous-enabled",
+                    "--autonomous-drive-until",
+                    auto.drive_until,
+                    "--autonomous-max-turns",
+                    str(auto.max_turns),
+                    "--autonomous-kick-text",
+                    auto.kick_text,
                 ]
         argv += list(runner_argv)
         return argv

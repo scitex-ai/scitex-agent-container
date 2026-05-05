@@ -270,6 +270,47 @@ def _build_event_log_hooks(agent_name: str, hook_matcher_cls: Any) -> dict:
 # ---------------------------------------------------------------------------
 
 
+async def _autonomous_loop(
+    inbox: "asyncio.Queue",
+    *,
+    mission: str,
+    drive_until: str,
+    max_turns: int,
+    kick_text: str,
+    stop: asyncio.Event,
+    loop: asyncio.AbstractEventLoop,
+) -> int:
+    """Drive turns until ``drive_until`` matches an assistant reply or
+    ``max_turns`` is reached.
+
+    Returns 0 on a clean ``drive_until`` match, 1 if the cap is hit
+    without a match. Always sets ``stop`` before returning so the
+    surrounding daemon shuts down cleanly.
+
+    F-CS3 phase 2 — pairs with the schema landed in phase 1
+    (``spec.autonomous`` in agent yaml).
+    """
+    from ._session_inbox import TurnEnvelope
+
+    text = mission
+    rc = 1
+    for _ in range(max(1, max_turns)):
+        if stop.is_set():
+            break
+        env = TurnEnvelope(text=text, response=loop.create_future(), exit_after=False)
+        await inbox.put(env)
+        try:
+            reply = await env.response
+        except Exception:  # stx-allow: fallback (reason: convo task may fail mid-loop; treat as terminal — set stop and exit non-zero)
+            break
+        if drive_until and drive_until in (reply or ""):
+            rc = 0
+            break
+        text = kick_text
+    stop.set()
+    return rc
+
+
 async def run(
     name: str,
     *,
@@ -280,6 +321,10 @@ async def run(
     print_stream: bool = False,
     a2a_host: str = "127.0.0.1",
     a2a_port: int | None = None,
+    autonomous_enabled: bool = False,
+    autonomous_drive_until: str = "DONE",
+    autonomous_max_turns: int = 50,
+    autonomous_kick_text: str = "Continue. Print DONE when finished.",
 ) -> int:
     """Run the daemon loop until SIGTERM / SIGINT.
 
@@ -335,8 +380,9 @@ async def run(
     # Spawn the SDK conversation task whenever the inbox has a producer:
     # mission seeds it with the boot prompt, or a2a_port lets HTTP feed
     # turns. Without a producer, no SDK client is needed.
+    autonomous_task: asyncio.Task | None = None
     if mission or a2a_port is not None:
-        if mission:
+        if mission and not autonomous_enabled:
             # Seed the inbox with the mission turn. exit_after=True only
             # for foreground (--print-stream) mode so the runner exits
             # when done.
@@ -357,7 +403,22 @@ async def run(
                 print_stream=print_stream,
             )
         )
-        if mission and print_stream:
+        if mission and autonomous_enabled:
+            # F-CS3 phase 2: drive turns until drive_until matches or
+            # max_turns is reached. The loop sets ``stop`` itself, so
+            # the surrounding shutdown path handles cleanup uniformly.
+            autonomous_task = asyncio.create_task(
+                _autonomous_loop(
+                    inbox,
+                    mission=mission,
+                    drive_until=autonomous_drive_until,
+                    max_turns=autonomous_max_turns,
+                    kick_text=autonomous_kick_text,
+                    stop=stop,
+                    loop=loop,
+                )
+            )
+        if mission and print_stream and not autonomous_enabled:
             # Foreground mode: wait for mission turn to complete, then exit.
             try:
                 await convo_task
@@ -373,6 +434,15 @@ async def run(
     try:
         await stop.wait()
     finally:
+        if autonomous_task is not None and not autonomous_task.done():
+            autonomous_task.cancel()
+            try:
+                await autonomous_task
+            except (
+                asyncio.CancelledError,
+                Exception,
+            ):  # stx-allow: fallback (reason: autonomous loop is best-effort; cancellation must not block shutdown)
+                pass
         if convo_task is not None and not convo_task.done():
             await inbox.put(ShutdownEnvelope())
             try:
@@ -482,6 +552,34 @@ def _parse_argv(argv: list[str] | None = None) -> argparse.Namespace:
             "having to tail session.jsonl."
         ),
     )
+    # F-CS3 phase 2 — autonomous drive-until-done.
+    p.add_argument(
+        "--autonomous-enabled",
+        action="store_true",
+        help=(
+            "Drive turns until --autonomous-drive-until matches an "
+            "assistant reply or --autonomous-max-turns is reached. "
+            "Requires --mission. Mirrors spec.autonomous in agent yaml."
+        ),
+    )
+    p.add_argument(
+        "--autonomous-drive-until",
+        type=str,
+        default="DONE",
+        help="Substring; assistant reply containing it ends the loop with exit 0.",
+    )
+    p.add_argument(
+        "--autonomous-max-turns",
+        type=int,
+        default=50,
+        help="Cap on turns. Hitting it without a match exits non-zero.",
+    )
+    p.add_argument(
+        "--autonomous-kick-text",
+        type=str,
+        default="Continue. Print DONE when finished.",
+        help="Text submitted as the next user turn after a non-matching reply.",
+    )
     return p.parse_args(argv)
 
 
@@ -498,6 +596,10 @@ def main(argv: list[str] | None = None) -> int:
             print_stream=args.print_stream,
             a2a_host=args.a2a_host,
             a2a_port=args.a2a_port,
+            autonomous_enabled=args.autonomous_enabled,
+            autonomous_drive_until=args.autonomous_drive_until,
+            autonomous_max_turns=args.autonomous_max_turns,
+            autonomous_kick_text=args.autonomous_kick_text,
         )
     )
 

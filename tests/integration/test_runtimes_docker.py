@@ -39,7 +39,7 @@ _CI_KEY_SET = bool(os.environ.get("SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY")
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE = REPO_ROOT / "config" / "examples" / "newbie-docker.yaml"
-TEST_IMAGE = "scitex-agent-container:test"
+TEST_IMAGE = "scitex-agent-container:test-sdk"
 AGENT_IMAGE = "scitex-agent-container:latest"
 
 
@@ -111,11 +111,22 @@ def _run_bare_container(image: str, name: str) -> None:
 @pytest.mark.docker_smoke
 @pytest.mark.skipif(not _DOCKER_OK, reason="docker unavailable (CLI or daemon)")
 def test_build_image_from_containers_dir(test_image):
-    """DockerRuntime.build_image() produced an image with ``claude`` on PATH."""
+    """The SDK-persistent image imports both claude_agent_sdk and the
+    runner module sac drives via 'python -m'."""
     assert _image_exists(test_image), f"{test_image} not registered with docker"
-    res = _docker("run", "--rm", "--entrypoint", "which", test_image, "claude")
-    assert res.returncode == 0, f"`which claude` failed: {res.stderr}"
-    assert res.stdout.strip(), "claude not on PATH inside image"
+    res = _docker(
+        "run",
+        "--rm",
+        "--entrypoint",
+        "python",
+        test_image,
+        "-c",
+        "import claude_agent_sdk; "
+        "import scitex_agent_container._runners.claude_session as r; "
+        "print('ok', r.__name__)",
+    )
+    assert res.returncode == 0, f"runner import failed: {res.stderr}"
+    assert "ok" in res.stdout, res.stdout
 
 
 # ---------------------------------------------------------------------------

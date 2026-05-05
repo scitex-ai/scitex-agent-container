@@ -148,6 +148,56 @@ def test_build_run_argv_runner_argv_override(tmp_path: Path):
     assert "--mission" in argv
 
 
+def test_build_run_argv_forwards_startup_command_as_mission(tmp_path: Path):
+    """startup_commands[0].command becomes --mission (+ --print-stream)."""
+    from scitex_agent_container.config._types import StartupCommand
+
+    rt = ContainerRuntime("docker")
+    cfg = _config(
+        tmp_path,
+        startup_commands=[StartupCommand(command="run smoke")],
+    )
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path)
+    assert "--mission" in argv
+    assert argv[argv.index("--mission") + 1] == "run smoke"
+    assert "--print-stream" in argv
+
+
+def test_build_run_argv_forwards_autonomous_block(tmp_path: Path):
+    """spec.autonomous flags propagate as --autonomous-* CLI args (F-CS3 phase 2)."""
+    from scitex_agent_container.config._types import AutonomousSpec, StartupCommand
+
+    rt = ContainerRuntime("docker")
+    cfg = _config(
+        tmp_path,
+        startup_commands=[StartupCommand(command="seed")],
+        autonomous=AutonomousSpec(
+            enabled=True,
+            drive_until="ALL DONE",
+            max_turns=12,
+            kick_text="keep going",
+        ),
+    )
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path)
+    assert "--autonomous-enabled" in argv
+    assert argv[argv.index("--autonomous-drive-until") + 1] == "ALL DONE"
+    assert argv[argv.index("--autonomous-max-turns") + 1] == "12"
+    assert argv[argv.index("--autonomous-kick-text") + 1] == "keep going"
+
+
+def test_build_run_argv_skips_autonomous_when_disabled(tmp_path: Path):
+    from scitex_agent_container.config._types import AutonomousSpec, StartupCommand
+
+    rt = ContainerRuntime("docker")
+    cfg = _config(
+        tmp_path,
+        startup_commands=[StartupCommand(command="seed")],
+        autonomous=AutonomousSpec(enabled=False),
+    )
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path)
+    assert "--autonomous-enabled" not in argv
+
+
 def test_build_run_argv_works_for_podman(tmp_path: Path):
     rt = ContainerRuntime("podman")
     cfg = _config(tmp_path)
