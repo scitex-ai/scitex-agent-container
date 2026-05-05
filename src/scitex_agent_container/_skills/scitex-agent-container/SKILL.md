@@ -57,6 +57,8 @@ rich non-agentic status surface.
 - [15_claude-session.md](15_claude-session.md) — `runtime: claude-session` SDK-native runtime + `POST /v1/turn` inbound endpoint
 - [16_claude-session-migration.md](16_claude-session-migration.md) — Migrating an agent to claude-session
 - [17_inbound-turn-endpoint.md](17_inbound-turn-endpoint.md) — `POST /v1/turn` wire format + sidecar replacement
+- [18_full-agent-delegation.md](18_full-agent-delegation.md) — Delegate multi-step work to another *full* Claude Code agent (vs Task subagent)
+- [19_full-agent-troubleshooting.md](19_full-agent-troubleshooting.md) — Operational deep-dives for sac peer fleets: stuck-peer recovery, reaper pattern, hard/soft skills, Monitor over polling
 
 ### Workflows
 - [10_cli.md](10_cli.md) — CLI commands and Python API
