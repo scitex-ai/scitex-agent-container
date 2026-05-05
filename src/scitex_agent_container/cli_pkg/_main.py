@@ -17,6 +17,7 @@ from .agent_group import agent_group
 from .auto_accept_group import auto_accept_group
 from .build_cmds import build, check, validate
 from .contributor_spec_cmds import contributor_spec
+from .db_group import db_group
 from .event_group import event_group
 from .hook_cmds import hook_event
 from .image_group import image_group
@@ -53,7 +54,7 @@ COMMAND_CATEGORIES = [
     ("Lifecycle (multiplexer)", ["auto-accept"]),
     ("Account & Quota", ["account", "quota"]),
     ("Network & Peer", ["network", "peer", "a2a"]),
-    ("Registry & Events", ["registry", "event", "actions"]),
+    ("Registry & Events", ["db", "registry", "event", "actions"]),
     ("Build & Install", ["image", "installation", "template"]),
     ("Introspection", ["mcp", "list-python-apis", "skills"]),
 ]
@@ -118,6 +119,7 @@ def main(ctx: click.Context, help_recursive: bool, as_json: bool) -> None:
 # Noun-groups (the new clean surface)
 # ---------------------------------------------------------------------------
 main.add_command(agent_group)
+main.add_command(db_group)
 main.add_command(registry_group)
 main.add_command(event_group)
 main.add_command(quota_group)
