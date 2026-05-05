@@ -28,8 +28,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-from ..context_manager import fetch_agent_meta, get_sensor
-
 # Keys from agent_meta.py we surface in snapshots / status --json.
 # `pane_tail` and `pane_tail_block` carry the last N lines of the agent's
 # tmux pane (todo#269 / todo#270): consumers (mamba-healer-*, the Agents
@@ -55,6 +53,7 @@ def _project_agent_meta(meta: dict[str, Any] | None) -> dict[str, Any] | None:
     if not meta:
         return None
     return {k: meta.get(k) for k in _AGENT_META_KEYS if k in meta}
+
 
 logger = logging.getLogger(__name__)
 
@@ -103,9 +102,13 @@ def _sidecar_alive(info: SidecarInfo) -> bool:
             return False
         try:
             os.kill(pid, 0)
-        except ProcessLookupError:  # stx-allow: fallback (reason: process probe expected failure)
+        except (
+            ProcessLookupError
+        ):  # stx-allow: fallback (reason: process probe expected failure)
             return False
-        except PermissionError:  # stx-allow: fallback (reason: process probe expected failure)
+        except (
+            PermissionError
+        ):  # stx-allow: fallback (reason: process probe expected failure)
             # Exists but we can't signal — still alive.
             return True
         except OSError:  # stx-allow: fallback (reason: file system operation failure)
@@ -183,7 +186,10 @@ def _run(cmd: list[str], timeout: float = 3.0) -> str:
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         return r.stdout
-    except (FileNotFoundError, subprocess.SubprocessError):  # stx-allow: fallback (reason: file may not exist on first use)
+    except (
+        FileNotFoundError,
+        subprocess.SubprocessError,
+    ):  # stx-allow: fallback (reason: file may not exist on first use)
         return ""
 
 
@@ -195,7 +201,10 @@ def _probe_tmux() -> tuple[int | None, list[str]]:
             text=True,
             timeout=3,
         )
-    except (FileNotFoundError, subprocess.SubprocessError):  # stx-allow: fallback (reason: file may not exist on first use)
+    except (
+        FileNotFoundError,
+        subprocess.SubprocessError,
+    ):  # stx-allow: fallback (reason: file may not exist on first use)
         return None, []
     if r.returncode != 0:
         # "no server running" is not an error for us — just zero sessions.
@@ -223,7 +232,10 @@ def _probe_screen_count() -> int | None:
             text=True,
             timeout=3,
         )
-    except (FileNotFoundError, subprocess.SubprocessError):  # stx-allow: fallback (reason: file may not exist on first use)
+    except (
+        FileNotFoundError,
+        subprocess.SubprocessError,
+    ):  # stx-allow: fallback (reason: file may not exist on first use)
         # Binary vanished between which() and run(); treat as not installed.
         return None
     combined = (r.stdout or "") + (r.stderr or "")
@@ -255,7 +267,10 @@ def _probe_claude_pid() -> int | None:
             text=True,
             timeout=3,
         )
-    except (FileNotFoundError, subprocess.SubprocessError):  # stx-allow: fallback (reason: file may not exist on first use)
+    except (
+        FileNotFoundError,
+        subprocess.SubprocessError,
+    ):  # stx-allow: fallback (reason: file may not exist on first use)
         return None
     first = (r.stdout or "").strip().splitlines()
     if not first:
@@ -348,7 +363,10 @@ def _probe_nproc() -> tuple[int | None, int | None]:
     elif platform.system() == "Linux":
         try:
             mx = int(Path("/proc/sys/kernel/pid_max").read_text().strip())
-        except (OSError, ValueError):  # stx-allow: fallback (reason: file system operation failure)
+        except (
+            OSError,
+            ValueError,
+        ):  # stx-allow: fallback (reason: file system operation failure)
             mx = None
     return cur, mx
 
@@ -367,7 +385,10 @@ def _probe_tmux_pids(session: str | None) -> dict[str, int | None]:
         )
         if r.returncode == 0 and r.stdout.strip().isdigit():
             pane = int(r.stdout.strip())
-    except (FileNotFoundError, subprocess.SubprocessError):  # stx-allow: fallback (reason: file may not exist on first use)
+    except (
+        FileNotFoundError,
+        subprocess.SubprocessError,
+    ):  # stx-allow: fallback (reason: file may not exist on first use)
         pass
     try:
         r = subprocess.run(
@@ -378,7 +399,10 @@ def _probe_tmux_pids(session: str | None) -> dict[str, int | None]:
         )
         if r.returncode == 0 and r.stdout.strip().isdigit():
             server = int(r.stdout.strip().splitlines()[0])
-    except (FileNotFoundError, subprocess.SubprocessError):  # stx-allow: fallback (reason: file may not exist on first use)
+    except (
+        FileNotFoundError,
+        subprocess.SubprocessError,
+    ):  # stx-allow: fallback (reason: file may not exist on first use)
         pass
     return {"server": server, "pane": pane}
 
@@ -403,16 +427,8 @@ def gather_snapshot(agent: str, *, session: str | None = None) -> dict[str, Any]
     else:
         fork_pct = None
 
-    sensor = get_sensor(agent)
-    context_percent = sensor.last_percent if sensor is not None else None
-
-    # Prefer a live sensor's cached meta to avoid an extra shell-out per
-    # tick. Fall back to a direct fetch when no sensor is running.
+    context_percent: float | None = None
     meta_full: dict[str, Any] | None = None
-    if sensor is not None and sensor.last_meta is not None:
-        meta_full = sensor.last_meta
-    else:
-        meta_full = fetch_agent_meta(agent)
     agent_meta_block = _project_agent_meta(meta_full)
     if (
         context_percent is None
@@ -467,7 +483,9 @@ def _flatten(obj: Any, prefix: str = "") -> dict[str, Any]:
     return out
 
 
-def compute_diff_fields(prev: dict[str, Any] | None, latest: dict[str, Any]) -> list[str]:
+def compute_diff_fields(
+    prev: dict[str, Any] | None, latest: dict[str, Any]
+) -> list[str]:
     if prev is None:
         return []
     flat_prev = _flatten(prev)
@@ -490,7 +508,9 @@ def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
-def take_snapshot(agent: str, *, session: str | None = None, with_diff: bool = True) -> dict[str, Any]:
+def take_snapshot(
+    agent: str, *, session: str | None = None, with_diff: bool = True
+) -> dict[str, Any]:
     """Gather, persist, and return a snapshot for ``agent``."""
     latest_p = _latest_path(agent)
     prev_p = _prev_path(agent)
@@ -503,7 +523,10 @@ def take_snapshot(agent: str, *, session: str | None = None, with_diff: bool = T
         if latest_p.exists():
             try:
                 prev_data = json.loads(latest_p.read_text())
-            except (OSError, json.JSONDecodeError):  # stx-allow: fallback (reason: malformed JSON tolerated)
+            except (
+                OSError,
+                json.JSONDecodeError,
+            ):  # stx-allow: fallback (reason: malformed JSON tolerated)
                 prev_data = None
 
         if with_diff:
@@ -517,7 +540,9 @@ def take_snapshot(agent: str, *, session: str | None = None, with_diff: bool = T
         if latest_p.exists():
             try:
                 os.replace(latest_p, prev_p)
-            except OSError:  # stx-allow: fallback (reason: file system operation failure)
+            except (
+                OSError
+            ):  # stx-allow: fallback (reason: file system operation failure)
                 logger.exception("snapshot[%s]: failed rolling latest to prev", agent)
 
         _atomic_write_json(latest_p, snap)
@@ -541,7 +566,10 @@ def read_latest(agent: str) -> dict[str, Any] | None:
         return None
     try:
         return json.loads(p.read_text())
-    except (OSError, json.JSONDecodeError):  # stx-allow: fallback (reason: malformed JSON tolerated)
+    except (
+        OSError,
+        json.JSONDecodeError,
+    ):  # stx-allow: fallback (reason: malformed JSON tolerated)
         return None
 
 

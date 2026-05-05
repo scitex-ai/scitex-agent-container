@@ -14,7 +14,6 @@ import json
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -194,33 +193,6 @@ def test_agent_start_invokes_pre_and_post(monkeypatch, tmp_path):
     hook_names = [c[0] for c in calls]
     assert "pre_start" in hook_names
     assert "post_start" in hook_names
-
-
-def test_compact_dispatcher_invokes_on_compact(monkeypatch):
-    from scitex_agent_container import context_manager
-
-    seen = []
-
-    def fake_run_hook(agent, hook_name, commands, context=None):
-        seen.append((agent, hook_name, list(commands or []), dict(context or {})))
-
-    # Patch via the hooks module since _fire_hook imports it lazily.
-    monkeypatch.setattr(hooks, "run_hook", fake_run_hook)
-    # Stub TmuxManager so the dispatcher can "send_keys".
-    fake_tmux = MagicMock()
-    import sys
-
-    fake_mod = SimpleNamespace(TmuxManager=fake_tmux)
-    monkeypatch.setitem(sys.modules, "scitex_agent_container.runtimes.tmux", fake_mod)
-
-    agent_cfg = SimpleNamespace(
-        name="a2",
-        screen_name="a2",
-        hooks={"on_compact": ["echo compacted"]},
-    )
-    context_manager.default_dispatcher("compact", agent_cfg)
-    assert any(s[1] == "on_compact" for s in seen)
-    assert seen[-1][2] == ["echo compacted"]
 
 
 def test_snapshot_on_diff_invoked_when_has_diff(monkeypatch, tmp_path):

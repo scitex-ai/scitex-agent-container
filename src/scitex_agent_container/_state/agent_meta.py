@@ -981,43 +981,4 @@ def collect_rich(
         "last_tool_name": _event_summary.get("last_tool_name") or "",
         "last_mcp_tool_at": _event_summary.get("last_mcp_tool_at") or "",
         "last_mcp_tool_name": _event_summary.get("last_mcp_tool_name") or "",
-        # PaneAction attempt-log summary (from action_store). Surfaces
-        # the latest run of any configured action (nonce-probe, compact,
-        # etc.) plus aggregate counts, so the dashboard can chip a
-        # "last probe: alive 12s ago" signal without reading the DB.
-        # Fail-open: absent store / I/O error -> empty summary.
-        **_collect_action_summary_fields(name),
     }
-
-
-def _collect_action_summary_fields(agent_name: str) -> dict[str, Any]:
-    """Return a flat dict of action-summary fields for ``collect_rich``.
-
-    Runs inside a try/except so a corrupt or missing
-    ``~/.scitex/agent-container/actions.db`` never blocks a
-    heartbeat. All keys are prefixed ``action_`` so consumers know
-    which subsystem they came from.
-    """
-    # stx-allow: fallback (reason: actions.db may be absent or corrupt;
-    # empty action summary never blocks a heartbeat — fail-open by design)
-    try:
-        from . import action_store
-
-        summary = action_store.summarize(agent_name)
-        return {
-            "last_action_at": summary.get("last_action_at", ""),
-            "last_action_name": summary.get("last_action_name", ""),
-            "last_action_outcome": summary.get("last_action_outcome", ""),
-            "last_action_elapsed_s": summary.get("last_action_elapsed_s"),
-            "action_counts": summary.get("counts", {}),
-            "p95_elapsed_s_by_action": summary.get("p95_elapsed_s_by_action", {}),
-        }
-    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-        return {
-            "last_action_at": "",
-            "last_action_name": "",
-            "last_action_outcome": "",
-            "last_action_elapsed_s": None,
-            "action_counts": {},
-            "p95_elapsed_s_by_action": {},
-        }

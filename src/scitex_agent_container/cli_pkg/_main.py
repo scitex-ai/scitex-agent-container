@@ -12,7 +12,6 @@ import click
 from ._helpers import HelpRecursiveGroup, renamed_redirect
 from .a2a_cmds import a2a as a2a_group
 from .account_cmds import account, quota_watch
-from .action_cmds import actions_cli
 from .agent_group import agent_group
 from .auto_accept_group import auto_accept_group
 from .build_cmds import build, check, validate
@@ -147,7 +146,6 @@ install_group.add_command(
 # Already-noun-group surfaces
 main.add_command(auto_accept_group)
 main.add_command(account)
-main.add_command(actions_cli)
 main.add_command(a2a_group)
 main.add_command(mcp_group)
 main.add_command(peer_group)

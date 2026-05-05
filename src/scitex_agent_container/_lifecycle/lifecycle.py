@@ -241,22 +241,6 @@ def agent_start(
     _run_hooks(config.hooks.get("post_start", []), extra_env=hook_env)
     _fire_forget_hook(config.name, "post_start", config.hooks.get("post_start", []))
 
-    # Start context-management sensor in background if enabled
-    if config.context_management.enabled:
-        # stx-allow: fallback (reason: context_manager sensor spawn may fail if tmux is unavailable; agent has already started and a sensor failure must not abort it)
-        try:
-            from ..context_manager import start_sensor
-
-            start_sensor(config)
-        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-            import sys
-
-            print(
-                f"[WARN] context_manager failed to start for {config.name}",
-                file=sys.stderr,
-            )
-            traceback.print_exc()
-
     # Start health monitor in background if enabled
     if config.health.enabled:
         thread = threading.Thread(
@@ -460,33 +444,7 @@ def agent_status(name: str, registry: Registry | None = None) -> dict:
         result["listen"] = []
         result["extensions"] = {}
 
-    # Surface context-management state for fleet_watch.sh / NAS orchestrator
-    # (todo#285). ``None`` when the feature is unconfigured or noop so
-    # consumers can distinguish "disabled" from "0%".
-    if config and config.context_management.enabled:
-        from ..context_manager import get_sensor
-
-        sensor = get_sensor(name)
-        result["context_management"] = {
-            "percent": sensor.last_percent if sensor is not None else None,
-            "strategy": config.context_management.strategy,
-            "trigger_at_percent": config.context_management.trigger_at_percent,
-        }
-    else:
-        result["context_management"] = None
-
-    # Expose the full agent_meta dict from the live sensor if present
-    # (todo#285 Phase 2b). This is the transcript-derived source of
-    # truth used by the dashboard when it's available.
-    # stx-allow: fallback (reason: context_manager module may be unimported or sensor absent; agent_meta is optional enrichment and None is acceptable)
-    try:
-        from ..context_manager import get_sensor as _gs
-
-        _live = _gs(name)
-        if _live is not None and _live.last_meta is not None:
-            result["agent_meta"] = _live.last_meta
-    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-        pass
+    result["context_management"] = None
 
     # Snapshot block — cheap read from cache (todo#286). Never re-gathers.
     # stx-allow: fallback (reason: snapshot module may not yet exist or cache may be absent on first run; None snapshot is valid initial state)
