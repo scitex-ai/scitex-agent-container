@@ -147,8 +147,7 @@ class ContainerRuntime(RuntimeBase):
         argv: list[str] = [
             self.engine,
             "run",
-            "--detach",  # daemon mode; --rm keeps the cleanup path simple
-            "--rm",
+            "--detach",  # daemon mode; lifecycle.stop handles removal
             "--name",
             config.name,
             "--user",
@@ -194,7 +193,8 @@ class ContainerRuntime(RuntimeBase):
                 # lands in `docker logs`. With no autonomous block the
                 # runner exits cleanly after one turn (matches the
                 # smoke-test contract: image pulled, prompt seeded,
-                # reply printed, container removed via --rm).
+                # reply printed; the stopped container persists for
+                # log inspection until lifecycle.stop removes it).
                 runner_argv += ["--print-stream"]
             if a2a_port is not None:
                 runner_argv += [
@@ -296,6 +296,11 @@ class ContainerRuntime(RuntimeBase):
         result = subprocess.run(
             [self.engine, "stop", cid], capture_output=True, text=True
         )
+        # Daemon argv no longer uses --rm so logs survive an unexpected
+        # exit. The matching cleanup happens here: best-effort `rm -f`
+        # after `stop` so the container name doesn't squat the next
+        # start.
+        subprocess.run([self.engine, "rm", "-f", cid], capture_output=True, text=True)
         # Whether or not docker returned cleanly, scrub the sidecar so
         # the next start isn't fooled by a stale ID.
         try:

@@ -72,7 +72,7 @@ def test_build_run_argv_emits_default_image_and_basic_mounts(tmp_path: Path):
     argv = rt.build_run_argv(cfg, state_dir=state)
 
     # Engine + run + detach flags first.
-    assert argv[:4] == ["docker", "run", "--detach", "--rm"]
+    assert argv[:3] == ["docker", "run", "--detach"]
     # Default image when spec.image is empty.
     assert DEFAULT_IMAGE in argv
     # Workdir bind mount points at /work; state bind mount at /state.
@@ -290,10 +290,13 @@ def test_stop_runs_docker_stop_and_clears_sidecar(
     state_dir = rt._state_dir(cfg)
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / CONTAINER_ID_FILE).write_text("abc123")
-    fake_run.queue(returncode=0)
+    fake_run.queue(returncode=0)  # docker stop
+    fake_run.queue(returncode=0)  # docker rm -f
 
     assert rt.stop(cfg) is True
-    assert fake_run.calls[-1][:3] == ["docker", "stop", "abc123"]
+    # First call: docker stop. Second: docker rm -f (no --rm at run time).
+    assert fake_run.calls[0][:3] == ["docker", "stop", "abc123"]
+    assert fake_run.calls[1][:4] == ["docker", "rm", "-f", "abc123"]
     assert not (state_dir / CONTAINER_ID_FILE).exists()
 
 
