@@ -108,6 +108,82 @@ def _try_dir(base: Path, name: str) -> str | None:
     return None
 
 
+# F-CS10 — smart name resolution
+class AmbiguousAgent(LookupError):
+    """Raised when a prefix matches multiple agent names."""
+
+    def __init__(self, prefix: str, matches: list[str]):
+        self.prefix = prefix
+        self.matches = matches
+        super().__init__(
+            f"agent name '{prefix}' is ambiguous: {', '.join(sorted(matches))}"
+        )
+
+
+def enumerate_agent_names() -> list[str]:
+    """Return every agent name discoverable through the standard search.
+
+    A name is recorded when ``<dir>/<name>/<name>.yaml`` exists OR
+    ``<dir>/<name>.yaml`` exists for any directory in the search
+    chain. Duplicates are collapsed; ordering is alphabetical.
+    """
+    primary, env_dirs, fleet_dirs = _search_dirs()
+    seen: set[str] = set()
+    for base in [primary, *env_dirs, *fleet_dirs]:
+        if not base.is_dir():
+            continue
+        # <base>/<name>.yaml form
+        for ext in (".yaml", ".yml"):
+            for f in base.glob(f"*{ext}"):
+                name = f.stem
+                if name and not name.startswith("."):
+                    seen.add(name)
+        # <base>/<name>/<name>.yaml form
+        for sub in base.iterdir():
+            if not sub.is_dir() or sub.name.startswith("."):
+                continue
+            for ext in (".yaml", ".yml"):
+                if (sub / f"{sub.name}{ext}").is_file():
+                    seen.add(sub.name)
+                    break
+    return sorted(seen)
+
+
+def resolve_with_prefix(name: str) -> str:
+    """Like :func:`resolve_config` but with smart prefix fallback.
+
+    Behaviour (F-CS10):
+      1. Exact match wins (delegates to resolve_config).
+      2. If no exact hit, look for agent names starting with ``name``.
+         - 1 match → use it. Emit a single stderr line so the user
+           knows we expanded the input.
+         - 2+ matches → raise :class:`AmbiguousAgent` with the list.
+         - 0 matches → re-raise the original FileNotFoundError so
+           the existing 'Agent not found. Searched: ...' help fires.
+
+    Path arguments (containing '/' or .yaml/.yml) bypass the entire
+    chain — they're already explicit.
+    """
+    if "/" in name or name.endswith((".yaml", ".yml")):
+        return resolve_config(name)
+    try:
+        return resolve_config(name)
+    except FileNotFoundError as exact_miss:
+        matches = [n for n in enumerate_agent_names() if n.startswith(name)]
+        if len(matches) == 1:
+            import sys
+
+            print(
+                f"resolved '{name}' → '{matches[0]}' (prefix match)",
+                file=sys.stderr,
+                flush=True,
+            )
+            return resolve_config(matches[0])
+        if len(matches) > 1:
+            raise AmbiguousAgent(name, matches) from exact_miss
+        raise
+
+
 def resolve_config(name_or_path: str) -> str:
     """Resolve agent name or path to a config file path.
 

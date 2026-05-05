@@ -25,6 +25,7 @@ import sys
 import click
 
 from ..config import load_config, resolve_config
+from ..config._resolve import resolve_with_prefix
 from ..config._host import resolve_hostname
 from ._helpers import console
 
@@ -191,7 +192,7 @@ def priority_check(
     """
     # stx-allow: fallback (reason: config path may not exist or resolve to a valid YAML; CLI exits with code 2 to signal a usage/config error to healer callers)
     try:
-        resolved = resolve_config(config_path)
+        resolved = resolve_with_prefix(config_path)
     except Exception as exc:
         if as_json:
             click.echo(json.dumps({"error": str(exc)}, indent=2))

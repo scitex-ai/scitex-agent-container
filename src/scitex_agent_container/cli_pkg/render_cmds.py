@@ -11,6 +11,7 @@ from __future__ import annotations
 import click
 
 from ..config import load_config, resolve_config
+from ..config._resolve import resolve_with_prefix
 from ..runtimes.slurm import render_attach_command, render_sbatch_script
 
 
@@ -28,7 +29,7 @@ def render_sbatch(name_or_path: str) -> None:
       $ sac template render-sbatch head-spartan
       $ sac template render-sbatch head-spartan > head-spartan.sbatch
     """
-    config_path = resolve_config(name_or_path)
+    config_path = resolve_with_prefix(name_or_path)
     cfg = load_config(config_path)
     if cfg.runtime != "slurm":
         raise click.ClickException(
@@ -57,7 +58,7 @@ def render_attach(name_or_path: str, job_id: str | None) -> None:
       $ sac template render-attach head-spartan
       $ sac template render-attach head-spartan --job-id 12345678
     """
-    config_path = resolve_config(name_or_path)
+    config_path = resolve_with_prefix(name_or_path)
     cfg = load_config(config_path)
     if cfg.runtime != "slurm":
         raise click.ClickException(

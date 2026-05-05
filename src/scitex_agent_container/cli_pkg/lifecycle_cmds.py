@@ -17,9 +17,10 @@ from .._lifecycle.lifecycle import (
     agent_start,
     agent_stop,
 )
-from ..config import AgentConfig, load_config, resolve_config
-from ..config._host import resolve_hostname
 from .._state.registry import Registry
+from ..config import AgentConfig, load_config
+from ..config._host import resolve_hostname
+from ..config._resolve import resolve_with_prefix
 from ._helpers import console
 
 _SKIP_DIR_NAMES = {"legacy-agents", "shared", "GITIGNORED"}
@@ -357,7 +358,7 @@ def start(
 
         # stx-allow: fallback (reason: config resolution, YAML parse, or agent_start can raise on misconfiguration or launch failure; catching here gives a clean error message and continues to the next target)
         try:
-            config_path = resolve_config(raw_target)
+            config_path = resolve_with_prefix(raw_target)
             config = load_config(config_path)
             try:
                 current_host = resolve_hostname()
@@ -551,7 +552,7 @@ def stop(
         try:
             name: str = raw_target
             if "/" in name or name.endswith((".yaml", ".yml")):
-                config_path = resolve_config(name)
+                config_path = resolve_with_prefix(name)
                 config = load_config(config_path)
                 name = config.name
             agent_stop(name, force=force)
@@ -598,7 +599,7 @@ def restart(name: str, dry_run: bool, yes: bool) -> None:
     # stx-allow: fallback (reason: config resolution or agent_restart can raise if the agent is not running or the session cannot be found; error message + sys.exit(1) is cleaner than an unhandled traceback)
     try:
         if "/" in name or name.endswith((".yaml", ".yml")):
-            config_path = resolve_config(name)
+            config_path = resolve_with_prefix(name)
             config = load_config(config_path)
             name = config.name
         agent_restart(name)
