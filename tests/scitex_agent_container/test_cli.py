@@ -46,7 +46,7 @@ class TestCLI:
     def test_validate_valid(self):
         path = _write_config(VALID_CONFIG)
         runner = CliRunner()
-        result = runner.invoke(main, ["validate", path])
+        result = runner.invoke(main, ["agent", "validate", path])
         assert result.exit_code == 0
         assert "valid" in result.output.lower()
         Path(path).unlink()
@@ -55,7 +55,7 @@ class TestCLI:
         data = {**VALID_CONFIG, "apiVersion": "wrong"}
         path = _write_config(data)
         runner = CliRunner()
-        result = runner.invoke(main, ["validate", path])
+        result = runner.invoke(main, ["agent", "validate", path])
         assert result.exit_code != 0
         Path(path).unlink()
 
@@ -179,7 +179,9 @@ class TestCLI:
                 yaml.safe_dump(config_with_caps, f)
 
             runner = CliRunner()
-            result = runner.invoke(main, ["agent", "find", "gpu", "--dir", tmpdir, "--json"])
+            result = runner.invoke(
+                main, ["agent", "find", "gpu", "--dir", tmpdir, "--json"]
+            )
             assert result.exit_code == 0
             data = json.loads(result.output)
             assert len(data) == 1
