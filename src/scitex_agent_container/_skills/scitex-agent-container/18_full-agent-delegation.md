@@ -49,6 +49,16 @@ spec:
   runtime: claude-session         # SDK-native, no tmux pane scraping
   model: sonnet                   # alias for the latest Sonnet (4.6+)
   workdir: /absolute/path/to/repo
+  # WARNING (F-CS8): NEVER point workdir at an umbrella directory
+  # that contains a heavy ``.claude/`` tree (e.g. ``~/proj/`` when
+  # ``~/proj/.claude/`` weighs tens of MB of hooks/skills).
+  # claude-agent-sdk auto-discovers ``<workdir>/.claude/`` and silently
+  # swallows errors when the tree is too large or contains a failing
+  # hook — every turn returns 0 tokens, no log line, heartbeat fresh.
+  # Use a project-specific subdir (e.g. ``~/proj/<this-project>/``) or
+  # ``/tmp/<scratch>/`` and reference other repos via absolute paths.
+  # ``sac agent start`` emits a stderr precheck warning when the
+  # workdir's ``.claude/`` exceeds 10 MB.
 
   startup_commands:
     - command: |

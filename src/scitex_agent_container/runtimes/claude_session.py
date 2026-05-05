@@ -30,6 +30,65 @@ from .claude_md import cleanup_claude_md, setup_claude_md
 
 __all__ = ["ClaudeSessionRuntime"]
 
+# F-CS8 — silent SDK failure on heavy workdir/.claude/ trees.
+# claude-agent-sdk auto-discovers ``<workdir>/.claude/`` at session
+# start (hooks, skills, settings.local.json, agents). When that tree
+# is large (or contains a hook that errors), the SDK swallows the
+# error and returns 0 tokens with no log line — heartbeat fresh,
+# every turn empty. Hard to debug. Emit a clear warning at start
+# whenever the size exceeds this threshold.
+_WORKDIR_CLAUDE_SIZE_WARN_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
+def _workdir_claude_size_bytes(workdir: str | None) -> int:
+    """Return total size of ``<workdir>/.claude/`` in bytes, or 0.
+
+    Symlinks are NOT followed (avoids loops; matches what the SDK's
+    own discovery walks). Inaccessible files contribute 0 — this is
+    a best-effort precheck, not a security audit.
+    """
+    if not workdir:
+        return 0
+    root = Path(workdir) / ".claude"
+    if not root.is_dir():
+        return 0
+    total = 0
+    for path in root.rglob("*"):
+        # stx-allow: fallback (reason: stat may fail on broken symlinks
+        # or permission-denied entries; treat as 0 bytes rather than abort)
+        try:
+            if path.is_file() and not path.is_symlink():
+                total += path.stat().st_size
+        except OSError:  # stx-allow: fallback (reason: see inline comment)
+            continue
+    return total
+
+
+def _warn_if_heavy_workdir_claude(config: AgentConfig) -> None:
+    """Print stderr warning if ``<workdir>/.claude/`` is large enough
+    to risk silent SDK discovery failure (F-CS8).
+
+    Best-effort: silent for stub configs, remote configs, or workdirs
+    that don't carry a ``.claude/`` subtree.
+    """
+    workdir = getattr(config, "expanded_workdir", None) or getattr(
+        config, "workdir", None
+    )
+    size = _workdir_claude_size_bytes(workdir)
+    if size <= _WORKDIR_CLAUDE_SIZE_WARN_BYTES:
+        return
+    mb = size / (1024 * 1024)
+    print(
+        f"warning: '{workdir}/.claude/' is {mb:.1f} MB — "
+        "claude-agent-sdk auto-discovery may swallow errors and the "
+        "agent will return 0 tokens per turn with no log line. "
+        "Recommend a project-specific workdir (e.g. "
+        "/home/<you>/proj/<this-project>/) or /tmp/<scratch>/, then "
+        "reference other repos via absolute paths. (F-CS8)",
+        file=sys.stderr,
+        flush=True,
+    )
+
 
 class ClaudeSessionRuntime(RuntimeBase):
     """Daemon-mode runtime backed by ``claude-agent-sdk`` (Phase 1: heartbeat only)."""
@@ -112,6 +171,11 @@ class ClaudeSessionRuntime(RuntimeBase):
         # SDK's auto-load picks up `@-import` lines for required skills
         # and the soft listing for available skills (F-CS1).
         self._setup_workspace(config)
+
+        # F-CS8: warn if workdir/.claude/ is heavy enough to risk
+        # silent SDK auto-discovery failure (heartbeat fresh, every
+        # turn returns 0 tokens). Best-effort precheck.
+        _warn_if_heavy_workdir_claude(config)
 
         # Detach via ``setsid`` so the runner survives the parent. Mirror
         # the pattern used by ``runtimes.auto.daemon.run_daemon`` (no

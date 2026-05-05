@@ -578,3 +578,84 @@ class TestCleanupWorkspace:
         assert "# My Project" in after
         assert "user stuff above" in after
         assert "agent-container:start" not in after
+
+
+# ---------------------------------------------------------------------------
+# F-CS8 — heavy workdir/.claude/ precheck
+# ---------------------------------------------------------------------------
+
+
+class TestHeavyWorkdirClaudeWarning:
+    """``_warn_if_heavy_workdir_claude`` surfaces the silent-SDK-failure
+    risk before agent start (F-CS8).
+
+    The SDK's ``<workdir>/.claude/`` auto-discovery silently swallows
+    errors when the tree is large or contains failing hooks — the runner
+    looks alive but every turn returns 0 tokens. We can't detect the
+    SDK's behaviour in advance, but we CAN measure size and warn.
+    """
+
+    def test_no_warning_when_no_claude_dir(self, workdir, capsys):
+        from scitex_agent_container.runtimes.claude_session import (
+            _warn_if_heavy_workdir_claude,
+        )
+
+        config = AgentConfig(name="x", runtime="claude-session", workdir=str(workdir))
+        _warn_if_heavy_workdir_claude(config)
+        err = capsys.readouterr().err
+        assert err == "", f"unexpected stderr: {err!r}"
+
+    def test_no_warning_for_small_claude_dir(self, workdir, capsys):
+        from scitex_agent_container.runtimes.claude_session import (
+            _warn_if_heavy_workdir_claude,
+        )
+
+        (workdir / ".claude").mkdir()
+        (workdir / ".claude" / "CLAUDE.md").write_text("x" * 1024)
+        config = AgentConfig(name="x", runtime="claude-session", workdir=str(workdir))
+        _warn_if_heavy_workdir_claude(config)
+        err = capsys.readouterr().err
+        assert err == "", f"small .claude must not warn, got: {err!r}"
+
+    def test_warns_when_claude_dir_exceeds_threshold(
+        self, workdir, capsys, monkeypatch
+    ):
+        """Lower the threshold so we don't have to write 10 MB to a tmp dir."""
+        from scitex_agent_container.runtimes import claude_session as cs
+
+        (workdir / ".claude" / "hooks").mkdir(parents=True)
+        # 200 KB across two files
+        (workdir / ".claude" / "hooks" / "big.sh").write_text("x" * 100 * 1024)
+        (workdir / ".claude" / "skills.md").write_text("y" * 100 * 1024)
+
+        # Threshold below the data we wrote.
+        monkeypatch.setattr(cs, "_WORKDIR_CLAUDE_SIZE_WARN_BYTES", 50 * 1024)
+
+        config = AgentConfig(name="x", runtime="claude-session", workdir=str(workdir))
+        cs._warn_if_heavy_workdir_claude(config)
+
+        err = capsys.readouterr().err
+        assert "F-CS8" in err
+        assert ".claude/" in err
+        assert "0 tokens" in err
+        assert str(workdir) in err
+
+    def test_symlinks_are_not_followed(self, workdir, tmp_path, capsys, monkeypatch):
+        """Symlinked targets must NOT inflate the size estimate."""
+        from scitex_agent_container.runtimes import claude_session as cs
+
+        (workdir / ".claude").mkdir()
+        # 200 KB outside of .claude/, exposed as a symlink inside.
+        big = tmp_path / "external-big.txt"
+        big.write_text("z" * 200 * 1024)
+        (workdir / ".claude" / "linked").symlink_to(big)
+
+        monkeypatch.setattr(cs, "_WORKDIR_CLAUDE_SIZE_WARN_BYTES", 50 * 1024)
+
+        config = AgentConfig(name="x", runtime="claude-session", workdir=str(workdir))
+        cs._warn_if_heavy_workdir_claude(config)
+        err = capsys.readouterr().err
+        assert err == "", (
+            "symlinked content must not count toward the size threshold; "
+            f"got warning: {err!r}"
+        )
