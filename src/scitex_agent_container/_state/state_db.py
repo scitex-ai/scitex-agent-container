@@ -211,19 +211,32 @@ def table_counts(db_path: Path | None = None) -> dict[str, int]:
 def _resolve_host(host: str | None) -> str:
     """Canonical hostname for state.db writes.
 
-    Resolution chain (matches F-CS12 spec):
+    Resolution chain (F-CS12):
         1. ``host`` arg (explicit override)
         2. ``$SAC_HOST`` env var
-        3. ``hostname -s`` (short form)
+        3. ``host.canonical`` from sac.yaml (when not the placeholder)
+        4. ``host.aliases[$(hostname -s)]`` from sac.yaml
+        5. ``$(hostname -s)`` (or fqdn when fallback=hostname-fqdn)
 
-    Full alias resolution against ``sac.yaml`` lands in F-CS12; this
-    helper just gives the registry a stable string to scope against.
+    Defers to ``_state.host_config.Config.canonical_host`` so the
+    chain stays in one place; callers that pass ``host`` skip the
+    config load entirely.
     """
     if host:
         return host
-    import socket
+    # Local import to avoid a circular dependency: host_config does
+    # not depend on state_db, but importing it at module load adds
+    # a yaml.safe_load on every state.db open which is wasteful.
+    from . import host_config
 
-    return os.environ.get("SAC_HOST") or socket.gethostname().split(".")[0]
+    # stx-allow: fallback (reason: a malformed sac.yaml must not block
+    # state.db writes — degrade to hostname-only resolution.)
+    try:
+        return host_config.load().canonical_host()
+    except Exception:  # stx-allow: fallback (reason: see inline comment)
+        import socket
+
+        return os.environ.get("SAC_HOST") or socket.gethostname().split(".")[0]
 
 
 def record_instance_start(

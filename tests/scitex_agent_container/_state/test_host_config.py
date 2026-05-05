@@ -1,0 +1,243 @@
+"""Tests for scitex_agent_container._state.host_config (F-CS12).
+
+Covers:
+- ``load`` reads sac.yaml or returns sensible defaults on missing file.
+- ``Config.canonical_host`` resolution chain: env > config > alias > hostname.
+- ``Config.validate`` flags via-references to unknown peers and bad fallbacks.
+- ``sac host show`` / ``host list`` / ``host validate`` end-to-end.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+from click.testing import CliRunner
+
+from scitex_agent_container._state.host_config import (
+    Config,
+    HostBlock,
+    PeerSpec,
+    load,
+)
+
+
+@pytest.fixture
+def cfg_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    p = tmp_path / "sac.yaml"
+    monkeypatch.setenv("SCITEX_AGENT_CONTAINER_SAC_YAML", str(p))
+    import importlib
+
+    import scitex_agent_container._state.host_config as mod
+
+    importlib.reload(mod)
+    return p
+
+
+def test_load_missing_file_yields_defaults(cfg_path: Path):
+    cfg = load()
+    assert cfg.host.aliases == {}
+    assert cfg.host.fallback == "hostname-short"
+    assert cfg.peers == {}
+    # source_path points to where it WOULD load from, even if missing.
+    assert cfg.source_path == cfg_path
+
+
+def test_load_parses_full_yaml(cfg_path: Path):
+    cfg_path.write_text(
+        """
+host:
+  canonical: $SAC_HOST
+  aliases:
+    Yusukes-MacBook-Air: mba
+    spartan-login1: spartan
+  fallback: hostname-short
+
+peers:
+  mba: { ssh: ywatanabe@mba.local }
+  spartan:
+    ssh: ywatanabe@spartan-login1
+    via: [mba]
+  bm198:
+    ssh: bm198
+    via: [mba, spartan]
+"""
+    )
+    cfg = load()
+    assert cfg.host.aliases == {
+        "Yusukes-MacBook-Air": "mba",
+        "spartan-login1": "spartan",
+    }
+    assert set(cfg.peers) == {"mba", "spartan", "bm198"}
+    assert cfg.peers["spartan"].via == ("mba",)
+    assert cfg.peers["bm198"].via == ("mba", "spartan")
+    # Jump chain renders ssh targets in order.
+    assert cfg.peers["bm198"].jump_chain(cfg.peers) == [
+        "ywatanabe@mba.local",
+        "ywatanabe@spartan-login1",
+    ]
+
+
+def test_canonical_host_env_override_wins(cfg_path: Path, monkeypatch):
+    monkeypatch.setenv("SAC_HOST", "explicit-override")
+    cfg = Config(host=HostBlock(canonical="from-yaml"))
+    assert cfg.canonical_host() == "explicit-override"
+
+
+def test_canonical_host_uses_yaml_when_no_env(monkeypatch):
+    monkeypatch.delenv("SAC_HOST", raising=False)
+    cfg = Config(host=HostBlock(canonical="from-yaml"))
+    assert cfg.canonical_host() == "from-yaml"
+
+
+def test_canonical_host_uses_alias(monkeypatch):
+    monkeypatch.delenv("SAC_HOST", raising=False)
+    import socket
+
+    raw = socket.gethostname().split(".")[0]
+    cfg = Config(host=HostBlock(aliases={raw: "aliased-name"}))
+    assert cfg.canonical_host() == "aliased-name"
+
+
+def test_canonical_host_falls_back_to_hostname(monkeypatch):
+    """No env, no yaml canonical, no alias hit → hostname -s."""
+    monkeypatch.delenv("SAC_HOST", raising=False)
+    cfg = Config()
+    import socket
+
+    assert cfg.canonical_host() == socket.gethostname().split(".")[0]
+
+
+def test_canonical_host_treats_placeholder_as_unset(monkeypatch):
+    """``host.canonical: $SAC_HOST`` with no env should NOT win — the
+    placeholder string is reserved for opt-in env override."""
+    monkeypatch.delenv("SAC_HOST", raising=False)
+    cfg = Config(host=HostBlock(canonical="$SAC_HOST"))
+    import socket
+
+    assert cfg.canonical_host() == socket.gethostname().split(".")[0]
+
+
+def test_validate_flags_unknown_via_peer():
+    cfg = Config(
+        peers={
+            "spartan": PeerSpec(name="spartan", ssh="x@spartan", via=("nope",)),
+        }
+    )
+    errors = cfg.validate()
+    assert any("via=" in e and "'nope'" in e for e in errors)
+
+
+def test_validate_flags_missing_ssh():
+    cfg = Config(peers={"x": PeerSpec(name="x", ssh="")})
+    errors = cfg.validate()
+    assert any("ssh: is required" in e for e in errors)
+
+
+def test_validate_flags_bad_fallback():
+    cfg = Config(host=HostBlock(fallback="garbage"))
+    errors = cfg.validate()
+    assert any("host.fallback" in e for e in errors)
+
+
+def test_load_rejects_non_mapping_top_level(cfg_path: Path):
+    cfg_path.write_text("- a list, not a map\n")
+    with pytest.raises(ValueError, match="must be a mapping"):
+        load()
+
+
+def test_load_rejects_non_list_via(cfg_path: Path):
+    cfg_path.write_text(
+        """
+peers:
+  spartan:
+    ssh: x
+    via: not-a-list
+"""
+    )
+    with pytest.raises(ValueError, match="via:"):
+        load()
+
+
+# ---------------------------------------------------------------------------
+# CLI surface
+# ---------------------------------------------------------------------------
+
+
+def test_host_show_renders_canonical(cfg_path: Path, monkeypatch):
+    monkeypatch.setenv("SAC_HOST", "smoke-host")
+    from scitex_agent_container.cli_pkg.host_group import host_show
+
+    runner = CliRunner()
+    result = runner.invoke(host_show, ["--json"])
+    assert result.exit_code == 0
+    body = json.loads(result.output)
+    assert body["canonical"] == "smoke-host"
+
+
+def test_host_list_empty_by_default(cfg_path: Path):
+    from scitex_agent_container.cli_pkg.host_group import host_list
+
+    runner = CliRunner()
+    result = runner.invoke(host_list, ["--json"])
+    assert result.exit_code == 0
+    body = json.loads(result.output)
+    assert body["peers"] == []
+
+
+def test_host_list_renders_peers(cfg_path: Path):
+    cfg_path.write_text(
+        """
+peers:
+  spartan:
+    ssh: ywatanabe@spartan-login1
+    via: [mba]
+  mba: { ssh: ywatanabe@mba.local }
+"""
+    )
+    from scitex_agent_container.cli_pkg.host_group import host_list
+
+    runner = CliRunner()
+    result = runner.invoke(host_list, ["--json"])
+    assert result.exit_code == 0
+    body = json.loads(result.output)
+    names = sorted(p["name"] for p in body["peers"])
+    assert names == ["mba", "spartan"]
+    spartan = next(p for p in body["peers"] if p["name"] == "spartan")
+    assert spartan["via"] == ["mba"]
+
+
+def test_host_validate_passes_for_clean_config(cfg_path: Path):
+    cfg_path.write_text(
+        """
+peers:
+  mba: { ssh: ywatanabe@mba.local }
+"""
+    )
+    from scitex_agent_container.cli_pkg.host_group import host_validate
+
+    runner = CliRunner()
+    result = runner.invoke(host_validate, ["--json"])
+    assert result.exit_code == 0
+    body = json.loads(result.output)
+    assert body["errors"] == []
+
+
+def test_host_validate_fails_with_unknown_via(cfg_path: Path):
+    cfg_path.write_text(
+        """
+peers:
+  spartan:
+    ssh: x@spartan
+    via: [does-not-exist]
+"""
+    )
+    from scitex_agent_container.cli_pkg.host_group import host_validate
+
+    runner = CliRunner()
+    result = runner.invoke(host_validate, ["--json"])
+    assert result.exit_code == 1
+    body = json.loads(result.output)
+    assert body["errors"]
+    assert "does-not-exist" in body["errors"][0]
