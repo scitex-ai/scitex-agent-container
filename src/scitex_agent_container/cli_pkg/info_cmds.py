@@ -12,8 +12,8 @@ import click
 from rich.table import Table
 
 from .._lifecycle.lifecycle import agent_logs
-from ..config import load_config
 from .._state.registry import Registry
+from ..config import load_config
 from ._api_tree import get_api_tree
 from ._helpers import _json_flag, console
 
@@ -146,7 +146,11 @@ def logs(name: str, lines: int, as_json: bool) -> None:
         click.echo(json_mod.dumps({"name": name, "lines": captured}))
         return
     if output:
-        console.print(output)
+        # Disable Rich markup parsing — log content frequently contains
+        # bracketed paths (e.g. "[/home/.../hook.sh]") that the markup
+        # parser interprets as tags, raising MarkupError. Logs are raw
+        # text; print as-is.
+        console.print(output, markup=False, highlight=False)
     else:
         console.print("[dim]No log output captured.[/dim]")
 
