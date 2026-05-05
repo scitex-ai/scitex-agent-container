@@ -162,6 +162,29 @@ class ContainerRuntime(RuntimeBase):
             "SCITEX_AGENT_CONTAINER_STATE_DB=/state/state.db",
         ]
 
+        # Forward Anthropic auth that the SDK runner inside the container
+        # needs (provision_anthropic_auth checks these in order). Sac
+        # owns the runner, so this is a known-name passthrough rather
+        # than a generic env-leak: each var is only forwarded when set
+        # on the host.
+        for auth_env in (
+            "ANTHROPIC_API_KEY",
+            "SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY_OAUTH",
+            "SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY",
+        ):
+            val = os.environ.get(auth_env)
+            if val:
+                argv += ["--env", f"{auth_env}={val}"]
+        # Also mount the operator's Pro/Max credentials file when it
+        # exists (read-only). Same image runs as UID 1000, so the
+        # credentials_file branch resolves at /home/agent/.claude/.
+        cred_file = Path.home() / ".claude" / ".credentials.json"
+        if cred_file.is_file():
+            argv += [
+                "--mount",
+                f"type=bind,src={cred_file},dst=/home/agent/.claude/.credentials.json,readonly",
+            ]
+
         for key, val in (config.env or {}).items():
             argv += ["--env", f"{key}={val}"]
         for env_file in config.env_files or []:

@@ -185,6 +185,48 @@ def test_build_run_argv_forwards_autonomous_block(tmp_path: Path):
     assert argv[argv.index("--autonomous-kick-text") + 1] == "keep going"
 
 
+def test_build_run_argv_forwards_anthropic_auth_env_when_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Host auth env vars get passed through with --env."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-xxx")
+    monkeypatch.setenv(
+        "SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY_OAUTH", "sk-ant-oat-yyy"
+    )
+    monkeypatch.delenv("SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY", raising=False)
+
+    rt = ContainerRuntime("docker")
+    cfg = _config(tmp_path)
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path)
+
+    assert "ANTHROPIC_API_KEY=sk-ant-xxx" in argv
+    assert "SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY_OAUTH=sk-ant-oat-yyy" in argv
+    # Unset var must not appear at all.
+    assert not any(
+        a.startswith("SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY=") for a in argv
+    )
+
+
+def test_build_run_argv_skips_authenticate_env_when_unset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    for v in (
+        "ANTHROPIC_API_KEY",
+        "SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY_OAUTH",
+        "SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY",
+    ):
+        monkeypatch.delenv(v, raising=False)
+    rt = ContainerRuntime("docker")
+    cfg = _config(tmp_path)
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path)
+    for v in (
+        "ANTHROPIC_API_KEY=",
+        "SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY_OAUTH=",
+        "SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY=",
+    ):
+        assert not any(a.startswith(v) for a in argv)
+
+
 def test_build_run_argv_skips_autonomous_when_disabled(tmp_path: Path):
     from scitex_agent_container.config._types import AutonomousSpec, StartupCommand
 
