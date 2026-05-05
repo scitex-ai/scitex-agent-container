@@ -584,6 +584,82 @@
     <span class="k">return</span> <span class="kc">None</span>
 
 
+<span class="c1"># F-CS10 — smart name resolution</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">AmbiguousAgent</span><span class="p">(</span><span class="ne">LookupError</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Raised when a prefix matches multiple agent names.&quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">prefix</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">matches</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">prefix</span> <span class="o">=</span> <span class="n">prefix</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">matches</span> <span class="o">=</span> <span class="n">matches</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;agent name &#39;</span><span class="si">{</span><span class="n">prefix</span><span class="si">}</span><span class="s2">&#39; is ambiguous: </span><span class="si">{</span><span class="s1">&#39;, &#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">matches</span><span class="p">))</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">enumerate_agent_names</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return every agent name discoverable through the standard search.</span>
+
+<span class="sd">    A name is recorded when ``&lt;dir&gt;/&lt;name&gt;/&lt;name&gt;.yaml`` exists OR</span>
+<span class="sd">    ``&lt;dir&gt;/&lt;name&gt;.yaml`` exists for any directory in the search</span>
+<span class="sd">    chain. Duplicates are collapsed; ordering is alphabetical.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">primary</span><span class="p">,</span> <span class="n">env_dirs</span><span class="p">,</span> <span class="n">fleet_dirs</span> <span class="o">=</span> <span class="n">_search_dirs</span><span class="p">()</span>
+    <span class="n">seen</span><span class="p">:</span> <span class="nb">set</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+    <span class="k">for</span> <span class="n">base</span> <span class="ow">in</span> <span class="p">[</span><span class="n">primary</span><span class="p">,</span> <span class="o">*</span><span class="n">env_dirs</span><span class="p">,</span> <span class="o">*</span><span class="n">fleet_dirs</span><span class="p">]:</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">base</span><span class="o">.</span><span class="n">is_dir</span><span class="p">():</span>
+            <span class="k">continue</span>
+        <span class="c1"># &lt;base&gt;/&lt;name&gt;.yaml form</span>
+        <span class="k">for</span> <span class="n">ext</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;.yaml&quot;</span><span class="p">,</span> <span class="s2">&quot;.yml&quot;</span><span class="p">):</span>
+            <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">base</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;*</span><span class="si">{</span><span class="n">ext</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">):</span>
+                <span class="n">name</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">stem</span>
+                <span class="k">if</span> <span class="n">name</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">name</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;.&quot;</span><span class="p">):</span>
+                    <span class="n">seen</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+        <span class="c1"># &lt;base&gt;/&lt;name&gt;/&lt;name&gt;.yaml form</span>
+        <span class="k">for</span> <span class="n">sub</span> <span class="ow">in</span> <span class="n">base</span><span class="o">.</span><span class="n">iterdir</span><span class="p">():</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">sub</span><span class="o">.</span><span class="n">is_dir</span><span class="p">()</span> <span class="ow">or</span> <span class="n">sub</span><span class="o">.</span><span class="n">name</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;.&quot;</span><span class="p">):</span>
+                <span class="k">continue</span>
+            <span class="k">for</span> <span class="n">ext</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;.yaml&quot;</span><span class="p">,</span> <span class="s2">&quot;.yml&quot;</span><span class="p">):</span>
+                <span class="k">if</span> <span class="p">(</span><span class="n">sub</span> <span class="o">/</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">sub</span><span class="o">.</span><span class="n">name</span><span class="si">}{</span><span class="n">ext</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">is_file</span><span class="p">():</span>
+                    <span class="n">seen</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">sub</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
+                    <span class="k">break</span>
+    <span class="k">return</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">seen</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">resolve_with_prefix</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Like :func:`resolve_config` but with smart prefix fallback.</span>
+
+<span class="sd">    Behaviour (F-CS10):</span>
+<span class="sd">      1. Exact match wins (delegates to resolve_config).</span>
+<span class="sd">      2. If no exact hit, look for agent names starting with ``name``.</span>
+<span class="sd">         - 1 match → use it. Emit a single stderr line so the user</span>
+<span class="sd">           knows we expanded the input.</span>
+<span class="sd">         - 2+ matches → raise :class:`AmbiguousAgent` with the list.</span>
+<span class="sd">         - 0 matches → re-raise the original FileNotFoundError so</span>
+<span class="sd">           the existing &#39;Agent not found. Searched: ...&#39; help fires.</span>
+
+<span class="sd">    Path arguments (containing &#39;/&#39; or .yaml/.yml) bypass the entire</span>
+<span class="sd">    chain — they&#39;re already explicit.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="s2">&quot;/&quot;</span> <span class="ow">in</span> <span class="n">name</span> <span class="ow">or</span> <span class="n">name</span><span class="o">.</span><span class="n">endswith</span><span class="p">((</span><span class="s2">&quot;.yaml&quot;</span><span class="p">,</span> <span class="s2">&quot;.yml&quot;</span><span class="p">)):</span>
+        <span class="k">return</span> <span class="n">resolve_config</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">resolve_config</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">FileNotFoundError</span> <span class="k">as</span> <span class="n">exact_miss</span><span class="p">:</span>
+        <span class="n">matches</span> <span class="o">=</span> <span class="p">[</span><span class="n">n</span> <span class="k">for</span> <span class="n">n</span> <span class="ow">in</span> <span class="n">enumerate_agent_names</span><span class="p">()</span> <span class="k">if</span> <span class="n">n</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="n">name</span><span class="p">)]</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">matches</span><span class="p">)</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="kn">import</span><span class="w"> </span><span class="nn">sys</span>
+
+            <span class="nb">print</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;resolved &#39;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">&#39; → &#39;</span><span class="si">{</span><span class="n">matches</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">&#39; (prefix match)&quot;</span><span class="p">,</span>
+                <span class="n">file</span><span class="o">=</span><span class="n">sys</span><span class="o">.</span><span class="n">stderr</span><span class="p">,</span>
+                <span class="n">flush</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="k">return</span> <span class="n">resolve_config</span><span class="p">(</span><span class="n">matches</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">matches</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">AmbiguousAgent</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">matches</span><span class="p">)</span> <span class="kn">from</span><span class="w"> </span><span class="nn">exact_miss</span>
+        <span class="k">raise</span>
+
+
 <div class="viewcode-block" id="resolve_config">
 <a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.resolve_config">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">resolve_config</span><span class="p">(</span><span class="n">name_or_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
