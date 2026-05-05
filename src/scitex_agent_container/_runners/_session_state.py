@@ -190,6 +190,44 @@ def read_session_id(state_dir: Path) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# state.db instance id (F-CS11 phase 3)
+#
+# The instance id is a uuid7 generated at start time by
+# ``_state.state_db.record_instance_start``. The runtime persists it
+# in ``<state_dir>/instance_id`` so the stop path can resolve the
+# row in ``state.db.instances`` without rescanning by name+host.
+# ---------------------------------------------------------------------------
+
+
+def write_instance_id(state_dir: Path, instance_id: str) -> None:
+    """Persist the state.db instance uuid alongside the runner pid."""
+    state_dir.mkdir(parents=True, exist_ok=True)
+    tmp = state_dir / "instance_id.tmp"
+    tmp.write_text(instance_id, encoding="utf-8")
+    tmp.replace(state_dir / "instance_id")
+
+
+def read_instance_id(state_dir: Path) -> str | None:
+    """Return the persisted state.db instance uuid, or None if absent."""
+    p = state_dir / "instance_id"
+    if not p.is_file():
+        return None
+    try:
+        return p.read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
+def clear_instance_id(state_dir: Path) -> None:
+    """Remove the persisted instance id file (called from stop)."""
+    p = state_dir / "instance_id"
+    try:
+        p.unlink()
+    except FileNotFoundError:
+        pass
+
+
+# ---------------------------------------------------------------------------
 # Transcript (session.jsonl)
 # ---------------------------------------------------------------------------
 

@@ -640,6 +640,63 @@ class TestHeavyWorkdirClaudeWarning:
         assert "0 tokens" in err
         assert str(workdir) in err
 
+    def test_record_stop_best_effort_marks_ended_via_sidecar(
+        self, tmp_path, monkeypatch
+    ):
+        """When a stop path runs and the state_dir holds an instance_id
+        sidecar, ``_record_stop_best_effort`` must update the matching
+        state.db row and clear the sidecar (F-CS11 phase 3)."""
+        # Isolate state.db to a tmp_path the test owns.
+        monkeypatch.setenv(
+            "SCITEX_AGENT_CONTAINER_STATE_DB", str(tmp_path / "state.db")
+        )
+        import importlib
+
+        import scitex_agent_container._state.state_db as state_db
+
+        importlib.reload(state_db)
+
+        from scitex_agent_container._runners._session_state import (
+            read_instance_id,
+            write_instance_id,
+        )
+        from scitex_agent_container.runtimes import claude_session as cs
+
+        importlib.reload(cs)
+
+        # Seed: insert a row, persist its id in a sidecar.
+        iid = state_db.record_instance_start("test-stop", host="h")
+        state_dir = tmp_path / "state-dir"
+        state_dir.mkdir()
+        write_instance_id(state_dir, iid)
+
+        cs._record_stop_best_effort(state_dir, "stopped")
+
+        with state_db.open_db() as conn:
+            row = conn.execute(
+                "SELECT ended_at, exit_reason FROM instances WHERE id=?", (iid,)
+            ).fetchone()
+        assert row["ended_at"] is not None
+        assert row["exit_reason"] == "stopped"
+        assert read_instance_id(state_dir) is None  # sidecar cleared
+
+    def test_record_stop_best_effort_no_sidecar_is_noop(self, tmp_path, monkeypatch):
+        """Stop on a state_dir without an instance_id sidecar is a quiet
+        no-op (agents started before F-CS11 won't have one)."""
+        monkeypatch.setenv(
+            "SCITEX_AGENT_CONTAINER_STATE_DB", str(tmp_path / "state.db")
+        )
+        import importlib
+
+        import scitex_agent_container.runtimes.claude_session as cs
+
+        importlib.reload(cs)
+
+        state_dir = tmp_path / "state-dir"
+        state_dir.mkdir()
+        # Should not raise, even though state.db has never been touched.
+        cs._record_stop_best_effort(state_dir, "stopped")
+
     def test_symlinks_are_not_followed(self, workdir, tmp_path, capsys, monkeypatch):
         """Symlinked targets must NOT inflate the size estimate."""
         from scitex_agent_container.runtimes import claude_session as cs

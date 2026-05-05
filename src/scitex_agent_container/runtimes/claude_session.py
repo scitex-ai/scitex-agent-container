@@ -24,6 +24,12 @@ import time
 from pathlib import Path
 
 from .._runners import claude_session as _runner
+from .._runners._session_state import (
+    clear_instance_id,
+    read_instance_id,
+    write_instance_id,
+)
+from .._state.state_db import record_instance_start, record_instance_stop
 from ..config import AgentConfig
 from .base import RuntimeBase
 from .claude_md import cleanup_claude_md, setup_claude_md
@@ -62,6 +68,55 @@ def _workdir_claude_size_bytes(workdir: str | None) -> int:
         except OSError:  # stx-allow: fallback (reason: see inline comment)
             continue
     return total
+
+
+def _record_start_best_effort(config: AgentConfig, pid: int, state_dir: Path) -> None:
+    """Insert a state.db ``instances`` row + persist the uuid sidecar.
+
+    Best-effort: any exception from the SQLite layer is swallowed
+    so a transient state.db issue (file lock, fs full) does not kill
+    a runner that is already healthy. Phase 3 follow-up will surface
+    these as warnings on ``sac db show``.
+    """
+    workdir = getattr(config, "expanded_workdir", None) or getattr(
+        config, "workdir", None
+    )
+    a2a_port = None
+    a2a = getattr(config, "a2a", None)
+    if a2a is not None:
+        a2a_port = getattr(a2a, "port", None)
+    screen = getattr(config, "screen_name", None)
+    # stx-allow: fallback (reason: state.db write must not block the
+    # runner; record-on-stop will paper over a missed start row.)
+    try:
+        instance_id = record_instance_start(
+            config.name,
+            pid=pid,
+            screen=screen,
+            workdir=workdir,
+            a2a_port=a2a_port,
+        )
+        write_instance_id(state_dir, instance_id)
+    except Exception:  # stx-allow: fallback (reason: see inline comment)
+        return
+
+
+def _record_stop_best_effort(state_dir: Path, exit_reason: str) -> None:
+    """Mark the recorded instance as ended and clear the sidecar.
+
+    Best-effort: missing sidecar is normal for agents started before
+    F-CS11 (they have no row to update); SQLite errors are swallowed.
+    """
+    iid = read_instance_id(state_dir)
+    if iid is None:
+        return
+    # stx-allow: fallback (reason: see _record_start_best_effort)
+    try:
+        record_instance_stop(iid, exit_reason=exit_reason)
+    except Exception:  # stx-allow: fallback (reason: see inline comment)
+        pass
+    finally:
+        clear_instance_id(state_dir)
 
 
 def _warn_if_heavy_workdir_claude(config: AgentConfig) -> None:
@@ -264,6 +319,15 @@ class ClaudeSessionRuntime(RuntimeBase):
         deadline = time.time() + 3.0
         while time.time() < deadline:
             if _runner.read_pid(state_dir) == proc.pid:
+                # F-CS11 phase 3: record the start in state.db so
+                # ``sac db query --table=instances`` and ``sac db
+                # clean`` see the row. Best-effort — failure here
+                # MUST NOT block the runner that's already alive;
+                # phase 4 (export/import) is what depends on this
+                # write surviving, and a missing row will be picked
+                # up at the next ``record_*`` call or migrated by
+                # ``sac db migrate``.
+                _record_start_best_effort(config, proc.pid, state_dir)
                 return True
             if proc.poll() is not None:
                 return False  # child died before writing PID
@@ -285,6 +349,7 @@ class ClaudeSessionRuntime(RuntimeBase):
             # a yaml that was never started but had setup_claude_md run
             # (e.g. dry-run materialisation) leaves no orphan markers.
             self._cleanup_workspace(config)
+            _record_stop_best_effort(state_dir, "stopped")
             return True
 
         try:
@@ -292,6 +357,7 @@ class ClaudeSessionRuntime(RuntimeBase):
         except ProcessLookupError:
             self._cleanup_state(state_dir)
             self._cleanup_workspace(config)
+            _record_stop_best_effort(state_dir, "stopped")
             return True
         except PermissionError:
             return False
@@ -301,6 +367,7 @@ class ClaudeSessionRuntime(RuntimeBase):
             if not _pid_alive(pid):
                 self._cleanup_state(state_dir)
                 self._cleanup_workspace(config)
+                _record_stop_best_effort(state_dir, "stopped")
                 return True
             time.sleep(0.1)
 
@@ -313,6 +380,7 @@ class ClaudeSessionRuntime(RuntimeBase):
         if not _pid_alive(pid):
             self._cleanup_state(state_dir)
             self._cleanup_workspace(config)
+            _record_stop_best_effort(state_dir, "killed")
             return True
         return False
 
