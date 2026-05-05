@@ -164,6 +164,49 @@ def load(path: Path | None = None) -> Config:
     return Config(host=host, peers=peers, source_path=p)
 
 
+def build_ssh_argv(
+    peer_name: str,
+    command: list[str],
+    peers: dict[str, PeerSpec],
+    *,
+    ssh_binary: str = "ssh",
+    extra_opts: list[str] | None = None,
+) -> list[str]:
+    """Render the ssh argv that runs ``command`` on ``peer_name``.
+
+    Multi-hop is handled via OpenSSH's ``-J`` (ProxyJump) flag, which
+    chains intermediate hosts without sac needing its own ssh tunnel
+    code. ``via: [mba, spartan]`` becomes ``-J <mba.ssh>,<spartan.ssh>``.
+
+    Conservative defaults pick: ``-o BatchMode=yes`` (no interactive
+    password / known-hosts prompts), ``-o ConnectTimeout=10``
+    (probe-friendly), and ``-o ServerAliveInterval=15`` (keepalive
+    so a wedged middle-hop is detectable).
+
+    Returns the argv list ready for ``subprocess.run``. Raises
+    ``KeyError`` when ``peer_name`` isn't in ``peers``.
+    """
+    peer = peers[peer_name]
+    argv: list[str] = [ssh_binary]
+    if peer.via:
+        chain = peer.jump_chain(peers)
+        if chain:
+            argv += ["-J", ",".join(chain)]
+    argv += [
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=10",
+        "-o",
+        "ServerAliveInterval=15",
+    ]
+    if extra_opts:
+        argv += list(extra_opts)
+    argv += [peer.ssh, "--"]
+    argv += list(command)
+    return argv
+
+
 def host_interfaces() -> list[dict]:
     """Best-effort inventory of local network interfaces.
 

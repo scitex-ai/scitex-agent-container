@@ -241,3 +241,172 @@ peers:
     body = json.loads(result.output)
     assert body["errors"]
     assert "does-not-exist" in body["errors"][0]
+
+
+# ---------------------------------------------------------------------------
+# F-CS12 phase 2 — build_ssh_argv + host exec / probe
+# ---------------------------------------------------------------------------
+
+
+def test_build_ssh_argv_single_hop():
+    from scitex_agent_container._state.host_config import (
+        PeerSpec,
+        build_ssh_argv,
+    )
+
+    peers = {"mba": PeerSpec(name="mba", ssh="ywatanabe@mba.local")}
+    argv = build_ssh_argv("mba", ["agent", "list"], peers)
+    # No -J (no jumps).
+    assert "-J" not in argv
+    assert "ywatanabe@mba.local" in argv
+    # Required defensive ssh options applied.
+    assert "BatchMode=yes" in argv
+    assert "ConnectTimeout=10" in argv
+    # Command appended after `--`.
+    assert argv[-3:] == ["--", "agent", "list"]
+
+
+def test_build_ssh_argv_multi_hop_renders_proxy_jump():
+    from scitex_agent_container._state.host_config import (
+        PeerSpec,
+        build_ssh_argv,
+    )
+
+    peers = {
+        "mba": PeerSpec(name="mba", ssh="ywatanabe@mba.local"),
+        "spartan": PeerSpec(
+            name="spartan",
+            ssh="ywatanabe@spartan-login1",
+            via=("mba",),
+        ),
+        "bm198": PeerSpec(name="bm198", ssh="bm198", via=("mba", "spartan")),
+    }
+    argv = build_ssh_argv("bm198", ["sac", "agent", "list"], peers)
+    j_idx = argv.index("-J")
+    assert argv[j_idx + 1] == "ywatanabe@mba.local,ywatanabe@spartan-login1"
+    # Final shape: [..., "bm198", "--", "sac", "agent", "list"]
+    sep = argv.index("--")
+    assert argv[sep - 1] == "bm198"
+    assert argv[sep + 1 :] == ["sac", "agent", "list"]
+
+
+def test_build_ssh_argv_unknown_peer_raises():
+    from scitex_agent_container._state.host_config import build_ssh_argv
+
+    with pytest.raises(KeyError):
+        build_ssh_argv("ghost", ["echo", "hi"], {})
+
+
+def test_host_exec_unknown_peer_exits_2(cfg_path: Path):
+    from scitex_agent_container.cli_pkg.host_group import host_exec
+
+    runner = CliRunner()
+    result = runner.invoke(host_exec, ["ghost", "--", "echo", "hi"])
+    assert result.exit_code == 2
+    assert "not defined" in (result.output + (result.stderr or ""))
+
+
+def test_host_exec_missing_command_exits_2(cfg_path: Path):
+    cfg_path.write_text(
+        """
+peers:
+  mba: { ssh: ywatanabe@mba.local }
+"""
+    )
+    from scitex_agent_container.cli_pkg.host_group import host_exec
+
+    runner = CliRunner()
+    result = runner.invoke(host_exec, ["mba"])
+    assert result.exit_code == 2
+
+
+def test_host_exec_invokes_subprocess_with_built_argv(cfg_path: Path, monkeypatch):
+    """The exec callback should hand build_ssh_argv's output to
+    subprocess.run unchanged. Mocked so the test doesn't ssh anywhere."""
+    cfg_path.write_text(
+        """
+peers:
+  mba: { ssh: ywatanabe@mba.local }
+"""
+    )
+    seen = {}
+
+    class _Result:
+        returncode = 0
+
+    def _fake_run(argv, **kw):
+        seen["argv"] = argv
+        return _Result()
+
+    from scitex_agent_container.cli_pkg import host_group
+
+    monkeypatch.setattr(host_group.subprocess, "run", _fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(host_group.host_exec, ["mba", "--", "echo", "hello"])
+    assert result.exit_code == 0
+    assert "ywatanabe@mba.local" in seen["argv"]
+    assert seen["argv"][-3:] == ["--", "echo", "hello"]
+
+
+def test_host_probe_reports_reachable_with_remote_canonical(
+    cfg_path: Path, monkeypatch
+):
+    """A successful remote ``sac host show`` returning JSON should
+    surface as ``reachable=True`` with the parsed canonical name."""
+    cfg_path.write_text(
+        """
+peers:
+  mba: { ssh: ywatanabe@mba.local }
+"""
+    )
+    import json as _json
+
+    class _Result:
+        returncode = 0
+        stdout = _json.dumps({"canonical": "mba"})
+        stderr = ""
+
+    def _fake_run(argv, **kw):
+        return _Result()
+
+    from scitex_agent_container.cli_pkg import host_group
+
+    monkeypatch.setattr(host_group.subprocess, "run", _fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(host_group.host_probe, ["mba", "--json"])
+    assert result.exit_code == 0
+    body = _json.loads(result.output)
+    assert body["reachable"] is True
+    assert body["remote_canonical"] == "mba"
+
+
+def test_host_probe_reports_unreachable_on_nonzero_exit(cfg_path: Path, monkeypatch):
+    cfg_path.write_text(
+        """
+peers:
+  mba: { ssh: ywatanabe@mba.local }
+"""
+    )
+    import json as _json
+
+    class _Result:
+        returncode = 255
+        stdout = ""
+        stderr = "ssh: connect to host mba.local port 22: timed out"
+
+    def _fake_run(argv, **kw):
+        return _Result()
+
+    from scitex_agent_container.cli_pkg import host_group
+
+    monkeypatch.setattr(host_group.subprocess, "run", _fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(host_group.host_probe, ["mba", "--json"])
+    assert result.exit_code == 1
+    body = _json.loads(result.output)
+    assert body["reachable"] is False
+    assert body["exit_code"] == 255
+    assert "timed out" in body["stderr"]

@@ -13,10 +13,11 @@ of ``sac network probe`` / ``sac installation boot``.
 from __future__ import annotations
 
 import json
+import subprocess
 
 import click
 
-from .._state.host_config import host_interfaces, load
+from .._state.host_config import build_ssh_argv, host_interfaces, load
 from ._helpers import _json_flag, console
 
 
@@ -118,4 +119,109 @@ def host_validate(ctx: click.Context, as_json: bool) -> None:
         else:
             console.print("[green]ok[/green]  sac.yaml is valid")
     if errors:
+        raise SystemExit(1)
+
+
+@host_group.command(
+    "exec",
+    context_settings={
+        "ignore_unknown_options": True,
+        "allow_extra_args": True,
+    },
+)
+@click.argument("peer", required=True)
+@click.argument("argv", nargs=-1, type=click.UNPROCESSED)
+def host_exec(peer: str, argv: tuple[str, ...]) -> None:
+    """Run a command on PEER over ssh, multi-hop aware.
+
+    \b
+    Example:
+      $ sac host exec spartan -- agent list --json
+      $ sac host exec bm198 -- sac db export --since 2026-05-01
+
+    PEER must be defined under sac.yaml's ``peers:`` block. The peer's
+    ``via:`` chain renders into ssh's ``-J`` flag automatically; sac
+    never opens a port. Stdio is inherited so streaming output works.
+    """
+    cfg = load()
+    if peer not in cfg.peers:
+        click.echo(
+            f"error: peer '{peer}' is not defined in {cfg.source_path}.\n"
+            f"Add it under peers: in sac.yaml, then re-run.",
+            err=True,
+        )
+        raise SystemExit(2)
+    if not argv:
+        click.echo(
+            "error: no command supplied. Try: sac host exec PEER -- <cmd>", err=True
+        )
+        raise SystemExit(2)
+    ssh_argv = build_ssh_argv(peer, list(argv), cfg.peers)
+    proc = subprocess.run(ssh_argv)
+    raise SystemExit(proc.returncode)
+
+
+@host_group.command("probe")
+@click.argument("peer", required=True)
+@click.option("--timeout", type=int, default=10, help="ssh ConnectTimeout seconds.")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+@click.pass_context
+def host_probe(ctx: click.Context, peer: str, timeout: int, as_json: bool) -> None:
+    """One ssh round-trip to PEER; report reachability + remote canonical hostname.
+
+    Cheap liveness check used by orchestrators (and eventually by
+    F-CS14's pull cron). Runs ``sac host show --json`` on the remote
+    so the report contains the peer's reported canonical name plus
+    a measured round-trip duration.
+    """
+    import time
+
+    cfg = load()
+    if peer not in cfg.peers:
+        msg = f"peer '{peer}' is not defined in sac.yaml"
+        if _json_flag(ctx, as_json):
+            click.echo(json.dumps({"peer": peer, "reachable": False, "error": msg}))
+        else:
+            click.echo(f"[red]error:[/red] {msg}", err=True)
+        raise SystemExit(2)
+
+    remote_argv = ["sac", "host", "show", "--json"]
+    ssh_argv = build_ssh_argv(
+        peer,
+        remote_argv,
+        cfg.peers,
+        extra_opts=["-o", f"ConnectTimeout={timeout}"],
+    )
+    started = time.monotonic()
+    proc = subprocess.run(ssh_argv, capture_output=True, text=True)
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+    reachable = proc.returncode == 0
+    remote_canonical: str | None = None
+    if reachable:
+        try:
+            remote_canonical = json.loads(proc.stdout).get("canonical")
+        except (
+            ValueError,
+            KeyError,
+        ):  # stx-allow: fallback (reason: malformed remote output tolerated)
+            remote_canonical = None
+    payload = {
+        "peer": peer,
+        "reachable": reachable,
+        "elapsed_ms": elapsed_ms,
+        "remote_canonical": remote_canonical,
+        "exit_code": proc.returncode,
+        "stderr": proc.stderr.strip() if proc.stderr else "",
+    }
+    if _json_flag(ctx, as_json):
+        click.echo(json.dumps(payload, indent=2))
+    elif reachable:
+        console.print(
+            f"[green]ok[/green]  {peer}  {elapsed_ms}ms  remote={remote_canonical}"
+        )
+    else:
+        console.print(f"[red]unreachable[/red]  {peer}  exit={proc.returncode}")
+        if proc.stderr.strip():
+            console.print(f"[dim]{proc.stderr.strip()[:200]}[/dim]")
+    if not reachable:
         raise SystemExit(1)
