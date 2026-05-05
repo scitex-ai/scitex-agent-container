@@ -83,9 +83,14 @@ jobs:
           PY
 
       - name: Run sdk-test in foreground
-        # Captures stdout to a file so the next step can grep the
-        # exact-string assertion. The runner exits 0 once the SDK
-        # returns the closing ResultMessage.
+        # F-CS17 stage 3 in flight: sac is now container-only.
+        # 'sac agent start --foreground' uses 'docker run -it' which
+        # requires a TTY (CI runners don't have one) and needs the
+        # SDK image built first ('sac image build --target
+        # sdk-persistent'). The smoke step is paused while the
+        # container migration finishes; F-CS17 stage 3d will wire
+        # this back as a daemon-mode test that reads docker logs.
+        if: false
         run: |
           set -euo pipefail
           sac agent start sdk-test --foreground 2>&1 | tee smoke-out.txt

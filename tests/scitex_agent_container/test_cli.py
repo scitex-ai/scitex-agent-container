@@ -327,7 +327,7 @@ spec:
 
         monkeypatch.setattr(
             _helpers,
-            "_probe_remote",
+            "_probe_local",
             lambda cfg: _HangingRuntime().is_running(cfg),
             raising=False,
         )
@@ -339,7 +339,7 @@ spec:
 
         t0 = time.monotonic()
         # Module-level function reference — the monkeypatch above replaced
-        # ``_probe_remote`` within _helpers so any call through that module
+        # ``_probe_local`` within _helpers so any call through that module
         # picks up the hanging mock.
         rows = _helpers.get_agent_list_data(_FakeRegistry(), remote_probe_timeout_s=1.0)
         elapsed = time.monotonic() - t0
@@ -384,7 +384,7 @@ spec:
                     }
                 ]
 
-        monkeypatch.setattr(_helpers, "_probe_remote", lambda cfg: True, raising=False)
+        monkeypatch.setattr(_helpers, "_probe_local", lambda cfg: True, raising=False)
 
         rows = _helpers.get_agent_list_data(_FakeRegistry(), remote_probe_timeout_s=5.0)
         row = rows[0]

@@ -1,4 +1,4 @@
-# In-repo smoke-test agent for the claude-session runtime.
+# In-repo smoke-test agent for the SDK-persistent runner (F-CS16).
 #
 # This file lives at <repo>/.scitex/agent-container/agents/sdk-test/
 # which sac auto-discovers as the highest-priority agent search root
@@ -8,36 +8,34 @@
 # How to test:
 #
 #   $ cd ~/proj/scitex-agent-container
-#   $ sac start sdk-test --foreground
+#   $ sac image build --target sdk-persistent --yes
+#   $ sac agent start sdk-test --foreground
 #   sdk-runtime-ok
 #   $
 #
 # Daemon mode (background + transcript view):
 #
-#   $ sac start sdk-test
-#   $ sac show-status sdk-test
-#   $ sac show-logs sdk-test
-#   $ sac stop sdk-test
+#   $ sac agent start sdk-test
+#   $ sac agent status sdk-test
+#   $ sac agent logs sdk-test
+#   $ sac agent stop sdk-test
 #
-# Resume + quota:
-#
-#   $ cat .scitex/agent-container/runtime/sdk-test/session_id
-#   $ cat .scitex/agent-container/runtime/sdk-test/quota.json
-#
-# Runtime state (heartbeat.json, pid, session.jsonl, session_id,
-# quota.json) lands in <repo>/.scitex/agent-container/runtime/sdk-test/
-# — gitignored, see ../runtime/.gitignore.
+# State location:
+#   <repo>/.scitex/agent-container/runtime/sdk-test/
+#   (gitignored — see ../runtime/.gitignore)
 
 apiVersion: scitex-agent-container/v3
 kind: Agent
 
 metadata:
   labels:
-    pattern: claude-session-smoke-test
+    pattern: sdk-persistent-smoke-test
     in-repo: "true"
 
 spec:
-  runtime: claude-session
+  runtime: docker
+  image: scitex-agent-container:sdk-persistent
+  dockerfile: ./containers/Dockerfile.sdk-persistent
   model: claude-haiku-4-5
   workdir: /tmp/sac-sdk-test-workspace
 

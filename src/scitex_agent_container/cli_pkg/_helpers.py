@@ -160,19 +160,26 @@ class HelpRecursiveGroup(CategorizedGroup):
         return "\n".join(lines)
 
 
-def _probe_remote(cfg) -> bool | None:
-    """Probe a remote agent's liveness. Returns None on exception/timeout.
+def _probe_local(cfg) -> bool | None:
+    """Probe an agent's liveness via ContainerRuntime.
 
-    Extracted to module level so tests can monkeypatch it (todo#254
-    regression suite needs to simulate hung + fast probes without
-    real SSH).
+    F-CS17 stage 3b: replaces the legacy ``_probe_remote`` /
+    ``_detect_multiplexer`` machinery. Sac is a container wrapper —
+    liveness is whatever ``docker inspect`` reports for the
+    container_id sidecar in the agent's state dir. Cross-host
+    liveness moved to F-CS12's ``sac --on <peer> agent status``
+    pattern; the local helper here NEVER does its own ssh.
+
+    Returns None on exception (e.g. malformed config) so the caller
+    surfaces ``status='unknown'`` rather than crashing the list.
     """
-    # stx-allow: fallback (reason: SSH probe may fail if host is unreachable;
-    # None signals "liveness unknown" which callers convert to status="unknown")
+    # stx-allow: fallback (reason: container engine may be missing or
+    # state-dir may not exist for an agent that never ran; either case
+    # maps to liveness_unknown rather than a hard error.)
     try:
-        from ..runtimes.claude_code import ClaudeCodeRuntime
+        from ..runtimes.claude_session import ClaudeSessionRuntime
 
-        return ClaudeCodeRuntime().is_running(cfg)
+        return ClaudeSessionRuntime().is_running(cfg)
     except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         return None
 
@@ -279,24 +286,28 @@ def get_agent_list_data(
         if cfg and cfg.remote.is_remote:
             remote_probes[prep["idx"]] = cfg
 
-    # Second pass: parallel remote probes with per-probe timeout.
-    # NOTE: Use explicit shutdown(wait=False) instead of `with ... as pool:`
-    # because the context manager's __exit__ joins all worker threads, which
-    # negates the per-probe timeout when a worker hangs on a wedged SSH
-    # socket (todo#254 regression: the `--json` call still blocks for the
-    # full hung-probe duration even though `future.result(timeout=…)` raised).
+    # Second pass: parallel local liveness probes with per-probe timeout.
+    # F-CS17 stage 3b: every probe is now local (each host's sac
+    # owns its own containers; cross-host queries route through
+    # F-CS12's ``sac --on <peer>`` which spawns a fresh sac on the
+    # remote host). The thread pool keeps the wall-clock cost of
+    # ``sac agent list`` low when many agents are registered.
+    #
+    # Explicit shutdown(wait=False) instead of ``with ... as pool:``
+    # so the context manager's __exit__ doesn't join all workers
+    # (todo#254 regression: that would defeat the per-probe timeout).
     probe_results: dict[int, bool | None] = {}
     if remote_probes:
         pool = ThreadPoolExecutor(max_workers=max_parallel_probes)
         try:
             future_to_idx = {
-                pool.submit(_probe_remote, cfg): idx
+                pool.submit(_probe_local, cfg): idx
                 for idx, cfg in remote_probes.items()
             }
             for future in list(future_to_idx):
                 idx = future_to_idx[future]
-                # stx-allow: fallback (reason: per-probe SSH or runtime
-                # exception maps to None = "liveness unknown", not "stopped")
+                # stx-allow: fallback (reason: per-probe runtime exception
+                # maps to None = "liveness unknown", not "stopped")
                 try:
                     probe_results[idx] = future.result(timeout=remote_probe_timeout_s)
                 except _FuturesTimeout:  # stx-allow: fallback (reason: expected failure — see inline comment)
