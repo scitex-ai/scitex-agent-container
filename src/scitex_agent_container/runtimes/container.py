@@ -152,6 +152,16 @@ class ContainerRuntime(RuntimeBase):
             config.name,
             "--user",
             user_spec,
+            # The host UID we --user into may not have a /etc/passwd
+            # entry inside the image, in which case HOME defaults to
+            # "/" (unwritable). The bundled `claude` binary the SDK
+            # runs writes a config dir on first start, so an unwritable
+            # HOME hangs it on the SDK initialize control request.
+            # Point HOME at /tmp (world-writable in the slim base) so
+            # any --user runs cleanly. See SDK runtime smoke debugging
+            # in F-CS17 stage 3d.
+            "--env",
+            "HOME=/tmp",
             "--mount",
             f"type=bind,src={Path(config.workdir).expanduser()},dst=/work",
             "--mount",
@@ -181,13 +191,16 @@ class ContainerRuntime(RuntimeBase):
             if val:
                 argv += ["--env", f"{auth_env}={val}"]
         # Also mount the operator's Pro/Max credentials file when it
-        # exists (read-only). Same image runs as UID 1000, so the
-        # credentials_file branch resolves at /home/agent/.claude/.
+        # exists (read-only). HOME inside the container is /tmp (see
+        # the comment on the HOME=/tmp env above), so the SDK's
+        # Path.home() / ".claude" / ".credentials.json" lookup
+        # resolves at /tmp/.claude/.credentials.json. Mount target
+        # follows.
         cred_file = Path.home() / ".claude" / ".credentials.json"
         if cred_file.is_file():
             argv += [
                 "--mount",
-                f"type=bind,src={cred_file},dst=/home/agent/.claude/.credentials.json,readonly",
+                f"type=bind,src={cred_file},dst=/tmp/.claude/.credentials.json,readonly",
             ]
 
         for key, val in (config.env or {}).items():
