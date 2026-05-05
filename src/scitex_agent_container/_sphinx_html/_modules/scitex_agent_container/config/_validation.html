@@ -478,10 +478,73 @@
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
 
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">sys</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">yaml</span>
+
+<span class="c1"># F-CS6 — yaml-field rename for ``spec.runtime``.</span>
+<span class="c1">#</span>
+<span class="c1"># The internal codebase still keys dispatch on the original names</span>
+<span class="c1"># (``claude-code`` / ``claude-session``), so the new aliases are</span>
+<span class="c1"># normalised back to the canonical form at load time. A stderr</span>
+<span class="c1"># warning is emitted once per shell session per renamed value so</span>
+<span class="c1"># stale yamls keep working without a constant log nag.</span>
+<span class="c1">#</span>
+<span class="c1"># §5 of the scitex CLI conventions mandates HARD redirects, but that</span>
+<span class="c1"># rule governs CLI commands; yaml field values can&#39;t be atomically</span>
+<span class="c1"># rewritten across every host&#39;s checked-in agent definitions, so a</span>
+<span class="c1"># soft alias is the right level of breakage here.</span>
+<span class="n">_RUNTIME_RENAMES</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;claude-cli-tui&quot;</span><span class="p">:</span> <span class="s2">&quot;claude-code&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;claude-sdk-persistent&quot;</span><span class="p">:</span> <span class="s2">&quot;claude-session&quot;</span><span class="p">,</span>
+<span class="p">}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_runtime_alias_warn_marker</span><span class="p">(</span><span class="n">old_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Path</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;One marker file per shell session per renamed value.</span>
+
+<span class="sd">    Keying on PPID gives one warning per *interactive shell* — child</span>
+<span class="sd">    invocations from the same shell don&#39;t re-print. Matches the</span>
+<span class="sd">    pattern documented in scitex/general/03_interface_02_cli/</span>
+<span class="sd">    11_deprecation.md §5a.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">runtime_dir</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;XDG_RUNTIME_DIR&quot;</span><span class="p">,</span> <span class="s2">&quot;/tmp&quot;</span><span class="p">)</span>
+    <span class="n">user</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;USER&quot;</span><span class="p">,</span> <span class="s2">&quot;u&quot;</span><span class="p">)</span>
+    <span class="n">ppid</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;PPID&quot;</span><span class="p">,</span> <span class="s2">&quot;0&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">Path</span><span class="p">(</span><span class="n">runtime_dir</span><span class="p">)</span> <span class="o">/</span> <span class="sa">f</span><span class="s2">&quot;sac-runtime-rename-</span><span class="si">{</span><span class="n">user</span><span class="si">}</span><span class="s2">-</span><span class="si">{</span><span class="n">ppid</span><span class="si">}</span><span class="s2">-</span><span class="si">{</span><span class="n">old_name</span><span class="si">}</span><span class="s2">.flag&quot;</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">normalize_runtime</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the canonical runtime value; warn on first use of an alias.</span>
+
+<span class="sd">    Accepts the new yaml-friendly aliases (``claude-cli-tui``,</span>
+<span class="sd">    ``claude-sdk-persistent``) and returns the long-standing internal</span>
+<span class="sd">    names (``claude-code``, ``claude-session``). Unknown / canonical</span>
+<span class="sd">    values pass through unchanged. ``None`` becomes ``None``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">value</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+    <span class="n">canonical</span> <span class="o">=</span> <span class="n">_RUNTIME_RENAMES</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">canonical</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">value</span>
+    <span class="n">marker</span> <span class="o">=</span> <span class="n">_runtime_alias_warn_marker</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">marker</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">marker</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+            <span class="n">marker</span><span class="o">.</span><span class="n">touch</span><span class="p">()</span>
+        <span class="k">except</span> <span class="ne">OSError</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: marker is best-effort; missing /tmp shouldn&#39;t block load)</span>
+            <span class="k">pass</span>
+        <span class="n">sys</span><span class="o">.</span><span class="n">stderr</span><span class="o">.</span><span class="n">write</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;warning: spec.runtime: &#39;</span><span class="si">{</span><span class="n">value</span><span class="si">}</span><span class="s2">&#39; is the new alias for &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;&#39;</span><span class="si">{</span><span class="n">canonical</span><span class="si">}</span><span class="s2">&#39;. Both work; the alias will become canonical &quot;</span>
+            <span class="s2">&quot;in a future major release. (F-CS6)</span><span class="se">\n</span><span class="s2">&quot;</span>
+        <span class="p">)</span>
+        <span class="n">sys</span><span class="o">.</span><span class="n">stderr</span><span class="o">.</span><span class="n">flush</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">canonical</span>
+
 
 <span class="c1"># Accepted shapes for ``spec.model`` (F-CS7).</span>
 <span class="c1">#</span>
@@ -613,9 +676,15 @@
 
         <span class="c1"># spec.runtime</span>
         <span class="n">runtime</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;runtime&quot;</span><span class="p">)</span>
+        <span class="c1"># F-CS6: dual-accept the new yaml-friendly aliases alongside</span>
+        <span class="c1"># the canonical internal names. The aliases normalise back at</span>
+        <span class="c1"># load time (see normalize_runtime); validation just permits</span>
+        <span class="c1"># both shapes so a yaml using the new name doesn&#39;t fail audit.</span>
         <span class="n">valid_runtimes</span> <span class="o">=</span> <span class="p">(</span>
             <span class="s2">&quot;claude-code&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;claude-cli-tui&quot;</span><span class="p">,</span>
             <span class="s2">&quot;claude-session&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;claude-sdk-persistent&quot;</span><span class="p">,</span>
             <span class="s2">&quot;slurm&quot;</span><span class="p">,</span>
             <span class="s2">&quot;slurm-tenant&quot;</span><span class="p">,</span>
         <span class="p">)</span>
