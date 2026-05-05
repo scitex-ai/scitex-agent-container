@@ -207,8 +207,9 @@ main.add_command(_hidden_alias(quota_watch, new_path="sac quota watch"))
 # Hook events
 main.add_command(_hidden_alias(hook_event, new_path="sac event ingest"))
 
-# Registry
-main.add_command(_hidden_alias(cleanup, new_path="sac registry clean"))
+# Registry — `registry clean` is now `db clean` (F-CS11 phase 5);
+# send the top-level alias straight there to avoid double-redirect.
+main.add_command(_hidden_alias(cleanup, new_path="sac db clean"))
 main.add_command(_hidden_alias(singleton_reconcile, new_path="sac registry reconcile"))
 
 # Build / image

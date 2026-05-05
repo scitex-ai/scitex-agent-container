@@ -56,7 +56,11 @@ def test_renamed_redirect_help_documents_new_path():
 
 
 def test_top_level_clean_registry_redirects():
-    """Sanity: a real registered alias hard-errors with the right path."""
+    """Sanity: a real registered alias hard-errors with the right path.
+
+    Post-F-CS11 phase 5: `sac clean-registry` skips the (now-redirected)
+    `sac registry clean` step and points straight at `sac db clean`.
+    """
     from scitex_agent_container.cli_pkg._main import main as sac_main
 
     runner = CliRunner()
@@ -65,7 +69,7 @@ def test_top_level_clean_registry_redirects():
         f"sac clean-registry must redirect (exit 2), "
         f"got exit={result.exit_code} stderr={result.stderr!r}"
     )
-    assert "sac registry clean" in result.stderr
+    assert "sac db clean" in result.stderr
 
 
 def test_top_level_probe_network_redirects():
@@ -87,3 +91,45 @@ def test_top_level_start_alias_redirects():
     result = runner.invoke(sac_main, ["start", "any-name"], standalone_mode=True)
     assert result.exit_code == 2
     assert "sac agent start" in result.stderr
+
+
+def test_registry_clean_redirects_to_db_clean():
+    """F-CS11 phase 5: `sac registry clean` is now `sac db clean`."""
+    from scitex_agent_container.cli_pkg._main import main as sac_main
+
+    runner = CliRunner()
+    result = runner.invoke(sac_main, ["registry", "clean"], standalone_mode=True)
+    assert result.exit_code == 2
+    # Old path text must reflect the user's full typed command.
+    assert "'sac registry clean'" in result.stderr
+    assert "sac db clean" in result.stderr
+
+
+def test_top_level_clean_registry_alias_skips_to_db_clean():
+    """`sac clean-registry` (top-level legacy) goes straight to db clean
+    (F-CS11 phase 5 update — no double-redirect through registry)."""
+    from scitex_agent_container.cli_pkg._main import main as sac_main
+
+    runner = CliRunner()
+    result = runner.invoke(sac_main, ["clean-registry"], standalone_mode=True)
+    assert result.exit_code == 2
+    assert "sac db clean" in result.stderr
+
+
+def test_renamed_redirect_old_path_override():
+    """Explicit ``old_path`` overrides the default ``sac <name>`` rendering."""
+    import click as _click
+
+    from scitex_agent_container.cli_pkg._helpers import renamed_redirect
+
+    @_click.command(name="clean")
+    def _clean():
+        pass
+
+    aliased = renamed_redirect(
+        _clean, new_path="sac db clean", old_path="sac registry clean"
+    )
+    runner = CliRunner()
+    result = runner.invoke(aliased, [], standalone_mode=True)
+    assert result.exit_code == 2
+    assert "'sac registry clean'" in result.stderr

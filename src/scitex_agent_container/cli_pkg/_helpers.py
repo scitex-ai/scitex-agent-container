@@ -14,7 +14,12 @@ from ..config import load_config
 console = Console()
 
 
-def renamed_redirect(cmd: click.Command, *, new_path: str) -> click.Command:
+def renamed_redirect(
+    cmd: click.Command,
+    *,
+    new_path: str,
+    old_path: str | None = None,
+) -> click.Command:
     """Wrap ``cmd`` so invoking the old name hard-errors with a redirect.
 
     Per scitex CLI convention §5: renamed commands MUST exit non-zero
@@ -27,15 +32,20 @@ def renamed_redirect(cmd: click.Command, *, new_path: str) -> click.Command:
     invoking the renamed command prints a single-line redirect to stderr
     and exits with code 2 (the convention's standard).
 
-    ``new_path`` is the user-facing replacement (e.g. ``"sac agent start"``);
-    it appears verbatim in the error. The original ``cmd.callback`` is
-    discarded — old paths no longer execute.
+    Args:
+        cmd: The Click command being redirected.
+        new_path: The user-facing replacement (e.g. ``"sac agent start"``).
+        old_path: The path the user actually typed, when it doesn't
+            match ``"sac <cmd.name>"`` — typically a subcommand of a
+            noun group (``"sac registry clean"`` rather than just
+            ``"sac clean"``). Defaults to ``f"sac {cmd.name}"``.
     """
+    rendered_old = old_path or f"sac {cmd.name}"
 
     def _callback(*args, **kwargs):
         del args, kwargs
         click.echo(
-            f"error: 'sac {cmd.name}' was renamed to '{new_path}'.\n"
+            f"error: '{rendered_old}' was renamed to '{new_path}'.\n"
             f"Re-run with: {new_path}",
             err=True,
         )

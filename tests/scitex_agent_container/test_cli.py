@@ -81,8 +81,10 @@ class TestCLI:
 
     def test_cleanup(self):
         runner = CliRunner()
-        # cleanup now confirms by default; pass --yes for non-interactive runs.
-        result = runner.invoke(main, ["registry", "clean", "--yes"])
+        # F-CS11 phase 5: `registry clean` was renamed to `db clean`.
+        # The new path is the SQLite GC sweep — runs against state.db,
+        # exits 0 with zero-or-more swept entries.
+        result = runner.invoke(main, ["db", "clean"])
         assert result.exit_code == 0
 
     def test_version(self):

@@ -1,11 +1,20 @@
-"""``sac registry`` noun-group — registry maintenance verbs."""
+"""``sac registry`` noun-group — registry maintenance verbs.
+
+Post-F-CS11: ``registry clean`` is folded into the new SQLite-backed
+``sac db clean``. The old verb still parses but hard-errors per
+scitex CLI convention §5 with a redirect to the new path.
+
+``registry reconcile`` is unchanged — it concerns fleet-level
+singleton-placement decisions (where should agent X run?), not
+state-database housekeeping. It will move to ``sac host reconcile``
+under F-CS12.
+"""
 
 from __future__ import annotations
 
 import click
 
-from ._helpers import HelpRecursiveGroup
-from .lifecycle_cmds import cleanup as _cleanup_impl
+from ._helpers import HelpRecursiveGroup, renamed_redirect
 from .priority_cmds import singleton_reconcile as _reconcile_impl
 
 
@@ -22,10 +31,25 @@ def _rebind(cmd: click.Command, new_name: str) -> click.Command:
 
 @click.group(name="registry", cls=HelpRecursiveGroup)
 def registry_group() -> None:
-    """Registry maintenance: clean stale entries, reconcile singletons."""
+    """Registry maintenance — folded into ``sac db`` (F-CS11)."""
 
 
-registry_group.add_command(_rebind(_cleanup_impl, "clean"))
+# `registry clean` -> hard-error redirect to `sac db clean`.
+# The wrapped command is a no-op stub whose callback is replaced by
+# renamed_redirect's exit-2 path; the surface (no params) stays
+# minimal so the redirect fires before any arg parsing surprises.
+@click.command(name="clean")
+def _clean_stub() -> None:
+    """[RENAMED] Use ``sac db clean`` instead."""
+
+
+registry_group.add_command(
+    renamed_redirect(
+        _clean_stub,
+        new_path="sac db clean",
+        old_path="sac registry clean",
+    )
+)
 registry_group.add_command(_rebind(_reconcile_impl, "reconcile"))
 
 
