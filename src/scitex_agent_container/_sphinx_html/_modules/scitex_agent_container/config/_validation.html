@@ -478,9 +478,42 @@
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
 
+<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">yaml</span>
+
+<span class="c1"># Accepted shapes for ``spec.model`` (F-CS7).</span>
+<span class="c1">#</span>
+<span class="c1"># claude-agent-sdk silently rejects unknown aliases — the runner stays</span>
+<span class="c1"># alive, the heartbeat is fresh, but every turn returns 0 input tokens</span>
+<span class="c1"># and 0 output tokens because the SDK never makes the API call. Pin</span>
+<span class="c1"># the validation here so the failure surfaces at yaml-validate time</span>
+<span class="c1"># instead of as a hung-looking agent.</span>
+<span class="c1">#</span>
+<span class="c1"># Two acceptable shapes:</span>
+<span class="c1">#   1. Bare alias: ``opus`` / ``sonnet`` / ``haiku`` / ``inherit`` /</span>
+<span class="c1">#      ``default``, optionally with a context-suffix (``[1m]``).</span>
+<span class="c1">#   2. Full versioned form: ``claude-&lt;family&gt;-N-M`` with optional date</span>
+<span class="c1">#      tail (``-20251001``) and optional context-suffix.</span>
+<span class="c1">#</span>
+<span class="c1"># Reproduction (2026-05-05): ``claude-opus[1m]`` (abbreviated, missing</span>
+<span class="c1"># the version digits) was accepted by the YAML loader but silently</span>
+<span class="c1"># rejected by the SDK — every turn returned ``input_tokens=0``,</span>
+<span class="c1"># ``output_tokens=0``, ``iterations=[]``. Other peers using</span>
+<span class="c1"># ``claude-opus-4-7[1m]`` worked fine.</span>
+<span class="n">_VALID_MODEL_RE</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    ^(?:</span>
+<span class="sd">        (?:opus|sonnet|haiku|inherit|default)</span>
+<span class="sd">        |</span>
+<span class="sd">        claude-(?:opus|sonnet|haiku)-\d+-\d+(?:-[a-z0-9]+)*</span>
+<span class="sd">    )</span>
+<span class="sd">    (?:\[[a-zA-Z0-9_]+\])?</span>
+<span class="sd">    $</span>
+<span class="sd">    &quot;&quot;&quot;</span><span class="p">,</span>
+    <span class="n">re</span><span class="o">.</span><span class="n">VERBOSE</span><span class="p">,</span>
+<span class="p">)</span>
 
 <span class="n">_VALID_API_VERSIONS</span> <span class="o">=</span> <span class="p">(</span><span class="s2">&quot;scitex-agent-container/v3&quot;</span><span class="p">,)</span>
 
@@ -590,6 +623,30 @@
             <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
                 <span class="sa">f</span><span class="s2">&quot;spec.runtime must be one of </span><span class="si">{</span><span class="n">valid_runtimes</span><span class="si">}</span><span class="s2">, got &#39;</span><span class="si">{</span><span class="n">runtime</span><span class="si">}</span><span class="s2">&#39;&quot;</span>
             <span class="p">)</span>
+
+        <span class="c1"># spec.model — F-CS7: validate against accepted SDK aliases /</span>
+        <span class="c1"># versioned forms. The SDK silently rejects unknown values</span>
+        <span class="c1"># (heartbeat fresh, every turn returns 0 tokens), so we surface</span>
+        <span class="c1"># bad strings at yaml-validate time. Empty / missing is allowed</span>
+        <span class="c1"># — runtime falls back to its default.</span>
+        <span class="n">model</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;model&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">model</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
+                <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                    <span class="sa">f</span><span class="s2">&quot;spec.model must be a string, got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">model</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span>
+                <span class="p">)</span>
+            <span class="k">elif</span> <span class="n">model</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">_VALID_MODEL_RE</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">model</span><span class="p">):</span>
+                <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                    <span class="sa">f</span><span class="s2">&quot;spec.model &#39;</span><span class="si">{</span><span class="n">model</span><span class="si">}</span><span class="s2">&#39; is not an accepted alias. &quot;</span>
+                    <span class="s2">&quot;Use a bare alias (&#39;opus&#39;, &#39;sonnet&#39;, &#39;haiku&#39;, &#39;inherit&#39;, &quot;</span>
+                    <span class="s2">&quot;&#39;default&#39;), optionally with a context suffix like &quot;</span>
+                    <span class="s2">&quot;&#39;opus[1m]&#39;; OR the full versioned form &quot;</span>
+                    <span class="s2">&quot;&#39;claude-&lt;family&gt;-N-M[-&lt;tail&gt;]&#39; (e.g. &#39;claude-opus-4-7&#39;, &quot;</span>
+                    <span class="s2">&quot;&#39;claude-opus-4-7[1m]&#39;, &#39;claude-haiku-4-5-20251001&#39;). &quot;</span>
+                    <span class="s2">&quot;Abbreviated forms like &#39;claude-opus[1m]&#39; are rejected &quot;</span>
+                    <span class="s2">&quot;by the SDK without raising — every turn returns 0 &quot;</span>
+                    <span class="s2">&quot;tokens.&quot;</span>
+                <span class="p">)</span>
 
         <span class="c1"># container.runtime</span>
         <span class="n">container</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;container&quot;</span><span class="p">,</span> <span class="p">{})</span> <span class="ow">or</span> <span class="p">{}</span>
