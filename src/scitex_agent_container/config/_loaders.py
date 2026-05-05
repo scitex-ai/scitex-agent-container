@@ -276,6 +276,8 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     return AgentConfig(
         name=name,
         runtime=normalize_runtime(spec.get("runtime")) or "claude-code",
+        image=str(spec.get("image", "")),
+        dockerfile=str(spec.get("dockerfile", "")),
         model=model,
         workdir=workdir,
         python_venv=_resolve_python_venv(spec.get("python-venv", "")),
@@ -377,6 +379,8 @@ def load_v2(raw: dict, path: Path) -> AgentConfig:
     return AgentConfig(
         name=name,
         runtime=normalize_runtime(spec.get("runtime")) or "claude-code",
+        image=str(spec.get("image", "")),
+        dockerfile=str(spec.get("dockerfile", "")),
         model=model,
         workdir=workdir,
         python_venv=_resolve_python_venv(spec.get("python-venv", "")),

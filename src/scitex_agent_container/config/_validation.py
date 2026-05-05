@@ -112,6 +112,8 @@ _KNOWN_TOP_LEVEL_KEYS = frozenset({"apiVersion", "kind", "metadata", "spec"})
 _KNOWN_SPEC_KEYS = frozenset(
     {
         "runtime",
+        "image",  # F-CS16 phase 2a — flattened from spec.container.image
+        "dockerfile",  # F-CS16 phase 2a — auto-build source when image missing
         "model",
         "workdir",
         "python-venv",
@@ -201,11 +203,20 @@ def validate_raw(raw: dict, path: str) -> list[str]:
 
         # spec.runtime
         runtime = spec.get("runtime")
-        # F-CS6: dual-accept the new yaml-friendly aliases alongside
-        # the canonical internal names. The aliases normalise back at
-        # load time (see normalize_runtime); validation just permits
-        # both shapes so a yaml using the new name doesn't fail audit.
+        # F-CS16 phase 2a: ``runtime`` is becoming the container engine
+        # selector. New canonical values are docker / podman / apptainer.
+        # Legacy values (claude-code, claude-cli-tui, claude-session,
+        # claude-sdk-persistent, slurm, slurm-tenant) still pass
+        # validation for one cycle so existing yamls don't break;
+        # F-CS16 phase 2e flips them to hard-error redirects.
+        # F-CS6 yaml-friendly aliases continue to normalise via
+        # normalize_runtime() at load time.
         valid_runtimes = (
+            # F-CS16 — container engines (canonical going forward).
+            "docker",
+            "podman",
+            "apptainer",
+            # Legacy — accepted for one cycle.
             "claude-code",
             "claude-cli-tui",
             "claude-session",
@@ -216,6 +227,22 @@ def validate_raw(raw: dict, path: str) -> list[str]:
         if runtime and runtime not in valid_runtimes:
             errors.append(
                 f"spec.runtime must be one of {valid_runtimes}, got '{runtime}'"
+            )
+
+        # spec.image (F-CS16 phase 2a) — top-level container image tag.
+        # Empty string is allowed and falls back to the default at
+        # dispatch time. Type check only here.
+        image = spec.get("image")
+        if image is not None and not isinstance(image, str):
+            errors.append(f"spec.image must be a string, got {type(image).__name__}")
+
+        # spec.dockerfile (F-CS16 phase 2a) — host-relative path to a
+        # Dockerfile sac auto-builds when ``image`` is missing locally
+        # (phase 2d wires the build). Type check only.
+        dockerfile = spec.get("dockerfile")
+        if dockerfile is not None and not isinstance(dockerfile, str):
+            errors.append(
+                f"spec.dockerfile must be a string, got {type(dockerfile).__name__}"
             )
 
         # spec.model — F-CS7: validate against accepted SDK aliases /

@@ -232,7 +232,10 @@ class TestSpecRuntime:
         assert not any("runtime" in e for e in errors)
 
     def test_invalid_runtime(self):
-        raw = _set(VALID_CONTRIBUTOR_SPEC, ["spec", "runtime"], "docker")
+        # F-CS16 phase 2a: ``docker`` / ``podman`` / ``apptainer`` are
+        # now valid runtime values (container engines). Use a clearly
+        # bogus value to assert the validator still rejects unknowns.
+        raw = _set(VALID_CONTRIBUTOR_SPEC, ["spec", "runtime"], "no-such-engine")
         errors = _errors(raw)
         assert any("runtime" in e for e in errors)
 

@@ -395,6 +395,12 @@ class AgentConfig:
 
     name: str
     runtime: str = "claude-code"
+    # F-CS16 phase 2a — top-level fields that flatten the old
+    # spec.container.{image, dockerfile} block. Empty string means
+    # "use the default" (resolved by phase 2d's auto-build path
+    # against ContainerSpec.image / containers/Dockerfile.<target>).
+    image: str = ""
+    dockerfile: str = ""
     model: str = "sonnet"
     workdir: str = "~/proj"
     python_venv: str = ""  # resolved venv path (post _resolve_python_venv)

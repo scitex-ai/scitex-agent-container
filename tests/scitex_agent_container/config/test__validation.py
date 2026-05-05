@@ -267,3 +267,125 @@ def test_autonomous_parse_reads_full_block():
     assert out.max_turns == 7
     assert out.idle_kick_after_s == 60
     assert out.kick_text == "keep going"
+
+
+# ---------------------------------------------------------------------------
+# F-CS16 phase 2a — schema flatten: spec.image, spec.dockerfile, runtime
+# ---------------------------------------------------------------------------
+
+
+def _spec_with(extra: dict):
+    return {
+        "apiVersion": "scitex-agent-container/v3",
+        "kind": "Agent",
+        "spec": {"runtime": "docker", **extra},
+    }
+
+
+@pytest.mark.parametrize("engine", ["docker", "podman", "apptainer"])
+def test_validate_raw_accepts_new_engine_runtime(engine):
+    """The new ``runtime`` field carries the container engine name.
+    docker / podman / apptainer must all pass validation."""
+    raw = {
+        "apiVersion": "scitex-agent-container/v3",
+        "kind": "Agent",
+        "spec": {"runtime": engine},
+    }
+    errors = validate_raw(raw, path="<test>")
+    assert not [e for e in errors if "spec.runtime" in e]
+
+
+def test_validate_raw_still_accepts_legacy_runtime_for_one_cycle():
+    """Legacy values must keep parsing through F-CS16 phase 2e."""
+    for legacy in (
+        "claude-code",
+        "claude-cli-tui",
+        "claude-session",
+        "claude-sdk-persistent",
+        "slurm",
+        "slurm-tenant",
+    ):
+        raw = {
+            "apiVersion": "scitex-agent-container/v3",
+            "kind": "Agent",
+            "spec": {"runtime": legacy},
+        }
+        errors = validate_raw(raw, path="<test>")
+        assert not [e for e in errors if "spec.runtime" in e], (
+            f"legacy runtime {legacy!r} must keep parsing during the migration"
+        )
+
+
+def test_validate_raw_accepts_top_level_image_field():
+    raw = _spec_with({"image": "scitex-agent-container:sdk-persistent"})
+    errors = validate_raw(raw, path="<test>")
+    assert not [e for e in errors if "spec.image" in e]
+
+
+def test_validate_raw_rejects_non_string_image():
+    raw = _spec_with({"image": 42})
+    errors = validate_raw(raw, path="<test>")
+    assert any("spec.image" in e and "string" in e for e in errors)
+
+
+def test_validate_raw_accepts_top_level_dockerfile_field():
+    raw = _spec_with({"dockerfile": "./containers/Dockerfile.sdk-persistent"})
+    errors = validate_raw(raw, path="<test>")
+    assert not [e for e in errors if "spec.dockerfile" in e]
+
+
+def test_validate_raw_rejects_non_string_dockerfile():
+    raw = _spec_with({"dockerfile": ["./a", "./b"]})
+    errors = validate_raw(raw, path="<test>")
+    assert any("spec.dockerfile" in e and "string" in e for e in errors)
+
+
+def test_image_and_dockerfile_default_to_empty_in_agentconfig(tmp_path):
+    """A yaml without ``image`` / ``dockerfile`` must still parse;
+    AgentConfig fields stay empty so phase 2d's auto-build path can
+    apply its defaults at dispatch time."""
+    import yaml as _yaml
+
+    from scitex_agent_container.config import load_config
+
+    yaml_dir = tmp_path / "fcs16-default"
+    yaml_dir.mkdir()
+    yaml_path = yaml_dir / "fcs16-default.yaml"
+    yaml_path.write_text(
+        _yaml.safe_dump(
+            {
+                "apiVersion": "scitex-agent-container/v3",
+                "kind": "Agent",
+                "spec": {"runtime": "docker"},
+            }
+        )
+    )
+    cfg = load_config(str(yaml_path))
+    assert cfg.image == ""
+    assert cfg.dockerfile == ""
+
+
+def test_image_and_dockerfile_round_trip_through_loader(tmp_path):
+    import yaml as _yaml
+
+    from scitex_agent_container.config import load_config
+
+    yaml_dir = tmp_path / "fcs16-set"
+    yaml_dir.mkdir()
+    yaml_path = yaml_dir / "fcs16-set.yaml"
+    yaml_path.write_text(
+        _yaml.safe_dump(
+            {
+                "apiVersion": "scitex-agent-container/v3",
+                "kind": "Agent",
+                "spec": {
+                    "runtime": "docker",
+                    "image": "clew-paper:capsule-01",
+                    "dockerfile": "./containers/clew-paper.Dockerfile",
+                },
+            }
+        )
+    )
+    cfg = load_config(str(yaml_path))
+    assert cfg.image == "clew-paper:capsule-01"
+    assert cfg.dockerfile == "./containers/clew-paper.Dockerfile"
