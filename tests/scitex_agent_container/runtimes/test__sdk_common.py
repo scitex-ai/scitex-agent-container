@@ -55,7 +55,10 @@ class TestProvisionAuth:
 
         assert "ANTHROPIC_API_KEY" not in os.environ
 
-    def test_bridge_sac_when_no_credentials_file(self, monkeypatch, tmp_path):
+    def test_bridge_sac_api_key_form_when_no_credentials_file(
+        self, monkeypatch, tmp_path
+    ):
+        """sk-ant-api-* form bridges directly to ANTHROPIC_API_KEY."""
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         monkeypatch.setattr(_sdk_common, "_CRED_FILE", tmp_path / "missing")
         monkeypatch.setenv(_SAC_KEY, "sk-ant-api-sac")
@@ -63,6 +66,27 @@ class TestProvisionAuth:
         import os
 
         assert os.environ.get("ANTHROPIC_API_KEY") == "sk-ant-api-sac"
+
+    def test_oauth_token_synthesises_credentials_file(self, monkeypatch, tmp_path):
+        """sk-ant-oat-* form writes a minimal credentials.json so the
+        SDK's credentials_file path picks it up — env-bridging an OAuth
+        token doesn't work (the bundled CLI rejects it)."""
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        cred_target = tmp_path / ".claude" / ".credentials.json"
+        monkeypatch.setattr(_sdk_common, "_CRED_FILE", cred_target)
+        monkeypatch.setenv(_SAC_KEY, "sk-ant-oat-zzz")
+
+        assert provision_anthropic_auth() == "sac_oauth_synthesised"
+        assert cred_target.is_file()
+
+        import os
+
+        # Critical: env was NOT mutated; OAuth path stays clean.
+        assert "ANTHROPIC_API_KEY" not in os.environ
+
+        blob = json.loads(cred_target.read_text())
+        assert blob["claudeAiOauth"]["accessToken"] == "sk-ant-oat-zzz"
+        assert blob["claudeAiOauth"]["expiresAt"] > 1_700_000_000_000
 
     def test_no_auth_raises(self, monkeypatch, tmp_path):
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)

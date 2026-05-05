@@ -78,16 +78,19 @@ def provision_anthropic_auth() -> str:
        (operator opted in explicitly; we don't second-guess).
     2. ``~/.claude/.credentials.json`` exists → ``"credentials_file"``
        (Pro/Max OAuth token; SDK reads the file directly).
-    3. ``SAC_ANTHROPIC_API_KEY`` set → bridge to ANTHROPIC_API_KEY
-       (``"bridged_sac"``). This is the standard sac-managed path —
-       operator hands sac the key under a sac-namespaced var; sac
-       translates only when actually launching the SDK runner.
+    3. ``SAC_ANTHROPIC_API_KEY`` set:
+       * starts with ``sk-ant-oat-`` (Pro/Max OAuth access token) →
+         synthesise ``~/.claude/.credentials.json`` so the SDK uses
+         the OAuth path → ``"sac_oauth_synthesised"``.
+       * otherwise (api-key form ``sk-ant-api-`` or anything else) →
+         bridge to ANTHROPIC_API_KEY → ``"bridged_sac"``.
 
     Raises :class:`SDKCommonError` if none of the above apply.
 
     Idempotent: calling repeatedly within the same process is safe and
     returns the same path (after the first call, ``ANTHROPIC_API_KEY``
-    is set if a bridge happened, so subsequent calls return ``"env"``).
+    is set if a bridge happened, or the credentials file exists if the
+    OAuth synth happened, so subsequent calls hit the earlier branches).
     """
     if os.environ.get("ANTHROPIC_API_KEY"):
         return "env"
@@ -95,6 +98,9 @@ def provision_anthropic_auth() -> str:
         return "credentials_file"
     bridged = os.environ.get(_SAC_API_KEY_ENV)
     if bridged:
+        if bridged.startswith("sk-ant-oat-"):
+            _write_oauth_credentials_file(bridged)
+            return "sac_oauth_synthesised"
         os.environ["ANTHROPIC_API_KEY"] = bridged
         return "bridged_sac"
     raise SDKCommonError(
@@ -102,6 +108,40 @@ def provision_anthropic_auth() -> str:
         "Pro/Max claude /login (~/.claude/.credentials.json), or export "
         f"{_SAC_API_KEY_ENV}"
     )
+
+
+def _write_oauth_credentials_file(access_token: str) -> None:
+    """Build a minimal ``~/.claude/.credentials.json`` from an OAuth
+    access token so the bundled CLI's credentials_file path picks it
+    up. Mode 0600 — never world-readable.
+
+    The synthesised blob carries only ``accessToken`` plus a far-future
+    ``expiresAt`` so the SDK's TTL check passes. We don't have a
+    refresh token (operator passed only the access token via env), so
+    sessions long enough to need a refresh will fail; that's an
+    acceptable tradeoff for the smoke / short-lived agent use case.
+    """
+    import json
+
+    _CRED_FILE.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "claudeAiOauth": {
+            "accessToken": access_token,
+            "refreshToken": "",
+            # Year ~2200 — well beyond any practical sac runner lifetime.
+            "expiresAt": 7258118400000,
+            "scopes": ["user:inference", "user:profile"],
+            "subscriptionType": "max",
+        }
+    }
+    _CRED_FILE.write_text(json.dumps(payload))
+    try:
+        _CRED_FILE.chmod(0o600)
+    except (
+        OSError,
+        PermissionError,
+    ):  # stx-allow: fallback (reason: chmod can fail on bind-mounted FS layouts; the file was already written)
+        pass
 
 
 # ---------------------------------------------------------------------------
