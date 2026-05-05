@@ -184,3 +184,174 @@ def test_db_query_rejects_unknown_table(db_path: Path):
     assert result.exit_code != 0
     # Click's invalid choice message
     assert "invalid" in result.output.lower() or "not one of" in result.output.lower()
+
+
+# ---------------------------------------------------------------------------
+# F-CS11 phase 2 — write helpers + gc_dead_instances
+# ---------------------------------------------------------------------------
+
+
+def test_record_instance_start_returns_uuid_and_inserts_row(db_path: Path):
+    from scitex_agent_container._state.state_db import (
+        list_active_instances,
+        record_instance_start,
+    )
+
+    iid = record_instance_start(
+        "diag-test", pid=1234, screen="diag-test", host="ywata-note-win"
+    )
+    assert iid and len(iid) >= 32  # uuid string
+
+    rows = list_active_instances()
+    assert len(rows) == 1
+    r = rows[0]
+    assert r["id"] == iid
+    assert r["name"] == "diag-test"
+    assert r["pid"] == 1234
+    assert r["host"] == "ywata-note-win"
+    assert r["ended_at"] is None
+
+
+def test_record_instance_start_logs_event(db_path: Path):
+    from scitex_agent_container._state.state_db import open_db, record_instance_start
+
+    iid = record_instance_start("x", host="h")
+    with open_db() as conn:
+        events = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT * FROM events WHERE instance_id=?", (iid,)
+            ).fetchall()
+        ]
+    assert len(events) == 1
+    assert events[0]["kind"] == "start"
+
+
+def test_record_instance_stop_marks_ended(db_path: Path):
+    from scitex_agent_container._state.state_db import (
+        list_active_instances,
+        record_instance_start,
+        record_instance_stop,
+    )
+
+    iid = record_instance_start("x", host="h")
+    assert record_instance_stop(iid, exit_reason="stopped") is True
+    assert list_active_instances() == []
+    # Idempotent on re-stop
+    assert record_instance_stop(iid) is False
+
+
+def test_update_heartbeat_appends_and_caches_rolling(db_path: Path):
+    from scitex_agent_container._state.state_db import (
+        open_db,
+        record_instance_start,
+        update_heartbeat,
+    )
+
+    iid = record_instance_start("x", host="h")
+    update_heartbeat(iid, iter=1, input_tokens=10, output_tokens=20)
+    # Two beats in the same wall-clock second collapse via ON CONFLICT
+    # — the row's iter / token fields advance to the latest values.
+    update_heartbeat(iid, iter=2, input_tokens=30, output_tokens=40)
+
+    with open_db() as conn:
+        hbs = conn.execute(
+            "SELECT count(*) AS n FROM heartbeats WHERE instance_id=?", (iid,)
+        ).fetchone()
+        hb_row = dict(
+            conn.execute(
+                "SELECT * FROM heartbeats WHERE instance_id=?", (iid,)
+            ).fetchone()
+        )
+        inst = conn.execute("SELECT * FROM instances WHERE id=?", (iid,)).fetchone()
+    # 1 heartbeat row per (instance_id, ts) at 1-sec resolution; the
+    # second update merged into the same row.
+    assert hbs["n"] == 1
+    assert hb_row["iter"] == 2
+    assert hb_row["input_tokens"] == 30
+    assert hb_row["output_tokens"] == 40
+    # Rolling cache on instances picks up the latest values regardless.
+    assert inst["iter_count"] == 2
+    assert inst["input_tokens"] == 30
+    assert inst["output_tokens"] == 40
+    assert inst["last_heartbeat_at"] is not None
+
+
+def test_update_heartbeat_partial_update_preserves_prev_via_coalesce(db_path: Path):
+    from scitex_agent_container._state.state_db import (
+        open_db,
+        record_instance_start,
+        update_heartbeat,
+    )
+
+    iid = record_instance_start("x", host="h")
+    update_heartbeat(iid, iter=5, input_tokens=100, output_tokens=200)
+    # Second call only updates pane_state — other fields must NOT reset.
+    update_heartbeat(iid, pane_state="alive")
+
+    with open_db() as conn:
+        inst = dict(
+            conn.execute("SELECT * FROM instances WHERE id=?", (iid,)).fetchone()
+        )
+    assert inst["iter_count"] == 5
+    assert inst["input_tokens"] == 100
+    assert inst["output_tokens"] == 200
+
+
+def test_gc_dead_instances_marks_dead_local_pid_as_crashed(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A local instance whose pid is dead should be marked 'crashed'."""
+    from scitex_agent_container._state import state_db
+    from scitex_agent_container._state.state_db import (
+        gc_dead_instances,
+        list_active_instances,
+        record_instance_start,
+    )
+
+    # Force a single canonical host for this test so the row's host
+    # matches the gc's host filter.
+    monkeypatch.setenv("SAC_HOST", "test-host")
+    # Avoid the boot-epoch sweep for this test (needs a stable started_at
+    # below boot — easier to suppress the proc check entirely).
+    monkeypatch.setattr(state_db, "_proc_btime", lambda: None)
+
+    iid = record_instance_start("dead-agent", pid=999_999_999, host="test-host")
+    assert list_active_instances(host="test-host")
+    counters = gc_dead_instances()
+    assert counters["crashed"] >= 1
+    assert list_active_instances(host="test-host") == []
+    # Record persists with the right exit_reason.
+    from scitex_agent_container._state.state_db import open_db
+
+    with open_db() as conn:
+        row = conn.execute(
+            "SELECT exit_reason FROM instances WHERE id=?", (iid,)
+        ).fetchone()
+    assert row["exit_reason"] == "crashed"
+
+
+def test_db_clean_via_cli_emits_counts(db_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from scitex_agent_container._state import state_db
+    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container.cli_pkg.db_group import db_clean
+
+    monkeypatch.setenv("SAC_HOST", "test-host")
+    monkeypatch.setattr(state_db, "_proc_btime", lambda: None)
+    record_instance_start("dead", pid=999_999_999, host="test-host")
+
+    runner = CliRunner()
+    result = runner.invoke(db_clean, ["--json"])
+    assert result.exit_code == 0, result.output
+    body = json.loads(result.output)
+    assert body["crashed"] >= 1
+
+
+def test_db_tick_silent_zero_exit(db_path: Path):
+    from scitex_agent_container.cli_pkg.db_group import db_tick
+
+    runner = CliRunner()
+    result = runner.invoke(db_tick, [])
+    assert result.exit_code == 0
+    # Tick is silent on success — no human-facing line.
+    assert result.output == ""

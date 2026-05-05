@@ -21,6 +21,7 @@ import click
 
 from .._state.state_db import (
     KNOWN_TABLES,
+    gc_dead_instances,
     import_legacy_registry,
     open_db,
     table_counts,
@@ -157,3 +158,56 @@ def db_migrate(
         f"Migrated from [cyan]{registry_dir}[/cyan]: "
         f"imported={result['imported']} skipped={result['skipped']}"
     )
+
+
+@db_group.command("clean")
+@click.option(
+    "--heartbeat-stale-seconds",
+    type=int,
+    default=300,
+    help="Mark instance gc-stale when last_heartbeat_at is older than this.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+@click.pass_context
+def db_clean(ctx: click.Context, heartbeat_stale_seconds: int, as_json: bool) -> None:
+    """Sweep dead instances. Replaces ``sac registry clean``.
+
+    Three checks (see _state.state_db.gc_dead_instances):
+      1. Boot-epoch — rows started before /proc/stat btime
+         are marked ``reboot-swept``.
+      2. PID liveness — local rows whose pid no longer exists
+         are marked ``crashed``.
+      3. Heartbeat staleness — rows whose last_heartbeat_at is
+         older than ``--heartbeat-stale-seconds`` are marked
+         ``gc-stale``.
+    """
+    counters = gc_dead_instances(heartbeat_stale_seconds=heartbeat_stale_seconds)
+    if _json_flag(ctx, as_json):
+        click.echo(json.dumps(counters, indent=2))
+        return
+    total = sum(counters.values())
+    console.print(f"[bold]sac db clean[/bold]  swept={total}")
+    for kind, n in counters.items():
+        if n:
+            console.print(f"  {kind:<14}  {n}")
+
+
+@db_group.command("tick")
+@click.option(
+    "--heartbeat-stale-seconds",
+    type=int,
+    default=300,
+)
+@click.pass_context
+def db_tick(ctx: click.Context, heartbeat_stale_seconds: int) -> None:
+    """One-shot housekeeping pass. Designed for cron / systemd timers.
+
+    Silent on success (just exits 0); writes only to state.db. Same
+    semantics as ``sac db clean`` but produces no human output, and
+    the exit code is the only signal:
+
+      * 0 — pass completed (zero or more rows swept).
+      * non-zero — sweep raised; the operator should investigate.
+    """
+    del ctx
+    gc_dead_instances(heartbeat_stale_seconds=heartbeat_stale_seconds)

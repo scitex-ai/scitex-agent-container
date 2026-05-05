@@ -30,6 +30,7 @@ hot paths over and retire the directory.
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import uuid
@@ -205,6 +206,294 @@ def table_counts(db_path: Path | None = None) -> dict[str, int]:
             row = conn.execute(f"SELECT count(*) AS n FROM {table}").fetchone()
             counts[table] = int(row["n"])
     return counts
+
+
+def _resolve_host(host: str | None) -> str:
+    """Canonical hostname for state.db writes.
+
+    Resolution chain (matches F-CS12 spec):
+        1. ``host`` arg (explicit override)
+        2. ``$SAC_HOST`` env var
+        3. ``hostname -s`` (short form)
+
+    Full alias resolution against ``sac.yaml`` lands in F-CS12; this
+    helper just gives the registry a stable string to scope against.
+    """
+    if host:
+        return host
+    import socket
+
+    return os.environ.get("SAC_HOST") or socket.gethostname().split(".")[0]
+
+
+def record_instance_start(
+    name: str,
+    *,
+    pid: int | None = None,
+    ppid: int | None = None,
+    screen: str | None = None,
+    workdir: str | None = None,
+    a2a_port: int | None = None,
+    scope: str = "global",
+    host: str | None = None,
+    definition_id: str | None = None,
+    db_path: Path | None = None,
+) -> str:
+    """Insert an ``instances`` row for a freshly-started agent.
+
+    Returns the new ``instance_id`` (uuid7). Caller is expected to
+    persist this id alongside the runner's PID file so subsequent
+    heartbeat / stop calls can target the right row.
+
+    Also appends a ``kind='start'`` row to ``events`` so the audit
+    log captures the lifecycle transition.
+    """
+    instance_id = new_uuid7()
+    started_at = now_iso()
+    canonical_host = _resolve_host(host)
+    with open_db(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO instances (
+                id, definition_id, name, host, scope,
+                pid, ppid, screen, workdir, a2a_port, started_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                instance_id,
+                definition_id,
+                name,
+                canonical_host,
+                scope,
+                pid,
+                ppid,
+                screen,
+                workdir,
+                a2a_port,
+                started_at,
+            ),
+        )
+        conn.execute(
+            "INSERT INTO events (ts, instance_id, kind, actor) VALUES (?, ?, 'start', 'sac')",
+            (started_at, instance_id),
+        )
+    return instance_id
+
+
+def record_instance_stop(
+    instance_id: str,
+    *,
+    exit_reason: str = "stopped",
+    db_path: Path | None = None,
+) -> bool:
+    """Mark an instance as ended. Returns True iff a row was updated.
+
+    Idempotent: stopping an already-stopped row is a no-op (the
+    update touches only rows where ``ended_at IS NULL``).
+    """
+    ended_at = now_iso()
+    with open_db(db_path) as conn:
+        cur = conn.execute(
+            "UPDATE instances SET ended_at=?, exit_reason=? "
+            "WHERE id=? AND ended_at IS NULL",
+            (ended_at, exit_reason, instance_id),
+        )
+        if cur.rowcount == 0:
+            return False
+        conn.execute(
+            "INSERT INTO events (ts, instance_id, kind, actor, payload_json) "
+            "VALUES (?, ?, 'stop', 'sac', ?)",
+            (ended_at, instance_id, json.dumps({"exit_reason": exit_reason})),
+        )
+    return True
+
+
+def update_heartbeat(
+    instance_id: str,
+    *,
+    iter: int | None = None,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    pane_state: str | None = None,
+    db_path: Path | None = None,
+) -> None:
+    """Append a heartbeat row + bump the rolling fields on the instance.
+
+    The duplicated state on ``instances`` (``last_heartbeat_at``,
+    ``iter_count``, ``input_tokens``, ``output_tokens``) lets ``sac
+    agent status`` answer 'is this agent still doing work?' without
+    a JOIN — the heartbeats table is the authoritative time series,
+    the columns on ``instances`` are a cache for the hot read.
+    """
+    ts = now_iso()
+    with open_db(db_path) as conn:
+        # Tolerate same-second collisions (the (instance_id, ts) PK
+        # rejects rapid duplicates at 1-second resolution; merge the
+        # latest-known fields onto the existing row instead of failing).
+        conn.execute(
+            """
+            INSERT INTO heartbeats (
+                instance_id, ts, iter, input_tokens, output_tokens, pane_state
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(instance_id, ts) DO UPDATE SET
+                iter          = COALESCE(excluded.iter, heartbeats.iter),
+                input_tokens  = COALESCE(excluded.input_tokens, heartbeats.input_tokens),
+                output_tokens = COALESCE(excluded.output_tokens, heartbeats.output_tokens),
+                pane_state    = COALESCE(excluded.pane_state, heartbeats.pane_state)
+            """,
+            (instance_id, ts, iter, input_tokens, output_tokens, pane_state),
+        )
+        # Bump rolling cache. COALESCE keeps the previous value when
+        # the caller didn't pass that field this turn.
+        conn.execute(
+            """
+            UPDATE instances
+               SET last_heartbeat_at = ?,
+                   iter_count    = COALESCE(?, iter_count),
+                   input_tokens  = COALESCE(?, input_tokens),
+                   output_tokens = COALESCE(?, output_tokens)
+             WHERE id = ?
+            """,
+            (ts, iter, input_tokens, output_tokens, instance_id),
+        )
+
+
+def list_active_instances(
+    host: str | None = None,
+    db_path: Path | None = None,
+) -> list[dict]:
+    """Return every ``ended_at IS NULL`` row, optionally host-filtered."""
+    with open_db(db_path) as conn:
+        if host is None:
+            cur = conn.execute(
+                "SELECT * FROM instances WHERE ended_at IS NULL "
+                "ORDER BY started_at DESC"
+            )
+        else:
+            cur = conn.execute(
+                "SELECT * FROM instances WHERE ended_at IS NULL AND host=? "
+                "ORDER BY started_at DESC",
+                (host,),
+            )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def _proc_btime() -> str | None:
+    """Return Linux boot time as ISO-8601 UTC, or None on non-Linux.
+
+    Used by ``gc_dead_instances`` to mark every instance whose
+    ``started_at`` predates the current boot as ``reboot-swept``.
+    No /proc/stat → no boot detection (we silently skip the sweep).
+    """
+    # stx-allow: fallback (reason: /proc/stat is Linux-specific; macOS
+    # has no equivalent and the reboot-sweep degrades gracefully)
+    try:
+        with open("/proc/stat") as f:
+            for line in f:
+                if line.startswith("btime "):
+                    btime = int(line.split()[1])
+                    return datetime.fromtimestamp(btime, timezone.utc).strftime(
+                        "%Y-%m-%dT%H:%M:%SZ"
+                    )
+    except OSError:  # stx-allow: fallback (reason: see inline comment)
+        pass
+    return None
+
+
+def gc_dead_instances(
+    *,
+    db_path: Path | None = None,
+    heartbeat_stale_seconds: int = 300,
+) -> dict[str, int]:
+    """Sweep instances whose runner is gone. Returns counters.
+
+    Three heuristics, applied in order:
+
+    1. **Boot-epoch check** — every active row whose ``started_at``
+       precedes the current ``/proc/stat btime`` is marked
+       ``exit_reason='reboot-swept'``.
+    2. **PID liveness** — for the host's own active rows, ``kill -0
+       pid`` failures mark the row ``exit_reason='crashed'``.
+    3. **Heartbeat staleness** — if ``last_heartbeat_at`` exists and
+       is older than ``heartbeat_stale_seconds``, mark
+       ``exit_reason='gc-stale'``.
+
+    Cross-host instances are NOT swept (we have no liveness signal
+    for them; F-CS12 will add ssh-based probing).
+    """
+    import socket
+
+    counters = {"reboot_swept": 0, "crashed": 0, "gc_stale": 0}
+    boot = _proc_btime()
+    canonical_host = _resolve_host(None)
+    now_ts = now_iso()
+    stale_cutoff = datetime.now(timezone.utc).timestamp() - heartbeat_stale_seconds
+
+    with open_db(db_path) as conn:
+        # 1. boot-epoch — applies to all hosts; if a row's started_at
+        # precedes the current boot, the runner can't possibly be alive.
+        if boot is not None:
+            cur = conn.execute(
+                "UPDATE instances SET ended_at=?, exit_reason='reboot-swept' "
+                "WHERE ended_at IS NULL AND host=? AND started_at < ?",
+                (boot, canonical_host, boot),
+            )
+            counters["reboot_swept"] = cur.rowcount
+
+        # 2. pid liveness — local rows only; remote requires ssh (F-CS12).
+        rows = conn.execute(
+            "SELECT id, pid FROM instances WHERE ended_at IS NULL AND host=?",
+            (canonical_host,),
+        ).fetchall()
+        for row in rows:
+            pid = row["pid"]
+            if pid is None or pid <= 0:
+                continue
+            # stx-allow: fallback (reason: kill -0 errors when pid is dead OR
+            # not ours; both cases mean 'not alive from our POV')
+            try:
+                os.kill(pid, 0)
+            except (
+                OSError,
+                ProcessLookupError,
+            ):  # stx-allow: fallback (reason: see inline comment)
+                conn.execute(
+                    "UPDATE instances SET ended_at=?, exit_reason='crashed' WHERE id=?",
+                    (now_ts, row["id"]),
+                )
+                counters["crashed"] += 1
+
+        # 3. heartbeat staleness — anything with a heartbeat_at older
+        # than the cutoff is presumed wedged.
+        cur = conn.execute(
+            "SELECT id, last_heartbeat_at FROM instances "
+            "WHERE ended_at IS NULL AND last_heartbeat_at IS NOT NULL"
+        ).fetchall()
+        for row in cur:
+            try:
+                hb = (
+                    datetime.strptime(row["last_heartbeat_at"], "%Y-%m-%dT%H:%M:%SZ")
+                    .replace(tzinfo=timezone.utc)
+                    .timestamp()
+                )
+            except (
+                ValueError,
+                TypeError,
+            ):  # stx-allow: fallback (reason: malformed timestamp tolerated)
+                continue
+            if hb < stale_cutoff:
+                conn.execute(
+                    "UPDATE instances SET ended_at=?, exit_reason='gc-stale' "
+                    "WHERE id=?",
+                    (now_ts, row["id"]),
+                )
+                counters["gc_stale"] += 1
+
+    # Suppress shadowing the canonical hostname helper.
+    _ = socket
+    return counters
 
 
 def import_legacy_registry(
