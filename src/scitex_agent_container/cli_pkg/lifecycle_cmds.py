@@ -227,6 +227,34 @@ def _discover_all_agents() -> list[str]:
         "error."
     ),
 )
+@click.option(
+    "--params-file",
+    "params_file",
+    type=click.Path(dir_okay=False, exists=True, path_type=Path),
+    default=None,
+    help=(
+        "CSV with one row per agent instance. Header names ${VAR} "
+        "placeholders to substitute in the template yaml; the 'name' "
+        "column is required and supplies the per-instance dirname. "
+        "Single-target only — TARGETS must be exactly one yaml. "
+        "Materialised yamls land under ./params-fleet-out/<name>/<name>.yaml "
+        "(override with --params-out)."
+    ),
+)
+@click.option(
+    "--params-out",
+    "params_out",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Output dir for materialised yamls (default: ./params-fleet-out).",
+)
+@click.option(
+    "--params-overwrite",
+    "params_overwrite",
+    is_flag=True,
+    default=False,
+    help="Replace existing materialised yamls under --params-out.",
+)
 def start(
     targets: tuple[str, ...],
     no_preflight: bool,
@@ -237,6 +265,9 @@ def start(
     as_json: bool,
     yes: bool,
     foreground: bool,
+    params_file: Path | None,
+    params_out: Path | None,
+    params_overwrite: bool,
 ) -> None:
     """Start one or more agents from YAML definitions.
 
@@ -255,6 +286,47 @@ def start(
 
     def _emit_json(payload: dict) -> None:
         click.echo(_json.dumps(payload, ensure_ascii=False))
+
+    # F-CS2: --params-file expands a single template + CSV into N
+    # materialised yamls. The materialised paths replace ``targets``
+    # for the rest of the function so every downstream code path
+    # (preflight, singleton check, runtime dispatch, JSON report)
+    # treats them identically to ordinary multi-target invocations.
+    if params_file is not None:
+        if len(targets) != 1:
+            click.echo(
+                "Error: --params-file requires exactly one TARGET (the "
+                "template yaml). Got "
+                f"{len(targets)} targets.",
+                err=True,
+            )
+            sys.exit(2)
+        template_path = Path(targets[0]).expanduser()
+        if not template_path.is_file():
+            click.echo(
+                f"Error: --params-file template not found: {template_path}",
+                err=True,
+            )
+            sys.exit(2)
+        out_dir = (params_out or Path("params-fleet-out")).expanduser()
+        from .._state.fleet_template import expand_params_file
+
+        try:
+            materialised = expand_params_file(
+                template_path,
+                params_file,
+                out_dir,
+                overwrite=params_overwrite,
+            )
+        except (ValueError, FileExistsError) as exc:
+            click.echo(f"Error: {exc}", err=True)
+            sys.exit(2)
+        targets = tuple(str(p) for p in materialised)
+        if not as_json:
+            console.print(
+                f"[bold]--params-file[/bold]  expanded "
+                f"{len(materialised)} agent(s) under [cyan]{out_dir}[/cyan]"
+            )
 
     # Classify targets: directory targets expand to all <name>/<name>.yaml
     # under them; non-directory targets are paths or agent names.
