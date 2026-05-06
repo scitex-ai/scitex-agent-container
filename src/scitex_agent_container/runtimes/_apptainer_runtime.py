@@ -193,6 +193,15 @@ class ApptainerContainerRuntime(RuntimeBase):
             sif_path = Path(image).expanduser().resolve()
             return sif_path if sif_path.is_file() else None
 
+        # Sandbox image: a directory tree built via `apptainer build
+        # --sandbox`. Used on hosts where /dev/fuse isn't exposed to
+        # user namespaces (Spartan compute nodes etc.) — the rootfs
+        # is a regular directory tree, no squashfuse needed at exec.
+        # Detection: presence of the `.singularity.d/` marker dir.
+        candidate = Path(image).expanduser()
+        if candidate.is_dir() and (candidate / ".singularity.d").is_dir():
+            return candidate.resolve()
+
         if image.startswith("docker://") or image.startswith("oras://"):
             sif_path = cache_dir / f"{_safe_image_tag(image)}.sif"
             if sif_path.is_file():
