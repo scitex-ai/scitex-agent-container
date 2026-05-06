@@ -215,6 +215,7 @@ _KNOWN_SPEC_KEYS = frozenset(
         "a2a",  # A2A sidecar config read by a2a/_server.py
         "orochi",  # Orochi-specific extension namespace
         "autonomous",  # F-CS3 — drive-until-done block
+        "apptainer",  # F-CS18 — apptainer-specific build extension
     }
 )
 

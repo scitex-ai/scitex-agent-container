@@ -41,13 +41,19 @@ def test_container_runtime_for_returns_instance(tmp_path, engine):
     assert rt.engine == engine
 
 
-@pytest.mark.parametrize(
-    "runtime", ["", "apptainer", "claude-session", "claude-code", "slurm"]
-)
-def test_container_runtime_for_returns_none_for_non_docker_podman(tmp_path, runtime):
-    """apptainer's runtime class arrives later; legacy runtimes are
-    rejected by the validator anyway, so the helper returns None for
-    everything except docker / podman in this commit."""
+def test_container_runtime_for_returns_apptainer_instance(tmp_path):
+    """F-CS18 — `runtime: apptainer` returns ApptainerContainerRuntime."""
+    cfg = AgentConfig(name="x", runtime="apptainer", workdir=str(tmp_path))
+    rt = _container_runtime_for(cfg)
+    assert rt is not None
+    assert rt.engine == "apptainer"
+    assert type(rt).__name__ == "ApptainerContainerRuntime"
+
+
+@pytest.mark.parametrize("runtime", ["", "claude-session", "claude-code", "slurm"])
+def test_container_runtime_for_returns_none_for_unknown(tmp_path, runtime):
+    """Legacy runtimes are rejected by the validator anyway; the helper
+    returns None for runtimes it doesn't know how to dispatch."""
     cfg = AgentConfig(name="x", runtime=runtime, workdir=str(tmp_path))
     assert _container_runtime_for(cfg) is None
 

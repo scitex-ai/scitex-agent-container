@@ -89,25 +89,27 @@ def _warn_if_heavy_workdir_claude(config: AgentConfig) -> None:
     )
 
 
-# F-CS16 phase 2c — yaml ``runtime`` -> ContainerRuntime engine.
-# Apptainer's runtime class lands in a follow-up; for now its
-# helper returns None and the caller surfaces a clear error.
+# F-CS16 phase 2c / F-CS18 — yaml ``runtime`` -> container-style runtime.
 _CONTAINER_ENGINES: tuple[str, ...] = ("docker", "podman", "apptainer")
 
 
 def _container_runtime_for(config: AgentConfig):
-    """Return a ContainerRuntime instance for ``config.runtime``, or None.
+    """Return a container-style runtime for ``config.runtime``, or None.
 
-    docker / podman -> ContainerRuntime
-    apptainer       -> None for now (apptainer ContainerRuntime
-                       subclass arrives in a follow-up commit).
+    docker / podman -> :class:`ContainerRuntime` (docker-shaped argv).
+    apptainer       -> :class:`ApptainerContainerRuntime` (HPC-friendly
+                       ``apptainer exec`` argv, no docker daemon).
     """
     runtime = getattr(config, "runtime", "")
-    if runtime not in ("docker", "podman"):
-        return None
-    from .container import ContainerRuntime
+    if runtime in ("docker", "podman"):
+        from .container import ContainerRuntime
 
-    return ContainerRuntime(engine=runtime)
+        return ContainerRuntime(engine=runtime)
+    if runtime == "apptainer":
+        from ._apptainer_runtime import ApptainerContainerRuntime
+
+        return ApptainerContainerRuntime()
+    return None
 
 
 class ClaudeSessionRuntime(RuntimeBase):

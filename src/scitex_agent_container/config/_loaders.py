@@ -8,6 +8,7 @@ from ._host import resolve_hostname, substitute_hostnames
 from ._parsers import (
     MODEL_DISPLAY_NAMES,
     interpolate_mcp_servers,
+    parse_apptainer,
     parse_autonomous,
     parse_claude,
     parse_container,
@@ -290,6 +291,7 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         watchdog=parse_watchdog(spec),
         restart=parse_restart(spec),
         autonomous=parse_autonomous(spec),
+        apptainer=parse_apptainer(spec),
         hooks=hooks,
         telegram=parse_telegram(spec),
         remote=parse_remote(spec),
@@ -392,6 +394,7 @@ def load_v2(raw: dict, path: Path) -> AgentConfig:
         watchdog=parse_watchdog(spec),
         restart=parse_restart(spec),
         autonomous=parse_autonomous(spec),
+        apptainer=parse_apptainer(spec),
         hooks=hooks,
         telegram=parse_telegram(spec),
         remote=parse_remote(spec),

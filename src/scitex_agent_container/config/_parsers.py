@@ -192,6 +192,33 @@ def parse_restart(spec: dict) -> RestartSpec:
     )
 
 
+def parse_apptainer(spec: dict):
+    """Parse spec.apptainer (F-CS18).
+
+    Three optional fields wire the apptainer-specific build extension:
+
+      * ``post`` — shell snippet for apptainer's ``%post`` block.
+      * ``environment`` — KEY=VAL dict for ``%environment``.
+      * ``def_file`` — path to a hand-authored ``.def`` (overrides the
+        synthesised one).
+
+    Empty / missing block → default ApptainerSpec (no extension).
+    """
+    from ._types import ApptainerSpec
+
+    raw = spec.get("apptainer", {}) or {}
+    if not isinstance(raw, dict):
+        return ApptainerSpec()
+    env_raw = raw.get("environment", {}) or {}
+    if not isinstance(env_raw, dict):
+        env_raw = {}
+    return ApptainerSpec(
+        post=str(raw.get("post", "") or ""),
+        environment={str(k): str(v) for k, v in env_raw.items()},
+        def_file=str(raw.get("def_file", "") or ""),
+    )
+
+
 def parse_autonomous(spec: dict):
     """Parse spec.autonomous (F-CS3 phase 1).
 

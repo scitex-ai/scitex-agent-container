@@ -77,6 +77,38 @@ class WatchdogSpec:
 # (consume these fields in _runners.claude_session) lands in phase 2.
 # An ``enabled`` row authored under the schema before phase 2 ships
 # is harmless — the runner just ignores it for now.
+# F-CS18 — apptainer-specific extension hook.
+#
+# Apptainer reads OCI images natively (`apptainer build sif docker://...`),
+# so for the no-extras case spec.image alone is enough — sac just
+# `apptainer build`s the SIF and runs it. For HPC-specific layering
+# (extra pip packages, system libs, env vars), the operator can either:
+#
+#   * declare `spec.apptainer.post` — sac synthesises a `.def` with
+#     `Bootstrap: docker` + `%post` + `%environment` and builds from it.
+#   * declare `spec.apptainer.def_file` — sac runs `apptainer build`
+#     against the operator's hand-written `.def` (full control).
+#
+# All fields are optional; an `apptainer:` block with no fields set is
+# equivalent to none at all.
+@dataclass
+class ApptainerSpec:
+    """Apptainer-specific image-build extensions (F-CS18)."""
+
+    post: str = ""
+    """Shell snippet run inside the SIF build (apptainer's `%post`).
+    Lines are concatenated verbatim. Empty = no extension."""
+
+    environment: dict = field(default_factory=dict)
+    """Env vars baked into the SIF (apptainer's `%environment`). Same
+    shape as ``spec.env`` — KEY: VALUE pairs."""
+
+    def_file: str = ""
+    """Path to a hand-authored ``.def`` file (apptainer's native
+    build language). Mutually exclusive with `post`/`environment`:
+    when set, sac uses this file verbatim and ignores `post`."""
+
+
 @dataclass
 class AutonomousSpec:
     enabled: bool = False
@@ -334,6 +366,7 @@ class AgentConfig:
     watchdog: WatchdogSpec = field(default_factory=WatchdogSpec)
     restart: RestartSpec = field(default_factory=RestartSpec)
     autonomous: AutonomousSpec = field(default_factory=AutonomousSpec)
+    apptainer: ApptainerSpec = field(default_factory=ApptainerSpec)
     hooks: dict[str, list[str]] = field(default_factory=dict)
     listen: list[ListenPort] = field(default_factory=list)
     extensions: Dict[str, Any] = field(default_factory=dict)
