@@ -7,9 +7,22 @@ console script (see pyproject.toml).
 
 from __future__ import annotations
 
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version_lookup
+
 import click
 
 from ._helpers import HelpRecursiveGroup, renamed_redirect
+
+
+def _pkg_version() -> str:
+    """Return the installed package version, or 'dev' off-tree."""
+    try:
+        return _pkg_version_lookup("scitex-agent-container")
+    except PackageNotFoundError:
+        return "dev"
+
+
 from .a2a_cmds import a2a as a2a_group
 from .account_cmds import account, quota_watch
 from .agent_group import agent_group
@@ -67,6 +80,20 @@ class _CategorizedHelpGroup(HelpRecursiveGroup):
     cls=_CategorizedHelpGroup,
     invoke_without_command=True,
     context_settings={"help_option_names": ["-h", "--help"]},
+    help=(
+        f"sac (v{_pkg_version()}) — SciTeX Agent Container: declarative "
+        f"agent management.\n\n"
+        "\b\n"
+        "Config resolution order:\n"
+        "  1. positional CONFIG path / agent name argument (where applicable)\n"
+        "  2. ``$SCITEX_AGENT_CONTAINER_CONFIG``\n"
+        "  3. ``~/.scitex/agent-container/agents/<name>/<name>.yaml``\n\n"
+        "\b\n"
+        "Example:\n"
+        "  $ sac --version\n"
+        "  $ sac agent list\n"
+        "  $ sac agent start ~/.scitex/agent-container/agents/foo/foo.yaml\n"
+    ),
 )
 @click.version_option(
     None,
