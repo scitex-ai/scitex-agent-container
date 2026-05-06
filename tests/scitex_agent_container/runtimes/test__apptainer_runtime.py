@@ -111,6 +111,23 @@ def test_argv_forwards_sac_anthropic_api_key(
     assert "SAC_ANTHROPIC_API_KEY=sk-ant-api-test" in argv
 
 
+def test_argv_emits_nv_when_apptainer_nv_set(tmp_path: Path) -> None:
+    """``spec.apptainer.nv: true`` adds ``--nv`` to bind host CUDA."""
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path, apptainer=ApptainerSpec(nv=True))
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    assert "--nv" in argv
+    # Sanity: rocm not added unless asked.
+    assert "--rocm" not in argv
+
+
+def test_argv_omits_nv_by_default(tmp_path: Path) -> None:
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path)
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    assert "--nv" not in argv
+
+
 def test_argv_forwards_autonomous_block(tmp_path: Path) -> None:
     from scitex_agent_container.config._types import AutonomousSpec
 

@@ -99,6 +99,18 @@ class ApptainerContainerRuntime(RuntimeBase):
             "/work",
         ]
 
+        # GPU passthrough — apptainer's --nv binds the host CUDA libs
+        # and devices into the container. --rocm does the same for AMD.
+        # Opt-in only: most agent workloads don't need the GPU and
+        # binding it adds startup overhead + a hard dependency on the
+        # host driver matching the container's CUDA toolkit.
+        ap = getattr(config, "apptainer", None)
+        if ap is not None:
+            if getattr(ap, "nv", False):
+                argv.append("--nv")
+            if getattr(ap, "rocm", False):
+                argv.append("--rocm")
+
         # Forward Anthropic auth (mirrors container.py).
         for auth_env in ("ANTHROPIC_API_KEY", "SAC_ANTHROPIC_API_KEY"):
             val = os.environ.get(auth_env)

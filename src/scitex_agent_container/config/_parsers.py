@@ -216,6 +216,8 @@ def parse_apptainer(spec: dict):
         post=str(raw.get("post", "") or ""),
         environment={str(k): str(v) for k, v in env_raw.items()},
         def_file=str(raw.get("def_file", "") or ""),
+        nv=bool(raw.get("nv", False)),
+        rocm=bool(raw.get("rocm", False)),
     )
 
 

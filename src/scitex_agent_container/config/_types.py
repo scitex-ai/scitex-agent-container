@@ -108,6 +108,15 @@ class ApptainerSpec:
     build language). Mutually exclusive with `post`/`environment`:
     when set, sac uses this file verbatim and ignores `post`."""
 
+    nv: bool = False
+    """Forward host NVIDIA driver/libs into the container (apptainer's
+    ``--nv``). Required for CUDA workloads on GPU nodes; harmless on
+    CPU-only hosts but only set when needed."""
+
+    rocm: bool = False
+    """Forward host AMD ROCm libs (apptainer's ``--rocm``). Mutually
+    exclusive with ``nv`` in practice (no host has both)."""
+
 
 @dataclass
 class AutonomousSpec:
