@@ -65,12 +65,15 @@ def test_argv_emits_bind_mounts_in_apptainer_syntax(tmp_path: Path) -> None:
     assert any(b.endswith(":/state") and str(state_dir) in b for b in binds)
 
 
-def test_argv_sets_home_tmp(tmp_path: Path) -> None:
-    """HOME=/tmp avoids the no-passwd-entry trap (mirrors docker path)."""
+def test_argv_does_not_override_home(tmp_path: Path) -> None:
+    """Apptainer protects HOME from --env override (security policy);
+    unlike the docker path it doesn't need a HOME=/tmp pin because
+    apptainer inherits the host's /etc/passwd entry by default."""
     rt = ApptainerContainerRuntime()
     cfg = _config(tmp_path)
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
-    assert "HOME=/tmp" in argv
+    assert "HOME=/tmp" not in argv
+    assert not any(a.startswith("HOME=") for a in argv)
 
 
 def test_argv_does_not_emit_user_flag(tmp_path: Path) -> None:

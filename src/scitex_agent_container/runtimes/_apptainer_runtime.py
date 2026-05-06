@@ -87,11 +87,12 @@ class ApptainerContainerRuntime(RuntimeBase):
             f"{Path(config.workdir).expanduser()}:/work",
             "--bind",
             f"{state_dir.expanduser()}:/state",
-            # HOME=/tmp — same reason as the docker path: the SDK runner
-            # writes a config dir on first start, and an unwritable HOME
-            # hangs it on the SDK initialize control request.
-            "--env",
-            "HOME=/tmp",
+            # Note — no `--env HOME=...`. Apptainer protects HOME from
+            # being overridden via --env ("Overriding HOME environment
+            # variable with APPTAINERENV_HOME is not permitted") and
+            # doesn't have the docker no-passwd-entry trap — it
+            # inherits the host's /etc/passwd entry, so HOME points at
+            # a real writable home automatically.
             "--env",
             "SCITEX_AGENT_CONTAINER_STATE_DB=/state/state.db",
             "--pwd",
