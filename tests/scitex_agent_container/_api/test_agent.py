@@ -1,8 +1,11 @@
 """Tests for ``scitex_agent_container._api`` noun submodules.
 
-Confirms the nested form (``sac.agent.list``) and the flat form
-(``sac.agent_list``) reference the same function objects — there's
-no aliasing layer that could drift.
+After the cleanup that dropped flat ``sac.agent_list`` re-exports
+in favour of nested ``sac.agent.list``, these tests guarantee:
+
+  1. Every CLI-tree verb is reachable via the noun submodule.
+  2. The package root only carries noun submodules + a handful of
+     legacy non-grouped names (config, Registry, …).
 """
 
 from __future__ import annotations
@@ -15,47 +18,49 @@ import scitex_agent_container as sac  # noqa: E402
 
 
 @pytest.mark.parametrize(
-    "submodule, verb, flat_name",
+    "submodule, verb",
     [
-        ("agent", "list", "agent_list"),
-        ("agent", "status", "agent_status"),
-        ("agent", "logs", "agent_logs"),
-        ("agent", "start", "agent_start"),
-        ("agent", "stop", "agent_stop"),
-        ("agent", "restart", "agent_restart"),
-        ("agent", "attach", "agent_attach"),
-        ("agent", "check", "agent_check"),
-        ("agent", "validate", "agent_validate"),
-        ("db", "show", "db_show"),
-        ("db", "query", "db_query"),
-        ("db", "clean", "db_clean"),
-        ("db", "tick", "db_tick"),
-        ("db", "migrate", "db_migrate"),
-        ("db", "export", "db_export"),
-        ("db", "import_", "db_import"),
-        ("host", "show", "host_show"),
-        ("host", "list", "host_list"),
-        ("host", "validate", "host_validate"),
-        ("host", "probe", "host_probe"),
-        ("host", "exec", "host_exec"),
-        ("image", "build", "image_build"),
-        ("template", "render_contributor_spec", "template_render_contributor_spec"),
-        ("account", "show", "account_show"),
-        ("skills", "list", "skills_list"),
-        ("skills", "get", "skills_get"),
-        ("mcp", "list_tools", "mcp_list_tools"),
-        ("mcp", "doctor", "mcp_doctor"),
+        ("agent", "list"),
+        ("agent", "status"),
+        ("agent", "logs"),
+        ("agent", "start"),
+        ("agent", "stop"),
+        ("agent", "restart"),
+        ("agent", "attach"),
+        ("agent", "check"),
+        ("agent", "validate"),
+        ("agent", "inspect"),
+        ("agent", "find"),
+        ("agent", "recall"),
+        ("agent", "check_priority"),
+        ("agent", "take_snapshot"),
+        ("agent", "health"),
+        ("db", "show"),
+        ("db", "query"),
+        ("db", "clean"),
+        ("db", "tick"),
+        ("db", "migrate"),
+        ("db", "export"),
+        ("db", "import_"),
+        ("host", "show"),
+        ("host", "list"),
+        ("host", "validate"),
+        ("host", "probe"),
+        ("host", "exec"),
+        ("image", "build"),
+        ("template", "render_contributor_spec"),
+        ("account", "show"),
+        ("account", "watch_quota"),
+        ("skills", "list"),
+        ("skills", "get"),
+        ("mcp", "list_tools"),
+        ("mcp", "doctor"),
     ],
 )
-def test_nested_form_is_same_object_as_flat(
-    submodule: str, verb: str, flat_name: str
-) -> None:
-    nested_fn = getattr(getattr(sac, submodule), verb)
-    flat_fn = getattr(sac, flat_name)
-    assert nested_fn is flat_fn, (
-        f"sac.{submodule}.{verb} should be the same function object "
-        f"as sac.{flat_name}, but they differ"
-    )
+def test_nested_verb_is_callable(submodule: str, verb: str) -> None:
+    """Every CLI-tree verb is reachable + callable via the noun submodule."""
+    fn = getattr(getattr(sac, submodule), verb)
+    assert callable(fn), f"sac.{submodule}.{verb} should be callable"
 
 
 def test_every_submodule_listed_in_package_all() -> None:
@@ -74,6 +79,31 @@ def test_every_submodule_listed_in_package_all() -> None:
         assert noun in sac.__all__, f"{noun!r} missing from sac.__all__"
 
 
-def test_account_watch_quota_reverse_aliased():
-    """``sac.account.watch_quota`` mirrors the flat ``quota_watch``."""
-    assert sac.account.watch_quota is sac.quota_watch
+def test_no_flat_verb_duplicates_at_package_root() -> None:
+    """We removed flat names like ``sac.agent_list`` in favour of the
+    nested form. Guard against accidental re-exports creeping back in."""
+    permitted = {
+        "AgentConfig",
+        "Registry",
+        "load_config",
+        "validate_config",
+        "peer",
+        "agent",
+        "db",
+        "host",
+        "image",
+        "template",
+        "account",
+        "skills",
+        "mcp",
+        "__version__",
+    }
+    leaked = [
+        name
+        for name in sac.__all__
+        if name not in permitted and "_" in name and not name.startswith("_")
+    ]
+    assert leaked == [], (
+        f"flat verb_noun duplicates leaked into sac.__all__: {leaked}. "
+        f"Use the nested form (sac.<noun>.<verb>) instead."
+    )
