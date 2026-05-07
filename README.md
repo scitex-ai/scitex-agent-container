@@ -61,6 +61,43 @@ Requires Python >= 3.10.
 pip install scitex-agent-container
 ```
 
+## Architecture
+
+```
+scitex_agent_container/
+├── _api/                ← Python API: spawn / inspect / health-check agents
+├── _cli/                ← `scitex-agent-container ...` Click commands
+│   └── cli_pkg/         ← grouped subcommand modules (account / build / install / lifecycle)
+├── _config/             ← layered config (priority: --flag → yaml → env → default)
+├── _docker/             ← Dockerfile + container build helpers
+├── _slurm/              ← single-agent SLURM dispatch
+├── _ssh/                ← remote-deploy entry-points
+└── _mcp/                ← MCP server bridge for agent introspection
+```
+
+The CLI is the canonical entry point; the Python API is what the
+MCP server exposes. The Docker + SLURM + SSH backends share the
+same `agents.yaml` schema so a workflow that runs locally also
+runs unchanged on a SLURM cluster.
+
+## Demo
+
+```mermaid
+flowchart LR
+    A["scitex-agent-container<br/>start --agent foo"] --> B{backend?}
+    B -- "local" --> C[docker run]
+    B -- "slurm" --> D[sbatch]
+    B -- "ssh" --> E[ssh remote &amp;&amp; nohup]
+    C & D & E --> F[(agent process)]
+    F --> G["MCP server<br/>scitex-agent-container mcp start"]
+    G --> H["agent.list / agent.health<br/>(agent introspection tools)"]
+```
+
+End-to-end: a single `start` command spawns an agent on whichever
+backend the config selects, the MCP server exposes its lifecycle
+tools, and downstream `health` / `list` queries surface the live
+state.
+
 ## Part of SciTeX
 
 `scitex-agent-container` is part of [**SciTeX**](https://scitex.ai). Install via
