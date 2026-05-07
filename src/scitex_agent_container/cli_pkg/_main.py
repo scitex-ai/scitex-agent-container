@@ -247,6 +247,17 @@ main.add_command(
     _hidden_alias(install_post_merge_cron, new_path="sac installation setup-cron")
 )
 
+# Shell completion (audit-cli §1a — required top-level commands so that
+# `<pkg> <TAB>` works in user shells).
+try:
+    from scitex_dev._cli._completion import attach_shell_completion
+
+    attach_shell_completion(main, prog_name="scitex-agent-container")
+except ImportError:
+    # scitex-dev is a [dev]/[cli-audit] extra; runtime CLI still works
+    # without tab completion if it's not installed.
+    pass
+
 
 def cli_entry_point() -> None:
     """Console-script entry. Honours the global ``--on <peer>`` flag.

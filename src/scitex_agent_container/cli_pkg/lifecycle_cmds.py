@@ -375,13 +375,13 @@ def start(
             if not single_targets:
                 return
         else:
-            if not yes and not click.confirm(
-                f"Start {len(yamls)} agents?", default=True
-            ):
-                click.echo("Aborted.")
-                if not single_targets:
-                    return
-            else:
+            if not yes:
+                click.echo(
+                    f"Refusing to start {len(yamls)} agents without --yes/-y.",
+                    err=True,
+                )
+                raise SystemExit(2)
+            if True:
                 try:
                     current_host = resolve_hostname()
                 except RuntimeError:  # stx-allow: fallback (reason: runtime state error — handled gracefully)
@@ -600,12 +600,13 @@ def stop(
             click.echo(f"[dry-run] would stop agent at '{yp}'")
         return
 
-    # Confirm bulk before stopping when directory targets resolved to ≥2 yamls.
+    # Refuse bulk stop without --yes/-y when directory targets resolved to ≥2 yamls.
     if len(bulk_yamls_from_dirs) > 1 and not yes:
-        if not click.confirm(f"Stop {len(bulk_yamls_from_dirs)} agents?", default=True):
-            click.echo("Aborted.")
-            if not single_targets:
-                return
+        click.echo(
+            f"Refusing to stop {len(bulk_yamls_from_dirs)} agents without --yes/-y.",
+            err=True,
+        )
+        raise SystemExit(2)
 
     # Bulk-from-dir-targets path
     any_error = False

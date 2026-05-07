@@ -221,11 +221,12 @@ def build(
     if dry_run:
         click.echo(f"[dry-run] would build {runtime} image '{image}' (target={target})")
         return
-    if not yes and not click.confirm(
-        f"Build {runtime} image '{image}' (target={target})?", default=True
-    ):
-        click.echo("Aborted.")
-        return
+    if not yes:
+        click.echo(
+            f"Refusing to build {runtime} image '{image}' (target={target}) without --yes/-y.",
+            err=True,
+        )
+        raise SystemExit(2)
     containers_dir = Path(__file__).resolve().parent.parent.parent.parent / "containers"
     dockerfile = containers_dir / _TARGET_DOCKERFILES[target]
 

@@ -158,9 +158,9 @@ def account_delete(name: str, dry_run: bool, yes: bool) -> None:
     if dry_run:
         click.echo(f"[dry-run] would delete account '{name}'")
         return
-    if not yes and not click.confirm(f"Delete account '{name}'?", default=False):
-        click.echo("Aborted.")
-        return
+    if not yes:
+        click.echo(f"Refusing to delete account '{name}' without --yes/-y.", err=True)
+        raise SystemExit(2)
     if delete_account(name):
         click.echo(f"Deleted account '{name}'")
     else:

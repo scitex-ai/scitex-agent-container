@@ -290,10 +290,12 @@ def install_post_merge_cron(dry_run: bool, uninstall: bool, yes: bool) -> None:
       $ sac installation setup-cron --uninstall
     """
     if not dry_run and not yes:
-        action = "Remove" if uninstall else "Install"
-        if not click.confirm(f"{action} post-merge-pull cron entry?", default=True):
-            click.echo("Aborted.")
-            return
+        action = "remove" if uninstall else "install"
+        click.echo(
+            f"Refusing to {action} post-merge-pull cron entry without --yes/-y.",
+            err=True,
+        )
+        raise SystemExit(2)
     if dry_run and uninstall:
         click.echo("Error: --dry-run and --uninstall are mutually exclusive.", err=True)
         sys.exit(2)
