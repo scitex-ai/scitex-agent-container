@@ -188,7 +188,7 @@ def agent_start(
     # ZOO#12 — lead-state-handover plumbing. All three calls are
     # best-effort: missing token / 404 / network errors must NOT block
     # agent_start. ``ensure_instance_uuid`` writes
-    # ``SCITEX_AGENT_INSTANCE_UUID`` into ``config.env`` so the runtime's
+    # ``SAC_INSTANCE_UUID`` into ``config.env`` so the runtime's
     # ``_build_env_exports`` (claude_code.py) propagates it; the runtime
     # is supposed to read it back when wiring up the orochi WS connect
     # (FR-E). ``hydrate_from_hub`` is pre-start so the agent's boot-time

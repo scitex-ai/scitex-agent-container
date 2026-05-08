@@ -13,7 +13,7 @@ Plus three lifecycle pieces:
   - ``ensure_instance_uuid(config)`` — generates ``uuid4()`` once per
     agent_start invocation and writes it to ``config.env`` so the
     runtime's ``_build_env_exports`` propagates it as
-    ``SCITEX_AGENT_INSTANCE_UUID`` (FR-E)
+    ``SAC_INSTANCE_UUID`` (FR-E)
   - ``hydrate_from_hub(config)``    — pulls the latest snapshot from the
     hub and writes its payload to ``<workdir>/.scitex/handover/snapshot.json``
     so the agent's boot-time skill can pick it up (FR-A)
@@ -85,16 +85,16 @@ def ensure_instance_uuid(config) -> str:
     """Generate a UUID for this start and write it into ``config.env``.
 
     Idempotent on the AgentConfig instance: if ``config.env`` already
-    has ``SCITEX_AGENT_INSTANCE_UUID`` (e.g. caller set it explicitly),
+    has ``SAC_INSTANCE_UUID`` (e.g. caller set it explicitly),
     leave it alone.
     """
     env = getattr(config, "env", None)
     env = env if isinstance(env, dict) else {}
-    existing = env.get("SCITEX_AGENT_INSTANCE_UUID", "")
+    existing = env.get("SAC_INSTANCE_UUID", "")
     if existing:
         return str(existing)
     new_uuid = str(uuid.uuid4())
-    env["SCITEX_AGENT_INSTANCE_UUID"] = new_uuid
+    env["SAC_INSTANCE_UUID"] = new_uuid
     config.env = env
     return new_uuid
 

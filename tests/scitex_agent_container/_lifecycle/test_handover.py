@@ -2,7 +2,7 @@
 
 Covers:
   - spec-key readers tolerate flat + ``spec:``-wrapped YAML
-  - ``ensure_instance_uuid`` writes ``SCITEX_AGENT_INSTANCE_UUID`` once
+  - ``ensure_instance_uuid`` writes ``SAC_INSTANCE_UUID`` once
   - ``_should_step_aside`` priority+healthy logic
   - ``hydrate_from_hub`` writes the snapshot file atomically
   - ``push_pre_stop_snapshot`` calls hub_client.push_snapshot
@@ -57,16 +57,16 @@ def test_ensure_instance_uuid_writes_env(tmp_path):
     out = _handover.ensure_instance_uuid(cfg)
     # uuid4 string format: 36 chars including 4 hyphens.
     assert len(out) == 36
-    assert cfg.env["SCITEX_AGENT_INSTANCE_UUID"] == out
+    assert cfg.env["SAC_INSTANCE_UUID"] == out
 
 
 def test_ensure_instance_uuid_idempotent(tmp_path):
     cfg = SimpleNamespace(
-        env={"SCITEX_AGENT_INSTANCE_UUID": "preset-id"}, expanded_workdir=str(tmp_path)
+        env={"SAC_INSTANCE_UUID": "preset-id"}, expanded_workdir=str(tmp_path)
     )
     out = _handover.ensure_instance_uuid(cfg)
     assert out == "preset-id"
-    assert cfg.env["SCITEX_AGENT_INSTANCE_UUID"] == "preset-id"
+    assert cfg.env["SAC_INSTANCE_UUID"] == "preset-id"
 
 
 def test_should_step_aside_higher_priority_healthy():
