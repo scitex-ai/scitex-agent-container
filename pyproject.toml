@@ -73,7 +73,7 @@ slurm = [
     "scitex-hpc>=0.6.2",
 ]
 dev = [
-    "scitex-dev",
+    "scitex-dev>=0.11.5",
     # PS210: tests import scitex_hpc unguarded, so [dev] must include it
     # (otherwise `pip install -e .[dev]` can't run the full suite).
     "scitex-hpc>=0.6.2",
