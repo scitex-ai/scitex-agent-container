@@ -73,22 +73,32 @@ class TestProvisionAuth:
         # Override happened: the value the SDK will see is SAC's, not the stale one.
         assert os.environ.get("ANTHROPIC_API_KEY") == "sk-ant-api-sac"
 
-    def test_credentials_file_wins_over_sac_env(self, monkeypatch, tmp_path):
-        """Cred file beats SAC env: Pro/Max OAuth flat-rate is preferred."""
+    def test_credentials_file_wins_over_sac_env_no_env_shadow(
+        self, monkeypatch, tmp_path
+    ):
+        """Cred file wins, AND ANTHROPIC_API_KEY stays unset.
+
+        Anthropic rejects ``sk-ant-oat*`` OAuth tokens passed as a
+        bare ``ANTHROPIC_API_KEY`` env. The SDK's auto-reader prefers
+        the env over the file when both are present — so even though
+        the file is the "correct" auth path, mirroring the SAC value
+        into ANTHROPIC_API_KEY would silently shadow the file and make
+        the SDK use the rejected env path. The provisioner must NOT
+        set ANTHROPIC_API_KEY when the file is the chosen path.
+        """
         import os
 
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-stale")
         cred = tmp_path / ".credentials.json"
         cred.write_text('{"claudeAiOauth": {"accessToken": "tok"}}')
         monkeypatch.setattr(_sdk_common, "_CRED_FILE", cred)
-        monkeypatch.setenv(_SAC_KEY, "sk-ant-api-sac")
+        monkeypatch.setenv(_SAC_KEY, "sk-ant-oat-sac")
 
         assert provision_anthropic_auth() == "credentials_file"
-        # SAC value was still mirrored to ANTHROPIC_API_KEY by the
-        # override step (the SDK may pick either path; the file is
-        # preferred and the env is now a known-good fallback rather
-        # than a stale dotfiles value).
-        assert os.environ.get("ANTHROPIC_API_KEY") == "sk-ant-api-sac"
+        # Critical: ANTHROPIC_API_KEY is NOT set so the SDK reads the
+        # credentials file (which has a real refresh_token) instead of
+        # the bare-bearer env that Anthropic would reject.
+        assert "ANTHROPIC_API_KEY" not in os.environ
 
     def test_sac_env_when_no_credentials_file(self, monkeypatch, tmp_path):
         """SAC value (any form) is mirrored to ANTHROPIC_API_KEY when

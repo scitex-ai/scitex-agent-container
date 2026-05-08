@@ -131,18 +131,29 @@ def provision_anthropic_auth() -> str:
        to ``ANTHROPIC_API_KEY`` in step 1; the SDK reads it as-is).
     3. Neither → :class:`SDKCommonError`.
     """
-    # Step 1 — SAC value is the only trusted env source. Override or pop.
+    # Pre-1: scrub any pre-existing ANTHROPIC_API_KEY. The SDK
+    # auto-reads it; a stale dotfiles export must not survive past
+    # this point regardless of which path we pick below.
+    os.environ.pop("ANTHROPIC_API_KEY", None)
+
+    # Path A: credentials.json wins (Pro/Max OAuth flat-rate, real
+    # refresh_token). The SDK reads the file directly. Critically we
+    # do NOT set ANTHROPIC_API_KEY here even if SAC is also set —
+    # Anthropic rejects ``sk-ant-oat*`` OAuth tokens passed as a bare
+    # env, so an env override would shadow the working file path
+    # and the SDK would fall back to the rejected env value
+    # ("Invalid API key").
+    if _CRED_FILE.is_file():
+        return "credentials_file"
+
+    # Path B: SAC env (api-key form for pay-per-token, or oauth where
+    # the operator deliberately doesn't have a credentials.json on
+    # this host). Mirror SAC value into ANTHROPIC_API_KEY for the SDK.
     sac_value = os.environ.get(_SAC_API_KEY_ENV)
     if sac_value:
         os.environ["ANTHROPIC_API_KEY"] = sac_value
-    else:
-        os.environ.pop("ANTHROPIC_API_KEY", None)
-
-    # Step 2 — pick the auth path. Cred-file is preferred; SAC env is fallback.
-    if _CRED_FILE.is_file():
-        return "credentials_file"
-    if sac_value:
         return "sac_env"
+
     raise SDKCommonError(
         f"no Anthropic auth available — run `claude /login` so "
         f"{_CRED_FILE} exists, or export {_SAC_API_KEY_ENV}. "
