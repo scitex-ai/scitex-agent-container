@@ -130,6 +130,34 @@ jobs:
               cat /home/agent/.claude/.credentials.json | head -c 80 && echo
             '
 
+      - name: Verify SAC_CLAUDE_CODE_CREDENTIALS_JSON byte-integrity
+        # If the bytes that GH delivered to env differ from the local
+        # file the upload tool hashed, the SDK will see a mangled
+        # credentials.json and fail to auth. Compare against the
+        # public SHA256 sidecar variable (uploaded alongside the
+        # secret).
+        env:
+          SIDECAR_SHA: ${{ vars.SAC_CLAUDE_CODE_CREDENTIALS_JSON_SHA256 }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SAC_CLAUDE_CODE_CREDENTIALS_JSON" ]; then
+            echo "no creds env — skipping byte-integrity check"
+            exit 0
+          fi
+          got_sha="$(printf '%s' "$SAC_CLAUDE_CODE_CREDENTIALS_JSON" | sha256sum | awk '{print $1}')"
+          got_sha_n="$(printf '%s\n' "$SAC_CLAUDE_CODE_CREDENTIALS_JSON" | sha256sum | awk '{print $1}')"
+          got_len="$(printf '%s' "$SAC_CLAUDE_CODE_CREDENTIALS_JSON" | wc -c)"
+          echo "expected (sidecar): ${SIDECAR_SHA:-unset}"
+          echo "got (no-trailing-LF): $got_sha (len=$got_len)"
+          echo "got (with-trailing-LF): $got_sha_n"
+          if [ -z "$SIDECAR_SHA" ]; then
+            echo "::warning::sidecar variable not set — cannot verify"
+          elif [ "$got_sha" = "$SIDECAR_SHA" ] || [ "$got_sha_n" = "$SIDECAR_SHA" ]; then
+            echo "byte-integrity: OK"
+          else
+            echo "::error::byte-integrity mismatch — GH transformed the secret in transit"
+          fi
+
       - name: Run sdk-test as daemon and tail docker logs
         run: |
           set -euo pipefail
