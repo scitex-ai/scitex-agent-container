@@ -89,7 +89,7 @@ window between text and ``Enter``. Both ``runtimes/tmux.py`` and
 Env var                           Default Meaning
 ================================= ======= ==================================
 ``SAC_KEY_DELAY_S``      ``0.1`` Delay between individual keys.
-``SCITEX_AGENT_SUBMIT_SETTLE_S``  ``0.3`` Settle after text, before Enter.
+``SAC_SUBMIT_SETTLE_S``  ``0.3`` Settle after text, before Enter.
 ================================= ======= ==================================
 
 A ``send_text_and_submit(session, text)`` helper wraps the two-step

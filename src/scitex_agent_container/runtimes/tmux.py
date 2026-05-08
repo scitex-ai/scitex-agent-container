@@ -17,7 +17,7 @@ from typing import Callable
 # Both values are overridable per-host via env vars so a slow HPC
 # login shell (Spartan) can raise them without a code change.
 _DEFAULT_INTER_KEY_DELAY_S = float(os.environ.get("SAC_KEY_DELAY_S", "0.1"))
-_DEFAULT_SUBMIT_SETTLE_S = float(os.environ.get("SCITEX_AGENT_SUBMIT_SETTLE_S", "0.3"))
+_DEFAULT_SUBMIT_SETTLE_S = float(os.environ.get("SAC_SUBMIT_SETTLE_S", "0.3"))
 
 
 class TmuxManager:
@@ -210,7 +210,7 @@ class TmuxManager:
         settle_s:
             Seconds to wait between the text and the Enter keystroke.
             ``None`` uses ``_DEFAULT_SUBMIT_SETTLE_S`` (env-overridable
-            via ``SCITEX_AGENT_SUBMIT_SETTLE_S``).
+            via ``SAC_SUBMIT_SETTLE_S``).
         sleep_fn:
             Injected sleep — tests pass a stub to avoid real waits.
         """
