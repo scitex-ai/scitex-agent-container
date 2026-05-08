@@ -188,17 +188,61 @@ class ContainerRuntime(RuntimeBase):
         sac_val = os.environ.get("SAC_ANTHROPIC_API_KEY")
         if sac_val:
             argv += ["--env", f"SAC_ANTHROPIC_API_KEY={sac_val}"]
-        # Also mount the operator's Pro/Max credentials file when it
-        # exists (read-only). HOME inside the container is /tmp (see
-        # the comment on the HOME=/tmp env above), so the SDK's
-        # Path.home() / ".claude" / ".credentials.json" lookup
-        # resolves at /tmp/.claude/.credentials.json. Mount target
-        # follows.
-        cred_file = Path.home() / ".claude" / ".credentials.json"
-        if cred_file.is_file():
+
+        # Materialise/mount Pro/Max OAuth credentials.json into the
+        # container so the SDK uses the file-based credentials_file
+        # flow (Anthropic rejects ``sk-ant-oat01-…`` OAuth tokens
+        # passed as bare ``ANTHROPIC_API_KEY`` env without the full
+        # refresh_token / expiresAt context).
+        #
+        # Resolution order (mirrors newb's ``_container_runner``):
+        #   1. ``$SAC_CLAUDE_CODE_CREDENTIALS_JSON`` env — full file
+        #      content as the var value. Materialise to a 0644
+        #      tempfile and bind-mount that. Designed for CI: a
+        #      single GH Actions secret is the only required input,
+        #      no shell provisioning step needed (and no chance of
+        #      writing to ``${HOME}/.claude/.credentials.json`` on
+        #      the runner where it could leak between jobs).
+        #   2. ``~/.claude/.credentials.json`` exists on the host —
+        #      bind-mount the original file (local-dev path).
+        #
+        # Mount targets — DUAL: ``/tmp/.claude/.credentials.json``
+        # (where ``Path.home()`` resolves under our ``HOME=/tmp`` env
+        # override; the Python SDK uses this) AND
+        # ``/home/agent/.claude/.credentials.json`` (where the bundled
+        # Node.js ``claude`` CLI's ``os.homedir()`` resolves via
+        # ``/etc/passwd`` for the image's ``agent`` user — HOME-env
+        # is not always honoured). Same source file, two paths,
+        # whichever the actual auth code looks at finds it.
+        #
+        # Mounts are read-write (NOT ``:ro``): the SDK refreshes the
+        # OAuth access token and writes the new one back to the file.
+        # With a read-only mount the refresh fails silently and
+        # Anthropic responds "Not logged in" on the next call.
+        # Containers are ephemeral so the leak surface is the runner's
+        # own filesystem, which dies with the job.
+        cred_mount_src: Path | None = None
+        creds_env = os.environ.get("SAC_CLAUDE_CODE_CREDENTIALS_JSON", "").strip()
+        if creds_env:
+            import tempfile
+
+            tmp = tempfile.NamedTemporaryFile(
+                "w", prefix="sac-creds-", suffix=".json", delete=False
+            )
+            tmp.write(creds_env)
+            tmp.close()
+            os.chmod(tmp.name, 0o644)
+            cred_mount_src = Path(tmp.name)
+        else:
+            host_creds = Path.home() / ".claude" / ".credentials.json"
+            if host_creds.is_file():
+                cred_mount_src = host_creds
+        if cred_mount_src is not None:
             argv += [
-                "--mount",
-                f"type=bind,src={cred_file},dst=/tmp/.claude/.credentials.json,readonly",
+                "-v",
+                f"{cred_mount_src}:/tmp/.claude/.credentials.json",
+                "-v",
+                f"{cred_mount_src}:/home/agent/.claude/.credentials.json",
             ]
 
         for key, val in (config.env or {}).items():

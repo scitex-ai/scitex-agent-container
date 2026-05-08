@@ -40,59 +40,40 @@ jobs:
     timeout-minutes: 5
 
     env:
-      # Sac-namespaced auth handoff. Forwarded into the container by
-      # ``container.py``; the runner inside translates it to
-      # ANTHROPIC_API_KEY (see _sdk_common.provision_anthropic_auth).
-      # Anthropic REJECTS ``sk-ant-oat*`` OAuth tokens passed as a
-      # bare ANTHROPIC_API_KEY — for those, the credentials.json file
-      # path below is required (the runner bind-mounts it into the
-      # container so the SDK uses the OAuth flat-rate path with a
-      # working refresh_token). Real ``sk-ant-api*`` keys work either
-      # way; whichever is set wins.
+      # Auth — two complementary paths, whichever is set wins:
+      #
+      #   * ``SAC_ANTHROPIC_API_KEY`` — bare env, works for real
+      #     ``sk-ant-api*`` keys (pay-per-token). Anthropic REJECTS
+      #     ``sk-ant-oat*`` OAuth tokens passed this way without
+      #     refresh-token / expiresAt context.
+      #   * ``SAC_CLAUDE_CODE_CREDENTIALS_JSON`` — full
+      #     ``~/.claude/.credentials.json`` content as the env-var
+      #     value. ``container.py`` materialises it to a 0644 tempfile
+      #     and dual-bind-mounts it into the container at the SDK's
+      #     and the bundled CLI's homedir paths. Required for Pro/Max
+      #     OAuth (flat-rate).
+      #
+      # Pattern lifted from newb's working CI (newb 0.26.5+).
       SAC_ANTHROPIC_API_KEY: ${{ secrets.SAC_ANTHROPIC_API_KEY }}
+      SAC_CLAUDE_CODE_CREDENTIALS_JSON: ${{ secrets.CLAUDE_CREDENTIALS_JSON }}
 
     steps:
       - name: Fail early if neither auth secret is set
-        env:
-          CLAUDE_CREDENTIALS_JSON: ${{ secrets.CLAUDE_CREDENTIALS_JSON }}
         run: |
-          if [ -z "$SAC_ANTHROPIC_API_KEY" ] && [ -z "$CLAUDE_CREDENTIALS_JSON" ]; then
+          if [ -z "$SAC_ANTHROPIC_API_KEY" ] && [ -z "$SAC_CLAUDE_CODE_CREDENTIALS_JSON" ]; then
             echo "::error::Neither SAC_ANTHROPIC_API_KEY nor CLAUDE_CREDENTIALS_JSON secret is set."
             echo "Push one with:"
             echo "  sac dev upload-apikey-from-credentials-to-github --yes  # api-key path"
             echo "  sac dev upload-credentials-to-github --yes              # OAuth flat-rate"
             exit 1
           fi
+          if [ -n "$SAC_CLAUDE_CODE_CREDENTIALS_JSON" ]; then
+            echo "auth: SAC_CLAUDE_CODE_CREDENTIALS_JSON set (OAuth flat-rate; container.py will mount tempfile)"
+          else
+            echo "auth: SAC_ANTHROPIC_API_KEY only (api-key path)"
+          fi
 
       - uses: actions/checkout@v4
-
-      - name: Materialise ~/.claude/.credentials.json from secret
-        # Pattern lifted from newb's newb-self-verify.yml. Anthropic
-        # rejects ``sk-ant-oat01-…`` OAuth tokens passed as a bare
-        # ANTHROPIC_API_KEY env, so for the OAuth flat-rate path we
-        # need the FULL credentials.json (with its real refresh_token)
-        # on disk before ``sac agent start``. ``container.py``
-        # bind-mounts ``~/.claude/.credentials.json`` into the
-        # container when present, so this step is sufficient.
-        #
-        # Mode 644, NOT 600. The container runs the agent as a
-        # non-root UID different from the GH runner host UID; with
-        # 600, the bind-mounted file is unreadable to the container,
-        # the SDK falls back to the (now stale-or-empty) env var, and
-        # we get "Invalid API key" from the bundled CLI. The runner
-        # is ephemeral and the secret stays in GitHub — 644 is fine
-        # for the ~minute job lifetime.
-        env:
-          CLAUDE_CREDENTIALS_JSON: ${{ secrets.CLAUDE_CREDENTIALS_JSON }}
-        run: |
-          if [ -n "${CLAUDE_CREDENTIALS_JSON}" ]; then
-            mkdir -p "${HOME}/.claude"
-            printf '%s' "${CLAUDE_CREDENTIALS_JSON}" > "${HOME}/.claude/.credentials.json"
-            chmod 644 "${HOME}/.claude/.credentials.json"
-            echo "auth: bind-mounted credentials.json (OAuth flat-rate)"
-          else
-            echo "auth: SAC_ANTHROPIC_API_KEY only (no CLAUDE_CREDENTIALS_JSON secret set)"
-          fi
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
