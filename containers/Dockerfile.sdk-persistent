@@ -77,9 +77,20 @@ RUN pip install --no-cache-dir \
 # chowned to UID/GID 1000 by the host (or use --user `id -u`:`id -g`
 # to match the host operator); the runner only needs read on the
 # credentials and read+write on /work and /state.
-RUN useradd -m -u 1000 -s /bin/bash agent
+RUN useradd -m -u 1000 -s /bin/bash agent \
+ && mkdir -p /home/agent/.claude \
+ && chown -R agent:agent /home/agent/.claude
 USER agent
 WORKDIR /work
+# Pre-create ``/home/agent/.claude`` owned by the ``agent`` user so a
+# single-file bind-mount of ``.claude/.credentials.json`` doesn't
+# leave the parent directory root-owned. Without this, the runtime
+# bind-mount creates ``.claude/`` with root:root ownership; the SDK
+# can read the credentials file (mode 644) but cannot write the
+# sibling state files it expects (session-tracking, refreshed
+# tokens), and Anthropic responds "Not logged in" on the call.
+# Pattern matches ``ghcr.io/ywatanabe1989/newb-runner``'s working
+# image (which pre-creates ``/home/newb/.claude``).
 
 # tini handles signal forwarding so `docker stop <id>` cleanly
 # triggers the runner's SIGTERM cooperative shutdown rather than
