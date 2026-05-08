@@ -202,14 +202,18 @@ def test_build_run_argv_does_not_forward_host_anthropic_api_key(
     assert not any(a.startswith("SAC_ANTHROPIC_API_KEY=") for a in argv)
 
 
-def test_build_run_argv_forwards_sac_anthropic_api_key_unchanged(
+def test_build_run_argv_forwards_sac_anthropic_api_key_when_no_cred_mount(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """SAC_ANTHROPIC_API_KEY is forwarded as-is; the runner inside the
-    container overrides ANTHROPIC_API_KEY with this value (or pops it
-    if SAC is unset). See provision_anthropic_auth."""
+    """SAC_ANTHROPIC_API_KEY is forwarded ONLY when the credentials.json
+    bind-mount path is NOT used. With a credentials file in play the
+    SDK's auto-reader picks the env over the file and Anthropic
+    rejects bearer-without-refresh — so we suppress the env in that
+    case (matches newb's runner.py rule)."""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.setenv("SAC_ANTHROPIC_API_KEY", "sk-ant-api-sac")
+    monkeypatch.delenv("SAC_CLAUDE_CODE_CREDENTIALS_JSON", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))  # no ~/.claude/.credentials.json
     rt = ContainerRuntime("docker")
     cfg = _config(tmp_path)
     argv = rt.build_run_argv(cfg, state_dir=tmp_path)
@@ -222,9 +226,12 @@ def test_build_run_argv_drops_host_anthropic_when_sac_also_set(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     """When BOTH are set, only SAC_ANTHROPIC_API_KEY is forwarded —
-    the host ANTHROPIC_API_KEY is dropped per the no-honour rule."""
+    the host ANTHROPIC_API_KEY is dropped per the no-honour rule.
+    (No credentials.json present so SAC env IS forwarded.)"""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-api-host")
     monkeypatch.setenv("SAC_ANTHROPIC_API_KEY", "sk-ant-api-sac")
+    monkeypatch.delenv("SAC_CLAUDE_CODE_CREDENTIALS_JSON", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))  # no ~/.claude/.credentials.json
     rt = ContainerRuntime("docker")
     cfg = _config(tmp_path)
     argv = rt.build_run_argv(cfg, state_dir=tmp_path)

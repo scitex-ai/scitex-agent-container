@@ -188,22 +188,17 @@ class ContainerRuntime(RuntimeBase):
             "SCITEX_AGENT_CONTAINER_STATE_DB=/state/state.db",
         ]
 
-        # Forward Anthropic auth — SAC_ANTHROPIC_API_KEY ONLY.
-        #
-        # We deliberately do NOT forward a host-side ``ANTHROPIC_API_KEY``
-        # into the container. See the module-level comment in
-        # ``runtimes/_sdk_common.py`` for the long form; short version:
-        # a stale ``ANTHROPIC_API_KEY`` from the operator's dotfiles
-        # silently shadows the OAuth credentials file inside the
-        # container and produces "401 Invalid auth" or surprise
-        # pay-per-token billing. The runner inside the container
-        # (``provision_anthropic_auth``) overrides ``ANTHROPIC_API_KEY``
-        # with the trusted ``SAC_ANTHROPIC_API_KEY`` value (or pops it
-        # if SAC is unset), so we keep the host-side env name strictly
-        # sac-namespaced.
+        # Forward Anthropic auth — SAC_ANTHROPIC_API_KEY ONLY, and
+        # ONLY when the credentials.json path below isn't being used.
+        # If both end up set in the container, the SDK's auto-reader
+        # picks the env path over the file and Anthropic returns
+        # "Not logged in" / 401 for ``sk-ant-oat*`` bearers passed
+        # without their refresh_token / expiresAt context. Newb's
+        # working runner.py codifies exactly the same rule.
+        # We deliberately do NOT forward a host-side ANTHROPIC_API_KEY
+        # under any circumstance — see the module-level comment in
+        # ``runtimes/_sdk_common.py``.
         sac_val = os.environ.get("SAC_ANTHROPIC_API_KEY")
-        if sac_val:
-            argv += ["--env", f"SAC_ANTHROPIC_API_KEY={sac_val}"]
 
         # Materialise/mount Pro/Max OAuth credentials.json into the
         # container so the SDK uses the file-based credentials_file
@@ -255,6 +250,14 @@ class ContainerRuntime(RuntimeBase):
                 "-v",
                 f"{cred_mount_src}:/home/agent/.claude/.credentials.json",
             ]
+
+        # Now decide whether to forward SAC_ANTHROPIC_API_KEY into the
+        # container. ONLY when the credentials file path is NOT in use
+        # — otherwise the SDK's auto-reader picks the env path over
+        # the file (per newb's runner.py comment) and Anthropic
+        # rejects bearer-without-refresh.
+        if sac_val and cred_mount_src is None:
+            argv += ["--env", f"SAC_ANTHROPIC_API_KEY={sac_val}"]
 
         for key, val in (config.env or {}).items():
             argv += ["--env", f"{key}={val}"]
