@@ -23,7 +23,7 @@ exact authoritative list, run the audit snippet at the bottom.
 | `SCITEX_AGENT_CONTAINER_AGENT_META_SCRIPT` | Path to agent-metadata generator script. | bundled | path |
 | `SCITEX_AGENT_CONTAINER_MODEL` | LLM model ID injected into the agent. | `—` | string |
 | `SCITEX_AGENT_CONTAINER_SCREEN_NAME` | GNU-screen session name attached to the agent. | auto | string |
-| `SCITEX_AGENT_NAME` | Short agent identifier (used in telemetry). | auto | string |
+| `SAC_NAME` | Short agent identifier (used in telemetry). | auto | string |
 
 ## Paths
 

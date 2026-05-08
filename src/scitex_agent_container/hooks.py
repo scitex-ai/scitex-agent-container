@@ -105,7 +105,7 @@ def _dispatch_shell(
         return
     env = {
         **os.environ,
-        "SCITEX_AGENT_NAME": agent_name,
+        "SAC_NAME": agent_name,
         "SCITEX_HOOK": hook_name,
         **_flatten_ctx_env(context),
     }

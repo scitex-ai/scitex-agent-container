@@ -53,7 +53,7 @@ def test_run_hook_shell_success(sync_pool, monkeypatch):
     monkeypatch.setattr(hooks.subprocess, "run", fake_run)
     hooks.run_hook("agent-x", "pre_start", ["echo hello world"], context={"k": "v"})
     assert seen["argv"] == ["echo", "hello", "world"]
-    assert seen["env"]["SCITEX_AGENT_NAME"] == "agent-x"
+    assert seen["env"]["SAC_NAME"] == "agent-x"
     assert seen["env"]["SCITEX_HOOK"] == "pre_start"
     assert seen["env"]["SCITEX_HOOK_CTX_K"] == "v"
 
