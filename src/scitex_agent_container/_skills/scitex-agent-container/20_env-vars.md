@@ -47,16 +47,14 @@ Auth precedence (highest → lowest) in `runtimes/_sdk_common.py::provision_anth
 
 1. `ANTHROPIC_API_KEY` already in env (caller pre-set; SDK uses it as-is).
 2. `~/.claude/.credentials.json` Pro/Max OAuth (preferred — no per-token billing).
-3. `SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY_OAUTH` (CI-only OAuth token).
-4. `SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY` (CI-only API key, last resort).
+3. `SAC_ANTHROPIC_API_KEY` (sac-namespaced handoff). Accepts either form — `sk-ant-oat*` is synthesised back into a credentials file (OAuth path), `sk-ant-api*` is bridged straight to `ANTHROPIC_API_KEY`.
 
-**Spartan compute-node gotcha (2026-05-03):** the user's `~/.bash.d/secrets/` exports `SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY` from a stale value. The SDK auth resolver picks API key over OAuth, so the expired key shadows a working OAuth and you get "401 Invalid auth" or "Command failed exit 1". Fix: `unset SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY` in the wrapper that starts the runner on Spartan.
+**Spartan compute-node gotcha (2026-05-03):** the user's `~/.bash.d/secrets/` exports `SAC_ANTHROPIC_API_KEY` from `~/.claude/.credentials.json`. If the credentials file is stale, the runner can fail with "401 Invalid auth" or "Command failed exit 1". Fix: `unset SAC_ANTHROPIC_API_KEY` (or refresh credentials with `claude /login`) in the wrapper that starts the runner on Spartan.
 
 | Variable | Purpose | Default | Type |
 |---|---|---|---|
 | `ANTHROPIC_API_KEY` | Read directly by the SDK if pre-set. The runner does NOT export this; the SDK calls `claude` CLI which falls back to `~/.claude/.credentials.json` OAuth when this is unset. | `—` | string |
-| `SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY_OAUTH` | OAuth bearer token for CI runs (rotate from `~/.claude/.credentials.json` via `jq -r .claudeAiOauth.accessToken`). | `—` | string (CI) |
-| `SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY` | Anthropic pay-per-token API key (last-resort CI fallback; off-budget). | `—` | string (CI) |
+| `SAC_ANTHROPIC_API_KEY` | Sac-namespaced auth handoff. Accepts both OAuth (`sk-ant-oat*`) and API-key (`sk-ant-api*`) forms; runner detects by prefix. Local shells populate via `sac dev credential2apikey`; CI populates via the GitHub Actions secret of the same name (rotate with `sac dev rotate-github-secrets`). | `—` | string |
 | `SCITEX_AGENT_CONTAINER_TELEGRAM_BOT_TOKEN` | Telegram bot token for agent bridge. | `—` | string |
 
 ## Context compaction

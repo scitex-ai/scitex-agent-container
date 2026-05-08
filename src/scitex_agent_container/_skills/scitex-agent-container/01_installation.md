@@ -24,8 +24,7 @@ The SDK runtime reads Anthropic auth in this precedence (see `runtimes/_sdk_comm
 
 1. `ANTHROPIC_API_KEY` env (used verbatim if set — operator opt-in)
 2. `~/.claude/.credentials.json` Pro/Max OAuth (default — flat-rate, no per-token billing)
-3. `SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY_OAUTH` env (CI-only OAuth bridge)
-4. `SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY` env (last resort — pay-per-token)
+3. `SAC_ANTHROPIC_API_KEY` env (sac-namespaced handoff; works for OAuth `sk-ant-oat*` *and* API-key `sk-ant-api*` forms — the runner detects by prefix and either bridges to `ANTHROPIC_API_KEY` or synthesises the credentials file)
 
 Run `claude /login` once to populate the credentials file. Set neither and you get a clear `SDKCommonError` rather than silent fall-through to API-key billing.
 
@@ -38,7 +37,7 @@ Example for Spartan HPC compute nodes:
 ```bash
 # ~/.scitex/agent-container/hosts/spartan-bm198.hpc.unimelb.edu.au.sh
 module load GCCcore/11.3.0 OpenSSL/1.1
-unset SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY
+unset SAC_ANTHROPIC_API_KEY
 # Optional: re-exec the runner inside an existing SLURM allocation
 if [ -z "$SLURM_JOB_ID" ]; then
     JOBID=$(squeue --me -h -n head-spartan -o "%i" | head -1)

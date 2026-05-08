@@ -9,7 +9,7 @@ of what users put in that file:
 
   ```bash
   module load GCCcore/11.3.0 OpenSSL/1.1
-  unset SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY
+  unset SAC_ANTHROPIC_API_KEY
   ```
 
 * Custom Python venv path:

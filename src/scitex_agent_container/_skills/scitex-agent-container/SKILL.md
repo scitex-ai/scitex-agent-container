@@ -76,6 +76,7 @@ rich non-agentic status surface.
 ## Environment
 
 - [20_env-vars.md](20_env-vars.md) — `SCITEX_*` env vars read at runtime
+- [21_cli-startup-budget.md](21_cli-startup-budget.md) — keep `sac --help` < 500 ms via LazyGroup
 
 ## 30-second start
 

@@ -31,7 +31,7 @@ if _HAS_DOCKER_CLI:
 else:
     _DOCKER_OK = False
 
-_CI_KEY_SET = bool(os.environ.get("SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY"))
+_CI_KEY_SET = bool(os.environ.get("SAC_ANTHROPIC_API_KEY"))
 
 # Individual tests that need a live docker daemon are decorated
 # per-function with ``@pytest.mark.docker_smoke`` + skipif; the fast
@@ -85,7 +85,7 @@ def _run_bare_container(image: str, name: str) -> None:
     """
     _docker("rm", "-f", name)
     env_args: list[str] = []
-    ci_key = os.environ.get("SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY")
+    ci_key = os.environ.get("SAC_ANTHROPIC_API_KEY")
     if ci_key:
         env_args = ["-e", f"ANTHROPIC_API_KEY={ci_key}"]
     res = _docker(
@@ -223,7 +223,7 @@ def _extract_cache_creation_tokens(envelope: dict) -> int:
 @pytest.mark.skipif(not _DOCKER_OK, reason="docker unavailable (CLI or daemon)")
 @pytest.mark.skipif(
     not _CI_KEY_SET,
-    reason="SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY not set",
+    reason="SAC_ANTHROPIC_API_KEY not set",
 )
 def test_claude_p_hello_inside_container(request, test_image):
     """Real LLM call inside the newbie container must return a clean result."""
@@ -264,7 +264,7 @@ def test_claude_p_hello_inside_container(request, test_image):
 @pytest.mark.skipif(not _DOCKER_OK, reason="docker unavailable (CLI or daemon)")
 @pytest.mark.skipif(
     not _CI_KEY_SET,
-    reason="SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY not set",
+    reason="SAC_ANTHROPIC_API_KEY not set",
 )
 def test_newbie_has_far_smaller_cache_than_host(request, test_image):
     """Newbie container should cache-create <<< host (isolation evidence).
@@ -277,7 +277,7 @@ def test_newbie_has_far_smaller_cache_than_host(request, test_image):
         pytest.skip("host claude CLI not on PATH for baseline comparison")
 
     # --- Host run (uses whatever context the host loads by default) ---
-    ci_key = os.environ["SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY"]
+    ci_key = os.environ["SAC_ANTHROPIC_API_KEY"]
     host_env = {**os.environ, "ANTHROPIC_API_KEY": ci_key}
     host_res = subprocess.run(
         [

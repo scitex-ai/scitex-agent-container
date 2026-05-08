@@ -114,12 +114,12 @@ The SDK's authentication path, by precedence:
 2. `~/.claude/.credentials.json` exists → SDK reads OAuth token
    automatically (Pro/Max plan, **flat-rate**). The default on every
    workstation that has run `claude /login`.
-3. `SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY_OAUTH` (sk-ant-oat*) →
-   bridged into `ANTHROPIC_API_KEY`. Headless contexts (CI, SLURM,
-   cron) — still flat-rate.
-4. `SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY` (sk-ant-api*) →
-   last resort. **Pay-per-token**. Never auto-bridged on top of an
-   OAuth path; explicit opt-in only.
+3. `SAC_ANTHROPIC_API_KEY` (sac-namespaced handoff for headless
+   contexts — CI, SLURM, cron). Auto-routes by prefix:
+   * `sk-ant-oat*` → OAuth credentials file is synthesised so the SDK
+     uses the flat-rate OAuth path.
+   * `sk-ant-api*` → bridged into `ANTHROPIC_API_KEY` (**pay-per-token**;
+     explicit opt-in only).
 
 Set neither and you get a clear `SDKCommonError` rather than a silent
 fall-through to API-key billing.

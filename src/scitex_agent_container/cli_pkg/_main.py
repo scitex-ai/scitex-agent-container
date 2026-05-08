@@ -1,8 +1,11 @@
 """Click entry point for scitex-agent-container.
 
-This module wires every subcommand defined in the sibling modules
-into a single click group, registered as the ``scitex-agent-container``
-console script (see pyproject.toml).
+Subcommand modules are NOT imported at module top-level — every entry
+on the user-facing surface is registered through ``LazyGroup`` so a
+``--help`` or ``<TAB>`` only pays for the click + LazyGroup imports
+(~150 ms). Modules load on demand when their command actually runs.
+See ``_lazy_group.py`` for the mechanism and ``21_cli-startup-budget.md``
+for the rationale.
 """
 
 from __future__ import annotations
@@ -12,7 +15,7 @@ from importlib.metadata import version as _pkg_version_lookup
 
 import click
 
-from ._helpers import HelpRecursiveGroup, renamed_redirect
+from ._lazy_group import LazyGroup
 
 
 def _pkg_version() -> str:
@@ -22,41 +25,6 @@ def _pkg_version() -> str:
     except PackageNotFoundError:
         return "dev"
 
-
-from .a2a_cmds import a2a as a2a_group
-from .account_cmds import account, quota_watch
-from .agent_group import agent_group
-from .auto_accept_group import auto_accept_group
-from .build_cmds import build, check, validate
-from .contributor_spec_cmds import contributor_spec
-from .db_group import db_group
-from .event_group import event_group
-from .hook_cmds import hook_event
-from .host_group import host_group
-from .image_group import image_group
-from .info_cmds import attach, find, list_python_apis, logs
-from .install_cmds import install_group, install_post_merge_cron
-from .lifecycle_cmds import (
-    cleanup,
-    restart,
-    send_accept,
-    start,
-    start_auto_accept,
-    stop,
-    stop_auto_accept,
-)
-from .mcp_cmds import mcp as mcp_group
-from .network_group import network_group
-from .peer_cmds import peer_group
-from .priority_cmds import priority_check, singleton_reconcile
-from .probe_cmds import probe_network
-from .quota_group import quota_group
-from .recall_cmds import recall
-from .registry_group import registry_group
-from .skills_group import skills_group
-from .snapshot_cmds import snapshot
-from .status_cmds import check_agent, health, list_agents, status
-from .template_group import template_group
 
 # ---------------------------------------------------------------------------
 # Help categories — clean noun-group surface
@@ -69,15 +37,168 @@ COMMAND_CATEGORIES = [
     ("Registry & Events", ["db", "registry", "event", "actions"]),
     ("Build & Install", ["image", "installation", "template"]),
     ("Introspection", ["mcp", "list-python-apis", "skills"]),
+    ("Developer", ["dev"]),
 ]
 
 
-class _CategorizedHelpGroup(HelpRecursiveGroup):
+_PKG = "scitex_agent_container.cli_pkg"
+
+
+class _MainGroup(LazyGroup):
     command_categories = COMMAND_CATEGORIES
+
+    # User-facing top-level commands. Resolved on demand.
+    LAZY_COMMANDS = {
+        # Noun groups
+        "agent": f"{_PKG}.agent_group:agent_group",
+        "db": f"{_PKG}.db_group:db_group",
+        "dev": f"{_PKG}.dev_group:dev_group",
+        "host": f"{_PKG}.host_group:host_group",
+        "registry": f"{_PKG}.registry_group:registry_group",
+        "event": f"{_PKG}.event_group:event_group",
+        "quota": f"{_PKG}.quota_group:quota_group",
+        "network": f"{_PKG}.network_group:network_group",
+        "image": f"{_PKG}.image_group:image_group",
+        "template": f"{_PKG}.template_group:template_group",
+        "skills": f"{_PKG}.skills_group:skills_group",
+        "auto-accept": f"{_PKG}.auto_accept_group:auto_accept_group",
+        "account": f"{_PKG}.account_cmds:account",
+        "a2a": f"{_PKG}.a2a_cmds:a2a",
+        "mcp": f"{_PKG}.mcp_cmds:mcp",
+        "peer": f"{_PKG}.peer_cmds:peer_group",
+        # Top-level standalone
+        "list-python-apis": f"{_PKG}.info_cmds:list_python_apis",
+        "installation": f"{_PKG}.install_cmds:install_group",
+    }
+
+    # Tracks whether scitex_dev._cli._completion has been attached.
+    # ``attach_shell_completion`` adds two top-level commands but pulls
+    # in the linter graph (~490 ms). We defer the import until the
+    # ``install-shell-completion`` or ``print-shell-completion`` name
+    # is actually resolved — the audit-cli §1a check, the user
+    # invoking the command, and tab completion all go through
+    # ``_resolve_lazy`` via the dict installed by ``LazyGroup``, so
+    # one hook covers every entry-point.
+    _completion_attached = False
+    _COMPLETION_NAMES = ("install-shell-completion", "print-shell-completion")
+
+    def _attach_completion(self) -> None:
+        if self._completion_attached:
+            return
+        self._completion_attached = True
+        try:
+            from scitex_dev._cli._completion import attach_shell_completion
+        except ImportError:
+            return  # scitex-dev[cli-audit] not installed; commands stay missing
+        attach_shell_completion(self, prog_name="scitex-agent-container")
+
+    def list_commands(self, ctx):
+        names = super().list_commands(ctx)
+        return sorted(set(names) | set(self._COMPLETION_NAMES))
+
+    def _resolve_lazy(self, name):
+        if name in self._COMPLETION_NAMES:
+            self._attach_completion()
+            # ``attach_shell_completion`` populates ``self.commands``
+            # via ``add_command``; pull the result back out so the
+            # caller (LazyCommandsDict / get_command) sees it.
+            return dict.get(self.commands, name)
+        return super()._resolve_lazy(name)
+
+    # Mirror of each top-level command's ``short_help``. Populated by
+    # hand because reading it via ``cmd.get_short_help_str()`` would
+    # force the import we're trying to avoid. Re-run the snippet in
+    # ``21_cli-startup-budget.md`` to refresh after editing any
+    # subcommand's docstring/short_help.
+    LAZY_SHORT_HELPS = {
+        "agent": "Agent lifecycle, status, introspection, and snapshots.",
+        "db": "Inspect and maintain the sac state database (state.db).",
+        "dev": "Developer / maintainer plumbing (CI secrets, etc.).",
+        "host": "Local host identity and peer routing for sac.",
+        "registry": "Registry maintenance — folded into ``sac db`` (F-CS11).",
+        "event": "Event log operations: ingest hook events into the per-agent ring buffer.",
+        "quota": "Quota tracking and auto-rotation.",
+        "network": "Network operations: liveness probes, fleet connectivity.",
+        "image": "Container image operations: build the runtime base image.",
+        "template": "Render text templates (contributor spec).",
+        "skills": "Agent-facing skills bundled with scitex-agent-container.",
+        "auto-accept": "Auto-accept TUI handler for Claude Code permission prompts.",
+        "account": "Manage stored Claude Code accounts for credential rotation.",
+        "a2a": "A2A protocol — generic agent-to-agent surface (no fleet deps).",
+        "mcp": "MCP (Model Context Protocol) server commands.",
+        "peer": "Outbound A2A calls into other agents' POST /v1/turn endpoint.",
+        "list-python-apis": "List all public Python APIs of scitex-agent-container.",
+        "installation": "Bootstrap and install helpers for a new fleet host.",
+        "install-shell-completion": "Wire up `<TAB>` completion in the user's shell rc.",
+        "print-shell-completion": "Print the shell-completion eval line (no install).",
+    }
+
+    # Renamed-command redirects (F-CS13 / scitex CLI convention §5):
+    # legacy click-name → (module:symbol, new-path). Hidden from --help
+    # and tab-completion; resolving the legacy name still works (prints
+    # a redirect to stderr and exits with code 2). Soft warnings let
+    # stale scripts persist indefinitely; hard errors force the fix.
+    LAZY_RENAMED = {
+        # Lifecycle
+        "start": (f"{_PKG}.lifecycle_cmds:start", "sac agent start"),
+        "stop": (f"{_PKG}.lifecycle_cmds:stop", "sac agent stop"),
+        "restart": (f"{_PKG}.lifecycle_cmds:restart", "sac agent restart"),
+        "validate": (f"{_PKG}.build_cmds:validate", "sac agent validate"),
+        "check": (f"{_PKG}.build_cmds:check", "sac agent check"),
+        # Auto-accept legacy flat names
+        "send-accept": (f"{_PKG}.lifecycle_cmds:send_accept", "sac auto-accept send"),
+        "start-auto-accept": (
+            f"{_PKG}.lifecycle_cmds:start_auto_accept",
+            "sac auto-accept start",
+        ),
+        "stop-auto-accept": (
+            f"{_PKG}.lifecycle_cmds:stop_auto_accept",
+            "sac auto-accept stop",
+        ),
+        # Status / introspection
+        "show-status": (f"{_PKG}.status_cmds:status", "sac agent status"),
+        "list-agents": (f"{_PKG}.status_cmds:list_agents", "sac agent list"),
+        "check-health": (f"{_PKG}.status_cmds:health", "sac agent health"),
+        "inspect": (f"{_PKG}.status_cmds:check_agent", "sac agent inspect"),
+        "take-snapshot": (f"{_PKG}.snapshot_cmds:snapshot", "sac agent take-snapshot"),
+        "find": (f"{_PKG}.info_cmds:find", "sac agent find"),
+        "show-logs": (f"{_PKG}.info_cmds:logs", "sac agent logs"),
+        "attach": (f"{_PKG}.info_cmds:attach", "sac agent attach"),
+        "recall": (f"{_PKG}.recall_cmds:recall", "sac agent recall"),
+        "check-priority": (
+            f"{_PKG}.priority_cmds:priority_check",
+            "sac agent check-priority",
+        ),
+        # Render / template
+        "render-contributor-spec": (
+            f"{_PKG}.contributor_spec_cmds:contributor_spec",
+            "sac template render-contributor-spec",
+        ),
+        # Quota
+        "watch-quota": (f"{_PKG}.account_cmds:quota_watch", "sac quota watch"),
+        # Hook events
+        "ingest-hook-event": (f"{_PKG}.hook_cmds:hook_event", "sac event ingest"),
+        # Registry — ``registry clean`` is now ``db clean`` (F-CS11 phase 5);
+        # send the top-level alias straight there to avoid double-redirect.
+        "clean-registry": (f"{_PKG}.lifecycle_cmds:cleanup", "sac db clean"),
+        "reconcile-singletons": (
+            f"{_PKG}.priority_cmds:singleton_reconcile",
+            "sac registry reconcile",
+        ),
+        # Build / image
+        "build-image": (f"{_PKG}.build_cmds:build", "sac image build"),
+        # Network
+        "probe-network": (f"{_PKG}.probe_cmds:probe_network", "sac network probe"),
+        # Install
+        "install-post-merge-cron": (
+            f"{_PKG}.install_cmds:install_post_merge_cron",
+            "sac installation setup-cron",
+        ),
+    }
 
 
 @click.group(
-    cls=_CategorizedHelpGroup,
+    cls=_MainGroup,
     invoke_without_command=True,
     context_settings={"help_option_names": ["-h", "--help"]},
     help=(
@@ -139,124 +260,6 @@ def main(ctx: click.Context, help_recursive: bool, as_json: bool) -> None:
         ctx.exit(0)
     elif ctx.invoked_subcommand is None:
         click.echo(ctx.get_help())
-
-
-# ---------------------------------------------------------------------------
-# Noun-groups (the new clean surface)
-# ---------------------------------------------------------------------------
-main.add_command(agent_group)
-main.add_command(db_group)
-main.add_command(host_group)
-main.add_command(registry_group)
-main.add_command(event_group)
-main.add_command(quota_group)
-main.add_command(network_group)
-main.add_command(image_group)
-main.add_command(template_group)
-main.add_command(skills_group)
-
-main.add_command(install_group)  # registered as "install"
-# Add cron sub-verb on the install group (renamed leaf; keeps the
-# old top-level ``install-post-merge-cron`` alias working).
-install_group.add_command(
-    click.Command(
-        name="setup-cron",
-        callback=install_post_merge_cron.callback,
-        params=list(install_post_merge_cron.params),
-        help=install_post_merge_cron.help,
-        short_help=install_post_merge_cron.short_help,
-        epilog=install_post_merge_cron.epilog,
-    )
-)
-
-# Already-noun-group surfaces
-main.add_command(auto_accept_group)
-main.add_command(account)
-main.add_command(a2a_group)
-main.add_command(mcp_group)
-main.add_command(peer_group)
-
-# Standard introspection (top-level by convention)
-main.add_command(list_python_apis)
-
-
-# ---------------------------------------------------------------------------
-# Renamed-command redirects (F-CS13 / scitex CLI convention §5):
-# old top-level names still parse so the user gets a helpful redirect
-# message, but they hard-error (exit 2) instead of warn-then-run.
-# Hidden from --help so the new noun-verb surface is uncluttered.
-# Soft warnings let stale scripts persist indefinitely; hard errors
-# force the fix in one iteration.
-# ---------------------------------------------------------------------------
-def _hidden_alias(cmd: click.Command, *, new_path: str, name: str | None = None):
-    alias = renamed_redirect(cmd, new_path=new_path)
-    if name is not None:
-        alias.name = name
-    alias.hidden = True
-    return alias
-
-
-# Lifecycle
-main.add_command(_hidden_alias(start, new_path="sac agent start"))
-main.add_command(_hidden_alias(stop, new_path="sac agent stop"))
-main.add_command(_hidden_alias(restart, new_path="sac agent restart"))
-main.add_command(_hidden_alias(validate, new_path="sac agent validate"))
-main.add_command(_hidden_alias(check, new_path="sac agent check"))
-
-# Auto-accept (already grouped — keep historical flat aliases)
-main.add_command(_hidden_alias(send_accept, new_path="sac auto-accept send"))
-main.add_command(_hidden_alias(start_auto_accept, new_path="sac auto-accept start"))
-main.add_command(_hidden_alias(stop_auto_accept, new_path="sac auto-accept stop"))
-
-# Status / introspection
-main.add_command(_hidden_alias(status, new_path="sac agent status"))
-main.add_command(_hidden_alias(list_agents, new_path="sac agent list"))
-main.add_command(_hidden_alias(health, new_path="sac agent health"))
-main.add_command(_hidden_alias(check_agent, new_path="sac agent inspect"))
-main.add_command(_hidden_alias(snapshot, new_path="sac agent take-snapshot"))
-main.add_command(_hidden_alias(find, new_path="sac agent find"))
-main.add_command(_hidden_alias(logs, new_path="sac agent logs"))
-main.add_command(_hidden_alias(attach, new_path="sac agent attach"))
-main.add_command(_hidden_alias(recall, new_path="sac agent recall"))
-main.add_command(_hidden_alias(priority_check, new_path="sac agent check-priority"))
-
-# Render / template
-main.add_command(
-    _hidden_alias(contributor_spec, new_path="sac template render-contributor-spec")
-)
-
-# Quota
-main.add_command(_hidden_alias(quota_watch, new_path="sac quota watch"))
-
-# Hook events
-main.add_command(_hidden_alias(hook_event, new_path="sac event ingest"))
-
-# Registry — `registry clean` is now `db clean` (F-CS11 phase 5);
-# send the top-level alias straight there to avoid double-redirect.
-main.add_command(_hidden_alias(cleanup, new_path="sac db clean"))
-main.add_command(_hidden_alias(singleton_reconcile, new_path="sac registry reconcile"))
-
-# Build / image
-main.add_command(_hidden_alias(build, new_path="sac image build"))
-
-# Network
-main.add_command(_hidden_alias(probe_network, new_path="sac network probe"))
-
-# Install
-main.add_command(
-    _hidden_alias(install_post_merge_cron, new_path="sac installation setup-cron")
-)
-
-# Shell completion (audit-cli §1a — required top-level commands so that
-# `<pkg> <TAB>` works in user shells).
-try:
-    from scitex_dev._cli._completion import attach_shell_completion
-
-    attach_shell_completion(main, prog_name="scitex-agent-container")
-except ImportError:
-    # scitex-dev is a [dev]/[cli-audit] extra; runtime CLI still works
-    # without tab completion if it's not installed.
-    pass
 
 
 def cli_entry_point() -> None:

@@ -53,10 +53,13 @@ class ApptainerRuntime(RuntimeBase):
         parts.extend(["--env", "CLAUDE_DISABLE_AUTO_UPDATE=1"])
 
         # Forward API key if available in host env (CI / tests).
-        # The container-side Claude CLI expects ANTHROPIC_API_KEY.
-        ci_key = os.environ.get("SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY")
+        # provision_anthropic_auth inside the runner bridges
+        # SAC_ANTHROPIC_API_KEY → ANTHROPIC_API_KEY (or synthesises
+        # ~/.claude/.credentials.json for OAuth tokens), so forward
+        # under the sac-namespaced name.
+        ci_key = os.environ.get("SAC_ANTHROPIC_API_KEY")
         if ci_key:
-            parts.extend(["--env", f"ANTHROPIC_API_KEY={ci_key}"])
+            parts.extend(["--env", f"SAC_ANTHROPIC_API_KEY={ci_key}"])
 
         # Working directory
         parts.extend(["--pwd", "/workspace"])

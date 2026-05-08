@@ -63,10 +63,13 @@ class DockerRuntime(RuntimeBase):
         args.extend(["-e", "CLAUDE_DISABLE_AUTO_UPDATE=1"])
 
         # Forward API key if available in host env (CI / tests).
-        # The container-side Claude CLI expects ANTHROPIC_API_KEY.
-        ci_key = os.environ.get("SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY")
+        # Inside the container, provision_anthropic_auth bridges
+        # SAC_ANTHROPIC_API_KEY → ANTHROPIC_API_KEY (or synthesises
+        # ~/.claude/.credentials.json for OAuth tokens) — so we forward
+        # under the sac-namespaced name and let the runner route by prefix.
+        ci_key = os.environ.get("SAC_ANTHROPIC_API_KEY")
         if ci_key:
-            args.extend(["-e", f"ANTHROPIC_API_KEY={ci_key}"])
+            args.extend(["-e", f"SAC_ANTHROPIC_API_KEY={ci_key}"])
 
         # Working directory inside container
         args.extend(["-w", "/workspace"])

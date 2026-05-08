@@ -360,3 +360,20 @@ def _write_crontab_str(content: str) -> None:
     if proc.returncode != 0:
         console.print(f"[red]Error writing crontab:[/red] {proc.stderr.strip()}")
         sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Sub-verb wiring
+# ---------------------------------------------------------------------------
+# Done at module level (rather than in cli_pkg/_main.py) so the lazy
+# loader resolves install_group with `setup-cron` already attached.
+install_group.add_command(
+    click.Command(
+        name="setup-cron",
+        callback=install_post_merge_cron.callback,
+        params=list(install_post_merge_cron.params),
+        help=install_post_merge_cron.help,
+        short_help=install_post_merge_cron.short_help,
+        epilog=install_post_merge_cron.epilog,
+    )
+)

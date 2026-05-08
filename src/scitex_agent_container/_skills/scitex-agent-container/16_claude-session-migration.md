@@ -173,7 +173,7 @@ OAuth on every host.
 2. `head-ywata-note-win` (local head; SSH fallback)
 3. `telegrammer-ywata-note-win` (single inbound channel; reuses existing `a2a.port`)
 4. `head-mba` / `head-nas` (remote, one at a time)
-5. `head-spartan` (SLURM-tenant; most moving parts — last; remember `module load OpenSSL/1.1` + unset stale `SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY` on compute nodes)
+5. `head-spartan` (SLURM-tenant; most moving parts — last; remember `module load OpenSSL/1.1` + unset stale `SAC_ANTHROPIC_API_KEY` on compute nodes)
 
 ## Audit checklist (run before declaring "migrated")
 

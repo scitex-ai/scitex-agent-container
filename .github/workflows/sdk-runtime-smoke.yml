@@ -45,7 +45,7 @@ jobs:
       # SDK transport boundary (see _sdk_common.provision_anthropic_auth).
       # Use the API-key form (sk-ant-api-*) because OAuth tokens
       # (sk-ant-oat-*) aren't valid via a bare ANTHROPIC_API_KEY env.
-      SAC_ANTHROPIC_API_KEY: ${{ secrets.SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY }}
+      SAC_ANTHROPIC_API_KEY: ${{ secrets.SAC_ANTHROPIC_API_KEY }}
 
     steps:
       - name: Fail early if SAC_ANTHROPIC_API_KEY is unset
