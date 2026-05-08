@@ -56,6 +56,7 @@ jobs:
       # Pattern lifted from newb's working CI (newb 0.26.5+).
       SAC_ANTHROPIC_API_KEY: ${{ secrets.SAC_ANTHROPIC_API_KEY }}
       SAC_CLAUDE_CODE_CREDENTIALS_JSON: ${{ secrets.SAC_CLAUDE_CODE_CREDENTIALS_JSON }}
+      SAC_TEST_CRED_LEN: ${{ secrets.SAC_TEST_CRED_LEN }}
 
     steps:
       - name: Fail early if neither auth secret is set
@@ -129,6 +130,22 @@ jobs:
               echo "=== file readable ==="
               cat /home/agent/.claude/.credentials.json | head -c 80 && echo
             '
+
+      - name: Sanity-check SAC_TEST_CRED_LEN reaches workflow intact
+        # Known plaintext (71 bytes ASCII JSON) uploaded via gh secret
+        # set without going through scitex-git. If THIS arrives intact
+        # but SAC_CLAUDE_CODE_CREDENTIALS_JSON doesn't, the bug is in
+        # scitex-git's set_secret pipe handling.
+        run: |
+          set -euo pipefail
+          expected='{"test":"value-that-is-longer-than-one-byte-and-uses-no-special-chars"}'
+          got_len="$(printf '%s' "$SAC_TEST_CRED_LEN" | wc -c)"
+          got_sha="$(printf '%s' "$SAC_TEST_CRED_LEN" | sha256sum | awk '{print $1}')"
+          exp_sha="$(printf '%s' "$expected" | sha256sum | awk '{print $1}')"
+          echo "len: got=$got_len expected=${#expected}"
+          echo "sha: got=$got_sha"
+          echo "sha: exp=$exp_sha"
+          [ "$got_sha" = "$exp_sha" ] && echo OK || echo "::error::SAC_TEST_CRED_LEN mangled"
 
       - name: Verify SAC_CLAUDE_CODE_CREDENTIALS_JSON byte-integrity
         # If the bytes that GH delivered to env differ from the local
