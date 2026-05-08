@@ -62,7 +62,7 @@ Auth precedence (highest → lowest) in `runtimes/_sdk_common.py::provision_anth
 | Variable | Purpose | Default | Type |
 |---|---|---|---|
 | `SAC_COMPACT_ENABLED` | Enable auto-compaction of context window. | `true` | bool |
-| `SCITEX_AGENT_COMPACT_THRESHOLD_PCT` | Trigger compaction at this context % used. | `80` | int |
+| `SAC_COMPACT_THRESHOLD_PCT` | Trigger compaction at this context % used. | `80` | int |
 | `SAC_COMPACT_MIN_DROP_PCT` | Minimum % that must drop per pass. | `20` | int |
 | `SAC_COMPACT_MIN_INTERVAL_S` | Minimum seconds between compactions. | `300` | int |
 | `SCITEX_AGENT_COMPACT_TIMEOUT_S` | Timeout per compaction attempt. | `60` | int |
