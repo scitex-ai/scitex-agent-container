@@ -35,7 +35,7 @@ class _FakeResp:
 
 @pytest.fixture(autouse=True)
 def _set_token(monkeypatch):
-    monkeypatch.setenv("SCITEX_AGENT_HUB_TOKEN", "wks_test_token")
+    monkeypatch.setenv("SAC_HUB_TOKEN", "wks_test_token")
     monkeypatch.setenv("SCITEX_AGENT_HUB_URL", "https://hub.test")
 
 
@@ -71,7 +71,7 @@ def test_push_snapshot_returns_false_on_http_error(monkeypatch):
 
 
 def test_push_snapshot_no_token_is_noop(monkeypatch):
-    monkeypatch.setenv("SCITEX_AGENT_HUB_TOKEN", "")
+    monkeypatch.setenv("SAC_HUB_TOKEN", "")
 
     def must_not_be_called(*a, **kw):
         raise AssertionError("urlopen called when token is empty")

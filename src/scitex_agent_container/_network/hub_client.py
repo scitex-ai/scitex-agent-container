@@ -7,7 +7,7 @@ Three endpoints (server side: scitex-orochi PR feat/lead-state-handover-server):
   - GET  /api/agents/<name>/owner/           — current_host + priority_list +
                                                healthy{} (FR-B)
 
-Auth: workspace token from ``SCITEX_AGENT_HUB_TOKEN``. Hub base URL from
+Auth: workspace token from ``SAC_HUB_TOKEN``. Hub base URL from
 ``SCITEX_AGENT_HUB_URL`` (defaults to ``https://scitex-orochi.com``).
 
 Stdlib only — no requests/httpx dependency. Same urlopen pattern as
@@ -41,14 +41,14 @@ def _hub_url() -> str:
 
 
 def _hub_token() -> str:
-    return os.environ.get("SCITEX_AGENT_HUB_TOKEN", "").strip()
+    return os.environ.get("SAC_HUB_TOKEN", "").strip()
 
 
 def _request(method: str, path: str, *, body: dict | None = None) -> dict | None:
     """Issue a hub request. Returns parsed JSON dict or ``None`` on error."""
     token = _hub_token()
     if not token:
-        logger.debug("hub_client: SCITEX_AGENT_HUB_TOKEN unset, skipping %s %s", method, path)
+        logger.debug("hub_client: SAC_HUB_TOKEN unset, skipping %s %s", method, path)
         return None
 
     url = f"{_hub_url()}{path}"
