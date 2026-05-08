@@ -77,6 +77,11 @@ dev = [
     # PS210: tests import scitex_hpc unguarded, so [dev] must include it
     # (otherwise `pip install -e .[dev]` can't run the full suite).
     "scitex-hpc>=0.6.2",
+    # `sac dev …` (rotate-secret + credential2apikey) imports
+    # scitex_git for its gh-secret/variable wrappers + sha256 sidecar.
+    # Keeping it in [dev] (not core deps) so a runtime install of sac
+    # doesn't pull the gh CLI plumbing — only maintainers / CI rotation.
+    "scitex-git>=0.2.0",
     "pytest>=7.0.0,<9.0.0",
     "pytest-cov>=4.0.0",
     "pytest-xdist>=3.0.0",

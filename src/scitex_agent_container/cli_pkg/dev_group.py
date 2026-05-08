@@ -24,12 +24,37 @@ import json
 import os
 import shutil
 import subprocess
-from datetime import datetime, timezone
 from pathlib import Path
 
 import click
 
 from ._helpers import HelpRecursiveGroup
+
+# scitex-git ships in the [dev] extra (see pyproject.toml). The
+# ``sac dev …`` commands need it for the gh-secret/variable wrappers
+# and sha256 sidecar; raise a clean message if a runtime install
+# without [dev] tries to invoke them.
+try:
+    from scitex_git import (
+        format_age,
+        get_variable,
+        list_secrets,
+        set_secret_with_sha_sidecar,
+        sha256_hex,
+    )
+
+    _SCITEX_GIT_OK = True
+except ImportError:
+    _SCITEX_GIT_OK = False
+
+
+def _require_scitex_git() -> None:
+    if not _SCITEX_GIT_OK:
+        raise click.ClickException(
+            "`sac dev` needs the [dev] extra. Install with: "
+            "pip install -e '.[dev]' (or pip install scitex-git>=0.1.3)."
+        )
+
 
 _CREDENTIALS_PATH = Path.home() / ".claude" / ".credentials.json"
 
@@ -67,77 +92,6 @@ def _detect_repo() -> str:
     return path[:-4] if path.endswith(".git") else path
 
 
-def _gh_list_secrets(repo: str) -> dict[str, str]:
-    """Return ``{name: updated_at_iso}`` for the repo's Actions secrets."""
-    raw = subprocess.check_output(
-        [
-            "gh",
-            "api",
-            f"repos/{repo}/actions/secrets",
-            "--paginate",
-        ],
-        text=True,
-    )
-    payload = json.loads(raw)
-    return {s["name"]: s["updated_at"] for s in payload.get("secrets", [])}
-
-
-def _gh_set_secret(repo: str, name: str, value: str) -> None:
-    proc = subprocess.run(
-        ["gh", "secret", "set", name, "-R", repo, "--body", "-"],
-        input=value,
-        text=True,
-        capture_output=True,
-    )
-    if proc.returncode != 0:
-        raise click.ClickException(
-            f"gh secret set {name} failed: {proc.stderr.strip() or proc.stdout.strip()}"
-        )
-
-
-def _gh_set_variable(repo: str, name: str, value: str) -> None:
-    """Create-or-update a repo Actions variable.
-
-    Variables are world-readable to anyone with repo read; we only
-    push a SHA256 hash of the secret value here, never anything that
-    could be reversed back to the token. Used as a public fingerprint
-    so :func:`upload_apikey_from_credentials_to_github` can show
-    whether the GitHub-side secret matches the local one.
-    """
-    # ``gh variable set`` is idempotent: creates or updates.
-    proc = subprocess.run(
-        ["gh", "variable", "set", name, "-R", repo, "--body", value],
-        text=True,
-        capture_output=True,
-    )
-    if proc.returncode != 0:
-        raise click.ClickException(
-            f"gh variable set {name} failed: "
-            f"{proc.stderr.strip() or proc.stdout.strip()}"
-        )
-
-
-def _gh_get_variable(repo: str, name: str) -> str | None:
-    """Return the variable value, or None if absent."""
-    proc = subprocess.run(
-        ["gh", "api", f"repos/{repo}/actions/variables/{name}"],
-        text=True,
-        capture_output=True,
-    )
-    if proc.returncode != 0:
-        return None
-    try:
-        return json.loads(proc.stdout).get("value")
-    except json.JSONDecodeError:
-        return None
-
-
-def _sha256(value: str) -> str:
-    import hashlib
-
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
-
-
 def _classify_token(value: str) -> str:
     """Return a short label ('oauth' / 'api-key' / 'unknown') for the report."""
     if value.startswith("sk-ant-oat"):
@@ -145,27 +99,6 @@ def _classify_token(value: str) -> str:
     if value.startswith("sk-ant-api"):
         return "api-key"
     return "unknown"
-
-
-def _format_age(updated_iso: str | None) -> str:
-    """Render a GitHub-secret ``updated_at`` timestamp as a human age.
-
-    Picks the largest unit that gives a readable number: seconds for
-    very fresh rotations, then minutes, hours, days. Mirrors the
-    `git relative_date` style — a single value + unit, no compound
-    "1d 4h" form.
-    """
-    if not updated_iso:
-        return "?"
-    dt = datetime.fromisoformat(updated_iso.replace("Z", "+00:00"))
-    seconds = (datetime.now(timezone.utc) - dt).total_seconds()
-    if seconds < 60:
-        return f"{int(seconds)}s"
-    if seconds < 3600:
-        return f"{int(seconds / 60)}min"
-    if seconds < 86400:
-        return f"{seconds / 3600:.1f}h"
-    return f"{seconds / 86400:.1f}d"
 
 
 def _read_credentials_oauth_token(path: Path) -> str:
@@ -286,6 +219,7 @@ def upload_apikey_from_credentials_to_github(dry_run: bool, yes: bool) -> None:
       $ sac dev upload-apikey-from-credentials-to-github --dry-run
       $ sac dev upload-apikey-from-credentials-to-github --yes
     """
+    _require_scitex_git()
     if shutil.which("gh") is None:
         raise click.ClickException("'gh' CLI not found on PATH")
 
@@ -295,9 +229,9 @@ def upload_apikey_from_credentials_to_github(dry_run: bool, yes: bool) -> None:
     target_slot = _ANTHROPIC_SLOT
     sha_var = f"{target_slot}_SHA256"
     kind = _classify_token(local)
-    remote = _gh_list_secrets(repo)
-    local_sha = _sha256(local)
-    remote_sha = _gh_get_variable(repo, sha_var)
+    remote = list_secrets(repo)
+    local_sha = sha256_hex(local)
+    remote_sha = get_variable(repo, sha_var)
 
     click.echo(f"repo:        {repo}")
     click.echo(f"source:      {source}")
@@ -312,7 +246,7 @@ def upload_apikey_from_credentials_to_github(dry_run: bool, yes: bool) -> None:
     click.echo(f"target slot: {target_slot}")
     if target_slot in remote:
         click.echo(
-            f"remote slot: present (last updated {_format_age(remote[target_slot])} ago)"
+            f"remote slot: present (last updated {format_age(remote[target_slot])} ago)"
         )
     else:
         click.echo("remote slot: missing")
@@ -335,11 +269,11 @@ def upload_apikey_from_credentials_to_github(dry_run: bool, yes: bool) -> None:
         )
         raise SystemExit(2)
 
-    _gh_set_secret(repo, target_slot, local)
-    # Publish the SHA256 as a public repo variable so future invocations
-    # can detect drift between local and remote without a CI roundtrip.
-    # Hash is irreversible; only the fingerprint is exposed.
-    _gh_set_variable(repo, sha_var, local_sha)
+    # Publish secret + SHA256 sidecar in one call. The sidecar is a
+    # public repo variable so future invocations can detect drift
+    # without a CI roundtrip. Hash is irreversible; only the
+    # fingerprint is exposed.
+    set_secret_with_sha_sidecar(repo, target_slot, local)
     click.echo(f"rotated {target_slot} on {repo} (sha256 sidecar: {sha_var})")
 
 
