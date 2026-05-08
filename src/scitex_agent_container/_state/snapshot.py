@@ -134,7 +134,7 @@ def _sidecars_payload(agent: str) -> dict[str, dict[str, Any]]:
 
 
 def cache_dir() -> Path:
-    override = os.environ.get("SCITEX_AGENT_CACHE_DIR")
+    override = os.environ.get("SAC_CACHE_DIR")
     if override:
         p = Path(override).expanduser()
     else:

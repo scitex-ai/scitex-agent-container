@@ -198,7 +198,7 @@ def test_agent_start_invokes_pre_and_post(monkeypatch, tmp_path):
 def test_snapshot_on_diff_invoked_when_has_diff(monkeypatch, tmp_path):
     from scitex_agent_container._state import snapshot
 
-    monkeypatch.setenv("SCITEX_AGENT_CACHE_DIR", str(tmp_path))
+    monkeypatch.setenv("SAC_CACHE_DIR", str(tmp_path))
 
     seen = []
 
