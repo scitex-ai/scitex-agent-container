@@ -36,7 +36,7 @@ class _FakeResp:
 @pytest.fixture(autouse=True)
 def _set_token(monkeypatch):
     monkeypatch.setenv("SAC_HUB_TOKEN", "wks_test_token")
-    monkeypatch.setenv("SCITEX_AGENT_HUB_URL", "https://hub.test")
+    monkeypatch.setenv("SAC_HUB_URL", "https://hub.test")
 
 
 def test_push_snapshot_posts_with_token(monkeypatch):

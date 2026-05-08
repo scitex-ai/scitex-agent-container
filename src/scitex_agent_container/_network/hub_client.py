@@ -8,7 +8,7 @@ Three endpoints (server side: scitex-orochi PR feat/lead-state-handover-server):
                                                healthy{} (FR-B)
 
 Auth: workspace token from ``SAC_HUB_TOKEN``. Hub base URL from
-``SCITEX_AGENT_HUB_URL`` (defaults to ``https://scitex-orochi.com``).
+``SAC_HUB_URL`` (defaults to ``https://scitex-orochi.com``).
 
 Stdlib only — no requests/httpx dependency. Same urlopen pattern as
 ``scitex_agent_container.hooks._dispatch_http`` so this module is safe
@@ -37,7 +37,7 @@ _HTTP_TIMEOUT_S = 10.0
 
 
 def _hub_url() -> str:
-    return os.environ.get("SCITEX_AGENT_HUB_URL", _DEFAULT_HUB).rstrip("/")
+    return os.environ.get("SAC_HUB_URL", _DEFAULT_HUB).rstrip("/")
 
 
 def _hub_token() -> str:
