@@ -475,7 +475,7 @@ a settle window before `Enter`. Both are configurable via env vars
 
 | Env var | Default | Meaning |
 |---|---|---|
-| `SCITEX_AGENT_KEY_DELAY_S` | `0.1` | Delay between individual keys |
+| `SAC_KEY_DELAY_S` | `0.1` | Delay between individual keys |
 | `SCITEX_AGENT_SUBMIT_SETTLE_S` | `0.3` | Settle after text, before `Enter` |
 | `SAC_ACTION_RETENTION_DAYS` | `30` | Default `actions purge --days` horizon |
 

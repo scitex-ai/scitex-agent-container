@@ -16,7 +16,7 @@ from typing import Callable
 #
 # Both values are overridable per-host via env vars so a slow HPC
 # login shell (Spartan) can raise them without a code change.
-_DEFAULT_INTER_KEY_DELAY_S = float(os.environ.get("SCITEX_AGENT_KEY_DELAY_S", "0.1"))
+_DEFAULT_INTER_KEY_DELAY_S = float(os.environ.get("SAC_KEY_DELAY_S", "0.1"))
 _DEFAULT_SUBMIT_SETTLE_S = float(os.environ.get("SCITEX_AGENT_SUBMIT_SETTLE_S", "0.3"))
 
 
@@ -163,7 +163,7 @@ class TmuxManager:
         inter_key_delay_s:
             Seconds to sleep between keystrokes. ``None`` (default)
             uses ``_DEFAULT_INTER_KEY_DELAY_S`` which is read from
-            ``SCITEX_AGENT_KEY_DELAY_S`` at import time. No sleep after
+            ``SAC_KEY_DELAY_S`` at import time. No sleep after
             the last key.
         sleep_fn:
             Injected sleep — tests pass a stub to avoid real waits.
