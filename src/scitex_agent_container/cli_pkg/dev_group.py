@@ -2,7 +2,7 @@
 
 Currently exposes:
 
-* ``rotate-github-secrets`` — sync local Anthropic auth env vars into
+* ``upload-apikey-from-credentials-to-github`` — sync local Anthropic auth env vars into
   this repo's GitHub Actions secret slots so CI runs against the same
   credentials the operator has locally. Honours the OAuth-vs-API
   prefix split (``sk-ant-oat-*`` → ``…_API_KEY_OAUTH`` slot;
@@ -95,6 +95,49 @@ def _gh_set_secret(repo: str, name: str, value: str) -> None:
         )
 
 
+def _gh_set_variable(repo: str, name: str, value: str) -> None:
+    """Create-or-update a repo Actions variable.
+
+    Variables are world-readable to anyone with repo read; we only
+    push a SHA256 hash of the secret value here, never anything that
+    could be reversed back to the token. Used as a public fingerprint
+    so :func:`upload_apikey_from_credentials_to_github` can show
+    whether the GitHub-side secret matches the local one.
+    """
+    # ``gh variable set`` is idempotent: creates or updates.
+    proc = subprocess.run(
+        ["gh", "variable", "set", name, "-R", repo, "--body", value],
+        text=True,
+        capture_output=True,
+    )
+    if proc.returncode != 0:
+        raise click.ClickException(
+            f"gh variable set {name} failed: "
+            f"{proc.stderr.strip() or proc.stdout.strip()}"
+        )
+
+
+def _gh_get_variable(repo: str, name: str) -> str | None:
+    """Return the variable value, or None if absent."""
+    proc = subprocess.run(
+        ["gh", "api", f"repos/{repo}/actions/variables/{name}"],
+        text=True,
+        capture_output=True,
+    )
+    if proc.returncode != 0:
+        return None
+    try:
+        return json.loads(proc.stdout).get("value")
+    except json.JSONDecodeError:
+        return None
+
+
+def _sha256(value: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
 def _classify_token(value: str) -> str:
     """Return a short label ('oauth' / 'api-key' / 'unknown') for the report."""
     if value.startswith("sk-ant-oat"):
@@ -104,11 +147,25 @@ def _classify_token(value: str) -> str:
     return "unknown"
 
 
-def _age_days(updated_iso: str | None) -> float | None:
+def _format_age(updated_iso: str | None) -> str:
+    """Render a GitHub-secret ``updated_at`` timestamp as a human age.
+
+    Picks the largest unit that gives a readable number: seconds for
+    very fresh rotations, then minutes, hours, days. Mirrors the
+    `git relative_date` style — a single value + unit, no compound
+    "1d 4h" form.
+    """
     if not updated_iso:
-        return None
+        return "?"
     dt = datetime.fromisoformat(updated_iso.replace("Z", "+00:00"))
-    return (datetime.now(timezone.utc) - dt).total_seconds() / 86400.0
+    seconds = (datetime.now(timezone.utc) - dt).total_seconds()
+    if seconds < 60:
+        return f"{int(seconds)}s"
+    if seconds < 3600:
+        return f"{int(seconds / 60)}min"
+    if seconds < 86400:
+        return f"{seconds / 3600:.1f}h"
+    return f"{seconds / 86400:.1f}d"
 
 
 def _read_credentials_oauth_token(path: Path) -> str:
@@ -117,7 +174,7 @@ def _read_credentials_oauth_token(path: Path) -> str:
     Mirrors the bash bridge in
     ``~/.dotfiles/src/.bash.d/secrets/010_scitex/01_agent-container.src``
     (``jq -r '.claudeAiOauth.accessToken // empty'``) so that calling
-    ``sac dev credential2apikey`` from a shell startup file produces
+    ``sac dev extract-apikey-from-credentials`` from a shell startup file produces
     the same value the legacy jq snippet did, without depending on jq.
     """
     if not path.is_file():
@@ -157,7 +214,7 @@ def dev_group() -> None:
     """Developer / maintainer plumbing (CI secrets, etc.)."""
 
 
-@dev_group.command(name="credential2apikey")
+@dev_group.command(name="extract-apikey-from-credentials")
 @click.option(
     "--path",
     "path",
@@ -172,7 +229,7 @@ def dev_group() -> None:
     default=False,
     help="Print 'export SAC_ANTHROPIC_API_KEY=...' shell snippet instead of the bare token.",
 )
-def credential2apikey(path: Path | None, as_export: bool) -> None:
+def extract_apikey_from_credentials(path: Path | None, as_export: bool) -> None:
     """Print the Anthropic OAuth access token from ~/.claude/.credentials.json.
 
     \b
@@ -184,8 +241,8 @@ def credential2apikey(path: Path | None, as_export: bool) -> None:
 
     \b
     Examples:
-      $ sac dev credential2apikey
-      $ eval "$(sac dev credential2apikey --export)"
+      $ sac dev extract-apikey-from-credentials
+      $ eval "$(sac dev extract-apikey-from-credentials --export)"
     """
     token = _read_credentials_oauth_token(path or _CREDENTIALS_PATH)
     if as_export:
@@ -194,7 +251,7 @@ def credential2apikey(path: Path | None, as_export: bool) -> None:
         click.echo(token)
 
 
-@dev_group.command(name="rotate-github-secrets")
+@dev_group.command(name="upload-apikey-from-credentials-to-github")
 @click.option(
     "--dry-run",
     "dry_run",
@@ -210,20 +267,13 @@ def credential2apikey(path: Path | None, as_export: bool) -> None:
     default=False,
     help="Confirm the rotation. Required when not in --dry-run.",
 )
-@click.option(
-    "--force",
-    "force",
-    is_flag=True,
-    default=False,
-    help="Rotate even when the GitHub slot was updated within the last day.",
-)
-def rotate_github_secrets(dry_run: bool, yes: bool, force: bool) -> None:
+def upload_apikey_from_credentials_to_github(dry_run: bool, yes: bool) -> None:
     """Sync local Anthropic auth env vars into this repo's GitHub Actions secrets.
 
     \b
     Reads ``SAC_ANTHROPIC_API_KEY`` from the local environment (falling
     back to ``~/.claude/.credentials.json`` via the same logic as
-    ``sac dev credential2apikey``) and pushes it to the GitHub secret
+    ``sac dev extract-apikey-from-credentials``) and pushes it to the GitHub secret
     of the same name on the current repo. The runner inside CI detects
     OAuth (``sk-ant-oat*``) vs api-key (``sk-ant-api*``) by prefix.
 
@@ -233,8 +283,8 @@ def rotate_github_secrets(dry_run: bool, yes: bool, force: bool) -> None:
 
     \b
     Examples:
-      $ sac dev rotate-github-secrets --dry-run
-      $ sac dev rotate-github-secrets --yes
+      $ sac dev upload-apikey-from-credentials-to-github --dry-run
+      $ sac dev upload-apikey-from-credentials-to-github --yes
     """
     if shutil.which("gh") is None:
         raise click.ClickException("'gh' CLI not found on PATH")
@@ -243,28 +293,36 @@ def rotate_github_secrets(dry_run: bool, yes: bool, force: bool) -> None:
 
     repo = _detect_repo()
     target_slot = _ANTHROPIC_SLOT
+    sha_var = f"{target_slot}_SHA256"
     kind = _classify_token(local)
     remote = _gh_list_secrets(repo)
-    remote_age = _age_days(remote.get(target_slot))
+    local_sha = _sha256(local)
+    remote_sha = _gh_get_variable(repo, sha_var)
 
     click.echo(f"repo:        {repo}")
     click.echo(f"source:      {source}")
-    click.echo(f"local token: {kind} (length={len(local)}, prefix={local[:11]}...)")
+    # Show enough of the token to spot-check at a glance (prefix + a
+    # tail fingerprint) without leaking the secret outright. Pattern
+    # is the same as `gh secret list` and `git ls-remote` truncations.
+    head = local[:24] if len(local) > 32 else local[: max(1, len(local) // 2)]
+    tail = local[-4:] if len(local) > 32 else ""
+    masked = f"{head}…{tail}" if tail else head
+    click.echo(f"local token: {kind} (length={len(local)}, value={masked})")
+    click.echo(f"local sha256: {local_sha}")
     click.echo(f"target slot: {target_slot}")
     if target_slot in remote:
-        age = "?" if remote_age is None else f"{remote_age:.1f} d"
-        click.echo(f"remote slot: present (last updated {age} ago)")
+        click.echo(
+            f"remote slot: present (last updated {_format_age(remote[target_slot])} ago)"
+        )
     else:
         click.echo("remote slot: missing")
-
-    fresh = remote_age is not None and remote_age < 1.0
-    if fresh and not force:
-        click.echo(
-            "slot was updated within the last day — pass --force to override.",
-            err=True,
-        )
-        if not dry_run:
-            raise SystemExit(0)
+    if remote_sha is None:
+        click.echo(f"remote sha256: <not yet published as `{sha_var}` repo variable>")
+        click.echo("match:       unknown (rotate with --yes to publish the hash)")
+    else:
+        click.echo(f"remote sha256: {remote_sha}")
+        match = "yes" if remote_sha == local_sha else "NO — local differs from remote"
+        click.echo(f"match:       {match}")
 
     if dry_run:
         click.echo("[dry-run] would push local value to the slot above.")
@@ -278,7 +336,11 @@ def rotate_github_secrets(dry_run: bool, yes: bool, force: bool) -> None:
         raise SystemExit(2)
 
     _gh_set_secret(repo, target_slot, local)
-    click.echo(f"rotated {target_slot} on {repo}")
+    # Publish the SHA256 as a public repo variable so future invocations
+    # can detect drift between local and remote without a CI roundtrip.
+    # Hash is irreversible; only the fingerprint is exposed.
+    _gh_set_variable(repo, sha_var, local_sha)
+    click.echo(f"rotated {target_slot} on {repo} (sha256 sidecar: {sha_var})")
 
 
 __all__ = ["dev_group"]

@@ -107,22 +107,28 @@ class SDKCommonError(RuntimeError):
 def provision_anthropic_auth() -> str:
     """Make sure the SDK can authenticate; return the path that will be used.
 
-    Step 1 (always, regardless of the rest of the function):
-    ``SAC_ANTHROPIC_API_KEY`` overrides ``ANTHROPIC_API_KEY`` in the
-    process env. If SAC is unset, ``ANTHROPIC_API_KEY`` is popped.
-    See the module-level comment for *why* — short version: a stale
-    ``ANTHROPIC_API_KEY`` from dotfiles is the single biggest source
-    of "mysterious 401 / unexpected pay-per-token" reports we've had.
+    Auth flow is *one-directional*:
+
+        ``~/.claude/.credentials.json``  →  ``SAC_ANTHROPIC_API_KEY``
+                                            (extracted by ``sac dev
+                                            extract-apikey-from-credentials`` or the
+                                            bash bridge)
+        ``SAC_ANTHROPIC_API_KEY``        →  ``ANTHROPIC_API_KEY``
+                                            (overridden here)
+
+    Sac NEVER writes/synthesises ``credentials.json``. It is treated
+    as a read-only artefact produced by ``claude /login``.
+
+    Step 1 (always): ``SAC_ANTHROPIC_API_KEY`` overrides
+    ``ANTHROPIC_API_KEY``. If SAC is unset, ``ANTHROPIC_API_KEY`` is
+    popped. See the module-level comment for *why*.
 
     Step 2: pick a path, in precedence order:
 
     1. ``~/.claude/.credentials.json`` exists → ``"credentials_file"``
        (Pro/Max OAuth, flat-rate; SDK reads the file directly).
-    2. ``SAC_ANTHROPIC_API_KEY`` set:
-       * ``sk-ant-oat*`` → synthesise ``~/.claude/.credentials.json``
-         so the SDK uses the OAuth path → ``"sac_oauth_synthesised"``.
-       * anything else (e.g. ``sk-ant-api*``) → already mirrored to
-         ``ANTHROPIC_API_KEY`` in step 1 → ``"sac_api_key"``.
+    2. ``SAC_ANTHROPIC_API_KEY`` set → ``"sac_env"`` (already mirrored
+       to ``ANTHROPIC_API_KEY`` in step 1; the SDK reads it as-is).
     3. Neither → :class:`SDKCommonError`.
     """
     # Step 1 — SAC value is the only trusted env source. Override or pop.
@@ -132,68 +138,18 @@ def provision_anthropic_auth() -> str:
     else:
         os.environ.pop("ANTHROPIC_API_KEY", None)
 
-    # Step 2 — pick the auth path.
+    # Step 2 — pick the auth path. Cred-file is preferred; SAC env is fallback.
     if _CRED_FILE.is_file():
         return "credentials_file"
     if sac_value:
-        if sac_value.startswith("sk-ant-oat"):
-            _write_oauth_credentials_file(sac_value)
-            return "sac_oauth_synthesised"
-        return "sac_api_key"
+        return "sac_env"
     raise SDKCommonError(
         f"no Anthropic auth available — run `claude /login` so "
         f"{_CRED_FILE} exists, or export {_SAC_API_KEY_ENV}. "
         "sac does NOT honour a pre-set ANTHROPIC_API_KEY (see the "
-        "module-level comment in runtimes/_sdk_common.py for why)."
+        "module-level comment in runtimes/_sdk_common.py for why), "
+        "and never writes/synthesises credentials.json itself."
     )
-
-
-def _write_oauth_credentials_file(access_token: str) -> None:
-    """Build a ``~/.claude/.credentials.json`` from an OAuth access
-    token so the bundled CLI's credentials_file path picks it up.
-    Mode 0600 — never world-readable.
-
-    Mirror of the file shape `claude /login` writes: full scopes
-    list, a near-future expiresAt (1 year), subscriptionType + a
-    plausible rateLimitTier. Missing fields cause the CLI to silently
-    treat the OAuth path as invalid and fall back to API-key billing
-    (manifesting as `Credit balance is too low`).
-
-    No refresh token — operator only passed the access token via env,
-    so sessions outliving the access token's real expiry will fail.
-    Acceptable for smoke / short-lived agent runs; long-running
-    operators should bind-mount their full ~/.claude/.credentials.json
-    instead.
-    """
-    import json
-    import time
-
-    _CRED_FILE.parent.mkdir(parents=True, exist_ok=True)
-    one_year_ahead_ms = int((time.time() + 365 * 24 * 3600) * 1000)
-    payload = {
-        "claudeAiOauth": {
-            "accessToken": access_token,
-            "refreshToken": "",
-            "expiresAt": one_year_ahead_ms,
-            "scopes": [
-                "user:file_upload",
-                "user:inference",
-                "user:mcp_servers",
-                "user:profile",
-                "user:sessions:claude_code",
-            ],
-            "subscriptionType": "max",
-            "rateLimitTier": "default_claude_max_20x",
-        }
-    }
-    _CRED_FILE.write_text(json.dumps(payload))
-    try:
-        _CRED_FILE.chmod(0o600)
-    except (
-        OSError,
-        PermissionError,
-    ):  # stx-allow: fallback (reason: chmod can fail on bind-mounted FS layouts; the file was already written)
-        pass
 
 
 # ---------------------------------------------------------------------------
