@@ -69,8 +69,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # (override via --build-arg SAC_REF=...) for deterministic rebuilds
 # from a single commit. Editable install isn't useful here — host
 # code is mounted at runtime via /work, not into site-packages.
+# claude-agent-sdk pinned to 0.1.72 — newb's working CI image bundles
+# the same version. 0.1.73 (newer at time of writing) ships a
+# different `_bundled/claude` ELF whose OAuth auth path returns
+# "Not logged in" on every call from a CI runner, even when the
+# credentials.json file is bind-mounted correctly. Tracked as a
+# regression; revisit when 0.1.74+ ships and is confirmed via the
+# SDK runtime smoke workflow.
 RUN pip install --no-cache-dir \
-        "claude-agent-sdk" \
+        "claude-agent-sdk==0.1.72" \
         "git+https://github.com/ywatanabe1989/scitex-agent-container.git@${SAC_REF}"
 
 # Run as a non-root user. The bind-mounts at runtime should be
