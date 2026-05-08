@@ -103,6 +103,33 @@ jobs:
           set -euo pipefail
           sac image build --target sdk-persistent --yes
 
+      - name: Diagnose container auth state (per newb's advice checklist)
+        # Confirms in-container HOME, UID, /home/agent/.claude perms,
+        # and that ANTHROPIC_API_KEY is NOT set in the container env
+        # — the four diagnostic checks newb's advice file documents
+        # in priority order. Output goes to the run log so the next
+        # CI failure (if any) names the failing check directly.
+        run: |
+          set -euo pipefail
+          cat > /tmp/diag-creds.json <<'JSON'
+          {"claudeAiOauth":{"accessToken":"sk-ant-oat-DIAG","refreshToken":"DIAG","expiresAt":9999999999000,"scopes":[],"subscriptionType":"max"}}
+          JSON
+          chmod 644 /tmp/diag-creds.json
+          docker run --rm \
+            -v /tmp/diag-creds.json:/home/agent/.claude/.credentials.json \
+            --entrypoint bash \
+            scitex-agent-container:sdk-persistent -c '
+              echo "=== container state ==="
+              echo "HOME=$HOME"
+              echo "USER=$(id -un):$(id -u):$(id -g)"
+              echo "ANTHROPIC_API_KEY set: ${ANTHROPIC_API_KEY:+yes}${ANTHROPIC_API_KEY:-no}"
+              echo "SAC_ANTHROPIC_API_KEY set: ${SAC_ANTHROPIC_API_KEY:+yes}${SAC_ANTHROPIC_API_KEY:-no}"
+              echo "=== /home/agent/.claude/ ==="
+              ls -la /home/agent/.claude/ || echo "(missing)"
+              echo "=== file readable ==="
+              cat /home/agent/.claude/.credentials.json | head -c 80 && echo
+            '
+
       - name: Run sdk-test as daemon and tail docker logs
         run: |
           set -euo pipefail
