@@ -71,7 +71,7 @@ CLI
     scitex-agent-container actions stats --agent <agent> --since 7d
 
     # Retention cleanup (default 30 days; override with
-    # SCITEX_AGENT_ACTION_RETENTION_DAYS or --days).
+    # SAC_ACTION_RETENTION_DAYS or --days).
     scitex-agent-container actions purge --days 14
 
 ``run`` builds an ``ActionContext`` from the local ``Registry`` entry

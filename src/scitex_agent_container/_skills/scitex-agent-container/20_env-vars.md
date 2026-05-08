@@ -71,7 +71,7 @@ Auth precedence (highest → lowest) in `runtimes/_sdk_common.py::provision_anth
 
 | Variable | Purpose | Default | Type |
 |---|---|---|---|
-| `SCITEX_AGENT_ACTION_RETENTION_DAYS` | How many days to keep action logs. | `30` | int |
+| `SAC_ACTION_RETENTION_DAYS` | How many days to keep action logs. | `30` | int |
 | `SCITEX_AGENT_ACTION_SNAPSHOT_MAX_CHARS` | Truncate action snapshots above this size. | `8192` | int |
 | `SCITEX_AGENT_AUTO_RESPONSE_TICK_S` | Auto-response poll interval. | `5` | int |
 | `SCITEX_AGENT_KEY_DELAY_S` | Delay between simulated keystrokes. | `0.05` | float |
