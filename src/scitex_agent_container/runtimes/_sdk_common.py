@@ -53,10 +53,45 @@ __all__ = [
 
 _CRED_FILE = Path.home() / ".claude" / ".credentials.json"
 
-# Sac-managed handoff env. The host sets SAC_ANTHROPIC_API_KEY (or sac
-# forwards it from the operator's env into the container); the runner
-# translates it to ANTHROPIC_API_KEY for the SDK transport. ANTHROPIC_API_KEY
-# itself is only honored when the user set it explicitly.
+# ---------------------------------------------------------------------------
+# Why we never honour a pre-set ANTHROPIC_API_KEY
+# ---------------------------------------------------------------------------
+# The Anthropic SDK auto-reads ``ANTHROPIC_API_KEY`` from the process
+# env. That auto-pickup is hostile to sac because:
+#
+#   1. **Dotfiles drift.** Operators historically exported stale API
+#      keys (or OAuth bearers under various names) from ``.bashrc``.
+#      An expired value silently survives every shell, every container
+#      bind-mounting the parent env, and every CI runner that inherits
+#      the secret. Symptom in production: "401 Invalid auth" or
+#      "Command failed exit 1" with no obvious cause — the SDK
+#      preferred the env var over the working OAuth credentials file.
+#
+#   2. **Surprise pay-per-token billing.** A pre-set
+#      ``ANTHROPIC_API_KEY`` shadows the Pro/Max flat-rate OAuth path
+#      in the credentials file. Operators paying for Pro/Max suddenly
+#      see "Credit balance is too low" because the SDK quietly
+#      switched to API-key billing.
+#
+#   3. **Provenance.** sac wants ONE tracked source of truth for the
+#      key. If an operator can side-load a value via
+#      ``ANTHROPIC_API_KEY``, every audit / quota / log lies about
+#      where the credential came from.
+#
+# The contract is therefore: **``SAC_ANTHROPIC_API_KEY`` is the only
+# env input we honour.** Whenever this function runs we:
+#
+#   * If ``SAC_ANTHROPIC_API_KEY`` is set → unconditionally OVERWRITE
+#     ``ANTHROPIC_API_KEY`` with it (highest priority, no fallback).
+#   * If ``SAC_ANTHROPIC_API_KEY`` is unset → POP ``ANTHROPIC_API_KEY``
+#     from the env so a stale dotfiles export can't be picked up by
+#     the SDK auto-reader after we return.
+#
+# Then the credentials-file path takes precedence (Pro/Max flat-rate),
+# falling back to the SAC-provided env value (api-key form bridged
+# directly; OAuth form synthesised into a credentials.json).
+# ---------------------------------------------------------------------------
+
 _SAC_API_KEY_ENV = "SAC_ANTHROPIC_API_KEY"
 
 
@@ -72,41 +107,44 @@ class SDKCommonError(RuntimeError):
 def provision_anthropic_auth() -> str:
     """Make sure the SDK can authenticate; return the path that will be used.
 
-    Decision order (first applicable wins):
+    Step 1 (always, regardless of the rest of the function):
+    ``SAC_ANTHROPIC_API_KEY`` overrides ``ANTHROPIC_API_KEY`` in the
+    process env. If SAC is unset, ``ANTHROPIC_API_KEY`` is popped.
+    See the module-level comment for *why* — short version: a stale
+    ``ANTHROPIC_API_KEY`` from dotfiles is the single biggest source
+    of "mysterious 401 / unexpected pay-per-token" reports we've had.
 
-    1. ``ANTHROPIC_API_KEY`` already set in the environment → ``"env"``
-       (operator opted in explicitly; we don't second-guess).
-    2. ``~/.claude/.credentials.json`` exists → ``"credentials_file"``
-       (Pro/Max OAuth token; SDK reads the file directly).
-    3. ``SAC_ANTHROPIC_API_KEY`` set:
-       * starts with ``sk-ant-oat-`` (Pro/Max OAuth access token) →
-         synthesise ``~/.claude/.credentials.json`` so the SDK uses
-         the OAuth path → ``"sac_oauth_synthesised"``.
-       * otherwise (api-key form ``sk-ant-api-`` or anything else) →
-         bridge to ANTHROPIC_API_KEY → ``"bridged_sac"``.
+    Step 2: pick a path, in precedence order:
 
-    Raises :class:`SDKCommonError` if none of the above apply.
-
-    Idempotent: calling repeatedly within the same process is safe and
-    returns the same path (after the first call, ``ANTHROPIC_API_KEY``
-    is set if a bridge happened, or the credentials file exists if the
-    OAuth synth happened, so subsequent calls hit the earlier branches).
+    1. ``~/.claude/.credentials.json`` exists → ``"credentials_file"``
+       (Pro/Max OAuth, flat-rate; SDK reads the file directly).
+    2. ``SAC_ANTHROPIC_API_KEY`` set:
+       * ``sk-ant-oat*`` → synthesise ``~/.claude/.credentials.json``
+         so the SDK uses the OAuth path → ``"sac_oauth_synthesised"``.
+       * anything else (e.g. ``sk-ant-api*``) → already mirrored to
+         ``ANTHROPIC_API_KEY`` in step 1 → ``"sac_api_key"``.
+    3. Neither → :class:`SDKCommonError`.
     """
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        return "env"
+    # Step 1 — SAC value is the only trusted env source. Override or pop.
+    sac_value = os.environ.get(_SAC_API_KEY_ENV)
+    if sac_value:
+        os.environ["ANTHROPIC_API_KEY"] = sac_value
+    else:
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+
+    # Step 2 — pick the auth path.
     if _CRED_FILE.is_file():
         return "credentials_file"
-    bridged = os.environ.get(_SAC_API_KEY_ENV)
-    if bridged:
-        if bridged.startswith("sk-ant-oat-"):
-            _write_oauth_credentials_file(bridged)
+    if sac_value:
+        if sac_value.startswith("sk-ant-oat"):
+            _write_oauth_credentials_file(sac_value)
             return "sac_oauth_synthesised"
-        os.environ["ANTHROPIC_API_KEY"] = bridged
-        return "bridged_sac"
+        return "sac_api_key"
     raise SDKCommonError(
-        "no Anthropic auth available — set ANTHROPIC_API_KEY, run a "
-        "Pro/Max claude /login (~/.claude/.credentials.json), or export "
-        f"{_SAC_API_KEY_ENV}"
+        f"no Anthropic auth available — run `claude /login` so "
+        f"{_CRED_FILE} exists, or export {_SAC_API_KEY_ENV}. "
+        "sac does NOT honour a pre-set ANTHROPIC_API_KEY (see the "
+        "module-level comment in runtimes/_sdk_common.py for why)."
     )
 
 

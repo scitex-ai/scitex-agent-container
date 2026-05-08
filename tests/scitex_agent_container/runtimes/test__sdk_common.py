@@ -36,41 +36,78 @@ _SAC_KEY = _sdk_common._SAC_API_KEY_ENV
 
 
 class TestProvisionAuth:
-    def test_env_var_already_set_wins(self, monkeypatch, tmp_path):
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-existing")
-        # Even if a credentials file is around, env wins.
-        monkeypatch.setattr(_sdk_common, "_CRED_FILE", tmp_path / ".credentials.json")
-        assert provision_anthropic_auth() == "env"
+    def test_pre_set_anthropic_api_key_is_popped_when_sac_unset(
+        self, monkeypatch, tmp_path
+    ):
+        """A pre-set ``ANTHROPIC_API_KEY`` is *never* honoured.
 
-    def test_credentials_file_skips_sac_bridge(self, monkeypatch, tmp_path):
+        See the module-level comment in ``runtimes/_sdk_common.py``
+        for the why — short version: stale dotfiles exports of
+        ``ANTHROPIC_API_KEY`` shadow the credentials.json path and
+        produce surprise pay-per-token billing or "401 Invalid auth"
+        in production.
+        """
+        import os
+
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-stale-from-dotfiles")
+        monkeypatch.delenv(_SAC_KEY, raising=False)
+        cred = tmp_path / ".credentials.json"
+        cred.write_text('{"claudeAiOauth": {"accessToken": "tok"}}')
+        monkeypatch.setattr(_sdk_common, "_CRED_FILE", cred)
+
+        assert provision_anthropic_auth() == "credentials_file"
+        # The pre-set ANTHROPIC_API_KEY must have been popped so the
+        # SDK auto-reader can't pick it up after we return.
+        assert "ANTHROPIC_API_KEY" not in os.environ
+
+    def test_sac_value_overrides_pre_set_anthropic_api_key(self, monkeypatch, tmp_path):
+        """``SAC_ANTHROPIC_API_KEY`` is the only trusted env input — it
+        overwrites a stale ``ANTHROPIC_API_KEY`` unconditionally."""
+        import os
+
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-stale-from-dotfiles")
+        monkeypatch.setenv(_SAC_KEY, "sk-ant-api-sac")
+        monkeypatch.setattr(_sdk_common, "_CRED_FILE", tmp_path / "missing")
+
+        assert provision_anthropic_auth() == "sac_api_key"
+        # Override happened: the value the SDK will see is SAC's, not the stale one.
+        assert os.environ.get("ANTHROPIC_API_KEY") == "sk-ant-api-sac"
+
+    def test_credentials_file_wins_over_sac_env(self, monkeypatch, tmp_path):
+        """Cred file beats SAC env: Pro/Max OAuth flat-rate is preferred."""
+        import os
+
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         cred = tmp_path / ".credentials.json"
         cred.write_text('{"claudeAiOauth": {"accessToken": "tok"}}')
         monkeypatch.setattr(_sdk_common, "_CRED_FILE", cred)
-        # Even with the sac bridge env set, cred file wins so SDK uses OAuth.
         monkeypatch.setenv(_SAC_KEY, "sk-ant-api-sac")
+
         assert provision_anthropic_auth() == "credentials_file"
-        # Critical: env was NOT mutated, OAuth path stays clean.
+        # SAC value was still mirrored to ANTHROPIC_API_KEY by the
+        # override step (the SDK may pick either path; the file is
+        # preferred and the env is now a known-good fallback rather
+        # than a stale dotfiles value).
+        assert os.environ.get("ANTHROPIC_API_KEY") == "sk-ant-api-sac"
+
+    def test_sac_api_key_form_when_no_credentials_file(self, monkeypatch, tmp_path):
+        """``sk-ant-api*`` form is mirrored to ``ANTHROPIC_API_KEY``."""
         import os
 
-        assert "ANTHROPIC_API_KEY" not in os.environ
-
-    def test_bridge_sac_api_key_form_when_no_credentials_file(
-        self, monkeypatch, tmp_path
-    ):
-        """sk-ant-api-* form bridges directly to ANTHROPIC_API_KEY."""
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         monkeypatch.setattr(_sdk_common, "_CRED_FILE", tmp_path / "missing")
         monkeypatch.setenv(_SAC_KEY, "sk-ant-api-sac")
-        assert provision_anthropic_auth() == "bridged_sac"
-        import os
 
+        assert provision_anthropic_auth() == "sac_api_key"
         assert os.environ.get("ANTHROPIC_API_KEY") == "sk-ant-api-sac"
 
     def test_oauth_token_synthesises_credentials_file(self, monkeypatch, tmp_path):
-        """sk-ant-oat-* form writes a minimal credentials.json so the
-        SDK's credentials_file path picks it up — env-bridging an OAuth
-        token doesn't work (the bundled CLI rejects it)."""
+        """``sk-ant-oat*`` form writes a minimal credentials.json so the
+        SDK's credentials_file path picks it up. The env override still
+        happens (SAC value mirrored to ANTHROPIC_API_KEY) so the SDK
+        has a known-good fallback even if the file path fails."""
+        import os
+
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         cred_target = tmp_path / ".claude" / ".credentials.json"
         monkeypatch.setattr(_sdk_common, "_CRED_FILE", cred_target)
@@ -78,11 +115,7 @@ class TestProvisionAuth:
 
         assert provision_anthropic_auth() == "sac_oauth_synthesised"
         assert cred_target.is_file()
-
-        import os
-
-        # Critical: env was NOT mutated; OAuth path stays clean.
-        assert "ANTHROPIC_API_KEY" not in os.environ
+        assert os.environ.get("ANTHROPIC_API_KEY") == "sk-ant-oat-zzz"
 
         blob = json.loads(cred_target.read_text())
         assert blob["claudeAiOauth"]["accessToken"] == "sk-ant-oat-zzz"

@@ -185,44 +185,50 @@ def test_build_run_argv_forwards_autonomous_block(tmp_path: Path):
     assert argv[argv.index("--autonomous-kick-text") + 1] == "keep going"
 
 
-def test_build_run_argv_forwards_anthropic_api_key_only_when_user_set(
+def test_build_run_argv_does_not_forward_host_anthropic_api_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """ANTHROPIC_API_KEY is forwarded only when the operator set it
-    explicitly on the host."""
+    """A host-side ``ANTHROPIC_API_KEY`` is *never* forwarded into the
+    container — see the module-level comment in
+    ``runtimes/_sdk_common.py`` for why (stale dotfiles values would
+    shadow the credentials.json path inside the container and produce
+    surprise pay-per-token billing or '401 Invalid auth')."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-api-host")
     monkeypatch.delenv("SAC_ANTHROPIC_API_KEY", raising=False)
     rt = ContainerRuntime("docker")
     cfg = _config(tmp_path)
     argv = rt.build_run_argv(cfg, state_dir=tmp_path)
-    assert "ANTHROPIC_API_KEY=sk-ant-api-host" in argv
+    assert not any(a.startswith("ANTHROPIC_API_KEY=") for a in argv)
     assert not any(a.startswith("SAC_ANTHROPIC_API_KEY=") for a in argv)
 
 
 def test_build_run_argv_forwards_sac_anthropic_api_key_unchanged(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """SAC_ANTHROPIC_API_KEY is forwarded as-is; the runner translates."""
+    """SAC_ANTHROPIC_API_KEY is forwarded as-is; the runner inside the
+    container overrides ANTHROPIC_API_KEY with this value (or pops it
+    if SAC is unset). See provision_anthropic_auth."""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.setenv("SAC_ANTHROPIC_API_KEY", "sk-ant-api-sac")
     rt = ContainerRuntime("docker")
     cfg = _config(tmp_path)
     argv = rt.build_run_argv(cfg, state_dir=tmp_path)
     assert "SAC_ANTHROPIC_API_KEY=sk-ant-api-sac" in argv
-    # ANTHROPIC_API_KEY must NOT be synthesized on the host — runner
-    # decides only when actually launching the SDK transport.
+    # Host ANTHROPIC_API_KEY must never end up in the container env.
     assert not any(a.startswith("ANTHROPIC_API_KEY=") for a in argv)
 
 
-def test_build_run_argv_forwards_both_when_both_set(
+def test_build_run_argv_drops_host_anthropic_when_sac_also_set(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
+    """When BOTH are set, only SAC_ANTHROPIC_API_KEY is forwarded —
+    the host ANTHROPIC_API_KEY is dropped per the no-honour rule."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-api-host")
     monkeypatch.setenv("SAC_ANTHROPIC_API_KEY", "sk-ant-api-sac")
     rt = ContainerRuntime("docker")
     cfg = _config(tmp_path)
     argv = rt.build_run_argv(cfg, state_dir=tmp_path)
-    assert "ANTHROPIC_API_KEY=sk-ant-api-host" in argv
+    assert not any(a.startswith("ANTHROPIC_API_KEY=") for a in argv)
     assert "SAC_ANTHROPIC_API_KEY=sk-ant-api-sac" in argv
 
 

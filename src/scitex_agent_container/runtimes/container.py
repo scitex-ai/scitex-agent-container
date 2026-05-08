@@ -172,24 +172,22 @@ class ContainerRuntime(RuntimeBase):
             "SCITEX_AGENT_CONTAINER_STATE_DB=/state/state.db",
         ]
 
-        # Forward Anthropic auth.
+        # Forward Anthropic auth — SAC_ANTHROPIC_API_KEY ONLY.
         #
-        # Two distinct envs, two distinct intents:
-        #
-        # * ANTHROPIC_API_KEY — passed through verbatim only when the
-        #   operator set it explicitly on the host. Sac never synthesises
-        #   it, so the variable in the container reflects the operator's
-        #   own decision (matches the user's "only use ANTHROPIC_API_KEY
-        #   when user explicitly pass" rule).
-        #
-        # * SAC_ANTHROPIC_API_KEY — sac-namespaced handoff. The runner
-        #   (provision_anthropic_auth) translates it to ANTHROPIC_API_KEY
-        #   internally just before talking to the SDK. Forwarded as-is so
-        #   the runner does the bridge, not the host.
-        for auth_env in ("ANTHROPIC_API_KEY", "SAC_ANTHROPIC_API_KEY"):
-            val = os.environ.get(auth_env)
-            if val:
-                argv += ["--env", f"{auth_env}={val}"]
+        # We deliberately do NOT forward a host-side ``ANTHROPIC_API_KEY``
+        # into the container. See the module-level comment in
+        # ``runtimes/_sdk_common.py`` for the long form; short version:
+        # a stale ``ANTHROPIC_API_KEY`` from the operator's dotfiles
+        # silently shadows the OAuth credentials file inside the
+        # container and produces "401 Invalid auth" or surprise
+        # pay-per-token billing. The runner inside the container
+        # (``provision_anthropic_auth``) overrides ``ANTHROPIC_API_KEY``
+        # with the trusted ``SAC_ANTHROPIC_API_KEY`` value (or pops it
+        # if SAC is unset), so we keep the host-side env name strictly
+        # sac-namespaced.
+        sac_val = os.environ.get("SAC_ANTHROPIC_API_KEY")
+        if sac_val:
+            argv += ["--env", f"SAC_ANTHROPIC_API_KEY={sac_val}"]
         # Also mount the operator's Pro/Max credentials file when it
         # exists (read-only). HOME inside the container is /tmp (see
         # the comment on the HOME=/tmp env above), so the SDK's
