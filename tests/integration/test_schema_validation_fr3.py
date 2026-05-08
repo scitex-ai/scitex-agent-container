@@ -154,37 +154,12 @@ class TestLabelsDescription:
 
 _SHARED_AGENTS_DIR = Path.home() / ".scitex" / "orochi" / "shared" / "agents"
 
-_KNOWN_SPEC_KEYS = frozenset(
-    {
-        "runtime",
-        "model",
-        "workdir",
-        "python-venv",
-        "env",
-        "screen",
-        "container",
-        "claude",
-        "health",
-        "watchdog",
-        "restart",
-        "hooks",
-        "telegram",
-        "remote",
-        "skills",
-        "startup_commands",
-        "startup",
-        "context_management",
-        "listen",
-        "extensions",
-        "mcp_servers",
-        "multiplexer",
-        "host",
-        "hosts",
-        "session",
-        "scheduling",
-        "a2a",
-        "orochi",
-    }
+# Mirror of validator's _KNOWN_SPEC_KEYS — re-imported instead of
+# duplicated so additions in _validation.py don't silently misclassify
+# valid YAMLs as "invalid" here (which they did for image/dockerfile
+# after F-CS16 phase 2a flattened spec.container.image).
+from scitex_agent_container.config._validation import (
+    _KNOWN_SPEC_KEYS as _KNOWN_SPEC_KEYS,
 )
 
 

@@ -26,7 +26,10 @@ metadata:
     capabilities: fork,clone,branch,commit,push,open-pr
 
 spec:
-  runtime: claude-code
+  # F-CS17: CLI/TUI runtime ('claude-code') was removed; use the SDK runner.
+  runtime: docker
+  image: scitex-agent-container:sdk-persistent
+  dockerfile: ./containers/Dockerfile.sdk-persistent
   model: "sonnet"
   multiplexer: tmux
 
@@ -109,7 +112,12 @@ spec:
     check_interval_seconds: 300
     warn_before_n_checks: 1
 
-  cardinality_enforced_at_hub: true
+  # FR#3: ZOO#12 keys (cardinality_enforced_at_hub, priority_list) live
+  # under `extensions:` rather than at the top of `spec:`. Opt in by
+  # uncommenting; _lifecycle/handover.py currently reads from `spec`
+  # directly, so until that reader is migrated this stays inert.
+  # extensions:
+  #   cardinality_enforced_at_hub: true
 
   startup_commands:
     - delay: 5

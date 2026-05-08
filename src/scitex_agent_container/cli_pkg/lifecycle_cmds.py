@@ -666,9 +666,9 @@ def restart(name: str, dry_run: bool, yes: bool) -> None:
     if dry_run:
         click.echo(f"[dry-run] would restart agent '{name}'")
         return
-    if not yes and not click.confirm(f"Restart agent '{name}'?", default=True):
-        click.echo("Aborted.")
-        return
+    if not yes:
+        click.echo(f"Refusing to restart agent '{name}' without --yes/-y.", err=True)
+        raise SystemExit(2)
     # stx-allow: fallback (reason: config resolution or agent_restart can raise if the agent is not running or the session cannot be found; error message + sys.exit(1) is cleaner than an unhandled traceback)
     try:
         if "/" in name or name.endswith((".yaml", ".yml")):
@@ -715,9 +715,11 @@ def cleanup(dry_run: bool, yes: bool) -> None:
             "[dry-run] would remove stale registry entries (run without --dry-run to apply)"
         )
         return
-    if not yes and not click.confirm("Remove stale registry entries?", default=True):
-        click.echo("Aborted.")
-        return
+    if not yes:
+        click.echo(
+            "Refusing to remove stale registry entries without --yes/-y.", err=True
+        )
+        raise SystemExit(2)
     cleaned = registry.cleanup_stale()
     if cleaned:
         console.print(f"[green]Cleaned {cleaned} stale registry entries[/green]")
@@ -863,11 +865,12 @@ def stop_auto_accept(agent: str, dry_run: bool, yes: bool) -> None:
     if dry_run:
         click.echo(f"[dry-run] would stop auto-accept daemon for agent '{agent}'")
         return
-    if not yes and not click.confirm(
-        f"Stop auto-accept daemon for '{agent}'?", default=True
-    ):
-        click.echo("Aborted.")
-        return
+    if not yes:
+        click.echo(
+            f"Refusing to stop auto-accept daemon for '{agent}' without --yes/-y.",
+            err=True,
+        )
+        raise SystemExit(2)
     import os as _os
     import signal
 
