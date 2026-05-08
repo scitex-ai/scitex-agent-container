@@ -277,4 +277,113 @@ def upload_apikey_from_credentials_to_github(dry_run: bool, yes: bool) -> None:
     click.echo(f"rotated {target_slot} on {repo} (sha256 sidecar: {sha_var})")
 
 
+_CREDENTIALS_SLOT = "CLAUDE_CREDENTIALS_JSON"
+
+
+@dev_group.command(name="upload-credentials-to-github")
+@click.option(
+    "--dry-run",
+    "dry_run",
+    is_flag=True,
+    default=False,
+    help="Print what would be uploaded without calling 'gh secret set'.",
+)
+@click.option(
+    "-y",
+    "--yes",
+    "yes",
+    is_flag=True,
+    default=False,
+    help="Confirm the upload. Required when not in --dry-run.",
+)
+def upload_credentials_to_github(dry_run: bool, yes: bool) -> None:
+    """Push the FULL ~/.claude/.credentials.json as a GitHub Actions secret.
+
+    \b
+    The bare ``ANTHROPIC_API_KEY`` env path does NOT work for Pro/Max
+    OAuth tokens (Anthropic rejects ``sk-ant-oat*`` bearers passed
+    that way). The working pattern — proven by newb's CI — is to
+    upload the entire credentials.json (with its real ``refreshToken``)
+    as a secret named ``CLAUDE_CREDENTIALS_JSON``, and have the
+    workflow materialise it back to ``~/.claude/.credentials.json``
+    before launching the agent. ``container.py`` then bind-mounts the
+    file into the container, the SDK reads it, and the OAuth flat-rate
+    path works.
+
+    \b
+    Refresh after every ``claude /login`` (the access token rotates).
+
+    \b
+    Slot:
+      CLAUDE_CREDENTIALS_JSON  (full file content, including refresh_token)
+
+    \b
+    Examples:
+      $ sac dev upload-credentials-to-github --dry-run
+      $ sac dev upload-credentials-to-github --yes
+    """
+    _require_scitex_git()
+    if shutil.which("gh") is None:
+        raise click.ClickException("'gh' CLI not found on PATH")
+
+    if not _CREDENTIALS_PATH.is_file():
+        raise click.ClickException(
+            f"{_CREDENTIALS_PATH} not found — run `claude /login` first."
+        )
+    content = _CREDENTIALS_PATH.read_text()
+
+    # Quick sanity: the file should parse as JSON with the expected
+    # OAuth shape, otherwise we'd silently push a bogus secret.
+    try:
+        payload = json.loads(content)
+    except json.JSONDecodeError as exc:
+        raise click.ClickException(
+            f"{_CREDENTIALS_PATH} is not valid JSON: {exc}"
+        ) from exc
+    if "claudeAiOauth" not in payload:
+        raise click.ClickException(
+            f"{_CREDENTIALS_PATH} has no .claudeAiOauth key — wrong format?"
+        )
+
+    repo = _detect_repo()
+    sha_var = f"{_CREDENTIALS_SLOT}_SHA256"
+    remote = list_secrets(repo)
+    local_sha = sha256_hex(content)
+    remote_sha = get_variable(repo, sha_var)
+
+    click.echo(f"repo:        {repo}")
+    click.echo(f"source:      {_CREDENTIALS_PATH}")
+    click.echo(f"local size:  {len(content)} bytes")
+    click.echo(f"local sha256: {local_sha}")
+    click.echo(f"target slot: {_CREDENTIALS_SLOT}")
+    if _CREDENTIALS_SLOT in remote:
+        click.echo(
+            f"remote slot: present (last updated "
+            f"{format_age(remote[_CREDENTIALS_SLOT])} ago)"
+        )
+    else:
+        click.echo("remote slot: missing")
+    if remote_sha is None:
+        click.echo(f"remote sha256: <not yet published as `{sha_var}` repo variable>")
+        click.echo("match:       unknown (upload with --yes to publish the hash)")
+    else:
+        click.echo(f"remote sha256: {remote_sha}")
+        match = "yes" if remote_sha == local_sha else "NO — local differs from remote"
+        click.echo(f"match:       {match}")
+
+    if dry_run:
+        click.echo("[dry-run] would push the credentials.json content above.")
+        return
+
+    if not yes:
+        click.echo(
+            "Refusing to upload without --yes/-y (this overwrites the GitHub secret).",
+            err=True,
+        )
+        raise SystemExit(2)
+
+    set_secret_with_sha_sidecar(repo, _CREDENTIALS_SLOT, content)
+    click.echo(f"uploaded {_CREDENTIALS_SLOT} on {repo} (sha256 sidecar: {sha_var})")
+
+
 __all__ = ["dev_group"]
