@@ -78,7 +78,7 @@ Auth precedence (highest → lowest) in `runtimes/_sdk_common.py::provision_anth
 | `SCITEX_AGENT_SUBMIT_SETTLE_S` | Seconds to wait after submitting a prompt. | `1.0` | float |
 | `SAC_PROBE_INTERVAL_S` | Liveness probe interval. | `30` | int |
 | `SAC_PROBE_POLL_INTERVAL_S` | Fine-grained poll step inside a probe. | `1` | int |
-| `SCITEX_AGENT_PROBE_TIMEOUT_S` | Probe timeout. | `10` | int |
+| `SAC_PROBE_TIMEOUT_S` | Probe timeout. | `10` | int |
 | `SCITEX_HEARTBEAT_INTERVAL` | Ecosystem-wide heartbeat interval (fleet-shared). | `60` | int |
 
 ## Hook context (read-only, set by the harness)
