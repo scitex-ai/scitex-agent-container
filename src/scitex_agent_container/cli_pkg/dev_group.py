@@ -277,7 +277,7 @@ def upload_apikey_from_credentials_to_github(dry_run: bool, yes: bool) -> None:
     click.echo(f"rotated {target_slot} on {repo} (sha256 sidecar: {sha_var})")
 
 
-_CREDENTIALS_SLOT = "CLAUDE_CREDENTIALS_JSON"
+_CREDENTIALS_SLOT = "SAC_CLAUDE_CODE_CREDENTIALS_JSON"
 
 
 @dev_group.command(name="upload-credentials-to-github")
@@ -304,7 +304,7 @@ def upload_credentials_to_github(dry_run: bool, yes: bool) -> None:
     OAuth tokens (Anthropic rejects ``sk-ant-oat*`` bearers passed
     that way). The working pattern — proven by newb's CI — is to
     upload the entire credentials.json (with its real ``refreshToken``)
-    as a secret named ``CLAUDE_CREDENTIALS_JSON``, and have the
+    as a secret named ``SAC_CLAUDE_CODE_CREDENTIALS_JSON``, and have the
     workflow materialise it back to ``~/.claude/.credentials.json``
     before launching the agent. ``container.py`` then bind-mounts the
     file into the container, the SDK reads it, and the OAuth flat-rate
@@ -315,7 +315,7 @@ def upload_credentials_to_github(dry_run: bool, yes: bool) -> None:
 
     \b
     Slot:
-      CLAUDE_CREDENTIALS_JSON  (full file content, including refresh_token)
+      SAC_CLAUDE_CODE_CREDENTIALS_JSON  (full file content, including refresh_token)
 
     \b
     Examples:

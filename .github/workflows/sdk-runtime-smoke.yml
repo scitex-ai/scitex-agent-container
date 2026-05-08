@@ -55,13 +55,13 @@ jobs:
       #
       # Pattern lifted from newb's working CI (newb 0.26.5+).
       SAC_ANTHROPIC_API_KEY: ${{ secrets.SAC_ANTHROPIC_API_KEY }}
-      SAC_CLAUDE_CODE_CREDENTIALS_JSON: ${{ secrets.CLAUDE_CREDENTIALS_JSON }}
+      SAC_CLAUDE_CODE_CREDENTIALS_JSON: ${{ secrets.SAC_CLAUDE_CODE_CREDENTIALS_JSON }}
 
     steps:
       - name: Fail early if neither auth secret is set
         run: |
           if [ -z "$SAC_ANTHROPIC_API_KEY" ] && [ -z "$SAC_CLAUDE_CODE_CREDENTIALS_JSON" ]; then
-            echo "::error::Neither SAC_ANTHROPIC_API_KEY nor CLAUDE_CREDENTIALS_JSON secret is set."
+            echo "::error::Neither SAC_ANTHROPIC_API_KEY nor SAC_CLAUDE_CODE_CREDENTIALS_JSON secret is set."
             echo "Push one with:"
             echo "  sac dev upload-apikey-from-credentials-to-github --yes  # api-key path"
             echo "  sac dev upload-credentials-to-github --yes              # OAuth flat-rate"
