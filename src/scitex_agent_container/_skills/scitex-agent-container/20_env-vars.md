@@ -61,7 +61,7 @@ Auth precedence (highest → lowest) in `runtimes/_sdk_common.py::provision_anth
 
 | Variable | Purpose | Default | Type |
 |---|---|---|---|
-| `SCITEX_AGENT_COMPACT_ENABLED` | Enable auto-compaction of context window. | `true` | bool |
+| `SAC_COMPACT_ENABLED` | Enable auto-compaction of context window. | `true` | bool |
 | `SCITEX_AGENT_COMPACT_THRESHOLD_PCT` | Trigger compaction at this context % used. | `80` | int |
 | `SCITEX_AGENT_COMPACT_MIN_DROP_PCT` | Minimum % that must drop per pass. | `20` | int |
 | `SCITEX_AGENT_COMPACT_MIN_INTERVAL_S` | Minimum seconds between compactions. | `300` | int |
@@ -98,7 +98,7 @@ authoritative list. The keys used here: `SCITEX_OROCHI_AGENT`,
 
 ## Feature flags
 
-- **opt-out:** `SCITEX_AGENT_COMPACT_ENABLED=false` disables context compaction.
+- **opt-out:** `SAC_COMPACT_ENABLED=false` disables context compaction.
 - No opt-in flags in this package.
 
 ## Audit
