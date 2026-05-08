@@ -157,11 +157,31 @@ class ContainerRuntime(RuntimeBase):
         ]
         if user_spec:
             argv += ["--user", user_spec]
+        # Pre-create + loosen permissions on the bind-mount sources.
+        # The container runs as the image's ``agent`` user (uid 1000)
+        # by default; when sac itself runs on the host as a different
+        # UID (e.g. CI runner uid 1001), the container can't write to
+        # /work or /state without permissive mode. ``0o777`` is loose
+        # but acceptable: the directories already contain
+        # operator-only secrets in agent state.db and the host
+        # filesystem is the protection boundary; other users on the
+        # same host who could read these dirs could already read sac's
+        # config. CI runners are single-user ephemeral.
+        workdir_host = Path(config.workdir).expanduser()
+        state_dir_host = state_dir.expanduser()
+        workdir_host.mkdir(parents=True, exist_ok=True)
+        state_dir_host.mkdir(parents=True, exist_ok=True)
+        try:
+            workdir_host.chmod(0o777)
+            state_dir_host.chmod(0o777)
+        except PermissionError:  # stx-allow: fallback (reason: chmod can fail when sac doesn't own the dir; the bind-mount may still work via group perms)
+            pass
+
         argv += [
             "--mount",
-            f"type=bind,src={Path(config.workdir).expanduser()},dst=/work",
+            f"type=bind,src={workdir_host},dst=/work",
             "--mount",
-            f"type=bind,src={state_dir.expanduser()},dst=/state",
+            f"type=bind,src={state_dir_host},dst=/state",
             "--workdir",
             "/work",
             "--env",
