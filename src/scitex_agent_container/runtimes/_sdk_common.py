@@ -302,6 +302,17 @@ def build_sdk_options(
         kwargs["cwd"] = workdir
     if mcp_servers:
         kwargs["mcp_servers"] = mcp_servers
+    # ``setting_sources=[]`` — match newb's working SDK setup.
+    # The default loads ``~/.claude/`` state files (state.json,
+    # projects/, settings.json) and treats "no state" as a not-yet-
+    # logged-in session even when the credentials.json is mounted.
+    # Empty sources tells the SDK the bind-mounted credentials.json
+    # is the entire login context — required for CI containers that
+    # only have the single file mounted, not a full ``~/.claude/``
+    # tree. (The host operator's CLAUDE.md never reaches the agent
+    # this way either, which is the right default for container-as-
+    # boundary anyway.)
+    kwargs.setdefault("setting_sources", [])
     if extra:
         kwargs.update(extra)
 
