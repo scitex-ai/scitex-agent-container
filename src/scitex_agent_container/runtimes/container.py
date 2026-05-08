@@ -135,14 +135,18 @@ class ContainerRuntime(RuntimeBase):
                 (``-m <RUNNER_MODULE> --name <agent>``).
         """
         image = config.image or DEFAULT_IMAGE
-        # F-CS16 phase 2d — auto-pass --user $(id -u):$(id -g) so any
-        # files the runner writes through /work or /state are owned
-        # by the host operator, not root or UID 1000. The yaml can
-        # override (e.g. for an image that demands a specific account)
-        # by exporting SAC_USER=<spec> before invoking sac, but the
-        # default avoids the most common bind-mount permission trap.
-        uid, gid = _operator_uid_gid()
-        user_spec = os.environ.get("SAC_USER", f"{uid}:{gid}")
+        # User selection (default: let the image's USER stand). Newb's
+        # working CI pattern showed that overriding --user with the
+        # host operator's UID breaks the Anthropic SDK auth — without
+        # an /etc/passwd entry for the foreign UID, the SDK's homedir
+        # lookup falls back unpredictably and the OAuth credentials
+        # file is read but Anthropic responds "Not logged in" on the
+        # call. Letting the image's USER drive everything matches
+        # newb's reliable behaviour. Set ``SAC_USER=$(id -u):$(id -g)``
+        # explicitly when host-UID alignment for /work / /state writes
+        # really matters (local-dev convenience; CI is ephemeral so it
+        # doesn't).
+        user_spec = os.environ.get("SAC_USER")
 
         argv: list[str] = [
             self.engine,
@@ -150,18 +154,10 @@ class ContainerRuntime(RuntimeBase):
             "--detach",  # daemon mode; lifecycle.stop handles removal
             "--name",
             config.name,
-            "--user",
-            user_spec,
-            # The host UID we --user into may not have a /etc/passwd
-            # entry inside the image, in which case HOME defaults to
-            # "/" (unwritable). The bundled `claude` binary the SDK
-            # runs writes a config dir on first start, so an unwritable
-            # HOME hangs it on the SDK initialize control request.
-            # Point HOME at /tmp (world-writable in the slim base) so
-            # any --user runs cleanly. See SDK runtime smoke debugging
-            # in F-CS17 stage 3d.
-            "--env",
-            "HOME=/tmp",
+        ]
+        if user_spec:
+            argv += ["--user", user_spec]
+        argv += [
             "--mount",
             f"type=bind,src={Path(config.workdir).expanduser()},dst=/work",
             "--mount",
@@ -206,21 +202,18 @@ class ContainerRuntime(RuntimeBase):
         #   2. ``~/.claude/.credentials.json`` exists on the host —
         #      bind-mount the original file (local-dev path).
         #
-        # Mount targets — DUAL: ``/tmp/.claude/.credentials.json``
-        # (where ``Path.home()`` resolves under our ``HOME=/tmp`` env
-        # override; the Python SDK uses this) AND
-        # ``/home/agent/.claude/.credentials.json`` (where the bundled
-        # Node.js ``claude`` CLI's ``os.homedir()`` resolves via
-        # ``/etc/passwd`` for the image's ``agent`` user — HOME-env
-        # is not always honoured). Same source file, two paths,
-        # whichever the actual auth code looks at finds it.
+        # Mount target: ``/home/agent/.claude/.credentials.json`` —
+        # the image's ``agent`` user's $HOME (per Dockerfile useradd
+        # -m). With the default --user behavior dropped above, the
+        # container runs as ``agent`` (uid 1000), so the SDK's
+        # ``Path.home()`` resolves to ``/home/agent`` via /etc/passwd.
         #
-        # Mounts are read-write (NOT ``:ro``): the SDK refreshes the
-        # OAuth access token and writes the new one back to the file.
-        # With a read-only mount the refresh fails silently and
-        # Anthropic responds "Not logged in" on the next call.
-        # Containers are ephemeral so the leak surface is the runner's
-        # own filesystem, which dies with the job.
+        # Read-write (no ``:ro``): the SDK refreshes the OAuth access
+        # token mid-session and writes the new one back to the file.
+        # With a read-only mount the refresh fails and Anthropic
+        # responds "Not logged in" on the next call. Containers and
+        # CI runners are ephemeral so the leak surface dies with the
+        # job.
         cred_mount_src: Path | None = None
         creds_env = os.environ.get("SAC_CLAUDE_CODE_CREDENTIALS_JSON", "").strip()
         if creds_env:
@@ -239,8 +232,6 @@ class ContainerRuntime(RuntimeBase):
                 cred_mount_src = host_creds
         if cred_mount_src is not None:
             argv += [
-                "-v",
-                f"{cred_mount_src}:/tmp/.claude/.credentials.json",
                 "-v",
                 f"{cred_mount_src}:/home/agent/.claude/.credentials.json",
             ]

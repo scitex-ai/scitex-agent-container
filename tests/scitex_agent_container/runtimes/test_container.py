@@ -446,17 +446,22 @@ def test_dry_run_writes_argv_file(state_root: Path, tmp_path: Path, fake_run: _F
 # ---------------------------------------------------------------------------
 
 
-def test_build_run_argv_injects_user_flag(tmp_path: Path):
-    """--user $(id -u):$(id -g) appears by default."""
-    import os as _os
+def test_build_run_argv_omits_user_flag_by_default(tmp_path: Path):
+    """No ``--user`` by default — let the image's USER stand.
 
+    Newb's working CI pattern showed that overriding --user with the
+    host operator's UID breaks the Anthropic SDK auth: the foreign
+    UID has no /etc/passwd entry inside the image, the SDK's homedir
+    lookup falls back unpredictably, and the OAuth credentials file
+    is read but Anthropic responds "Not logged in" on the call.
+    Letting the image's USER drive everything matches newb's reliable
+    behaviour. ``SAC_USER`` is the explicit opt-in for host-UID
+    alignment when local-dev /work writes really need it.
+    """
     rt = ContainerRuntime("docker")
     cfg = _config(tmp_path / "wd")
     argv = rt.build_run_argv(cfg, state_dir=tmp_path)
-    assert "--user" in argv
-    spec = argv[argv.index("--user") + 1]
-    expected = f"{_os.getuid()}:{_os.getgid()}"
-    assert spec == expected
+    assert "--user" not in argv
 
 
 def test_build_run_argv_user_override_via_env(tmp_path, monkeypatch):
