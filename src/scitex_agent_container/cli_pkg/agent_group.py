@@ -19,7 +19,6 @@ import click
 from ._helpers import HelpRecursiveGroup
 from .build_cmds import check as _check_impl
 from .build_cmds import validate as _validate_impl
-from .info_cmds import attach as _attach_impl
 from .info_cmds import find as _find_impl
 from .info_cmds import logs as _logs_impl
 from .lifecycle_cmds import restart as _restart_impl
@@ -55,7 +54,6 @@ agent_group.add_command(_rebind(_start_impl, "start"))
 agent_group.add_command(_rebind(_stop_impl, "stop"))
 agent_group.add_command(_rebind(_restart_impl, "restart"))
 agent_group.add_command(_rebind(_validate_impl, "validate"))
-agent_group.add_command(_rebind(_attach_impl, "attach"))
 agent_group.add_command(_rebind(_inspect_impl, "inspect"))
 
 # Polysemous noun-leaves (allowed under noun groups by §1 loosening)

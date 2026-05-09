@@ -8,8 +8,6 @@ import pytest
 import yaml
 
 from scitex_agent_container._network import host_identity as hi
-from scitex_agent_container.config import AgentConfig
-from scitex_agent_container.config._types import RemoteSpec
 
 
 @pytest.fixture(autouse=True)
@@ -87,24 +85,6 @@ def test_yaml_file_aliases_not_list_raises(_isolate, monkeypatch):
     hi._reset_cache_for_tests()
     with pytest.raises(RuntimeError, match="must be a list"):
         hi.get_local_identities()
-
-
-def test_runtime_selection_falls_back_to_local(monkeypatch):
-    from scitex_agent_container.runtimes import claude_code as cc
-
-    cfg = AgentConfig(name="t")
-    cfg.remote = RemoteSpec(host="nas")
-    monkeypatch.setattr(cc, "is_local_host", lambda name: True)
-    assert cc._should_dispatch_remote(cfg) is False
-
-
-def test_runtime_selection_stays_remote_when_not_local(monkeypatch):
-    from scitex_agent_container.runtimes import claude_code as cc
-
-    cfg = AgentConfig(name="t")
-    cfg.remote = RemoteSpec(host="nas")
-    monkeypatch.setattr(cc, "is_local_host", lambda name: False)
-    assert cc._should_dispatch_remote(cfg) is True
 
 
 def test_cache_reset_for_tests(monkeypatch):

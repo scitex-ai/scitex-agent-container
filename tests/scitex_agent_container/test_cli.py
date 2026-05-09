@@ -200,26 +200,6 @@ class TestCLI:
         assert "Checking" in result.output
         Path(path).unlink()
 
-    def test_check_remote_agent_no_ssh(self):
-        """check command on unreachable remote should fail gracefully."""
-        remote_config = {
-            **VALID_CONFIG,
-            "spec": {
-                **VALID_CONFIG["spec"],
-                "remote": {
-                    "host": "192.0.2.1",  # RFC 5737 TEST-NET, unreachable
-                    "user": "testuser",
-                },
-            },
-        }
-        path = _write_config(remote_config)
-        runner = CliRunner()
-        result = runner.invoke(main, ["agent", "check", path])
-        assert result.exit_code != 0
-        assert "SSH connection" in result.output
-        assert "FAIL" in result.output
-        Path(path).unlink()
-
     def test_start_help_shows_no_preflight(self):
         """start --help should show the --no-preflight option."""
         runner = CliRunner()
@@ -331,11 +311,6 @@ spec:
             lambda cfg: _HangingRuntime().is_running(cfg),
             raising=False,
         )
-
-        # Patch ScreenManager for the local agent path.
-        from scitex_agent_container.runtimes import screen as _screen
-
-        monkeypatch.setattr(_screen.ScreenManager, "exists", lambda n: False)
 
         t0 = time.monotonic()
         # Module-level function reference — the monkeypatch above replaced

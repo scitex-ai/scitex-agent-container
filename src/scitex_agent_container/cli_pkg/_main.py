@@ -61,7 +61,6 @@ class _MainGroup(LazyGroup):
         "image": f"{_PKG}.image_group:image_group",
         "template": f"{_PKG}.template_group:template_group",
         "skills": f"{_PKG}.skills_group:skills_group",
-        "auto-accept": f"{_PKG}.auto_accept_group:auto_accept_group",
         "account": f"{_PKG}.account_cmds:account",
         "a2a": f"{_PKG}.a2a_cmds:a2a",
         "mcp": f"{_PKG}.mcp_cmds:mcp",
@@ -145,16 +144,6 @@ class _MainGroup(LazyGroup):
         "restart": (f"{_PKG}.lifecycle_cmds:restart", "sac agent restart"),
         "validate": (f"{_PKG}.build_cmds:validate", "sac agent validate"),
         "check": (f"{_PKG}.build_cmds:check", "sac agent check"),
-        # Auto-accept legacy flat names
-        "send-accept": (f"{_PKG}.lifecycle_cmds:send_accept", "sac auto-accept send"),
-        "start-auto-accept": (
-            f"{_PKG}.lifecycle_cmds:start_auto_accept",
-            "sac auto-accept start",
-        ),
-        "stop-auto-accept": (
-            f"{_PKG}.lifecycle_cmds:stop_auto_accept",
-            "sac auto-accept stop",
-        ),
         # Status / introspection
         "show-status": (f"{_PKG}.status_cmds:status", "sac agent status"),
         "list-agents": (f"{_PKG}.status_cmds:list_agents", "sac agent list"),
@@ -163,7 +152,6 @@ class _MainGroup(LazyGroup):
         "take-snapshot": (f"{_PKG}.snapshot_cmds:snapshot", "sac agent take-snapshot"),
         "find": (f"{_PKG}.info_cmds:find", "sac agent find"),
         "show-logs": (f"{_PKG}.info_cmds:logs", "sac agent logs"),
-        "attach": (f"{_PKG}.info_cmds:attach", "sac agent attach"),
         "recall": (f"{_PKG}.recall_cmds:recall", "sac agent recall"),
         "check-priority": (
             f"{_PKG}.priority_cmds:priority_check",

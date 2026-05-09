@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import subprocess
-from unittest.mock import MagicMock
 
 from scitex_agent_container._lifecycle.ready_state import wait_for_ready
 
@@ -163,84 +162,3 @@ def test_subprocess_error_treated_as_no_match():
     )
     assert ok is True
     assert errors["n"] >= 4  # first error plus 3 idle matches
-
-
-def test_on_timeout_capture_and_fail_raises_or_returns_failure(tmp_path, monkeypatch):
-    """Integration: claude_code._wait_for_ready_state returns False on strict timeout."""
-    from scitex_agent_container.config._types import (
-        AgentConfig,
-        ReadyPattern,
-        StartupSpec,
-    )
-    from scitex_agent_container.runtimes.claude_code import ClaudeCodeRuntime
-
-    cfg = AgentConfig(name="timeout-fail")
-    cfg.startup = StartupSpec(
-        ready_patterns=[ReadyPattern(regex="NEVER_MATCHES")],
-        ready_idle_ticks=1,
-        ready_poll_interval_seconds=0.01,
-        ready_timeout_seconds=0.05,
-        on_timeout="capture_and_fail",
-    )
-
-    runtime = ClaudeCodeRuntime()
-    fake_mux = MagicMock()
-    fake_mux.capture_content.return_value = "nothing useful"
-    monkeypatch.setattr(runtime, "_get_mux", lambda c: fake_mux)
-
-    # Redirect log dir to tmp
-    monkeypatch.setenv("HOME", str(tmp_path))
-
-    proceed = runtime._wait_for_ready_state(cfg)
-    assert proceed is False
-    # Boot capture written to tmp HOME
-    log_dir = tmp_path / ".scitex" / "agent-container" / "logs" / "timeout-fail"
-    assert log_dir.exists()
-    captures = list(log_dir.glob("boot-capture-*.txt"))
-    assert captures, "expected a boot capture file"
-
-
-def test_on_timeout_capture_and_proceed_continues(tmp_path, monkeypatch):
-    from scitex_agent_container.config._types import (
-        AgentConfig,
-        ReadyPattern,
-        StartupSpec,
-    )
-    from scitex_agent_container.runtimes.claude_code import ClaudeCodeRuntime
-
-    cfg = AgentConfig(name="timeout-proceed")
-    cfg.startup = StartupSpec(
-        ready_patterns=[ReadyPattern(regex="NEVER_MATCHES")],
-        ready_idle_ticks=1,
-        ready_poll_interval_seconds=0.01,
-        ready_timeout_seconds=0.05,
-        on_timeout="capture_and_proceed",
-    )
-
-    runtime = ClaudeCodeRuntime()
-    fake_mux = MagicMock()
-    fake_mux.capture_content.return_value = "nothing"
-    monkeypatch.setattr(runtime, "_get_mux", lambda c: fake_mux)
-    monkeypatch.setenv("HOME", str(tmp_path))
-
-    assert runtime._wait_for_ready_state(cfg) is True
-
-
-def test_wait_for_ready_state_no_patterns_is_noop(monkeypatch):
-    """Legacy configs (no spec.startup block) skip the poll loop entirely."""
-    from scitex_agent_container.config._types import AgentConfig
-    from scitex_agent_container.runtimes.claude_code import ClaudeCodeRuntime
-
-    cfg = AgentConfig(name="legacy")
-    # Default StartupSpec has no patterns.
-    runtime = ClaudeCodeRuntime()
-
-    called = {"n": 0}
-
-    def should_not_be_called(c):
-        called["n"] += 1
-        raise AssertionError("mux should not be consulted when patterns empty")
-
-    monkeypatch.setattr(runtime, "_get_mux", should_not_be_called)
-    assert runtime._wait_for_ready_state(cfg) is True
-    assert called["n"] == 0

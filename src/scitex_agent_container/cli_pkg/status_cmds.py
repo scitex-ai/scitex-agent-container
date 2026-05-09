@@ -8,11 +8,11 @@ import sys
 import click
 from rich.table import Table
 
+from .._account.credentials import read_credentials_metadata
 from .._lifecycle.health import health_check
 from .._lifecycle.lifecycle import agent_status
-from ..config import load_config
-from .._account.credentials import read_credentials_metadata
 from .._state.registry import Registry
+from ..config import load_config
 from ._helpers import _json_flag, console, print_agent_list, print_agent_list_json
 
 
@@ -262,25 +262,6 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
         sys.exit(1)
 
 
-def _detect_agent_state(content: str) -> str:
-    """Detect agent state from captured pane content."""
-    if not content.strip():
-        return "empty (no content captured)"
-    if "Enter to confirm" in content and "Bypass Permissions" in content:
-        return "waiting: Bypass Permissions prompt"
-    if "Enter to confirm" in content and "development channels" in content:
-        return "waiting: dev channels prompt"
-    if "Enter to confirm" in content:
-        return "waiting: TUI prompt"
-    if "bypass permissions" in content and "Enter to confirm" not in content:
-        return "idle (ready for input)"
-    if "Thinking" in content or "thinking" in content:
-        return "working (thinking)"
-    if "Tool" in content:
-        return "working (tool use)"
-    return "active"
-
-
 @click.command(name="inspect")
 @click.argument("name")
 @click.option(
@@ -292,7 +273,12 @@ def _detect_agent_state(content: str) -> str:
 )
 @click.pass_context
 def check_agent(ctx: click.Context, name: str, as_json: bool) -> None:
-    """Check live state of an agent by capturing pane content.
+    """Report whether an agent's container/runner is alive.
+
+    Sac is SDK-only; rich state lives behind the agent's HTTP A2A
+    surface (use ``sac peer ...`` to talk to it). This command answers
+    the cheap ``is the runtime running?`` question by asking the
+    runtime directly.
 
     \b
     Example:
@@ -319,18 +305,14 @@ def check_agent(ctx: click.Context, name: str, as_json: bool) -> None:
             console.print(f"[red]Error loading config: {exc}[/red]")
         sys.exit(1)
 
-    from ..runtimes.multiplexer import get_multiplexer
+    from ..runtimes.claude_session import ClaudeSessionRuntime
 
-    mux = get_multiplexer(config)
-    session_name = config.screen_name
-    alive = mux.exists(session_name)
-    content = mux.capture_content(session_name) if alive else ""
-    state = _detect_agent_state(content) if alive else "stopped"
+    alive = ClaudeSessionRuntime().is_running(config)
+    state = "running" if alive else "stopped"
 
     result = {
         "name": name,
-        "session": session_name,
-        "multiplexer": config.multiplexer,
+        "runtime": config.runtime,
         "alive": alive,
         "state": state,
     }
@@ -339,15 +321,8 @@ def check_agent(ctx: click.Context, name: str, as_json: bool) -> None:
         click.echo(json_mod.dumps(result, indent=2))
     else:
         status_color = "green" if alive else "red"
-        console.print(f"[bold]{name}[/bold] ({config.multiplexer}: {session_name})")
+        console.print(f"[bold]{name}[/bold] ({config.runtime})")
         console.print(f"  Status: [{status_color}]{state}[/{status_color}]")
-        if content.strip():
-            # Show last 5 non-empty lines of content
-            lines = [ln for ln in content.splitlines() if ln.strip()]
-            preview = "\n".join(lines[-5:])
-            console.print(
-                f"  Preview:\n    {preview.replace(chr(10), chr(10) + '    ')}"
-            )
 
     if not alive:
         sys.exit(1)
