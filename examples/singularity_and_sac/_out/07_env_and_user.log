@@ -1,0 +1,11 @@
+── apptainer --env / --cleanenv examples (not run) ──
+$ apptainer exec --env FOO=bar scitex-agent-container.sif env | grep FOO
+$ apptainer exec --cleanenv --env API_KEY="$API_KEY" scitex-agent-container.sif ...
+
+── sac equivalent (spec.yaml fragment) ──
+spec:
+  runtime: apptainer
+  env:
+    FOO: bar
+    API_KEY: ${API_KEY}
+    HOME: ${HOME}

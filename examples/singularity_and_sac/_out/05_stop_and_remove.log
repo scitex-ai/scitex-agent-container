@@ -1,0 +1,5 @@
+── what apptainer would do ──
+$ apptainer instance stop demo-noop
+
+── what sac would do ──
+$ sac agent stop demo-noop

@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Lesson 06 — Bind mounts (--bind, the apptainer equivalent of -v).
+#
+# Pure apptainer:
+#   apptainer exec --bind /host:/container my.sif ...
+#   apptainer exec --bind /host:/container:ro my.sif ...        # read-only
+#   apptainer exec --bind $PWD --bind /scratch my.sif ...       # multi-bind
+#
+# Defaults you don't see:
+#   apptainer auto-binds $HOME, /tmp, $PWD, /sys, /dev, /proc.
+#   This is OPPOSITE of docker (which auto-binds nothing).
+#   To opt out: --no-home, --contain (strict isolation), --containall.
+#
+# Why this matters on HPC:
+#   The auto-binds make apptainer "just work" with the user's files
+#   and scratch dirs. Most HPC sites also pre-configure system binds
+#   like /scratch, /project — see /etc/apptainer/apptainer.conf.
+#
+# sac equivalent — declared in spec.yaml just like for docker:
+#
+#   spec:
+#     mounts:
+#       - src: ${HOME}/proj
+#         dst: ${HOME}/proj
+#         mode: rw
+#       - src: /scratch/${USER}
+#         dst: /scratch/${USER}
+#         mode: rw
+#
+# sac's mounts list is runtime-agnostic — the same yaml works whether
+# the agent is dispatched to docker or apptainer.
+set -euo pipefail
+
+echo "── apptainer --bind examples (not run) ──"
+# shellcheck disable=SC2016
+echo '$ apptainer exec --bind "$PWD":/work scitex-agent-container.sif python -V'
+# shellcheck disable=SC2016
+echo '$ apptainer exec --bind "$HOME":"$HOME":ro scitex-agent-container.sif ...'
+
+echo
+echo "── sac equivalent (spec.yaml fragment, same for both runtimes) ──"
+cat <<'YAML'
+spec:
+  runtime: apptainer
+  mounts:
+    - src: ${HOME}
+      dst: ${HOME}
+      mode: rw
+    - src: /scratch/${USER}
+      dst: /scratch/${USER}
+      mode: rw
+YAML
