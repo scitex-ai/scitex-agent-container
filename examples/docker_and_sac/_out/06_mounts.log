@@ -1,0 +1,10 @@
+── docker -v examples (not run) ──
+$ docker run -v "$HOME":"$HOME":rw  scitex-agent-container:sdk-persistent ...
+$ docker run -v "$PWD":/workdir:ro scitex-agent-container:sdk-persistent ...
+
+── sac equivalent (spec.yaml fragment) ──
+spec:
+  mounts:
+    - src: ${HOME}
+      dst: ${HOME}
+      mode: rw

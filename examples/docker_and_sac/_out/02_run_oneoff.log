@@ -1,0 +1,3 @@
+── docker run --rm (one-off, prints inside container) ──
+$ docker run --rm scitex-agent-container:sdk-persistent python -c "print(\"hi from container\")"
+(dry-run; pass --apply to actually execute)
