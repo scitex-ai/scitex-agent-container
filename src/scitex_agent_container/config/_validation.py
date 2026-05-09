@@ -89,6 +89,8 @@ _KNOWN_SPEC_KEYS = frozenset(
         "orochi",  # Orochi-specific extension namespace
         "autonomous",  # F-CS3 — drive-until-done block
         "apptainer",  # F-CS18 — apptainer-specific build extension
+        "mounts",  # extra host paths to bind into the container (declarative)
+        "home_passthrough",  # bool: bind-mount $HOME so paths are seamless
     }
 )
 
@@ -236,6 +238,56 @@ def validate_raw(raw: dict, path: str) -> list[str]:
         method = health.get("method")
         if method and method not in ("sdk-alive",):
             errors.append(f"spec.health.method must be 'sdk-alive', got '{method}'")
+
+        # spec.mounts — declarative bind-mounts. Each entry: {src, dst, mode?}.
+        # `src` and `dst` are strings (host path / container path); `mode` is
+        # optional and one of "rw" (default) / "ro".
+        mounts = spec.get("mounts")
+        if mounts is not None:
+            if not isinstance(mounts, list):
+                errors.append(
+                    f"spec.mounts must be a list of mappings, got "
+                    f"{type(mounts).__name__}"
+                )
+            else:
+                for i, m in enumerate(mounts):
+                    if not isinstance(m, dict):
+                        errors.append(
+                            f"spec.mounts[{i}] must be a mapping, got "
+                            f"{type(m).__name__}"
+                        )
+                        continue
+                    extra = set(m.keys()) - {"src", "dst", "mode"}
+                    for k in sorted(extra):
+                        errors.append(
+                            f"spec.mounts[{i}]: unknown key '{k}'. "
+                            "Valid keys: src, dst, mode."
+                        )
+                    src = m.get("src")
+                    dst = m.get("dst")
+                    if not isinstance(src, str) or not src:
+                        errors.append(
+                            f"spec.mounts[{i}].src must be a non-empty string"
+                        )
+                    if not isinstance(dst, str) or not dst:
+                        errors.append(
+                            f"spec.mounts[{i}].dst must be a non-empty string"
+                        )
+                    mode = m.get("mode")
+                    if mode is not None and mode not in ("rw", "ro"):
+                        errors.append(
+                            f"spec.mounts[{i}].mode must be 'rw' or 'ro', got '{mode}'"
+                        )
+
+        # spec.home_passthrough — bool. When True, sac binds the host's $HOME
+        # into the container at the same path, sets container $HOME to match,
+        # and forwards ~/.gitconfig + ~/.ssh (read-only). Lets agents see and
+        # operate on host project repos out of the box.
+        hp = spec.get("home_passthrough")
+        if hp is not None and not isinstance(hp, bool):
+            errors.append(
+                f"spec.home_passthrough must be a boolean, got {type(hp).__name__}"
+            )
 
         # host / hosts (mutually exclusive)
         has_host = "host" in spec

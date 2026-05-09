@@ -52,11 +52,22 @@ ARG SAC_REF=develop
 #   * git           — pip install + project-local skill discovery
 #   * curl, ca-certificates — for outbound SDK API calls + pip
 #   * tini          — pid-1 reaper for clean SIGTERM handling
+#   * gh (GitHub CLI) — agents need to query CI / open PRs / inspect runs
+#     when working on host repos via spec.home_passthrough or spec.mounts
+#   * openssh-client — git push over ssh:// remotes uses the host's
+#     forwarded ~/.ssh (mounted read-only when home_passthrough is on)
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git \
         curl \
         ca-certificates \
         tini \
+        openssh-client \
+    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+        > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update && apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/*
 
 # claude-agent-sdk ships a bundled standalone `claude` ELF binary

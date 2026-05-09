@@ -393,6 +393,11 @@ class AgentConfig:
     scheduling: SchedulingSpec = field(default_factory=SchedulingSpec)
     orochi: OrochiSpec = field(default_factory=OrochiSpec)
     config_path: str = ""
+    # Declarative bind-mounts: list of {"src": <host>, "dst": <ctr>, "mode": "rw"|"ro"}.
+    mounts: list[dict] = field(default_factory=list)
+    # When True, sac binds host $HOME into the container at the same path,
+    # sets container $HOME to match, and forwards ~/.gitconfig + ~/.ssh (ro).
+    home_passthrough: bool = False
 
     def __post_init__(self) -> None:
         if not self.screen_name:

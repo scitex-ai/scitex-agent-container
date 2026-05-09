@@ -188,6 +188,46 @@ class ContainerRuntime(RuntimeBase):
             "SCITEX_AGENT_CONTAINER_STATE_DB=/state/state.db",
         ]
 
+        # spec.home_passthrough — make container paths mirror the host's:
+        # bind $HOME at the same absolute path, set $HOME, run as the host
+        # UID:GID, and forward ~/.gitconfig + ~/.ssh (read-only). With this
+        # on, prompts that say "/home/<user>/proj/foo" just work — no path
+        # rewriting, gh / git push behave like on the host.
+        home_passthrough = bool(getattr(config, "home_passthrough", False))
+        if home_passthrough:
+            host_home = Path.home()
+            argv += [
+                "--mount",
+                f"type=bind,src={host_home},dst={host_home}",
+                "--env",
+                f"HOME={host_home}",
+                # host UID:GID, so writes from the container land as the
+                # operator's user. Overrides SAC_USER above.
+                "--user",
+                f"{os.getuid()}:{os.getgid()}",
+            ]
+            # Forward gh's per-host token store if present (~/.config/gh).
+            gh_dir = host_home / ".config" / "gh"
+            if gh_dir.is_dir():
+                argv += [
+                    "--mount",
+                    f"type=bind,src={gh_dir},dst={gh_dir},readonly",
+                ]
+
+        # spec.mounts — declarative extra bind mounts. Each entry is
+        # {"src": <host>, "dst": <ctr>, "mode": "rw"|"ro"}. Path expansion
+        # (~ / $VAR) is applied to ``src`` so YAMLs stay portable.
+        for m in getattr(config, "mounts", []) or []:
+            src = os.path.expandvars(os.path.expanduser(str(m.get("src", ""))))
+            dst = str(m.get("dst", ""))
+            mode = m.get("mode", "rw")
+            if not src or not dst:
+                continue
+            entry = f"type=bind,src={src},dst={dst}"
+            if mode == "ro":
+                entry += ",readonly"
+            argv += ["--mount", entry]
+
         # Forward Anthropic auth — SAC_ANTHROPIC_API_KEY ONLY, and
         # ONLY when the credentials.json path below isn't being used.
         # If both end up set in the container, the SDK's auto-reader
@@ -246,10 +286,16 @@ class ContainerRuntime(RuntimeBase):
             if host_creds.is_file():
                 cred_mount_src = host_creds
         if cred_mount_src is not None:
-            argv += [
-                "-v",
-                f"{cred_mount_src}:/home/agent/.claude/.credentials.json",
-            ]
+            # When home_passthrough is on, the container's $HOME is the
+            # host's $HOME (mirrored bind), so the SDK's Path.home() lookup
+            # resolves to the same path the cred file already lives at.
+            # Otherwise we land at the image's ``agent`` $HOME.
+            cred_dst = (
+                f"{Path.home()}/.claude/.credentials.json"
+                if home_passthrough
+                else "/home/agent/.claude/.credentials.json"
+            )
+            argv += ["-v", f"{cred_mount_src}:{cred_dst}"]
 
         # Now decide whether to forward SAC_ANTHROPIC_API_KEY into the
         # container. ONLY when the credentials file path is NOT in use

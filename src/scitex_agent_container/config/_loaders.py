@@ -304,6 +304,8 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         multiplexer=spec.get("multiplexer", "tmux"),
         hosts_spec=hosts_spec,
         config_path=str(path),
+        mounts=list(spec.get("mounts") or []),
+        home_passthrough=bool(spec.get("home_passthrough", False)),
     )
 
 

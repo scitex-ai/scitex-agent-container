@@ -101,6 +101,43 @@ def test_build_run_argv_passes_env_dict_as_separate_flags(tmp_path: Path):
     assert argv.count("--env") >= 2
 
 
+def test_build_run_argv_emits_spec_mounts(tmp_path: Path):
+    """spec.mounts entries become --mount type=bind,src,dst[,readonly] flags."""
+    rt = ContainerRuntime("docker")
+    cfg = _config(
+        tmp_path,
+        mounts=[
+            {"src": str(tmp_path / "proj"), "dst": "/host/proj"},
+            {"src": str(tmp_path / "data"), "dst": "/host/data", "mode": "ro"},
+        ],
+    )
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path)
+    assert f"type=bind,src={tmp_path / 'proj'},dst=/host/proj" in argv
+    assert f"type=bind,src={tmp_path / 'data'},dst=/host/data,readonly" in argv
+
+
+def test_build_run_argv_home_passthrough_mirrors_host_home(tmp_path: Path, monkeypatch):
+    """spec.home_passthrough mounts $HOME at the same path, sets $HOME env,
+    and runs as host UID:GID so writes from the container are owned by the
+    operator."""
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "fakehome"))
+    (tmp_path / "fakehome").mkdir()
+
+    rt = ContainerRuntime("docker")
+    cfg = _config(tmp_path, home_passthrough=True)
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path)
+
+    assert f"type=bind,src={tmp_path / 'fakehome'},dst={tmp_path / 'fakehome'}" in argv
+    assert f"HOME={tmp_path / 'fakehome'}" in argv
+    # --user UID:GID forwarded.
+    import os as _os
+
+    user_str = f"{_os.getuid()}:{_os.getgid()}"
+    assert user_str in argv
+    user_idx = argv.index(user_str)
+    assert argv[user_idx - 1] == "--user"
+
+
 def test_build_run_argv_threads_env_files(tmp_path: Path):
     rt = ContainerRuntime("docker")
     cfg = _config(tmp_path, env_files=[".envrc", "secrets.env"])
