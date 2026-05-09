@@ -57,89 +57,16 @@
 <li class="toctree-l2"><a class="reference internal" href="../../../templates.html#examples">Examples</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="../../../slurm.html">SLURM Runtimes</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="../../../slurm.html#single-agent-runtime-slurm">Single-agent (<code class="docutils literal notranslate"><span class="pre">runtime:</span> <span class="pre">slurm</span></code>)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../../slurm.html#multi-tenant-runtime-slurm-tenant">Multi-tenant (<code class="docutils literal notranslate"><span class="pre">runtime:</span> <span class="pre">slurm-tenant</span></code>)</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="../../../slurm.html#step-1-book-the-reservation">Step 1 — book the reservation</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../slurm.html#step-2-write-tenant-yamls">Step 2 — write tenant YAMLs</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../slurm.html#step-3-start-agents-into-the-allocation">Step 3 — start agents into the allocation</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../slurm.html#step-4-operate-them">Step 4 — operate them</a></li>
-</ul>
-</li>
-<li class="toctree-l2"><a class="reference internal" href="../../../slurm.html#architectural-notes">Architectural notes</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../../slurm.html#migration-path">Migration path</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../../slurm.html#troubleshooting">Troubleshooting</a></li>
-</ul>
-</li>
 <li class="toctree-l1"><a class="reference internal" href="../../../status_and_hooks.html">Status and Hook Integration</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="../../../status_and_hooks.html#rich-status">Rich Status</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../../status_and_hooks.html#claude-code-hook-integration">Claude Code Hook Integration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../../status_and_hooks.html#zero-coupling-design">Zero Coupling Design</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="../../../actions.html">Pane Actions</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="../../../actions.html#why">Why</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../../actions.html#architecture">Architecture</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../../actions.html#cli">CLI</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../../actions.html#runtime-timing">Runtime timing</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../../actions.html#status-integration">Status integration</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../../actions.html#extending">Extending</a></li>
-</ul>
-</li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../api/scitex_agent_container.html">scitex_agent_container API Reference</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig"><code class="docutils literal notranslate"><span class="pre">AgentConfig</span></code></a><ul>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.name"><code class="docutils literal notranslate"><span class="pre">AgentConfig.name</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.runtime"><code class="docutils literal notranslate"><span class="pre">AgentConfig.runtime</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.image"><code class="docutils literal notranslate"><span class="pre">AgentConfig.image</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.dockerfile"><code class="docutils literal notranslate"><span class="pre">AgentConfig.dockerfile</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.model"><code class="docutils literal notranslate"><span class="pre">AgentConfig.model</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.workdir</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.python_venv"><code class="docutils literal notranslate"><span class="pre">AgentConfig.python_venv</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.env"><code class="docutils literal notranslate"><span class="pre">AgentConfig.env</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.env_files"><code class="docutils literal notranslate"><span class="pre">AgentConfig.env_files</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.screen_name"><code class="docutils literal notranslate"><span class="pre">AgentConfig.screen_name</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.labels"><code class="docutils literal notranslate"><span class="pre">AgentConfig.labels</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.container"><code class="docutils literal notranslate"><span class="pre">AgentConfig.container</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.claude"><code class="docutils literal notranslate"><span class="pre">AgentConfig.claude</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.health"><code class="docutils literal notranslate"><span class="pre">AgentConfig.health</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.watchdog"><code class="docutils literal notranslate"><span class="pre">AgentConfig.watchdog</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.restart"><code class="docutils literal notranslate"><span class="pre">AgentConfig.restart</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.autonomous"><code class="docutils literal notranslate"><span class="pre">AgentConfig.autonomous</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.apptainer"><code class="docutils literal notranslate"><span class="pre">AgentConfig.apptainer</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.hooks"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hooks</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.listen"><code class="docutils literal notranslate"><span class="pre">AgentConfig.listen</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.extensions"><code class="docutils literal notranslate"><span class="pre">AgentConfig.extensions</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.telegram"><code class="docutils literal notranslate"><span class="pre">AgentConfig.telegram</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.remote"><code class="docutils literal notranslate"><span class="pre">AgentConfig.remote</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.skills</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.context_management"><code class="docutils literal notranslate"><span class="pre">AgentConfig.context_management</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.startup_commands"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_commands</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.startup"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.mcp_servers"><code class="docutils literal notranslate"><span class="pre">AgentConfig.mcp_servers</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.multiplexer"><code class="docutils literal notranslate"><span class="pre">AgentConfig.multiplexer</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.hosts_spec"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hosts_spec</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.scheduling"><code class="docutils literal notranslate"><span class="pre">AgentConfig.scheduling</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.orochi"><code class="docutils literal notranslate"><span class="pre">AgentConfig.orochi</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.config_path"><code class="docutils literal notranslate"><span class="pre">AgentConfig.config_path</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig.expanded_workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.expanded_workdir</span></code></a></li>
-</ul>
-</li>
-<li class="toctree-l2"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.load_config"><code class="docutils literal notranslate"><span class="pre">load_config()</span></code></a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.validate_config"><code class="docutils literal notranslate"><span class="pre">validate_config()</span></code></a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.Registry"><code class="docutils literal notranslate"><span class="pre">Registry</span></code></a><ul>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.Registry.__init__"><code class="docutils literal notranslate"><span class="pre">Registry.__init__()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.Registry.add"><code class="docutils literal notranslate"><span class="pre">Registry.add()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.Registry.remove"><code class="docutils literal notranslate"><span class="pre">Registry.remove()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.Registry.get"><code class="docutils literal notranslate"><span class="pre">Registry.get()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.Registry.list_all"><code class="docutils literal notranslate"><span class="pre">Registry.list_all()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.Registry.exists"><code class="docutils literal notranslate"><span class="pre">Registry.exists()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.Registry.cleanup_stale"><code class="docutils literal notranslate"><span class="pre">Registry.cleanup_stale()</span></code></a></li>
-</ul>
-</li>
 <li class="toctree-l2"><a class="reference internal" href="../../../api/scitex_agent_container.html#module-scitex_agent_container.config">Config</a><ul>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig"><code class="docutils literal notranslate"><span class="pre">AgentConfig</span></code></a><ul>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.name"><code class="docutils literal notranslate"><span class="pre">AgentConfig.name</span></code></a></li>
@@ -339,24 +266,7 @@
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.validate_contributor_spec_raw"><code class="docutils literal notranslate"><span class="pre">validate_contributor_spec_raw()</span></code></a></li>
 </ul>
 </li>
-<li class="toctree-l2"><a class="reference internal" href="../../../api/scitex_agent_container.html#lifecycle">Lifecycle</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../../api/scitex_agent_container.html#registry">Registry</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../../api/scitex_agent_container.html#observability">Observability</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../../api/scitex_agent_container.html#pane-actions">Pane Actions</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../../api/scitex_agent_container.html#module-scitex_agent_container.runtimes.multiplexer">Runtimes / Multiplexer</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.multiplexer.MultiplexerProtocol"><code class="docutils literal notranslate"><span class="pre">MultiplexerProtocol</span></code></a><ul>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.multiplexer.MultiplexerProtocol.exists"><code class="docutils literal notranslate"><span class="pre">MultiplexerProtocol.exists()</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.multiplexer.MultiplexerProtocol.start"><code class="docutils literal notranslate"><span class="pre">MultiplexerProtocol.start()</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.multiplexer.MultiplexerProtocol.stop"><code class="docutils literal notranslate"><span class="pre">MultiplexerProtocol.stop()</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.multiplexer.MultiplexerProtocol.capture_content"><code class="docutils literal notranslate"><span class="pre">MultiplexerProtocol.capture_content()</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.multiplexer.MultiplexerProtocol.capture_logs"><code class="docutils literal notranslate"><span class="pre">MultiplexerProtocol.capture_logs()</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.multiplexer.MultiplexerProtocol.send_keys"><code class="docutils literal notranslate"><span class="pre">MultiplexerProtocol.send_keys()</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.multiplexer.MultiplexerProtocol.send_text_and_submit"><code class="docutils literal notranslate"><span class="pre">MultiplexerProtocol.send_text_and_submit()</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.multiplexer.MultiplexerProtocol.attach"><code class="docutils literal notranslate"><span class="pre">MultiplexerProtocol.attach()</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.multiplexer.MultiplexerProtocol.__init__"><code class="docutils literal notranslate"><span class="pre">MultiplexerProtocol.__init__()</span></code></a></li>
-</ul>
-</li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.multiplexer.get_multiplexer"><code class="docutils literal notranslate"><span class="pre">get_multiplexer()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../api/scitex_agent_container.html#module-scitex_agent_container.runtimes.prompts">Runtimes</a><ul>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.PromptHandler"><code class="docutils literal notranslate"><span class="pre">PromptHandler</span></code></a><ul>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.PromptHandler.name"><code class="docutils literal notranslate"><span class="pre">PromptHandler.name</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.PromptHandler.detect"><code class="docutils literal notranslate"><span class="pre">PromptHandler.detect</span></code></a></li>
@@ -413,77 +323,20 @@
            <div itemprop="articleBody">
              
   <h1>Source code for scitex_agent_container.config._validation</h1><div class="highlight"><pre>
-<span></span><span class="sd">&quot;&quot;&quot;YAML config validation.&quot;&quot;&quot;</span>
+<span></span><span class="sd">&quot;&quot;&quot;YAML config validation.</span>
+
+<span class="sd">Sac is SDK-only and container-only since the CLI/TUI runtime cleanup.</span>
+<span class="sd">Accepted ``spec.runtime`` values are ``docker``, ``podman``, ``apptainer``</span>
+<span class="sd">— each backend wraps the same long-running Claude Agent SDK runner.</span>
+<span class="sd">Communication with the agent uses the HTTP A2A surface, never panes.</span>
+<span class="sd">&quot;&quot;&quot;</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
 
-<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">sys</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">yaml</span>
-
-<span class="c1"># F-CS6 — yaml-field rename for ``spec.runtime``.</span>
-<span class="c1">#</span>
-<span class="c1"># The internal codebase still keys dispatch on the original names</span>
-<span class="c1"># (``claude-code`` / ``claude-session``), so the new aliases are</span>
-<span class="c1"># normalised back to the canonical form at load time. A stderr</span>
-<span class="c1"># warning is emitted once per shell session per renamed value so</span>
-<span class="c1"># stale yamls keep working without a constant log nag.</span>
-<span class="c1">#</span>
-<span class="c1"># §5 of the scitex CLI conventions mandates HARD redirects, but that</span>
-<span class="c1"># rule governs CLI commands; yaml field values can&#39;t be atomically</span>
-<span class="c1"># rewritten across every host&#39;s checked-in agent definitions, so a</span>
-<span class="c1"># soft alias is the right level of breakage here.</span>
-<span class="n">_RUNTIME_RENAMES</span> <span class="o">=</span> <span class="p">{</span>
-    <span class="s2">&quot;claude-cli-tui&quot;</span><span class="p">:</span> <span class="s2">&quot;claude-code&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;claude-sdk-persistent&quot;</span><span class="p">:</span> <span class="s2">&quot;claude-session&quot;</span><span class="p">,</span>
-<span class="p">}</span>
-
-
-<span class="k">def</span><span class="w"> </span><span class="nf">_runtime_alias_warn_marker</span><span class="p">(</span><span class="n">old_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Path</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;One marker file per shell session per renamed value.</span>
-
-<span class="sd">    Keying on PPID gives one warning per *interactive shell* — child</span>
-<span class="sd">    invocations from the same shell don&#39;t re-print. Matches the</span>
-<span class="sd">    pattern documented in scitex/general/03_interface_02_cli/</span>
-<span class="sd">    11_deprecation.md §5a.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-    <span class="n">runtime_dir</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;XDG_RUNTIME_DIR&quot;</span><span class="p">,</span> <span class="s2">&quot;/tmp&quot;</span><span class="p">)</span>
-    <span class="n">user</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;USER&quot;</span><span class="p">,</span> <span class="s2">&quot;u&quot;</span><span class="p">)</span>
-    <span class="n">ppid</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;PPID&quot;</span><span class="p">,</span> <span class="s2">&quot;0&quot;</span><span class="p">)</span>
-    <span class="k">return</span> <span class="n">Path</span><span class="p">(</span><span class="n">runtime_dir</span><span class="p">)</span> <span class="o">/</span> <span class="sa">f</span><span class="s2">&quot;sac-runtime-rename-</span><span class="si">{</span><span class="n">user</span><span class="si">}</span><span class="s2">-</span><span class="si">{</span><span class="n">ppid</span><span class="si">}</span><span class="s2">-</span><span class="si">{</span><span class="n">old_name</span><span class="si">}</span><span class="s2">.flag&quot;</span>
-
-
-<span class="k">def</span><span class="w"> </span><span class="nf">normalize_runtime</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the canonical runtime value; warn on first use of an alias.</span>
-
-<span class="sd">    Accepts the new yaml-friendly aliases (``claude-cli-tui``,</span>
-<span class="sd">    ``claude-sdk-persistent``) and returns the long-standing internal</span>
-<span class="sd">    names (``claude-code``, ``claude-session``). Unknown / canonical</span>
-<span class="sd">    values pass through unchanged. ``None`` becomes ``None``.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-    <span class="k">if</span> <span class="n">value</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="k">return</span> <span class="kc">None</span>
-    <span class="n">canonical</span> <span class="o">=</span> <span class="n">_RUNTIME_RENAMES</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
-    <span class="k">if</span> <span class="n">canonical</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">value</span>
-    <span class="n">marker</span> <span class="o">=</span> <span class="n">_runtime_alias_warn_marker</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
-    <span class="k">if</span> <span class="ow">not</span> <span class="n">marker</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
-        <span class="k">try</span><span class="p">:</span>
-            <span class="n">marker</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-            <span class="n">marker</span><span class="o">.</span><span class="n">touch</span><span class="p">()</span>
-        <span class="k">except</span> <span class="ne">OSError</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: marker is best-effort; missing /tmp shouldn&#39;t block load)</span>
-            <span class="k">pass</span>
-        <span class="n">sys</span><span class="o">.</span><span class="n">stderr</span><span class="o">.</span><span class="n">write</span><span class="p">(</span>
-            <span class="sa">f</span><span class="s2">&quot;warning: spec.runtime: &#39;</span><span class="si">{</span><span class="n">value</span><span class="si">}</span><span class="s2">&#39; is the new alias for &quot;</span>
-            <span class="sa">f</span><span class="s2">&quot;&#39;</span><span class="si">{</span><span class="n">canonical</span><span class="si">}</span><span class="s2">&#39;. Both work; the alias will become canonical &quot;</span>
-            <span class="s2">&quot;in a future major release. (F-CS6)</span><span class="se">\n</span><span class="s2">&quot;</span>
-        <span class="p">)</span>
-        <span class="n">sys</span><span class="o">.</span><span class="n">stderr</span><span class="o">.</span><span class="n">flush</span><span class="p">()</span>
-    <span class="k">return</span> <span class="n">canonical</span>
-
 
 <span class="c1"># Accepted shapes for ``spec.model`` (F-CS7).</span>
 <span class="c1">#</span>
@@ -522,77 +375,8 @@
 <span class="n">_KNOWN_TOP_LEVEL_KEYS</span> <span class="o">=</span> <span class="nb">frozenset</span><span class="p">({</span><span class="s2">&quot;apiVersion&quot;</span><span class="p">,</span> <span class="s2">&quot;kind&quot;</span><span class="p">,</span> <span class="s2">&quot;metadata&quot;</span><span class="p">,</span> <span class="s2">&quot;spec&quot;</span><span class="p">})</span>
 
 
-<span class="k">def</span><span class="w"> </span><span class="nf">_legacy_runtime_redirect</span><span class="p">(</span><span class="n">old</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">new</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">image</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Render the §5-style hard-error message for a renamed runtime.</span>
-
-<span class="sd">    Each legacy value names a specific replacement so a stale yaml</span>
-<span class="sd">    gets fixed in one pass:</span>
-
-<span class="sd">      spec.runtime: claude-session   -&gt;   spec.runtime: docker</span>
-<span class="sd">                                          spec.image:   scitex-agent-container:sdk-persistent</span>
-<span class="sd">                                          spec.dockerfile: ./containers/Dockerfile.sdk-persistent</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-    <span class="k">return</span> <span class="p">(</span>
-        <span class="sa">f</span><span class="s2">&quot;spec.runtime: &#39;</span><span class="si">{</span><span class="n">old</span><span class="si">}</span><span class="s2">&#39; was renamed to spec.runtime: &#39;</span><span class="si">{</span><span class="n">new</span><span class="si">}</span><span class="s2">&#39;. &quot;</span>
-        <span class="sa">f</span><span class="s2">&quot;Set:</span><span class="se">\n</span><span class="s2">&quot;</span>
-        <span class="sa">f</span><span class="s2">&quot;  spec.runtime:    </span><span class="si">{</span><span class="n">new</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span>
-        <span class="sa">f</span><span class="s2">&quot;  spec.image:      </span><span class="si">{</span><span class="n">image</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span>
-        <span class="sa">f</span><span class="s2">&quot;  spec.dockerfile: ./containers/Dockerfile.sdk-persistent</span><span class="se">\n</span><span class="s2">&quot;</span>
-        <span class="s2">&quot;(F-CS16 phase 2e: sac is container-only; the old runtime &quot;</span>
-        <span class="s2">&quot;names are no longer accepted.)&quot;</span>
-    <span class="p">)</span>
-
-
-<span class="c1"># F-CS16 phase 2e — every legacy runtime value hard-errors with a</span>
-<span class="c1"># redirect that names the new shape. Mapping kept module-level so</span>
-<span class="c1"># tests can pin individual messages without re-deriving the dict.</span>
 <span class="n">_SDK_IMAGE</span> <span class="o">=</span> <span class="s2">&quot;scitex-agent-container:sdk-persistent&quot;</span>
 
-
-<span class="k">def</span><span class="w"> </span><span class="nf">legacy_runtime_redirect_message</span><span class="p">(</span><span class="n">runtime</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the §5-style redirect text for a legacy runtime, or None.</span>
-
-<span class="sd">    Phase 2e.1 callers (lifecycle, dispatch helpers, error reporters)</span>
-<span class="sd">    use this to surface &quot;use ``runtime: docker`` + image + dockerfile&quot;</span>
-<span class="sd">    guidance even while the validator still accepts the legacy value.</span>
-<span class="sd">    F-CS17&#39;s sweep flips the validator itself to call this function</span>
-<span class="sd">    and append the result to ``errors``.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-    <span class="k">return</span> <span class="n">_LEGACY_RUNTIME_REDIRECTS</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">runtime</span><span class="p">)</span>
-
-
-<span class="n">_LEGACY_RUNTIME_REDIRECTS</span> <span class="o">=</span> <span class="p">{</span>
-    <span class="s2">&quot;claude-session&quot;</span><span class="p">:</span> <span class="n">_legacy_runtime_redirect</span><span class="p">(</span><span class="s2">&quot;claude-session&quot;</span><span class="p">,</span> <span class="s2">&quot;docker&quot;</span><span class="p">,</span> <span class="n">_SDK_IMAGE</span><span class="p">),</span>
-    <span class="s2">&quot;claude-sdk-persistent&quot;</span><span class="p">:</span> <span class="n">_legacy_runtime_redirect</span><span class="p">(</span>
-        <span class="s2">&quot;claude-sdk-persistent&quot;</span><span class="p">,</span> <span class="s2">&quot;docker&quot;</span><span class="p">,</span> <span class="n">_SDK_IMAGE</span>
-    <span class="p">),</span>
-    <span class="s2">&quot;claude-code&quot;</span><span class="p">:</span> <span class="p">(</span>
-        <span class="s2">&quot;spec.runtime: &#39;claude-code&#39; (CLI/TUI runtime) is no longer &quot;</span>
-        <span class="s2">&quot;supported by sac. The CLI/TUI path was removed in F-CS17. &quot;</span>
-        <span class="s2">&quot;Use the SDK runner instead:</span><span class="se">\n</span><span class="s2">&quot;</span>
-        <span class="s2">&quot;  spec.runtime:    docker</span><span class="se">\n</span><span class="s2">&quot;</span>
-        <span class="sa">f</span><span class="s2">&quot;  spec.image:      </span><span class="si">{</span><span class="n">_SDK_IMAGE</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span>
-        <span class="s2">&quot;  spec.dockerfile: ./containers/Dockerfile.sdk-persistent&quot;</span>
-    <span class="p">),</span>
-    <span class="s2">&quot;claude-cli-tui&quot;</span><span class="p">:</span> <span class="p">(</span>
-        <span class="s2">&quot;spec.runtime: &#39;claude-cli-tui&#39; is no longer supported &quot;</span>
-        <span class="s2">&quot;(CLI/TUI runtime removed in F-CS17). Use:</span><span class="se">\n</span><span class="s2">&quot;</span>
-        <span class="s2">&quot;  spec.runtime:    docker</span><span class="se">\n</span><span class="s2">&quot;</span>
-        <span class="sa">f</span><span class="s2">&quot;  spec.image:      </span><span class="si">{</span><span class="n">_SDK_IMAGE</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span>
-        <span class="s2">&quot;  spec.dockerfile: ./containers/Dockerfile.sdk-persistent&quot;</span>
-    <span class="p">),</span>
-    <span class="s2">&quot;slurm&quot;</span><span class="p">:</span> <span class="p">(</span>
-        <span class="s2">&quot;spec.runtime: &#39;slurm&#39; is no longer supported. Sac is a &quot;</span>
-        <span class="s2">&quot;container wrapper; HPC scheduling is the operator&#39;s &quot;</span>
-        <span class="s2">&quot;concern (submit your own sbatch and run &#39;sac agent start&#39; &quot;</span>
-        <span class="s2">&quot;inside the allocation). See F-CS16 design doc.&quot;</span>
-    <span class="p">),</span>
-    <span class="s2">&quot;slurm-tenant&quot;</span><span class="p">:</span> <span class="p">(</span>
-        <span class="s2">&quot;spec.runtime: &#39;slurm-tenant&#39; is no longer supported (see &quot;</span>
-        <span class="s2">&quot;the redirect for &#39;slurm&#39;). Submit sbatch yourself and &quot;</span>
-        <span class="s2">&quot;invoke &#39;sac agent start&#39; inside the allocation.&quot;</span>
-    <span class="p">),</span>
-<span class="p">}</span>
 
 <span class="c1"># All spec keys read by load_v3, parsers, or a2a/_server.py.</span>
 <span class="c1"># Unknown keys are rejected at parse time so typos surface at boot.</span>
@@ -600,14 +384,14 @@
 <span class="n">_KNOWN_SPEC_KEYS</span> <span class="o">=</span> <span class="nb">frozenset</span><span class="p">(</span>
     <span class="p">{</span>
         <span class="s2">&quot;runtime&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;image&quot;</span><span class="p">,</span>  <span class="c1"># F-CS16 phase 2a — flattened from spec.container.image</span>
-        <span class="s2">&quot;dockerfile&quot;</span><span class="p">,</span>  <span class="c1"># F-CS16 phase 2a — auto-build source when image missing</span>
+        <span class="s2">&quot;image&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;dockerfile&quot;</span><span class="p">,</span>
         <span class="s2">&quot;model&quot;</span><span class="p">,</span>
         <span class="s2">&quot;workdir&quot;</span><span class="p">,</span>
         <span class="s2">&quot;python-venv&quot;</span><span class="p">,</span>
         <span class="s2">&quot;env&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;screen&quot;</span><span class="p">,</span>
         <span class="s2">&quot;container&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;screen&quot;</span><span class="p">,</span>  <span class="c1"># legacy: agent metadata (screen_name) — no longer drives a multiplexer</span>
         <span class="s2">&quot;claude&quot;</span><span class="p">,</span>
         <span class="s2">&quot;health&quot;</span><span class="p">,</span>
         <span class="s2">&quot;watchdog&quot;</span><span class="p">,</span>
@@ -622,7 +406,6 @@
         <span class="s2">&quot;listen&quot;</span><span class="p">,</span>
         <span class="s2">&quot;extensions&quot;</span><span class="p">,</span>
         <span class="s2">&quot;mcp_servers&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;multiplexer&quot;</span><span class="p">,</span>
         <span class="s2">&quot;host&quot;</span><span class="p">,</span>
         <span class="s2">&quot;hosts&quot;</span><span class="p">,</span>
         <span class="s2">&quot;session&quot;</span><span class="p">,</span>  <span class="c1"># shortcut alias for spec.claude.session</span>
@@ -689,21 +472,16 @@
                 <span class="sa">f</span><span class="s2">&quot;known keys: </span><span class="si">{</span><span class="nb">sorted</span><span class="p">(</span><span class="n">_KNOWN_SPEC_KEYS</span><span class="p">)</span><span class="si">}</span><span class="s2">.&quot;</span>
             <span class="p">)</span>
 
-        <span class="c1"># spec.runtime — F-CS17 stage 2.</span>
-        <span class="c1">#</span>
-        <span class="c1"># The migration&#39;s grace period (phase 2e.1) is over. Every</span>
-        <span class="c1"># legacy value now hard-errors with the redirect string from</span>
-        <span class="c1"># ``legacy_runtime_redirect_message`` — see the §5-style</span>
-        <span class="c1"># guidance there. Canonical engines (docker / podman /</span>
-        <span class="c1"># apptainer) remain the only accepted values.</span>
+        <span class="c1"># spec.runtime — sac is SDK-only; the only accepted values are</span>
+        <span class="c1"># the container backends. Each wraps the same long-running</span>
+        <span class="c1"># Claude Agent SDK runner with a different permission model.</span>
         <span class="n">runtime</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;runtime&quot;</span><span class="p">)</span>
         <span class="n">valid_runtimes</span> <span class="o">=</span> <span class="p">(</span><span class="s2">&quot;docker&quot;</span><span class="p">,</span> <span class="s2">&quot;podman&quot;</span><span class="p">,</span> <span class="s2">&quot;apptainer&quot;</span><span class="p">)</span>
-        <span class="n">legacy_msg</span> <span class="o">=</span> <span class="n">legacy_runtime_redirect_message</span><span class="p">(</span><span class="n">runtime</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
-        <span class="k">if</span> <span class="n">legacy_msg</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">legacy_msg</span><span class="p">)</span>
-        <span class="k">elif</span> <span class="n">runtime</span> <span class="ow">and</span> <span class="n">runtime</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">valid_runtimes</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">runtime</span> <span class="ow">and</span> <span class="n">runtime</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">valid_runtimes</span><span class="p">:</span>
             <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                <span class="sa">f</span><span class="s2">&quot;spec.runtime must be one of </span><span class="si">{</span><span class="n">valid_runtimes</span><span class="si">}</span><span class="s2">, got &#39;</span><span class="si">{</span><span class="n">runtime</span><span class="si">}</span><span class="s2">&#39;&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;spec.runtime must be one of </span><span class="si">{</span><span class="n">valid_runtimes</span><span class="si">}</span><span class="s2">, got &#39;</span><span class="si">{</span><span class="n">runtime</span><span class="si">}</span><span class="s2">&#39;. &quot;</span>
+                <span class="s2">&quot;Sac is SDK-only since the CLI/TUI cleanup; pick a container &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;backend and image (default </span><span class="si">{</span><span class="n">_SDK_IMAGE</span><span class="si">}</span><span class="s2">).&quot;</span>
             <span class="p">)</span>
 
         <span class="c1"># spec.image (F-CS16 phase 2a) — top-level container image tag.</span>
@@ -777,18 +555,12 @@
                 <span class="sa">f</span><span class="s2">&quot;spec.restart.policy must be never|on-failure|always, got &#39;</span><span class="si">{</span><span class="n">policy</span><span class="si">}</span><span class="s2">&#39;&quot;</span>
             <span class="p">)</span>
 
-        <span class="c1"># multiplexer</span>
-        <span class="n">mux</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;multiplexer&quot;</span><span class="p">)</span>
-        <span class="k">if</span> <span class="n">mux</span> <span class="ow">and</span> <span class="n">mux</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;screen&quot;</span><span class="p">,</span> <span class="s2">&quot;tmux&quot;</span><span class="p">):</span>
-            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;spec.multiplexer must be &#39;screen&#39; or &#39;tmux&#39;, got &#39;</span><span class="si">{</span><span class="n">mux</span><span class="si">}</span><span class="s2">&#39;&quot;</span><span class="p">)</span>
-
-        <span class="c1"># health.method</span>
+        <span class="c1"># health.method — sole supported probe is the SDK runner&#39;s</span>
+        <span class="c1"># /healthz / heartbeat-file check (see runtimes/_sdk_common.py).</span>
         <span class="n">health</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;health&quot;</span><span class="p">,</span> <span class="p">{})</span> <span class="ow">or</span> <span class="p">{}</span>
         <span class="n">method</span> <span class="o">=</span> <span class="n">health</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;method&quot;</span><span class="p">)</span>
-        <span class="k">if</span> <span class="n">method</span> <span class="ow">and</span> <span class="n">method</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;multiplexer-alive&quot;</span><span class="p">,):</span>
-            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                <span class="sa">f</span><span class="s2">&quot;spec.health.method must be &#39;multiplexer-alive&#39;, got &#39;</span><span class="si">{</span><span class="n">method</span><span class="si">}</span><span class="s2">&#39;&quot;</span>
-            <span class="p">)</span>
+        <span class="k">if</span> <span class="n">method</span> <span class="ow">and</span> <span class="n">method</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;sdk-alive&quot;</span><span class="p">,):</span>
+            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;spec.health.method must be &#39;sdk-alive&#39;, got &#39;</span><span class="si">{</span><span class="n">method</span><span class="si">}</span><span class="s2">&#39;&quot;</span><span class="p">)</span>
 
         <span class="c1"># host / hosts (mutually exclusive)</span>
         <span class="n">has_host</span> <span class="o">=</span> <span class="s2">&quot;host&quot;</span> <span class="ow">in</span> <span class="n">spec</span>

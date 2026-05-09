@@ -22,8 +22,8 @@
     <script src="_static/js/theme.js"></script>
     <link rel="index" title="Index" href="genindex.html" />
     <link rel="search" title="Search" href="search.html" />
-    <link rel="next" title="Pane Actions" href="actions.html" />
-    <link rel="prev" title="SLURM Runtimes" href="slurm.html" /> 
+    <link rel="next" title="scitex_agent_container API Reference" href="api/scitex_agent_container.html" />
+    <link rel="prev" title="Templates and Examples" href="templates.html" /> 
 </head>
 
 <body class="wy-body-for-nav"> 
@@ -60,89 +60,16 @@
 <li class="toctree-l2"><a class="reference internal" href="templates.html#examples">Examples</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="slurm.html">SLURM Runtimes</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="slurm.html#single-agent-runtime-slurm">Single-agent (<code class="docutils literal notranslate"><span class="pre">runtime:</span> <span class="pre">slurm</span></code>)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="slurm.html#multi-tenant-runtime-slurm-tenant">Multi-tenant (<code class="docutils literal notranslate"><span class="pre">runtime:</span> <span class="pre">slurm-tenant</span></code>)</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="slurm.html#step-1-book-the-reservation">Step 1 — book the reservation</a></li>
-<li class="toctree-l3"><a class="reference internal" href="slurm.html#step-2-write-tenant-yamls">Step 2 — write tenant YAMLs</a></li>
-<li class="toctree-l3"><a class="reference internal" href="slurm.html#step-3-start-agents-into-the-allocation">Step 3 — start agents into the allocation</a></li>
-<li class="toctree-l3"><a class="reference internal" href="slurm.html#step-4-operate-them">Step 4 — operate them</a></li>
-</ul>
-</li>
-<li class="toctree-l2"><a class="reference internal" href="slurm.html#architectural-notes">Architectural notes</a></li>
-<li class="toctree-l2"><a class="reference internal" href="slurm.html#migration-path">Migration path</a></li>
-<li class="toctree-l2"><a class="reference internal" href="slurm.html#troubleshooting">Troubleshooting</a></li>
-</ul>
-</li>
 <li class="toctree-l1 current"><a class="current reference internal" href="#">Status and Hook Integration</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="#rich-status">Rich Status</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#claude-code-hook-integration">Claude Code Hook Integration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#zero-coupling-design">Zero Coupling Design</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="actions.html">Pane Actions</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="actions.html#why">Why</a></li>
-<li class="toctree-l2"><a class="reference internal" href="actions.html#architecture">Architecture</a></li>
-<li class="toctree-l2"><a class="reference internal" href="actions.html#cli">CLI</a></li>
-<li class="toctree-l2"><a class="reference internal" href="actions.html#runtime-timing">Runtime timing</a></li>
-<li class="toctree-l2"><a class="reference internal" href="actions.html#status-integration">Status integration</a></li>
-<li class="toctree-l2"><a class="reference internal" href="actions.html#extending">Extending</a></li>
-</ul>
-</li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="api/scitex_agent_container.html">scitex_agent_container API Reference</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig"><code class="docutils literal notranslate"><span class="pre">AgentConfig</span></code></a><ul>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig.name"><code class="docutils literal notranslate"><span class="pre">AgentConfig.name</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig.runtime"><code class="docutils literal notranslate"><span class="pre">AgentConfig.runtime</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig.image"><code class="docutils literal notranslate"><span class="pre">AgentConfig.image</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig.dockerfile"><code class="docutils literal notranslate"><span class="pre">AgentConfig.dockerfile</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig.model"><code class="docutils literal notranslate"><span class="pre">AgentConfig.model</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig.workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.workdir</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig.python_venv"><code class="docutils literal notranslate"><span class="pre">AgentConfig.python_venv</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig.env"><code class="docutils literal notranslate"><span class="pre">AgentConfig.env</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig.env_files"><code class="docutils literal notranslate"><span class="pre">AgentConfig.env_files</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig.screen_name"><code class="docutils literal notranslate"><span class="pre">AgentConfig.screen_name</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig.labels"><code class="docutils literal notranslate"><span class="pre">AgentConfig.labels</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig.container"><code class="docutils literal notranslate"><span class="pre">AgentConfig.container</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig.claude"><code class="docutils literal notranslate"><span class="pre">AgentConfig.claude</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig.health"><code class="docutils literal notranslate"><span class="pre">AgentConfig.health</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig.watchdog"><code class="docutils literal notranslate"><span class="pre">AgentConfig.watchdog</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig.restart"><code class="docutils literal notranslate"><span class="pre">AgentConfig.restart</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig.autonomous"><code class="docutils literal notranslate"><span class="pre">AgentConfig.autonomous</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig.apptainer"><code class="docutils literal notranslate"><span class="pre">AgentConfig.apptainer</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig.hooks"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hooks</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig.listen"><code class="docutils literal notranslate"><span class="pre">AgentConfig.listen</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig.extensions"><code class="docutils literal notranslate"><span class="pre">AgentConfig.extensions</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig.telegram"><code class="docutils literal notranslate"><span class="pre">AgentConfig.telegram</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig.remote"><code class="docutils literal notranslate"><span class="pre">AgentConfig.remote</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig.skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.skills</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig.context_management"><code class="docutils literal notranslate"><span class="pre">AgentConfig.context_management</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig.startup_commands"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_commands</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig.startup"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig.mcp_servers"><code class="docutils literal notranslate"><span class="pre">AgentConfig.mcp_servers</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig.multiplexer"><code class="docutils literal notranslate"><span class="pre">AgentConfig.multiplexer</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig.hosts_spec"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hosts_spec</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig.scheduling"><code class="docutils literal notranslate"><span class="pre">AgentConfig.scheduling</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig.orochi"><code class="docutils literal notranslate"><span class="pre">AgentConfig.orochi</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig.config_path"><code class="docutils literal notranslate"><span class="pre">AgentConfig.config_path</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.AgentConfig.expanded_workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.expanded_workdir</span></code></a></li>
-</ul>
-</li>
-<li class="toctree-l2"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.load_config"><code class="docutils literal notranslate"><span class="pre">load_config()</span></code></a></li>
-<li class="toctree-l2"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.validate_config"><code class="docutils literal notranslate"><span class="pre">validate_config()</span></code></a></li>
-<li class="toctree-l2"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.Registry"><code class="docutils literal notranslate"><span class="pre">Registry</span></code></a><ul>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.Registry.__init__"><code class="docutils literal notranslate"><span class="pre">Registry.__init__()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.Registry.add"><code class="docutils literal notranslate"><span class="pre">Registry.add()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.Registry.remove"><code class="docutils literal notranslate"><span class="pre">Registry.remove()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.Registry.get"><code class="docutils literal notranslate"><span class="pre">Registry.get()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.Registry.list_all"><code class="docutils literal notranslate"><span class="pre">Registry.list_all()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.Registry.exists"><code class="docutils literal notranslate"><span class="pre">Registry.exists()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.Registry.cleanup_stale"><code class="docutils literal notranslate"><span class="pre">Registry.cleanup_stale()</span></code></a></li>
-</ul>
-</li>
 <li class="toctree-l2"><a class="reference internal" href="api/scitex_agent_container.html#module-scitex_agent_container.config">Config</a><ul>
 <li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig"><code class="docutils literal notranslate"><span class="pre">AgentConfig</span></code></a><ul>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.name"><code class="docutils literal notranslate"><span class="pre">AgentConfig.name</span></code></a></li>
@@ -342,24 +269,7 @@
 <li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.validate_contributor_spec_raw"><code class="docutils literal notranslate"><span class="pre">validate_contributor_spec_raw()</span></code></a></li>
 </ul>
 </li>
-<li class="toctree-l2"><a class="reference internal" href="api/scitex_agent_container.html#lifecycle">Lifecycle</a></li>
-<li class="toctree-l2"><a class="reference internal" href="api/scitex_agent_container.html#registry">Registry</a></li>
-<li class="toctree-l2"><a class="reference internal" href="api/scitex_agent_container.html#observability">Observability</a></li>
-<li class="toctree-l2"><a class="reference internal" href="api/scitex_agent_container.html#pane-actions">Pane Actions</a></li>
-<li class="toctree-l2"><a class="reference internal" href="api/scitex_agent_container.html#module-scitex_agent_container.runtimes.multiplexer">Runtimes / Multiplexer</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.runtimes.multiplexer.MultiplexerProtocol"><code class="docutils literal notranslate"><span class="pre">MultiplexerProtocol</span></code></a><ul>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.runtimes.multiplexer.MultiplexerProtocol.exists"><code class="docutils literal notranslate"><span class="pre">MultiplexerProtocol.exists()</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.runtimes.multiplexer.MultiplexerProtocol.start"><code class="docutils literal notranslate"><span class="pre">MultiplexerProtocol.start()</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.runtimes.multiplexer.MultiplexerProtocol.stop"><code class="docutils literal notranslate"><span class="pre">MultiplexerProtocol.stop()</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.runtimes.multiplexer.MultiplexerProtocol.capture_content"><code class="docutils literal notranslate"><span class="pre">MultiplexerProtocol.capture_content()</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.runtimes.multiplexer.MultiplexerProtocol.capture_logs"><code class="docutils literal notranslate"><span class="pre">MultiplexerProtocol.capture_logs()</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.runtimes.multiplexer.MultiplexerProtocol.send_keys"><code class="docutils literal notranslate"><span class="pre">MultiplexerProtocol.send_keys()</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.runtimes.multiplexer.MultiplexerProtocol.send_text_and_submit"><code class="docutils literal notranslate"><span class="pre">MultiplexerProtocol.send_text_and_submit()</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.runtimes.multiplexer.MultiplexerProtocol.attach"><code class="docutils literal notranslate"><span class="pre">MultiplexerProtocol.attach()</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.runtimes.multiplexer.MultiplexerProtocol.__init__"><code class="docutils literal notranslate"><span class="pre">MultiplexerProtocol.__init__()</span></code></a></li>
-</ul>
-</li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.runtimes.multiplexer.get_multiplexer"><code class="docutils literal notranslate"><span class="pre">get_multiplexer()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="api/scitex_agent_container.html#module-scitex_agent_container.runtimes.prompts">Runtimes</a><ul>
 <li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.PromptHandler"><code class="docutils literal notranslate"><span class="pre">PromptHandler</span></code></a><ul>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.PromptHandler.name"><code class="docutils literal notranslate"><span class="pre">PromptHandler.name</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.PromptHandler.detect"><code class="docutils literal notranslate"><span class="pre">PromptHandler.detect</span></code></a></li>
@@ -550,8 +460,8 @@ package.</p>
            </div>
           </div>
           <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
-        <a href="slurm.html" class="btn btn-neutral float-left" title="SLURM Runtimes" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
-        <a href="actions.html" class="btn btn-neutral float-right" title="Pane Actions" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+        <a href="templates.html" class="btn btn-neutral float-left" title="Templates and Examples" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="api/scitex_agent_container.html" class="btn btn-neutral float-right" title="scitex_agent_container API Reference" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
     </div>
 
   <hr/>
