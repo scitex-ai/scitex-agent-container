@@ -188,6 +188,19 @@ class ContainerRuntime(RuntimeBase):
             "SCITEX_AGENT_CONTAINER_STATE_DB=/state/state.db",
         ]
 
+        # Also bind the workdir at its HOST path inside the container,
+        # so anything that reads ``cfg.workdir`` (the SDK runner's
+        # ``ClaudeAgentOptions.cwd``, hooks, helper scripts) sees the
+        # same path on both sides. ``/work`` stays as the canonical
+        # in-container working dir; the second mount is just an alias.
+        # Skipped when the workdir is already under $HOME and
+        # home_passthrough is on (the $HOME bind covers it).
+        host_workdir_str = str(workdir_host)
+        argv += [
+            "--mount",
+            f"type=bind,src={workdir_host},dst={host_workdir_str}",
+        ]
+
         # spec.home_passthrough — make container paths mirror the host's:
         # bind $HOME at the same absolute path, set $HOME, run as the host
         # UID:GID, and forward ~/.gitconfig + ~/.ssh (read-only). With this
