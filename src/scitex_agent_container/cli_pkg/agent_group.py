@@ -28,7 +28,6 @@ from .lifecycle_cmds import stop as _stop_impl
 from .priority_cmds import priority_check as _priority_check_impl
 from .recall_cmds import recall as _recall_impl
 from .snapshot_cmds import snapshot as _snapshot_impl
-from .status_cmds import check_agent as _inspect_impl
 from .status_cmds import health as _health_impl
 from .status_cmds import list_agents as _list_agents_impl
 from .status_cmds import status as _status_impl
@@ -56,9 +55,8 @@ class _AgentGroup(HelpRecursiveGroup):
         (
             "Inspect",
             [
-                "status",
                 "list",
-                "inspect",
+                "status",
                 "health",
                 "logs",
                 "tail",
@@ -81,7 +79,6 @@ agent_group.add_command(_rebind(_start_impl, "start"))
 agent_group.add_command(_rebind(_stop_impl, "stop"))
 agent_group.add_command(_rebind(_restart_impl, "restart"))
 agent_group.add_command(_rebind(_validate_impl, "validate"))
-agent_group.add_command(_rebind(_inspect_impl, "inspect"))
 
 # Polysemous noun-leaves (allowed under noun groups by §1 loosening)
 agent_group.add_command(_rebind(_status_impl, "status"))

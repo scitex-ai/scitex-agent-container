@@ -148,7 +148,6 @@ class _MainGroup(LazyGroup):
         "show-status": (f"{_PKG}.status_cmds:status", "sac agent status"),
         "list-agents": (f"{_PKG}.status_cmds:list_agents", "sac agent list"),
         "check-health": (f"{_PKG}.status_cmds:health", "sac agent health"),
-        "inspect": (f"{_PKG}.status_cmds:check_agent", "sac agent inspect"),
         "take-snapshot": (f"{_PKG}.snapshot_cmds:snapshot", "sac agent take-snapshot"),
         "find": (f"{_PKG}.info_cmds:find", "sac agent find"),
         "show-logs": (f"{_PKG}.info_cmds:logs", "sac agent logs"),
