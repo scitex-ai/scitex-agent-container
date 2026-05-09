@@ -45,7 +45,33 @@ def _rebind(cmd: click.Command, new_name: str) -> click.Command:
     )
 
 
-@click.group(name="agent", cls=HelpRecursiveGroup)
+class _AgentGroup(HelpRecursiveGroup):
+    """Render ``sac agent --help`` with grouped sections instead of one
+    flat alphabetical list. Categories follow the verbs' actual purpose:
+    *Lifecycle* mutates state; *Inspect* reads it; *Preflight* validates
+    before launch; *Discovery* finds peers."""
+
+    COMMAND_CATEGORIES = [
+        ("Lifecycle", ["start", "stop", "restart"]),
+        (
+            "Inspect",
+            [
+                "status",
+                "list",
+                "inspect",
+                "health",
+                "logs",
+                "tail",
+                "recall",
+                "take-snapshot",
+            ],
+        ),
+        ("Preflight", ["check", "validate"]),
+        ("Discovery", ["find", "check-priority"]),
+    ]
+
+
+@click.group(name="agent", cls=_AgentGroup)
 def agent_group() -> None:
     """Agent lifecycle, status, introspection, and snapshots."""
 
