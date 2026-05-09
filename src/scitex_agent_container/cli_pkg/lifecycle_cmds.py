@@ -21,7 +21,7 @@ from .._state.registry import Registry
 from ..config import AgentConfig, load_config
 from ..config._host import resolve_hostname
 from ..config._resolve import resolve_with_prefix
-from ._helpers import console
+from ._helpers import agent_name_complete, console
 
 _SKIP_DIR_NAMES = {"legacy-agents", "shared", "GITIGNORED"}
 
@@ -157,7 +157,9 @@ def _discover_all_agents() -> list[str]:
 
 
 @click.command()
-@click.argument("targets", type=str, nargs=-1, required=True)
+@click.argument(
+    "targets", type=str, nargs=-1, required=True, shell_complete=agent_name_complete
+)
 @click.option(
     "--no-preflight",
     is_flag=True,
@@ -540,7 +542,9 @@ def start(
 
 
 @click.command()
-@click.argument("targets", type=str, nargs=-1, required=True)
+@click.argument(
+    "targets", type=str, nargs=-1, required=True, shell_complete=agent_name_complete
+)
 @click.option(
     "--force",
     "force",
@@ -639,7 +643,7 @@ def stop(
 
 
 @click.command()
-@click.argument("name")
+@click.argument("name", shell_complete=agent_name_complete)
 @click.option(
     "--dry-run",
     "dry_run",

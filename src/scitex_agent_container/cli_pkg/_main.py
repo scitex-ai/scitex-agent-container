@@ -32,7 +32,7 @@ def _pkg_version() -> str:
 COMMAND_CATEGORIES = [
     ("Agent", ["agent"]),
     ("Lifecycle (multiplexer)", ["auto-accept"]),
-    ("Account & Quota", ["account", "quota"]),
+    ("Account", ["account"]),
     ("Network & Peer", ["host", "network", "peer", "a2a"]),
     ("Registry & Events", ["db", "registry", "event", "actions"]),
     ("Build & Install", ["image", "installation", "template"]),
@@ -56,7 +56,6 @@ class _MainGroup(LazyGroup):
         "host": f"{_PKG}.host_group:host_group",
         "registry": f"{_PKG}.registry_group:registry_group",
         "event": f"{_PKG}.event_group:event_group",
-        "quota": f"{_PKG}.quota_group:quota_group",
         "network": f"{_PKG}.network_group:network_group",
         "image": f"{_PKG}.image_group:image_group",
         "template": f"{_PKG}.template_group:template_group",
@@ -116,7 +115,6 @@ class _MainGroup(LazyGroup):
         "host": "Local host identity and peer routing for sac.",
         "registry": "Registry maintenance — folded into ``sac db`` (F-CS11).",
         "event": "Event log operations: ingest hook events into the per-agent ring buffer.",
-        "quota": "Quota tracking and auto-rotation.",
         "network": "Network operations: liveness probes, fleet connectivity.",
         "image": "Container image operations: build the runtime base image.",
         "template": "Render text templates (contributor spec).",
@@ -146,11 +144,9 @@ class _MainGroup(LazyGroup):
         "check": (f"{_PKG}.build_cmds:check", "sac agent check"),
         # Status / introspection
         "show-status": (f"{_PKG}.status_cmds:status", "sac agent status"),
-        "list-agents": (f"{_PKG}.status_cmds:list_agents", "sac agent list"),
         "check-health": (f"{_PKG}.status_cmds:health", "sac agent health"),
         "take-snapshot": (f"{_PKG}.snapshot_cmds:snapshot", "sac agent take-snapshot"),
         "find": (f"{_PKG}.info_cmds:find", "sac agent find"),
-        "show-logs": (f"{_PKG}.info_cmds:logs", "sac agent logs"),
         "recall": (f"{_PKG}.recall_cmds:recall", "sac agent recall"),
         "check-priority": (
             f"{_PKG}.priority_cmds:priority_check",

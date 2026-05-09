@@ -1,4 +1,4 @@
-"""Info commands: find, logs, attach, list-python-apis."""
+"""Info commands: find, tail, list-python-apis."""
 
 from __future__ import annotations
 
@@ -11,10 +11,9 @@ from pathlib import Path
 import click
 from rich.table import Table
 
-from .._lifecycle.lifecycle import agent_logs
 from ..config import load_config
 from ._api_tree import get_api_tree
-from ._helpers import _json_flag, console
+from ._helpers import _json_flag, agent_name_complete, console
 
 
 @click.command()
@@ -104,55 +103,8 @@ def find(
     console.print(table)
 
 
-@click.command(name="show-logs")
-@click.argument("name")
-@click.option(
-    "--lines",
-    "-n",
-    default=50,
-    help="Number of log lines to show.",
-)
-@click.option(
-    "--json",
-    "as_json",
-    is_flag=True,
-    default=False,
-    help="Emit captured log lines as a JSON array.",
-)
-def logs(name: str, lines: int, as_json: bool) -> None:
-    """Show recent agent output.
-
-    \b
-    Example:
-      $ sac agent logs head-ywata-note-win
-      $ sac agent logs head-ywata-note-win -n 200
-      $ sac agent logs head-ywata-note-win --json
-    """
-    # stx-allow: fallback (reason: agent_logs reads from multiplexer or log files that may be absent if the agent was never started; error is reported and CLI exits with code 1)
-    try:
-        output = agent_logs(name, lines)
-    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-        if as_json:
-            click.echo(json_mod.dumps({"error": str(exc), "lines": []}))
-        else:
-            console.print(f"[red]Error: {exc}[/red]")
-        sys.exit(1)
-    if as_json:
-        captured = (output or "").splitlines()
-        click.echo(json_mod.dumps({"name": name, "lines": captured}))
-        return
-    if output:
-        # Disable Rich markup parsing — log content frequently contains
-        # bracketed paths (e.g. "[/home/.../hook.sh]") that the markup
-        # parser interprets as tags, raising MarkupError. Logs are raw
-        # text; print as-is.
-        console.print(output, markup=False, highlight=False)
-    else:
-        console.print("[dim]No log output captured.[/dim]")
-
-
 @click.command(name="tail")
-@click.argument("name")
+@click.argument("name", shell_complete=agent_name_complete)
 @click.option(
     "--lines", "-n", default=20, help="Number of recent assistant turns to show."
 )

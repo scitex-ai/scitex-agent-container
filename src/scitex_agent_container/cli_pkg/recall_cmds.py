@@ -20,6 +20,7 @@ from .._state.recall import (
     iter_entries,
     parse_duration,
 )
+from ._helpers import agent_name_complete
 
 
 def _resolve_jsonl(arg: str) -> Path:
@@ -88,7 +89,7 @@ def _resolve_jsonl(arg: str) -> Path:
 
 
 @click.command()
-@click.argument("jsonl", type=str)
+@click.argument("jsonl", type=str, shell_complete=agent_name_complete)
 @click.option(
     "--stats",
     "stats_only",

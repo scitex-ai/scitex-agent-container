@@ -8,10 +8,11 @@ import sys
 import click
 
 from .._state.snapshot import take_snapshot
+from ._helpers import agent_name_complete
 
 
 @click.command(name="take-snapshot")
-@click.option("--agent", "agent", required=True, help="Agent name to snapshot.")
+@click.argument("agent", shell_complete=agent_name_complete)
 @click.option(
     "--json",
     "as_json",
@@ -40,7 +41,7 @@ from .._state.snapshot import take_snapshot
 )
 def snapshot(
     agent: str,
-    as_json: bool,
+    as_json: bool,  # noqa: ARG001 — accepted for back-compat; output is always JSON
     with_diff: bool,
     session: str | None,
     terse: bool,

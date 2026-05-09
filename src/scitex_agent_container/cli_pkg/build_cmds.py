@@ -10,16 +10,18 @@ from pathlib import Path
 import click
 
 from ..config import load_config, resolve_config, validate_config
-from ._helpers import console
+from ._helpers import agent_name_complete, console
 
 
 @click.command()
-@click.argument("name_or_path", type=str)
+@click.argument("name_or_path", type=str, shell_complete=agent_name_complete)
 def check(name_or_path: str) -> None:
     """Run preflight checks for an agent deployment.
 
-    Accepts either a bare agent name (resolved against the search chain)
-    or an explicit path to ``spec.yaml``.
+    Validates the YAML spec, then probes runtime dependencies
+    (container backend, python). Accepts either a bare agent name
+    (resolved against the search chain) or an explicit path to
+    ``spec.yaml``.
 
     \b
     Example:
@@ -29,6 +31,19 @@ def check(name_or_path: str) -> None:
     # stx-allow: fallback (reason: config file may not exist or contain invalid YAML; CLI exits with code 1 to signal preflight failure)
     try:
         config_path = resolve_config(name_or_path)
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+        console.print(f"[red]Error: {exc}[/red]")
+        sys.exit(1)
+
+    errors = validate_config(config_path)
+    if errors:
+        console.print(f"[red]Config validation failed: {config_path}[/red]")
+        for error in errors:
+            console.print(f"  [red]- {error}[/red]")
+        sys.exit(1)
+
+    # stx-allow: fallback (reason: load_config may fail post-validation in rare schema-evolution scenarios; CLI exits cleanly)
+    try:
         config = load_config(config_path)
     except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         console.print(f"[red]Error loading config: {exc}[/red]")
