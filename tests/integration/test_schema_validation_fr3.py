@@ -79,7 +79,6 @@ class TestUnknownFieldRejection:
             "spec": {
                 "runtime": "docker",
                 "model": "sonnet",
-                "multiplexer": "tmux",
                 "a2a": {"port": 9999},
                 "extensions": {"my_custom": "value"},
             },

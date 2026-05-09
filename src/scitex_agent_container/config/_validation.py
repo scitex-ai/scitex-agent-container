@@ -66,6 +66,7 @@ _KNOWN_SPEC_KEYS = frozenset(
         "python-venv",
         "env",
         "container",
+        "screen",  # legacy: agent metadata (screen_name) — no longer drives a multiplexer
         "claude",
         "health",
         "watchdog",
