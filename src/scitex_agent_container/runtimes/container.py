@@ -459,14 +459,11 @@ class ContainerRuntime(RuntimeBase):
 
     @staticmethod
     def _state_dir(config: AgentConfig) -> Path:
-        """Per-agent state dir on the host (mirrors ``claude_session``)."""
+        """Per-agent state dir on the host."""
         from .._runners import claude_session as _runner
+        from ._sdk_common import project_runtime_root
 
-        try:
-            from ..runtimes.claude_session import _project_runtime_root
-        except ImportError:  # stx-allow: fallback (reason: import cycle hardening)
-            _project_runtime_root = lambda _c: None  # noqa: E731
-        return _runner.state_dir_for(config.name, root=_project_runtime_root(config))
+        return _runner.state_dir_for(config.name, root=project_runtime_root(config))
 
     def _read_container_id(self, config: AgentConfig) -> str | None:
         path = self._state_dir(config) / CONTAINER_ID_FILE

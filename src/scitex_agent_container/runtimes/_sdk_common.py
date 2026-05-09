@@ -44,12 +44,35 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:  # pragma: no cover — typing only
     from claude_agent_sdk import ClaudeAgentOptions
 
+    from ..config._types import AgentConfig
+
 __all__ = [
     "SDKCommonError",
     "provision_anthropic_auth",
     "resolve_agent_workspace",
     "build_sdk_options",
+    "project_runtime_root",
 ]
+
+
+def project_runtime_root(config: "AgentConfig") -> "Path | None":
+    """If the agent's YAML lives under a project-scope
+    ``.scitex/agent-container/`` tree, return the sibling ``runtime/``
+    so per-agent state lands inside the same repo. Otherwise None.
+
+    In-repo test agents get in-repo state, keeping ``~/.scitex`` clean
+    and letting CI snapshot transcripts as build artifacts.
+    """
+    src = getattr(config, "config_path", "") or ""
+    if not src:
+        return None
+    try:
+        from scitex_config._ecosystem import local_state
+    except Exception:  # stx-allow: fallback (reason: scitex-config optional; degrade to home-scope state)
+        return None
+    scope = local_state.find_project_scope("agent-container", start=Path(src).parent)
+    return (scope / "runtime") if scope is not None else None
+
 
 _CRED_FILE = Path.home() / ".claude" / ".credentials.json"
 
