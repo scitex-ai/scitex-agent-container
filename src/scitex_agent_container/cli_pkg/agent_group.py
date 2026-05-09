@@ -21,6 +21,7 @@ from .build_cmds import check as _check_impl
 from .build_cmds import validate as _validate_impl
 from .info_cmds import find as _find_impl
 from .info_cmds import logs as _logs_impl
+from .info_cmds import tail_session as _tail_impl
 from .lifecycle_cmds import restart as _restart_impl
 from .lifecycle_cmds import start as _start_impl
 from .lifecycle_cmds import stop as _stop_impl
@@ -59,6 +60,7 @@ agent_group.add_command(_rebind(_inspect_impl, "inspect"))
 # Polysemous noun-leaves (allowed under noun groups by §1 loosening)
 agent_group.add_command(_rebind(_status_impl, "status"))
 agent_group.add_command(_rebind(_logs_impl, "logs"))
+agent_group.add_command(_rebind(_tail_impl, "tail"))
 agent_group.add_command(_rebind(_health_impl, "health"))
 
 # Verb leaves

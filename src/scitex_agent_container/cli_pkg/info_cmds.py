@@ -154,6 +154,84 @@ def logs(name: str, lines: int, as_json: bool) -> None:
         console.print("[dim]No log output captured.[/dim]")
 
 
+@click.command(name="tail")
+@click.argument("name")
+@click.option(
+    "--lines", "-n", default=20, help="Number of recent assistant turns to show."
+)
+@click.option("--tools", "show_tools", is_flag=True, help="Also show tool_use entries.")
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Emit raw session.jsonl records as JSON array.",
+)
+def tail_session(name: str, lines: int, show_tools: bool, as_json: bool) -> None:
+    """Pretty-print the SDK runner's session.jsonl transcript.
+
+    Reads ``<state>/<agent>/<agent>/session.jsonl`` (the structured
+    transcript the SDK runner writes inside the container, mounted to
+    the host via /state) and renders each record as a single line so
+    you can monitor a running agent without grepping the raw JSON
+    yourself.
+
+    \b
+    Example:
+      $ sac agent tail polish-scholar
+      $ sac agent tail polish-scholar -n 50 --tools
+      $ sac agent tail polish-scholar --json
+    """
+    import json as _json
+    from pathlib import Path
+
+    from .._state.registry import Registry
+
+    entry = Registry().get(name)
+    if entry is None:
+        console.print(f"[red]Agent '{name}' not found in registry[/red]")
+        sys.exit(1)
+
+    # state-dir layout: ~/.scitex/agent-container/runtime/<name>/<name>/session.jsonl
+    state_root = Path.home() / ".scitex" / "agent-container" / "runtime" / name / name
+    transcript = state_root / "session.jsonl"
+    if not transcript.is_file():
+        console.print(
+            f"[red]No transcript at {transcript}. Agent may not have started a "
+            "session yet, or runs in a non-default state-root.[/red]"
+        )
+        sys.exit(1)
+
+    raw_lines = transcript.read_text(encoding="utf-8", errors="replace").splitlines()
+    records = []
+    for line in raw_lines:
+        try:
+            records.append(_json.loads(line))
+        except _json.JSONDecodeError:
+            continue
+
+    if as_json:
+        click.echo(_json.dumps(records[-lines:], default=str, indent=2))
+        return
+
+    out: list[str] = []
+    for r in records[-lines * 6 :]:
+        kind = r.get("type", "?")
+        if kind == "assistant":
+            txt = str(r.get("text") or r.get("raw") or "")
+            if txt.strip():
+                out.append(f"[assistant] {txt[:300]}")
+        elif kind == "user_echo" and show_tools:
+            raw = str(r.get("raw") or "")[:200]
+            out.append(f"[tool_result] {raw}")
+        elif kind == "result":
+            out.append(f"[result] {str(r)[:300]}")
+        elif kind == "error":
+            out.append(f"[error] {str(r)[:300]}")
+    for line in out[-lines:]:
+        console.print(line, markup=False, highlight=False)
+
+
 @click.command(name="list-python-apis")
 @click.option(
     "-v",
