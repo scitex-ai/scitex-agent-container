@@ -9,25 +9,26 @@ from pathlib import Path
 
 import click
 
-from ..config import load_config, validate_config
+from ..config import load_config, resolve_config, validate_config
 from ._helpers import console
 
 
 @click.command()
-@click.argument("config_path", type=str)
-def check(config_path: str) -> None:
+@click.argument("name_or_path", type=str)
+def check(name_or_path: str) -> None:
     """Run preflight checks for an agent deployment.
 
-    Verifies that all dependencies (SSH, screen, python, etc.) are
-    available before starting the agent. Useful for debugging deployment
-    failures.
+    Accepts either a bare agent name (resolved against the search chain)
+    or an explicit path to ``spec.yaml``.
 
     \b
     Example:
-      $ sac agent check ~/.scitex/agent-container/agents/foo/foo.yaml
+      $ sac agent check orchestrator
+      $ sac agent check ~/.scitex/agent-container/agents/foo/spec.yaml
     """
     # stx-allow: fallback (reason: config file may not exist or contain invalid YAML; CLI exits with code 1 to signal preflight failure)
     try:
+        config_path = resolve_config(name_or_path)
         config = load_config(config_path)
     except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         console.print(f"[red]Error loading config: {exc}[/red]")
@@ -74,14 +75,23 @@ def check(config_path: str) -> None:
 
 
 @click.command()
-@click.argument("config_path", type=str)
-def validate(config_path: str) -> None:
+@click.argument("name_or_path", type=str)
+def validate(name_or_path: str) -> None:
     """Validate a YAML config file.
+
+    Accepts either a bare agent name (resolved against the search chain)
+    or an explicit path to ``spec.yaml``.
 
     \b
     Example:
-      $ sac agent validate ~/.scitex/agent-container/agents/foo/foo.yaml
+      $ sac agent validate orchestrator
+      $ sac agent validate ~/.scitex/agent-container/agents/foo/spec.yaml
     """
+    try:
+        config_path = resolve_config(name_or_path)
+    except Exception as exc:  # stx-allow: fallback (reason: not-found / unresolvable name surfaced to user)
+        console.print(f"[red]Error: {exc}[/red]")
+        sys.exit(1)
     errors = validate_config(config_path)
     if not errors:
         console.print(f"[green]Config is valid: {config_path}[/green]")
