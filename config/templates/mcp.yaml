@@ -41,7 +41,7 @@ spec:
   health:
     enabled: true
     interval: 60
-    method: multiplexer-alive
+    method: sdk-alive
 
   restart:
     policy: never
