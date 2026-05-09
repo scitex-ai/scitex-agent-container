@@ -89,8 +89,8 @@ _KNOWN_SPEC_KEYS = frozenset(
         "orochi",  # Orochi-specific extension namespace
         "autonomous",  # F-CS3 — drive-until-done block
         "apptainer",  # F-CS18 — apptainer-specific build extension
-        "mounts",  # extra host paths to bind into the container (declarative)
-        "home_passthrough",  # bool: bind-mount $HOME so paths are seamless
+        "mounts",  # declarative bind-mounts: list of {src, dst, mode?}
+        "user",  # container user: "host" | "uid:gid" | "" (image default)
     }
 )
 
@@ -279,15 +279,23 @@ def validate_raw(raw: dict, path: str) -> list[str]:
                             f"spec.mounts[{i}].mode must be 'rw' or 'ro', got '{mode}'"
                         )
 
-        # spec.home_passthrough — bool. When True, sac binds the host's $HOME
-        # into the container at the same path, sets container $HOME to match,
-        # and forwards ~/.gitconfig + ~/.ssh (read-only). Lets agents see and
-        # operate on host project repos out of the box.
-        hp = spec.get("home_passthrough")
-        if hp is not None and not isinstance(hp, bool):
-            errors.append(
-                f"spec.home_passthrough must be a boolean, got {type(hp).__name__}"
-            )
+        # spec.user — container user. Three accepted shapes:
+        #   * ""              (default) → image's USER (typically `agent`)
+        #   * "host"          → run as host operator's UID:GID
+        #   * "<uid>:<gid>"   → explicit numeric, e.g. "1000:1000"
+        # Pair with spec.mounts and (optionally) spec.env.HOME to give an
+        # agent host-shaped paths + ownership without any special flags.
+        user_val = spec.get("user")
+        if user_val is not None:
+            if not isinstance(user_val, str):
+                errors.append(
+                    f"spec.user must be a string, got {type(user_val).__name__}"
+                )
+            elif user_val and user_val != "host" and ":" not in user_val:
+                errors.append(
+                    f'spec.user must be "", "host", or "<uid>:<gid>"; '
+                    f"got '{user_val}'"
+                )
 
         # host / hosts (mutually exclusive)
         has_host = "host" in spec

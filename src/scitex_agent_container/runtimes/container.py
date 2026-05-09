@@ -193,46 +193,35 @@ class ContainerRuntime(RuntimeBase):
         # ``ClaudeAgentOptions.cwd``, hooks, helper scripts) sees the
         # same path on both sides. ``/work`` stays as the canonical
         # in-container working dir; the second mount is just an alias.
-        # Skipped when the workdir is already under $HOME and
-        # home_passthrough is on (the $HOME bind covers it).
         host_workdir_str = str(workdir_host)
         argv += [
             "--mount",
             f"type=bind,src={workdir_host},dst={host_workdir_str}",
         ]
 
-        # spec.home_passthrough — make container paths mirror the host's:
-        # bind $HOME at the same absolute path, set $HOME, run as the host
-        # UID:GID, and forward ~/.gitconfig + ~/.ssh (read-only). With this
-        # on, prompts that say "/home/<user>/proj/foo" just work — no path
-        # rewriting, gh / git push behave like on the host.
-        home_passthrough = bool(getattr(config, "home_passthrough", False))
-        if home_passthrough:
-            host_home = Path.home()
-            argv += [
-                "--mount",
-                f"type=bind,src={host_home},dst={host_home}",
-                "--env",
-                f"HOME={host_home}",
-                # host UID:GID, so writes from the container land as the
-                # operator's user. Overrides SAC_USER above.
-                "--user",
-                f"{os.getuid()}:{os.getgid()}",
-            ]
-            # Forward gh's per-host token store if present (~/.config/gh).
-            gh_dir = host_home / ".config" / "gh"
-            if gh_dir.is_dir():
-                argv += [
-                    "--mount",
-                    f"type=bind,src={gh_dir},dst={gh_dir},readonly",
-                ]
+        # spec.user — uniform user override for the container.
+        # ""             → image's USER stands (typically `agent`).
+        # "host"         → run as host operator's UID:GID. Required when
+        #                  spec.mounts grants host-shaped paths and you
+        #                  want files written from inside to land as your
+        #                  user on the host.
+        # "<uid>:<gid>"  → explicit numeric.
+        # Falls back to SAC_USER env (legacy local-dev convenience).
+        user_field = str(getattr(config, "user", "") or "")
+        if user_field == "host":
+            argv += ["--user", f"{os.getuid()}:{os.getgid()}"]
+        elif user_field:
+            argv += ["--user", user_field]
+        # SAC_USER env handling already happened upstream of this block.
 
         # spec.mounts — declarative extra bind mounts. Each entry is
         # {"src": <host>, "dst": <ctr>, "mode": "rw"|"ro"}. Path expansion
-        # (~ / $VAR) is applied to ``src`` so YAMLs stay portable.
+        # (~ / $VAR) is applied to BOTH src and dst so YAMLs stay portable
+        # — operators write ``${HOME}/proj/foo`` and sac resolves it
+        # against the launching shell's environment.
         for m in getattr(config, "mounts", []) or []:
             src = os.path.expandvars(os.path.expanduser(str(m.get("src", ""))))
-            dst = str(m.get("dst", ""))
+            dst = os.path.expandvars(os.path.expanduser(str(m.get("dst", ""))))
             mode = m.get("mode", "rw")
             if not src or not dst:
                 continue
@@ -299,15 +288,15 @@ class ContainerRuntime(RuntimeBase):
             if host_creds.is_file():
                 cred_mount_src = host_creds
         if cred_mount_src is not None:
-            # When home_passthrough is on, the container's $HOME is the
-            # host's $HOME (mirrored bind), so the SDK's Path.home() lookup
-            # resolves to the same path the cred file already lives at.
-            # Otherwise we land at the image's ``agent`` $HOME.
-            cred_dst = (
-                f"{Path.home()}/.claude/.credentials.json"
-                if home_passthrough
-                else "/home/agent/.claude/.credentials.json"
-            )
+            # The cred-mount target is the agent's effective $HOME inside
+            # the container. Resolution order:
+            #   1. spec.env.HOME if the YAML overrides it (host-shaped).
+            #   2. image default /home/agent.
+            # The SDK's Path.home() reads /etc/passwd (image-baked) plus
+            # the HOME env, so this matches what the SDK will look for.
+            env_home = (getattr(config, "env", None) or {}).get("HOME")
+            ctr_home = os.path.expandvars(env_home) if env_home else "/home/agent"
+            cred_dst = f"{ctr_home}/.claude/.credentials.json"
             argv += ["-v", f"{cred_mount_src}:{cred_dst}"]
 
         # Now decide whether to forward SAC_ANTHROPIC_API_KEY into the
@@ -318,8 +307,11 @@ class ContainerRuntime(RuntimeBase):
         if sac_val and cred_mount_src is None:
             argv += ["--env", f"SAC_ANTHROPIC_API_KEY={sac_val}"]
 
+        # ${VAR} references in spec.env values are expanded against the
+        # launching shell's environment — same convention as spec.mounts.
         for key, val in (config.env or {}).items():
-            argv += ["--env", f"{key}={val}"]
+            expanded = os.path.expandvars(str(val))
+            argv += ["--env", f"{key}={expanded}"]
         for env_file in config.env_files or []:
             argv += ["--env-file", str(env_file)]
 

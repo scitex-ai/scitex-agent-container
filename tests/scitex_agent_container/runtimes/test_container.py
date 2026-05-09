@@ -116,26 +116,36 @@ def test_build_run_argv_emits_spec_mounts(tmp_path: Path):
     assert f"type=bind,src={tmp_path / 'data'},dst=/host/data,readonly" in argv
 
 
-def test_build_run_argv_home_passthrough_mirrors_host_home(tmp_path: Path, monkeypatch):
-    """spec.home_passthrough mounts $HOME at the same path, sets $HOME env,
-    and runs as host UID:GID so writes from the container are owned by the
-    operator."""
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "fakehome"))
-    (tmp_path / "fakehome").mkdir()
+def test_build_run_argv_user_host_runs_as_host_uid(tmp_path: Path):
+    """spec.user="host" runs the container as the operator's UID:GID so
+    files written from inside land as the operator on the host."""
+    import os as _os
 
     rt = ContainerRuntime("docker")
-    cfg = _config(tmp_path, home_passthrough=True)
+    cfg = _config(tmp_path, user="host")
     argv = rt.build_run_argv(cfg, state_dir=tmp_path)
-
-    assert f"type=bind,src={tmp_path / 'fakehome'},dst={tmp_path / 'fakehome'}" in argv
-    assert f"HOME={tmp_path / 'fakehome'}" in argv
-    # --user UID:GID forwarded.
-    import os as _os
 
     user_str = f"{_os.getuid()}:{_os.getgid()}"
     assert user_str in argv
-    user_idx = argv.index(user_str)
-    assert argv[user_idx - 1] == "--user"
+    assert argv[argv.index(user_str) - 1] == "--user"
+
+
+def test_build_run_argv_user_explicit_passthrough(tmp_path: Path):
+    """spec.user="<uid>:<gid>" is forwarded verbatim."""
+    rt = ContainerRuntime("docker")
+    cfg = _config(tmp_path, user="2000:2000")
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path)
+    assert "2000:2000" in argv
+    assert argv[argv.index("2000:2000") - 1] == "--user"
+
+
+def test_build_run_argv_no_user_default_image(tmp_path: Path, monkeypatch):
+    """Default spec.user="" leaves the image's USER (no --user flag)."""
+    monkeypatch.delenv("SAC_USER", raising=False)
+    rt = ContainerRuntime("docker")
+    cfg = _config(tmp_path)
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path)
+    assert "--user" not in argv
 
 
 def test_build_run_argv_threads_env_files(tmp_path: Path):

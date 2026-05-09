@@ -120,6 +120,18 @@ def parse_orochi(spec: dict) -> OrochiSpec:
     )
 
 
+def parse_a2a(spec: dict) -> "A2ASpec":
+    """Parse spec.a2a into an :class:`A2ASpec`. Empty if absent."""
+    from ._types import A2ASpec
+
+    raw = spec.get("a2a", {}) or {}
+    port = raw.get("port")
+    return A2ASpec(
+        host=str(raw.get("host", "127.0.0.1")),
+        port=int(port) if port is not None else None,
+    )
+
+
 def parse_container(spec: dict) -> ContainerSpec:
     raw = spec.get("container", {}) or {}
     return ContainerSpec(

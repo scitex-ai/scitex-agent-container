@@ -8,6 +8,7 @@ from ._host import resolve_hostname, substitute_hostnames
 from ._parsers import (
     MODEL_DISPLAY_NAMES,
     interpolate_mcp_servers,
+    parse_a2a,
     parse_apptainer,
     parse_autonomous,
     parse_claude,
@@ -306,7 +307,8 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         hosts_spec=hosts_spec,
         config_path=str(path),
         mounts=list(spec.get("mounts") or []),
-        home_passthrough=bool(spec.get("home_passthrough", False)),
+        user=str(spec.get("user", "")),
+        a2a=parse_a2a(spec),
     )
 
 

@@ -137,6 +137,16 @@ class RestartSpec:
 
 
 # Parsed for backward compat but not interpreted by runtime.
+# Inbound A2A surface for an agent. When ``port`` is set, the SDK runner
+# launches a sidecar HTTP server exposing ``/v1/turn`` (worker → agent
+# message ingress) and ``/.well-known/agent.json`` (agent card) so other
+# agents can post-turn this one.
+@dataclass
+class A2ASpec:
+    host: str = "127.0.0.1"
+    port: int | None = None
+
+
 # Telegram setup is managed externally via hooks.
 @dataclass
 class TelegramSpec:
@@ -395,9 +405,12 @@ class AgentConfig:
     config_path: str = ""
     # Declarative bind-mounts: list of {"src": <host>, "dst": <ctr>, "mode": "rw"|"ro"}.
     mounts: list[dict] = field(default_factory=list)
-    # When True, sac binds host $HOME into the container at the same path,
-    # sets container $HOME to match, and forwards ~/.gitconfig + ~/.ssh (ro).
-    home_passthrough: bool = False
+    # Container user. "" → image's USER (typically `agent`); "host" → host
+    # operator's UID:GID; "<uid>:<gid>" → explicit numeric. Pair with
+    # spec.mounts + spec.env.HOME for host-shaped paths + ownership.
+    user: str = ""
+    # Inbound A2A endpoint (HTTP /v1/turn + AgentCard).
+    a2a: A2ASpec = field(default_factory=A2ASpec)
 
     def __post_init__(self) -> None:
         if not self.screen_name:
