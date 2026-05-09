@@ -176,7 +176,7 @@ class TestCLI:
         with tempfile.TemporaryDirectory() as tmpdir:
             agent_dir = Path(tmpdir) / "test-gpu-agent"
             agent_dir.mkdir()
-            path = agent_dir / "test-gpu-agent.yaml"
+            path = agent_dir / "spec.yaml"
             with open(path, "w") as f:
                 yaml.safe_dump(config_with_caps, f)
 

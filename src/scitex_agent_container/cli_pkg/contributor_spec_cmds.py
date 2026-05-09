@@ -144,7 +144,7 @@ def contributor_spec(
 
     Reads ~/.scitex/orochi/shared/agents/.templates/contributor.yaml.j2
     (produced by chunk A: c-sac-spec-template-jinja) and writes
-    ~/.scitex/orochi/shared/agents/<name>/<name>.yaml.
+    ~/.scitex/orochi/shared/agents/<name>/spec.yaml.
 
     \b
     Example:

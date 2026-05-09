@@ -193,15 +193,21 @@ class _MainGroup(LazyGroup):
         f"sac (v{_pkg_version()}) — SciTeX Agent Container: declarative "
         f"agent management.\n\n"
         "\b\n"
-        "Config resolution order:\n"
-        "  1. positional CONFIG path / agent name argument (where applicable)\n"
-        "  2. ``$SCITEX_AGENT_CONTAINER_CONFIG``\n"
-        "  3. ``~/.scitex/agent-container/agents/<name>/<name>.yaml``\n\n"
+        "Each agent lives in its own directory with a ``spec.yaml``:\n"
+        "  ~/.scitex/agent-container/agents/<name>/spec.yaml\n"
+        "Subcommands accept either the bare ``<name>`` (looked up under the\n"
+        "search root) or an explicit path to the YAML file.\n\n"
+        "\b\n"
+        "Search order when only a name is given:\n"
+        "  1. ./.scitex/agent-container/agents/<name>/spec.yaml  (project-local)\n"
+        "  2. ~/.scitex/agent-container/agents/<name>/spec.yaml  (user-wide)\n"
+        "  3. ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` (colon-separated extra dirs)\n\n"
         "\b\n"
         "Example:\n"
         "  $ sac --version\n"
         "  $ sac agent list\n"
-        "  $ sac agent start ~/.scitex/agent-container/agents/foo/foo.yaml\n"
+        "  $ sac agent start orchestrator                                      # by name\n"
+        "  $ sac agent start ~/.scitex/agent-container/agents/orchestrator/spec.yaml   # by path\n"
     ),
 )
 @click.version_option(
@@ -229,16 +235,20 @@ def main(ctx: click.Context, help_recursive: bool, as_json: bool) -> None:
     """SciTeX Agent Container -- Declarative agent management.
 
     \b
-    Config resolution order:
-      1. positional CONFIG path / agent name argument (where applicable)
-      2. ``$SCITEX_AGENT_CONTAINER_CONFIG``
-      3. ``~/.scitex/agent-container/agents/<name>/<name>.yaml``
+    Each agent lives in its own directory with a ``spec.yaml``:
+      ~/.scitex/agent-container/agents/<name>/spec.yaml
+    Subcommands accept either the bare ``<name>`` or an explicit path.
+
+    \b
+    Search order when only a name is given:
+      1. ./.scitex/agent-container/agents/<name>/spec.yaml  (project-local)
+      2. ~/.scitex/agent-container/agents/<name>/spec.yaml  (user-wide)
+      3. ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` (colon-separated extra dirs)
 
     \b
     Example:
-      $ sac --version
-      $ sac agent list
-      $ sac agent start ~/.scitex/agent-container/agents/foo/foo.yaml
+      $ sac agent start orchestrator                                      # by name
+      $ sac agent start ~/.scitex/agent-container/agents/orchestrator/spec.yaml   # by path
     """
     ctx.ensure_object(dict)
     if as_json:

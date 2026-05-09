@@ -337,13 +337,19 @@ class ContainerRuntime(RuntimeBase):
             cmds = list(getattr(config, "startup_commands", []) or [])
             if cmds and getattr(cmds[0], "command", ""):
                 runner_argv += ["--mission", cmds[0].command]
-                # --print-stream mirrors assistant text to stdout so it
-                # lands in `docker logs`. With no autonomous block the
-                # runner exits cleanly after one turn (matches the
-                # smoke-test contract: image pulled, prompt seeded,
-                # reply printed; the stopped container persists for
-                # log inspection until lifecycle.stop removes it).
-                runner_argv += ["--print-stream"]
+                # --print-stream mirrors assistant text to stdout AND
+                # signals the runner to ``exit_after`` the mission turn.
+                # That's the smoke-test contract — but it's wrong for
+                # long-lived agents that listen on A2A or run autonomous
+                # drives. Only enable it when neither is on.
+                a2a_port_decision = self._a2a_port(config)
+                auto_decision = getattr(config, "autonomous", None)
+                stay_alive = a2a_port_decision is not None or (
+                    auto_decision is not None
+                    and getattr(auto_decision, "enabled", False)
+                )
+                if not stay_alive:
+                    runner_argv += ["--print-stream"]
             if a2a_port is not None:
                 runner_argv += [
                     "--a2a-port",

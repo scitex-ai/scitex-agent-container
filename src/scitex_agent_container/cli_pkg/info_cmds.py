@@ -52,17 +52,14 @@ def find(
     search_path = Path(search_dir).expanduser().resolve()
 
     matches: list[dict] = []
-    # Dir-as-SSoT: agents live at <name>/<name>.yaml. Walk one level deep
-    # and match the convention. Bare top-level *.yaml files are also
-    # accepted for legacy / scratch use.
+    # Dir-as-SSoT: agents live at <name>/spec.yaml. Walk one level deep
+    # and match the convention.
     candidates: list[Path] = []
     for sub in sorted(search_path.iterdir()) if search_path.is_dir() else []:
         if sub.is_dir():
-            yaml_in = sub / f"{sub.name}.yaml"
-            if yaml_in.exists():
-                candidates.append(yaml_in)
-        elif sub.suffix == ".yaml":
-            candidates.append(sub)
+            spec = sub / "spec.yaml"
+            if spec.exists():
+                candidates.append(spec)
     for yaml_path in candidates:
         # stx-allow: fallback (reason: individual YAML files in the search directory may be invalid or unrelated; skipping bad files lets the search return partial results rather than aborting)
         try:

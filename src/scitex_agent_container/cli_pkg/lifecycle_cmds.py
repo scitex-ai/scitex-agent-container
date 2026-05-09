@@ -99,7 +99,7 @@ def _discover_all_agents() -> list[str]:
       0. **Project-local** — first ``.scitex/agent-container/agents/``
          found walking upward from cwd. Highest priority so checked-in
          test agents and CI fixtures override globals.
-      1. ``~/.scitex/agent-container/agents/<name>/<name>.yaml`` (sac root)
+      1. ``~/.scitex/agent-container/agents/<name>/spec.yaml`` (sac root)
       2. ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` (plugin-port colon-separated dirs)
       3. ``~/.scitex/orochi/<HOST>/agents/`` (host-specific override)
       4. ``~/.scitex/orochi/shared/agents/`` (fleet-shared)
