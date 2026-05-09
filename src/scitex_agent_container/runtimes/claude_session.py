@@ -25,6 +25,16 @@ from pathlib import Path
 from ..config import AgentConfig
 from .base import RuntimeBase
 from .claude_md import cleanup_claude_md, setup_claude_md
+from .src_files import (  # noqa: F401  — used dynamically in _setup_workspace / _cleanup_workspace
+    cleanup_src_claude_md,
+    cleanup_src_env,
+    cleanup_src_mcp_json,
+    cleanup_src_state_md,
+    deploy_src_claude_md,
+    deploy_src_env,
+    deploy_src_mcp_json,
+    deploy_src_state_md,
+)
 
 __all__ = ["ClaudeSessionRuntime"]
 
@@ -134,14 +144,28 @@ class ClaudeSessionRuntime(RuntimeBase):
         required_attrs = ("expanded_workdir", "skills", "claude", "env", "labels")
         if not all(hasattr(config, a) for a in required_attrs):
             return
-        setup_claude_md(config, config.expanded_workdir)
+        workdir = config.expanded_workdir
+        # Sac-managed agent-container section in <workdir>/.claude/CLAUDE.md.
+        setup_claude_md(config, workdir)
+        # User-authored sources in the agent definition directory get
+        # materialised into the workspace at the SDK-conventional paths.
+        # Each helper is a no-op if its src_* file isn't present.
+        deploy_src_claude_md(config, workdir)
+        deploy_src_state_md(config, workdir)
+        deploy_src_mcp_json(config, workdir)
+        deploy_src_env(config, workdir)
 
     def _cleanup_workspace(self, config: AgentConfig) -> None:
         """Remove the agent-container CLAUDE.md section on stop."""
         required_attrs = ("expanded_workdir", "skills", "claude", "env", "labels")
         if not all(hasattr(config, a) for a in required_attrs):
             return
-        cleanup_claude_md(config, config.expanded_workdir)
+        workdir = config.expanded_workdir
+        cleanup_claude_md(config, workdir)
+        cleanup_src_claude_md(config, workdir)
+        cleanup_src_state_md(config, workdir)
+        cleanup_src_mcp_json(config, workdir)
+        cleanup_src_env(config, workdir)
 
     def start(
         self,

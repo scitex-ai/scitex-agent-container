@@ -292,7 +292,7 @@ def test_validate_raw_rejects_non_string_image():
 
 
 def test_validate_raw_accepts_top_level_dockerfile_field():
-    raw = _spec_with({"dockerfile": "./containers/Dockerfile.sdk-persistent"})
+    raw = _spec_with({"dockerfile": "./containers/Dockerfile"})
     errors = validate_raw(raw, path="<test>")
     assert not [e for e in errors if "spec.dockerfile" in e]
 

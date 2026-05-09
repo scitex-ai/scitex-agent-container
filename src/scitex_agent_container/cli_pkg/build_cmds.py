@@ -95,7 +95,7 @@ def validate(config_path: str) -> None:
 # F-CS17: only the SDK runner remains. cli-tui target was removed
 # along with the rest of the CLI/TUI surface in stage 3b.
 _TARGET_DOCKERFILES = {
-    "sdk-persistent": "Dockerfile.sdk-persistent",
+    "sdk-persistent": "Dockerfile",
 }
 
 # Container engines all map to sdk-persistent.

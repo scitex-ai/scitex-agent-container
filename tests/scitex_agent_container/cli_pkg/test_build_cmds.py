@@ -69,13 +69,13 @@ def test_build_invokes_docker_with_dockerfile_flag(monkeypatch):
     )
     assert result.exit_code == 0, result.output
     assert seen["image"] == "scitex-agent-container:sdk-persistent"
-    assert Path(seen["dockerfile"]).name == "Dockerfile.sdk-persistent"
+    assert Path(seen["dockerfile"]).name == "Dockerfile"
 
 
 def test_dockerfile_sdk_persistent_exists():
     """The sdk-persistent Dockerfile must ship in the repo."""
     repo = Path(__file__).resolve().parents[3]
-    dockerfile = repo / "containers" / "Dockerfile.sdk-persistent"
+    dockerfile = repo / "containers" / "Dockerfile"
     assert dockerfile.is_file(), f"missing: {dockerfile}"
     text = dockerfile.read_text()
     assert "claude-agent-sdk" in text

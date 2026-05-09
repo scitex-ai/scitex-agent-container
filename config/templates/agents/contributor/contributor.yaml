@@ -29,7 +29,7 @@ spec:
   # Sac is SDK-only; one container backend wraps the long-running runner.
   runtime: docker
   image: scitex-agent-container:sdk-persistent
-  dockerfile: ./containers/Dockerfile.sdk-persistent
+  dockerfile: ./containers/Dockerfile
   model: "sonnet"
 
   # Singleton — one contributor per branch.

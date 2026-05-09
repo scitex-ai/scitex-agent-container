@@ -374,7 +374,9 @@ def deploy_src_mcp_json(config: AgentConfig, workdir: str) -> None:
     # Validate JSON
     try:
         data = json.loads(text)
-    except json.JSONDecodeError as exc:  # stx-allow: fallback (reason: malformed JSON tolerated)
+    except (
+        json.JSONDecodeError
+    ) as exc:  # stx-allow: fallback (reason: malformed JSON tolerated)
         logger.warning("Invalid JSON in %s: %s", src, exc)
         return
 
@@ -386,7 +388,10 @@ def deploy_src_mcp_json(config: AgentConfig, workdir: str) -> None:
     if dest.exists():
         try:
             existing = json.loads(dest.read_text())
-        except (json.JSONDecodeError, OSError):  # stx-allow: fallback (reason: malformed JSON tolerated)
+        except (
+            json.JSONDecodeError,
+            OSError,
+        ):  # stx-allow: fallback (reason: malformed JSON tolerated)
             pass
     if not isinstance(existing, dict):
         existing = {}
@@ -449,7 +454,10 @@ def cleanup_src_mcp_json(config: AgentConfig, workdir: str) -> None:
 
     try:
         src_data = json.loads(src.read_text())
-    except (json.JSONDecodeError, OSError):  # stx-allow: fallback (reason: malformed JSON tolerated)
+    except (
+        json.JSONDecodeError,
+        OSError,
+    ):  # stx-allow: fallback (reason: malformed JSON tolerated)
         return
 
     keys_to_remove = list(src_data.get("mcpServers", {}).keys())
@@ -462,7 +470,10 @@ def cleanup_src_mcp_json(config: AgentConfig, workdir: str) -> None:
 
     try:
         data = json.loads(dest.read_text())
-    except (json.JSONDecodeError, OSError):  # stx-allow: fallback (reason: malformed JSON tolerated)
+    except (
+        json.JSONDecodeError,
+        OSError,
+    ):  # stx-allow: fallback (reason: malformed JSON tolerated)
         return
 
     servers = data.get("mcpServers", {})
@@ -527,10 +538,67 @@ def deploy_src_env(config: AgentConfig, workdir: str) -> None:
     dest.write_text(text)
     try:
         os.chmod(dest, 0o600)
-    except OSError as exc:  # stx-allow: fallback (reason: file system operation failure)
+    except (
+        OSError
+    ) as exc:  # stx-allow: fallback (reason: file system operation failure)
         logger.warning("Failed to chmod 0600 on %s: %s", dest, exc)
 
     logger.info("Deployed src_env for %s to %s", config.name, dest)
+
+
+def deploy_src_state_md(config: AgentConfig, workdir: str) -> None:
+    """Copy ``src_state.md`` to ``{workdir}/state.md`` (full overwrite).
+
+    Symmetric to :func:`deploy_src_env` minus the chmod. ``src_state.md``
+    is a temporal-handoff snapshot — the orchestrator (or any agent that
+    inherits state) reads it once on boot and supersedes it with its own
+    running ``state/*`` files. Full overwrite on each deploy; no marker
+    protocol, no user-tail preservation. ``${VAR}`` and
+    ``${metadata.name}`` / ``${metadata.labels.*}`` are interpolated.
+
+    If ``src_state.md`` does not exist next to the agent YAML, does
+    nothing (state is optional; not every agent has handover material).
+    """
+    defdir = _definition_dir(config)
+    if defdir is None:
+        return
+
+    src = defdir / "src_state.md"
+    if not src.exists():
+        return
+
+    text = src.read_text()
+    if not text.strip():
+        return
+
+    text = _interpolate_metadata(text, config)
+    text = _interpolate_env(text)
+
+    dest = Path(workdir) / "state.md"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if not text.endswith("\n"):
+        text += "\n"
+    dest.write_text(text)
+    logger.info("Deployed src_state.md for %s to %s", config.name, dest)
+
+
+def cleanup_src_state_md(config: AgentConfig, workdir: str) -> None:
+    """Remove ``{workdir}/state.md`` on agent stop.
+
+    The workspace ``state.md`` is owned by ``deploy_src_state_md``;
+    nothing the agent writes is preserved. Agents that need to keep
+    running state across restarts should write under ``state/*``
+    instead, which this function does NOT touch.
+    """
+    dest = Path(workdir) / "state.md"
+    if dest.exists():
+        try:
+            dest.unlink()
+            logger.info("Removed deployed state.md for %s at %s", config.name, dest)
+        except (
+            OSError
+        ) as exc:  # stx-allow: fallback (reason: file system operation failure)
+            logger.warning("Failed to remove %s: %s", dest, exc)
 
 
 def cleanup_src_env(config: AgentConfig, workdir: str) -> None:

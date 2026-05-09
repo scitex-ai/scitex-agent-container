@@ -77,6 +77,7 @@ rich non-agentic status surface.
 
 - [20_env-vars.md](20_env-vars.md) — `SCITEX_*` env vars read at runtime
 - [21_cli-startup-budget.md](21_cli-startup-budget.md) — keep `sac --help` < 500 ms via LazyGroup
+- [22_host-passthrough.md](22_host-passthrough.md) — `spec.home_passthrough` + `spec.mounts` for SDK agents that need host filesystem / git / gh
 
 ## 30-second start
 
