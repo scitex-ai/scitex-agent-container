@@ -28,7 +28,6 @@ from ._parsers import (
     parse_watchdog,
 )
 from ._types import AgentConfig, HostsSpec, SchedulingSpec
-from ._validation import normalize_runtime
 
 # Default workdir layout: sac's own state root. Per-agent runtime state
 # (CLAUDE.md, .mcp.json, .claude/) lives at
@@ -275,7 +274,7 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
 
     return AgentConfig(
         name=name,
-        runtime=normalize_runtime(spec.get("runtime")) or "claude-code",
+        runtime=str(spec.get("runtime") or "docker"),
         image=str(spec.get("image", "")),
         dockerfile=str(spec.get("dockerfile", "")),
         model=model,
@@ -378,7 +377,7 @@ def load_v2(raw: dict, path: Path) -> AgentConfig:
 
     return AgentConfig(
         name=name,
-        runtime=normalize_runtime(spec.get("runtime")) or "claude-code",
+        runtime=str(spec.get("runtime") or "docker"),
         image=str(spec.get("image", "")),
         dockerfile=str(spec.get("dockerfile", "")),
         model=model,

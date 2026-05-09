@@ -101,52 +101,6 @@ def _isolate_runtime_warning_marker(tmp_path, monkeypatch):
     yield
 
 
-def test_normalize_runtime_passthrough_for_canonical():
-    from scitex_agent_container.config._validation import normalize_runtime
-
-    assert normalize_runtime("claude-code") == "claude-code"
-    assert normalize_runtime("claude-session") == "claude-session"
-    assert normalize_runtime("slurm") == "slurm"
-    assert normalize_runtime("slurm-tenant") == "slurm-tenant"
-
-
-def test_normalize_runtime_returns_none_for_none():
-    from scitex_agent_container.config._validation import normalize_runtime
-
-    assert normalize_runtime(None) is None
-
-
-def test_normalize_runtime_maps_aliases_to_canonical():
-    from scitex_agent_container.config._validation import normalize_runtime
-
-    assert normalize_runtime("claude-cli-tui") == "claude-code"
-    assert normalize_runtime("claude-sdk-persistent") == "claude-session"
-
-
-def test_normalize_runtime_warns_once_per_shell(capsys):
-    from scitex_agent_container.config._validation import normalize_runtime
-
-    normalize_runtime("claude-cli-tui")
-    first = capsys.readouterr().err
-    assert "claude-cli-tui" in first
-    assert "F-CS6" in first
-
-    normalize_runtime("claude-cli-tui")
-    second = capsys.readouterr().err
-    assert second == "", "warning must fire only once per shell-session marker"
-
-
-def test_normalize_runtime_warns_per_distinct_alias(capsys):
-    """Two different aliases each get their own marker -> each warns once."""
-    from scitex_agent_container.config._validation import normalize_runtime
-
-    normalize_runtime("claude-cli-tui")
-    normalize_runtime("claude-sdk-persistent")
-    err = capsys.readouterr().err
-    assert "claude-cli-tui" in err
-    assert "claude-sdk-persistent" in err
-
-
 def test_validate_raw_rejects_f_cs6_aliases_after_f_cs17():
     """F-CS17 stage 2 rejects every legacy / aliased runtime value.
     F-CS6's yaml-friendly aliases (claude-cli-tui /
@@ -311,11 +265,9 @@ def test_validate_raw_accepts_new_engine_runtime(engine):
         "slurm-tenant",
     ],
 )
-def test_validate_raw_hard_errors_on_legacy_runtime(legacy):
-    """F-CS17 stage 2: legacy runtime values now hard-error with a
-    redirect that names the new shape. Phase 2e.1's grace period
-    is over — every yaml that still uses the old runtime values is
-    rejected at parse time."""
+def test_validate_raw_rejects_legacy_runtime_values(legacy):
+    """Sac is SDK-only; every legacy runtime value is rejected as
+    "not one of (docker, podman, apptainer)" at parse time."""
     raw = {
         "apiVersion": "scitex-agent-container/v3",
         "kind": "Agent",
@@ -323,47 +275,8 @@ def test_validate_raw_hard_errors_on_legacy_runtime(legacy):
     }
     errors = validate_raw(raw, path="<test>")
     runtime_errors = [e for e in errors if "spec.runtime" in e]
-    assert runtime_errors, f"legacy runtime {legacy!r} must now be rejected"
-    msg = runtime_errors[0]
-    assert legacy in msg
-    if legacy.startswith("slurm"):
-        assert "no longer supported" in msg
-    else:
-        assert "docker" in msg or "container" in msg.lower()
-
-
-@pytest.mark.parametrize(
-    "legacy,expected",
-    [
-        ("claude-session", "docker"),
-        ("claude-sdk-persistent", "docker"),
-        ("claude-code", "docker"),
-        ("claude-cli-tui", "docker"),
-        ("slurm", "no longer supported"),
-        ("slurm-tenant", "no longer supported"),
-    ],
-)
-def test_legacy_runtime_redirect_message_returns_targeted_guidance(legacy, expected):
-    """The redirect helper hands callers a §5-style guidance string
-    even before the validator hard-errors (F-CS17 sweep). Each legacy
-    value names a specific replacement."""
-    from scitex_agent_container.config._validation import (
-        legacy_runtime_redirect_message,
-    )
-
-    msg = legacy_runtime_redirect_message(legacy)
-    assert msg is not None
-    assert legacy in msg
-    assert expected in msg
-
-
-def test_legacy_runtime_redirect_message_returns_none_for_canonical():
-    from scitex_agent_container.config._validation import (
-        legacy_runtime_redirect_message,
-    )
-
-    for canonical in ("docker", "podman", "apptainer", ""):
-        assert legacy_runtime_redirect_message(canonical) is None
+    assert runtime_errors, f"legacy runtime {legacy!r} must be rejected"
+    assert legacy in runtime_errors[0]
 
 
 def test_validate_raw_accepts_top_level_image_field():

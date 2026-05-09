@@ -2,26 +2,37 @@
 
 from __future__ import annotations
 
-import subprocess
 import time
 import traceback
 
-from ..config import AgentConfig
 from .._state.registry import Registry
+from ..config import AgentConfig
 
 
 def health_check(config: AgentConfig) -> tuple[bool, str]:
-    """Run a single health check. Returns (is_healthy, message)."""
-    method = config.health.method
+    """Run a single health check. Returns (is_healthy, message).
 
-    if method == "multiplexer-alive":
-        if config.remote.is_remote:
-            return _check_session_alive_remote(config)
-        return _check_session_alive(config)
+    Two methods:
+      * ``sdk-alive`` (default) — ask the SDK runtime whether its
+        container/process is up.
+      * ``a2a-card`` — probe the A2A AgentCard endpoint (higher
+        fidelity, confirms the HTTP surface is actually serving).
+    """
+    method = config.health.method or "sdk-alive"
+    if method == "sdk-alive":
+        return _check_sdk_alive(config)
     if method == "a2a-card":
         return _check_a2a_card(config)
-
     return False, f"Unknown health method: {method}"
+
+
+def _check_sdk_alive(config: AgentConfig) -> tuple[bool, str]:
+    """Ask the SDK runtime whether the container/runner is up."""
+    from ..runtimes.claude_session import ClaudeSessionRuntime
+
+    if ClaudeSessionRuntime().is_running(config):
+        return True, "healthy"
+    return False, "unhealthy: SDK runner not running"
 
 
 def _check_a2a_card(config: AgentConfig) -> tuple[bool, str]:
@@ -30,11 +41,6 @@ def _check_a2a_card(config: AgentConfig) -> tuple[bool, str]:
     Reads ``spec.a2a.{port,host}`` from the YAML and issues a GET to
     ``http://<host>:<port>/v1/agents/<name>/.well-known/agent.json``.
     Healthy iff the endpoint returns 200 with ``name == config.name``.
-
-    Used when ``spec.health.method: a2a-card`` is set in v3 YAML —
-    higher-fidelity than ``multiplexer-alive`` because it confirms
-    the agent's A2A surface is actually serving, not just that the
-    multiplexer session exists.
     """
     import json
     import urllib.error
@@ -75,46 +81,6 @@ def _check_a2a_card(config: AgentConfig) -> tuple[bool, str]:
             f"(expected {config.name!r}, got {data.get('name')!r})"
         )
     return True, f"healthy ({elapsed_ms} ms via {host}:{port})"
-
-
-def _check_session_alive(config: AgentConfig) -> tuple[bool, str]:
-    """Check if a multiplexer session exists locally."""
-    from ..runtimes.multiplexer import get_multiplexer
-
-    mux = get_multiplexer(config)
-    if mux.exists(config.screen_name):
-        return True, "healthy"
-    return False, f"unhealthy: {config.multiplexer} session not found"
-
-
-def _check_session_alive_remote(config: AgentConfig) -> tuple[bool, str]:
-    """Check if a multiplexer session exists on remote machine."""
-    session_name = config.screen_name or f"cld-{config.name}"
-    # Determine the check command based on multiplexer type
-    if config.multiplexer == "tmux":
-        check_cmd = (
-            f"tmux has-session -t {session_name} 2>/dev/null && echo {session_name}"
-        )
-    else:
-        check_cmd = f"screen -ls {session_name}"
-    ssh_cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"]
-    if config.remote.key:
-        ssh_cmd += ["-i", config.remote.key]
-    if config.remote.port != 22:
-        ssh_cmd += ["-p", str(config.remote.port)]
-    target = (
-        f"{config.remote.user}@{config.remote.host}"
-        if config.remote.user
-        else config.remote.host
-    )
-    ssh_cmd += [target, check_cmd]
-    result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=15)
-    if session_name in result.stdout:
-        return True, f"healthy (remote: {config.remote.host})"
-    return (
-        False,
-        f"unhealthy: {config.multiplexer} session not found on {config.remote.host}",
-    )
 
 
 def health_monitor(

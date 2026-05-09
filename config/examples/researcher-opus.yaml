@@ -3,7 +3,7 @@
 # Migrated to v3 on 2026-04-23:
 #   * apiVersion v1 -> scitex-agent-container/v3
 #   * removed metadata.name (dir-as-SSoT; filename is the agent name)
-#   * health.method: screen-alive -> multiplexer-alive (already set)
+#   * health.method: screen-alive -> sdk-alive (already set)
 #   * screen.name dropped (auto-derived from agent name in v3 loader)
 #
 # TEMPLATE NOTE — dir-as-SSoT:
@@ -39,7 +39,7 @@ spec:
     enabled: true
     interval: 45
     timeout: 5
-    method: multiplexer-alive
+    method: sdk-alive
 
   restart:
     policy: on-failure

@@ -33,97 +33,36 @@ def check(config_path: str) -> None:
         console.print(f"[red]Error loading config: {exc}[/red]")
         sys.exit(1)
 
-    console.print(
-        f"[blue]Checking {config.name}"
-        + (
-            f" (remote: {config.remote.host})"
-            if config.remote.is_remote
-            else " (local)"
-        )
-        + "...[/blue]"
-    )
+    console.print(f"[blue]Checking {config.name} ({config.runtime})...[/blue]")
 
     all_ok = True
 
-    if config.remote.is_remote:
-        from ..runtimes.claude_code import _SSHRemote
-
-        results = _SSHRemote.preflight(config)
-        for name, passed, detail in results:
-            if passed:
-                console.print(f"  {name + ':':30s} [green]{detail}[/green]")
-            else:
-                all_ok = False
-                console.print(f"  {name + ':':30s} [red]FAIL[/red]")
-                for line in detail.split("\n"):
-                    console.print(f"    [red]{line}[/red]")
+    # Container backend binary (docker / podman / apptainer)
+    backend = config.runtime or "docker"
+    backend_bin = shutil.which(backend)
+    if backend_bin:
+        console.print(f"  {backend + ':':30s} [green]OK ({backend_bin})[/green]")
     else:
-        # Local checks
-        screen_bin = shutil.which("screen")
-        if screen_bin:
-            console.print(f"  {'screen:':30s} [green]OK ({screen_bin})[/green]")
-        else:
-            all_ok = False
-            console.print(f"  {'screen:':30s} [red]FAIL[/red]")
-            console.print("    [red]GNU screen not found[/red]")
-            console.print("    [red]  Fix: sudo apt install screen[/red]")
+        all_ok = False
+        console.print(f"  {backend + ':':30s} [red]FAIL ({backend} not found)[/red]")
 
-        try:
-            proc = subprocess.run(
-                ["python3", "--version"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if proc.returncode == 0:
-                console.print(
-                    f"  {'python:':30s} [green]OK ({proc.stdout.strip()})[/green]"
-                )
-            else:
-                all_ok = False
-                console.print(f"  {'python:':30s} [red]FAIL[/red]")
-        except (
-            FileNotFoundError
-        ):  # stx-allow: fallback (reason: file may not exist on first use)
-            all_ok = False
-            console.print(f"  {'python:':30s} [red]FAIL (python3 not found)[/red]")
-
-        sac_bin = shutil.which("scitex-agent-container")
-        if sac_bin:
-            # stx-allow: fallback (reason: subprocess to get version may fail due to permission or env issues; "unknown" version is safe for the preflight display)
-            try:
-                proc = subprocess.run(
-                    ["scitex-agent-container", "--version"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                )
-                ver = proc.stdout.strip() if proc.returncode == 0 else "unknown"
-            except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-                ver = "unknown"
+    # Python (used by hooks / pre-start scripts)
+    try:
+        proc = subprocess.run(
+            ["python3", "--version"], capture_output=True, text=True, timeout=5
+        )
+        if proc.returncode == 0:
             console.print(
-                f"  {'scitex-agent-container:':30s} [green]OK ({ver})[/green]"
+                f"  {'python:':30s} [green]OK ({proc.stdout.strip()})[/green]"
             )
         else:
             all_ok = False
-            console.print(f"  {'scitex-agent-container:':30s} [red]FAIL[/red]")
-            console.print("    [red]  Fix: pip install scitex-agent-container[/red]")
-
-        # stx-allow: fallback (reason: df may be unavailable or timeout in restricted environments; showing "unknown" disk status is acceptable for a preflight report)
-        try:
-            proc = subprocess.run(
-                ["df", "-h", "/"], capture_output=True, text=True, timeout=5
-            )
-            if proc.returncode == 0:
-                lines = proc.stdout.strip().split("\n")
-                if len(lines) >= 2:
-                    parts = lines[1].split()
-                    usage = parts[4] if len(parts) >= 5 else "unknown"
-                    console.print(
-                        f"  {'disk space:':30s} [green]OK ({usage} used)[/green]"
-                    )
-        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-            console.print(f"  {'disk space:':30s} [dim]unknown[/dim]")
+            console.print(f"  {'python:':30s} [red]FAIL[/red]")
+    except (
+        FileNotFoundError
+    ):  # stx-allow: fallback (reason: file may not exist on first use)
+        all_ok = False
+        console.print(f"  {'python:':30s} [red]FAIL (python3 not found)[/red]")
 
     if all_ok:
         console.print("[green]Ready to deploy.[/green]")
@@ -245,13 +184,13 @@ def build(
             console.print("[red]Docker build failed[/red]")
             sys.exit(1)
     elif runtime == "apptainer":
-        from ..runtimes.apptainer import ApptainerRuntime
+        import subprocess as _sp
 
         def_file = str(containers_dir / "apptainer.def")
         sif_path = str(containers_dir / "scitex-agent-container.sif")
         console.print(f"[blue]Building Apptainer image: {sif_path}[/blue]")
-        success = ApptainerRuntime.build_image(def_file=def_file, sif_path=sif_path)
-        if success:
+        result = _sp.run(["apptainer", "build", sif_path, def_file], text=True)
+        if result.returncode == 0:
             console.print(f"[green]Apptainer image built: {sif_path}[/green]")
         else:
             console.print("[red]Apptainer build failed[/red]")

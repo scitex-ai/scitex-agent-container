@@ -51,7 +51,7 @@ def test_template_loads(tmp_path, src):
     target, agent_name = _instantiate(src, tmp_path)
     cfg = load_config(target)
     assert cfg.name == agent_name
-    assert cfg.health.method == "multiplexer-alive"
+    assert cfg.health.method == "sdk-alive"
 
 
 @pytest.mark.parametrize(
@@ -65,7 +65,7 @@ def test_example_loads(tmp_path, src):
     target, agent_name = _instantiate(src, tmp_path)
     cfg = load_config(target)
     assert cfg.name == agent_name
-    assert cfg.health.method == "multiplexer-alive"
+    assert cfg.health.method == "sdk-alive"
 
 
 # ---------------------------------------------------------------------------

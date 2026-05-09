@@ -12,7 +12,6 @@ import click
 from rich.table import Table
 
 from .._lifecycle.lifecycle import agent_logs
-from .._state.registry import Registry
 from ..config import load_config
 from ._api_tree import get_api_tree
 from ._helpers import _json_flag, console
@@ -153,41 +152,6 @@ def logs(name: str, lines: int, as_json: bool) -> None:
         console.print(output, markup=False, highlight=False)
     else:
         console.print("[dim]No log output captured.[/dim]")
-
-
-@click.command()
-@click.argument("name")
-def attach(name: str) -> None:
-    """Attach to an agent's multiplexer session.
-
-    \b
-    Example:
-      $ sac agent attach head-ywata-note-win
-    """
-    registry = Registry()
-    entry = registry.get(name)
-    if entry is None:
-        console.print(f"[red]Agent '{name}' not found in registry[/red]")
-        sys.exit(1)
-
-    from ..config import load_config
-
-    config = load_config(entry["config"])
-
-    from ..runtimes.multiplexer import get_multiplexer
-
-    mux = get_multiplexer(config)
-    session_name = config.screen_name
-
-    if not mux.exists(session_name):
-        console.print(f"[red]Session '{session_name}' not found[/red]")
-        sys.exit(1)
-
-    detach_hint = "Ctrl-B D" if config.multiplexer == "tmux" else "Ctrl-A D"
-    console.print(
-        f"[blue]Attaching to '{session_name}' ({detach_hint} to detach)[/blue]"
-    )
-    mux.attach(session_name)
 
 
 @click.command(name="list-python-apis")

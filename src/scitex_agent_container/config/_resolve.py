@@ -188,15 +188,11 @@ def resolve_config(name_or_path: str) -> str:
     """Resolve agent name or path to a config file path.
 
     Search order for short names (no slash, no .yaml/.yml suffix):
-      0. **Project-local** — first ``.scitex/agent-container/agents/``
-         found walking upward from cwd. Highest priority so checked-in
-         test agents and CI fixtures override globals.
-      1. ~/.scitex/agent-container/agents/<name>.yaml  (sac install root)
-      2. $SCITEX_AGENT_CONTAINER_YAML_DIRS (colon-separated extra dirs)
-      3. Fleet layout — for each root in
-         (~/.scitex/orochi, ~/.dotfiles/src/.scitex/orochi):
-             a. ``<root>/<HOST>/agents/<name>/<name>.yaml`` (host override)
-             b. ``<root>/shared/agents/<name>/<name>.yaml`` (shared default)
+
+    0. **Project-local** — first ``.scitex/agent-container/agents/`` found walking upward from cwd. Highest priority so checked-in test agents and CI fixtures override globals.
+    1. ``~/.scitex/agent-container/agents/<name>.yaml`` (sac install root).
+    2. ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` (colon-separated extra dirs).
+    3. Fleet layout — for each root in ``~/.scitex/orochi`` and ``~/.dotfiles/src/.scitex/orochi``: ``<root>/<HOST>/agents/<name>/<name>.yaml`` (host override), then ``<root>/shared/agents/<name>/<name>.yaml`` (shared default).
 
     Pass an explicit path (with / or .yaml/.yml) to bypass the search entirely.
     """

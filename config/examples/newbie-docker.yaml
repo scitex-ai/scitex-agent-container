@@ -60,7 +60,7 @@ spec:
     enabled: true
     interval: 60
     timeout: 5
-    method: multiplexer-alive           # v3 renamed screen-alive -> multiplexer-alive
+    method: sdk-alive           # v3 renamed screen-alive -> sdk-alive
 
   startup_commands:
     - delay: 5

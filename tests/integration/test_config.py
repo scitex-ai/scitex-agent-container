@@ -51,7 +51,7 @@ FULL_CONFIG = {
             "enabled": True,
             "interval": 45,
             "timeout": 10,
-            "method": "multiplexer-alive",
+            "method": "sdk-alive",
         },
         "restart": {
             "policy": "on-failure",
@@ -272,7 +272,9 @@ class TestSkillsSpec:
 
 class TestClaudeMdGeneration:
     def test_setup_creates_claude_md(self):
-        from scitex_agent_container.runtimes.claude_code import _setup_claude_md
+        from scitex_agent_container.runtimes.claude_md import (
+            setup_claude_md as _setup_claude_md,
+        )
 
         with tempfile.TemporaryDirectory() as tmpdir:
             config = AgentConfig(
@@ -295,7 +297,9 @@ class TestClaudeMdGeneration:
             assert "Role: worker" in content
 
     def test_setup_preserves_existing_content(self):
-        from scitex_agent_container.runtimes.claude_code import _setup_claude_md
+        from scitex_agent_container.runtimes.claude_md import (
+            setup_claude_md as _setup_claude_md,
+        )
 
         with tempfile.TemporaryDirectory() as tmpdir:
             claude_dir = Path(tmpdir) / ".claude"
@@ -312,7 +316,9 @@ class TestClaudeMdGeneration:
             assert '<!-- agent-container:start id="test-agent" -->' in content
 
     def test_setup_replaces_existing_section(self):
-        from scitex_agent_container.runtimes.claude_code import _setup_claude_md
+        from scitex_agent_container.runtimes.claude_md import (
+            setup_claude_md as _setup_claude_md,
+        )
 
         with tempfile.TemporaryDirectory() as tmpdir:
             claude_dir = Path(tmpdir) / ".claude"
@@ -339,7 +345,9 @@ class TestClaudeMdGeneration:
             assert "# Footer" in content
 
     def test_cleanup_removes_section(self):
-        from scitex_agent_container.runtimes.claude_code import _cleanup_claude_md
+        from scitex_agent_container.runtimes.claude_md import (
+            cleanup_claude_md as _cleanup_claude_md,
+        )
 
         with tempfile.TemporaryDirectory() as tmpdir:
             claude_dir = Path(tmpdir) / ".claude"
@@ -363,7 +371,9 @@ class TestClaudeMdGeneration:
             assert "# Footer" in content
 
     def test_cleanup_noop_when_no_file(self):
-        from scitex_agent_container.runtimes.claude_code import _cleanup_claude_md
+        from scitex_agent_container.runtimes.claude_md import (
+            cleanup_claude_md as _cleanup_claude_md,
+        )
 
         with tempfile.TemporaryDirectory() as tmpdir:
             config = AgentConfig(name="test-agent")

@@ -26,12 +26,11 @@ metadata:
     capabilities: fork,clone,branch,commit,push,open-pr
 
 spec:
-  # F-CS17: CLI/TUI runtime ('claude-code') was removed; use the SDK runner.
+  # Sac is SDK-only; one container backend wraps the long-running runner.
   runtime: docker
   image: scitex-agent-container:sdk-persistent
   dockerfile: ./containers/Dockerfile.sdk-persistent
   model: "sonnet"
-  multiplexer: tmux
 
   # Singleton — one contributor per branch.
   host:
@@ -96,7 +95,7 @@ spec:
     enabled: true
     interval: 60
     timeout: 5
-    method: multiplexer-alive
+    method: sdk-alive
 
   restart:
     policy: on-failure
