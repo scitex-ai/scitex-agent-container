@@ -97,12 +97,14 @@ def _search_dirs() -> Tuple[Path, List[Path], List[Path]]:
 
 
 def _try_dir(base: Path, name: str) -> str | None:
-    """Try <base>/<name>.yaml|yml and <base>/<name>/<name>.yaml|yml."""
+    """Locate ``<base>/<name>/spec.yaml|yml``.
+
+    The flat-form ``<base>/<name>.yaml`` and the legacy
+    ``<base>/<name>/<name>.yaml`` are no longer accepted — every agent
+    lives in its own directory and the config is named ``spec.yaml``.
+    """
     for ext in (".yaml", ".yml"):
-        cand = base / f"{name}{ext}"
-        if cand.exists():
-            return str(cand)
-        cand = base / name / f"{name}{ext}"
+        cand = base / name / f"spec{ext}"
         if cand.exists():
             return str(cand)
     return None
@@ -123,27 +125,21 @@ class AmbiguousAgent(LookupError):
 def enumerate_agent_names() -> list[str]:
     """Return every agent name discoverable through the standard search.
 
-    A name is recorded when ``<dir>/<name>/<name>.yaml`` exists OR
-    ``<dir>/<name>.yaml`` exists for any directory in the search
-    chain. Duplicates are collapsed; ordering is alphabetical.
+    A name is recorded when ``<dir>/<name>/spec.yaml`` (or .yml) exists
+    in any search-chain directory. The flat-form ``<dir>/<name>.yaml``
+    and the legacy ``<dir>/<name>/<name>.yaml`` no longer count.
+    Duplicates are collapsed; ordering is alphabetical.
     """
     primary, env_dirs, fleet_dirs = _search_dirs()
     seen: set[str] = set()
     for base in [primary, *env_dirs, *fleet_dirs]:
         if not base.is_dir():
             continue
-        # <base>/<name>.yaml form
-        for ext in (".yaml", ".yml"):
-            for f in base.glob(f"*{ext}"):
-                name = f.stem
-                if name and not name.startswith("."):
-                    seen.add(name)
-        # <base>/<name>/<name>.yaml form
         for sub in base.iterdir():
             if not sub.is_dir() or sub.name.startswith("."):
                 continue
             for ext in (".yaml", ".yml"):
-                if (sub / f"{sub.name}{ext}").is_file():
+                if (sub / f"spec{ext}").is_file():
                     seen.add(sub.name)
                     break
     return sorted(seen)
@@ -187,12 +183,17 @@ def resolve_with_prefix(name: str) -> str:
 def resolve_config(name_or_path: str) -> str:
     """Resolve agent name or path to a config file path.
 
+    Every agent lives in its own directory; the config file is always
+    named ``spec.yaml`` (or ``spec.yml``). The flat-form
+    ``<base>/<name>.yaml`` and the legacy ``<base>/<name>/<name>.yaml``
+    are no longer accepted — sac is dir-as-SSoT.
+
     Search order for short names (no slash, no .yaml/.yml suffix):
 
     0. **Project-local** — first ``.scitex/agent-container/agents/`` found walking upward from cwd. Highest priority so checked-in test agents and CI fixtures override globals.
-    1. ``~/.scitex/agent-container/agents/<name>.yaml`` (sac install root).
-    2. ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` (colon-separated extra dirs).
-    3. Fleet layout — for each root in ``~/.scitex/orochi`` and ``~/.dotfiles/src/.scitex/orochi``: ``<root>/<HOST>/agents/<name>/<name>.yaml`` (host override), then ``<root>/shared/agents/<name>/<name>.yaml`` (shared default).
+    1. ``~/.scitex/agent-container/agents/<name>/spec.yaml`` (sac install root).
+    2. ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` (colon-separated extra dirs, each searched as ``<dir>/<name>/spec.yaml``).
+    3. Fleet layout — for each root in ``~/.scitex/orochi`` and ``~/.dotfiles/src/.scitex/orochi``: ``<root>/<HOST>/agents/<name>/spec.yaml`` (host override), then ``<root>/shared/agents/<name>/spec.yaml`` (shared default).
 
     Pass an explicit path (with / or .yaml/.yml) to bypass the search entirely.
     """
@@ -226,19 +227,17 @@ def resolve_config(name_or_path: str) -> str:
             return hit
 
     project_lines = "\n".join(
-        f"  {d}/{name_or_path}/{name_or_path}.yaml" for d in project_local_dirs
+        f"  {d}/{name_or_path}/spec.yaml" for d in project_local_dirs
     )
     env_line = (
         f"  (env ${_ENV_VAR}: "
         f"{', '.join(str(d) for d in operator_env_dirs) if operator_env_dirs else '<unset>'})"
     )
-    fleet_lines = "\n".join(
-        f"  {d}/{name_or_path}/{name_or_path}.yaml" for d in fleet_dirs
-    )
+    fleet_lines = "\n".join(f"  {d}/{name_or_path}/spec.yaml" for d in fleet_dirs)
     raise FileNotFoundError(
         f"Agent '{name_or_path}' not found. Searched:\n"
         + (project_lines + "\n" if project_lines else "")
-        + f"  {primary}/{name_or_path}.yaml\n"
+        + f"  {primary}/{name_or_path}/spec.yaml\n"
         f"{env_line}\n"
         f"{fleet_lines}"
     )

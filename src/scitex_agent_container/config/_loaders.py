@@ -95,9 +95,10 @@ def compose_effective_name(
 def _name_from_path(path: Path | str) -> str:
     """Derive the agent name from the YAML path.
 
-    Convention: each agent lives in its own directory ``<name>/<name>.yaml``.
-    The directory name IS the agent identifier — single source of truth.
-    YAMLs do not carry a redundant ``metadata.name`` field.
+    Convention: each agent lives in its own directory
+    ``<name>/spec.yaml``. The directory name IS the agent identifier —
+    single source of truth. YAMLs do not carry a redundant
+    ``metadata.name`` field, and the file is always named ``spec.yaml``.
     """
     return Path(path).parent.name
 
