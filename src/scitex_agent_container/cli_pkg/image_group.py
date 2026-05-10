@@ -264,12 +264,17 @@ def image_list(as_json: bool) -> None:
     """
     from scitex_container.apptainer import list_versions
 
+    _ensure_containers_dir()
     versions = list_versions(_CONTAINERS_DIR)
+    console.print(f"[dim]containers dir: {_CONTAINERS_DIR}[/dim]")
     if as_json:
         click.echo(json.dumps(versions, indent=2, default=str))
         return
     if not versions:
-        console.print("[dim](no SIFs installed under containers/)[/dim]")
+        console.print(
+            f"[dim](no SIFs in {_CONTAINERS_DIR} — run "
+            f"`sac image build base -y && sac image build scitex -y` to populate)[/dim]"
+        )
         return
     for v in versions:
         console.print(f"  {v}")
@@ -330,7 +335,7 @@ def image_status(as_json: bool) -> None:
         click.echo(json.dumps(info, indent=2, default=str))
         return
     if not info:
-        console.print("[dim](no containers in this dir)[/dim]")
+        console.print(f"[dim](no containers in {_CONTAINERS_DIR})[/dim]")
         return
     for entry in info:
         name = entry.get("name", "?")

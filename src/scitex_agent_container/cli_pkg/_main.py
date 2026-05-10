@@ -89,6 +89,46 @@ class _MainGroup(LazyGroup):
         except ImportError:
             return  # scitex-dev[cli-audit] not installed; commands stay missing
         attach_shell_completion(self, prog_name="scitex-agent-container")
+        # The package ships TWO console-scripts (``scitex-agent-container``
+        # and the short alias ``sac``); both need their own eval line in
+        # ``~/.bashrc`` for Click's binary-name-keyed completion to fire.
+        # Wrap the helper's install command so a single
+        # ``sac install-shell-completion`` writes both lines.
+        self._wrap_install_for_alias()
+
+    def _wrap_install_for_alias(self) -> None:
+        """Make ``install-shell-completion`` also register the ``sac`` alias."""
+        import os
+
+        from scitex_dev._cli._completion import _eval_line, _marker, _rc_path
+
+        cmd = self.commands.get("install-shell-completion")
+        if cmd is None or cmd.callback is None:
+            return
+        original = cmd.callback
+
+        def install_both(*args, **kwargs):
+            original(*args, **kwargs)
+            shell = kwargs.get("shell", "bash")
+            dry_run = kwargs.get("dry_run", False)
+            if shell == "fish":
+                return  # fish uses per-prog files; no alias bridge needed
+            rc_path = _rc_path(shell, "sac")
+            line = _eval_line(shell, "sac")
+            marker = _marker("sac")
+            if dry_run:
+                click.echo(f"Would also append to {rc_path}:")
+                click.echo(f"  {line}")
+                return
+            if os.path.isfile(rc_path):
+                with open(rc_path) as fh:
+                    if marker in fh.read():
+                        return  # already present
+            with open(rc_path, "a") as fh:
+                fh.write(f"\n{line}\n")
+            click.echo(f"Tab completion (sac alias) installed in {rc_path}")
+
+        cmd.callback = install_both
 
     def list_commands(self, ctx):
         names = super().list_commands(ctx)
