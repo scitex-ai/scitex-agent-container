@@ -17,7 +17,7 @@ Global flags:
 - `-h / --help` — show help
 - `--help-recursive` — show help for the root command and every subcommand
 - `--json` — emit structured JSON where supported (status / actions / events)
-- `--on PEER` — dispatch the rest of argv via ssh on `PEER` (defined in `sac.yaml`'s `peers:` block)
+- `--on PEER` — dispatch the rest of argv via ssh on `PEER` (defined in `config.yaml`'s `peers:` block)
 
 ## Agent lifecycle (most-used)
 

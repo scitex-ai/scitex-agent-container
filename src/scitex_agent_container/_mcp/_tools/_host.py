@@ -14,13 +14,13 @@ def host_show() -> dict[str, Any]:
 
 
 def host_list() -> dict[str, Any]:
-    """List configured peers (~/.scitex/agent-container/sac.yaml).
+    """List configured peers (~/.scitex/agent-container/config.yaml).
     Mirrors ``sac host list --json``."""
     return invoke_cli_json(["host", "list", "--json"])
 
 
 def host_validate() -> dict[str, Any]:
-    """Validate the sac.yaml peer config (chain integrity,
+    """Validate the config.yaml peer config (chain integrity,
     unknown via, schema). Mirrors ``sac host validate --json``."""
     return invoke_cli_json(["host", "validate", "--json"])
 

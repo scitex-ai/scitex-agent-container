@@ -1,7 +1,7 @@
 """Sac-local host & peer configuration (F-CS12).
 
-Lives at ``~/.scitex/agent-container/sac.yaml`` (or under
-``$SCITEX_AGENT_CONTAINER_HOME/sac.yaml``). Separate from any orochi
+Lives at ``~/.scitex/agent-container/config.yaml`` (or under
+``$SCITEX_AGENT_CONTAINER_HOME/config.yaml``). Separate from any orochi
 config — sac never reaches out to orochi; orochi is a separate
 concern that pulls from sac via ssh.
 
@@ -25,13 +25,13 @@ Resolution chain for the local canonical hostname (used by every
 state.db write so cross-host queries scope correctly):
 
   1. ``$SAC_HOST`` env var (explicit override)
-  2. ``host.canonical`` if set in sac.yaml (and not the literal
+  2. ``host.canonical`` if set in config.yaml (and not the literal
      ``$SAC_HOST`` placeholder)
   3. ``host.aliases[$(hostname -s)]`` if matching
   4. ``$(hostname -s)`` (or fqdn when fallback=hostname-fqdn)
 
 The config is missing-tolerant: every key is optional. With no
-sac.yaml at all the chain still produces a sensible canonical name
+config.yaml at all the chain still produces a sensible canonical name
 via ``hostname -s``.
 """
 
@@ -46,15 +46,15 @@ import yaml
 
 DEFAULT_CONFIG_PATH = Path(
     os.environ.get(
-        "SCITEX_AGENT_CONTAINER_SAC_YAML",
-        os.path.expanduser("~/.scitex/agent-container/sac.yaml"),
+        "SCITEX_AGENT_CONTAINER_CONFIG",
+        os.path.expanduser("~/.scitex/agent-container/config.yaml"),
     )
 )
 
 
 @dataclass(frozen=True)
 class PeerSpec:
-    """One peer entry from ``peers:`` in sac.yaml."""
+    """One peer entry from ``peers:`` in config.yaml."""
 
     name: str
     ssh: str  # 'user@host[:port]' or just 'host' (assumes ~/.ssh/config)
@@ -65,7 +65,7 @@ class PeerSpec:
 
         Used to build the ``-J peer1,peer2`` ProxyJump argument when
         executing on a multi-hop peer. Unknown intermediate names are
-        silently dropped — sac.yaml is operator-edited and should fail
+        silently dropped — config.yaml is operator-edited and should fail
         loudly elsewhere (see ``Config.validate``).
         """
         return [peers[name].ssh for name in self.via if name in peers]
@@ -123,20 +123,20 @@ class Config:
 
 
 def load(path: Path | None = None) -> Config:
-    """Read sac.yaml; missing file or empty file yields defaults."""
+    """Read config.yaml; missing file or empty file yields defaults."""
     p = Path(path) if path else DEFAULT_CONFIG_PATH
     if not p.is_file():
         return Config(source_path=p)
     raw = yaml.safe_load(p.read_text()) or {}
     if not isinstance(raw, dict):
-        raise ValueError(f"sac.yaml must be a mapping at top level: {p}")
+        raise ValueError(f"config.yaml must be a mapping at top level: {p}")
 
     host_raw = raw.get("host") or {}
     if not isinstance(host_raw, dict):
-        raise ValueError(f"sac.yaml: 'host' must be a mapping: {p}")
+        raise ValueError(f"config.yaml: 'host' must be a mapping: {p}")
     aliases_raw = host_raw.get("aliases") or {}
     if not isinstance(aliases_raw, dict):
-        raise ValueError(f"sac.yaml: 'host.aliases' must be a mapping: {p}")
+        raise ValueError(f"config.yaml: 'host.aliases' must be a mapping: {p}")
     host = HostBlock(
         canonical=host_raw.get("canonical"),
         aliases={str(k): str(v) for k, v in aliases_raw.items()},
@@ -145,16 +145,16 @@ def load(path: Path | None = None) -> Config:
 
     peers_raw = raw.get("peers") or {}
     if not isinstance(peers_raw, dict):
-        raise ValueError(f"sac.yaml: 'peers' must be a mapping: {p}")
+        raise ValueError(f"config.yaml: 'peers' must be a mapping: {p}")
     peers: dict[str, PeerSpec] = {}
     for name, spec in peers_raw.items():
         if not isinstance(spec, dict):
             raise ValueError(
-                f"sac.yaml: peer '{name}' must be a mapping with ssh:/via:"
+                f"config.yaml: peer '{name}' must be a mapping with ssh:/via:"
             )
         via_raw = spec.get("via") or []
         if not isinstance(via_raw, list):
-            raise ValueError(f"sac.yaml: peer '{name}' via: must be a list")
+            raise ValueError(f"config.yaml: peer '{name}' via: must be a list")
         peers[str(name)] = PeerSpec(
             name=str(name),
             ssh=str(spec.get("ssh") or ""),

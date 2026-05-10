@@ -78,7 +78,7 @@ def host_show(ctx: click.Context, as_json: bool) -> None:
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
 @click.pass_context
 def host_list(ctx: click.Context, as_json: bool) -> None:
-    """Peers configured under sac.yaml's ``peers:`` block.
+    """Peers configured under config.yaml's ``peers:`` block.
 
     \b
     Example:
@@ -99,7 +99,7 @@ def host_list(ctx: click.Context, as_json: bool) -> None:
         click.echo(json.dumps({"peers": rows}, indent=2))
         return
     if not rows:
-        console.print("[dim](no peers configured in sac.yaml)[/dim]")
+        console.print("[dim](no peers configured in config.yaml)[/dim]")
         return
     console.print("[bold]peers[/bold]")
     for r in rows:
@@ -111,7 +111,7 @@ def host_list(ctx: click.Context, as_json: bool) -> None:
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
 @click.pass_context
 def host_validate(ctx: click.Context, as_json: bool) -> None:
-    """Check sac.yaml for misconfiguration; exit non-zero on errors.
+    """Check config.yaml for misconfiguration; exit non-zero on errors.
 
     \b
     Example:
@@ -135,7 +135,7 @@ def host_validate(ctx: click.Context, as_json: bool) -> None:
             for e in errors:
                 console.print(f"[red]error:[/red] {e}")
         else:
-            console.print("[green]ok[/green]  sac.yaml is valid")
+            console.print("[green]ok[/green]  config.yaml is valid")
     if errors:
         raise SystemExit(1)
 
@@ -182,7 +182,7 @@ def dispatch_remote(peer: str, argv: list[str], ssh_argv0: str = "sac") -> int:
     if peer not in cfg.peers:
         click.echo(
             f"error: --on peer '{peer}' is not defined in {cfg.source_path}.\n"
-            f"Add it under peers: in sac.yaml, then re-run.",
+            f"Add it under peers: in config.yaml, then re-run.",
             err=True,
         )
         return 2
@@ -208,7 +208,7 @@ def host_exec(peer: str, argv: tuple[str, ...]) -> None:
       $ sac host exec spartan -- agent list --json
       $ sac host exec bm198 -- sac db export --since 2026-05-01
 
-    PEER must be defined under sac.yaml's ``peers:`` block. The peer's
+    PEER must be defined under config.yaml's ``peers:`` block. The peer's
     ``via:`` chain renders into ssh's ``-J`` flag automatically; sac
     never opens a port. Stdio is inherited so streaming output works.
     """
@@ -216,7 +216,7 @@ def host_exec(peer: str, argv: tuple[str, ...]) -> None:
     if peer not in cfg.peers:
         click.echo(
             f"error: peer '{peer}' is not defined in {cfg.source_path}.\n"
-            f"Add it under peers: in sac.yaml, then re-run.",
+            f"Add it under peers: in config.yaml, then re-run.",
             err=True,
         )
         raise SystemExit(2)
@@ -252,7 +252,7 @@ def host_probe(ctx: click.Context, peer: str, timeout: int, as_json: bool) -> No
 
     cfg = load()
     if peer not in cfg.peers:
-        msg = f"peer '{peer}' is not defined in sac.yaml"
+        msg = f"peer '{peer}' is not defined in config.yaml"
         if _json_flag(ctx, as_json):
             click.echo(json.dumps({"peer": peer, "reachable": False, "error": msg}))
         else:

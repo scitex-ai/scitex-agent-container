@@ -214,8 +214,8 @@ def _resolve_host(host: str | None) -> str:
     Resolution chain (F-CS12):
         1. ``host`` arg (explicit override)
         2. ``$SAC_HOST`` env var
-        3. ``host.canonical`` from sac.yaml (when not the placeholder)
-        4. ``host.aliases[$(hostname -s)]`` from sac.yaml
+        3. ``host.canonical`` from config.yaml (when not the placeholder)
+        4. ``host.aliases[$(hostname -s)]`` from config.yaml
         5. ``$(hostname -s)`` (or fqdn when fallback=hostname-fqdn)
 
     Defers to ``_state.host_config.Config.canonical_host`` so the
@@ -229,7 +229,7 @@ def _resolve_host(host: str | None) -> str:
     # a yaml.safe_load on every state.db open which is wasteful.
     from . import host_config
 
-    # stx-allow: fallback (reason: a malformed sac.yaml must not block
+    # stx-allow: fallback (reason: a malformed config.yaml must not block
     # state.db writes — degrade to hostname-only resolution.)
     try:
         return host_config.load().canonical_host()

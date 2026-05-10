@@ -11,7 +11,7 @@
 #   * docker (or podman) installed
 #   * sac itself installed (so ``sac --on host`` actually finds a
 #     remote sac to dispatch to)
-#   * an entry under ``peers:`` in ~/.scitex/agent-container/sac.yaml
+#   * an entry under ``peers:`` in ~/.scitex/agent-container/config.yaml
 #     on the laptop pointing at this host
 
 apiVersion: scitex-agent-container/v3
