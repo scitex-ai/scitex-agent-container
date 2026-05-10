@@ -28,7 +28,7 @@ metadata:
 spec:
   runtime: docker
   image: scitex-agent-container:scitex
-  dockerfile: ./containers/Dockerfile
+  dockerfile: scitex_agent_container/containers/Dockerfile.scitex
   model: sonnet
   multiplexer: tmux
   host:

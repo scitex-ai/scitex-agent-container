@@ -39,7 +39,7 @@ metadata:
 spec:
   runtime: docker
   image: scitex-agent-container:scitex
-  dockerfile: ./containers/Dockerfile
+  dockerfile: scitex_agent_container/containers/Dockerfile.scitex
   model: "claude-haiku-4-5-20251001"   # cheap-first (user decision 2026-04-23)
   workdir: ~/proj/example
 
