@@ -1,8 +1,9 @@
 ── existing SIFs (if any) ──
-(no SIFs built yet)
+-rwxr-xr-x 1 ywatanabe ywatanabe 1045028864 May 10 16:49 /home/ywatanabe/.scitex/agent-container/containers/scitex-agent-container-base.sif
 
 ── sac image list ──
-(no SIFs installed under containers/)
+containers dir: /home/ywatanabe/.scitex/agent-container/containers
+  scitex-agent-container-base.sif                       996.6 MB
 
 ── sac image status ──
-(no containers in this dir)
+(no containers in /home/ywatanabe/.scitex/agent-container/containers)

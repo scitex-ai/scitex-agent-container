@@ -3,7 +3,9 @@
 #
 # Problem:
 #   scitex packages release frequently. Baking a version into a SIF
-#   means rebuilding (~10 min) every time you want fresh.
+#   means rebuilding (60-90 min on cold cache, since `pip install
+#   scitex[all]` pulls the full scientific stack) every time you want
+#   fresh.
 #
 # Solution: apptainer's *sandbox* mode + sac image verbs.
 #
@@ -54,7 +56,7 @@ echo '$ sac image freeze '"$SANDBOX_DIR"' scitex-NEW.sif'
 if [[ "$APPLY" == "--apply" ]]; then
     if [[ ! -d "$SANDBOX_DIR" ]]; then
         echo
-        echo "── sac image build scitex --sandbox -y (real, ~10 min) ──"
+        echo "── sac image build scitex --sandbox -y (real, 60-90 min — scitex[all] is heavy) ──"
         sac image build scitex --sandbox -y
     fi
     echo

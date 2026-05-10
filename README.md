@@ -97,9 +97,10 @@ Recipes ship in the pip wheel — no need to clone the repo to run `sac image bu
 ## Quickstart
 
 ```bash
-# 1. Build the layered images (one-time; ~20 min for full stack)
-sac image build base -y
-sac image build scitex -y
+# 1. Build the layered images (one-time)
+sac image build base -y     # ~15-25 min — OS + dev tools
+sac image build scitex -y   # 60-90 min — FROM :base + scitex[all] (numpy / pandas /
+                            #              scipy / torch / etc.). Walk away.
 
 # 2. Define an agent
 mkdir -p ~/.scitex/agent-container/agents/hello/

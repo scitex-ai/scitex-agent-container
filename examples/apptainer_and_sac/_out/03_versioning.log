@@ -1,13 +1,14 @@
 ── sac image list ──
-(no SIFs installed under containers/)
+containers dir: /home/ywatanabe/.scitex/agent-container/containers
+  scitex-agent-container-base.sif                       996.6 MB
 
 ── sac image status ──
-(no containers in this dir)
+(no containers in /home/ywatanabe/.scitex/agent-container/containers)
 
 ── sac image snapshot (preview, first 30 lines) ──
 {
   "schema_version": "1.0",
-  "timestamp": "2026-05-10T05:30:17.299577+00:00",
+  "timestamp": "2026-05-10T08:50:42.223251+00:00",
   "container": {
     "version": null
   },

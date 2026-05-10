@@ -54,9 +54,16 @@ sac image status || true
 
 if [[ "$APPLY" == "--apply" ]]; then
     echo
-    echo "── sac image build base -y (real, ~10 min) ──"
+    echo "── sac image build base -y (real, ~15-25 min) ──"
+    # :base = OS + dev tools + node + rust toolchain + cargo binstall'd
+    # CLIs + tree-from-source + npm globals + chrome-headless-shell.
+    # First build can be ~25 min on cold cache; subsequent builds reuse
+    # the apt/cargo/npm caches and are faster.
     sac image build base -y
     echo
-    echo "── sac image build scitex -y (real, ~10 min) ──"
+    echo "── sac image build scitex -y (real, 60-90 min — scitex[all] is heavy) ──"
+    # :scitex layers `pip install scitex[all]` on top — pulls numpy /
+    # pandas / scipy / torch / and the rest of the SciTeX scientific
+    # stack. Genuinely an hour or more on a cold pip cache.
     sac image build scitex -y
 fi

@@ -10,9 +10,11 @@ tags: [scitex-agent-container-quick-start]
 ## 0. One-time: build the runtime images
 
 ```bash
-sac image build base   -y          # OS + dev tools  (~15 min, one-time)
-sac image build scitex -y          # FROM :base + scitex[all] + claude SDK + sac
+sac image build base   -y          # OS + dev tools           (~15-25 min, one-time)
+sac image build scitex -y          # FROM :base + scitex[all] (60-90 min, scitex[all] is heavy)
 ```
+
+The `:scitex` build pulls the full SciTeX scientific stack (numpy / pandas / scipy / torch + every other package in `scitex[all]`). On a cold pip cache that's genuinely an hour or more — kick it off and walk away.
 
 Skip if you already have `scitex-agent-container-scitex.sif` from a teammate or a published release.
 
