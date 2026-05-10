@@ -23,9 +23,6 @@
 Bootstrap: localimage
 From: ./scitex-agent-container-base.sif
 
-%arguments
-    SAC_REF=develop
-
 %post
     set -e
     export DEBIAN_FRONTEND=noninteractive
@@ -50,7 +47,9 @@ From: ./scitex-agent-container-base.sif
         pytest pytest-cov \
         claude-agent-sdk \
         "scitex[all]" \
-        "git+https://github.com/ywatanabe1989/scitex-agent-container.git@${SAC_REF}"
+        "git+https://github.com/ywatanabe1989/scitex-agent-container.git@develop"
+    # Pin a specific sac release by editing the @develop above to @v0.14.0
+    # (or whatever tag), then ``sac image build scitex -y`` again.
 
 %environment
     export PATH=/opt/venv-sac/bin:$PATH
