@@ -18,8 +18,7 @@
 #   then dispatches to the right runtime per spec.runtime.
 set -euo pipefail
 APPLY="${1:-}"
-THIS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SIF="$(cd "$THIS_DIR/../../containers" && pwd)/scitex-agent-container-scitex.sif"
+SIF="$HOME/.scitex/agent-container/containers/scitex-agent-container-scitex.sif"
 
 echo "── apptainer exec (one-off) ──"
 echo '$ apptainer exec '"$SIF"' python -c "print(\"hi from sif\")"'

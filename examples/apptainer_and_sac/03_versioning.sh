@@ -4,7 +4,7 @@
 # After freezing sandboxes into SIFs (see Lesson 02), you accumulate
 # multiple versioned images:
 #
-#   containers/
+#   ~/.scitex/agent-container/containers/
 #     scitex-agent-container-scitex.sif         → currently active (symlink)
 #     scitex-agent-container-scitex-2.28.14.sif
 #     scitex-agent-container-scitex-2.28.15.sif

@@ -19,9 +19,13 @@
 # by default — the build is reproducible from a definition file (.def).
 #
 # Pure apptainer:
-#   apptainer build out.sif containers/apptainer-base.def     # build :base SIF
-#   apptainer build out.sif containers/apptainer-scitex.def   # build :scitex SIF
-#   apptainer inspect out.sif                                 # labels, def
+#   apptainer build out.sif <pkg>/containers/apptainer-base.def     # build :base SIF
+#   apptainer build out.sif <pkg>/containers/apptainer-scitex.def   # build :scitex SIF
+#   apptainer inspect out.sif                                       # labels, def
+#
+# (Recipes ship inside the pip wheel at
+#  <site-packages>/scitex_agent_container/containers/; resolve via
+#  `python -c "import scitex_agent_container; print(scitex_agent_container.__file__)"`.)
 #
 # sac wrapper (delegates to scitex-container for versioning):
 #   sac image build base                                      # build :base
@@ -32,10 +36,10 @@
 set -euo pipefail
 APPLY="${1:-}"
 
-# Resolve the package's containers/ dir relative to this script's location
-# (../../containers/) so the lesson works wherever the repo is checked out.
-THIS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONTAINERS_DIR="$(cd "$THIS_DIR/../../containers" && pwd)"
+# Built SIFs and sandboxes live in user state, not the repo. This is
+# scitex's standard local-state convention (~/.scitex/<pkg>/...).
+CONTAINERS_DIR="$HOME/.scitex/agent-container/containers"
+mkdir -p "$CONTAINERS_DIR"
 
 echo "── existing SIFs (if any) ──"
 ls -la "$CONTAINERS_DIR"/*.sif 2>/dev/null || echo "(no SIFs built yet)"

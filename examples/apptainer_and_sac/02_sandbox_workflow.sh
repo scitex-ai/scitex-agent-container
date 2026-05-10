@@ -9,14 +9,15 @@
 #
 #   1. Build a writable sandbox once:
 #        sac image build scitex --sandbox
-#        # → containers/scitex-sandbox/  (next to apptainer-scitex.def)
+#        # → ~/.scitex/agent-container/containers/scitex-agent-container-scitex-sandbox/
 #
 #   2. Refresh packages any time:
-#        sac image update containers/scitex-sandbox/                # default: scitex[all]
-#        sac image update containers/scitex-sandbox/ -p scitex-dsp  # specific package(s)
+#        sac image update ~/.scitex/agent-container/containers/scitex-agent-container-scitex-sandbox/
+#        sac image update ~/.scitex/agent-container/containers/scitex-agent-container-scitex-sandbox/ -p scitex-dsp
 #
 #   3. When stable, freeze back to an immutable SIF:
-#        sac image freeze containers/scitex-sandbox/ scitex-2.28.15.sif
+#        sac image freeze ~/.scitex/agent-container/containers/scitex-agent-container-scitex-sandbox/ \
+#                         ~/.scitex/agent-container/containers/scitex-agent-container-2.28.15.sif
 #
 #   4. Versioned switch / rollback handles the rest:
 #        sac image list                  # see installed SIFs
@@ -36,10 +37,10 @@
 set -euo pipefail
 APPLY="${1:-}"
 
-# Resolve the package's containers/ dir relative to this script's location.
-THIS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONTAINERS_DIR="$(cd "$THIS_DIR/../../containers" && pwd)"
-SANDBOX_DIR="$CONTAINERS_DIR/scitex-sandbox"
+# User-state location for built artifacts (sandboxes + SIFs).
+CONTAINERS_DIR="$HOME/.scitex/agent-container/containers"
+mkdir -p "$CONTAINERS_DIR"
+SANDBOX_DIR="$CONTAINERS_DIR/scitex-agent-container-scitex-sandbox"
 
 echo "── existing sandbox (if any) ──"
 ls -ld "$SANDBOX_DIR" 2>/dev/null || echo "(no sandbox yet)"

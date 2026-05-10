@@ -82,7 +82,17 @@ Two `.def` recipes, layered:
 | `:base` | Ubuntu 24.04 + dev tools (git, gh, rust CLIs, mermaid, prettier, eslint, jsonlint, uv, pipx, tree, node 20) | Foundation |
 | `:scitex` | `FROM :base` + ffmpeg + portaudio + `scitex[all]` + claude-agent-sdk + sac itself | **Default** when `spec.image` is unset |
 
-`containers/apptainer-base.def` and `containers/apptainer-scitex.def` are canonical; `containers/Dockerfile.{base,scitex}` mirror them for docker users.
+```
+<site-packages>/scitex_agent_container/containers/    ← recipes (ship in pip wheel)
+  apptainer-{base,scitex}.def                          ← canonical SSoT
+  Dockerfile.{base,scitex}                             ← docker mirrors
+
+~/.scitex/agent-container/containers/                 ← built artifacts (user state)
+  scitex-agent-container-{base,scitex}.sif
+  *-sandbox/
+```
+
+Recipes ship in the pip wheel — no need to clone the repo to run `sac image build`. Built artifacts live under `~/.scitex/agent-container/containers/`, never in git.
 
 ## Quickstart
 
@@ -193,7 +203,7 @@ End-to-end: `sac agent start` materializes the workspace (`src_*` files + mounts
 | `apiVersion` | `scitex-agent-container/v3` | Config format version |
 | `metadata` | `name` (auto-derived from dir), `labels` | Agent identity |
 | `spec.runtime` | `apptainer` (default) / `docker` / `claude-session` (host-local) | Container backend |
-| `spec.image` | path or tag | Default: `scitex-agent-container:scitex` (or `~/containers/scitex-agent-container-scitex.sif`) |
+| `spec.image` | path or tag | Default: `scitex-agent-container:scitex` (docker) or `~/.scitex/agent-container/containers/scitex-agent-container-scitex.sif` (apptainer) |
 | `spec.workdir` | path | Workspace mounted at `/work` inside the container |
 | `spec.model` | `sonnet`, `opus[1m]`, `haiku-4-5`, ... | Claude model |
 | `spec.user` | `""` / `"host"` / `"<uid>:<gid>"` | Run-as user; `"host"` matches the operator |
