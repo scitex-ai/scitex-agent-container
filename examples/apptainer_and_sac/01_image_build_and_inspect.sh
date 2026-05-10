@@ -61,9 +61,10 @@ if [[ "$APPLY" == "--apply" ]]; then
     # the apt/cargo/npm caches and are faster.
     sac image build base -y
     echo
-    echo "── sac image build scitex -y (real, 60-90 min — scitex[all] is heavy) ──"
-    # :scitex layers `pip install scitex[all]` on top — pulls numpy /
+    echo "── sac image build scitex -y (real, ~10-20 min with uv resolver) ──"
+    # :scitex layers ``uv pip install scitex[all]`` on top — pulls numpy /
     # pandas / scipy / torch / and the rest of the SciTeX scientific
-    # stack. Genuinely an hour or more on a cold pip cache.
+    # stack. uv's parallel Rust resolver does in 1-3 min what pip would
+    # spend 30+ min backtracking on; the rest is wheel download + install.
     sac image build scitex -y
 fi

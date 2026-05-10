@@ -11,14 +11,14 @@
 #
 #   1. Build a writable sandbox once:
 #        sac image build scitex --sandbox
-#        # → ~/.scitex/agent-container/containers/scitex-agent-container-scitex-sandbox/
+#        # → ~/.scitex/agent-container/containers/scitex-agent-container-scitex.sandbox/
 #
 #   2. Refresh packages any time:
-#        sac image update ~/.scitex/agent-container/containers/scitex-agent-container-scitex-sandbox/
-#        sac image update ~/.scitex/agent-container/containers/scitex-agent-container-scitex-sandbox/ -p scitex-dsp
+#        sac image update ~/.scitex/agent-container/containers/scitex-agent-container-scitex.sandbox/
+#        sac image update ~/.scitex/agent-container/containers/scitex-agent-container-scitex.sandbox/ -p scitex-dsp
 #
 #   3. When stable, freeze back to an immutable SIF:
-#        sac image freeze ~/.scitex/agent-container/containers/scitex-agent-container-scitex-sandbox/ \
+#        sac image freeze ~/.scitex/agent-container/containers/scitex-agent-container-scitex.sandbox/ \
 #                         ~/.scitex/agent-container/containers/scitex-agent-container-2.28.15.sif
 #
 #   4. Versioned switch / rollback handles the rest:
@@ -42,7 +42,7 @@ APPLY="${1:-}"
 # User-state location for built artifacts (sandboxes + SIFs).
 CONTAINERS_DIR="$HOME/.scitex/agent-container/containers"
 mkdir -p "$CONTAINERS_DIR"
-SANDBOX_DIR="$CONTAINERS_DIR/scitex-agent-container-scitex-sandbox"
+SANDBOX_DIR="$CONTAINERS_DIR/scitex-agent-container-scitex.sandbox"
 
 echo "── existing sandbox (if any) ──"
 ls -ld "$SANDBOX_DIR" 2>/dev/null || echo "(no sandbox yet)"
