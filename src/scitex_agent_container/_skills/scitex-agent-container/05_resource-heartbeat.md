@@ -98,4 +98,4 @@ systemctl --user enable --now scitex-heartbeat
 ## Related
 
 - `resource-management.md` — the reader-side API
-- `scitex-orochi/resource-hub.md` — aggregating caches across the fleet
+- Downstream fleet hub — aggregating caches across the fleet (sac is fleet-agnostic)

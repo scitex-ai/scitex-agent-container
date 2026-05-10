@@ -67,10 +67,10 @@ Callers inspect `cache_timestamp` themselves. Rules of thumb:
 ## Not in this Package
 
 - Resource **acquisition** (`salloc`/`srun` wrappers, context managers) is out of scope for the initial release. For now, agents compose their own SLURM commands using info from `slurm_status()`.
-- Cross-fleet aggregation (rsync-ing caches between hosts) is handled by `scitex-orochi/resource-hub.md`.
+- Cross-fleet aggregation (rsync-ing caches between hosts) is handled by a downstream fleet hub (consumer of sac), not by sac itself.
 
 ## Related
 
 - `resource-heartbeat.md` — how to install and run the heartbeat sampler
-- `scitex-orochi/resource-hub.md` — fleet-wide aggregation
+- Downstream fleet hub docs — fleet-wide aggregation (sac is fleet-agnostic)
 - memory: `project_spartan_login_node.md` — login1 is controller-only; workloads go via SLURM

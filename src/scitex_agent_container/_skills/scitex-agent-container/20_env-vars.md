@@ -7,8 +7,30 @@ tags: [scitex-agent-container-env-vars]
 
 # scitex-agent-container — Environment Variables
 
-With ~40 `SCITEX_*` vars in source, this leaf groups them by purpose. For the
+With ~40 sac-owned vars in source, this leaf groups them by purpose. For the
 exact authoritative list, run the audit snippet at the bottom.
+
+## Naming — `SAC_*` and `SCITEX_AGENT_CONTAINER_*` are interchangeable
+
+Every sac-owned env var has TWO equivalent names: a short `SAC_<X>` form
+and a long `SCITEX_AGENT_CONTAINER_<X>` form. Either reads to the same
+slot. The helper at `scitex_agent_container._env.getenv("X")` reads
+both.
+
+**Conflict detection.** If both forms are set with **different** values,
+sac raises `SacEnvConflict` at startup rather than silently picking one
+— a drifted alias is almost always a bug:
+
+```
+SAC_HUB_URL=https://hub-a.example
+SCITEX_AGENT_CONTAINER_HUB_URL=https://hub-b.example
+# → SacEnvConflict: SAC_HUB_URL=...hub-a... vs SCITEX_AGENT_CONTAINER_HUB_URL=...hub-b...
+```
+
+When set to the same value, either form (or both) is accepted.
+
+In every table below, the `Variable` column lists the long form for
+readability; the short `SAC_*` alias is always available.
 
 ## Container identity / metadata
 
@@ -88,13 +110,21 @@ Auth precedence (highest → lowest) in `runtimes/_sdk_common.py::provision_anth
 | `SCITEX_HOOK` | Name of the hook currently running. |
 | `SCITEX_HOOK_CTX_*` | Per-hook context keys (dynamic prefix). |
 
-## Cross-package (orochi fleet integration)
+## Hub / fleet integration (optional)
 
-scitex-agent-container also reads the `SCITEX_OROCHI_*` family when joining
-the orochi fleet — see `scitex-orochi/21_convention-env-vars.md` for the
-authoritative list. The keys used here: `SCITEX_OROCHI_AGENT`,
-`SCITEX_OROCHI_CHANNELS`, `SCITEX_OROCHI_MACHINE`, `SCITEX_OROCHI_MODEL`,
-`SCITEX_OROCHI_TOKEN`, `SCITEX_OROCHI_URL`.
+sac is fleet-agnostic. To join a fleet hub, set `SAC_HUB_URL` (or the
+long form `SCITEX_AGENT_CONTAINER_HUB_URL`) to the hub endpoint. **No
+default** — when unset, sac runs as a standalone agent and skips hub
+calls. When set but unreachable, sac logs and continues; it never hard-
+fails on hub absence.
+
+| Variable | Purpose | Default | Type |
+|---|---|---|---|
+| `SCITEX_AGENT_CONTAINER_HUB_URL` | Fleet hub endpoint (e.g. an orochi instance). | unset (standalone) | URL |
+| `SCITEX_AGENT_CONTAINER_HUB_TOKEN` | Bearer token for the hub. | `—` | string |
+
+Downstream fleet implementations (e.g. scitex-orochi) own their own env
+namespace; sac does not read fleet-specific vars directly.
 
 ## Feature flags
 

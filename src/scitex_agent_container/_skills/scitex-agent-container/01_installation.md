@@ -37,7 +37,7 @@ Built artifacts (SIFs, sandboxes) land under user state, never in the wheel:
 ~/.scitex/agent-container/containers/
   scitex-agent-container-base.sif
   scitex-agent-container-scitex.sif
-  *-sandbox/
+  *.sandbox/
 ```
 
 Build with `sac image build base -y && sac image build scitex -y`. See

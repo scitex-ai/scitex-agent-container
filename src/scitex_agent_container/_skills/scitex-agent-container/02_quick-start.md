@@ -10,11 +10,21 @@ tags: [scitex-agent-container-quick-start]
 ## 0. One-time: build the runtime images
 
 ```bash
-sac image build base   -y          # OS + dev tools           (~15-25 min, one-time)
-sac image build scitex -y          # FROM :base + scitex[all] (60-90 min, scitex[all] is heavy)
+sac image build base   -y          # OS + dev tools             (~15-25 min, one-time)
+sac image build scitex -y          # FROM :base + scitex[all]   (~10-20 min with uv)
 ```
 
-The `:scitex` build pulls the full SciTeX scientific stack (numpy / pandas / scipy / torch + every other package in `scitex[all]`). On a cold pip cache that's genuinely an hour or more — kick it off and walk away.
+The `:scitex` def file uses **uv** (Rust-based parallel resolver) to
+install `scitex[all]`. uv finishes in 1-3 min what plain pip would
+spend 30+ min thrashing on (it walks version histories of the heavy
+transitive set — sphinx-rtd-theme, openalex-local, awscli/botocore,
+etc.). The def falls back to pip if uv is missing on the base layer.
+
+Sandbox builds (writable rootfs dirs, suffix `.sandbox/`):
+
+```bash
+sac image build scitex --sandbox -y    # writable :scitex rootfs
+```
 
 Skip if you already have `scitex-agent-container-scitex.sif` from a teammate or a published release.
 

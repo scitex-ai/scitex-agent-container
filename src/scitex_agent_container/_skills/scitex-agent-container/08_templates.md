@@ -32,8 +32,8 @@ Patterns are orthogonal — a real agent can combine them (e.g. `ssh` + `mcp`, `
 The v3 loader derives the agent name from the parent directory, not from `metadata.name`. To instantiate:
 
 ```bash
-mkdir -p ~/.scitex/orochi/agents/my-agent
-cp examples/agent-templates/local.yaml ~/.scitex/orochi/agents/my-agent/my-agent.yaml
+mkdir -p ~/.scitex/agent-container/agents/my-agent
+cp examples/agent-templates/local.yaml ~/.scitex/agent-container/agents/my-agent/my-agent.yaml
 sac agent start my-agent
 ```
 
