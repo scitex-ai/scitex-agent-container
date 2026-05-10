@@ -364,11 +364,11 @@
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">_resolve_host</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return hostname using SCITEX_AGENT_CONTAINER_HOSTNAME or SCITEX_OROCHI_HOSTNAME or gethostname.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return hostname using SCITEX_AGENT_CONTAINER_HOSTNAME or SCITEX_AGENT_CONTAINER_HOSTNAME or gethostname.&quot;&quot;&quot;</span>
     <span class="n">env</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;SCITEX_AGENT_CONTAINER_HOSTNAME&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
     <span class="k">if</span> <span class="n">env</span><span class="p">:</span>
         <span class="k">return</span> <span class="n">env</span>
-    <span class="n">env</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;SCITEX_OROCHI_HOSTNAME&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+    <span class="n">env</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;SCITEX_AGENT_CONTAINER_HOSTNAME&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
     <span class="k">if</span> <span class="n">env</span><span class="p">:</span>
         <span class="k">return</span> <span class="n">env</span>
     <span class="k">try</span><span class="p">:</span>

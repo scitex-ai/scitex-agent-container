@@ -93,23 +93,20 @@ def _iter_agent_yamls(agents_dir: "Path") -> "list[tuple[str, str]]":
 
 
 def _discover_all_agents() -> list[str]:
-    """Find all agent YAML files in the sac install root and shared-host layout.
+    """Find all agent YAML files via sac's standard search chain.
 
     Search locations (earlier wins on name collision):
       0. **Project-local** — first ``.scitex/agent-container/agents/``
          found walking upward from cwd. Highest priority so checked-in
          test agents and CI fixtures override globals.
-      1. ``~/.scitex/agent-container/agents/<name>/spec.yaml`` (sac root)
-      2. ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` (plugin-port colon-separated dirs)
-      3. ``~/.scitex/orochi/<HOST>/agents/`` (host-specific override)
-      4. ``~/.scitex/orochi/shared/agents/`` (fleet-shared)
-      5. ``~/.scitex/orochi/agents/`` (legacy flat layout)
+      1. ``~/.scitex/agent-container/agents/<name>/spec.yaml`` — sac's own root.
+      2. ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` — plugin port (colon-separated)
+         for downstream orchestrators (e.g. orochi) to inject extra paths
+         without sac knowing about them.
 
-    Note: per-agent runtime state (CLAUDE.md / .mcp.json / .claude/) lives at
-    ``~/.scitex/orochi/runtime/workspaces/<effective-id>/`` (see the 2026-04-17
-    layout). ``<HOST> = ${SCITEX_OROCHI_HOSTNAME:-$(hostname -s)}``.
-
-    Returned paths are sorted by effective agent name for stable ordering.
+    sac is standalone: it never reads from any other scitex package's
+    state directory. Returned paths are sorted by agent name for stable
+    ordering.
     """
     from pathlib import Path
 
@@ -132,23 +129,6 @@ def _discover_all_agents() -> list[str]:
             search_dirs.append(Path(p).expanduser())
 
     for src_dir in search_dirs:
-        for name, yaml_path in _iter_agent_yamls(src_dir):
-            if name not in found:
-                found[name] = yaml_path
-
-    # Fleet layout search
-    root = home / ".scitex" / "orochi"
-    try:
-        host = resolve_hostname()
-    except RuntimeError:
-        host = ""
-
-    host_dir = root / host / "agents" if host else None
-    shared_dir = root / "shared" / "agents"
-
-    for src_dir in (host_dir, shared_dir):
-        if src_dir is None:
-            continue
         for name, yaml_path in _iter_agent_yamls(src_dir):
             if name not in found:
                 found[name] = yaml_path

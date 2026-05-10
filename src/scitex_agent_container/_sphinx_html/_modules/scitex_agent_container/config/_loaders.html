@@ -638,7 +638,7 @@
 <span class="k">def</span><span class="w"> </span><span class="nf">load_v2</span><span class="p">(</span><span class="n">raw</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">path</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AgentConfig</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Load a scitex-agent-container/v2 config with auto-derived defaults.</span>
 
-<span class="sd">    Substitutes ``${HOSTNAME}`` / ``${SCITEX_OROCHI_HOSTNAME}`` in every</span>
+<span class="sd">    Substitutes ``${HOSTNAME}`` / ``${SCITEX_AGENT_CONTAINER_HOSTNAME}`` in every</span>
 <span class="sd">    string field before dataclass construction, and composes the effective</span>
 <span class="sd">    agent id from ``metadata.name`` + ``spec.scheduling`` so the v2 shared</span>
 <span class="sd">    layout can keep one canonical YAML per role across the fleet.</span>

@@ -8,10 +8,6 @@ from typing import List, Tuple
 
 _ENV_VAR = "SCITEX_AGENT_CONTAINER_YAML_DIRS"
 
-# Retained for ``runtimes/claude_session.py``; project-local discovery
-# itself delegates to ``scitex_config._ecosystem.local_state``.
-_PROJECT_LOCAL_MAX_DEPTH = 10
-
 
 def _project_local_dirs(start: Path | None = None) -> List[Path]:
     """Return ``[<scope>/agents]`` for the closest project scope, or [].
@@ -38,23 +34,6 @@ def _project_local_dirs(start: Path | None = None) -> List[Path]:
     return [agents] if agents.is_dir() else []
 
 
-def _resolve_host() -> str:
-    """Return hostname using SCITEX_AGENT_CONTAINER_HOSTNAME or SCITEX_OROCHI_HOSTNAME or gethostname."""
-    env = os.environ.get("SCITEX_AGENT_CONTAINER_HOSTNAME", "").strip()
-    if env:
-        return env
-    env = os.environ.get("SCITEX_OROCHI_HOSTNAME", "").strip()
-    if env:
-        return env
-    try:
-        import socket
-
-        hn = socket.gethostname()
-        return hn.split(".", 1)[0] if hn else ""
-    except Exception:
-        return ""
-
-
 def _search_dirs() -> Tuple[Path, List[Path], List[Path]]:
     """Return (primary_dir, env_dirs, fleet_dirs) with ~ expansion.
 
@@ -65,12 +44,18 @@ def _search_dirs() -> Tuple[Path, List[Path], List[Path]]:
          over stale globals.
       1. ``~/.scitex/agent-container/agents/`` — sac's own install root.
       2. ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` — plugin port for external
-         orchestrators to extend the search scope without touching sac.
-      3. Fleet layout — for each root in
-         (~/.scitex/orochi, ~/.dotfiles/src/.scitex/orochi):
-             a. ``<root>/<HOST>/agents/`` (host-specific override)
-             b. ``<root>/shared/agents/`` (shared default)
-             c. ``<root>/agents/`` (legacy flat layout)
+         orchestrators (e.g. orochi) to extend the search scope without
+         sac knowing about them. Colon-separated; each path treated as
+         a base dir holding ``<name>/spec.yaml`` agents.
+
+    sac is standalone and does not read from any other scitex package's
+    state directory. Downstream orchestrators that want sac to discover
+    their agent specs must set ``$SCITEX_AGENT_CONTAINER_YAML_DIRS``,
+    e.g. in their startup script:
+
+        export SCITEX_AGENT_CONTAINER_YAML_DIRS=\\
+            ~/.scitex/orochi/$(hostname -s)/agents:\\
+            ~/.scitex/orochi/shared/agents
     """
     home = Path(os.path.expanduser("~"))
     primary = home / ".scitex" / "agent-container" / "agents"
@@ -81,18 +66,7 @@ def _search_dirs() -> Tuple[Path, List[Path], List[Path]]:
     # but inserted before the existing primary check at the call site
     # below by ordering primary AFTER it in resolve_config().
     env_dirs = _project_local_dirs() + env_dirs
-
-    host = _resolve_host()
-    fleet_roots = [
-        home / ".scitex" / "orochi",
-        home / ".dotfiles" / "src" / ".scitex" / "orochi",
-    ]
-    fleet_dirs: list[Path] = []
-    for root in fleet_roots:
-        if host:
-            fleet_dirs.append(root / host / "agents")
-        fleet_dirs.append(root / "shared" / "agents")
-        fleet_dirs.append(root / "agents")
+    fleet_dirs: list[Path] = []  # always empty; preserved for back-compat tuple shape
     return primary, env_dirs, fleet_dirs
 
 

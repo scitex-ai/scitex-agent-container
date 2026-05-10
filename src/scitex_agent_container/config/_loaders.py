@@ -315,7 +315,7 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
 def load_v2(raw: dict, path: Path) -> AgentConfig:
     """Load a scitex-agent-container/v2 config with auto-derived defaults.
 
-    Substitutes ``${HOSTNAME}`` / ``${SCITEX_OROCHI_HOSTNAME}`` in every
+    Substitutes ``${HOSTNAME}`` / ``${SCITEX_AGENT_CONTAINER_HOSTNAME}`` in every
     string field before dataclass construction, and composes the effective
     agent id from ``metadata.name`` + ``spec.scheduling`` so the v2 shared
     layout can keep one canonical YAML per role across the fleet.
