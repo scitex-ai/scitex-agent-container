@@ -1,12 +1,18 @@
 name: Publish to PyPI
 
+# Triggers:
+#   - push of a v*.*.* tag → automatic build + publish + GitHub Release
+#   - workflow_dispatch    → manual republish of an existing tag
 on:
+  push:
+    tags: ['v*']
   workflow_dispatch:
     inputs:
       version:
         description: 'Tag to publish (e.g. v0.10.19) — must already exist on the repo'
         required: true
         type: string
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -14,11 +20,11 @@ jobs:
       name: pypi
       url: https://pypi.org/p/scitex-agent-container
     permissions:
-      id-token: write
+      id-token: write   # OIDC for trusted publisher
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.version }}
+          ref: ${{ github.event.inputs.version || github.ref }}
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -27,20 +33,11 @@ jobs:
         run: pip install build
       - name: Build distribution
         run: python -m build
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-    needs: build
-    runs-on: ubuntu-latest
-    environment: pypi
-    permissions:
-      id-token: write   # OIDC for trusted publisher
-    steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@v4
         with:
           name: dist
           path: dist
-
       - name: Publish to PyPI (trusted publisher / OIDC)
         uses: pypa/gh-action-pypi-publish@release/v1
 
@@ -56,7 +53,7 @@ jobs:
     permissions:
       contents: write   # gh release create
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - name: Download dist artifacts
         uses: actions/download-artifact@v4

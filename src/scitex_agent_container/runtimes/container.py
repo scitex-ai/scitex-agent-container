@@ -35,7 +35,7 @@ from pathlib import Path
 from ..config import AgentConfig
 from .base import RuntimeBase
 
-DEFAULT_IMAGE = "scitex-agent-container:sdk-persistent"
+DEFAULT_IMAGE = "scitex-agent-container:scitex"
 RUNNER_MODULE = "scitex_agent_container._runners.claude_session"
 
 

@@ -50,7 +50,7 @@ _VALID_API_VERSIONS = ("scitex-agent-container/v3",)
 _KNOWN_TOP_LEVEL_KEYS = frozenset({"apiVersion", "kind", "metadata", "spec"})
 
 
-_SDK_IMAGE = "scitex-agent-container:sdk-persistent"
+_SDK_IMAGE = "scitex-agent-container:scitex"
 
 
 # All spec keys read by load_v3, parsers, or a2a/_server.py.
