@@ -193,7 +193,8 @@ def build(
             err=True,
         )
         raise SystemExit(2)
-    containers_dir = Path(__file__).resolve().parent.parent.parent.parent / "containers"
+    # Recipes ship inside the wheel: <package>/containers/Dockerfile.{base,scitex}
+    containers_dir = Path(__file__).resolve().parent.parent / "containers"
     dockerfile = containers_dir / _TARGET_DOCKERFILES[target]
 
     if runtime == "docker":

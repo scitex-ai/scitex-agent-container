@@ -26,9 +26,11 @@ import click
 
 from ._helpers import HelpRecursiveGroup, console
 
-# Project-local containers/ dir (where our .def files live).
-_PKG_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-_CONTAINERS_DIR = _PKG_ROOT / "containers"
+# Recipes ship inside the wheel (read-only, package-relative).
+_RECIPES_DIR = Path(__file__).resolve().parent.parent / "containers"
+
+# Built artifacts live in user state (persistent, never in the repo).
+_CONTAINERS_DIR = Path.home() / ".scitex" / "agent-container" / "containers"
 
 # Layer → .def filename mapping.
 _LAYERS = {
@@ -36,6 +38,12 @@ _LAYERS = {
     "scitex": "apptainer-scitex.def",
 }
 _DEFAULT_LAYER = "scitex"
+
+
+def _ensure_containers_dir() -> Path:
+    """Create ``~/.scitex/agent-container/containers/`` if needed; return it."""
+    _CONTAINERS_DIR.mkdir(parents=True, exist_ok=True)
+    return _CONTAINERS_DIR
 
 
 def _resolve_def_name(layer: str) -> str:
@@ -101,39 +109,65 @@ def image_build(
         )
         sys.exit(2)
 
+    out_dir = _ensure_containers_dir()
+    def_path = _RECIPES_DIR / _LAYERS[layer]
+    if not def_path.is_file():
+        click.echo(f"error: recipe not found in wheel: {def_path}", err=True)
+        sys.exit(1)
+
     if runtime == "apptainer":
-        # stx-allow: fallback (reason: scitex-container is an optional dep; if absent the user gets a clear message instead of a traceback)
-        try:
-            from scitex_container.apptainer import build as _sc_build
-        except ImportError:
-            click.echo(
-                "error: apptainer build requires scitex-container. "
-                "Install it with: pip install scitex-container",
-                err=True,
-            )
-            sys.exit(1)
-        def_name = _resolve_def_name(layer)
-        result = _sc_build(
-            def_name=def_name,
-            output_dir=_CONTAINERS_DIR,
-            force=force,
-            sandbox=sandbox,
-        )
-        console.print(f"[green]built[/green] {result}")
+        # apptainer-scitex.def has `Bootstrap: localimage` `From: ./<base>.sif`
+        # which resolves against cwd — so we cd into the user-state dir
+        # where built SIFs live before invoking apptainer.
+        if sandbox:
+            output = out_dir / f"scitex-agent-container-{layer}-sandbox"
+            argv = [
+                "apptainer",
+                "build",
+                "--sandbox",
+                "--fakeroot",
+                str(output),
+                str(def_path),
+            ]
+        else:
+            output = out_dir / f"scitex-agent-container-{layer}.sif"
+            argv = ["apptainer", "build"]
+            if force:
+                argv.append("--force")
+            argv += [str(output), str(def_path)]
+        import subprocess
+
+        result = subprocess.run(argv, cwd=str(out_dir))
+        if result.returncode != 0:
+            click.echo("error: apptainer build failed", err=True)
+            sys.exit(result.returncode)
+        console.print(f"[green]built[/green] {output}")
         return
 
-    # docker runtime — direct shell-out (no scitex-container needed)
-    from .build_cmds import build as _docker_build
+    # docker runtime — also from the wheel-bundled Dockerfile
+    image_tag = f"scitex-agent-container:{layer}"
+    dockerfile = _RECIPES_DIR / f"Dockerfile.{layer}"
+    if not dockerfile.is_file():
+        click.echo(f"error: dockerfile not found: {dockerfile}", err=True)
+        sys.exit(1)
+    import subprocess
 
-    ctx = click.get_current_context()
-    ctx.invoke(
-        _docker_build,
-        runtime="docker",
-        target=layer,
-        image=f"scitex-agent-container:{layer}",
-        dry_run=False,
-        yes=yes,
-    )
+    argv = [
+        "docker",
+        "build",
+        "-t",
+        image_tag,
+        "-f",
+        str(dockerfile),
+        str(_RECIPES_DIR),
+    ]
+    if force:
+        argv.insert(2, "--no-cache")
+    result = subprocess.run(argv)
+    if result.returncode != 0:
+        click.echo("error: docker build failed", err=True)
+        sys.exit(result.returncode)
+    console.print(f"[green]built[/green] {image_tag}")
 
 
 # ---------------------------------------------------------------------------

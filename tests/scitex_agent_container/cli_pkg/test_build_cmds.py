@@ -69,9 +69,11 @@ def test_build_invokes_docker_with_dockerfile_flag(monkeypatch):
 
 
 def test_dockerfile_scitex_exists():
-    """The Dockerfile.scitex (default layer) must ship in the repo."""
-    repo = Path(__file__).resolve().parents[3]
-    dockerfile = repo / "containers" / "Dockerfile.scitex"
+    """The Dockerfile.scitex (default layer) must ship in the wheel."""
+    import scitex_agent_container
+
+    pkg = Path(scitex_agent_container.__file__).resolve().parent
+    dockerfile = pkg / "containers" / "Dockerfile.scitex"
     assert dockerfile.is_file(), f"missing: {dockerfile}"
     text = dockerfile.read_text()
     assert "claude-agent-sdk" in text
@@ -79,7 +81,9 @@ def test_dockerfile_scitex_exists():
 
 
 def test_dockerfile_base_exists():
-    """The Dockerfile.base (foundation layer) must ship in the repo."""
-    repo = Path(__file__).resolve().parents[3]
-    dockerfile = repo / "containers" / "Dockerfile.base"
+    """The Dockerfile.base (foundation layer) must ship in the wheel."""
+    import scitex_agent_container
+
+    pkg = Path(scitex_agent_container.__file__).resolve().parent
+    dockerfile = pkg / "containers" / "Dockerfile.base"
     assert dockerfile.is_file(), f"missing: {dockerfile}"
