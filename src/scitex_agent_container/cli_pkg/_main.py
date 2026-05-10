@@ -89,46 +89,106 @@ class _MainGroup(LazyGroup):
         except ImportError:
             return  # scitex-dev[cli-audit] not installed; commands stay missing
         attach_shell_completion(self, prog_name="scitex-agent-container")
-        # The package ships TWO console-scripts (``scitex-agent-container``
-        # and the short alias ``sac``); both need their own eval line in
-        # ``~/.bashrc`` for Click's binary-name-keyed completion to fire.
-        # Wrap the helper's install command so a single
-        # ``sac install-shell-completion`` writes both lines.
-        self._wrap_install_for_alias()
+        # The upstream helper writes an ``eval "$(_NAME_COMPLETE=...)"``
+        # line in ~/.bashrc for ONE binary. Two problems for sac:
+        #   1. We ship TWO binaries (``scitex-agent-container`` and ``sac``);
+        #      Click's completion is keyed on argv[0], so each name needs
+        #      its own registration.
+        #   2. The eval line invokes the binary on every shell start
+        #      (~0.4 s per binary; 9 scitex eval lines = ~3.6 s of source
+        #      ~/.bashrc latency).
+        # Replace the upstream behaviour with a cache-file install: write
+        # the static completion script once to
+        # ``~/.local/share/bash-completion/scitex/<binary>`` and let
+        # ~/.bashrc just ``source`` that file (microseconds).
+        self._install_shell_completion_cache_based()
 
-    def _wrap_install_for_alias(self) -> None:
-        """Make ``install-shell-completion`` also register the ``sac`` alias."""
+    def _install_shell_completion_cache_based(self) -> None:
+        """Replace install-shell-completion with a cache-file install.
+
+        Writes generated completion scripts (one per binary) to
+        ``~/.local/share/bash-completion/scitex/<binary>`` and appends
+        ``source`` lines to ~/.bashrc. The source op is O(microseconds);
+        the eval-the-binary op was O(0.4 s).
+        """
         import os
-
-        from scitex_dev._cli._completion import _eval_line, _marker, _rc_path
+        import subprocess
+        from pathlib import Path
 
         cmd = self.commands.get("install-shell-completion")
-        if cmd is None or cmd.callback is None:
+        if cmd is None:
             return
-        original = cmd.callback
 
-        def install_both(*args, **kwargs):
-            original(*args, **kwargs)
+        # Primary: sac-owned, under runtime/ per local-state-directories spec §4b.
+        SAC_CACHE_DIR = (
+            Path.home() / ".scitex" / "agent-container" / "runtime" / "completion"
+        )
+        # Secondary: XDG bash-completion dir (where third-party tooling
+        # auto-discovers); kept as a symlink to the sac-owned file so
+        # both paths point at the same content.
+        XDG_CACHE_DIR = Path.home() / ".local" / "share" / "bash-completion" / "scitex"
+
+        BINARIES = (
+            ("scitex-agent-container", "_SCITEX_AGENT_CONTAINER_COMPLETE"),
+            ("sac", "_SAC_COMPLETE"),
+        )
+        SOURCE_MAP = {"bash": "bash_source", "zsh": "zsh_source"}
+
+        def install_cached(*args, **kwargs):
             shell = kwargs.get("shell", "bash")
             dry_run = kwargs.get("dry_run", False)
-            if shell == "fish":
-                return  # fish uses per-prog files; no alias bridge needed
-            rc_path = _rc_path(shell, "sac")
-            line = _eval_line(shell, "sac")
-            marker = _marker("sac")
-            if dry_run:
-                click.echo(f"Would also append to {rc_path}:")
-                click.echo(f"  {line}")
+            if shell not in SOURCE_MAP:
+                click.echo(
+                    f"error: cache install supports bash/zsh; got {shell!r}", err=True
+                )
                 return
-            if os.path.isfile(rc_path):
-                with open(rc_path) as fh:
-                    if marker in fh.read():
-                        return  # already present
-            with open(rc_path, "a") as fh:
-                fh.write(f"\n{line}\n")
-            click.echo(f"Tab completion (sac alias) installed in {rc_path}")
+            rc_path = Path.home() / (".bashrc" if shell == "bash" else ".zshrc")
 
-        cmd.callback = install_both
+            for binary, env_var in BINARIES:
+                cache_path = SAC_CACHE_DIR / binary
+                xdg_link = XDG_CACHE_DIR / binary
+                source_line = f"[ -f {cache_path} ] && source {cache_path}"
+                marker = f"# sac-completion: {binary}"
+
+                if dry_run:
+                    click.echo(f"Would write {cache_path} ({binary} completions)")
+                    click.echo(f"Would symlink {xdg_link} -> {cache_path}")
+                    click.echo(f"Would append to {rc_path}: {source_line}  {marker}")
+                    continue
+
+                # Generate static script via the binary itself.
+                env = os.environ.copy()
+                env[env_var] = SOURCE_MAP[shell]
+                result = subprocess.run(
+                    [binary], capture_output=True, text=True, env=env
+                )
+                if result.returncode != 0 or not result.stdout.strip():
+                    click.echo(
+                        f"warn: failed to generate completion for {binary}",
+                        err=True,
+                    )
+                    continue
+                SAC_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                cache_path.write_text(result.stdout)
+
+                # XDG symlink for auto-discovery (idempotent).
+                XDG_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                if xdg_link.is_symlink() or xdg_link.exists():
+                    xdg_link.unlink()
+                xdg_link.symlink_to(cache_path)
+
+                # Add the source line in rc if not already present.
+                if rc_path.is_file() and marker in rc_path.read_text():
+                    continue
+                with rc_path.open("a") as fh:
+                    fh.write(f"\n{source_line}  {marker}\n")
+                click.echo(f"Tab completion installed: {cache_path}")
+                click.echo(f"  XDG symlink: {xdg_link}")
+
+            if not dry_run:
+                click.echo(f"Run: source {rc_path}")
+
+        cmd.callback = install_cached
 
     def list_commands(self, ctx):
         names = super().list_commands(ctx)
