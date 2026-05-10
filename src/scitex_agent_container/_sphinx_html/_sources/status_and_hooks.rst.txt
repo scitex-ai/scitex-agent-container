@@ -96,7 +96,7 @@ Claude Code Hook Integration
 ``scitex-agent-container ingest-hook-event <kind>`` is designed to be called
 from Claude Code's hook configuration. It reads the Claude Code hook
 payload from stdin and appends a compact JSON record to a per-agent
-ring-buffer at ``$XDG_DATA_HOME/.scitex/agent-container/events/<agent>.jsonl``
+ring-buffer at ``$XDG_DATA_HOME/.scitex/agent-container/runtime/events/<agent>.jsonl``
 (capped at 500 lines).
 
 Wire it into the agent workspace's ``.claude/settings.local.json``:

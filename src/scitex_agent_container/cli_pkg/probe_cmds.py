@@ -77,7 +77,7 @@ def probe_network(
 
     Runs four probes (DNS → default gateway → TCP → HTTPS) and writes
     the result as one JSONL line under
-    ``~/.scitex/agent-container/logs/network/<agent>.jsonl``.
+    ``~/.scitex/agent-container/runtime/logs/network/<agent>.jsonl``.
 
     The output is designed to be correlated with fleet-side SSH-dead
     logs: when the fleet's SSH probe to this host fails, we have a

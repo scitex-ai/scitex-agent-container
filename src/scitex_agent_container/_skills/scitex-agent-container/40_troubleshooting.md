@@ -34,10 +34,10 @@ spec:
 
 ## Auto-accept logs
 
-Check `~/.scitex/agent-container/logs/{name}/auto-accept.log`:
+Check `~/.scitex/agent-container/runtime/logs/{name}/auto-accept.log`:
 
 ```bash
-cat ~/.scitex/agent-container/logs/my-agent/auto-accept.log
+cat ~/.scitex/agent-container/runtime/logs/my-agent/auto-accept.log
 ```
 
 Shows every poll cycle: pane content, matched handlers, timeouts.

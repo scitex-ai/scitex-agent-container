@@ -356,9 +356,9 @@
 
 <span class="c1"># Default workdir layout: sac&#39;s own state root. Per-agent runtime state</span>
 <span class="c1"># (CLAUDE.md, .mcp.json, .claude/) lives at</span>
-<span class="c1"># ``~/.scitex/agent-container/workspaces/&lt;effective-id&gt;/``. External</span>
+<span class="c1"># ``~/.scitex/agent-container/runtime/workspaces/&lt;effective-id&gt;/``. External</span>
 <span class="c1"># orchestrators that want a different layout can override via ``spec.workdir``.</span>
-<span class="n">_DEFAULT_WORKDIR_RUNTIME</span> <span class="o">=</span> <span class="s2">&quot;~/.scitex/agent-container/workspaces/</span><span class="si">{name}</span><span class="s2">&quot;</span>
+<span class="n">_DEFAULT_WORKDIR_RUNTIME</span> <span class="o">=</span> <span class="s2">&quot;~/.scitex/agent-container/runtime/workspaces/</span><span class="si">{name}</span><span class="s2">&quot;</span>
 
 <span class="c1"># Host-aware fallback chain for `venv: auto` resolution.</span>
 <span class="c1"># Tried in order; first existing path wins. Empty string means no venv</span>

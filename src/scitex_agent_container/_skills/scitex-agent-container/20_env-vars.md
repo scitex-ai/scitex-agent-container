@@ -36,7 +36,7 @@ resolver walks per-host `<host>/agents/`, then `shared/agents/`, then
 |---|---|---|---|
 | `SCITEX_AGENT_CONTAINER_CONFIG_PATH` | Path to the YAML config. | bundled | path |
 | `SCITEX_AGENT_CONTAINER_YAML_DIRS` | Extra dirs scanned for YAML overrides (colon-separated). | unset | string (paths) |
-| `SCITEX_AGENT_CONTAINER_REGISTRY_DIR` | Directory where the container registers its presence. | `~/.scitex/agent-container/registry` | path |
+| `SCITEX_AGENT_CONTAINER_REGISTRY_DIR` | Directory where the container registers its presence. | `~/.scitex/agent-container/runtime/registry` | path |
 | `SCITEX_AGENT_CONTAINER_RUNTIME_DIR` | Per-agent runtime state root for the claude-session runner (pid / heartbeat.json / session.jsonl / quota.json / session_id). | `~/.scitex/agent-container/runtime` | path |
 | `SCITEX_AGENT_CONTAINER_SLURM_STATE_DIR` | Directory for SLURM-job state handoff. | `~/.scitex/agent-container/slurm` | path |
 | `SAC_CACHE_DIR` | Agent-local cache directory. | `~/.cache/scitex-agent` | path |

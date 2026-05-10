@@ -118,7 +118,7 @@ layer that actually broke:
 | `https` only | TLS handshake or captive-portal interposing |
 
 The probe writes one JSONL line per run to
-`~/.scitex/agent-container/logs/network/<agent>.jsonl`. This is
+`~/.scitex/agent-container/runtime/logs/network/<agent>.jsonl`. This is
 the ring the fleet correlates against its own SSH-dead timestamps.
 
 ### Cron-style continuous probe

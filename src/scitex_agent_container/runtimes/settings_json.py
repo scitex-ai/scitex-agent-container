@@ -50,7 +50,7 @@ _MANAGED_KEYS = frozenset(
 
 # Hook config pushed into every spawned agent's settings.local.json so
 # PreToolUse / PostToolUse / UserPromptSubmit / Stop events flow into
-# the per-agent event ring-buffer (~/.scitex/agent-container/events/
+# the per-agent event ring-buffer (~/.scitex/agent-container/runtime/events/
 # <agent>.jsonl). Consumed by event_log.summarize() which feeds the
 # Orochi dashboard's Last tool / Last MCP / Last action rows. Without
 # this wiring those rows render as dashes (scitex-orochi todo#59).
@@ -226,7 +226,7 @@ def setup_settings_json(config: AgentConfig, workdir: str) -> None:
     settings["hooks"] = _HOOKS_CONFIG
 
     # Register sac-statusline as the statusLine command so the JSON payload
-    # is persisted to ~/.scitex/agent-container/statusline/<agent>.json each
+    # is persisted to ~/.scitex/agent-container/runtime/statusline/<agent>.json each
     # turn. sac agent status prefers this authoritative source over the JSONL
     # approximation (sac issue #52). No-op if claude-hud is absent — the
     # script falls back to a minimal echo.

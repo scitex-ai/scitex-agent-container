@@ -32,9 +32,9 @@ from ._types import AgentConfig, HostsSpec, SchedulingSpec
 
 # Default workdir layout: sac's own state root. Per-agent runtime state
 # (CLAUDE.md, .mcp.json, .claude/) lives at
-# ``~/.scitex/agent-container/workspaces/<effective-id>/``. External
+# ``~/.scitex/agent-container/runtime/workspaces/<effective-id>/``. External
 # orchestrators that want a different layout can override via ``spec.workdir``.
-_DEFAULT_WORKDIR_RUNTIME = "~/.scitex/agent-container/workspaces/{name}"
+_DEFAULT_WORKDIR_RUNTIME = "~/.scitex/agent-container/runtime/workspaces/{name}"
 
 # Host-aware fallback chain for `venv: auto` resolution.
 # Tried in order; first existing path wins. Empty string means no venv

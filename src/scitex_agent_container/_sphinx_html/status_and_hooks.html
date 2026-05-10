@@ -402,7 +402,7 @@ suitable for dashboards.</p>
 <p><code class="docutils literal notranslate"><span class="pre">scitex-agent-container</span> <span class="pre">ingest-hook-event</span> <span class="pre">&lt;kind&gt;</span></code> is designed to be called
 from Claude Code’s hook configuration. It reads the Claude Code hook
 payload from stdin and appends a compact JSON record to a per-agent
-ring-buffer at <code class="docutils literal notranslate"><span class="pre">$XDG_DATA_HOME/.scitex/agent-container/events/&lt;agent&gt;.jsonl</span></code>
+ring-buffer at <code class="docutils literal notranslate"><span class="pre">$XDG_DATA_HOME/.scitex/agent-container/runtime/events/&lt;agent&gt;.jsonl</span></code>
 (capped at 500 lines).</p>
 <p>Wire it into the agent workspace’s <code class="docutils literal notranslate"><span class="pre">.claude/settings.local.json</span></code>:</p>
 <div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>

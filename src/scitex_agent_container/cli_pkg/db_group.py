@@ -138,7 +138,7 @@ def db_query(
     type=click.Path(file_okay=False, path_type=Path),
     default=None,
     help="Legacy registry directory (default: $SCITEX_AGENT_CONTAINER_REGISTRY_DIR "
-    "else ~/.scitex/agent-container/registry).",
+    "else ~/.scitex/agent-container/runtime/registry).",
 )
 @click.option(
     "--host", type=str, default=None, help="Canonical hostname for imported rows."
@@ -161,14 +161,14 @@ def db_migrate(
     \b
     Example:
       $ sac db migrate
-      $ sac db migrate --registry-dir ~/.scitex/agent-container/registry
+      $ sac db migrate --registry-dir ~/.scitex/agent-container/runtime/registry
       $ sac db migrate --host head-nas --json
     """
     if registry_dir is None:
         registry_dir = Path(
             os.environ.get(
                 "SCITEX_AGENT_CONTAINER_REGISTRY_DIR",
-                os.path.expanduser("~/.scitex/agent-container/registry"),
+                os.path.expanduser("~/.scitex/agent-container/runtime/registry"),
             )
         )
     result = import_legacy_registry(registry_dir, host=host)

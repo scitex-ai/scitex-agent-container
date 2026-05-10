@@ -68,7 +68,7 @@ The v3 loader fills in defaults from the agent name (parent-directory stem):
 | Field | Auto-derived value |
 |---|---|
 | `screen_name` | the agent name itself (used for tmux/screen session) |
-| `workdir` | `~/.scitex/agent-container/workspaces/<name>/` |
+| `workdir` | `~/.scitex/agent-container/runtime/workspaces/<name>/` |
 | `env.SCITEX_AGENT_CONTAINER_NAME` | `<name>` |
 | `env.SCITEX_AGENT_CONTAINER_AGENT` | `<name>` |
 | `env.SCITEX_AGENT_CONTAINER_ID` | `<name>` |

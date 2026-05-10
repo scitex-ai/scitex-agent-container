@@ -21,7 +21,7 @@ correlated with fleet-side outages:
    but (1)-(3) pass we learn Wi-Fi roam happened but routing survived).
 
 Each probe records ``(ok, latency_ms, err)`` into a JSONL ring at
-``~/.scitex/agent-container/logs/network/<agent>.jsonl`` so the next
+``~/.scitex/agent-container/runtime/logs/network/<agent>.jsonl`` so the next
 incident leaves a timeline the fleet can diff against SSH-dead logs
 from other hosts.
 

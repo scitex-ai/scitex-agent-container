@@ -72,7 +72,7 @@ spec:
 
 ## Diagnostics
 
-Logged to `~/.scitex/agent-container/logs/{name}/auto-accept.log`:
+Logged to `~/.scitex/agent-container/runtime/logs/{name}/auto-accept.log`:
 - Every poll: pane content snapshot, elapsed time
 - Handler matches with timestamps
 - Timeout diagnostics with last captured content

@@ -64,7 +64,7 @@ Quickstart
     scitex-agent-container actions query --agent my-agent --limit 5
     scitex-agent-container actions stats --agent my-agent --since 1h
 
-   Every attempt is recorded in ``~/.scitex/agent-container/actions.db``
+   Every attempt is recorded in ``~/.scitex/agent-container/runtime/actions.db``
    and the most recent one is reflected in ``status --json`` under
    ``last_action_at`` / ``last_action_name`` / ``last_action_outcome``.
    See :doc:`actions` for the full subsystem.

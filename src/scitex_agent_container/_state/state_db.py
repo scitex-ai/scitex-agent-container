@@ -1,7 +1,7 @@
 """SQLite-backed state for scitex-agent-container (F-CS11).
 
 Replaces the per-agent JSON files under
-``~/.scitex/agent-container/registry/`` with a single ``state.db``
+``~/.scitex/agent-container/runtime/registry/`` with a single ``state.db``
 holding four tables:
 
   * ``definitions`` — yaml on disk (one row per ``(yaml_path, sha256)``
@@ -42,7 +42,7 @@ from typing import Iterator
 DEFAULT_DB_PATH = Path(
     os.environ.get(
         "SCITEX_AGENT_CONTAINER_STATE_DB",
-        os.path.expanduser("~/.scitex/agent-container/state.db"),
+        os.path.expanduser("~/.scitex/agent-container/runtime/state.db"),
     )
 )
 
