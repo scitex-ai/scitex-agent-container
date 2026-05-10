@@ -23,7 +23,7 @@ from ._helpers import console
 # ---------------------------------------------------------------------------
 
 _SHARED_DIRS = [
-    "~/.scitex/orochi/shared/agents",
+    "~/.scitex/agent-container/agents",
     "~/.scitex/orochi/shared/skills",
     "~/.scitex/orochi/shared/logs",
     "~/.scitex/orochi/shared/cron",

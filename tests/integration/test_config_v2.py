@@ -87,7 +87,7 @@ class TestV2Config:
         monkeypatch.setenv("HOME", str(tmp_path))
         path = _write_config(MINIMAL_V2_CONFIG)
         config = load_config(path)
-        assert config.workdir == "~/.scitex/orochi/runtime/workspaces/head-test"
+        assert config.workdir == "~/.scitex/agent-container/runtime/workspaces/head-test"
         Path(path).unlink()
 
     def test_v2_screen_name(self):
@@ -155,7 +155,7 @@ class TestV2Config:
         path = _write_config(MINIMAL_V1_CONFIG)
         config = load_config(path)
         assert config.screen_name == "test-agent"
-        assert config.workdir == "~/.scitex/orochi/runtime/workspaces/test-agent"
+        assert config.workdir == "~/.scitex/agent-container/runtime/workspaces/test-agent"
         assert config.mcp_servers == {}
         Path(path).unlink()
 

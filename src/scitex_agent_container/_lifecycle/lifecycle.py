@@ -35,9 +35,13 @@ def _get_runtime(config: AgentConfig):
 def _fallback_workdir(name: str) -> str:
     """Return the workdir path used when the agent's YAML can't be loaded.
 
-    Canonical 2026-04-17 layout: ``~/.scitex/orochi/runtime/workspaces/<id>/``.
+    Lands under sac's own user-state dir
+    (``~/.scitex/agent-container/runtime/workspaces/<name>/``) per the
+    local-state-directories spec — sac never writes to another package's tree.
     """
-    return str(Path.home() / ".scitex" / "orochi" / "runtime" / "workspaces" / name)
+    return str(
+        Path.home() / ".scitex" / "agent-container" / "runtime" / "workspaces" / name
+    )
 
 
 def _fire_forget_hook(

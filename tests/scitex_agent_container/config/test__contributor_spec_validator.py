@@ -411,7 +411,7 @@ class TestValidateContributorSpecFile:
     def test_real_agent_spec_is_valid(self):
         spec_path = (
             Path.home()
-            / ".scitex/orochi/shared/agents/c-sac-spec-template-validate/c-sac-spec-template-validate.yaml"
+            / ".scitex/agent-container/agents/c-sac-spec-template-validate/c-sac-spec-template-validate.yaml"
         )
         if not spec_path.exists():
             pytest.skip(f"Agent spec not found: {spec_path}")

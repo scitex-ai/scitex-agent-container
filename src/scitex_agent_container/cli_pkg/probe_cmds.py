@@ -26,7 +26,7 @@ from .._network.probe import (
     "-a",
     default=None,
     help="Agent name for the JSONL log filename. "
-    "Defaults to $SCITEX_OROCHI_AGENT or 'anonymous-agent'.",
+    "Defaults to $CLAUDE_AGENT_ID or 'anonymous-agent'.",
 )
 @click.option(
     "--hub-host",
@@ -89,12 +89,7 @@ def probe_network(
       $ sac network probe --agent head-ywata-note-win
       $ sac network probe --quiet --exit-nonzero-on-fail
     """
-    effective_agent = (
-        agent
-        or os.environ.get("SCITEX_OROCHI_AGENT")
-        or os.environ.get("CLAUDE_AGENT_ID")
-        or "anonymous-agent"
-    )
+    effective_agent = agent or os.environ.get("CLAUDE_AGENT_ID") or "anonymous-agent"
     summary = run_and_log(
         effective_agent,
         hub_host=hub_host,

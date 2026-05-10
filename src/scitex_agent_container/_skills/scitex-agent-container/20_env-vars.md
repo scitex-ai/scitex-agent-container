@@ -28,7 +28,7 @@ exact authoritative list, run the audit snippet at the bottom.
 ## Paths
 
 Canonical agent YAML location (fleet shared via dotfiles):
-`~/.scitex/orochi/shared/agents/<name>/<name>.yaml` — the dir-as-SSoT
+`~/.scitex/agent-container/agents/<name>/<name>.yaml` — the dir-as-SSoT
 resolver walks per-host `<host>/agents/`, then `shared/agents/`, then
 `agents/`. See `01_config-v3.md` for the full search path.
 

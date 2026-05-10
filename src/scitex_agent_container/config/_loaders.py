@@ -48,11 +48,11 @@ _DEFAULT_WORKDIR_RUNTIME = "~/.scitex/agent-container/workspaces/{name}"
 # (head-nas msg#12877; head-mba msg#12879 root cause).
 _VENV_AUTO_FALLBACK_CHAIN = ("~/.venv-3.11", "~/.venv")
 
-# Default workdir layout (2026-04-17 runtime/ restructure). Definitions ship
-# under ``shared/agents/<name>/`` or ``<host>/agents/<name>/``; per-agent
-# runtime state (CLAUDE.md, .mcp.json, .claude/) lives at
-# ``runtime/workspaces/<effective-id>/``.
-_DEFAULT_WORKDIR_RUNTIME = "~/.scitex/orochi/runtime/workspaces/{name}"
+# Default workdir for an agent when ``spec.workdir`` is unset. Lives
+# under sac's own user-state tree (per the local-state-directories spec):
+# ``~/.scitex/agent-container/runtime/workspaces/<name>/`` holds the
+# materialized CLAUDE.md, .mcp.json, .claude/ for that agent.
+_DEFAULT_WORKDIR_RUNTIME = "~/.scitex/agent-container/runtime/workspaces/{name}"
 
 
 def _resolve_venv(venv: str) -> str:

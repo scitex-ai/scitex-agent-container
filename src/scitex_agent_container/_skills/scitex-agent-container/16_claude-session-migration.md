@@ -28,7 +28,7 @@ Prove the SDK can produce something sensible before flipping anything.
    ```bash
    AGENT=head-ywata-note-win
    SANDBOX=${AGENT}-sdk
-   cp ~/.scitex/orochi/shared/agents/$AGENT/$AGENT.yaml /tmp/$SANDBOX.yaml
+   cp ~/.scitex/agent-container/agents/$AGENT/$AGENT.yaml /tmp/$SANDBOX.yaml
    sed -i "s/runtime: claude-code/runtime: claude-session/" /tmp/$SANDBOX.yaml
    sed -i "s/^metadata:/metadata:\n  labels:\n    sandbox-of: $AGENT/" /tmp/$SANDBOX.yaml
    # Make sure the workdir doesn't collide with the live agent.
@@ -70,8 +70,8 @@ Goal: run the SDK version *alongside* the live one and compare.
    discovery path under a `-sdk` suffix:
 
    ```bash
-   mkdir -p ~/.scitex/orochi/shared/agents/$SANDBOX
-   cp /tmp/$SANDBOX.yaml ~/.scitex/orochi/shared/agents/$SANDBOX/$SANDBOX.yaml
+   mkdir -p ~/.scitex/agent-container/agents/$SANDBOX
+   cp /tmp/$SANDBOX.yaml ~/.scitex/agent-container/agents/$SANDBOX/$SANDBOX.yaml
    sac agent start $SANDBOX
    ```
 
@@ -104,7 +104,7 @@ Goal: flip the live YAML, keep the legacy one stoppable as fallback.
 
    ```bash
    sac agent stop $AGENT
-   YAML=~/.scitex/orochi/shared/agents/$AGENT/$AGENT.yaml
+   YAML=~/.scitex/agent-container/agents/$AGENT/$AGENT.yaml
    cp $YAML $YAML.bak
    sed -i "s/runtime: claude-code/runtime: claude-session/" $YAML
    # Drop the multiplexer line — claude-session has no terminal:
@@ -132,12 +132,12 @@ Goal: flip the live YAML, keep the legacy one stoppable as fallback.
 
    ```bash
    sac agent stop $SANDBOX
-   rm -rf ~/.scitex/orochi/shared/agents/$SANDBOX
+   rm -rf ~/.scitex/agent-container/agents/$SANDBOX
    ```
 
 ## Phase 4 — soak window (one release cycle)
 
-Don't drop the legacy backup yet. Keep `~/.scitex/orochi/shared/agents/$AGENT/$AGENT.yaml.bak`
+Don't drop the legacy backup yet. Keep `~/.scitex/agent-container/agents/$AGENT/$AGENT.yaml.bak`
 in place for at least one minor-version cycle. Watch:
 
 - `sac agent status $AGENT --json` heartbeat state stays in
@@ -150,8 +150,8 @@ in place for at least one minor-version cycle. Watch:
 
 ```bash
 sac agent stop $AGENT
-mv ~/.scitex/orochi/shared/agents/$AGENT/$AGENT.yaml.bak \
-   ~/.scitex/orochi/shared/agents/$AGENT/$AGENT.yaml
+mv ~/.scitex/agent-container/agents/$AGENT/$AGENT.yaml.bak \
+   ~/.scitex/agent-container/agents/$AGENT/$AGENT.yaml
 sac agent start $AGENT
 sac agent status $AGENT --json | jq .runtime  # back to claude-code
 ```

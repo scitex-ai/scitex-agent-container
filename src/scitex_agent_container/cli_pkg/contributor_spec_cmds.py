@@ -8,9 +8,9 @@ from pathlib import Path
 import click
 
 _TEMPLATE_PATH = (
-    Path.home() / ".scitex/orochi/shared/agents/.templates/contributor.yaml.j2"
+    Path.home() / ".scitex/agent-container/agents/.templates/contributor.yaml.j2"
 )
-_AGENTS_DIR = Path.home() / ".scitex/orochi/shared/agents"
+_AGENTS_DIR = Path.home() / ".scitex/agent-container/agents"
 
 # Built-in fallback matches the chunk-A canonical template variable names.
 _FALLBACK_TEMPLATE = """\
@@ -122,7 +122,7 @@ def _derive_branch_short(name: str) -> str:
     "--output-dir",
     "output_dir",
     default=None,
-    help="Override output directory (default: ~/.scitex/orochi/shared/agents/<name>/).",
+    help="Override output directory (default: ~/.scitex/agent-container/agents/<name>/).",
 )
 @click.option(
     "--dry-run",
@@ -142,9 +142,9 @@ def contributor_spec(
 ) -> None:
     """Render a contributor agent spec YAML from the Jinja2 template.
 
-    Reads ~/.scitex/orochi/shared/agents/.templates/contributor.yaml.j2
+    Reads ~/.scitex/agent-container/agents/.templates/contributor.yaml.j2
     (produced by chunk A: c-sac-spec-template-jinja) and writes
-    ~/.scitex/orochi/shared/agents/<name>/spec.yaml.
+    ~/.scitex/agent-container/agents/<name>/spec.yaml.
 
     \b
     Example:

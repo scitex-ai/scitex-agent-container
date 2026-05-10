@@ -61,7 +61,8 @@ class TestProbeNetworkCLI:
         result = runner.invoke(
             main,
             [
-                "network", "probe",
+                "network",
+                "probe",
                 "--agent",
                 "a",
                 "--quiet",
@@ -77,7 +78,7 @@ class TestProbeNetworkCLI:
     def test_env_fallback_for_agent(self, monkeypatch, tmp_path: Path):
         monkeypatch.setattr(np, "run_all_probes", _fake_all_ok)
         monkeypatch.setattr(np, "DEFAULT_LOG_ROOT", tmp_path)
-        monkeypatch.setenv("SCITEX_OROCHI_AGENT", "head-ywata-note-win")
+        monkeypatch.setenv("CLAUDE_AGENT_ID", "head-ywata-note-win")
         runner = CliRunner()
         result = runner.invoke(main, ["network", "probe", "--quiet"])
         assert result.exit_code == 0

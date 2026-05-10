@@ -166,8 +166,7 @@ def resolve_config(name_or_path: str) -> str:
 
     0. **Project-local** — first ``.scitex/agent-container/agents/`` found walking upward from cwd. Highest priority so checked-in test agents and CI fixtures override globals.
     1. ``~/.scitex/agent-container/agents/<name>/spec.yaml`` (sac install root).
-    2. ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` (colon-separated extra dirs, each searched as ``<dir>/<name>/spec.yaml``).
-    3. Fleet layout — for each root in ``~/.scitex/orochi`` and ``~/.dotfiles/src/.scitex/orochi``: ``<root>/<HOST>/agents/<name>/spec.yaml`` (host override), then ``<root>/shared/agents/<name>/spec.yaml`` (shared default).
+    2. ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` (colon-separated extra dirs, each searched as ``<dir>/<name>/spec.yaml``). Plugin port for downstream orchestrators to inject extra paths without sac knowing about them.
 
     Pass an explicit path (with / or .yaml/.yml) to bypass the search entirely.
     """
