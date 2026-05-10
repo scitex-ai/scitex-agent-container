@@ -15,7 +15,7 @@ metadata:
 
 spec:
   runtime: apptainer
-  image: ~/containers/scitex-agent-container.sif
+  image: ~/containers/scitex-agent-container-scitex.sif
   model: sonnet
   workdir: ~/proj/example
 

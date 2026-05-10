@@ -6,7 +6,7 @@
   </a>
 </p>
 
-<p align="center"><b>Declarative YAML-based AI agent lifecycle management with tmux/screen, SSH remote deploy, health checks, and auto-accept.</b></p>
+<p align="center"><b>Declarative YAML-based AI agent lifecycle management — apptainer-first, layered runtime images, sandbox/freeze versioning via scitex-container.</b></p>
 
 <p align="center">
   <a href="https://scitex-agent-container.readthedocs.io/">Full Documentation</a> · <code>pip install scitex-agent-container</code>
@@ -29,33 +29,30 @@
 
 | # | Problem | Solution |
 |---|---------|----------|
-| 1 | **Fragile per-agent scripts** — launching Claude Code means hand-rolling shell scripts for tmux, env vars, MCP configs, and auto-accept prompts, with no restart policy or health monitoring | **Declarative YAML manifest** — one file fully specifies runtime, model, MCP servers, env, health checks, and remote host; `sac agent start` brings the agent up in tmux/screen with auto-accept and a watchdog |
-| 2 | **No fleet story** — scaling from one agent to many across machines duplicates the same fragile scripts, with no SSH deploy, no presence, and no inter-agent comms | **Remote deploy + state inspection** — `sac` copies src files, installs the venv over SSH, and keeps a live view of every pane's state so the fleet behaves as one unit |
-
-## Problem
-
-Managing AI coding agents (Claude Code) in production requires manual script-writing, environment setup, and process monitoring for each agent instance. Scaling from one agent to a fleet across multiple machines means duplicating fragile shell scripts with no health checks, restart policies, remote deployment, or inter-agent communication.
+| 1 | **Per-agent shell scripts don't compose** — every Claude Code agent needs its own bash glue for env vars, MCP wiring, restart policy, and inter-agent comms | **Declarative `spec.yaml` + SDK runtime** — one file fully specifies the agent (image, mounts, env, model, A2A port). `sac agent start` brings it up; the runner hosts a long-living Claude SDK session and exposes `POST /v1/turn` for agent-to-agent calls |
+| 2 | **"Reproducible" containers drift** — a Dockerfile rebuilt next month installs different scitex / numpy / torch versions, even with the same base image | **Layered SIF + sandbox/freeze** — `:base` (OS+tools) and `:scitex` (scientific stack) are separate layers; `sac image sandbox` gives a writable rootfs, `sac image update` refreshes packages, `sac image freeze` bakes back to an immutable, hash-stable SIF for publication |
+| 3 | **Single host doesn't scale** — running on HPC requires apptainer (no docker), but most agent toolkits are docker-only | **Apptainer-first** — apptainer is the primary runtime; layered `.def` files are canonical SSoT. Docker stays as dev-laptop convenience. `sac` delegates the build/sandbox/version lifecycle to [`scitex-container`](https://github.com/ywatanabe1989/scitex-container) |
 
 ## Solution
 
-scitex-agent-container provides declarative YAML definitions that fully specify an agent -- runtime, model, MCP servers, environment, health checks, remote host -- started with a single command:
+`scitex-agent-container` (`sac`) is a thin user-facing wrapper that ties three concerns together:
 
 ```
-YAML manifest + src_CLAUDE.md + src_mcp.json
-          |
-          v
-scitex-agent-container start
-          |
-          v
-tmux/screen session + auto-accept TUI prompts
-                     + remote SSH deploy
-                     + health monitor
-                     + restart policy
+   spec.yaml ─┐
+              ├─→ runtime image (apptainer SIF or docker)
+   src_*  ────┘        │
+                       ▼
+              long-living Claude SDK session
+                       │
+                       ├─→ POST /v1/turn   (A2A inbound)
+                       └─→ session.jsonl   (structured transcript)
 ```
+
+The image lifecycle is delegated to `scitex-container`; the agent lifecycle stays in this package.
 
 ## Installation
 
-Requires Python >= 3.10.
+Requires Python >= 3.10 and (for production runs) `apptainer` >= 1.4 on the host.
 
 ```bash
 pip install scitex-agent-container
@@ -65,456 +62,174 @@ pip install scitex-agent-container
 
 ```
 scitex_agent_container/
-├── _api/                ← Python API: spawn / inspect / health-check agents
-├── _cli/                ← `scitex-agent-container ...` Click commands
-│   └── cli_pkg/         ← grouped subcommand modules (account / build / install / lifecycle)
-├── _config/             ← layered config (priority: --flag → yaml → env → default)
-├── _docker/             ← Dockerfile + container build helpers
-├── _slurm/              ← single-agent SLURM dispatch
-├── _ssh/                ← remote-deploy entry-points
-└── _mcp/                ← MCP server bridge for agent introspection
+├── _runners/             ← long-living Claude SDK runner (the entry point inside the container)
+├── _network/peer.py      ← A2A outbound (post_turn / resolve_peer_url)
+├── _lifecycle/           ← start / stop / restart / health / handover
+├── _state/               ← registry (state.db) + session.jsonl tailing
+├── runtimes/             ← apptainer (primary) + docker (dev) backends
+├── cli_pkg/              ← `sac` Click commands grouped by noun
+└── config/               ← v3 yaml schema + validation
 ```
 
-The CLI is the canonical entry point; the Python API is what the
-MCP server exposes. The Docker + SLURM + SSH backends share the
-same `agents.yaml` schema so a workflow that runs locally also
-runs unchanged on a SLURM cluster.
+The CLI is the canonical entry point; the Python API mirrors it. Apptainer is the default runtime; docker is supported for dev laptops.
+
+## Layered runtime images
+
+Two `.def` recipes, layered:
+
+| Tag | What's inside | When |
+|---|---|---|
+| `:base` | Ubuntu 24.04 + dev tools (git, gh, rust CLIs, mermaid, prettier, eslint, jsonlint, uv, pipx, tree, node 20) | Foundation |
+| `:scitex` | `FROM :base` + ffmpeg + portaudio + `scitex[all]` + claude-agent-sdk + sac itself | **Default** when `spec.image` is unset |
+
+`containers/apptainer-base.def` and `containers/apptainer-scitex.def` are canonical; `containers/Dockerfile.{base,scitex}` mirror them for docker users.
+
+## Quickstart
+
+```bash
+# 1. Build the layered images (one-time; ~20 min for full stack)
+sac image build base -y
+sac image build scitex -y
+
+# 2. Define an agent
+mkdir -p ~/.scitex/agent-container/agents/hello/
+cat > ~/.scitex/agent-container/agents/hello/spec.yaml <<'YAML'
+apiVersion: scitex-agent-container/v3
+kind: Agent
+spec:
+  runtime: apptainer
+  workdir: /tmp/hello
+  model: claude-haiku-4-5
+  startup_commands:
+    - command: "Reply with the string 'hello-ok' and nothing else."
+YAML
+
+# 3. Run
+sac agent start hello --foreground   # streams stdout, exits when done
+```
+
+## "scitex updates often, do we rebuild?"
+
+No — sandbox once, refresh when you want, freeze when stable:
+
+```bash
+sac image build scitex --sandbox        # one-time: writable sandbox
+sac image update sandbox/                # any time: pip install --upgrade scitex[all]
+sac image freeze sandbox/ scitex-2.28.15.sif   # bake to immutable SIF
+sac image switch 2.28.15                 # atomic flip (previous remembered)
+sac image rollback                       # restore previous version
+sac image snapshot -o env.json           # full reproducibility capsule
+```
+
+The build / sandbox / version / rollback verbs all delegate to [`scitex-container`](https://github.com/ywatanabe1989/scitex-container).
+
+## 1 Interfaces
+
+<details open>
+<summary><strong>CLI ⭐⭐⭐ (primary)</strong></summary>
+
+<br>
+
+```bash
+# Agent lifecycle
+sac agent start <name> [--foreground]    # daemon by default; --foreground streams stdio
+sac agent stop  <name>                    # graceful SIGTERM, escalate to SIGKILL after 5 s
+sac agent restart <name>
+sac agent status [<name>] [--snapshot] [--priority]
+sac agent health <name>
+sac agent tail   <name>                   # render session.jsonl (structured transcript)
+sac agent recall <name>                   # human-readable session summary
+sac agent check  <name>                   # preflight (validates yaml + probes runtime deps)
+sac agent find   <capability>
+
+# Image lifecycle (delegates to scitex-container)
+sac image build [base|scitex] [--sandbox] [--runtime apptainer|docker]
+sac image sandbox SOURCE                  # SIF → writable sandbox
+sac image update  SANDBOX [-p PKG]        # pip install --upgrade
+sac image freeze  SANDBOX OUT.sif         # sandbox → SIF
+sac image list                            # installed versions
+sac image switch  VERSION                 # atomic flip
+sac image rollback                        # restore previous
+sac image status                          # unified dashboard
+sac image snapshot [-o env.json]          # reproducibility capsule
+
+# Account / quota
+sac account list / save / delete / switch / watch-quota
+
+# Network / peers
+sac host show / list / probe / exec / validate
+sac peer post-turn AGENT TEXT             # A2A outbound
+sac a2a serve <yamls...>                  # A2A inbound for non-SDK runtimes
+
+# Misc
+sac event ingest                          # Claude Code hook event ingestor
+sac db   query / show / clean / migrate   # state.db inspection
+sac registry reconcile                    # singleton placement reconcile across fleet
+sac --help-recursive                      # full subcommand tree
+```
+
+</details>
 
 ## Demo
 
 ```mermaid
 flowchart LR
-    A["scitex-agent-container<br/>start --agent foo"] --> B{backend?}
-    B -- "local" --> C[docker run]
-    B -- "slurm" --> D[sbatch]
-    B -- "ssh" --> E[ssh remote &amp;&amp; nohup]
-    C & D & E --> F[(agent process)]
-    F --> G["MCP server<br/>scitex-agent-container mcp start"]
-    G --> H["agent.list / agent.health<br/>(agent introspection tools)"]
+    A["sac agent start foo"] --> B{spec.runtime}
+    B -- "apptainer (default)" --> C["apptainer instance start<br/>scitex-agent-container-scitex.sif"]
+    B -- "docker" --> D["docker run<br/>scitex-agent-container:scitex"]
+    B -- "remote ssh" --> E["ssh PEER &amp;&amp; sac agent start"]
+    C & D & E --> F["claude-agent-sdk runner<br/>(long-living session)"]
+    F --> G["session.jsonl<br/>(structured transcript)"]
+    F --> H["POST /v1/turn<br/>(A2A inbound)"]
+    H -. "sac peer post-turn" .-> I["other agent"]
 ```
 
-End-to-end: a single `start` command spawns an agent on whichever
-backend the config selects, the MCP server exposes its lifecycle
-tools, and downstream `health` / `list` queries surface the live
-state.
+End-to-end: `sac agent start` materializes the workspace (`src_*` files + mounts + env), launches the runtime image, the SDK runner hosts a long-living session, and downstream tooling reads `session.jsonl` for state or POSTs to `/v1/turn` to drive the agent.
 
-## Part of SciTeX
+## YAML Spec Reference (v3)
 
-`scitex-agent-container` is part of [**SciTeX**](https://scitex.ai). Install via
-the umbrella with `pip install scitex[agent-container]` to use as
-`scitex.agent_container` (Python) or `scitex agent-container ...` (CLI).
+| Section | Key Fields | Description |
+|---|---|---|
+| `apiVersion` | `scitex-agent-container/v3` | Config format version |
+| `metadata` | `name` (auto-derived from dir), `labels` | Agent identity |
+| `spec.runtime` | `apptainer` (default) / `docker` / `claude-session` (host-local) | Container backend |
+| `spec.image` | path or tag | Default: `scitex-agent-container:scitex` (or `~/containers/scitex-agent-container-scitex.sif`) |
+| `spec.workdir` | path | Workspace mounted at `/work` inside the container |
+| `spec.model` | `sonnet`, `opus[1m]`, `haiku-4-5`, ... | Claude model |
+| `spec.user` | `""` / `"host"` / `"<uid>:<gid>"` | Run-as user; `"host"` matches the operator |
+| `spec.mounts[]` | `src`, `dst`, `mode` (ro/rw) | Bind mounts (`${VAR}` expanded at start) |
+| `spec.env` | key-value pairs | Container env (`${VAR}` expanded) |
+| `spec.a2a` | `port` | Bind `POST /v1/turn` on this localhost port |
+| `spec.remote` | `host`, `user`, `timeout` | SSH-as-transport for cross-machine deploy |
+| `spec.startup_commands[]` | `command` | One-shot turns to send to the SDK before going idle |
+| `spec.health` | `enabled`, `interval`, `method: sdk-alive` | Health probe config |
+| `spec.skills` | `required[]`, `available[]` | Skill auto-injection into CLAUDE.md |
+
+`src_CLAUDE.md`, `src_state.md`, `src_mcp.json`, `src_env` siblings of `spec.yaml` are materialized into the workspace at start with `${metadata.name}` and `${ENV_VAR}` interpolation.
 
 ## Templates
 
-`config/templates/` ships six minimal pattern templates — copy and adapt:
+`config/templates/` ships minimal pattern templates — copy and adapt:
 
 | Template | Pattern | When to use |
 |---|---|---|
-| `local.yaml` | claude-code on local host | Default; shares operator's env (skills, MCP, venv) |
-| `docker.yaml` | claude-code in Docker | Local isolation; `mount_host_claude` opt-in |
-| `apptainer.yaml` | claude-code in Apptainer/Singularity | HPC compute nodes / locked-down hosts |
-| `ssh.yaml` | claude-code via SSH on remote host | Cross-machine fleet member |
-| `ssh-slurm.yaml` | SLURM-submitted job (with auto-resubmit) | Long-running compute on shared cluster |
-| `mcp.yaml` | claude-code with MCP server wiring | Agent that needs MCP tool access |
+| `apptainer.yaml` | claude-session inside Apptainer SIF | **Default**: HPC + reproducibility |
+| `docker.yaml` | claude-session inside docker | Dev laptop where docker is already running |
+| `ssh.yaml` | remote agent via SSH | Cross-machine fleet member |
+| `mcp.yaml` | agent with MCP tool wiring | Specialised tool surface |
 
-Concrete real-world configs live in `config/examples/` (e.g. `newbie-docker.yaml`, `researcher-opus.yaml`). Both directories are validated by `tests/test_templates_v3_valid.py` — every shipped YAML must round-trip through `load_config`, and the SLURM template must additionally render a valid sbatch script.
+## Examples
 
-To instantiate (dir-as-SSoT — agent name is derived from the parent directory):
+`examples/apptainer_and_sac/` walks through the runtime in 9 lessons (build, sandbox/update/freeze, versioning, run/stop, logs/exec, mounts, env+user). Run them read-only with `bash 00_run_all.sh`, or `--apply` to execute the mutating ones.
 
-```bash
-mkdir -p ~/.scitex/orochi/agents/my-agent
-cp config/templates/local.yaml ~/.scitex/orochi/agents/my-agent/my-agent.yaml
-scitex-agent-container start my-agent
-```
+## Part of SciTeX
 
-## 1 Interfaces
-
-<details open>
-<summary><strong>CLI</strong></summary>
-
-<br>
-
-```bash
-sac agent start <agent-yaml>      # launch declared agent in tmux/screen with auto-accept + watchdog
-sac agent stop <agent>            # graceful stop
-sac agent status                  # live state of every pane
-sac deploy <host>           # SSH-deploy fleet to remote host
-sac --help-recursive        # full subcommand tree
-```
-
-</details>
-
-## Quickstart (v2 config)
-
-1. Create agent definition directory:
-
-```
-my-agent/
-  my-agent.yaml     # Agent config
-  src_CLAUDE.md      # -> deployed to {workdir}/CLAUDE.md
-  src_mcp.json       # -> deployed to {workdir}/.mcp.json
-  src_env            # -> deployed to {workdir}/.env  (mode 0600)
-```
-
-The `src_*` family is a generic file-deploy pipeline: a sibling file named `src_X` next to the YAML is materialized into the workspace at agent start, with `${VAR}` and `${metadata.name}` interpolation. `src_env` is the dotenv variant — sourceable by anything the agent spawns (cron jobs, ssh-launched commands, fresh shells), not just the multiplexer session. See [`_skills/scitex-agent-container/06_env-injection-ports.md`](src/scitex_agent_container/_skills/scitex-agent-container/06_env-injection-ports.md) for the four distinct env-injection ports and when to use each.
-
-2. Write a YAML manifest:
-
-```yaml
-apiVersion: scitex-agent-container/v2
-kind: Agent
-metadata:
-  name: my-agent
-  labels:
-    role: worker
-    machine: local
-spec:
-  runtime: claude-code
-  model: sonnet
-  multiplexer: tmux       # tmux (default) or screen
-
-  claude:
-    flags:
-      - --dangerously-skip-permissions
-    # session: continue-or-new (default) | continue | new
-    # continue-or-new: pass --continue iff a prior session exists for the
-    #   workdir, else launch fresh. Preserves /compact history across
-    #   rolling restarts without risking a hard failure.
-    # continue: always pass --continue (fails if no prior session)
-    # new:      never pass --continue
-    session: continue-or-new
-
-  skills:
-    required:
-      - scitex
-
-  health:
-    enabled: true
-    interval: 60
-    method: multiplexer-alive
-
-  restart:
-    policy: on-failure
-    max_retries: 3
-```
-
-v2 auto-derives from `metadata.name`: workdir, session name, env vars (CLAUDE_AGENT_ID, CLAUDE_AGENT_ROLE, etc.), and pre-start hooks. Sibling `src_CLAUDE.md` and `src_mcp.json` files are deployed to the workspace with `${metadata.name}` and `${ENV_VAR}` interpolation.
-
-3. Start and monitor:
-
-```bash
-scitex-agent-container start my-agent.yaml
-scitex-agent-container inspect my-agent         # Live state detection
-scitex-agent-container show-status my-agent
-scitex-agent-container show-logs my-agent -n 100
-scitex-agent-container attach my-agent          # Ctrl-B D to detach (tmux)
-```
-
-## Remote SSH Deployment
-
-Deploy agents to remote machines:
-
-```yaml
-spec:
-  remote:
-    host: mba              # SSH hostname
-    user: ywatanabe
-    timeout: 180
-```
-
-```bash
-scitex-agent-container start remote-agent.yaml   # SSHs to remote, launches there
-scitex-agent-container stop remote-agent.yaml     # Accepts name or YAML path
-scitex-agent-container inspect my-remote-agent    # Live state from remote
-```
-
-## SLURM (single-agent)
-
-Submit an agent as an `sbatch` job that holds the allocation, runs claude in tmux on the compute node, and auto-resubmits before walltime via a `SIGUSR1` trap:
-
-```yaml
-spec:
-  runtime: slurm
-  slurm:
-    partition: cascade
-    cpus_per_task: 4
-    mem: "16G"
-    time_limit: "7-00:00:00"
-    auto_resubmit: true
-    hooks:
-      pre_agent: ~/path/to/module-load.sh    # `module load Python/3.11.3` etc.
-```
-
-```bash
-sac agent start head-spartan/head-spartan.yaml   # submits sbatch on the local SLURM submission host
-sac agent attach head-spartan                    # srun --pty + tmux attach on the compute node
-sac agent stop head-spartan                      # scancel + clear state
-```
-
-## SLURM (multi-tenant — many agents on one allocation)
-
-Requires `pip install scitex-agent-container[slurm]` (pulls `scitex-hpc>=0.6.1`).
-
-Book a reservation **once**, then launch many agents into the same allocation. Cuts queue wait from minutes per launch to one ssh round-trip per launch:
-
-```bash
-# Once: book a node for the day
-scitex-hpc reservations book dev-pool \
-    --host spartan --partition cascade \
-    --cpus 8 --mem 32G --time 7-0 \
-    --tmux-server sac --persistent
-
-# All day: launch agents into it
-sac agent start dev-helper.yaml         # tmux session in dev-pool's allocation
-sac agent start doc-builder.yaml        # second tmux session, same allocation
-sac agent start test-runner.yaml        # third, same allocation
-
-sac agent attach dev-helper             # interactive on compute node
-
-# When done with the day's pool:
-scitex-hpc reservations release dev-pool
-```
-
-Tenant agent YAML — note the new runtime kind and the `slurm.reservation` field:
-
-```yaml
-spec:
-  runtime: slurm-tenant
-  slurm:
-    reservation: dev-pool         # name of the existing scitex-hpc lease
-  claude:
-    flags: [--dangerously-skip-permissions]
-```
-
-The reservation's hold body bootstraps a long-lived tmux server as PID 1 of the sbatch script (via `--tmux-server sac`), so tenant tmux sessions survive past their setup commands. Without it, `srun --overlap` step cgroups would terminate them within seconds.
-
-**Compatible with HPC policies banning persistent daemons** — every operation is bastion-initiated SSH, no `crontab @reboot`, no autossh, no tunnel. SLURM's documented `SIGUSR1` signal handles walltime auto-resubmit.
-
-## MCP Servers (src_mcp.json)
-
-MCP config lives alongside the YAML as `src_mcp.json` -- visible, editable, version-controlled:
-
-```json
-{
-  "mcpServers": {
-    "scitex-orochi": {
-      "type": "stdio",
-      "command": "bun",
-      "args": ["run", "~/proj/scitex-orochi/ts/mcp_channel.ts"],
-      "env": {
-        "SCITEX_OROCHI_URL": "wss://scitex-orochi.com",
-        "SCITEX_OROCHI_AGENT": "${metadata.name}",
-        "SCITEX_OROCHI_TOKEN": "${SCITEX_OROCHI_TOKEN}"
-      }
-    }
-  }
-}
-```
-
-`~` in args is expanded at deploy time. `${metadata.name}` interpolates from YAML. `${ENV_VAR}` resolves from the environment.
-
-## Auto-Accept TUI Prompts
-
-Claude Code shows confirmation prompts for dangerous flags. The auto-accept system handles them automatically using modular prompt handlers (`runtimes/prompts.py`):
-
-```python
-# Each handler: detect prompt text -> send number key + Enter
-PromptHandler(name="bypass-permissions",
-              detect=lambda c: "2. Yes, I accept" in c,
-              keys=["2", "Enter"])
-```
-
-Handlers are order-agnostic, use numbered option text for reliability, and work with both tmux and screen. New prompts are added by appending to `PROMPT_HANDLERS`.
-
-Diagnostics logged to `~/.scitex/agent-container/logs/{name}/auto-accept.log`.
-
-## CLI Commands
-
-```bash
-# Lifecycle (accepts name or YAML path)
-scitex-agent-container start <config.yaml>
-scitex-agent-container stop <name|yaml>
-scitex-agent-container restart <name|yaml>
-
-# Inspection
-scitex-agent-container inspect <name> [--json]   # Live pane state detection
-scitex-agent-container show-status [name] [--json]   # Rich status dict (see below)
-scitex-agent-container list [--json] [--capability X] [--machine Y]
-scitex-agent-container show-logs <name> [-n LINES]
-scitex-agent-container check-health <name> [--json]
-scitex-agent-container attach <name>
-
-# Hook event ingestor (wired from Claude Code hooks, see below)
-scitex-agent-container ingest-hook-event <pretool|posttool|prompt|stop|other>
-
-# Pane actions (see "Pane Actions" below)
-scitex-agent-container actions run <nonce-probe|compact> <agent> [--json]
-scitex-agent-container actions query [--agent X] [--action Y] [--since 2h]
-scitex-agent-container actions stats [--agent X] [--since 7d]
-scitex-agent-container actions purge [--days N]
-
-# A2A protocol — standalone agent endpoint, no fleet deps
-# (echo handler by default; --handler claude_cli runs `claude --print`)
-scitex-agent-container a2a serve <agent.yaml>... [--port 8888] [--handler echo|claude_cli|exec]
-
-# Configuration
-scitex-agent-container validate <config.yaml>
-scitex-agent-container check <config.yaml>
-
-# Maintenance
-scitex-agent-container clean-registry
-```
-
-## Rich Status (`status <name> --json`)
-
-`status <name> --json` returns a non-agentic snapshot of the agent suitable
-for dashboards or fleet monitors. The payload merges the base registry
-entry with fields from `agent_meta.collect_rich()` and
-`event_log.summarize()`:
-
-| Field | Description |
-|---|---|
-| `pane_text` | Recent tmux `capture-pane` output, secrets redacted |
-| `pane_state` | Classified: `running` / `idle_prompt` / `y_n_prompt` / `auth_error` / `compose_pending_unsent` / `limit_reached` / `unknown` |
-| `stuck_prompt_text` | Last line when `pane_state` indicates a blocking prompt |
-| `claude_md` | Workspace `CLAUDE.md` contents (truncated) |
-| `mcp_json` | Workspace `.mcp.json` with token-like values redacted |
-| `recent_tools`, `recent_prompts` | Last N tool uses / user prompts from the hook ring-buffer |
-| `agent_calls`, `background_tasks` | Subagent launches and `Bash run_in_background=true` starts |
-| `tool_counts` | `{tool_name: count}` over the window |
-| `last_tool_at`, `last_tool_name` | ISO timestamp and name of the newest `pretool` event (any tool) -- functional heartbeat, distinguishes "process alive" from "LLM actually producing tool calls" |
-| `last_mcp_tool_at`, `last_mcp_tool_name` | Same, restricted to tools whose name starts with `mcp__` -- MCP sidecar health probe |
-| `last_action_at`, `last_action_name` | ISO timestamp and name of the most recent `PaneAction` attempt. `last_action_name` (renamed from `last_action`) avoids a column collision with orochi's hub schema. |
-| `last_action_outcome`, `last_action_elapsed_s` | Outcome (`success`, `precondition_fail`, `send_error`, `completion_timeout`, `skipped_by_policy`) and wall-clock duration of that attempt |
-| `action_counts` | `{action_name: count}` rollup from `action_store.summarize()` |
-| `p95_elapsed_s_by_action` | `{action_name: p95_seconds}` per-action latency headline |
-| `context_pct`, `current_tool`, `current_task`, `last_user_msg`, `model_transcript` | Derived from the active Claude Code transcript JSONL |
-| `quota_5h_used_pct`, `quota_7d_used_pct`, `quota_*_reset_at` | Claude usage (best-effort, cached) |
-| `metrics` | Host-level CPU / memory / load / disk (psutil) |
-
-Every field is best-effort: failures leave the default value (`""`,
-`0`, `[]`) rather than raising.
-
-```bash
-scitex-agent-container show-status my-agent --json | jq '.pane_state, .recent_tools[-3:]'
-```
-
-## Claude Code Hook Integration
-
-`hook-event` is the non-agentic counterpart to the status command: Claude
-Code invokes it on every tool call / prompt / stop, and the handler
-appends a compact JSON record to a per-agent ring-buffer at
-`$XDG_DATA_HOME/.scitex/agent-container/events/<agent>.jsonl` (capped at
-500 lines). `status --json` reads that buffer to populate
-`recent_tools`, `recent_prompts`, `agent_calls`, `background_tasks`, and
-`tool_counts`.
-
-Wire it in the agent workspace's `.claude/settings.local.json`:
-
-```json
-{
-  "hooks": {
-    "PreToolUse":       [{"matcher": "", "hooks": [
-      {"type": "command", "command": "scitex-agent-container ingest-hook-event pretool"}
-    ]}],
-    "PostToolUse":      [{"matcher": "", "hooks": [
-      {"type": "command", "command": "scitex-agent-container ingest-hook-event posttool"}
-    ]}],
-    "UserPromptSubmit": [{"matcher": "", "hooks": [
-      {"type": "command", "command": "scitex-agent-container ingest-hook-event prompt"}
-    ]}],
-    "Stop":             [{"matcher": "", "hooks": [
-      {"type": "command", "command": "scitex-agent-container ingest-hook-event stop"}
-    ]}]
-  }
-}
-```
-
-Agent name resolution order: `--agent <name>` flag >
-`SCITEX_OROCHI_AGENT` env var > `CLAUDE_AGENT_ID` env var > basename of
-the current working directory. The handler swallows all errors so a
-broken log can never block a tool call.
-
-## Pane Actions
-
-A typed, logged vocabulary for pane-mediated agent actions. Each
-action is a `PaneAction` subclass implementing four methods
-(`snapshot` / `precheck` / `send` / `is_complete`); the `run_action`
-engine classifies every attempt as `success`, `precondition_fail`,
-`send_error`, `completion_timeout`, or `skipped_by_policy`, and
-writes it to a host-wide SQLite log at
-`~/.scitex/agent-container/actions.db` (`agent` is a column, not a
-path). Two concrete actions ship today:
-
-- `NonceProbeAction` -- sends `Repeat <nonce>` and confirms the model
-  echoes it back (true functional liveness, not just "process alive").
-- `CompactAction` -- sends `/compact` and confirms by watching
-  `context_pct` drop by at least `--min-drop-pct` (default 20).
-
-```bash
-# Run an attempt (non-zero exit on any non-SUCCESS / non-SKIPPED).
-scitex-agent-container actions run nonce-probe <agent>
-scitex-agent-container actions run compact <agent> \
-    --min-drop-pct 30 --timeout 60 --json
-
-# Query / aggregate / purge the attempt log.
-scitex-agent-container actions query \
-    --agent <agent> --action compact --since 2h --limit 20
-scitex-agent-container actions stats --agent <agent> --since 7d
-scitex-agent-container actions purge --days 14
-```
-
-The latest attempt is folded into `status --json` via
-`agent_meta.collect_rich()` as `last_action_at` / `last_action_name` /
-`last_action_outcome` / `last_action_elapsed_s`, with rollups
-`action_counts` and `p95_elapsed_s_by_action`.
-
-Reliable `send_keys` into a running pane needs an inter-key delay and
-a settle window before `Enter`. Both are configurable via env vars
-(read once at import time by `runtimes/tmux.py` and `runtimes/screen.py`):
-
-| Env var | Default | Meaning |
-|---|---|---|
-| `SAC_KEY_DELAY_S` | `0.1` | Delay between individual keys |
-| `SAC_SUBMIT_SETTLE_S` | `0.3` | Settle after text, before `Enter` |
-| `SAC_ACTION_RETENTION_DAYS` | `30` | Default `actions purge --days` horizon |
-
-A `send_text_and_submit(session, text)` helper wraps the "type then
-submit" pattern used by every action's `send`.
-
-## Zero Coupling to Downstream Orchestrators
-
-scitex-agent-container is a generic library. It knows nothing about
-scitex-orochi, the hub, or any particular dashboard. `status --json`
-emits a self-describing dict; downstream consumers (e.g. orochi's
-`heartbeat-push` command) wrap it -- calling `status --json`, reshaping
-the payload, and POSTing to whatever endpoint they own. Keeping the
-two sides decoupled lets you swap the orchestrator, the transport, or
-the schema without touching this package.
-
-## YAML Spec Reference
-
-| Section | Key Fields | Description |
-|---------|-----------|-------------|
-| `apiVersion` | `scitex-agent-container/v2`, `cld-agent/v1` | Config format version |
-| `metadata` | `name`, `labels` | Agent identity and labels |
-| `spec.runtime` | `claude-code`, `slurm`, `slurm-tenant` | Agent runtime selector |
-| `spec.model` | `sonnet`, `opus[1m]` | Model selection |
-| `spec.multiplexer` | `tmux` (default), `screen` | Terminal multiplexer |
-| `spec.remote` | `host`, `user`, `timeout` | SSH remote deployment |
-| `spec.claude` | `flags[]`, `session`, `auto_accept` | Claude Code options. `session` values: `continue-or-new` (default, try `--continue` with graceful fallback), `continue` (strict resume), `new` (always fresh). Top-level `spec.session:` also accepted and takes precedence. |
-| `spec.health` | `enabled`, `interval`, `method` | Health monitoring |
-| `spec.restart` | `policy`, `max_retries`, `backoff` | Auto-restart |
-| `spec.skills` | `required[]`, `available[]` | Skill injection |
-| `spec.env` | key-value pairs | Environment variables |
-| `spec.venv` | path | Python virtualenv to activate |
-| `spec.hooks` | `pre_start`, `post_start`, `pre_stop`, `post_stop` | Lifecycle hooks |
-| `spec.container` | `runtime`, `image`, `volumes` | Docker/Apptainer |
+`scitex-agent-container` is part of [**SciTeX**](https://scitex.ai). Install via the umbrella with `pip install scitex[agent-container]` to use as `scitex.agent_container` (Python) or `scitex agent-container ...` (CLI).
 
 >Four Freedoms for Research
 >
->0. The freedom to **run** your research anywhere -- your machine, your terms.
->1. The freedom to **study** how every step works -- from raw data to final manuscript.
+>0. The freedom to **run** your research anywhere — your machine, your terms.
+>1. The freedom to **study** how every step works — from raw data to final manuscript.
 >2. The freedom to **redistribute** your workflows, not just your papers.
 >3. The freedom to **modify** any module and share improvements with the community.
 >
