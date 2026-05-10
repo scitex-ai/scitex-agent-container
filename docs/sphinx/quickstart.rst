@@ -8,7 +8,7 @@ Quickstart
     pip install scitex-agent-container
 
    The fastest path is to copy a pattern template from
-   ``config/templates/`` (``local``, ``docker``, ``apptainer``, ``ssh``,
+   ``examples/agent-templates/`` (``local``, ``docker``, ``apptainer``, ``ssh``,
    ``ssh-slurm``, ``mcp``). See :doc:`templates` for the full matrix.
 
 2. Create an agent definition directory with a YAML manifest plus

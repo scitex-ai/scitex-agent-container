@@ -3,10 +3,10 @@ Templates and Examples
 
 Two directories ship under ``config/`` in the repo:
 
-* ``config/templates/`` — minimal pattern templates. Each one demonstrates
+* ``examples/agent-templates/`` — minimal pattern templates. Each one demonstrates
   one deployment pattern with the smallest YAML that exercises it.
   Copy-and-adapt is the intended workflow.
-* ``config/examples/`` — concrete real-world configs that document
+* ``examples/agent-specs/`` — concrete real-world configs that document
   specific operator decisions (e.g. ``newbie-docker.yaml`` carries the
   Hawthorne-effect-free design notes from the 2026-04-12 contamination
   incident).
@@ -68,7 +68,7 @@ instantiate:
 .. code-block:: bash
 
     mkdir -p ~/.scitex/orochi/agents/my-agent
-    cp config/templates/local.yaml ~/.scitex/orochi/agents/my-agent/my-agent.yaml
+    cp examples/agent-templates/local.yaml ~/.scitex/orochi/agents/my-agent/my-agent.yaml
     # Edit fields you want to customize, then:
     scitex-agent-container start my-agent
 

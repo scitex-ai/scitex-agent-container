@@ -1,14 +1,14 @@
-"""Every shipped ``config/templates/*.yaml`` and ``config/examples/*.yaml``
+"""Every shipped ``examples/agent-templates/*.yaml`` and ``examples/agent-specs/*.yaml``
 must load clean under v3.
 
 Templates live in two places:
-  * ``config/templates/`` — minimal pattern templates (one per pattern:
+  * ``examples/agent-templates/`` — minimal pattern templates (one per pattern:
     docker, apptainer, ssh, mcp). These are the starting points users
     copy from. F-CS17 deleted the ``local`` / ``claude-session`` /
     ``ssh-slurm`` patterns: bare-metal and SLURM scheduling are no
     longer supported (sac is a container wrapper; HPC scheduling
     is the operator's concern).
-  * ``config/examples/`` — concrete real-world configs (newbie-docker,
+  * ``examples/agent-specs/`` — concrete real-world configs (newbie-docker,
     researcher-opus). These document specific operator decisions.
 
 Both must round-trip through ``load_config`` cleanly.
@@ -21,8 +21,8 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-TEMPLATES_DIR = REPO_ROOT / "config" / "templates"
-EXAMPLES_DIR = REPO_ROOT / "config" / "examples"
+TEMPLATES_DIR = REPO_ROOT / "examples" / "agent-templates"
+EXAMPLES_DIR = REPO_ROOT / "examples" / "agent-specs"
 
 
 def _instantiate(src: Path, parent: Path):

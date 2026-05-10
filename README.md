@@ -89,7 +89,7 @@ Two `.def` recipes, layered:
 
 ~/.scitex/agent-container/containers/                 ← built artifacts (user state)
   scitex-agent-container-{base,scitex}.sif
-  *-sandbox/
+  *.sandbox/
 ```
 
 Recipes ship in the pip wheel — no need to clone the repo to run `sac image build`. Built artifacts live under `~/.scitex/agent-container/containers/`, never in git.
@@ -220,7 +220,7 @@ End-to-end: `sac agent start` materializes the workspace (`src_*` files + mounts
 
 ## Templates
 
-`config/templates/` ships minimal pattern templates — copy and adapt:
+`examples/agent-templates/` ships minimal pattern templates — copy and adapt:
 
 | Template | Pattern | When to use |
 |---|---|---|

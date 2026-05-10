@@ -99,6 +99,6 @@ If you have legacy YAMLs:
 
 ## See also
 
-- `08_templates.md` — six minimal pattern templates under `config/templates/`
+- `08_templates.md` — six minimal pattern templates under `examples/agent-templates/`
 - `06_env-injection-ports.md` — yaml.env vs src_mcp.json env vs src_env vs hooks
 - `09_slurm-tenant.md` — multi-tenant `runtime: slurm-tenant` and `slurm.reservation`
