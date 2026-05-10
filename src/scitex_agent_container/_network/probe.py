@@ -53,9 +53,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-DEFAULT_HUB_HOST = "scitex-orochi.com"
+# sac is standalone — no built-in hub default. The operator (or the
+# orchestrator wrapping sac) supplies the target via --hub-host /
+# --hub-port / --hub-url or SAC_HUB_URL. ``probe_network`` errors out
+# clearly when none of these are set.
+DEFAULT_HUB_HOST = ""
 DEFAULT_HUB_PORT = 443
-DEFAULT_HUB_URL = f"https://{DEFAULT_HUB_HOST}/"
+DEFAULT_HUB_URL = ""
 DEFAULT_TIMEOUT_S = 3.0
 
 DEFAULT_LOG_ROOT = (
@@ -188,13 +192,14 @@ def probe_https(
                 err="" if ok else f"status={status}",
                 extra={"status": status},
             )
-    except urllib.error.HTTPError as exc:  # stx-allow: fallback (reason: expected failure — see inline comment)
+    except (
+        urllib.error.HTTPError
+    ) as exc:  # stx-allow: fallback (reason: expected failure — see inline comment)
         # Cloudflare / hub returning 4xx is still "transport ok".
         latency_ms = (time.monotonic() - start) * 1000.0
         status = exc.code
         ok = status < 500 and (
-            not expected_status_prefix
-            or str(status).startswith(expected_status_prefix)
+            not expected_status_prefix or str(status).startswith(expected_status_prefix)
         )
         return ProbeResult(
             name="https",
@@ -252,7 +257,9 @@ def _read_ip_route() -> str:
         # gw_hex is little-endian IPv4 bytes.
         try:
             gw_int = int(gw_hex, 16)
-        except ValueError:  # stx-allow: fallback (reason: type coercion or format mismatch)
+        except (
+            ValueError
+        ):  # stx-allow: fallback (reason: type coercion or format mismatch)
             continue
         octets = [(gw_int >> (8 * i)) & 0xFF for i in range(4)]
         gw = ".".join(str(o) for o in octets)
@@ -273,7 +280,9 @@ def probe_gateway(
     is a false negative the caller should interpret loosely.
     """
     start = time.monotonic()
-    route_output = ip_route_reader() if callable(ip_route_reader) else str(ip_route_reader or "")
+    route_output = (
+        ip_route_reader() if callable(ip_route_reader) else str(ip_route_reader or "")
+    )
     gw = _parse_default_gateway(route_output)
     if not gw:
         latency_ms = (time.monotonic() - start) * 1000.0

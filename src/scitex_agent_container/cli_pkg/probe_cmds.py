@@ -89,6 +89,23 @@ def probe_network(
       $ sac network probe --agent head-ywata-note-win
       $ sac network probe --quiet --exit-nonzero-on-fail
     """
+    # Fall back to env var for hub-url; require an explicit target.
+    if not hub_url:
+        hub_url = os.environ.get("SAC_HUB_URL", "").strip()
+    if not hub_host:
+        # Derive from hub_url if given, else error out.
+        if hub_url:
+            from urllib.parse import urlparse
+
+            hub_host = urlparse(hub_url).hostname or ""
+    if not hub_host or not hub_url:
+        click.echo(
+            "error: no hub configured. Pass --hub-host/--hub-url or set "
+            "SAC_HUB_URL — sac is standalone and has no built-in default.",
+            err=True,
+        )
+        sys.exit(2)
+
     effective_agent = agent or os.environ.get("CLAUDE_AGENT_ID") or "anonymous-agent"
     summary = run_and_log(
         effective_agent,

@@ -1,6 +1,6 @@
-"""Stdlib-only HTTP client for the Orochi hub's lead-state-handover API.
+"""Stdlib-only HTTP client for an external hub's lead-state-handover API.
 
-Three endpoints (server side: scitex-orochi PR feat/lead-state-handover-server):
+Three endpoints expected on the hub:
 
   - POST /api/agents/<name>/snapshot/        — upsert payload (FR-A)
   - GET  /api/agents/<name>/snapshot/latest/ — fetch latest payload (FR-A)
@@ -8,7 +8,9 @@ Three endpoints (server side: scitex-orochi PR feat/lead-state-handover-server):
                                                healthy{} (FR-B)
 
 Auth: workspace token from ``SAC_HUB_TOKEN``. Hub base URL from
-``SAC_HUB_URL`` (defaults to ``https://scitex-orochi.com``).
+``SAC_HUB_URL`` — **no default**. sac is standalone and does not assume
+any particular hub deployment exists. When ``SAC_HUB_URL`` is unset,
+hub-publishing operations are skipped (logged at DEBUG).
 
 Stdlib only — no requests/httpx dependency. Same urlopen pattern as
 ``scitex_agent_container.hooks._dispatch_http`` so this module is safe
@@ -32,12 +34,12 @@ from urllib import request as urlrequest
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_HUB = "https://scitex-orochi.com"
 _HTTP_TIMEOUT_S = 10.0
 
 
 def _hub_url() -> str:
-    return os.environ.get("SAC_HUB_URL", _DEFAULT_HUB).rstrip("/")
+    """Return the configured hub URL or empty string if unset."""
+    return os.environ.get("SAC_HUB_URL", "").strip().rstrip("/")
 
 
 def _hub_token() -> str:
@@ -45,13 +47,17 @@ def _hub_token() -> str:
 
 
 def _request(method: str, path: str, *, body: dict | None = None) -> dict | None:
-    """Issue a hub request. Returns parsed JSON dict or ``None`` on error."""
+    """Issue a hub request. Returns parsed JSON dict or ``None`` on error / no hub."""
+    base = _hub_url()
+    if not base:
+        logger.debug("hub_client: SAC_HUB_URL unset, skipping %s %s", method, path)
+        return None
     token = _hub_token()
     if not token:
         logger.debug("hub_client: SAC_HUB_TOKEN unset, skipping %s %s", method, path)
         return None
 
-    url = f"{_hub_url()}{path}"
+    url = f"{base}{path}"
     data: bytes | None = None
     headers = {"Accept": "application/json"}
     if method == "GET":

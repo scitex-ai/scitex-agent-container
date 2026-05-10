@@ -33,6 +33,7 @@ class TestProbeNetworkCLI:
     def test_all_ok_returns_zero(self, monkeypatch, tmp_path: Path):
         monkeypatch.setattr(np, "run_all_probes", _fake_all_ok)
         monkeypatch.setattr(np, "DEFAULT_LOG_ROOT", tmp_path)
+        monkeypatch.setenv("SAC_HUB_URL", "https://hub.example/")
         runner = CliRunner()
         result = runner.invoke(
             main,
@@ -48,6 +49,7 @@ class TestProbeNetworkCLI:
     def test_non_quiet_prints_json(self, monkeypatch, tmp_path: Path):
         monkeypatch.setattr(np, "run_all_probes", _fake_all_ok)
         monkeypatch.setattr(np, "DEFAULT_LOG_ROOT", tmp_path)
+        monkeypatch.setenv("SAC_HUB_URL", "https://hub.example/")
         runner = CliRunner()
         result = runner.invoke(main, ["network", "probe", "--agent", "a"])
         assert result.exit_code == 0
@@ -57,6 +59,7 @@ class TestProbeNetworkCLI:
     def test_exit_nonzero_on_fail(self, monkeypatch, tmp_path: Path):
         monkeypatch.setattr(np, "run_all_probes", _fake_dns_fail)
         monkeypatch.setattr(np, "DEFAULT_LOG_ROOT", tmp_path)
+        monkeypatch.setenv("SAC_HUB_URL", "https://hub.example/")
         runner = CliRunner()
         result = runner.invoke(
             main,
@@ -78,6 +81,7 @@ class TestProbeNetworkCLI:
     def test_env_fallback_for_agent(self, monkeypatch, tmp_path: Path):
         monkeypatch.setattr(np, "run_all_probes", _fake_all_ok)
         monkeypatch.setattr(np, "DEFAULT_LOG_ROOT", tmp_path)
+        monkeypatch.setenv("SAC_HUB_URL", "https://hub.example/")
         monkeypatch.setenv("CLAUDE_AGENT_ID", "head-ywata-note-win")
         runner = CliRunner()
         result = runner.invoke(main, ["network", "probe", "--quiet"])
