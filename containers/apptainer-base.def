@@ -1,0 +1,109 @@
+# scitex-agent-container:base — Apptainer recipe (canonical SSoT).
+#
+# Self-contained: no `source`-ing of external module trees. The matching
+# Dockerfile.base is a hand-mirrored convenience for dev-laptop docker
+# users; this .def is the canonical record of what `:base` contains.
+#
+# Build (preferred — go through scitex-container for versioning/sandbox):
+#   scitex-container build scitex-agent-container-base
+#
+# Build (raw apptainer):
+#   apptainer build scitex-agent-container-base.sif containers/apptainer-base.def
+#   apptainer build --sandbox base/ containers/apptainer-base.def
+#
+# Sandbox + mutate:
+#   apptainer build --sandbox base/ apptainer-base.def
+#   apptainer exec --writable base/ apt-get install -y NEW_TOOL
+#   apptainer build base.sif base/        # re-bake to immutable
+#
+# Layer this with apptainer-scitex.def to add scitex[all] + claude-sdk + sac.
+
+Bootstrap: docker
+From: ubuntu:24.04
+
+%post
+    set -e
+    export DEBIAN_FRONTEND=noninteractive
+
+    # ---- 1. apt: system packages ---------------------------------------
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        ca-certificates curl wget gnupg \
+        git openssh-client sshpass autossh git-crypt \
+        build-essential pkg-config \
+        libffi-dev libssl-dev libgl1-mesa-dev libc6-dev \
+        python3 python3-pip python3-venv python3-dev \
+        locales tzdata \
+        htop procps lsof strace less \
+        iputils-ping dnsutils netcat-openbsd \
+        nano jq \
+        tini
+    locale-gen en_US.UTF-8
+
+    # ---- 2. GitHub CLI -------------------------------------------------
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+    chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+        > /etc/apt/sources.list.d/github-cli.list
+    apt-get update
+    apt-get install -y --no-install-recommends gh
+
+    # ---- 3. Node.js + npm globals --------------------------------------
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+    apt-get install -y --no-install-recommends nodejs
+    mkdir -p /opt/npm-global
+    npm config set prefix /opt/npm-global
+    export PATH=/opt/npm-global/bin:$PATH
+    npm install -g \
+        prettier \
+        eslint \
+        @typescript-eslint/parser \
+        @typescript-eslint/eslint-plugin \
+        jsonlint \
+        @mermaid-js/mermaid-cli
+    npx puppeteer browsers install chrome-headless-shell || true
+
+    rm -rf /var/lib/apt/lists/*
+
+    # ---- 4. Rust toolchain + Rust CLIs ---------------------------------
+    export RUSTUP_HOME=/opt/rust
+    export CARGO_HOME=/opt/cargo
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --profile minimal --no-modify-path
+    export PATH=/opt/cargo/bin:$PATH
+    curl --proto '=https' --tlsv1.2 -sSfL \
+        https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh \
+        | bash
+    cargo binstall --no-confirm --force fd-find bat eza ripgrep
+    rm -rf /opt/cargo/registry /opt/cargo/git
+
+    # ---- 5. tree v2.1.3 from source ------------------------------------
+    curl -fsSL https://gitlab.com/OldManProgrammer/unix-tree/-/archive/2.1.3/unix-tree-2.1.3.tar.gz \
+        | tar xz -C /tmp
+    make -C /tmp/unix-tree-2.1.3 -j"$(nproc)"
+    make -C /tmp/unix-tree-2.1.3 install PREFIX=/usr/local
+    rm -rf /tmp/unix-tree-*
+
+    # ---- 6. uv (Astral) + pipx -----------------------------------------
+    UV_INSTALL_DIR=/usr/local/bin curl -LsSf https://astral.sh/uv/install.sh | sh
+    python3 -m pip install --no-cache-dir --break-system-packages pipx
+
+    # ---- 7. RTK (deferred — repo not yet public) -----------------------
+
+%environment
+    export LANG=en_US.UTF-8
+    export LC_ALL=en_US.UTF-8
+    export PATH=/opt/cargo/bin:/opt/npm-global/bin:/usr/local/bin:$PATH
+    export RUSTUP_HOME=/opt/rust
+    export CARGO_HOME=/opt/cargo
+
+%labels
+    org.scitex.layer base
+    org.scitex.runtime apptainer
+    org.scitex.contains "git gh node npm rustc cargo fd bat eza rg tree uv pipx mermaid prettier eslint jsonlint"
+
+%help
+    scitex-agent-container :base layer.
+    OS + developer tooling. Layer apptainer-scitex.def on top to add
+    scitex[all] + claude-agent-sdk + sac itself.
