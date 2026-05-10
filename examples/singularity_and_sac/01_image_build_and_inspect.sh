@@ -1,6 +1,19 @@
 #!/usr/bin/env bash
 # Lesson 01 — Building and inspecting a SIF image.
 #
+# Each agent picks its image in spec.yaml — same as docker:
+#
+#   spec:
+#     runtime: apptainer
+#     image: /path/to/scitex-agent-container.sif      # default-ish
+#   # or:
+#     image: /scratch/${USER}/cuda-agent.sif          # GPU SIF
+#     image: my-custom.sif                            # bring your own
+#
+# `sac image build --runtime apptainer` builds the *bundled default*
+# SIF (containers/scitex-agent-container.sif). Custom SIFs you build
+# with plain apptainer.
+#
 # Singularity/Apptainer images are *single-file* (.sif), not layered
 # like docker. There's no daemon, no registry pull by default — the
 # build is reproducible from a definition file (apptainer.def).
@@ -11,7 +24,7 @@
 #   apptainer inspect my.sif                          # labels, def file
 #   apptainer inspect --runscript my.sif              # what `run` would do
 #
-# sac wrapper:
+# sac wrapper (default SIF only):
 #   sac image build --runtime apptainer               # uses containers/apptainer.def
 #                                                       → containers/scitex-agent-container.sif
 #   sac image build --runtime apptainer --dry-run

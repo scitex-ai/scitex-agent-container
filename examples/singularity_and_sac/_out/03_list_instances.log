@@ -9,13 +9,3 @@ INSTANCE NAME    PID    IP    IMAGE
 │ orchestrator   │ stopped │ LOCAL    │ orchestrator   │ 2026-05-09T08:54:05Z │
 │ polish-scholar │ stopped │ LOCAL    │ polish-scholar │ 2026-05-09T04:26:06Z │
 └────────────────┴─────────┴──────────┴────────────────┴──────────────────────┘
-
-Claude Code account
-  Email:          ywata1989@gmail.com
-  Organization:   ywata1989@gmail.com's Organization
-  Display name:   Yusuke
-  Billing type:   stripe_subscription
-  Subscription:   max  (tier: default_claude_max_20x)
-  Available:      -
-  Extra usage:    disabled (reason: org_level_disabled)
-  Since:          2025-05-30T19:59:34.010055Z

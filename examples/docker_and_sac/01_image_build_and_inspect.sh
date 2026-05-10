@@ -1,16 +1,24 @@
 #!/usr/bin/env bash
-# Lesson 01 — Building and inspecting the runtime image.
+# Lesson 01 — Building and inspecting a runtime image.
 #
-# sac runs every agent inside a single shared image
-# `scitex-agent-container:sdk-persistent`. Each agent is a separate
-# container started from that image; the image itself is built once.
+# Each agent picks its image in spec.yaml:
+#
+#   spec:
+#     image: scitex-agent-container:sdk-persistent   # default-ish
+#   # or:
+#     image: scitex-agent-container:cuda-12          # GPU agent
+#     image: my-custom:latest                        # bring your own
+#
+# `sac image build` builds the *bundled default* image
+# (`scitex-agent-container:sdk-persistent`); custom images you build
+# with plain docker (or any of your team's pipelines).
 #
 # Pure docker:
 #   docker build -t scitex-agent-container:sdk-persistent -f containers/Dockerfile containers/
 #   docker images scitex-agent-container
 #   docker inspect scitex-agent-container:sdk-persistent
 #
-# sac wrapper:
+# sac wrapper (default image only):
 #   sac image build               # invokes docker build with the right tag/dockerfile
 #   sac image build --dry-run     # just print what would run
 set -euo pipefail
