@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Lesson 06 — Bind mounts (--bind, the apptainer equivalent of -v).
+# Lesson 08 — Bind mounts (apptainer's --bind).
 #
 # Pure apptainer:
 #   apptainer exec --bind /host:/container my.sif ...
@@ -8,7 +8,6 @@
 #
 # Defaults you don't see:
 #   apptainer auto-binds $HOME, /tmp, $PWD, /sys, /dev, /proc.
-#   This is OPPOSITE of docker (which auto-binds nothing).
 #   To opt out: --no-home, --contain (strict isolation), --containall.
 #
 # Why this matters on HPC:
@@ -16,7 +15,7 @@
 #   and scratch dirs. Most HPC sites also pre-configure system binds
 #   like /scratch, /project — see /etc/apptainer/apptainer.conf.
 #
-# sac equivalent — declared in spec.yaml just like for docker:
+# sac equivalent — declared in spec.yaml:
 #
 #   spec:
 #     mounts:
@@ -28,7 +27,7 @@
 #         mode: rw
 #
 # sac's mounts list is runtime-agnostic — the same yaml works whether
-# the agent is dispatched to docker or apptainer.
+# the agent runs under apptainer or docker.
 set -euo pipefail
 
 echo "── apptainer --bind examples (not run) ──"

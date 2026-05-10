@@ -1,3 +1,0 @@
-── apptainer exec (one-off) ──
-$ apptainer exec /home/ywatanabe/proj/scitex-agent-container/containers/scitex-agent-container.sif python -c "print(\"hi from sif\")"
-(dry-run; pass --apply, requires SIF built)

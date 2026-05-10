@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Lesson 05 — Stopping a long-living instance.
+# Lesson 07 — Stopping a long-living instance.
 #
 # Pure apptainer:
 #   apptainer instance stop <name>         # SIGTERM, then SIGKILL after 10s
@@ -7,8 +7,8 @@
 #   apptainer instance stop --signal SIGINT <name>
 #
 # Notes:
-#   - There's no "remove" step like `docker rm`. An instance either
-#     exists (running) or it doesn't. Stop = remove.
+#   - There's no separate "remove" step. An instance either exists
+#     (running) or it doesn't. Stop = remove.
 #   - SIF files on disk are independent — stopping doesn't delete
 #     anything. Remove the SIF with plain `rm` if you want.
 #

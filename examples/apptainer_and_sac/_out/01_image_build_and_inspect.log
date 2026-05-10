@@ -1,0 +1,10 @@
+── existing SIFs (if any) ──
+(no SIFs built yet)
+
+── sac image list ──
+(no SIFs installed under containers/)
+
+── sac image status ──
+  apptainer-base                        None  REBUILD
+  apptainer-scitex                      None  REBUILD
+  apptainer                             None  REBUILD

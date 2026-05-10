@@ -1,5 +1,0 @@
-── existing SIF (if any) ──
-(no SIF built yet)
-
-── sac image build --runtime apptainer --dry-run ──
-[dry-run] would build apptainer image 'scitex-agent-container:sdk-persistent' (target=sdk-persistent)

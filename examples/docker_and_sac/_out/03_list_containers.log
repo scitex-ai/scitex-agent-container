@@ -1,6 +1,0 @@
-── docker ps (raw) ──
-NAMES                  IMAGE            STATUS
-orochi-server-stable   docker-orochi    Up 11 hours
-orochi-redis-stable    redis:7-alpine   Up 11 hours
-
-── sac agent status (registry) ──

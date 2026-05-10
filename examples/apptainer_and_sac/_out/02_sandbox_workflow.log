@@ -1,0 +1,7 @@
+── existing sandbox (if any) ──
+(no sandbox yet)
+
+── sac image verbs (dry-run; pass --apply to execute) ──
+$ sac image build scitex --sandbox
+$ sac image update /home/ywatanabe/proj/scitex-agent-container/containers/scitex-sandbox
+$ sac image freeze /home/ywatanabe/proj/scitex-agent-container/containers/scitex-sandbox scitex-NEW.sif

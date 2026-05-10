@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Lesson 04 — Reading logs and entering a running instance.
+# Lesson 06 — Reading logs and entering a running instance.
 #
 # Pure apptainer:
 #   apptainer instance logs <name>            # combined stdout + stderr

@@ -1,0 +1,33 @@
+── sac image list ──
+(no SIFs installed under containers/)
+
+── sac image status ──
+  apptainer-base                        None  REBUILD
+  apptainer-scitex                      None  REBUILD
+  apptainer                             None  REBUILD
+
+── sac image snapshot (preview, first 30 lines) ──
+{
+  "schema_version": "1.0",
+  "timestamp": "2026-05-10T03:58:54.105570+00:00",
+  "container": {
+    "version": null
+  },
+  "host": {
+    "texlive": {
+      "installed": true,
+      "version": "pdfTeX 3.141592653-2.6-1.40.22 (TeX Live 2022/dev/Debian)"
+    },
+    "imagemagick": {
+      "installed": true,
+      "version": "Version: ImageMagick 6.9.11-60 Q16 x86_64 2021-01-25 https://imagemagick.org"
+    }
+  },
+  "dev_repos": [],
+  "lock_files": {}
+}
+
+── examples (dry-run only) ──
+$ sac image switch 2.28.15
+$ sac image rollback
+$ sac image snapshot -o env.json

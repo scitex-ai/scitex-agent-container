@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Lesson 03 — Listing running instances.
+# Lesson 05 — Listing running instances.
 #
 # Pure apptainer:
-#   apptainer instance list             # like `docker ps`, but per-user
+#   apptainer instance list             # per-user view
 #   apptainer instance list --json
 #
 # Note: instances are scoped to YOUR user account on this node.

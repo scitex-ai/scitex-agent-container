@@ -1,6 +1,0 @@
-── what would docker do ──
-$ docker stop demo-noop
-$ docker rm   demo-noop
-
-── what sac would do ──
-$ sac agent stop demo-noop

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Lesson 07 — Environment variables and the run-as user.
+# Lesson 09 — Environment variables and the run-as user.
 #
 # Pure apptainer:
 #   apptainer exec --env FOO=bar my.sif ...

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Lesson 02 — Running a one-off command vs. starting a long-living instance.
+# Lesson 04 — Running a one-off command vs. starting a long-living instance.
 #
-# Apptainer has TWO ways to run, where docker has one:
+# Apptainer has THREE ways to run:
 #
 #   apptainer exec  my.sif  python -c 'print("hi")'   # one-off, no startup hook
 #   apptainer run   my.sif                            # one-off, runs %runscript
@@ -18,7 +18,7 @@
 #   then dispatches to the right runtime per spec.runtime.
 set -euo pipefail
 APPLY="${1:-}"
-SIF=/home/ywatanabe/proj/scitex-agent-container/containers/scitex-agent-container.sif
+SIF=/home/ywatanabe/proj/scitex-agent-container/containers/scitex-agent-container-scitex.sif
 
 echo "── apptainer exec (one-off) ──"
 echo '$ apptainer exec '"$SIF"' python -c "print(\"hi from sif\")"'
