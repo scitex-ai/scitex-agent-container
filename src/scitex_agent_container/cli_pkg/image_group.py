@@ -78,13 +78,16 @@ def image_group() -> None:
     default=False,
     help="Build as a writable sandbox directory (apptainer only).",
 )
-@click.option(
-    "--force", is_flag=True, default=False, help="Rebuild even if SIF exists."
-)
 @click.option("--dry-run", is_flag=True, default=False, help="Print what would build.")
-@click.option("-y", "--yes", is_flag=True, default=False, help="Skip confirmation.")
+@click.option(
+    "-y",
+    "--yes",
+    is_flag=True,
+    default=False,
+    help="Skip confirmation. Also implies overwrite of any existing SIF.",
+)
 def image_build(
-    layer: str, runtime: str, sandbox: bool, force: bool, dry_run: bool, yes: bool
+    layer: str, runtime: str, sandbox: bool, dry_run: bool, yes: bool
 ) -> None:
     """Build the :LAYER image (default: scitex).
 
@@ -97,8 +100,7 @@ def image_build(
     """
     if dry_run:
         click.echo(
-            f"[dry-run] would build runtime={runtime} layer={layer} "
-            f"sandbox={sandbox} force={force}"
+            f"[dry-run] would build runtime={runtime} layer={layer} sandbox={sandbox}"
         )
         return
 
@@ -119,6 +121,9 @@ def image_build(
         # apptainer-scitex.def has `Bootstrap: localimage` `From: ./<base>.sif`
         # which resolves against cwd — so we cd into the user-state dir
         # where built SIFs live before invoking apptainer.
+        # ``-y`` (yes, already gating sac's own confirmation above) also
+        # implies ``--force`` for apptainer so its built-in "build target
+        # already exists" prompt doesn't double-block on rebuilds.
         if sandbox:
             output = out_dir / f"scitex-agent-container-{layer}-sandbox"
             argv = [
@@ -126,15 +131,13 @@ def image_build(
                 "build",
                 "--sandbox",
                 "--fakeroot",
+                "--force",
                 str(output),
                 str(def_path),
             ]
         else:
             output = out_dir / f"scitex-agent-container-{layer}.sif"
-            argv = ["apptainer", "build"]
-            if force:
-                argv.append("--force")
-            argv += [str(output), str(def_path)]
+            argv = ["apptainer", "build", "--force", str(output), str(def_path)]
         import subprocess
 
         result = subprocess.run(argv, cwd=str(out_dir))
@@ -161,8 +164,6 @@ def image_build(
         str(dockerfile),
         str(_RECIPES_DIR),
     ]
-    if force:
-        argv.insert(2, "--no-cache")
     result = subprocess.run(argv)
     if result.returncode != 0:
         click.echo("error: docker build failed", err=True)

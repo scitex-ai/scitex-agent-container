@@ -19,7 +19,6 @@ kind: Agent
 metadata:
   labels:
     role: contributor-{{ project }}
-    team: orochi
     trigger: pr-driven
     project: {{ project }}
     branch_kind: {{ branch_kind }}
@@ -39,25 +38,16 @@ spec:
     port: {{ a2a_port }}
     handler: claude_cli
     host: 127.0.0.1
-  orochi:
-    enabled: true
-    hosts:
-    - scitex-orochi.com
   claude:
     flags:
     - --dangerously-skip-permissions
-    - --dangerously-load-development-channels
-    - server:scitex-orochi
     - --add-dir
     - /home/ywatanabe/proj/scitex-agent-container/src/scitex_agent_container/_skills/
-    - --add-dir
-    - /home/ywatanabe/.scitex/orochi/shared/skills/
     session: continue-or-new
   skills:
     required:
     - scitex
     - scitex-agent-container
-    - scitex-orochi
   python-venv:
   - ~/.venv
   - ~/.venv-3.11

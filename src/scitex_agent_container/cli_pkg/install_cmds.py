@@ -24,17 +24,17 @@ from ._helpers import console
 
 _SHARED_DIRS = [
     "~/.scitex/agent-container/agents",
-    "~/.scitex/orochi/shared/skills",
-    "~/.scitex/orochi/shared/logs",
-    "~/.scitex/orochi/shared/cron",
+    "~/.scitex/agent-container/skills",
+    "~/.scitex/agent-container/runtime/logs",
+    "~/.scitex/agent-container/runtime/cron",
 ]
 
 _CRON_SCRIPT_NAME = "post-merge-pull.sh"
 _CRON_SCRIPT_DEST = (
-    Path("~/.scitex/orochi/shared/cron").expanduser() / _CRON_SCRIPT_NAME
+    Path("~/.scitex/agent-container/runtime/cron").expanduser() / _CRON_SCRIPT_NAME
 )
 _CRON_LOG_PATTERN = (
-    "~/.scitex/orochi/shared/logs/post-merge-pull.$(hostname -s).cron.log"
+    "~/.scitex/agent-container/runtime/logs/post-merge-pull.$(hostname -s).cron.log"
 )
 
 _CRON_MARKER = "post-merge-pull"
@@ -77,7 +77,7 @@ def boot(dry_run: bool) -> None:  # noqa: C901
       2. pip install -e <this package> into the venv.
       3. Add ~/.venv-3.11/bin to ~/.bashrc and ~/.zshrc (if they exist).
       4. Verify tmux is on PATH (prints instructions if missing).
-      5. Create ~/.scitex/orochi/shared/{agents,skills,logs,cron}/.
+      5. Create ~/.scitex/agent-container/{agents,skills,runtime/{logs,cron}}/.
       6. Copy bundled post-merge-pull.sh to the cron dir (chmod +x).
       7. Print "boot OK" and the installed sac version.
 
