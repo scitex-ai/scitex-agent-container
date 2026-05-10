@@ -9,7 +9,7 @@
 <p align="center"><b>Declarative YAML-based AI agent lifecycle management — apptainer-first, layered runtime images, sandbox/freeze versioning via scitex-container.</b></p>
 
 <p align="center">
-  <a href="https://scitex-agent-container.readthedocs.io/">Full Documentation</a> · <code>pip install scitex-agent-container</code>
+  <a href="https://scitex-agent-container.readthedocs.io/">Full Documentation</a> · <code>uv pip install scitex-agent-container[all]</code>
 </p>
 
 <!-- scitex-badges:start -->
