@@ -98,7 +98,7 @@ def test_docker_template_uses_docker_runtime(tmp_path):
     cfg = load_config(target)
     assert cfg.runtime == "docker"
     assert cfg.image  # spec.image is non-empty (F-CS16 phase 2a)
-    assert "sdk-persistent" in cfg.image
+    assert "scitex" in cfg.image
     assert cfg.dockerfile  # auto-build target declared
 
 

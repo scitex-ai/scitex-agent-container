@@ -129,7 +129,7 @@ def image_build(
     ctx.invoke(
         _docker_build,
         runtime="docker",
-        target="sdk-persistent",  # legacy target name, until docker side is reworked
+        target=layer,
         image=f"scitex-agent-container:{layer}",
         dry_run=False,
         yes=yes,

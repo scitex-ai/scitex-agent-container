@@ -17,7 +17,7 @@ metadata:
 
 spec:
   runtime: docker
-  image: scitex-agent-container:sdk-persistent
+  image: scitex-agent-container:scitex
   dockerfile: ./containers/Dockerfile
   model: sonnet
   workdir: ~/proj/example

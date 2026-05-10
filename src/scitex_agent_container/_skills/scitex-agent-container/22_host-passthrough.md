@@ -73,7 +73,7 @@ Without ``env.HOME``, the cred file lands at the image default
 ```yaml
 spec:
   runtime: docker
-  image: scitex-agent-container:sdk-persistent
+  image: scitex-agent-container:scitex
   mounts:
     - { src: ~/proj/scitex-stats, dst: ~/proj/scitex-stats, mode: rw }
   startup_commands:
@@ -93,7 +93,7 @@ group-writable or the operator runs sac as uid 1000 herself.
 ```yaml
 spec:
   runtime: docker
-  image: scitex-agent-container:sdk-persistent
+  image: scitex-agent-container:scitex
   user: host                      # writes land as operator
   env:
     HOME: ${HOME}                  # tools resolve $HOME to host
@@ -107,7 +107,7 @@ spec:
 
 ## Required image bits
 
-The default ``scitex-agent-container:sdk-persistent`` image installs
+The default ``scitex-agent-container:scitex`` image installs
 ``gh`` (GitHub CLI), ``git``, and ``openssh-client`` so an agent given
 host-shaped access can immediately query CI, push commits over SSH,
 and pull skill content from private repos. If you build a custom

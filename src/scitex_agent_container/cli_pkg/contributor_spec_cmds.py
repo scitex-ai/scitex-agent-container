@@ -27,7 +27,7 @@ metadata:
     capabilities: fork,clone,branch,commit,push,open-pr
 spec:
   runtime: docker
-  image: scitex-agent-container:sdk-persistent
+  image: scitex-agent-container:scitex
   dockerfile: ./containers/Dockerfile
   model: sonnet
   multiplexer: tmux

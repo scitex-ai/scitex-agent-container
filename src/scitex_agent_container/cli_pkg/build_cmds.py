@@ -117,17 +117,18 @@ def validate(name_or_path: str) -> None:
         sys.exit(1)
 
 
-# F-CS17: only the SDK runner remains. cli-tui target was removed
-# along with the rest of the CLI/TUI surface in stage 3b.
+# Layered runtime images — :base is the OS+dev-tools layer, :scitex
+# is the default user-facing image (FROM :base + scitex[all] + sac).
 _TARGET_DOCKERFILES = {
-    "sdk-persistent": "Dockerfile",
+    "base": "Dockerfile.base",
+    "scitex": "Dockerfile.scitex",
 }
 
-# Container engines all map to sdk-persistent.
+# Container engines all default to :scitex.
 _RUNTIME_TO_TARGET = {
-    "docker": "sdk-persistent",
-    "podman": "sdk-persistent",
-    "apptainer": "sdk-persistent",
+    "docker": "scitex",
+    "podman": "scitex",
+    "apptainer": "scitex",
 }
 
 
@@ -141,8 +142,8 @@ _RUNTIME_TO_TARGET = {
 @click.option(
     "--target",
     type=click.Choice(sorted(_TARGET_DOCKERFILES)),
-    default="sdk-persistent",
-    help="Which image to build (only sdk-persistent supported).",
+    default="scitex",
+    help="Which layered image to build (base or scitex).",
 )
 @click.option(
     "--image",
@@ -171,11 +172,12 @@ def build(
     dry_run: bool,
     yes: bool,
 ) -> None:
-    """Build container base image.
+    """Build a layered runtime image.
 
     \b
     Example:
-      $ sac image build                              # sdk-persistent (default)
+      $ sac image build                              # scitex (default)
+      $ sac image build --target base                # OS + tools only
       $ sac image build --runtime apptainer
       $ sac image build --dry-run
     """
