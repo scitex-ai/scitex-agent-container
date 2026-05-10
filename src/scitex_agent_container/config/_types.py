@@ -157,16 +157,6 @@ class TelegramSpec:
 
 
 @dataclass
-class OrochiSpec:
-    enabled: bool = False
-    hosts: list[str] = field(default_factory=list)
-    port: int = 8559
-    token_env: str = "SCITEX_OROCHI_TOKEN"
-    channels: list[str] = field(default_factory=list)
-    heartbeat_interval: int = 60
-
-
-@dataclass
 class RemoteSpec:
     # Chain-based remote: list of SSH config aliases (new format).
     # Populated when spec.remote is a str or list[str].
@@ -401,7 +391,6 @@ class AgentConfig:
     multiplexer: str = "tmux"  # "tmux" (default) or "screen"
     hosts_spec: HostsSpec = field(default_factory=HostsSpec)
     scheduling: SchedulingSpec = field(default_factory=SchedulingSpec)
-    orochi: OrochiSpec = field(default_factory=OrochiSpec)
     config_path: str = ""
     # Declarative bind-mounts: list of {"src": <host>, "dst": <ctr>, "mode": "rw"|"ro"}.
     mounts: list[dict] = field(default_factory=list)

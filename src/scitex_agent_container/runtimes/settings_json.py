@@ -117,7 +117,10 @@ def _mcp_server_names(config: AgentConfig, workdir: str) -> list[str]:
         try:
             data = json.loads(mcp_path.read_text())
             names.update(data.get("mcpServers", {}).keys())
-        except (json.JSONDecodeError, OSError):  # stx-allow: fallback (reason: malformed JSON tolerated)
+        except (
+            json.JSONDecodeError,
+            OSError,
+        ):  # stx-allow: fallback (reason: malformed JSON tolerated)
             pass
 
     return sorted(names)
@@ -155,7 +158,7 @@ _SEED_DEFAULTS: dict = {
 }
 
 _SEED_TEMPLATE = (
-    Path.home() / ".scitex" / "orochi" / "templates" / "claude-code-seed.json"
+    Path.home() / ".scitex" / "agent-container" / "templates" / "claude-code-seed.json"
 )
 
 
@@ -242,7 +245,10 @@ def setup_settings_json(config: AgentConfig, workdir: str) -> None:
     if settings_path.exists():
         try:
             existing = json.loads(settings_path.read_text())
-        except (json.JSONDecodeError, OSError):  # stx-allow: fallback (reason: malformed JSON tolerated)
+        except (
+            json.JSONDecodeError,
+            OSError,
+        ):  # stx-allow: fallback (reason: malformed JSON tolerated)
             pass
     if not isinstance(existing, dict):
         existing = {}
@@ -278,7 +284,10 @@ def cleanup_settings_json(config: AgentConfig, workdir: str) -> None:
 
     try:
         data = json.loads(settings_path.read_text())
-    except (json.JSONDecodeError, OSError):  # stx-allow: fallback (reason: malformed JSON tolerated)
+    except (
+        json.JSONDecodeError,
+        OSError,
+    ):  # stx-allow: fallback (reason: malformed JSON tolerated)
         return
 
     if not isinstance(data, dict):

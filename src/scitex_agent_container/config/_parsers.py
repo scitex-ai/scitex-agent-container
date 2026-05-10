@@ -12,7 +12,6 @@ from ._types import (
     HealthSpec,
     HostsSpec,
     ListenPort,
-    OrochiSpec,
     ReadyPattern,
     RemoteSpec,
     RestartSpec,
@@ -105,19 +104,6 @@ HOOK_KEYS = (
     "on_restart",
     "on_diff",
 )
-
-
-def parse_orochi(spec: dict) -> OrochiSpec:
-    raw = spec.get("orochi", {}) or {}
-    hosts = raw.get("hosts", []) or []
-    return OrochiSpec(
-        enabled=raw.get("enabled", bool(hosts)),
-        hosts=hosts,
-        port=int(raw.get("port", 8559)),
-        token_env=raw.get("token_env", "SCITEX_OROCHI_TOKEN"),
-        channels=raw.get("channels", []) or [],
-        heartbeat_interval=int(raw.get("heartbeat_interval", 60)),
-    )
 
 
 def parse_a2a(spec: dict) -> "A2ASpec":

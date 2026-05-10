@@ -26,11 +26,11 @@ from typing import Any
 _HOSTNAME_TOKENS = ("HOSTNAME", "SCITEX_AGENT_CONTAINER_HOSTNAME")
 _PLACEHOLDER_RE = re.compile(r"\$\{(" + "|".join(_HOSTNAME_TOKENS) + r")\}")
 
-# Declarative host identity map. Check shared/config.yaml first (fleet layout),
-# then fall back to agent-container/config.yaml (sac install root).
-_CONFIG_PATH_FLEET = Path.home() / ".scitex" / "orochi" / "shared" / "config.yaml"
-_CONFIG_PATH_SAC = Path.home() / ".scitex" / "agent-container" / "config.yaml"
-_CONFIG_PATH = _CONFIG_PATH_FLEET if _CONFIG_PATH_FLEET.exists() else _CONFIG_PATH_SAC
+# Declarative host identity map. sac is standalone — reads only from
+# its own config.yaml; downstream orchestrators (orochi, etc.) wire
+# their own state via env vars or the plugin-port pattern (see
+# _skills/general/01_ecosystem_06_local-state-directories.md §9.5).
+_CONFIG_PATH = Path.home() / ".scitex" / "agent-container" / "config.yaml"
 
 
 def _load_hostname_aliases() -> dict[str, str]:
@@ -44,7 +44,9 @@ def _load_hostname_aliases() -> dict[str, str]:
         return {}
     try:
         import yaml  # PyYAML ships with the container; same import sac uses.
-    except ImportError:  # stx-allow: fallback (reason: optional dependency not installed)
+    except (
+        ImportError
+    ):  # stx-allow: fallback (reason: optional dependency not installed)
         return {}
     # stx-allow: fallback (reason: malformed YAML config must not break hostname resolution; empty aliases dict is the safe default)
     try:
