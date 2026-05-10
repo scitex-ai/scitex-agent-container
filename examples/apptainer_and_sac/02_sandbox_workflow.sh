@@ -9,7 +9,7 @@
 #
 #   1. Build a writable sandbox once:
 #        sac image build scitex --sandbox
-#        # → /home/ywatanabe/proj/scitex-agent-container/containers/scitex-sandbox/
+#        # → containers/scitex-sandbox/  (next to apptainer-scitex.def)
 #
 #   2. Refresh packages any time:
 #        sac image update containers/scitex-sandbox/                # default: scitex[all]
@@ -36,7 +36,9 @@
 set -euo pipefail
 APPLY="${1:-}"
 
-CONTAINERS_DIR=/home/ywatanabe/proj/scitex-agent-container/containers
+# Resolve the package's containers/ dir relative to this script's location.
+THIS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONTAINERS_DIR="$(cd "$THIS_DIR/../../containers" && pwd)"
 SANDBOX_DIR="$CONTAINERS_DIR/scitex-sandbox"
 
 echo "── existing sandbox (if any) ──"

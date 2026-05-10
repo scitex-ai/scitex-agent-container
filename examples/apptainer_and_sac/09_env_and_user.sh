@@ -31,9 +31,9 @@ set -euo pipefail
 
 echo "── apptainer --env / --cleanenv examples (not run) ──"
 # shellcheck disable=SC2016
-echo '$ apptainer exec --env FOO=bar scitex-agent-container.sif env | grep FOO'
+echo '$ apptainer exec --env FOO=bar scitex-agent-container-scitex.sif env | grep FOO'
 # shellcheck disable=SC2016
-echo '$ apptainer exec --cleanenv --env API_KEY="$API_KEY" scitex-agent-container.sif ...'
+echo '$ apptainer exec --cleanenv --env API_KEY="$API_KEY" scitex-agent-container-scitex.sif ...'
 
 echo
 echo "── sac equivalent (spec.yaml fragment) ──"

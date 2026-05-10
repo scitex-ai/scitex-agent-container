@@ -32,7 +32,10 @@
 set -euo pipefail
 APPLY="${1:-}"
 
-CONTAINERS_DIR=/home/ywatanabe/proj/scitex-agent-container/containers
+# Resolve the package's containers/ dir relative to this script's location
+# (../../containers/) so the lesson works wherever the repo is checked out.
+THIS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONTAINERS_DIR="$(cd "$THIS_DIR/../../containers" && pwd)"
 
 echo "── existing SIFs (if any) ──"
 ls -la "$CONTAINERS_DIR"/*.sif 2>/dev/null || echo "(no SIFs built yet)"

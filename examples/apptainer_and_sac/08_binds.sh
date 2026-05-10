@@ -32,9 +32,9 @@ set -euo pipefail
 
 echo "── apptainer --bind examples (not run) ──"
 # shellcheck disable=SC2016
-echo '$ apptainer exec --bind "$PWD":/work scitex-agent-container.sif python -V'
+echo '$ apptainer exec --bind "$PWD":/work scitex-agent-container-scitex.sif python -V'
 # shellcheck disable=SC2016
-echo '$ apptainer exec --bind "$HOME":"$HOME":ro scitex-agent-container.sif ...'
+echo '$ apptainer exec --bind "$HOME":"$HOME":ro scitex-agent-container-scitex.sif ...'
 
 echo
 echo "── sac equivalent (spec.yaml fragment, same for both runtimes) ──"
