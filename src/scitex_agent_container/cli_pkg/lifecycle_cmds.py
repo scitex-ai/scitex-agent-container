@@ -22,6 +22,7 @@ from ..config import AgentConfig, load_config
 from ..config._host import resolve_hostname
 from ..config._resolve import resolve_with_prefix
 from ._helpers import agent_name_complete, console
+from .._env import getenv as _sac_env
 
 _SKIP_DIR_NAMES = {"legacy-agents", "shared", "GITIGNORED"}
 
@@ -122,7 +123,7 @@ def _discover_all_agents() -> list[str]:
     search_dirs: list[Path] = list(_project_local_dirs())
     search_dirs.append(primary)
 
-    env_raw = os.environ.get("SCITEX_AGENT_CONTAINER_YAML_DIRS", "")
+    env_raw = _sac_env("YAML_DIRS", "")
     for p in env_raw.split(":"):
         p = p.strip()
         if p:

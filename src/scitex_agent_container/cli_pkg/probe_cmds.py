@@ -12,6 +12,7 @@ import sys
 
 import click
 
+from .._env import getenv as _sac_env
 from .._network.probe import (
     DEFAULT_HUB_HOST,
     DEFAULT_HUB_PORT,
@@ -91,7 +92,7 @@ def probe_network(
     """
     # Fall back to env var for hub-url; require an explicit target.
     if not hub_url:
-        hub_url = os.environ.get("SAC_HUB_URL", "").strip()
+        hub_url = _sac_env("HUB_URL", "").strip()
     if not hub_host:
         # Derive from hub_url if given, else error out.
         if hub_url:

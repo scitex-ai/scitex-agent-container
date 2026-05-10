@@ -22,6 +22,7 @@ import re
 import socket
 from pathlib import Path
 from typing import Any
+from .._env import getenv as _sac_env
 
 _HOSTNAME_TOKENS = ("HOSTNAME", "SCITEX_AGENT_CONTAINER_HOSTNAME")
 _PLACEHOLDER_RE = re.compile(r"\$\{(" + "|".join(_HOSTNAME_TOKENS) + r")\}")
@@ -75,10 +76,10 @@ def resolve_hostname() -> str:
             something on any configured box) but is handled loudly rather
             than returning the empty string.
     """
-    env = os.environ.get("SCITEX_AGENT_CONTAINER_HOSTNAME", "").strip()
+    env = _sac_env("HOSTNAME", "").strip()
     if env:
         return env
-    env = os.environ.get("SCITEX_AGENT_CONTAINER_HOSTNAME", "").strip()
+    env = _sac_env("HOSTNAME", "").strip()
     if env:
         return env
     hn = socket.gethostname()

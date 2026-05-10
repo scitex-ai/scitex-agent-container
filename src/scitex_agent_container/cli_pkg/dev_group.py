@@ -29,6 +29,7 @@ from pathlib import Path
 import click
 
 from ._helpers import HelpRecursiveGroup
+from .._env import getenv as _sac_env
 
 # scitex-git ships in the [dev] extra (see pyproject.toml). The
 # ``sac dev …`` commands need it for the gh-secret/variable wrappers
@@ -131,7 +132,7 @@ def _resolve_local_token() -> tuple[str, str]:
       1. ``SAC_ANTHROPIC_API_KEY`` env var (the canonical handoff name)
       2. OAuth ``accessToken`` in ``~/.claude/.credentials.json``
     """
-    val = os.environ.get("SAC_ANTHROPIC_API_KEY")
+    val = _sac_env("ANTHROPIC_API_KEY")
     if val:
         return val, "env:SAC_ANTHROPIC_API_KEY"
     if _CREDENTIALS_PATH.is_file():

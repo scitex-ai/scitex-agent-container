@@ -36,6 +36,7 @@ from typing import Any
 
 import yaml
 
+from .._env import getenv as _sac_env
 from .._network import hub_client
 
 logger = logging.getLogger(__name__)
@@ -146,7 +147,7 @@ def push_pre_stop_snapshot(config, payload: dict[str, Any] | None = None) -> boo
     via its own pre_stop hook.
     """
     body = payload if payload is not None else {"reason": "pre_stop"}
-    owner = os.environ.get("SCITEX_AGENT_CONTAINER_HOSTNAME", "")
+    owner = _sac_env("HOSTNAME", "")
     return hub_client.push_snapshot(config.name, body, owner_host=owner)
 
 
@@ -158,7 +159,7 @@ _pollers_lock = threading.Lock()
 
 
 def _self_host() -> str:
-    return os.environ.get("SCITEX_AGENT_CONTAINER_HOSTNAME", "")
+    return _sac_env("HOSTNAME", "") or ""
 
 
 def _should_step_aside(self_host: str, owner_payload: dict) -> bool:

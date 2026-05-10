@@ -26,11 +26,12 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from typing import Any
 from urllib import error as urlerror
 from urllib import parse as urlparse
 from urllib import request as urlrequest
+
+from .._env import getenv as _sac_env
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +40,11 @@ _HTTP_TIMEOUT_S = 10.0
 
 def _hub_url() -> str:
     """Return the configured hub URL or empty string if unset."""
-    return os.environ.get("SAC_HUB_URL", "").strip().rstrip("/")
+    return (_sac_env("HUB_URL", "") or "").strip().rstrip("/")
 
 
 def _hub_token() -> str:
-    return os.environ.get("SAC_HUB_TOKEN", "").strip()
+    return (_sac_env("HUB_TOKEN", "") or "").strip()
 
 
 def _request(method: str, path: str, *, body: dict | None = None) -> dict | None:

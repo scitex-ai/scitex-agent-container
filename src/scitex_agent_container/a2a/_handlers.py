@@ -26,8 +26,10 @@ import shlex
 import subprocess
 from typing import Callable
 
-CLAUDE_TIMEOUT_S = float(os.environ.get("SAC_A2A_CLAUDE_TIMEOUT_S", "25"))
-EXEC_TIMEOUT_S = float(os.environ.get("SAC_A2A_EXEC_TIMEOUT_S", "25"))
+from scitex_agent_container._env import getenv as _sac_env
+
+CLAUDE_TIMEOUT_S = float(_sac_env("A2A_CLAUDE_TIMEOUT_S", "25"))
+EXEC_TIMEOUT_S = float(_sac_env("A2A_EXEC_TIMEOUT_S", "25"))
 
 CLAUDE_DEFAULT_SYSTEM = (
     "You are a brief responder. Reply to the user in one or two short "
@@ -46,10 +48,10 @@ def handle_echo(agent_name: str, user_text: str) -> str:
 
 def handle_claude_cli(agent_name: str, user_text: str) -> str:
     """Run ``claude --print`` once with ``user_text``, return stdout."""
-    claude_bin = os.environ.get("SAC_A2A_CLAUDE_BIN", "claude")
-    system = os.environ.get("SAC_A2A_CLAUDE_SYSTEM", CLAUDE_DEFAULT_SYSTEM)
+    claude_bin = _sac_env("A2A_CLAUDE_BIN", "claude")
+    system = _sac_env("A2A_CLAUDE_SYSTEM", CLAUDE_DEFAULT_SYSTEM)
     cmd = [claude_bin, "--print", "--append-system-prompt", system]
-    model = os.environ.get("SAC_A2A_CLAUDE_MODEL")
+    model = _sac_env("A2A_CLAUDE_MODEL")
     if model:
         cmd.extend(["--model", model])
     try:
@@ -136,8 +138,8 @@ def handle_claude_session(agent_name: str, user_text: str) -> str:
         build_sdk_options,
     )
 
-    system = os.environ.get("SAC_A2A_CLAUDE_SYSTEM", CLAUDE_DEFAULT_SYSTEM)
-    model = os.environ.get("SAC_A2A_CLAUDE_MODEL")
+    system = _sac_env("A2A_CLAUDE_SYSTEM", CLAUDE_DEFAULT_SYSTEM)
+    model = _sac_env("A2A_CLAUDE_MODEL")
     try:
         options = build_sdk_options(
             agent_name,
@@ -173,7 +175,7 @@ def handle_claude_session(agent_name: str, user_text: str) -> str:
 
 def handle_exec(agent_name: str, user_text: str) -> str:
     """Run ``$SAC_A2A_EXEC_COMMAND``, piping user_text on stdin."""
-    raw = os.environ.get("SAC_A2A_EXEC_COMMAND", "")
+    raw = _sac_env("A2A_EXEC_COMMAND", "")
     if not raw.strip():
         raise HandlerError(
             "SAC_A2A_EXEC_COMMAND is not set; can't dispatch via 'exec' handler"

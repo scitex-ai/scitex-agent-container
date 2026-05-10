@@ -34,6 +34,7 @@ from pathlib import Path
 
 from ..config import AgentConfig
 from .base import RuntimeBase
+from .._env import getenv as _sac_env
 
 DEFAULT_IMAGE = "scitex-agent-container:scitex"
 RUNNER_MODULE = "scitex_agent_container._runners.claude_session"
@@ -146,7 +147,7 @@ class ContainerRuntime(RuntimeBase):
         # explicitly when host-UID alignment for /work / /state writes
         # really matters (local-dev convenience; CI is ephemeral so it
         # doesn't).
-        user_spec = os.environ.get("SAC_USER")
+        user_spec = _sac_env("USER")
 
         argv: list[str] = [
             self.engine,
@@ -240,7 +241,7 @@ class ContainerRuntime(RuntimeBase):
         # We deliberately do NOT forward a host-side ANTHROPIC_API_KEY
         # under any circumstance — see the module-level comment in
         # ``runtimes/_sdk_common.py``.
-        sac_val = os.environ.get("SAC_ANTHROPIC_API_KEY")
+        sac_val = _sac_env("ANTHROPIC_API_KEY")
 
         # Materialise/mount Pro/Max OAuth credentials.json into the
         # container so the SDK uses the file-based credentials_file
@@ -272,7 +273,7 @@ class ContainerRuntime(RuntimeBase):
         # CI runners are ephemeral so the leak surface dies with the
         # job.
         cred_mount_src: Path | None = None
-        creds_env = os.environ.get("SAC_CLAUDE_CODE_CREDENTIALS_JSON", "").strip()
+        creds_env = _sac_env("CLAUDE_CODE_CREDENTIALS_JSON", "").strip()
         if creds_env:
             import tempfile
 

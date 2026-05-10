@@ -9,6 +9,7 @@ from pathlib import Path
 
 from ..config import AgentConfig
 from .base import RuntimeBase
+from .._env import getenv as _sac_env
 
 
 class DockerRuntime(RuntimeBase):
@@ -67,7 +68,7 @@ class DockerRuntime(RuntimeBase):
         # SAC_ANTHROPIC_API_KEY → ANTHROPIC_API_KEY (or synthesises
         # ~/.claude/.credentials.json for OAuth tokens) — so we forward
         # under the sac-namespaced name and let the runner route by prefix.
-        ci_key = os.environ.get("SAC_ANTHROPIC_API_KEY")
+        ci_key = _sac_env("ANTHROPIC_API_KEY")
         if ci_key:
             args.extend(["-e", f"SAC_ANTHROPIC_API_KEY={ci_key}"])
 

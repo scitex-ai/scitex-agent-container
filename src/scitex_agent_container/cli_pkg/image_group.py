@@ -263,10 +263,20 @@ def image_list(as_json: bool) -> None:
       $ sac image list
       $ sac image list --json
     """
-    from scitex_container.apptainer import list_versions
-
     _ensure_containers_dir()
-    versions = list_versions(_CONTAINERS_DIR)
+    # Match our own naming pattern (scitex-agent-container-*.sif). We
+    # don't delegate to scitex-container's list_versions because that
+    # regex is hard-coded to the legacy ``scitex-v*.sif`` form.
+    sifs = sorted(_CONTAINERS_DIR.glob("scitex-agent-container-*.sif"))
+    versions = [
+        {
+            "name": p.name,
+            "path": str(p),
+            "size_bytes": p.stat().st_size,
+            "mtime": p.stat().st_mtime,
+        }
+        for p in sifs
+    ]
     console.print(f"[dim]containers dir: {_CONTAINERS_DIR}[/dim]")
     if as_json:
         click.echo(json.dumps(versions, indent=2, default=str))
@@ -278,7 +288,8 @@ def image_list(as_json: bool) -> None:
         )
         return
     for v in versions:
-        console.print(f"  {v}")
+        size_mb = v["size_bytes"] / (1024 * 1024)
+        console.print(f"  {v['name']:50s} {size_mb:>8.1f} MB")
 
 
 # ---------------------------------------------------------------------------

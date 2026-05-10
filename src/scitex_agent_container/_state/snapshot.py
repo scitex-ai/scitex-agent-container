@@ -27,6 +27,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
+from .._env import getenv as _sac_env
 
 # Keys from agent_meta.py we surface in snapshots / status --json.
 # `pane_tail` and `pane_tail_block` carry the last N lines of the agent's
@@ -134,7 +135,7 @@ def _sidecars_payload(agent: str) -> dict[str, dict[str, Any]]:
 
 
 def cache_dir() -> Path:
-    override = os.environ.get("SAC_CACHE_DIR")
+    override = _sac_env("CACHE_DIR")
     if override:
         p = Path(override).expanduser()
     else:

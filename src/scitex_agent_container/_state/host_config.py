@@ -43,6 +43,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
+from .._env import getenv as _sac_env
 
 DEFAULT_CONFIG_PATH = Path(
     os.environ.get(
@@ -86,7 +87,7 @@ class Config:
 
     def canonical_host(self) -> str:
         """Resolve the local canonical hostname (see module docstring)."""
-        env_override = os.environ.get("SAC_HOST")
+        env_override = _sac_env("HOST")
         if env_override:
             return env_override
         if self.host.canonical and self.host.canonical != "$SAC_HOST":

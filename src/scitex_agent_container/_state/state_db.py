@@ -38,6 +38,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
+from .._env import getenv as _sac_env
 
 DEFAULT_DB_PATH = Path(
     os.environ.get(
@@ -236,7 +237,7 @@ def _resolve_host(host: str | None) -> str:
     except Exception:  # stx-allow: fallback (reason: see inline comment)
         import socket
 
-        return os.environ.get("SAC_HOST") or socket.gethostname().split(".")[0]
+        return _sac_env("HOST") or socket.gethostname().split(".")[0]
 
 
 def record_instance_start(
@@ -678,7 +679,7 @@ def import_legacy_registry(
     import socket
 
     if host is None:
-        host = os.environ.get("SAC_HOST") or socket.gethostname().split(".")[0]
+        host = _sac_env("HOST") or socket.gethostname().split(".")[0]
 
     imported = 0
     skipped = 0
