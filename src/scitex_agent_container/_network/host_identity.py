@@ -74,7 +74,9 @@ def _load_file_aliases() -> set[str]:
         return set()
     try:
         data = yaml.safe_load(HOST_IDENTITY_PATH.read_text()) or {}
-    except yaml.YAMLError as exc:  # stx-allow: fallback (reason: expected failure — see inline comment)
+    except (
+        yaml.YAMLError
+    ) as exc:  # stx-allow: fallback (reason: expected failure — see inline comment)
         raise RuntimeError(f"Invalid YAML in {HOST_IDENTITY_PATH}: {exc}") from exc
     if not isinstance(data, dict):
         raise RuntimeError(
@@ -90,10 +92,15 @@ def _load_file_aliases() -> set[str]:
 
 def _load_resource_aliases() -> set[str]:
     """Aliases declared in scitex-resource's machine config."""
-    try:
-        from scitex_resource import get_machine_config, get_machine_name
-    except ImportError:  # stx-allow: fallback (reason: optional dependency not installed)
+    from scitex_dev import try_import_optional
+
+    scitex_resource = try_import_optional(
+        "scitex_resource", pkg="scitex-agent-container"
+    )
+    if scitex_resource is None:
         return set()
+    get_machine_config = scitex_resource.get_machine_config
+    get_machine_name = scitex_resource.get_machine_name
     out: set[str] = set()
     name = (get_machine_name() or "").strip()
     if name:

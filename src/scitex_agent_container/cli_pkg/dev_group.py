@@ -21,32 +21,31 @@ Design constraints:
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
 from pathlib import Path
 
 import click
 
-from ._helpers import HelpRecursiveGroup
-from .._env import getenv as _sac_env
-
 # scitex-git ships in the [dev] extra (see pyproject.toml). The
 # ``sac dev …`` commands need it for the gh-secret/variable wrappers
 # and sha256 sidecar; raise a clean message if a runtime install
 # without [dev] tries to invoke them.
-try:
-    from scitex_git import (
-        format_age,
-        get_variable,
-        list_secrets,
-        set_secret_with_sha_sidecar,
-        sha256_hex,
-    )
+from scitex_dev import try_import_optional
 
-    _SCITEX_GIT_OK = True
-except ImportError:
-    _SCITEX_GIT_OK = False
+from .._env import getenv as _sac_env
+from ._helpers import HelpRecursiveGroup
+
+scitex_git = try_import_optional(
+    "scitex_git", extra="dev", pkg="scitex-agent-container"
+)
+_SCITEX_GIT_OK = scitex_git is not None
+if _SCITEX_GIT_OK:
+    format_age = scitex_git.format_age
+    get_variable = scitex_git.get_variable
+    list_secrets = scitex_git.list_secrets
+    set_secret_with_sha_sidecar = scitex_git.set_secret_with_sha_sidecar
+    sha256_hex = scitex_git.sha256_hex
 
 
 def _require_scitex_git() -> None:
