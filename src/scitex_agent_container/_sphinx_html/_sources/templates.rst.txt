@@ -25,38 +25,21 @@ Pattern Templates
    :widths: 18 22 60
 
    * - Template
-     - Runtime
+     - Pattern
      - When to use
-   * - ``local.yaml``
-     - claude-code (no container)
-     - Default. Agent shares the operator's environment — skills, MCP,
-       venv, ``claude`` CLI on PATH.
-   * - ``docker.yaml``
-     - claude-code in Docker
-     - Local isolation. Container is the boundary;
-       ``mount_host_claude`` is opt-in so host identity does not leak.
    * - ``apptainer.yaml``
-     - claude-code in Apptainer/Singularity
-     - HPC compute nodes or locked-down hosts where Docker is
-       unavailable. Pair with ``ssh-slurm`` for SIFs on shared FS.
+     - claude-session inside Apptainer SIF
+     - **Default**. HPC + reproducibility. F-CS17 made sac
+       container-only; this is the canonical pattern.
    * - ``ssh.yaml``
-     - claude-code via SSH
-     - Cross-machine fleet member. ``sac`` copies YAML +
-       ``src_CLAUDE.md`` / ``src_mcp.json`` to the remote and drives
-       lifecycle over SSH. Set ``no_preflight: true`` for HPC login
-       nodes that need ``module load`` before ``python3``.
-   * - ``ssh-slurm.yaml``
-     - SLURM
-     - Long-running compute on a shared cluster. Wraps the agent in
-       ``sbatch``, runs in tmux on the compute node, holds the
-       allocation, and auto-resubmits ~1h before walltime via a
-       ``SIGUSR1`` trap. Use ``slurm.hooks.pre_agent`` for ``module
-       load`` etc.
-   * - ``mcp.yaml``
-     - claude-code with MCP wiring
-     - Agent that needs MCP tool access. Demonstrates the
-       ``mcp_servers`` block with stdio transport and ``${metadata.name}``
-       / ``${ENV_VAR}`` interpolation.
+     - remote agent via SSH
+     - Cross-machine fleet member. ``sac --on <peer>`` (F-CS12)
+       dispatches across hosts; the per-agent
+       ``dot_claude/`` directory is rsync'd to the remote at start.
+
+MCP tool wiring is no longer a separate template — drop a
+``.mcp.json`` into the agent's ``dot_claude/`` directory and it'll be
+merged into ``<workdir>/.mcp.json`` at start (F-DC1).
 
 Instantiating a Template
 ------------------------
@@ -67,15 +50,12 @@ instantiate:
 
 .. code-block:: bash
 
-    mkdir -p ~/.scitex/orochi/agents/my-agent
-    cp examples/agent-templates/local.yaml ~/.scitex/orochi/agents/my-agent/my-agent.yaml
-    # Edit fields you want to customize, then:
-    scitex-agent-container start my-agent
-
-For SSH and SSH+SLURM patterns, also drop sibling ``src_CLAUDE.md`` and
-``src_mcp.json`` files into the agent directory; ``sac`` copies them to
-``/tmp/`` on the remote and materializes them into the workspace at
-agent start.
+    mkdir -p ~/.scitex/agent-container/agents/my-agent
+    cp examples/agent-templates/apptainer.yaml \\
+       ~/.scitex/agent-container/agents/my-agent/spec.yaml
+    # Optionally add a dot_claude/ sibling with CLAUDE.md / .mcp.json /
+    # .env / state.md / commands/ / skills/ / hooks/ (all optional).
+    sac agent start my-agent
 
 Examples
 --------

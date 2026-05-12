@@ -344,65 +344,41 @@ user’s first <code class="docutils literal notranslate"><span class="pre">sac<
 </colgroup>
 <thead>
 <tr class="row-odd"><th class="head"><p>Template</p></th>
-<th class="head"><p>Runtime</p></th>
+<th class="head"><p>Pattern</p></th>
 <th class="head"><p>When to use</p></th>
 </tr>
 </thead>
 <tbody>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">local.yaml</span></code></p></td>
-<td><p>claude-code (no container)</p></td>
-<td><p>Default. Agent shares the operator’s environment — skills, MCP,
-venv, <code class="docutils literal notranslate"><span class="pre">claude</span></code> CLI on PATH.</p></td>
-</tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">docker.yaml</span></code></p></td>
-<td><p>claude-code in Docker</p></td>
-<td><p>Local isolation. Container is the boundary;
-<code class="docutils literal notranslate"><span class="pre">mount_host_claude</span></code> is opt-in so host identity does not leak.</p></td>
-</tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">apptainer.yaml</span></code></p></td>
-<td><p>claude-code in Apptainer/Singularity</p></td>
-<td><p>HPC compute nodes or locked-down hosts where Docker is
-unavailable. Pair with <code class="docutils literal notranslate"><span class="pre">ssh-slurm</span></code> for SIFs on shared FS.</p></td>
+<td><p>claude-session inside Apptainer SIF</p></td>
+<td><p><strong>Default</strong>. HPC + reproducibility. F-CS17 made sac
+container-only; this is the canonical pattern.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">ssh.yaml</span></code></p></td>
-<td><p>claude-code via SSH</p></td>
-<td><p>Cross-machine fleet member. <code class="docutils literal notranslate"><span class="pre">sac</span></code> copies YAML +
-<code class="docutils literal notranslate"><span class="pre">src_CLAUDE.md</span></code> / <code class="docutils literal notranslate"><span class="pre">src_mcp.json</span></code> to the remote and drives
-lifecycle over SSH. Set <code class="docutils literal notranslate"><span class="pre">no_preflight:</span> <span class="pre">true</span></code> for HPC login
-nodes that need <code class="docutils literal notranslate"><span class="pre">module</span> <span class="pre">load</span></code> before <code class="docutils literal notranslate"><span class="pre">python3</span></code>.</p></td>
-</tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">ssh-slurm.yaml</span></code></p></td>
-<td><p>SLURM</p></td>
-<td><p>Long-running compute on a shared cluster. Wraps the agent in
-<code class="docutils literal notranslate"><span class="pre">sbatch</span></code>, runs in tmux on the compute node, holds the
-allocation, and auto-resubmits ~1h before walltime via a
-<code class="docutils literal notranslate"><span class="pre">SIGUSR1</span></code> trap. Use <code class="docutils literal notranslate"><span class="pre">slurm.hooks.pre_agent</span></code> for <code class="docutils literal notranslate"><span class="pre">module</span>
-<span class="pre">load</span></code> etc.</p></td>
-</tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">mcp.yaml</span></code></p></td>
-<td><p>claude-code with MCP wiring</p></td>
-<td><p>Agent that needs MCP tool access. Demonstrates the
-<code class="docutils literal notranslate"><span class="pre">mcp_servers</span></code> block with stdio transport and <code class="docutils literal notranslate"><span class="pre">${metadata.name}</span></code>
-/ <code class="docutils literal notranslate"><span class="pre">${ENV_VAR}</span></code> interpolation.</p></td>
+<td><p>remote agent via SSH</p></td>
+<td><p>Cross-machine fleet member. <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">--on</span> <span class="pre">&lt;peer&gt;</span></code> (F-CS12)
+dispatches across hosts; the per-agent
+<code class="docutils literal notranslate"><span class="pre">dot_claude/</span></code> directory is rsync’d to the remote at start.</p></td>
 </tr>
 </tbody>
 </table>
+<p>MCP tool wiring is no longer a separate template — drop a
+<code class="docutils literal notranslate"><span class="pre">.mcp.json</span></code> into the agent’s <code class="docutils literal notranslate"><span class="pre">dot_claude/</span></code> directory and it’ll be
+merged into <code class="docutils literal notranslate"><span class="pre">&lt;workdir&gt;/.mcp.json</span></code> at start (F-DC1).</p>
 </section>
 <section id="instantiating-a-template">
 <h2>Instantiating a Template<a class="headerlink" href="#instantiating-a-template" title="Link to this heading"></a></h2>
 <p>The v3 loader uses <code class="docutils literal notranslate"><span class="pre">dir-as-SSoT</span></code> — the agent name is derived from the
 parent directory of the YAML, not from a <code class="docutils literal notranslate"><span class="pre">metadata.name</span></code> field. To
 instantiate:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>mkdir<span class="w"> </span>-p<span class="w"> </span>~/.scitex/orochi/agents/my-agent
-cp<span class="w"> </span>examples/agent-templates/local.yaml<span class="w"> </span>~/.scitex/orochi/agents/my-agent/my-agent.yaml
-<span class="c1"># Edit fields you want to customize, then:</span>
-scitex-agent-container<span class="w"> </span>start<span class="w"> </span>my-agent
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>mkdir<span class="w"> </span>-p<span class="w"> </span>~/.scitex/agent-container/agents/my-agent
+cp<span class="w"> </span>examples/agent-templates/apptainer.yaml<span class="w"> </span><span class="se">\\</span>
+<span class="w">   </span>~/.scitex/agent-container/agents/my-agent/spec.yaml
+<span class="c1"># Optionally add a dot_claude/ sibling with CLAUDE.md / .mcp.json /</span>
+<span class="c1"># .env / state.md / commands/ / skills/ / hooks/ (all optional).</span>
+sac<span class="w"> </span>agent<span class="w"> </span>start<span class="w"> </span>my-agent
 </pre></div>
 </div>
-<p>For SSH and SSH+SLURM patterns, also drop sibling <code class="docutils literal notranslate"><span class="pre">src_CLAUDE.md</span></code> and
-<code class="docutils literal notranslate"><span class="pre">src_mcp.json</span></code> files into the agent directory; <code class="docutils literal notranslate"><span class="pre">sac</span></code> copies them to
-<code class="docutils literal notranslate"><span class="pre">/tmp/</span></code> on the remote and materializes them into the workspace at
-agent start.</p>
 </section>
 <section id="examples">
 <h2>Examples<a class="headerlink" href="#examples" title="Link to this heading"></a></h2>
