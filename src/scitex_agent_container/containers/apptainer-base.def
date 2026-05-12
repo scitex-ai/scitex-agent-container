@@ -61,7 +61,8 @@ From: ubuntu:24.04
         @typescript-eslint/parser \
         @typescript-eslint/eslint-plugin \
         jsonlint \
-        @mermaid-js/mermaid-cli
+        @mermaid-js/mermaid-cli \
+        @anthropic-ai/claude-code
     npx puppeteer browsers install chrome-headless-shell || true
 
     rm -rf /var/lib/apt/lists/*
@@ -101,8 +102,14 @@ From: ubuntu:24.04
     # in scitex-agent-container, which needs claude-agent-sdk. Install
     # just these two into a dedicated venv so /usr/bin/python3 stays
     # untouched and per-agent overlays own their own scientific stack.
+    #
+    # uv landed at /root/.local/bin/uv (the uv installer ignores
+    # UV_INSTALL_DIR for the curl|sh path and uses XDG_BIN_HOME ->
+    # ~/.local/bin under root). PATH below is conservative — extend
+    # it explicitly rather than rely on the build shell.
     python3 -m venv /opt/venv-sac
-    /usr/local/bin/uv pip install --python /opt/venv-sac/bin/python \
+    export PATH=/root/.local/bin:/usr/local/bin:$PATH
+    uv pip install --python /opt/venv-sac/bin/python \
         claude-agent-sdk \
         "git+https://github.com/ywatanabe1989/scitex-agent-container.git@feat/yaml-mounts-and-home-passthrough"
 
