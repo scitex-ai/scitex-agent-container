@@ -1,5 +1,5 @@
 <!-- ---
-!-- Timestamp: 2026-05-13 06:10:51
+!-- Timestamp: 2026-05-13 06:33:45
 !-- Author: ywatanabe
 !-- File: /home/ywatanabe/proj/scitex-agent-container/README.md
 !-- --- -->
@@ -35,11 +35,42 @@
 
 | # | Problem                                                     | Solution                                                                                                                                      |
 |---|-------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------|
-| 1 | Scripting an agentic workflow is hard.                      | `scitex-agent-container` (`sac`) declares the agent as a **single YAML file** (`spec.yaml`).                                                  |
+| 1 | Scripting an agentic workflow is hard.                      | `scitex-agent-container` (`sac`) declares the agent as a **single YAML file** ([`spec.yaml`](## YAML Spec Reference (v3))).                                                  |
 | 2 | Subagents don't scale across hosts, projects, and contexts. | `sac` lets agents spawn **full agents** on local AND **remote hosts**.                                                                        |
 | 3 | Controlling agent permissions is difficult.                 | `sac` runs every agent **inside Apptainer** — full mount/env/security options exposed in `spec.yaml`.                                         |
 | 4 | Supporting the A2A protocol by hand is time-consuming.      | `sac` needs just one YAML field (`spec.a2a.port`).                                                                                            |
 | 5 | Version-controlling Apptainer recipes is laborious.         | `sac` enables layered Apptainer images with a sandbox/update/freeze workflow via [`scitex-container`](https://github.com/ywatanabe1989/scitex-container). |
+
+## Installation
+
+```bash
+uv pip install "scitex-agent-container[all]"
+```
+
+## Quickstart
+
+```bash
+# 1. Build the layered images (one-time)
+sac image build base -y     # ~15-25 min — OS + dev tools
+sac image build scitex -y   # ~10-20 min with uv — FROM :base + scitex[all] (numpy / pandas /
+                            #              scipy / torch / etc.). Walk away.
+
+# 2. Define an agent
+mkdir -p ~/.scitex/agent-container/agents/hello/
+cat > ~/.scitex/agent-container/agents/hello/spec.yaml <<'YAML'
+apiVersion: scitex-agent-container/v3
+kind: Agent
+spec:
+  runtime: apptainer
+  workdir: /tmp/hello
+  model: claude-haiku-4-5
+  startup_commands:
+    - command: "Reply with the string 'hello-ok' and nothing else."
+YAML
+
+# 3. Run
+sac agent start hello --foreground   # streams stdout, exits when done
+```
 
 ## How it works
 
@@ -77,16 +108,40 @@
   sac peer  post-turn  AGENT TEXT  ────────────────────────┘
 ```
 
-## User state layout (`~/.scitex/agent-container/`)
 
-Two halves under one root — **tracked** at the top (commit-worthy
-input / credentials) and **runtime** under `runtime/` (regenerable
-per-host output, gitignored). Project-scope
-`<proj-root>/.scitex/agent-container/` overrides user-scope when
-present.
+<details>
+<summary><strong>YAML Spec Reference (v3)</strong></summary>
+
+| Section | Key Fields | Description |
+|---|---|---|
+| `apiVersion` | `scitex-agent-container/v3` | Config format version |
+| `metadata` | `name` (auto-derived from dir), `labels` | Agent identity |
+| `spec.runtime` | `apptainer` (default) / `docker` / `claude-session` (host-local) | Container backend |
+| `spec.image` | path or tag | Default: `~/.scitex/agent-container/containers/sac-scitex.sif` (apptainer); `scitex-agent-container:scitex` for docker |
+| `spec.workdir` | path | Workspace mounted at `/work` inside the container |
+| `spec.model` | `sonnet`, `opus[1m]`, `haiku-4-5`, ... | Claude model |
+| `spec.user` | `""` / `"host"` / `"<uid>:<gid>"` | Run-as user; `"host"` matches the operator |
+| `spec.mounts[]` | `src`, `dst`, `mode` (ro/rw) | Bind mounts (`${VAR}` expanded at start) |
+| `spec.env` | key-value pairs | Container env (`${VAR}` expanded) |
+| `spec.a2a` | `port` | Bind `POST /v1/turn` on this localhost port |
+| `spec.remote` | `host`, `user`, `timeout` | SSH-as-transport for cross-machine deploy |
+| `spec.startup_commands[]` | `command` | One-shot turns to send to the SDK before going idle |
+| `spec.health` | `enabled`, `interval`, `method: sdk-alive` | Health probe config |
+| `spec.skills` | `required[]`, `available[]` | Skill auto-injection into CLAUDE.md |
+| `spec.dot_claude` | path | Default: auto-discover `./dot_claude` next to `spec.yaml`. Absolute or relative; the directory is materialized into the workspace at start with `${metadata.name}` and `${ENV_VAR}` interpolation. |
+
+`<dot_claude>/CLAUDE.md`, `state.md`, `.mcp.json`, `.env` are materialized at the workdir root; `<dot_claude>/commands/`, `skills/`, `hooks/`, etc. mirror into `<workdir>/.claude/`.
+
+Example YAML file is seen at [`./examples/agent-templates`](./examples/agent-templates)
+
+</details>
+
+## Configuration Directory
+
+Configuration directories are separated into user-scope (`~/.scitex/agent-container/`) and project-scope (`<proj-root>/.scitex/agent-container/`; prioritized when present). They include `config.yaml`, `agents`, `accounts`, `tokens`, `conatiners`, and `runtime` as described below.
 
 ```
-~/.scitex/agent-container/
+~/.scitex/agent-container/ or <project>/.scitex/agent-container/
 ├── config.yaml                ← host identity, host.aliases, peers (F-CS12)
 ├── agents/<name>/             ← per-agent declarations (you write these)
 │   ├── spec.yaml              ← v3 Agent definition (the SSoT)
@@ -108,14 +163,14 @@ present.
 │   └── listen-<host>.token    ← `sac listen` bearer tokens (0600)
 ├── containers/                ← built Apptainer images (see "Apptainer images" below)
 │   ├── sac-base.sif    -> sac-base/sac-base.sif        (top-level symlink)
-│   ├── sac-scitex.sif  -> sac-scitex/sac-scitex.sif
+│   ├── sac-scitex.sif  -> sac-scitex/sac-scitex.sif    (top-level symlink)
 │   ├── sac-{base,scitex}/                              (dir-per-image)
-│   │   ├── sac-{base,scitex}.sif                       (the image)
+│   │   ├── sac-{base,scitex}.sif                       (the image; gitignored)
 │   │   ├── sac-{base,scitex}.def                       (recipe snapshot)
-│   │   ├── sac-{base,scitex}.build-YYYY-MMDD-HHMMSS.log (full build log)
+│   │   ├── sac-{base,scitex}.build-YYYY-MMDD-HHMMSS.log (full build log; gitignored)
 │   │   └── .def-hash                                   (skip-rebuild cache)
 │   └── {dpkg,node,requirements}-lock.txt               (auto-freeze lock files)
-└── runtime/                   ← regenerable per-host state; never in git
+└── runtime/                   ← regenerable per-host state; gitignored
     ├── <agent-name>/           per-agent runner state
     │   ├── pid                  (runner PID)
     │   ├── heartbeat.json       ({ts, pid, state}; refreshed every tick)
@@ -128,48 +183,10 @@ present.
         └── <agent>.{latest,prev,diff}.json
 ```
 
-`agents/` is *input* (you write spec.yaml + dot_claude/);
-`runtime/` is *output* (sac writes pid / heartbeat / session.jsonl /
-hook events / snapshot cache). `sac db clean` sweeps stale `runtime/`
-entries; `sac agent stop --force` clears a wedged agent without
-touching its spec.
-
-## Installation
-
-```bash
-uv pip install "scitex-agent-container[all]"
-```
-
-## Quickstart
-
-```bash
-# 1. Build the layered images (one-time)
-sac image build base -y     # ~15-25 min — OS + dev tools
-sac image build scitex -y   # ~10-20 min with uv — FROM :base + scitex[all] (numpy / pandas /
-                            #              scipy / torch / etc.). Walk away.
-
-# 2. Define an agent
-mkdir -p ~/.scitex/agent-container/agents/hello/
-cat > ~/.scitex/agent-container/agents/hello/spec.yaml <<'YAML'
-apiVersion: scitex-agent-container/v3
-kind: Agent
-spec:
-  runtime: apptainer
-  workdir: /tmp/hello
-  model: claude-haiku-4-5
-  startup_commands:
-    - command: "Reply with the string 'hello-ok' and nothing else."
-YAML
-
-# 3. Run
-sac agent start hello --foreground   # streams stdout, exits when done
-```
-
-
 <details>
-<summary><strong>Configuration</strong></summary>
+<summary><strong>Configuration Cascade</strong></summary>
 
-Every sac knob can be set in four places. Highest wins:
+Configurations can be overriden by CLI flags and environmental variables with the following precedence:
 
 1. **CLI flag** — `sac agent start hello --workdir /tmp/x`
 2. **Env var** — `SAC_<X>` or the long `SCITEX_AGENT_CONTAINER_<X>` form
@@ -180,13 +197,10 @@ Every sac knob can be set in four places. Highest wins:
 4. **User config** — `~/.scitex/agent-container/config.yaml`
    (relocatable via `$SCITEX_DIR`).
 
-Per-agent state lives under the same `<scope>/.scitex/agent-container/`
-tree — see [User state layout](#user-state-layout) below.
-
 </details>
 
 <details>
-<summary><strong>Builtin Apptainer images</strong></summary>
+<summary><strong>Builtin Apptainer Images (`base` and `scitex`)</strong></summary>
 
 Two `.def` recipes, layered:
 
@@ -264,31 +278,6 @@ sac db   query / show / clean / migrate   # state.db inspection
 sac registry reconcile                    # singleton placement reconcile across fleet
 sac --help-recursive                      # full subcommand tree
 ```
-
-</details>
-
-<details>
-<summary><strong>YAML Spec Reference (v3)</strong></summary>
-
-| Section | Key Fields | Description |
-|---|---|---|
-| `apiVersion` | `scitex-agent-container/v3` | Config format version |
-| `metadata` | `name` (auto-derived from dir), `labels` | Agent identity |
-| `spec.runtime` | `apptainer` (default) / `docker` / `claude-session` (host-local) | Container backend |
-| `spec.image` | path or tag | Default: `~/.scitex/agent-container/containers/sac-scitex.sif` (apptainer); `scitex-agent-container:scitex` for docker |
-| `spec.workdir` | path | Workspace mounted at `/work` inside the container |
-| `spec.model` | `sonnet`, `opus[1m]`, `haiku-4-5`, ... | Claude model |
-| `spec.user` | `""` / `"host"` / `"<uid>:<gid>"` | Run-as user; `"host"` matches the operator |
-| `spec.mounts[]` | `src`, `dst`, `mode` (ro/rw) | Bind mounts (`${VAR}` expanded at start) |
-| `spec.env` | key-value pairs | Container env (`${VAR}` expanded) |
-| `spec.a2a` | `port` | Bind `POST /v1/turn` on this localhost port |
-| `spec.remote` | `host`, `user`, `timeout` | SSH-as-transport for cross-machine deploy |
-| `spec.startup_commands[]` | `command` | One-shot turns to send to the SDK before going idle |
-| `spec.health` | `enabled`, `interval`, `method: sdk-alive` | Health probe config |
-| `spec.skills` | `required[]`, `available[]` | Skill auto-injection into CLAUDE.md |
-| `spec.dot_claude` | path | Default: auto-discover `./dot_claude` next to `spec.yaml`. Absolute or relative; the directory is materialized into the workspace at start with `${metadata.name}` and `${ENV_VAR}` interpolation. |
-
-`<dot_claude>/CLAUDE.md`, `state.md`, `.mcp.json`, `.env` are materialized at the workdir root; `<dot_claude>/commands/`, `skills/`, `hooks/`, etc. mirror into `<workdir>/.claude/`.
 
 </details>
 
