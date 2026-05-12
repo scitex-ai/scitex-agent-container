@@ -1,5 +1,5 @@
 <!-- ---
-!-- Timestamp: 2026-05-13 00:27:13
+!-- Timestamp: 2026-05-13 00:50:11
 !-- Author: ywatanabe
 !-- File: /home/ywatanabe/proj/scitex-agent-container/README.md
 !-- --- -->
@@ -41,9 +41,9 @@
 | 4 | Supporting the A2A protocol by hand is time-consuming.      | `sac` needs just one YAML field (`spec.a2a.port`).                                                                                            |
 | 5 | Version-controlling Apptainer recipes is laborious.         | `sac` enables layered SIFs with a sandbox/update/freeze workflow via [`scitex-container`](https://github.com/ywatanabe1989/scitex-container). |
 
-## Architecture
+## How it works
 
-`scitex-agent-container` (`sac`) is a thin user-facing wrapper that materializes a v3 `spec.yaml` into a long-lived, externally addressable Claude agent:
+`scitex-agent-container` (`sac`) materializes a `spec.yaml` into a long-lived, externally addressable Claude agent:
 
 ```
   spec.yaml   ─┐
@@ -76,57 +76,6 @@
   sac channel send TO MSG ─────────────────────────────────┤
   sac peer  post-turn  AGENT TEXT  ────────────────────────┘
 ```
-
-<!-- Per-agent surface (`spec.a2a.port` → `/v1/turn`) is the **hot path**: turns enqueue into the live SDK session with no re-boot cost. The host-wide `sac listen` plane is the **control surface** — bearer-token authenticated, loopback-only by default — that orchestrators reach from outside the host (cloudflared / autossh / etc.) and that routes turns either into the live runner or, if no runner is up, into a short-lived `claude --resume <sid>` against the persisted `session_id`. -->
-
-## Installation
-
-```bash
-uv pip install "scitex-agent-container[all]"
-```
-
-### Configuration
-
-Every sac knob can be set in four places. Highest wins:
-
-1. **CLI flag** — `sac agent start hello --workdir /tmp/x`
-2. **Env var** — `SAC_<X>` or the long `SCITEX_AGENT_CONTAINER_<X>` form
-   (setting both with different values raises `SacEnvConflict`). Copy
-   [`.env.example`](.env.example) to `.env` and uncomment what you need.
-3. **Project config** — `<proj>/.scitex/agent-container/config.yaml`,
-   when you're inside a git repo that ships one.
-4. **User config** — `~/.scitex/agent-container/config.yaml`
-   (relocatable via `$SCITEX_DIR`).
-
-Per-agent state lives under the same `<scope>/.scitex/agent-container/`
-tree — see [User state layout](#user-state-layout) below.
-
-## Layered runtime images
-
-Two `.def` recipes, layered:
-
-| Tag | What's inside | When |
-|---|---|---|
-| `:base` | Ubuntu 24.04 + dev tools (git, gh, rust CLIs, mermaid, prettier, eslint, jsonlint, uv, pipx, tree, node 20) | Foundation |
-| `:scitex` | `FROM :base` + ffmpeg + portaudio + `scitex[all]` + claude-agent-sdk + sac itself | **Default** when `spec.image` is unset |
-
-```
-<site-packages>/scitex_agent_container/containers/    ← recipes (ship in pip wheel)
-  apptainer-{base,scitex}.def                          ← canonical SSoT
-  Dockerfile.{base,scitex}                             ← docker mirrors
-
-~/.scitex/agent-container/containers/                 ← built artifacts (user state)
-  sac-base.sif    -> sac-base/sac-base.sif             (top-level symlink)
-  sac-scitex.sif  -> sac-scitex/sac-scitex.sif
-  sac-{base,scitex}/                                   (dir-per-image)
-    sac-{base,scitex}.sif                              (the image)
-    sac-{base,scitex}.def                              (recipe snapshot)
-    sac-{base,scitex}.build-YYYY-MMDD-HHMMSS.log       (full build log)
-    .def-hash                                          (skip-rebuild cache)
-  {dpkg,node,requirements}-lock.txt                    (auto-freeze lock files)
-```
-
-Recipes ship in the pip wheel — no need to clone the repo to run `sac image build`. Built artifacts live under `~/.scitex/agent-container/containers/`, never in git. The dir-per-image layout (and the build itself) is delegated to [`scitex-container`](https://github.com/ywatanabe1989/scitex-container) — one canonical builder, not two.
 
 ## User state layout (`~/.scitex/agent-container/`)
 
@@ -177,6 +126,58 @@ hook events / snapshot cache). `sac db clean` sweeps stale `runtime/`
 entries; `sac agent stop --force` clears a wedged agent without
 touching its spec.
 
+## Installation
+
+```bash
+uv pip install "scitex-agent-container[all]"
+```
+
+### Configuration
+
+Every sac knob can be set in four places. Highest wins:
+
+1. **CLI flag** — `sac agent start hello --workdir /tmp/x`
+2. **Env var** — `SAC_<X>` or the long `SCITEX_AGENT_CONTAINER_<X>` form
+   (setting both with different values raises `SacEnvConflict`). Copy
+   [`.env.example`](.env.example) to `.env` and uncomment what you need.
+3. **Project config** — `<proj>/.scitex/agent-container/config.yaml`,
+   when you're inside a git repo that ships one.
+4. **User config** — `~/.scitex/agent-container/config.yaml`
+   (relocatable via `$SCITEX_DIR`).
+
+Per-agent state lives under the same `<scope>/.scitex/agent-container/`
+tree — see [User state layout](#user-state-layout) below.
+
+<details>
+<summary><strong>Builtin Apptainer images</strong></summary>
+
+Two `.def` recipes, layered:
+
+| Tag       | What's inside                                                                                               | When                                   |
+|-----------|-------------------------------------------------------------------------------------------------------------|----------------------------------------|
+| `:base`   | Ubuntu 24.04 + dev tools (git, gh, rust CLIs, mermaid, prettier, eslint, jsonlint, uv, pipx, tree, node 20) | Foundation                             |
+| `:scitex` | `FROM :base` + ffmpeg + portaudio + `scitex[all]` + claude-agent-sdk + sac itself                           | **Default** when `spec.image` is unset |
+
+```
+<site-packages>/scitex_agent_container/containers/    ← recipes (ship in pip wheel)
+  apptainer-{base,scitex}.def                          ← canonical SSoT
+  Dockerfile.{base,scitex}                             ← docker mirrors
+
+~/.scitex/agent-container/containers/                 ← built artifacts (user state)
+  sac-base.sif    -> sac-base/sac-base.sif             (top-level symlink)
+  sac-scitex.sif  -> sac-scitex/sac-scitex.sif
+  sac-{base,scitex}/                                   (dir-per-image)
+    sac-{base,scitex}.sif                              (the image)
+    sac-{base,scitex}.def                              (recipe snapshot)
+    sac-{base,scitex}.build-YYYY-MMDD-HHMMSS.log       (full build log)
+    .def-hash                                          (skip-rebuild cache)
+  {dpkg,node,requirements}-lock.txt                    (auto-freeze lock files)
+```
+
+Recipes ship in the pip wheel — no need to clone the repo to run `sac image build`. Built artifacts live under `~/.scitex/agent-container/containers/`, never in git.
+
+</details>
+
 ## Quickstart
 
 ```bash
@@ -202,7 +203,8 @@ YAML
 sac agent start hello --foreground   # streams stdout, exits when done
 ```
 
-## "scitex updates often, do we rebuild?"
+<details>
+<summary><strong>"scitex updates often, do we rebuild?"</strong></summary>
 
 No — sandbox once, refresh when you want, freeze when stable:
 
@@ -216,6 +218,8 @@ sac image snapshot -o env.json           # full reproducibility capsule
 ```
 
 The build / sandbox / version / rollback verbs all delegate to [`scitex-container`](https://github.com/ywatanabe1989/scitex-container).
+
+</details> 
 
 ## 1 Interfaces
 
@@ -280,7 +284,8 @@ flowchart LR
 
 End-to-end: `sac agent start` materializes the workspace (`dot_claude/` files + mounts + env), launches the runtime image, the SDK runner hosts a long-living session, and downstream tooling reads `session.jsonl` for state or POSTs to `/v1/turn` to drive the agent.
 
-## YAML Spec Reference (v3)
+<details>
+<summary><strong>YAML Spec Reference (v3)</strong></summary>
 
 | Section | Key Fields | Description |
 |---|---|---|
@@ -302,7 +307,11 @@ End-to-end: `sac agent start` materializes the workspace (`dot_claude/` files + 
 
 `<dot_claude>/CLAUDE.md`, `state.md`, `.mcp.json`, `.env` are materialized at the workdir root; `<dot_claude>/commands/`, `skills/`, `hooks/`, etc. mirror into `<workdir>/.claude/`.
 
-## Templates
+</details>
+
+## Examples
+
+### Agent Templates
 
 `examples/agent-templates/` ships minimal pattern templates — copy and adapt:
 
@@ -315,7 +324,7 @@ MCP tool wiring is no longer a separate template — drop a `.mcp.json`
 into the agent's [`dot_claude/`](#user-state-layout-scitexagent-container)
 directory and it'll be merged into `<workdir>/.mcp.json` at start.
 
-## Examples
+### Tutorial
 
 `examples/apptainer_and_sac/` walks through the runtime in 9 lessons (build, sandbox/update/freeze, versioning, run/stop, logs/exec, mounts, env+user). Run them read-only with `bash 00_run_all.sh`, or `--apply` to execute the mutating ones.
 
