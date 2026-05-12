@@ -63,35 +63,11 @@ From: ubuntu:24.04
         jsonlint \
         @mermaid-js/mermaid-cli
 
-    # ---- 3a. Claude Code CLI via official install.sh -----------------
-    # The npm @anthropic-ai/claude-code package hangs on --print inside
-    # apptainer (silent freeze, no debug output). Anthropic's own
-    # Dockerfile.test installs via curl install.sh, which lands the
-    # binary at /root/.local/bin/claude. Mirror that — and then move
-    # it to /usr/local/bin so it stays on PATH for non-root container
-    # users (apptainer runs as the host user, not root, so /root/* is
-    # unreachable at runtime).
-    #
-    # Pin to `stable` rather than letting the installer pick `latest`.
-    # `latest` pulled 2.1.139 which has a regression that hangs on the
-    # `GET /v1/mcp_servers` startup call inside apptainer (proven by
-    # bind-mounting the host's npm-installed 2.1.112: same SIF, same
-    # network, same creds — only the binary differs, and 2.1.112 works
-    # while 2.1.139 hangs). 2026-05-12.
-    curl -fsSL https://claude.ai/install.sh | bash -s -- stable
-    if [ -x /root/.local/bin/claude ]; then
-        cp -a /root/.local/bin/claude /usr/local/bin/claude
-        # The launcher resolves the real binary under
-        # /root/.claude/downloads/<version>/linux-x64/claude; copy that
-        # too so the symlink target is reachable from any UID.
-        if [ -d /root/.claude/downloads ]; then
-            mkdir -p /opt/claude/downloads
-            cp -a /root/.claude/downloads/. /opt/claude/downloads/
-            # Re-point the launcher at the world-readable copy.
-            sed -i "s|/root/.claude|/opt/claude|g" /usr/local/bin/claude || true
-        fi
-    fi
-    /usr/local/bin/claude --version || echo "WARN: claude --version failed in build"
+    # ---- 3a. Claude Code CLI — bundled with claude-agent-sdk -------
+    # No separate install needed: pip install claude-agent-sdk bundles
+    # the matching CLI binary under _bundled/claude (see
+    # claude-agent-sdk-python README). We symlink it onto PATH in
+    # section 6b after the venv is built.
     npx puppeteer browsers install chrome-headless-shell || true
 
     rm -rf /var/lib/apt/lists/*
@@ -132,6 +108,15 @@ From: ubuntu:24.04
     # just these two into a dedicated venv so /usr/bin/python3 stays
     # untouched and per-agent overlays own their own scientific stack.
     #
+    # claude-agent-sdk PINNED to 0.1.72 — newer 0.1.81 bundles claude
+    # CLI 2.1.139, which has a regression that hangs on the startup
+    # `GET /v1/mcp_servers` call inside apptainer (proven against the
+    # host's working 0.1.72/2.1.112 pair, same SIF, same creds,
+    # same network — only the bundled binary differs). The SDK
+    # bundles its CLI under `_bundled/claude`, so pinning the Python
+    # version also pins the binary — no separate `claude` install
+    # needed (see Anthropic's claude-agent-sdk-python README). 2026-05-12.
+    #
     # uv landed at /root/.local/bin/uv (the uv installer ignores
     # UV_INSTALL_DIR for the curl|sh path and uses XDG_BIN_HOME ->
     # ~/.local/bin under root). PATH below is conservative — extend
@@ -139,8 +124,17 @@ From: ubuntu:24.04
     python3 -m venv /opt/venv-sac
     export PATH=/root/.local/bin:/usr/local/bin:$PATH
     uv pip install --python /opt/venv-sac/bin/python \
-        claude-agent-sdk \
+        "claude-agent-sdk==0.1.72" \
         "git+https://github.com/ywatanabe1989/scitex-agent-container.git@feat/yaml-mounts-and-home-passthrough"
+
+    # Surface the SDK's bundled claude CLI on PATH so humans can
+    # `apptainer shell` and run `claude` interactively, and so that
+    # subprocess_cli's bundled-fallback path resolves the same binary
+    # the SDK uses programmatically.
+    if [ -x /opt/venv-sac/lib/python3.12/site-packages/claude_agent_sdk/_bundled/claude ]; then
+        ln -sf /opt/venv-sac/lib/python3.12/site-packages/claude_agent_sdk/_bundled/claude \
+            /usr/local/bin/claude
+    fi
 
     # ---- 7. RTK (deferred — repo not yet public) -----------------------
 
