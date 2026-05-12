@@ -37,7 +37,7 @@ VALID_CONTRIBUTOR_SPEC: dict = {
         }
     },
     "spec": {
-        "runtime": "docker",
+        "runtime": "apptainer",
         "host": ["spartan", "spartan-bm149"],
         "a2a": {
             "port": 19132,
@@ -239,14 +239,20 @@ class TestSpecRuntime:
         errors = _errors(raw)
         assert any("runtime" in e for e in errors)
 
-    @pytest.mark.parametrize("runtime", ["docker", "podman", "apptainer"])
-    def test_valid_runtimes(self, runtime):
-        """F-CS17 stage 2: only container engines are valid runtime
-        values (sac is a container wrapper). claude-code / slurm /
-        slurm-tenant moved to ``legacy_runtime_redirect_message``."""
-        raw = _set(VALID_CONTRIBUTOR_SPEC, ["spec", "runtime"], runtime)
+    def test_valid_runtime_apptainer(self):
+        """Apptainer is the only accepted runtime since the 2026-05-13
+        docker/podman ripout."""
+        raw = _set(VALID_CONTRIBUTOR_SPEC, ["spec", "runtime"], "apptainer")
         errors = _errors(raw)
         assert not any("runtime" in e for e in errors)
+
+    @pytest.mark.parametrize("runtime", ["docker", "podman"])
+    def test_docker_and_podman_rejected(self, runtime):
+        """docker / podman were valid runtimes pre-2026-05-13; the
+        ripout makes them errors."""
+        raw = _set(VALID_CONTRIBUTOR_SPEC, ["spec", "runtime"], runtime)
+        errors = _errors(raw)
+        assert any("runtime" in e for e in errors)
 
 
 # ---------------------------------------------------------------------------

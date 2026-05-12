@@ -33,16 +33,9 @@ from scitex_agent_container.runtimes.claude_session import (
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("engine", ["docker", "podman"])
-def test_container_runtime_for_returns_instance(tmp_path, engine):
-    cfg = AgentConfig(name="x", runtime=engine, workdir=str(tmp_path))
-    rt = _container_runtime_for(cfg)
-    assert rt is not None
-    assert rt.engine == engine
-
-
 def test_container_runtime_for_returns_apptainer_instance(tmp_path):
-    """F-CS18 — `runtime: apptainer` returns ApptainerContainerRuntime."""
+    """Sac is apptainer-only since 2026-05-13 — the only runtime
+    `_container_runtime_for` knows how to dispatch."""
     cfg = AgentConfig(name="x", runtime="apptainer", workdir=str(tmp_path))
     rt = _container_runtime_for(cfg)
     assert rt is not None
@@ -50,7 +43,15 @@ def test_container_runtime_for_returns_apptainer_instance(tmp_path):
     assert type(rt).__name__ == "ApptainerContainerRuntime"
 
 
-@pytest.mark.parametrize("runtime", ["", "claude-session", "claude-code", "slurm"])
+def test_container_runtime_for_treats_empty_as_apptainer(tmp_path):
+    """Unset `spec.runtime` defaults to apptainer at dispatch."""
+    cfg = AgentConfig(name="x", runtime="", workdir=str(tmp_path))
+    rt = _container_runtime_for(cfg)
+    assert rt is not None
+    assert type(rt).__name__ == "ApptainerContainerRuntime"
+
+
+@pytest.mark.parametrize("runtime", ["claude-session", "claude-code", "slurm"])
 def test_container_runtime_for_returns_none_for_unknown(tmp_path, runtime):
     """Legacy runtimes are rejected by the validator anyway; the helper
     returns None for runtimes it doesn't know how to dispatch."""

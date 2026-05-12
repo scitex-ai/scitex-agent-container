@@ -8,16 +8,15 @@ runpy issues a ``RuntimeWarning`` because the module is already in
 ``sys.modules``. Deferring the adapter import breaks that cycle —
 the runner subprocess never imports the adapter, so the warning
 never fires.
+
+Docker / Podman adapters were ripped out 2026-05-13: sac is
+apptainer-only for simplicity.
 """
 
 from .base import RuntimeBase
-from .docker import DockerRuntime
-from .podman import PodmanRuntime
 
 __all__ = [
     "ClaudeSessionRuntime",
-    "DockerRuntime",
-    "PodmanRuntime",
     "RuntimeBase",
 ]
 
@@ -27,4 +26,5 @@ def __getattr__(name: str):
         from .claude_session import ClaudeSessionRuntime
 
         return ClaudeSessionRuntime
+
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

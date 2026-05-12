@@ -42,7 +42,7 @@ def _write_yaml(data: dict, name: str = "test-agent") -> Path:
 _BASE = {
     "apiVersion": "scitex-agent-container/v3",
     "kind": "Agent",
-    "spec": {"runtime": "docker"},
+    "spec": {"runtime": "apptainer"},
 }
 
 
@@ -57,7 +57,7 @@ class TestUnknownFieldRejection:
 
         data = {
             **_BASE,
-            "spec": {"runtime": "docker", "cardinality_enforced_at_hub": True},
+            "spec": {"runtime": "apptainer", "cardinality_enforced_at_hub": True},
         }
         path = _write_yaml(data)
         with pytest.raises(ValueError, match="cardinality_enforced_at_hub"):
@@ -77,7 +77,7 @@ class TestUnknownFieldRejection:
         data = {
             **_BASE,
             "spec": {
-                "runtime": "docker",
+                "runtime": "apptainer",
                 "model": "sonnet",
                 "a2a": {"port": 9999},
                 "extensions": {"my_custom": "value"},
@@ -85,7 +85,7 @@ class TestUnknownFieldRejection:
         }
         path = _write_yaml(data)
         cfg = load_config(path)
-        assert cfg.runtime == "docker"
+        assert cfg.runtime == "apptainer"
 
     def test_validate_raw_returns_errors_for_unknown_spec(self):
         from scitex_agent_container.config._validation import validate_raw
@@ -93,7 +93,7 @@ class TestUnknownFieldRejection:
         raw = {
             "apiVersion": "scitex-agent-container/v3",
             "kind": "Agent",
-            "spec": {"runtime": "docker", "bad_field": 1, "another_bad": 2},
+            "spec": {"runtime": "apptainer", "bad_field": 1, "another_bad": 2},
         }
         errors = validate_raw(raw, "test.yaml")
         messages = "\n".join(errors)
@@ -112,7 +112,7 @@ class TestLabelsDescription:
             "apiVersion": "scitex-agent-container/v3",
             "kind": "Agent",
             "metadata": {"labels": labels},
-            "spec": {"runtime": "docker"},
+            "spec": {"runtime": "apptainer"},
         }
 
     def test_explicit_description_used(self):

@@ -133,7 +133,7 @@ def _mkagent(root: Path, name: str) -> None:
     (d / "spec.yaml").write_text(
         "apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
-        "spec: { runtime: docker }\n"
+        "spec: { runtime: apptainer }\n"
     )
 
 
@@ -186,7 +186,7 @@ def test_path_argument_bypasses_smart_logic(agent_root: Path, tmp_path: Path):
     yaml_path.write_text(
         "apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
-        "spec: { runtime: docker }\n"
+        "spec: { runtime: apptainer }\n"
     )
     assert resolve_with_prefix(str(yaml_path)) == str(yaml_path)
 

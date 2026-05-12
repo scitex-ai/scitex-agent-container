@@ -40,7 +40,7 @@ _CLAUDE_YAML = dedent(
       labels:
         role: head
     spec:
-      runtime: docker
+      runtime: apptainer
       model: sonnet
     """
 )

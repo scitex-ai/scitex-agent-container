@@ -18,7 +18,7 @@ _BASE = {
     "apiVersion": "scitex-agent-container/v3",
     "kind": "Agent",
     "spec": {
-        "runtime": "docker",
+        "runtime": "apptainer",
     },
 }
 
@@ -137,7 +137,7 @@ def _autonomous_spec(autonomous):
     return {
         "apiVersion": "scitex-agent-container/v3",
         "kind": "Agent",
-        "spec": {"runtime": "docker", "autonomous": autonomous},
+        "spec": {"runtime": "apptainer", "autonomous": autonomous},
     }
 
 
@@ -160,7 +160,7 @@ def test_autonomous_block_optional():
     raw = {
         "apiVersion": "scitex-agent-container/v3",
         "kind": "Agent",
-        "spec": {"runtime": "docker"},
+        "spec": {"runtime": "apptainer"},
     }
     errors = validate_raw(raw, path="<test>")
     assert not [e for e in errors if "spec.autonomous" in e]
@@ -237,18 +237,16 @@ def _spec_with(extra: dict):
     return {
         "apiVersion": "scitex-agent-container/v3",
         "kind": "Agent",
-        "spec": {"runtime": "docker", **extra},
+        "spec": {"runtime": "apptainer", **extra},
     }
 
 
-@pytest.mark.parametrize("engine", ["docker", "podman", "apptainer"])
-def test_validate_raw_accepts_new_engine_runtime(engine):
-    """The new ``runtime`` field carries the container engine name.
-    docker / podman / apptainer must all pass validation."""
+def test_validate_raw_accepts_apptainer_runtime():
+    """`apptainer` is the only accepted runtime since 2026-05-13."""
     raw = {
         "apiVersion": "scitex-agent-container/v3",
         "kind": "Agent",
-        "spec": {"runtime": engine},
+        "spec": {"runtime": "apptainer"},
     }
     errors = validate_raw(raw, path="<test>")
     assert not [e for e in errors if "spec.runtime" in e]
@@ -257,6 +255,8 @@ def test_validate_raw_accepts_new_engine_runtime(engine):
 @pytest.mark.parametrize(
     "legacy",
     [
+        "docker",
+        "podman",
         "claude-code",
         "claude-cli-tui",
         "claude-session",
@@ -266,8 +266,9 @@ def test_validate_raw_accepts_new_engine_runtime(engine):
     ],
 )
 def test_validate_raw_rejects_legacy_runtime_values(legacy):
-    """Sac is SDK-only; every legacy runtime value is rejected as
-    "not one of (docker, podman, apptainer)" at parse time."""
+    """Every non-apptainer runtime is rejected at parse time
+    (docker / podman dropped 2026-05-13; legacy SDK strings even
+    earlier)."""
     raw = {
         "apiVersion": "scitex-agent-container/v3",
         "kind": "Agent",
@@ -291,64 +292,58 @@ def test_validate_raw_rejects_non_string_image():
     assert any("spec.image" in e and "string" in e for e in errors)
 
 
-def test_validate_raw_accepts_top_level_dockerfile_field():
-    raw = _spec_with({"dockerfile": "scitex_agent_container/containers/Dockerfile.scitex"})
-    errors = validate_raw(raw, path="<test>")
-    assert not [e for e in errors if "spec.dockerfile" in e]
-
-
 def test_validate_raw_rejects_non_string_dockerfile():
+    """``spec.dockerfile`` is no longer interpreted (docker ripout
+    2026-05-13), but a non-string value still surfaces a type error
+    so an operator can't put a list there by accident."""
     raw = _spec_with({"dockerfile": ["./a", "./b"]})
     errors = validate_raw(raw, path="<test>")
     assert any("spec.dockerfile" in e and "string" in e for e in errors)
 
 
-def test_image_and_dockerfile_default_to_empty_in_agentconfig(tmp_path):
-    """A yaml without ``image`` / ``dockerfile`` must still parse;
-    AgentConfig fields stay empty so phase 2d's auto-build path can
-    apply its defaults at dispatch time."""
+def test_image_defaults_to_empty_in_agentconfig(tmp_path):
+    """A yaml without ``image`` must still parse; AgentConfig.image
+    stays empty so the apptainer dispatcher applies its default
+    (the sac-scitex SIF) at dispatch."""
     import yaml as _yaml
 
     from scitex_agent_container.config import load_config
 
-    yaml_dir = tmp_path / "fcs16-default"
+    yaml_dir = tmp_path / "image-default"
     yaml_dir.mkdir()
-    yaml_path = yaml_dir / "fcs16-default.yaml"
+    yaml_path = yaml_dir / "image-default.yaml"
     yaml_path.write_text(
         _yaml.safe_dump(
             {
                 "apiVersion": "scitex-agent-container/v3",
                 "kind": "Agent",
-                "spec": {"runtime": "docker"},
+                "spec": {"runtime": "apptainer"},
             }
         )
     )
     cfg = load_config(str(yaml_path))
     assert cfg.image == ""
-    assert cfg.dockerfile == ""
 
 
-def test_image_and_dockerfile_round_trip_through_loader(tmp_path):
+def test_image_round_trip_through_loader(tmp_path):
     import yaml as _yaml
 
     from scitex_agent_container.config import load_config
 
-    yaml_dir = tmp_path / "fcs16-set"
+    yaml_dir = tmp_path / "image-set"
     yaml_dir.mkdir()
-    yaml_path = yaml_dir / "fcs16-set.yaml"
+    yaml_path = yaml_dir / "image-set.yaml"
     yaml_path.write_text(
         _yaml.safe_dump(
             {
                 "apiVersion": "scitex-agent-container/v3",
                 "kind": "Agent",
                 "spec": {
-                    "runtime": "docker",
-                    "image": "clew-paper:capsule-01",
-                    "dockerfile": "./containers/clew-paper.Dockerfile",
+                    "runtime": "apptainer",
+                    "image": "~/.scitex/agent-container/containers/sac-scitex.sif",
                 },
             }
         )
     )
     cfg = load_config(str(yaml_path))
-    assert cfg.image == "clew-paper:capsule-01"
-    assert cfg.dockerfile == "./containers/clew-paper.Dockerfile"
+    assert cfg.image == "~/.scitex/agent-container/containers/sac-scitex.sif"

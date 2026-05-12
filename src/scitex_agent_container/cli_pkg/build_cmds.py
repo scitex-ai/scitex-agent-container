@@ -5,7 +5,6 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sys
-from pathlib import Path
 
 import click
 
@@ -49,12 +48,14 @@ def check(name_or_path: str) -> None:
         console.print(f"[red]Error loading config: {exc}[/red]")
         sys.exit(1)
 
-    console.print(f"[blue]Checking {config.name} ({config.runtime})...[/blue]")
+    console.print(
+        f"[blue]Checking {config.name} ({config.runtime or 'apptainer'})...[/blue]"
+    )
 
     all_ok = True
 
-    # Container backend binary (docker / podman / apptainer)
-    backend = config.runtime or "docker"
+    # Container backend binary — apptainer-only since the 2026-05-13 ripout.
+    backend = config.runtime or "apptainer"
     backend_bin = shutil.which(backend)
     if backend_bin:
         console.print(f"  {backend + ':':30s} [green]OK ({backend_bin})[/green]")
@@ -117,120 +118,8 @@ def validate(name_or_path: str) -> None:
         sys.exit(1)
 
 
-# Layered runtime images — :base is the OS+dev-tools layer, :scitex
-# is the default user-facing image (FROM :base + scitex[all] + sac).
-_TARGET_DOCKERFILES = {
-    "base": "Dockerfile.base",
-    "scitex": "Dockerfile.scitex",
-}
-
-# Container engines all default to :scitex.
-_RUNTIME_TO_TARGET = {
-    "docker": "scitex",
-    "podman": "scitex",
-    "apptainer": "scitex",
-}
-
-
-@click.command(name="build-image")
-@click.option(
-    "--runtime",
-    type=click.Choice(["docker", "apptainer"]),
-    default="docker",
-    help="Container engine to build for.",
-)
-@click.option(
-    "--target",
-    type=click.Choice(sorted(_TARGET_DOCKERFILES)),
-    default="scitex",
-    help="Which layered image to build (base or scitex).",
-)
-@click.option(
-    "--image",
-    default=None,
-    help="Image name/tag (default: scitex-agent-container:<target>).",
-)
-@click.option(
-    "--dry-run",
-    "dry_run",
-    is_flag=True,
-    default=False,
-    help="Print what would be built without invoking the container runtime.",
-)
-@click.option(
-    "-y",
-    "--yes",
-    "yes",
-    is_flag=True,
-    default=False,
-    help="Skip confirmation prompt.",
-)
-def build(
-    runtime: str,
-    target: str,
-    image: str | None,
-    dry_run: bool,
-    yes: bool,
-) -> None:
-    """Build a layered runtime image.
-
-    \b
-    Example:
-      $ sac image build                              # scitex (default)
-      $ sac image build --target base                # OS + tools only
-      $ sac image build --runtime apptainer
-      $ sac image build --dry-run
-    """
-    if image is None:
-        image = f"scitex-agent-container:{target}"
-
-    if dry_run:
-        click.echo(f"[dry-run] would build {runtime} image '{image}' (target={target})")
-        return
-    if not yes:
-        click.echo(
-            f"Refusing to build {runtime} image '{image}' (target={target}) without --yes/-y.",
-            err=True,
-        )
-        raise SystemExit(2)
-    # Recipes ship inside the wheel: <package>/containers/Dockerfile.{base,scitex}
-    containers_dir = Path(__file__).resolve().parent.parent / "containers"
-    dockerfile = containers_dir / _TARGET_DOCKERFILES[target]
-
-    if runtime == "docker":
-        from ..runtimes.docker import DockerRuntime
-
-        console.print(f"[blue]Building Docker image: {image} from {dockerfile}[/blue]")
-        success = DockerRuntime.build_image(
-            image=image,
-            context=str(containers_dir),
-            dockerfile=str(dockerfile),
-        )
-        if success:
-            console.print(f"[green]Docker image built: {image}[/green]")
-        else:
-            console.print("[red]Docker build failed[/red]")
-            sys.exit(1)
-    elif runtime == "apptainer":
-        import subprocess as _sp
-
-        def_file = str(containers_dir / "apptainer.def")
-        sif_path = str(containers_dir / "scitex-agent-container.sif")
-        console.print(f"[blue]Building Apptainer image: {sif_path}[/blue]")
-        result = _sp.run(["apptainer", "build", sif_path, def_file], text=True)
-        if result.returncode == 0:
-            console.print(f"[green]Apptainer image built: {sif_path}[/green]")
-        else:
-            console.print("[red]Apptainer build failed[/red]")
-            sys.exit(1)
-
-
-def target_for_runtime(runtime: str | None) -> str | None:
-    """Return the ``--target`` name for a yaml ``spec.runtime`` value.
-
-    Used by F-CS16 phase 2's container dispatch to pick the right
-    image when the yaml didn't specify ``spec.container.image`` itself.
-    Returns ``None`` for runtimes that don't map (slurm / slurm-tenant /
-    unknown).
-    """
-    return _RUNTIME_TO_TARGET.get(runtime or "")
+# NOTE: the legacy `sac build-image` command lived here and supported
+# Docker + Apptainer side-by-side. Both build paths have been removed
+# in the 2026-05-13 docker/podman ripout — the canonical builder is
+# now `sac image build` (in `image_group.py`), which delegates to
+# `scitex-container` and emits Apptainer SIFs only.

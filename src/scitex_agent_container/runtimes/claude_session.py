@@ -90,22 +90,16 @@ def _warn_if_heavy_workdir_claude(config: AgentConfig) -> None:
     )
 
 
-# F-CS16 phase 2c / F-CS18 — yaml ``runtime`` -> container-style runtime.
-_CONTAINER_ENGINES: tuple[str, ...] = ("docker", "podman", "apptainer")
+# 2026-05-13 docker/podman ripout: apptainer is the only accepted
+# runtime. Empty / unset ``spec.runtime`` is treated as ``apptainer``.
+_CONTAINER_ENGINES: tuple[str, ...] = ("apptainer",)
 
 
 def _container_runtime_for(config: AgentConfig):
-    """Return a container-style runtime for ``config.runtime``, or None.
-
-    docker / podman -> :class:`ContainerRuntime` (docker-shaped argv).
-    apptainer       -> :class:`ApptainerContainerRuntime` (HPC-friendly
-                       ``apptainer exec`` argv, no docker daemon).
+    """Return the apptainer container runtime, or None for an
+    unrecognised ``spec.runtime``.
     """
-    runtime = getattr(config, "runtime", "")
-    if runtime in ("docker", "podman"):
-        from .container import ContainerRuntime
-
-        return ContainerRuntime(engine=runtime)
+    runtime = getattr(config, "runtime", "") or "apptainer"
     if runtime == "apptainer":
         from ._apptainer_runtime import ApptainerContainerRuntime
 
@@ -115,9 +109,8 @@ def _container_runtime_for(config: AgentConfig):
 
 class ClaudeSessionRuntime(RuntimeBase):
     """Daemon-mode runtime backed by ``claude-agent-sdk``, dispatched
-    via a container engine (F-CS16). The host side never spawns a
-    Python subprocess — every ``start`` goes through ``docker run``
-    or equivalent.
+    via apptainer. The host side never spawns a Python subprocess —
+    every ``start`` goes through ``apptainer exec`` (or equivalent).
     """
 
     def _setup_workspace(self, config: AgentConfig) -> None:

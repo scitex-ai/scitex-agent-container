@@ -247,7 +247,7 @@ def _write_v2_config(tmp_path: Path, extra: str = "") -> Path:
         "apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
         "spec:\n"
-        "  runtime: docker\n"
+        "  runtime: apptainer\n"
         "  model: sonnet\n" + extra
     )
     return p

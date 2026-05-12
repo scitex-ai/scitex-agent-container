@@ -60,7 +60,6 @@ _KNOWN_SPEC_KEYS = frozenset(
     {
         "runtime",
         "image",
-        "dockerfile",
         "model",
         "workdir",
         "python-venv",
@@ -148,16 +147,15 @@ def validate_raw(raw: dict, path: str) -> list[str]:
                 f"known keys: {sorted(_KNOWN_SPEC_KEYS)}."
             )
 
-        # spec.runtime — sac is SDK-only; the only accepted values are
-        # the container backends. Each wraps the same long-running
-        # Claude Agent SDK runner with a different permission model.
+        # spec.runtime — sac is apptainer-only since the docker/podman
+        # ripout (2026-05-13). Empty/unset is accepted and defaults to
+        # apptainer at dispatch.
         runtime = spec.get("runtime")
-        valid_runtimes = ("docker", "podman", "apptainer")
-        if runtime and runtime not in valid_runtimes:
+        if runtime and runtime != "apptainer":
             errors.append(
-                f"spec.runtime must be one of {valid_runtimes}, got '{runtime}'. "
-                "Sac is SDK-only since the CLI/TUI cleanup; pick a container "
-                f"backend and image (default {_SDK_IMAGE})."
+                f"spec.runtime must be 'apptainer' (got '{runtime}'). "
+                "Sac is apptainer-only since 2026-05-13; docker / podman "
+                "support was removed for simplicity."
             )
 
         # spec.image (F-CS16 phase 2a) — top-level container image tag.
@@ -167,9 +165,9 @@ def validate_raw(raw: dict, path: str) -> list[str]:
         if image is not None and not isinstance(image, str):
             errors.append(f"spec.image must be a string, got {type(image).__name__}")
 
-        # spec.dockerfile (F-CS16 phase 2a) — host-relative path to a
-        # Dockerfile sac auto-builds when ``image`` is missing locally
-        # (phase 2d wires the build). Type check only.
+        # spec.dockerfile dropped 2026-05-13 with the docker ripout.
+        # Keep type check around for one minor version so explicit
+        # use surfaces a clear error rather than silently disappearing.
         dockerfile = spec.get("dockerfile")
         if dockerfile is not None and not isinstance(dockerfile, str):
             errors.append(

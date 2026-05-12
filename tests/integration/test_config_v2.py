@@ -40,7 +40,7 @@ MINIMAL_V1_CONFIG = {
     "apiVersion": "scitex-agent-container/v3",
     "kind": "Agent",
     "metadata": {"name": "test-agent"},
-    "spec": {"runtime": "docker"},
+    "spec": {"runtime": "apptainer"},
 }
 
 MINIMAL_V2_CONFIG = {
@@ -51,7 +51,7 @@ MINIMAL_V2_CONFIG = {
         "labels": {"role": "head", "team": "orochi", "machine": "test-box"},
     },
     "spec": {
-        "runtime": "docker",
+        "runtime": "apptainer",
         "model": "opus[1m]",
     },
 }
@@ -64,7 +64,7 @@ V2_WITH_MCP = {
         "labels": {"role": "head"},
     },
     "spec": {
-        "runtime": "docker",
+        "runtime": "apptainer",
         "model": "sonnet",
         "mcp_servers": {
             "scitex-orochi": {
@@ -477,7 +477,7 @@ class TestPythonVenvResolution:
             "kind": "Agent",
             "metadata": {"name": "regression"},
             "spec": {
-                "runtime": "docker",
+                "runtime": "apptainer",
                 "python-venv": [str(tmp_path / "missing"), str(v)],
             },
         }

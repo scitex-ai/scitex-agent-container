@@ -26,10 +26,9 @@ metadata:
     capabilities: fork,clone,branch,commit,push,open-pr
 
 spec:
-  # Sac is SDK-only; one container backend wraps the long-running runner.
-  runtime: docker
-  image: scitex-agent-container:scitex
-  dockerfile: scitex_agent_container/containers/Dockerfile.scitex
+  # Sac is apptainer-only since 2026-05-13.
+  runtime: apptainer
+  image: ~/.scitex/agent-container/containers/sac-scitex.sif
   model: "sonnet"
 
   # Singleton — one contributor per branch.

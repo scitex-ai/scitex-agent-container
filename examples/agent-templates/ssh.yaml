@@ -1,14 +1,15 @@
-# ssh — agent that runs in a docker container on a remote host.
+# ssh — agent that runs in an Apptainer SIF on a remote host.
 #
 # Pattern: cross-machine fleet member. F-CS12 introduced
 # ``sac --on <peer> agent start <name>`` which ssh's into <peer>
 # and runs sac there. The remote sac sees this yaml as a normal
-# local invocation and does ``docker run`` on its own filesystem.
-# No sac-side ssh dispatch — that lives entirely in F-CS12's host
-# group.
+# local invocation and does ``apptainer exec`` on its own
+# filesystem. No sac-side ssh dispatch — that lives entirely in
+# F-CS12's host group.
 #
 # Requirements on the remote host:
-#   * docker (or podman) installed
+#   * apptainer installed (docker/podman support was removed
+#     2026-05-13 for simplicity — sac is apptainer-only)
 #   * sac itself installed (so ``sac --on host`` actually finds a
 #     remote sac to dispatch to)
 #   * an entry under ``peers:`` in ~/.scitex/agent-container/config.yaml
@@ -22,9 +23,8 @@ metadata:
     pattern: ssh
 
 spec:
-  runtime: docker
-  image: scitex-agent-container:scitex
-  dockerfile: scitex_agent_container/containers/Dockerfile.scitex
+  runtime: apptainer
+  image: ~/.scitex/agent-container/containers/sac-scitex.sif
   model: sonnet
   workdir: ~/proj/example
 

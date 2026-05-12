@@ -20,7 +20,7 @@ MINIMAL_CONFIG = {
     "apiVersion": "scitex-agent-container/v3",
     "kind": "Agent",
     "metadata": {"name": "test-agent"},
-    "spec": {"runtime": "docker"},
+    "spec": {"runtime": "apptainer"},
 }
 
 FULL_CONFIG = {
@@ -31,7 +31,7 @@ FULL_CONFIG = {
         "labels": {"role": "worker", "team": "dev"},
     },
     "spec": {
-        "runtime": "docker",
+        "runtime": "apptainer",
         "model": "opus",
         "workdir": "/tmp/test-workdir",
         "claude": {
@@ -42,7 +42,7 @@ FULL_CONFIG = {
         "env": {"MY_VAR": "my_value"},
         "screen": {"name": "full-agent"},
         "container": {
-            "runtime": "docker",
+            "runtime": "apptainer",
             "image": "my-image:latest",
             "volumes": ["/data:/data"],
             "network": "bridge",
@@ -97,7 +97,7 @@ class TestLoadConfig:
         path = _write_config(MINIMAL_CONFIG)
         config = load_config(path)
         assert config.name == "test-agent"
-        assert config.runtime == "docker"
+        assert config.runtime == "apptainer"
         assert config.model == "sonnet"  # default
         assert config.screen_name == "test-agent"  # auto-generated
         Path(path).unlink()
@@ -110,7 +110,7 @@ class TestLoadConfig:
         assert config.labels == {"role": "worker", "team": "dev"}
         assert config.claude.channels == ["plugin:telegram@claude-plugins-official"]
         assert config.claude.session == "continue"
-        assert config.container.runtime == "docker"
+        assert config.container.runtime == "apptainer"
         assert config.container.image == "my-image:latest"
         assert config.container.network == "bridge"
         assert config.health.enabled is True
@@ -154,7 +154,7 @@ class TestLoadConfig:
                     "apiVersion": "scitex-agent-container/v3",
                     "kind": "Agent",
                     "metadata": {"name": "rejected-agent"},
-                    "spec": {"runtime": "docker"},
+                    "spec": {"runtime": "apptainer"},
                 }
             )
         )
@@ -199,7 +199,7 @@ class TestValidateConfig:
             "kind": "Agent",
             "metadata": {"name": "test"},
             "spec": {
-                "runtime": "docker",
+                "runtime": "apptainer",
                 "container": {"runtime": "kubernetes"},
             },
         }
@@ -214,7 +214,7 @@ class TestValidateConfig:
             "kind": "Agent",
             "metadata": {"name": "test"},
             "spec": {
-                "runtime": "docker",
+                "runtime": "apptainer",
                 "restart": {"policy": "maybe"},
             },
         }
@@ -238,7 +238,7 @@ class TestSkillsSpec:
             "kind": "Agent",
             "metadata": {"name": "skills-agent"},
             "spec": {
-                "runtime": "docker",
+                "runtime": "apptainer",
                 "skills": {
                     "required": ["quality-guards", "autonomous"],
                     "available": ["scitex", "code-review"],
@@ -257,7 +257,7 @@ class TestSkillsSpec:
             "kind": "Agent",
             "metadata": {"name": "partial-skills"},
             "spec": {
-                "runtime": "docker",
+                "runtime": "apptainer",
                 "skills": {
                     "required": ["speech"],
                 },
@@ -400,7 +400,7 @@ class TestRemoteSpec:
             "kind": "Agent",
             "metadata": {"name": "remote-agent"},
             "spec": {
-                "runtime": "docker",
+                "runtime": "apptainer",
                 "remote": {
                     "host": "mba",
                     "user": "testuser",
@@ -423,7 +423,7 @@ class TestRemoteSpec:
             "kind": "Agent",
             "metadata": {"name": "remote-full"},
             "spec": {
-                "runtime": "docker",
+                "runtime": "apptainer",
                 "remote": {
                     "host": "192.168.1.100",
                     "user": "deploy",
@@ -472,7 +472,7 @@ class TestRemoteSpec:
             "kind": "Agent",
             "metadata": {"name": "test-login-shell"},
             "spec": {
-                "runtime": "docker",
+                "runtime": "apptainer",
                 "remote": {
                     "host": "fast-host",
                     "user": "deploy",

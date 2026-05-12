@@ -63,7 +63,7 @@ class TestResolvePeerUrl:
             "apiVersion: scitex-agent-container/v3\n"
             "kind: Agent\n"
             "spec:\n"
-            "  runtime: docker\n"
+            "  runtime: apptainer\n"
             "  a2a: {port: 18888}\n"
         )
         from scitex_agent_container.config import _resolve
@@ -85,7 +85,7 @@ class TestResolvePeerUrl:
             "apiVersion: scitex-agent-container/v3\n"
             "kind: Agent\n"
             "spec:\n"
-            "  runtime: docker\n"
+            "  runtime: apptainer\n"
             "  a2a: {port: 19000}\n"
             "  remote: {host: mba}\n"
         )
@@ -101,7 +101,7 @@ class TestResolvePeerUrl:
         agent_yaml.write_text(
             "apiVersion: scitex-agent-container/v3\n"
             "kind: Agent\n"
-            "spec:\n  runtime: docker\n"
+            "spec:\n  runtime: apptainer\n"
         )
         from scitex_agent_container.config import _resolve
 

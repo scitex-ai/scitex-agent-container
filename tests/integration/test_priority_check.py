@@ -45,7 +45,7 @@ def _write_agent_yaml(tmp_path: Path, host_value) -> str:
     agent_dir.mkdir(exist_ok=True)
     yaml_path = agent_dir / "test-agent.yaml"
 
-    spec: dict = {"runtime": "docker"}
+    spec: dict = {"runtime": "apptainer"}
     if isinstance(host_value, list):
         spec["host"] = host_value
     elif host_value:

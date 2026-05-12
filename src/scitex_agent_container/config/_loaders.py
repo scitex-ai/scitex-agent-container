@@ -276,9 +276,8 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
 
     return AgentConfig(
         name=name,
-        runtime=str(spec.get("runtime") or "docker"),
+        runtime=str(spec.get("runtime") or "apptainer"),
         image=str(spec.get("image", "")),
-        dockerfile=str(spec.get("dockerfile", "")),
         model=model,
         workdir=workdir,
         python_venv=_resolve_python_venv(spec.get("python-venv", "")),
@@ -383,9 +382,8 @@ def load_v2(raw: dict, path: Path) -> AgentConfig:
 
     return AgentConfig(
         name=name,
-        runtime=str(spec.get("runtime") or "docker"),
+        runtime=str(spec.get("runtime") or "apptainer"),
         image=str(spec.get("image", "")),
-        dockerfile=str(spec.get("dockerfile", "")),
         model=model,
         workdir=workdir,
         python_venv=_resolve_python_venv(spec.get("python-venv", "")),

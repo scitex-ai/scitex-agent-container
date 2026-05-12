@@ -10,9 +10,8 @@ tags: [scitex-agent-container-installation]
 ## pip install
 
 ```bash
-pip install scitex-agent-container          # core CLI + apptainer/docker runtimes
+pip install scitex-agent-container          # core CLI + apptainer runtime
 pip install 'scitex-agent-container[sdk]'   # adds claude-agent-sdk + starlette/uvicorn for the inbound HTTP endpoint
-pip install 'scitex-agent-container[slurm]' # adds scitex-hpc for runtime: slurm and slurm-tenant
 pip install 'scitex-agent-container[all]'   # everything
 ```
 
@@ -27,17 +26,15 @@ images without cloning the repo:
 <site-packages>/scitex_agent_container/containers/
   apptainer-base.def       # OS + dev tools
   apptainer-scitex.def     # FROM :base + scitex[all] + sac
-  Dockerfile.base
-  Dockerfile.scitex
 ```
 
 Built artifacts (SIFs, sandboxes) land under user state, never in the wheel:
 
 ```
 ~/.scitex/agent-container/containers/
-  scitex-agent-container-base.sif
-  scitex-agent-container-scitex.sif
-  *.sandbox/
+  sac-base/sac-base.sif        + symlink at containers/sac-base.sif
+  sac-scitex/sac-scitex.sif    + symlink at containers/sac-scitex.sif
+  sac-*/*.sandbox/             (optional sandbox builds)
 ```
 
 Build with `sac image build base -y && sac image build scitex -y`. See

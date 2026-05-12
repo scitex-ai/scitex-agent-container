@@ -20,9 +20,8 @@ metadata:
     team: research
 
 spec:
-  runtime: docker
-  image: scitex-agent-container:scitex
-  dockerfile: scitex_agent_container/containers/Dockerfile.scitex
+  runtime: apptainer
+  image: ~/.scitex/agent-container/containers/sac-scitex.sif
   model: opus
   workdir: ~/proj
 

@@ -17,18 +17,16 @@ from .health import health_monitor
 def _get_runtime(config: AgentConfig):
     """Return the SDK runtime for the config.
 
-    Sac is SDK-only. Every accepted ``spec.runtime`` value (docker,
-    podman, apptainer) routes to :class:`ClaudeSessionRuntime`, which
-    dispatches to the right ContainerRuntime subclass internally
-    (see ``runtimes.claude_session._container_runtime_for``).
+    Sac is apptainer-only since the 2026-05-13 ripout. Empty / unset
+    ``spec.runtime`` is treated as ``"apptainer"``.
     """
-    if config.runtime in ("docker", "podman", "apptainer"):
+    if config.runtime in ("", "apptainer"):
         from ..runtimes.claude_session import ClaudeSessionRuntime
 
         return ClaudeSessionRuntime()
     raise ValueError(
         f"Unsupported runtime: {config.runtime!r}. "
-        "Sac is SDK-only; choose docker, podman, or apptainer."
+        "Sac is apptainer-only since 2026-05-13."
     )
 
 

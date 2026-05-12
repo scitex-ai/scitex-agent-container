@@ -104,7 +104,7 @@ def test_apptainer_template_uses_apptainer_runtime(tmp_path):
     assert cfg.image.endswith(".sif")
 
 
-def test_ssh_template_loads_as_docker_runtime(tmp_path):
+def test_ssh_template_loads_as_apptainer_runtime(tmp_path):
     """F-CS17: the ``ssh`` pattern is no longer about sac-side SSH
     dispatch — that's done by ``sac --on <peer>`` (F-CS12). This
     template just shows what an agent yaml on a remote host looks
@@ -113,4 +113,4 @@ def test_ssh_template_loads_as_docker_runtime(tmp_path):
 
     target, _ = _instantiate(TEMPLATES_DIR / "ssh.yaml", tmp_path)
     cfg = load_config(target)
-    assert cfg.runtime == "docker"
+    assert cfg.runtime == "apptainer"
