@@ -101,6 +101,53 @@ def test_build_run_argv_passes_env_dict_as_separate_flags(tmp_path: Path):
     assert argv.count("--env") >= 2
 
 
+def test_build_run_argv_emits_spec_mounts(tmp_path: Path):
+    """spec.mounts entries become --mount type=bind,src,dst[,readonly] flags."""
+    rt = ContainerRuntime("docker")
+    cfg = _config(
+        tmp_path,
+        mounts=[
+            {"src": str(tmp_path / "proj"), "dst": "/host/proj"},
+            {"src": str(tmp_path / "data"), "dst": "/host/data", "mode": "ro"},
+        ],
+    )
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path)
+    assert f"type=bind,src={tmp_path / 'proj'},dst=/host/proj" in argv
+    assert f"type=bind,src={tmp_path / 'data'},dst=/host/data,readonly" in argv
+
+
+def test_build_run_argv_user_host_runs_as_host_uid(tmp_path: Path):
+    """spec.user="host" runs the container as the operator's UID:GID so
+    files written from inside land as the operator on the host."""
+    import os as _os
+
+    rt = ContainerRuntime("docker")
+    cfg = _config(tmp_path, user="host")
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path)
+
+    user_str = f"{_os.getuid()}:{_os.getgid()}"
+    assert user_str in argv
+    assert argv[argv.index(user_str) - 1] == "--user"
+
+
+def test_build_run_argv_user_explicit_passthrough(tmp_path: Path):
+    """spec.user="<uid>:<gid>" is forwarded verbatim."""
+    rt = ContainerRuntime("docker")
+    cfg = _config(tmp_path, user="2000:2000")
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path)
+    assert "2000:2000" in argv
+    assert argv[argv.index("2000:2000") - 1] == "--user"
+
+
+def test_build_run_argv_no_user_default_image(tmp_path: Path, monkeypatch):
+    """Default spec.user="" leaves the image's USER (no --user flag)."""
+    monkeypatch.delenv("SAC_USER", raising=False)
+    rt = ContainerRuntime("docker")
+    cfg = _config(tmp_path)
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path)
+    assert "--user" not in argv
+
+
 def test_build_run_argv_threads_env_files(tmp_path: Path):
     rt = ContainerRuntime("docker")
     cfg = _config(tmp_path, env_files=[".envrc", "secrets.env"])

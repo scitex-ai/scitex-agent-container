@@ -50,7 +50,7 @@ _MANAGED_KEYS = frozenset(
 
 # Hook config pushed into every spawned agent's settings.local.json so
 # PreToolUse / PostToolUse / UserPromptSubmit / Stop events flow into
-# the per-agent event ring-buffer (~/.scitex/agent-container/events/
+# the per-agent event ring-buffer (~/.scitex/agent-container/runtime/events/
 # <agent>.jsonl). Consumed by event_log.summarize() which feeds the
 # Orochi dashboard's Last tool / Last MCP / Last action rows. Without
 # this wiring those rows render as dashes (scitex-orochi todo#59).
@@ -117,7 +117,10 @@ def _mcp_server_names(config: AgentConfig, workdir: str) -> list[str]:
         try:
             data = json.loads(mcp_path.read_text())
             names.update(data.get("mcpServers", {}).keys())
-        except (json.JSONDecodeError, OSError):  # stx-allow: fallback (reason: malformed JSON tolerated)
+        except (
+            json.JSONDecodeError,
+            OSError,
+        ):  # stx-allow: fallback (reason: malformed JSON tolerated)
             pass
 
     return sorted(names)
@@ -155,7 +158,7 @@ _SEED_DEFAULTS: dict = {
 }
 
 _SEED_TEMPLATE = (
-    Path.home() / ".scitex" / "orochi" / "templates" / "claude-code-seed.json"
+    Path.home() / ".scitex" / "agent-container" / "templates" / "claude-code-seed.json"
 )
 
 
@@ -226,7 +229,7 @@ def setup_settings_json(config: AgentConfig, workdir: str) -> None:
     settings["hooks"] = _HOOKS_CONFIG
 
     # Register sac-statusline as the statusLine command so the JSON payload
-    # is persisted to ~/.scitex/agent-container/statusline/<agent>.json each
+    # is persisted to ~/.scitex/agent-container/runtime/statusline/<agent>.json each
     # turn. sac agent status prefers this authoritative source over the JSONL
     # approximation (sac issue #52). No-op if claude-hud is absent — the
     # script falls back to a minimal echo.
@@ -242,7 +245,10 @@ def setup_settings_json(config: AgentConfig, workdir: str) -> None:
     if settings_path.exists():
         try:
             existing = json.loads(settings_path.read_text())
-        except (json.JSONDecodeError, OSError):  # stx-allow: fallback (reason: malformed JSON tolerated)
+        except (
+            json.JSONDecodeError,
+            OSError,
+        ):  # stx-allow: fallback (reason: malformed JSON tolerated)
             pass
     if not isinstance(existing, dict):
         existing = {}
@@ -278,7 +284,10 @@ def cleanup_settings_json(config: AgentConfig, workdir: str) -> None:
 
     try:
         data = json.loads(settings_path.read_text())
-    except (json.JSONDecodeError, OSError):  # stx-allow: fallback (reason: malformed JSON tolerated)
+    except (
+        json.JSONDecodeError,
+        OSError,
+    ):  # stx-allow: fallback (reason: malformed JSON tolerated)
         return
 
     if not isinstance(data, dict):

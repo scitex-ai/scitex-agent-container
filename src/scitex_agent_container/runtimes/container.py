@@ -34,8 +34,9 @@ from pathlib import Path
 
 from ..config import AgentConfig
 from .base import RuntimeBase
+from .._env import getenv as _sac_env
 
-DEFAULT_IMAGE = "scitex-agent-container:sdk-persistent"
+DEFAULT_IMAGE = "scitex-agent-container:scitex"
 RUNNER_MODULE = "scitex_agent_container._runners.claude_session"
 
 
@@ -146,7 +147,7 @@ class ContainerRuntime(RuntimeBase):
         # explicitly when host-UID alignment for /work / /state writes
         # really matters (local-dev convenience; CI is ephemeral so it
         # doesn't).
-        user_spec = os.environ.get("SAC_USER")
+        user_spec = _sac_env("USER")
 
         argv: list[str] = [
             self.engine,
@@ -188,6 +189,48 @@ class ContainerRuntime(RuntimeBase):
             "SCITEX_AGENT_CONTAINER_STATE_DB=/state/state.db",
         ]
 
+        # Also bind the workdir at its HOST path inside the container,
+        # so anything that reads ``cfg.workdir`` (the SDK runner's
+        # ``ClaudeAgentOptions.cwd``, hooks, helper scripts) sees the
+        # same path on both sides. ``/work`` stays as the canonical
+        # in-container working dir; the second mount is just an alias.
+        host_workdir_str = str(workdir_host)
+        argv += [
+            "--mount",
+            f"type=bind,src={workdir_host},dst={host_workdir_str}",
+        ]
+
+        # spec.user — uniform user override for the container.
+        # ""             → image's USER stands (typically `agent`).
+        # "host"         → run as host operator's UID:GID. Required when
+        #                  spec.mounts grants host-shaped paths and you
+        #                  want files written from inside to land as your
+        #                  user on the host.
+        # "<uid>:<gid>"  → explicit numeric.
+        # Falls back to SAC_USER env (legacy local-dev convenience).
+        user_field = str(getattr(config, "user", "") or "")
+        if user_field == "host":
+            argv += ["--user", f"{os.getuid()}:{os.getgid()}"]
+        elif user_field:
+            argv += ["--user", user_field]
+        # SAC_USER env handling already happened upstream of this block.
+
+        # spec.mounts — declarative extra bind mounts. Each entry is
+        # {"src": <host>, "dst": <ctr>, "mode": "rw"|"ro"}. Path expansion
+        # (~ / $VAR) is applied to BOTH src and dst so YAMLs stay portable
+        # — operators write ``${HOME}/proj/foo`` and sac resolves it
+        # against the launching shell's environment.
+        for m in getattr(config, "mounts", []) or []:
+            src = os.path.expandvars(os.path.expanduser(str(m.get("src", ""))))
+            dst = os.path.expandvars(os.path.expanduser(str(m.get("dst", ""))))
+            mode = m.get("mode", "rw")
+            if not src or not dst:
+                continue
+            entry = f"type=bind,src={src},dst={dst}"
+            if mode == "ro":
+                entry += ",readonly"
+            argv += ["--mount", entry]
+
         # Forward Anthropic auth — SAC_ANTHROPIC_API_KEY ONLY, and
         # ONLY when the credentials.json path below isn't being used.
         # If both end up set in the container, the SDK's auto-reader
@@ -198,7 +241,7 @@ class ContainerRuntime(RuntimeBase):
         # We deliberately do NOT forward a host-side ANTHROPIC_API_KEY
         # under any circumstance — see the module-level comment in
         # ``runtimes/_sdk_common.py``.
-        sac_val = os.environ.get("SAC_ANTHROPIC_API_KEY")
+        sac_val = _sac_env("ANTHROPIC_API_KEY")
 
         # Materialise/mount Pro/Max OAuth credentials.json into the
         # container so the SDK uses the file-based credentials_file
@@ -230,7 +273,7 @@ class ContainerRuntime(RuntimeBase):
         # CI runners are ephemeral so the leak surface dies with the
         # job.
         cred_mount_src: Path | None = None
-        creds_env = os.environ.get("SAC_CLAUDE_CODE_CREDENTIALS_JSON", "").strip()
+        creds_env = _sac_env("CLAUDE_CODE_CREDENTIALS_JSON", "").strip()
         if creds_env:
             import tempfile
 
@@ -246,10 +289,16 @@ class ContainerRuntime(RuntimeBase):
             if host_creds.is_file():
                 cred_mount_src = host_creds
         if cred_mount_src is not None:
-            argv += [
-                "-v",
-                f"{cred_mount_src}:/home/agent/.claude/.credentials.json",
-            ]
+            # The cred-mount target is the agent's effective $HOME inside
+            # the container. Resolution order:
+            #   1. spec.env.HOME if the YAML overrides it (host-shaped).
+            #   2. image default /home/agent.
+            # The SDK's Path.home() reads /etc/passwd (image-baked) plus
+            # the HOME env, so this matches what the SDK will look for.
+            env_home = (getattr(config, "env", None) or {}).get("HOME")
+            ctr_home = os.path.expandvars(env_home) if env_home else "/home/agent"
+            cred_dst = f"{ctr_home}/.claude/.credentials.json"
+            argv += ["-v", f"{cred_mount_src}:{cred_dst}"]
 
         # Now decide whether to forward SAC_ANTHROPIC_API_KEY into the
         # container. ONLY when the credentials file path is NOT in use
@@ -259,8 +308,11 @@ class ContainerRuntime(RuntimeBase):
         if sac_val and cred_mount_src is None:
             argv += ["--env", f"SAC_ANTHROPIC_API_KEY={sac_val}"]
 
+        # ${VAR} references in spec.env values are expanded against the
+        # launching shell's environment — same convention as spec.mounts.
         for key, val in (config.env or {}).items():
-            argv += ["--env", f"{key}={val}"]
+            expanded = os.path.expandvars(str(val))
+            argv += ["--env", f"{key}={expanded}"]
         for env_file in config.env_files or []:
             argv += ["--env-file", str(env_file)]
 
@@ -286,13 +338,19 @@ class ContainerRuntime(RuntimeBase):
             cmds = list(getattr(config, "startup_commands", []) or [])
             if cmds and getattr(cmds[0], "command", ""):
                 runner_argv += ["--mission", cmds[0].command]
-                # --print-stream mirrors assistant text to stdout so it
-                # lands in `docker logs`. With no autonomous block the
-                # runner exits cleanly after one turn (matches the
-                # smoke-test contract: image pulled, prompt seeded,
-                # reply printed; the stopped container persists for
-                # log inspection until lifecycle.stop removes it).
-                runner_argv += ["--print-stream"]
+                # --print-stream mirrors assistant text to stdout AND
+                # signals the runner to ``exit_after`` the mission turn.
+                # That's the smoke-test contract — but it's wrong for
+                # long-lived agents that listen on A2A or run autonomous
+                # drives. Only enable it when neither is on.
+                a2a_port_decision = self._a2a_port(config)
+                auto_decision = getattr(config, "autonomous", None)
+                stay_alive = a2a_port_decision is not None or (
+                    auto_decision is not None
+                    and getattr(auto_decision, "enabled", False)
+                )
+                if not stay_alive:
+                    runner_argv += ["--print-stream"]
             if a2a_port is not None:
                 runner_argv += [
                     "--a2a-port",

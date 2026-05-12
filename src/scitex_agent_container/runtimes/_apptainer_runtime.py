@@ -99,6 +99,17 @@ class ApptainerContainerRuntime(RuntimeBase):
             "/work",
         ]
 
+        # Extra bind-mounts from spec.container.volumes — `src:dst[:opts]`
+        # entries get translated into one `--bind` flag each. Use case:
+        # HPC hosts where `$HOME/.cache` is a symlink into a parallel
+        # filesystem (e.g. Spartan's `~/.cache -> /data/gpfs/...`).
+        # Without binding that filesystem, every `mkdir` inside the
+        # container fails because the symlink target is invisible.
+        container_spec = getattr(config, "container", None)
+        if container_spec is not None:
+            for vol in getattr(container_spec, "volumes", None) or []:
+                argv += ["--bind", str(vol)]
+
         # GPU passthrough — apptainer's --nv binds the host CUDA libs
         # and devices into the container. --rocm does the same for AMD.
         # Opt-in only: most agent workloads don't need the GPU and
@@ -110,8 +121,24 @@ class ApptainerContainerRuntime(RuntimeBase):
                 argv.append("--nv")
             if getattr(ap, "rocm", False):
                 argv.append("--rocm")
+            # Writable overlay — lets the agent install packages, write
+            # caches and persist state while the base SIF stays
+            # immutable. Resolution: absolute path used as-is; relative
+            # paths are interpreted against the workdir.
+            overlay = getattr(ap, "overlay", "") or ""
+            if overlay:
+                overlay_p = Path(overlay).expanduser()
+                if not overlay_p.is_absolute():
+                    overlay_p = Path(config.workdir).expanduser() / overlay_p
+                argv += ["--overlay", str(overlay_p)]
 
-        # Forward Anthropic auth (mirrors container.py).
+        # Forward Anthropic auth (mirrors container.py). Order matters:
+        # see runtimes/_sdk_common.py:provision_anthropic_auth — when
+        # `~/.claude/.credentials.json` exists (Pro/Max OAuth flow), the
+        # SDK reads the file directly and a bare `ANTHROPIC_API_KEY`
+        # env shadows it (Anthropic rejects sk-ant-oat* OAuth tokens as
+        # bare env). So we only pass *pay-per-token* env values; the
+        # credentials.json is bind-mounted below.
         for auth_env in ("ANTHROPIC_API_KEY", "SAC_ANTHROPIC_API_KEY"):
             val = os.environ.get(auth_env)
             if val:
@@ -132,11 +159,16 @@ class ApptainerContainerRuntime(RuntimeBase):
         argv.append(str(sif_path))
 
         # Inner command: tini-supervised SDK runner. tini comes from
-        # the SIF's apt install (sac.def's %post block).
+        # the SIF's apt install (sac.def's %post block). Use `python3`
+        # (always present after `apt install python3`) rather than bare
+        # `python`, which on Ubuntu 24.04 is not provided by default —
+        # the base SIF currently lacks the `/usr/local/bin/python ->
+        # python3` symlink so `tini -- python …` fails with "exec
+        # python failed: No such file or directory".
         inner: list[str] = [
             "/usr/bin/tini",
             "--",
-            "python",
+            "python3",
             "-m",
             RUNNER_MODULE,
         ]

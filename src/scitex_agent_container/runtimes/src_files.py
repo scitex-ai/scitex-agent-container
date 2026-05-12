@@ -280,46 +280,6 @@ def cleanup_src_claude_md(config: AgentConfig, workdir: str) -> None:
         logger.info("Cleaned up CLAUDE.md for %s at %s", config.name, dest)
 
 
-_TEMPLATE_DIR = Path(__file__).parent.parent / "_agent_templates"
-
-
-def _generate_src_mcp_from_template(config: AgentConfig) -> None:
-    """Write src_mcp.json into the agent definition dir from the canonical template.
-
-    Called when src_mcp.json is absent but metadata.labels.channels is set.
-    This implements the Option (a) lifecycle policy from todo#35: src_mcp.json
-    is treated as a generated artifact, regenerated from the upstream template
-    on every startup, so it never needs to be committed to git.
-    """
-    defdir = _definition_dir(config)
-    if defdir is None:
-        return
-    channels = config.labels.get("channels", "")
-    if not channels:
-        return
-    template = _TEMPLATE_DIR / "src_mcp.json"
-    if not template.exists():
-        logger.warning(
-            "Canonical src_mcp.json template missing at %s — cannot auto-generate for %s",
-            template,
-            config.name,
-        )
-        return
-    dest = defdir / "src_mcp.json"
-    text = template.read_text()
-    # Inject channels label so the template placeholder resolves correctly
-    os.environ.setdefault("SCITEX_OROCHI_URL", "wss://scitex-orochi.com")
-    text = _interpolate_metadata(text, config)
-    text = _interpolate_env(text)
-    dest.write_text(text)
-    logger.info(
-        "Auto-generated src_mcp.json for %s at %s (channels=%s)",
-        config.name,
-        dest,
-        channels,
-    )
-
-
 def deploy_src_mcp_json(config: AgentConfig, workdir: str) -> None:
     """Copy ``src_mcp.json`` to ``{workdir}/.mcp.json`` on EVERY invocation.
 
@@ -328,9 +288,9 @@ def deploy_src_mcp_json(config: AgentConfig, workdir: str) -> None:
     * **Unconditional refresh** — the workspace ``.mcp.json`` is always
       rewritten from the canonical ``src_mcp.json`` when this function
       is called. There is NO ``if dest.exists()`` fast-path. This is the
-      invariant that makes canonical config edits (e.g. adding a channel
-      to ``SCITEX_OROCHI_CHANNELS``) propagate on the next agent start
-      rather than lingering as stale workspace state for hours.
+      invariant that makes canonical config edits (e.g. adding an env
+      var to a server's ``env:`` block) propagate on the next agent
+      start rather than lingering as stale workspace state for hours.
     * **Per-server replace**, not deep-merge — every server entry
       declared in ``src_mcp.json`` fully overwrites the same-named entry
       in the workspace copy. This means env keys removed from the
@@ -359,8 +319,6 @@ def deploy_src_mcp_json(config: AgentConfig, workdir: str) -> None:
 
     src = defdir / "src_mcp.json"
     if not src.exists():
-        _generate_src_mcp_from_template(config)
-    if not src.exists():
         return
 
     text = src.read_text().strip()
@@ -374,7 +332,9 @@ def deploy_src_mcp_json(config: AgentConfig, workdir: str) -> None:
     # Validate JSON
     try:
         data = json.loads(text)
-    except json.JSONDecodeError as exc:  # stx-allow: fallback (reason: malformed JSON tolerated)
+    except (
+        json.JSONDecodeError
+    ) as exc:  # stx-allow: fallback (reason: malformed JSON tolerated)
         logger.warning("Invalid JSON in %s: %s", src, exc)
         return
 
@@ -386,7 +346,10 @@ def deploy_src_mcp_json(config: AgentConfig, workdir: str) -> None:
     if dest.exists():
         try:
             existing = json.loads(dest.read_text())
-        except (json.JSONDecodeError, OSError):  # stx-allow: fallback (reason: malformed JSON tolerated)
+        except (
+            json.JSONDecodeError,
+            OSError,
+        ):  # stx-allow: fallback (reason: malformed JSON tolerated)
             pass
     if not isinstance(existing, dict):
         existing = {}
@@ -402,8 +365,7 @@ def deploy_src_mcp_json(config: AgentConfig, workdir: str) -> None:
     # Per-server replace (NOT deep merge): the src entry wholly overrides
     # any workspace entry with the same key. This guarantees that env
     # keys removed from src_mcp.json are also removed from the workspace
-    # copy — critical for e.g. retiring a ``SCITEX_OROCHI_CHANNELS``
-    # subscription entry cleanly.
+    # copy — critical for retiring an env entry cleanly.
     src_servers = data.get("mcpServers", {})
     existing.setdefault("mcpServers", {}).update(src_servers)
 
@@ -449,7 +411,10 @@ def cleanup_src_mcp_json(config: AgentConfig, workdir: str) -> None:
 
     try:
         src_data = json.loads(src.read_text())
-    except (json.JSONDecodeError, OSError):  # stx-allow: fallback (reason: malformed JSON tolerated)
+    except (
+        json.JSONDecodeError,
+        OSError,
+    ):  # stx-allow: fallback (reason: malformed JSON tolerated)
         return
 
     keys_to_remove = list(src_data.get("mcpServers", {}).keys())
@@ -462,7 +427,10 @@ def cleanup_src_mcp_json(config: AgentConfig, workdir: str) -> None:
 
     try:
         data = json.loads(dest.read_text())
-    except (json.JSONDecodeError, OSError):  # stx-allow: fallback (reason: malformed JSON tolerated)
+    except (
+        json.JSONDecodeError,
+        OSError,
+    ):  # stx-allow: fallback (reason: malformed JSON tolerated)
         return
 
     servers = data.get("mcpServers", {})
@@ -527,10 +495,67 @@ def deploy_src_env(config: AgentConfig, workdir: str) -> None:
     dest.write_text(text)
     try:
         os.chmod(dest, 0o600)
-    except OSError as exc:  # stx-allow: fallback (reason: file system operation failure)
+    except (
+        OSError
+    ) as exc:  # stx-allow: fallback (reason: file system operation failure)
         logger.warning("Failed to chmod 0600 on %s: %s", dest, exc)
 
     logger.info("Deployed src_env for %s to %s", config.name, dest)
+
+
+def deploy_src_state_md(config: AgentConfig, workdir: str) -> None:
+    """Copy ``src_state.md`` to ``{workdir}/state.md`` (full overwrite).
+
+    Symmetric to :func:`deploy_src_env` minus the chmod. ``src_state.md``
+    is a temporal-handoff snapshot — the orchestrator (or any agent that
+    inherits state) reads it once on boot and supersedes it with its own
+    running ``state/*`` files. Full overwrite on each deploy; no marker
+    protocol, no user-tail preservation. ``${VAR}`` and
+    ``${metadata.name}`` / ``${metadata.labels.*}`` are interpolated.
+
+    If ``src_state.md`` does not exist next to the agent YAML, does
+    nothing (state is optional; not every agent has handover material).
+    """
+    defdir = _definition_dir(config)
+    if defdir is None:
+        return
+
+    src = defdir / "src_state.md"
+    if not src.exists():
+        return
+
+    text = src.read_text()
+    if not text.strip():
+        return
+
+    text = _interpolate_metadata(text, config)
+    text = _interpolate_env(text)
+
+    dest = Path(workdir) / "state.md"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if not text.endswith("\n"):
+        text += "\n"
+    dest.write_text(text)
+    logger.info("Deployed src_state.md for %s to %s", config.name, dest)
+
+
+def cleanup_src_state_md(config: AgentConfig, workdir: str) -> None:
+    """Remove ``{workdir}/state.md`` on agent stop.
+
+    The workspace ``state.md`` is owned by ``deploy_src_state_md``;
+    nothing the agent writes is preserved. Agents that need to keep
+    running state across restarts should write under ``state/*``
+    instead, which this function does NOT touch.
+    """
+    dest = Path(workdir) / "state.md"
+    if dest.exists():
+        try:
+            dest.unlink()
+            logger.info("Removed deployed state.md for %s at %s", config.name, dest)
+        except (
+            OSError
+        ) as exc:  # stx-allow: fallback (reason: file system operation failure)
+            logger.warning("Failed to remove %s: %s", dest, exc)
 
 
 def cleanup_src_env(config: AgentConfig, workdir: str) -> None:
