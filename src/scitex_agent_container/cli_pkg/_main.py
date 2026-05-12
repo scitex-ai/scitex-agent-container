@@ -33,7 +33,7 @@ COMMAND_CATEGORIES = [
     ("Agent", ["agent"]),
     ("Lifecycle (multiplexer)", ["auto-accept"]),
     ("Account", ["account"]),
-    ("Network & Peer", ["host", "network", "peer", "a2a", "fleet"]),
+    ("Network & Peer", ["host", "network", "peer", "a2a", "fleet", "listen"]),
     ("Registry & Events", ["db", "registry", "event", "actions"]),
     ("Build & Install", ["image", "installation", "template"]),
     ("Introspection", ["mcp", "list-python-apis", "skills"]),
@@ -65,6 +65,7 @@ class _MainGroup(LazyGroup):
         "mcp": f"{_PKG}.mcp_cmds:mcp",
         "peer": f"{_PKG}.peer_cmds:peer_group",
         "fleet": f"{_PKG}.fleet_group:fleet_group",
+        "listen": f"{_PKG}.listen_cmds:listen",
         # Top-level standalone
         "list-python-apis": f"{_PKG}.info_cmds:list_python_apis",
         "installation": f"{_PKG}.install_cmds:install_group",
