@@ -25,7 +25,7 @@ import urllib.request as _urlrequest
 
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 from .._runners._session_state import read_session_id, state_dir_for
@@ -249,7 +249,20 @@ async def agent_send(request: Request) -> Response:
         argv += ["--max-turns", str(options["max_turns"])]
 
     workdir = cfg.expanded_workdir or os.getcwd()
-    # Run blocking subprocess in a worker thread so the event loop stays free.
+
+    # SSE branch: client opted in via Accept: text/event-stream. Stream
+    # claude's stdout line-by-line (it already emits one JSON object per
+    # line when --output-format stream-json is set) as SSE frames.
+    accept = request.headers.get("accept", "")
+    if "text/event-stream" in accept:
+        argv += ["--output-format", "stream-json", "--include-partial-messages"]
+        return StreamingResponse(
+            _stream_claude(argv, workdir, name, sid),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    # Buffered branch (default): run to completion, return one JSON blob.
     proc = await asyncio.to_thread(
         subprocess.run,
         argv,
@@ -267,6 +280,54 @@ async def agent_send(request: Request) -> Response:
             "stderr": proc.stderr,
         }
     )
+
+
+def _sse_frame(event: str | None, data: str) -> bytes:
+    """Encode one SSE frame. ``event`` is optional; ``data`` is one line."""
+    head = f"event: {event}\n" if event else ""
+    return (head + f"data: {data}\n\n").encode("utf-8")
+
+
+async def _stream_claude(argv: list[str], workdir: str, name: str, sid: str):
+    """Run claude as an async subprocess and yield SSE frames.
+
+    Each line of claude's stdout (one stream-json object per line) becomes
+    a ``data:`` frame. On exit, emit a final ``event: done`` frame with
+    the returncode. If the client disconnects, the generator is closed
+    and we SIGTERM the subprocess.
+    """
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
+            cwd=workdir,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except FileNotFoundError as exc:
+        yield _sse_frame("error", _json.dumps({"error": str(exc)}))
+        return
+
+    # Announce the resume up front so the client gets immediate feedback.
+    yield _sse_frame("start", _json.dumps({"name": name, "session_id": sid}))
+
+    assert proc.stdout is not None
+    try:
+        while True:
+            line = await proc.stdout.readline()
+            if not line:
+                break
+            yield _sse_frame(None, line.decode("utf-8", "replace").rstrip("\n"))
+        rc = await proc.wait()
+        yield _sse_frame("done", _json.dumps({"returncode": rc}))
+    except (asyncio.CancelledError, GeneratorExit):
+        # Client disconnected; kill claude so we don't leak it.
+        if proc.returncode is None:
+            proc.terminate()
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=2.0)
+            except asyncio.TimeoutError:
+                proc.kill()
+        raise
 
 
 async def agents_start(request: Request) -> JSONResponse:

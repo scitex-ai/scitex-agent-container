@@ -443,3 +443,82 @@ def test_delete_signals_pid(client):
     assert r.status_code == 200, r.text
     assert r.json()["stopped"] is True
     assert killed == {"pid": 12345, "sig": 15}
+
+
+# --- SSE streaming ------------------------------------------------------
+
+
+class _FakeStdout:
+    def __init__(self, lines: list[bytes]) -> None:
+        self._lines = list(lines)
+
+    async def readline(self) -> bytes:
+        return self._lines.pop(0) if self._lines else b""
+
+
+class _FakeProc:
+    def __init__(self, lines: list[bytes], returncode: int = 0) -> None:
+        self.stdout = _FakeStdout(lines)
+        self.stderr = None
+        self._rc = returncode
+        self.returncode: int | None = None
+
+    async def wait(self) -> int:
+        self.returncode = self._rc
+        return self._rc
+
+    def terminate(self) -> None:
+        self.returncode = -15
+
+    def kill(self) -> None:
+        self.returncode = -9
+
+
+def test_send_sse_streams_stream_json_lines(client):
+    """With Accept: text/event-stream, /send returns SSE frames built
+    from claude's stream-json stdout, plus start/done events."""
+    c, _ = client
+
+    fake = _FakeProc(
+        lines=[
+            b'{"type":"assistant","text":"hi"}\n',
+            b'{"type":"result","ok":true}\n',
+        ],
+        returncode=0,
+    )
+
+    async def fake_exec(*argv, **_kwargs):
+        # also assert stream-json got appended to argv
+        assert "--output-format" in argv
+        assert "stream-json" in argv
+        return fake
+
+    with (
+        patch(
+            "scitex_agent_container._listen.server._find_claude_binary",
+            return_value="/x/claude",
+        ),
+        patch(
+            "scitex_agent_container._listen.server.asyncio.create_subprocess_exec",
+            side_effect=fake_exec,
+        ),
+    ):
+        with c.stream(
+            "POST",
+            "/v1/sac/agents/alpha/send",
+            json={"prompt": "go"},
+            headers={**auth_headers(), "Accept": "text/event-stream"},
+        ) as r:
+            assert r.status_code == 200
+            assert r.headers["content-type"].startswith("text/event-stream")
+            body = b"".join(r.iter_bytes()).decode("utf-8")
+
+    # start frame mentions the session id
+    assert "event: start" in body
+    assert "sess-abc" in body
+    # both stream-json lines come through as data frames
+    assert '"assistant"' in body
+    assert '"result"' in body
+    # final done frame carries the returncode
+    assert "event: done" in body
+    assert '"returncode": 0' in body
