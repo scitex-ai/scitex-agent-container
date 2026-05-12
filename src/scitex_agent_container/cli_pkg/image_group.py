@@ -37,7 +37,7 @@ _LAYERS = {
     "base": "apptainer-base.def",
     "scitex": "apptainer-scitex.def",
 }
-_DEFAULT_LAYER = "scitex"
+_DEFAULT_LAYER = "base"
 
 
 def _ensure_containers_dir() -> Path:
@@ -75,17 +75,10 @@ def image_group() -> None:
 @image_group.command("build")
 @click.argument("layer", type=click.Choice(list(_LAYERS)), default=_DEFAULT_LAYER)
 @click.option(
-    "--runtime",
-    type=click.Choice(["apptainer", "docker"]),
-    default="apptainer",
-    show_default=True,
-    help="Container runtime to build for.",
-)
-@click.option(
     "--sandbox",
     is_flag=True,
     default=False,
-    help="Build as a writable sandbox directory (apptainer only).",
+    help="Build as a writable sandbox directory.",
 )
 @click.option("--dry-run", is_flag=True, default=False, help="Print what would build.")
 @click.option(
@@ -95,27 +88,24 @@ def image_group() -> None:
     default=False,
     help="Skip confirmation. Also implies overwrite of any existing SIF.",
 )
-def image_build(
-    layer: str, runtime: str, sandbox: bool, dry_run: bool, yes: bool
-) -> None:
-    """Build the :LAYER image (default: scitex).
+def image_build(layer: str, sandbox: bool, dry_run: bool, yes: bool) -> None:
+    """Build the :LAYER Apptainer SIF (default: base).
+
+    Sac is apptainer-only since the 2026-05-13 docker/podman ripout.
 
     \b
     Examples:
-      $ sac image build                       # apptainer :scitex SIF
-      $ sac image build base                  # apptainer :base SIF
-      $ sac image build scitex --sandbox      # writable sandbox dir
-      $ sac image build --runtime docker      # docker :scitex
+      $ sac image build                # apptainer :base SIF (default; OS + dev tools, ~15-25 min)
+      $ sac image build scitex         # apptainer :scitex SIF (FROM :base + scitex[all], ~10-20 min)
+      $ sac image build --sandbox      # writable sandbox dir
     """
     if dry_run:
-        click.echo(
-            f"[dry-run] would build runtime={runtime} layer={layer} sandbox={sandbox}"
-        )
+        click.echo(f"[dry-run] would build apptainer layer={layer} sandbox={sandbox}")
         return
 
     if not yes:
         click.echo(
-            f"Refusing to build (runtime={runtime}, layer={layer}) without --yes/-y.",
+            f"Refusing to build (layer={layer}) without --yes/-y.",
             err=True,
         )
         sys.exit(2)
@@ -126,56 +116,30 @@ def image_build(
         click.echo(f"error: recipe not found in wheel: {def_path}", err=True)
         sys.exit(1)
 
-    if runtime == "apptainer":
-        # Delegate to scitex-container's canonical builder so we don't
-        # carry a duplicate apptainer-invocation here. scitex-container
-        # owns the dir-per-image layout (mirrors
-        # scripts/migrate_containers_layout.sh):
-        #
-        #   containers/
-        #   ├── sac-<layer>.sif -> sac-<layer>/sac-<layer>.sif
-        #   └── sac-<layer>/
-        #       ├── sac-<layer>.sif
-        #       ├── sac-<layer>.def                         (recipe snapshot)
-        #       └── sac-<layer>.build-YYYY-MMDD-HHMMSS.log  (full build log)
-        from scitex_container.apptainer import build as _sc_build
+    # Delegate to scitex-container's canonical builder so we don't
+    # carry a duplicate apptainer-invocation here. scitex-container
+    # owns the dir-per-image layout:
+    #
+    #   containers/
+    #   ├── sac-<layer>.sif -> sac-<layer>/sac-<layer>.sif
+    #   └── sac-<layer>/
+    #       ├── sac-<layer>.sif
+    #       ├── sac-<layer>.def                         (recipe snapshot)
+    #       └── sac-<layer>.build-YYYY-MMDD-HHMMSS.log  (full build log)
+    from scitex_container.apptainer import build as _sc_build
 
-        try:
-            output = _sc_build(
-                def_path=def_path,
-                output_dir=out_dir,
-                image_name=f"sac-{layer}",
-                force=True,  # -y already gated above
-                sandbox=sandbox,
-            )
-        except (FileNotFoundError, RuntimeError) as exc:
-            click.echo(f"error: apptainer build failed: {exc}", err=True)
-            sys.exit(1)
-        console.print(f"[green]built[/green] {output}")
-        return
-
-    # docker runtime — also from the wheel-bundled Dockerfile
-    image_tag = f"scitex-agent-container:{layer}"
-    dockerfile = _RECIPES_DIR / f"Dockerfile.{layer}"
-    if not dockerfile.is_file():
-        click.echo(f"error: dockerfile not found: {dockerfile}", err=True)
+    try:
+        output = _sc_build(
+            def_path=def_path,
+            output_dir=out_dir,
+            image_name=f"sac-{layer}",
+            force=True,  # -y already gated above
+            sandbox=sandbox,
+        )
+    except (FileNotFoundError, RuntimeError) as exc:
+        click.echo(f"error: apptainer build failed: {exc}", err=True)
         sys.exit(1)
-    import subprocess
-
-    argv = [
-        "docker",
-        "build",
-        "-t",
-        image_tag,
-        "-f",
-        str(dockerfile),
-        str(_RECIPES_DIR),
-    ]
-    result = subprocess.run(argv)
-    if result.returncode != 0:
-        click.echo("error: docker build failed", err=True)
-        sys.exit(result.returncode)
-    console.print(f"[green]built[/green] {image_tag}")
+    console.print(f"[green]built[/green] {output}")
 
 
 # ---------------------------------------------------------------------------

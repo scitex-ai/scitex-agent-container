@@ -1,5 +1,5 @@
 <!-- ---
-!-- Timestamp: 2026-05-13 08:19:36
+!-- Timestamp: 2026-05-13 08:29:41
 !-- Author: ywatanabe
 !-- File: /home/ywatanabe/proj/scitex-agent-container/README.md
 !-- --- -->
@@ -52,14 +52,13 @@ uv pip install "scitex-agent-container[all]"
 
 ```bash
 # 1. Build the layered images (one-time)
-sac image build base -y     # ~15-25 min — OS + dev tools
+sac image build base -y       # ~15-25 min — OS + dev tools
 # sac image build scitex -y   # ~10-20 min with uv — FROM :base + scitex[all] (numpy / pandas /
 #                             # scipy / torch / etc.). Walk away.
 
-# 2. Define an agent
-define_agent() {
-    local agent_name=$1
-    local agent_dir=~/.scitex/agent-container/agents/"$agent_name"
+# 2. Define hello-agent-1, hello-agent-2, hello-agent-3
+for agent_id in 1 2 3; do
+    agent_dir=~/.scitex/agent-container/agents/"hello-agent-$agent_id"
 
     mkdir -p "$agent_dir"
     # Unquoted heredoc tag — shell expands $agent_name before write.
@@ -81,24 +80,26 @@ spec:
       - --dangerously-skip-permissions
 
   startup_prompts:
-    - "Reply with the string 'Hello! I am $agent_name' and nothing else."
+    - "Reply with the string 'Hello! I am hello-agent-$agent_id' and nothing else."
 YAML
-}
 
-define_agent hello-agent
+done
 
 # 3. Start an agent
-sac agent start hello-agent --foreground  # streams stdout, exits when done
+sac agent start hello-agent-1 --foreground  # streams stdout
+# Starting agent 'hello-agent-1' (runtime: apptainer, LOCAL)...
+# Hello! I am hello-agent-1
+# Agent 'hello-agent-1' started successfully [LOCAL]
 
 # 4. Check agents
 sac agent status
-#                             Registered Agents                            
-# ┏━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━┓
-# ┃ Name        ┃ Status  ┃ Location ┃ Screen      ┃ Started              ┃
-# ┡━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━┩
-# │ hello-agent │ stopped │ LOCAL    │ hello-agent │ 2026-05-12T23:02:58Z │
-# └─────────────┴─────────┴──────────┴─────────────┴──────────────────────┘
-#  
+#                               Registered Agents                              
+# ┏━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━┓
+# ┃ Name          ┃ Status  ┃ Location ┃ Screen        ┃ Started              ┃
+# ┡━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━┩
+# │ hello-agent-1 │ stopped │ LOCAL    │ hello-agent-1 │ 2026-05-12T23:25:49Z │
+# └───────────────┴─────────┴──────────┴───────────────┴──────────────────────┘
+#
 # Claude Code account
 #   Email:          wyusuuke@gmail.com
 #   Organization:   wyusuuke@gmail.com's Organization
@@ -109,18 +110,14 @@ sac agent status
 #   Extra usage:    enabled
 #   Since:          2025-05-04T06:41:46.877655Z
 
-# 5. Read the output
-sac agent tail hello-agent
-# [assistant] hello-ok
-# [result] {'ts': 1778626991.6960883, 'type': 'result', 'session_id': '159b5d36-60b6-45e5-a49a-1ac66e14a0fd', 'usage': {'input_tokens': 6, 'cache_creation_input_tokens': 9458, 'cache_read_input_tokens': 0, 'output_tokens': 9, 'server_tool_use': {'web_search_requests': 
-# 0, 'web_fetch_requests': 0}, 'service_tier
+# 5. Start multiple agents
+sac agent start hello-agent-1 hello-agent-2 hello-agent-3 #  in background (default)
 
-# 4. Start multiple agents (space-separated names)
-DIR="$HOME/.scitex/agent-container/agents/"
-cp -r "$DIR"/hello-agent/ "$DIR"/hello-agent2/
-cp -r "$DIR"/hello-agent/ "$DIR"/hello-agent3/
-sac agent start hello-agent hello-agent2 hello-agent3 --foreground
-sac agent tail hello-agent hello-agent2 hello-agent3
+# 5. Read the output
+sac agent tail hello-agent-1 hello-agent-2 hello-agent-3
+
+# 6. Cleanup
+sac agent stop hello-agent-1 hello-agent-2 hello-agent-3
 ```
 
 ## How it works
