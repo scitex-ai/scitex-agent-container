@@ -335,31 +335,39 @@
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
 
-<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">socket</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">scitex_config._ecosystem</span><span class="w"> </span><span class="kn">import</span> <span class="n">local_state</span> <span class="k">as</span> <span class="n">_local_state</span>
+
 <span class="kn">from</span><span class="w"> </span><span class="nn">.._env</span><span class="w"> </span><span class="kn">import</span> <span class="n">getenv</span> <span class="k">as</span> <span class="n">_sac_env</span>
 
 <span class="n">_HOSTNAME_TOKENS</span> <span class="o">=</span> <span class="p">(</span><span class="s2">&quot;HOSTNAME&quot;</span><span class="p">,</span> <span class="s2">&quot;SCITEX_AGENT_CONTAINER_HOSTNAME&quot;</span><span class="p">)</span>
 <span class="n">_PLACEHOLDER_RE</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\$\{(&quot;</span> <span class="o">+</span> <span class="s2">&quot;|&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">_HOSTNAME_TOKENS</span><span class="p">)</span> <span class="o">+</span> <span class="sa">r</span><span class="s2">&quot;)\}&quot;</span><span class="p">)</span>
 
-<span class="c1"># Declarative host identity map. sac is standalone — reads only from</span>
-<span class="c1"># its own config.yaml; downstream orchestrators (orochi, etc.) wire</span>
-<span class="c1"># their own state via env vars or the plugin-port pattern (see</span>
-<span class="c1"># _skills/general/01_ecosystem_06_local-state-directories.md §9.5).</span>
-<span class="n">_CONFIG_PATH</span> <span class="o">=</span> <span class="n">Path</span><span class="o">.</span><span class="n">home</span><span class="p">()</span> <span class="o">/</span> <span class="s2">&quot;.scitex&quot;</span> <span class="o">/</span> <span class="s2">&quot;agent-container&quot;</span> <span class="o">/</span> <span class="s2">&quot;config.yaml&quot;</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_config_path</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">Path</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Resolve config.yaml via the SciTeX local-state cascade.</span>
+
+<span class="sd">    Project-scope (`&lt;repo&gt;/.scitex/agent-container/config.yaml`) wins</span>
+<span class="sd">    when it exists, else falls back to user-scope under</span>
+<span class="sd">    ``$SCITEX_DIR/agent-container/`` (default ``~/.scitex/...``). See</span>
+<span class="sd">    `01_ecosystem_06_local-state-directories.md`.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">_local_state</span><span class="o">.</span><span class="n">path</span><span class="p">(</span><span class="s2">&quot;agent-container&quot;</span><span class="p">,</span> <span class="s2">&quot;config.yaml&quot;</span><span class="p">)</span>
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">_load_hostname_aliases</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Read ``spec.hostname_aliases`` from ``shared/config.yaml``.</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Read ``spec.hostname_aliases`` from ``config.yaml``.</span>
 
 <span class="sd">    Returns an empty dict if the file is missing, unparseable, lacks the</span>
 <span class="sd">    section, or the map isn&#39;t a dict. Never raises — hostname resolution</span>
 <span class="sd">    must still succeed via the identity fallback on a bare host.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
-    <span class="k">if</span> <span class="ow">not</span> <span class="n">_CONFIG_PATH</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
+    <span class="n">cfg_path</span> <span class="o">=</span> <span class="n">_config_path</span><span class="p">()</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">cfg_path</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
         <span class="k">return</span> <span class="p">{}</span>
     <span class="k">try</span><span class="p">:</span>
         <span class="kn">import</span><span class="w"> </span><span class="nn">yaml</span>  <span class="c1"># PyYAML ships with the container; same import sac uses.</span>
@@ -369,7 +377,7 @@
         <span class="k">return</span> <span class="p">{}</span>
     <span class="c1"># stx-allow: fallback (reason: malformed YAML config must not break hostname resolution; empty aliases dict is the safe default)</span>
     <span class="k">try</span><span class="p">:</span>
-        <span class="n">data</span> <span class="o">=</span> <span class="n">yaml</span><span class="o">.</span><span class="n">safe_load</span><span class="p">(</span><span class="n">_CONFIG_PATH</span><span class="o">.</span><span class="n">read_text</span><span class="p">())</span> <span class="ow">or</span> <span class="p">{}</span>
+        <span class="n">data</span> <span class="o">=</span> <span class="n">yaml</span><span class="o">.</span><span class="n">safe_load</span><span class="p">(</span><span class="n">cfg_path</span><span class="o">.</span><span class="n">read_text</span><span class="p">())</span> <span class="ow">or</span> <span class="p">{}</span>
     <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: catch-all safety net — see inline comment for context)</span>
         <span class="k">return</span> <span class="p">{}</span>
     <span class="n">aliases</span> <span class="o">=</span> <span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;spec&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;hostname_aliases&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="p">{}</span>
