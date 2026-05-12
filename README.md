@@ -1,5 +1,5 @@
 <!-- ---
-!-- Timestamp: 2026-05-13 06:37:26
+!-- Timestamp: 2026-05-13 06:41:17
 !-- Author: ywatanabe
 !-- File: /home/ywatanabe/proj/scitex-agent-container/README.md
 !-- --- -->
@@ -70,8 +70,14 @@ spec:
     - command: "Reply with the string 'hello-ok' and nothing else."
 YAML
 
-# 3. Run
+# 3. Start an agent
 sac agent start hello --foreground   # streams stdout, exits when done
+
+# 4. Start multiple agents
+DIR="~/.scitex/agent-container/agents/"
+cp -r "$DIR"/hello/ "$DIR"/hello2/
+cp -r "$DIR"/hello/ "$DIR"/hello3/
+sac agent start hello,hello2,hellow3 --foreground   # streams stdout, exits when done
 ```
 
 ## How it works
