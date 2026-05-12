@@ -51,8 +51,15 @@
                                           │
                                           ▼
                               long-lived Claude SDK session
+                              │
+                              ├── <workdir>  (= spec.workdir, mounted rw)
+                              │     CLAUDE.md / .mcp.json / .env / state.md     ← from dot_claude/
+                              │     .claude/{commands,skills,hooks,...}         ← mirrored
+                              │
+                              ├── spec.mounts[]  ← explicit host-path allowlist (ro/rw)
+                              │
                               ├── --max-restarts supervisor (auto-reopen on crash)
-                              ├── state-dir
+                              ├── state-dir  (host: ~/.scitex/agent-container/runtime/<name>/)
                               │     pid, heartbeat.json,
                               │     session.jsonl, session_id, quota.json
                               │
