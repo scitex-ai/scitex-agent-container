@@ -2,7 +2,7 @@
 
 Step 3 of SAC_OROCHI_SCOPES.md §6. Local-only routing in v1: each
 ``sac channel send`` POSTs to the local ``sac listen`` at
-``http://127.0.0.1:7878/v1/sac/agents/<to>/send`` with the message
+``http://127.0.0.1:7878/v1/agents/<to>/send`` with the message
 wrapped in a ``<channel source="sac" from="<from>">…</channel>`` tag so
 the receiving agent reads it as channel input (per claude's channel
 protocol — see ~/.claude/skills/claude-code-official/03_runtime_03_channels.md).
@@ -91,7 +91,7 @@ def send(
             "auto-generate it, or pass --token-file explicitly."
         )
     base = listen_url or _default_listen_url()
-    url = f"{base.rstrip('/')}/v1/sac/agents/{to_agent}/send"
+    url = f"{base.rstrip('/')}/v1/agents/{to_agent}/send"
 
     # Wrap in the channel-tag shape claude consumes natively.
     wrapped = f'<channel source="sac" from="{from_agent}">{message}</channel>'

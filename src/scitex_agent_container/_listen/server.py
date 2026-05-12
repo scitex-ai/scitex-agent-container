@@ -1,16 +1,20 @@
 """Starlette app factory for ``sac listen``.
 
-Hosts the ``/v1/sac/...`` namespace as designed in SAC_OROCHI_SCOPES.md.
-v1 endpoints:
+Hosts symmetric ``/v1/agents/...`` and ``/v1/a2a/...`` namespaces as
+designed in REQUIREMENT_SUMMARY.md §4. v1 endpoints:
 
-    GET    /v1/sac/health
-    GET    /v1/sac/agents
-    GET    /v1/sac/agents/<name>/status
-    POST   /v1/sac/agents/<name>/send
-    DELETE /v1/sac/agents/<name>
+    GET    /v1/health
+    GET    /v1/agents
+    POST   /v1/agents                       (create/start from spec)
+    GET    /v1/agents/<name>/status
+    GET    /v1/agents/<name>/tail           (SSE stream of session.jsonl)
+    POST   /v1/agents/<name>/send           (prompt or key)
+    GET    /v1/agents/<name>/card           (A2A-compatible card)
+    DELETE /v1/agents/<name>
 
-Tail (SSE), POST /v1/sac/agents (start from spec body), and the A2A
-namespace under /v1/sac/a2a/ are reserved for steps 3-4 of §6.
+The ``/v1/a2a/...`` mirror registers the same handlers under the A2A
+protocol-compat prefix. No backward-compat for the legacy ``/v1/sac/``
+paths — those are dropped wholesale (operator-stated stance).
 """
 
 from __future__ import annotations
@@ -22,6 +26,8 @@ import shutil
 import subprocess
 import urllib.error as _urlerror
 import urllib.request as _urlrequest
+from datetime import datetime
+from pathlib import Path
 
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -148,19 +154,25 @@ async def _forward_to_live_runner(
 
 
 async def agent_send(request: Request) -> Response:
-    """POST /v1/sac/agents/<name>/send.
+    """POST /v1/agents/<name>/send.
 
-    Body discriminator:
-        {"type":"prompt","prompt":"...","options":{"model":...,"max_turns":...}}
-        {"type":"key","key":"ESC"}   # not yet implemented
+    Body discriminator (per REQUIREMENT_SUMMARY §4.2):
+        {"type":"prompt","prompt":"...","options":{...}}
+        {"type":"key","key":"ESC"}
 
-    Routing:
+    Back-compat (this commit only): a body without ``type`` is treated
+    as ``{type: "prompt", ...}`` so existing callers keep working.
+
+    Routing for ``type: prompt``:
         1. If the agent has ``spec.a2a.port`` set and its inbound HTTP
            is reachable, forward the turn into the live in-memory
-           runner inbox (long-lived path; preserves session, tool
-           state, channel listeners).
+           runner inbox.
         2. Otherwise fall back to ``claude --resume <sid> -p`` —
            short-lived re-launch against the persisted session.jsonl.
+
+    Routing for ``type: key``:
+        SIGINT the live runner pid (best-effort). ESC / C-c / SIGINT
+        accepted; unknown keys → 400. No live runner → 404.
     """
     name = request.path_params["name"]
     try:
@@ -168,22 +180,23 @@ async def agent_send(request: Request) -> Response:
     except Exception:  # stx-allow: fallback (reason: malformed JSON → 400 with explanation rather than ASGI 500)
         return JSONResponse({"error": "body must be JSON"}, status_code=400)
 
+    # Default to prompt when ``type`` is absent — back-compat shim
+    # documented in REQUIREMENT_SUMMARY §4.2.
     type_ = body.get("type", "prompt")
     if type_ == "key":
         key = body.get("key")
-        # ESC / C-c → SIGINT to the runner pid, which interrupts the
-        # current turn without killing the agent (claude-agent-sdk
-        # handles SIGINT gracefully). Other keys are reserved for a
-        # future tty-bridge implementation.
+        # Supported: ESC / C-c / SIGINT — all map to SIGINT on the
+        # runner pid, which interrupts the current turn without
+        # killing the agent.
         if key not in ("ESC", "C-c", "SIGINT"):
             return JSONResponse(
                 {
                     "error": (
-                        f"key={key!r} not yet supported. Only ESC / C-c / "
-                        "SIGINT are wired (cancel current turn)."
+                        f"unsupported key={key!r}; expected one of "
+                        "'ESC', 'C-c', 'SIGINT'"
                     )
                 },
-                status_code=501,
+                status_code=400,
             )
         import signal as _signal
 
@@ -191,7 +204,8 @@ async def agent_send(request: Request) -> Response:
         pid_file = sd / "pid"
         if not pid_file.is_file():
             return JSONResponse(
-                {"error": "no pid file (agent not running)"}, status_code=404
+                {"error": f"agent {name!r} has no live session"},
+                status_code=404,
             )
         try:
             pid = int(pid_file.read_text().strip())
@@ -252,8 +266,7 @@ async def agent_send(request: Request) -> Response:
     workdir = cfg.expanded_workdir or os.getcwd()
 
     # SSE branch: client opted in via Accept: text/event-stream. Stream
-    # claude's stdout line-by-line (it already emits one JSON object per
-    # line when --output-format stream-json is set) as SSE frames.
+    # claude's stdout line-by-line as SSE frames.
     accept = request.headers.get("accept", "")
     if "text/event-stream" in accept:
         argv += ["--output-format", "stream-json", "--include-partial-messages"]
@@ -290,13 +303,7 @@ def _sse_frame(event: str | None, data: str) -> bytes:
 
 
 async def _stream_claude(argv: list[str], workdir: str, name: str, sid: str):
-    """Run claude as an async subprocess and yield SSE frames.
-
-    Each line of claude's stdout (one stream-json object per line) becomes
-    a ``data:`` frame. On exit, emit a final ``event: done`` frame with
-    the returncode. If the client disconnects, the generator is closed
-    and we SIGTERM the subprocess.
-    """
+    """Run claude as an async subprocess and yield SSE frames."""
     try:
         proc = await asyncio.create_subprocess_exec(
             *argv,
@@ -308,7 +315,6 @@ async def _stream_claude(argv: list[str], workdir: str, name: str, sid: str):
         yield _sse_frame("error", _json.dumps({"error": str(exc)}))
         return
 
-    # Announce the resume up front so the client gets immediate feedback.
     yield _sse_frame("start", _json.dumps({"name": name, "session_id": sid}))
 
     assert proc.stdout is not None
@@ -321,7 +327,6 @@ async def _stream_claude(argv: list[str], workdir: str, name: str, sid: str):
         rc = await proc.wait()
         yield _sse_frame("done", _json.dumps({"returncode": rc}))
     except (asyncio.CancelledError, GeneratorExit):
-        # Client disconnected; kill claude so we don't leak it.
         if proc.returncode is None:
             proc.terminate()
             try:
@@ -331,17 +336,142 @@ async def _stream_claude(argv: list[str], workdir: str, name: str, sid: str):
         raise
 
 
+# --- tail (SSE over session.jsonl) ----------------------------------------
+
+
+def _parse_iso_ts(value: str) -> datetime | None:
+    """Best-effort ISO-8601 parser. Returns None on failure."""
+    if not isinstance(value, str) or not value:
+        return None
+    s = value.rstrip("Z")
+    try:
+        return datetime.fromisoformat(s)
+    except ValueError:
+        return None
+
+
+def _record_ts(record: dict) -> datetime | None:
+    """Pluck a timestamp from a session.jsonl record; ``ts`` or ``timestamp``."""
+    for key in ("ts", "timestamp"):
+        raw = record.get(key)
+        if raw is None:
+            continue
+        parsed = _parse_iso_ts(raw) if isinstance(raw, str) else None
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _runtime_session_jsonl(name: str) -> Path:
+    """Per-agent session.jsonl path. Patchable in tests."""
+    return (
+        Path(os.path.expanduser("~"))
+        / ".scitex"
+        / "agent-container"
+        / "runtime"
+        / name
+        / "session.jsonl"
+    )
+
+
+async def _stream_tail(path: Path, since: datetime | None, follow: bool):
+    """Yield SSE frames for each line of ``path``; tail when follow=True.
+
+    Each frame: ``data: {"line_no": N, "record": <obj>}``. Heartbeats
+    ``: keep-alive`` every 15s during follow when idle.
+    """
+    line_no = 0
+    seen_since = since is None  # if no since filter, include from line 0
+    # If the file doesn't exist yet, in follow=true we still want to
+    # wait for it to appear; in non-follow mode we close immediately.
+    if not path.is_file():
+        if not follow:
+            return
+
+    # Open once, read to EOF, then (if follow) keep polling.
+    while not path.is_file():
+        await asyncio.sleep(0.5)
+
+    last_heartbeat = asyncio.get_event_loop().time()
+    with path.open("r", encoding="utf-8") as fh:
+        while True:
+            line = fh.readline()
+            if line:
+                line_no += 1
+                line = line.rstrip("\n")
+                if not line:
+                    continue
+                try:
+                    record = _json.loads(line)
+                except _json.JSONDecodeError:
+                    # Malformed line — surface as a string payload.
+                    record = {"raw": line}
+
+                if since is not None:
+                    rec_ts = _record_ts(record) if isinstance(record, dict) else None
+                    if rec_ts is None:
+                        # No timestamp on record: include only after we've
+                        # already crossed the since boundary.
+                        if not seen_since:
+                            continue
+                    elif rec_ts < since:
+                        continue
+                    else:
+                        seen_since = True
+
+                payload = _json.dumps({"line_no": line_no, "record": record})
+                yield _sse_frame(None, payload)
+                last_heartbeat = asyncio.get_event_loop().time()
+                continue
+
+            # EOF
+            if not follow:
+                return
+            # Heartbeat every 15s of idle.
+            now = asyncio.get_event_loop().time()
+            if now - last_heartbeat >= 15.0:
+                yield b": keep-alive\n\n"
+                last_heartbeat = now
+            try:
+                await asyncio.sleep(0.5)
+            except (asyncio.CancelledError, GeneratorExit):
+                raise
+
+
+async def agent_tail(request: Request) -> Response:
+    """GET /v1/agents/<name>/tail?since=<iso>&follow=<bool>.
+
+    Server-Sent Events stream of the per-agent ``session.jsonl`` lines
+    at ``~/.scitex/agent-container/runtime/<name>/session.jsonl``.
+    """
+    name = request.path_params["name"]
+    since_raw = request.query_params.get("since")
+    follow_raw = request.query_params.get("follow", "false")
+    follow = str(follow_raw).lower() in ("1", "true", "yes")
+    since = _parse_iso_ts(since_raw) if since_raw else None
+
+    path = _runtime_session_jsonl(name)
+    if not follow and not path.is_file():
+        return JSONResponse(
+            {"error": f"no session.jsonl for {name!r}"}, status_code=404
+        )
+
+    return StreamingResponse(
+        _stream_tail(path, since, follow),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 async def agents_start(request: Request) -> JSONResponse:
-    """POST /v1/sac/agents — start one or more agents.
+    """POST /v1/agents — start one or more agents.
 
     Body shapes:
 
         # Start a pre-registered spec (existing on disk):
         {"name": "<existing-spec-name>"}
 
-        # Register-and-start an ad-hoc spec in one call (orochi adopts
-        # this so it can launch agents on a sac host without staging
-        # YAML out-of-band):
+        # Register-and-start an ad-hoc spec in one call:
         {
             "name": "<name>",
             "spec": {"apiVersion": "scitex-agent-container/v3",
@@ -349,10 +479,6 @@ async def agents_start(request: Request) -> JSONResponse:
                      "spec": {...}},
             "overwrite": false   # optional; default false → 409 on clash
         }
-
-    Internally shells out to ``sac agent start <name>`` so the proven
-    lifecycle path drives the launch (preflight, singleton check,
-    runtime dispatch). The body returns the subprocess result.
     """
     try:
         body = await request.json()
@@ -394,12 +520,9 @@ async def agents_start(request: Request) -> JSONResponse:
 
 
 async def agent_card(request: Request) -> JSONResponse:
-    """GET /v1/sac/agents/<name>/card.
+    """GET /v1/agents/<name>/card (mirrored at /v1/a2a/agents/<name>/card).
 
     Returns an A2A-compatible AgentCard built from the agent's v3 spec.
-    Step 4 of SAC_OROCHI_SCOPES.md §6. Backed by
-    :func:`scitex_agent_container.a2a._card.project_card` so the card
-    shape stays in sync with the bare A2A surface.
     """
     import yaml
 
@@ -416,17 +539,13 @@ async def agent_card(request: Request) -> JSONResponse:
     except OSError as exc:
         return JSONResponse({"error": str(exc)}, status_code=500)
 
-    base_url = str(request.base_url).rstrip("/") + "/v1/sac/a2a"
+    base_url = str(request.base_url).rstrip("/") + "/v1/a2a"
     card = project_card(name, v3, base_url)
     return JSONResponse(card)
 
 
 async def agent_delete(request: Request) -> JSONResponse:
-    """DELETE /v1/sac/agents/<name> — stop the agent.
-
-    v1: reads pid from state_dir and SIGTERMs it. Apptainer wrapper
-    cleanup is delegated to the existing lifecycle.stop path in step 3.
-    """
+    """DELETE /v1/agents/<name> — stop the agent."""
     name = request.path_params["name"]
     sd = state_dir_for(name)
     pid_file = sd / "pid"
@@ -443,17 +562,33 @@ async def agent_delete(request: Request) -> JSONResponse:
 # --- App factory -----------------------------------------------------------
 
 
-def create_app(*, token: str) -> Starlette:
-    """Build the Starlette app with bearer auth + /v1/sac/ routes."""
-    routes = [
-        Route("/v1/sac/health", health, methods=["GET"]),
-        Route("/v1/sac/agents", list_agents, methods=["GET"]),
-        Route("/v1/sac/agents", agents_start, methods=["POST"]),
-        Route("/v1/sac/agents/{name}/status", agent_status, methods=["GET"]),
-        Route("/v1/sac/agents/{name}/send", agent_send, methods=["POST"]),
-        Route("/v1/sac/agents/{name}/card", agent_card, methods=["GET"]),
-        Route("/v1/sac/agents/{name}", agent_delete, methods=["DELETE"]),
+def _v1_agent_routes(prefix: str) -> list[Route]:
+    """Build the agent route set under a given prefix.
+
+    Used to register identical handlers at both ``/v1/agents`` and
+    ``/v1/a2a/agents`` per the symmetric-namespace requirement.
+    """
+    return [
+        Route(f"{prefix}", list_agents, methods=["GET"]),
+        Route(f"{prefix}", agents_start, methods=["POST"]),
+        Route(f"{prefix}/{{name}}/status", agent_status, methods=["GET"]),
+        Route(f"{prefix}/{{name}}/tail", agent_tail, methods=["GET"]),
+        Route(f"{prefix}/{{name}}/send", agent_send, methods=["POST"]),
+        Route(f"{prefix}/{{name}}/card", agent_card, methods=["GET"]),
+        Route(f"{prefix}/{{name}}", agent_delete, methods=["DELETE"]),
     ]
+
+
+def create_app(*, token: str) -> Starlette:
+    """Build the Starlette app with bearer auth and v1 routes.
+
+    Two symmetric prefixes share identical handlers:
+        - /v1/agents/...   sac-native verbs
+        - /v1/a2a/agents/... A2A-protocol-compat mirror
+    """
+    routes: list[Route] = [Route("/v1/health", health, methods=["GET"])]
+    routes += _v1_agent_routes("/v1/agents")
+    routes += _v1_agent_routes("/v1/a2a/agents")
     app = Starlette(routes=routes)
     app.add_middleware(BearerAuthMiddleware, token=token)
     return app

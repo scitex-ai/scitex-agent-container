@@ -58,27 +58,27 @@ def auth_headers() -> dict:
 
 def test_health_is_public(client):
     c, _ = client
-    r = c.get("/v1/sac/health")
+    r = c.get("/v1/health")
     assert r.status_code == 200
     assert r.json()["ok"] is True
 
 
 def test_missing_token_is_401(client):
     c, _ = client
-    r = c.get("/v1/sac/agents")
+    r = c.get("/v1/agents")
     assert r.status_code == 401
     assert "missing" in r.json()["error"]
 
 
 def test_wrong_token_is_403(client):
     c, _ = client
-    r = c.get("/v1/sac/agents", headers={"Authorization": "Bearer nope"})
+    r = c.get("/v1/agents", headers={"Authorization": "Bearer nope"})
     assert r.status_code == 403
 
 
 def test_bearer_scheme_case_insensitive(client):
     c, _ = client
-    r = c.get("/v1/sac/agents", headers={"Authorization": f"bearer {TOKEN}"})
+    r = c.get("/v1/agents", headers={"Authorization": f"bearer {TOKEN}"})
     assert r.status_code == 200
 
 
@@ -87,7 +87,7 @@ def test_bearer_scheme_case_insensitive(client):
 
 def test_list_agents_returns_array(client):
     c, _ = client
-    r = c.get("/v1/sac/agents", headers=auth_headers())
+    r = c.get("/v1/agents", headers=auth_headers())
     assert r.status_code == 200
     assert "agents" in r.json()
     assert isinstance(r.json()["agents"], list)
@@ -95,7 +95,7 @@ def test_list_agents_returns_array(client):
 
 def test_status_returns_session_id_and_workdir(client):
     c, tmp_path = client
-    r = c.get("/v1/sac/agents/alpha/status", headers=auth_headers())
+    r = c.get("/v1/agents/alpha/status", headers=auth_headers())
     assert r.status_code == 200
     body = r.json()
     assert body["name"] == "alpha"
@@ -105,7 +105,7 @@ def test_status_returns_session_id_and_workdir(client):
 
 def test_status_unknown_agent_is_404(client):
     c, _ = client
-    r = c.get("/v1/sac/agents/does-not-exist/status", headers=auth_headers())
+    r = c.get("/v1/agents/does-not-exist/status", headers=auth_headers())
     assert r.status_code == 404
 
 
@@ -115,7 +115,7 @@ def test_status_unknown_agent_is_404(client):
 def test_send_requires_json(client):
     c, _ = client
     r = c.post(
-        "/v1/sac/agents/alpha/send",
+        "/v1/agents/alpha/send",
         data="not-json",
         headers=auth_headers(),
     )
@@ -132,7 +132,7 @@ def test_send_key_esc_sends_sigint(client):
         side_effect=lambda pid, sig: killed.update(pid=pid, sig=sig),
     ):
         r = c.post(
-            "/v1/sac/agents/alpha/send",
+            "/v1/agents/alpha/send",
             json={"type": "key", "key": "ESC"},
             headers=auth_headers(),
         )
@@ -142,20 +142,20 @@ def test_send_key_esc_sends_sigint(client):
     assert killed == {"pid": 9876, "sig": 2}
 
 
-def test_send_key_unknown_is_501(client):
+def test_send_key_unknown_is_400(client):
     c, _ = client
     r = c.post(
-        "/v1/sac/agents/alpha/send",
+        "/v1/agents/alpha/send",
         json={"type": "key", "key": "F12"},
         headers=auth_headers(),
     )
-    assert r.status_code == 501
+    assert r.status_code == 400
 
 
 def test_send_missing_prompt_is_400(client):
     c, _ = client
     r = c.post(
-        "/v1/sac/agents/alpha/send",
+        "/v1/agents/alpha/send",
         json={"type": "prompt"},
         headers=auth_headers(),
     )
@@ -165,7 +165,7 @@ def test_send_missing_prompt_is_400(client):
 def test_send_no_session_id_is_409(client):
     c, _ = client
     r = c.post(
-        "/v1/sac/agents/ghost/send",
+        "/v1/agents/ghost/send",
         json={"prompt": "hello"},
         headers=auth_headers(),
     )
@@ -175,7 +175,7 @@ def test_send_no_session_id_is_409(client):
 def test_send_unknown_agent_is_404(client):
     c, _ = client
     r = c.post(
-        "/v1/sac/agents/missing/send",
+        "/v1/agents/missing/send",
         json={"prompt": "hello"},
         headers=auth_headers(),
     )
@@ -208,7 +208,7 @@ def test_send_happy_path_invokes_claude(client):
         ),
     ):
         r = c.post(
-            "/v1/sac/agents/alpha/send",
+            "/v1/agents/alpha/send",
             json={"prompt": "follow up", "options": {"model": "opus", "max_turns": 2}},
             headers=auth_headers(),
         )
@@ -297,7 +297,7 @@ def test_send_routes_to_live_runner_when_a2a_port_set(tmp_path, monkeypatch):
         side_effect=fake_urlopen,
     ):
         r = c.post(
-            "/v1/sac/agents/live/send",
+            "/v1/agents/live/send",
             json={"prompt": "hello live"},
             headers=auth_headers(),
         )
@@ -346,7 +346,7 @@ def test_send_falls_back_when_live_runner_unreachable(tmp_path, monkeypatch):
         ),
     ):
         r = c.post(
-            "/v1/sac/agents/down/send",
+            "/v1/agents/down/send",
             json={"prompt": "hello fallback"},
             headers=auth_headers(),
         )
@@ -359,13 +359,13 @@ def test_send_falls_back_when_live_runner_unreachable(tmp_path, monkeypatch):
 
 def test_post_agents_rejects_non_json(client):
     c, _ = client
-    r = c.post("/v1/sac/agents", data="x", headers=auth_headers())
+    r = c.post("/v1/agents", data="x", headers=auth_headers())
     assert r.status_code == 400
 
 
 def test_post_agents_requires_name(client):
     c, _ = client
-    r = c.post("/v1/sac/agents", json={}, headers=auth_headers())
+    r = c.post("/v1/agents", json={}, headers=auth_headers())
     assert r.status_code == 400
     assert "name" in r.json()["error"]
 
@@ -394,7 +394,7 @@ def test_post_agents_inline_spec_writes_file_and_starts(client, tmp_path, monkey
         ),
     ):
         r = c.post(
-            "/v1/sac/agents",
+            "/v1/agents",
             json={
                 "name": "adhoc-1",
                 "spec": {
@@ -419,7 +419,7 @@ def test_post_agents_inline_spec_rejects_wrong_apiversion(
     c, _ = client
     monkeypatch.setenv("HOME", str(tmp_path))
     r = c.post(
-        "/v1/sac/agents",
+        "/v1/agents",
         json={
             "name": "bad",
             "spec": {"apiVersion": "v1", "kind": "Agent"},
@@ -442,7 +442,7 @@ def test_post_agents_inline_spec_conflicts_without_overwrite(
     monkeypatch.setenv("HOME", str(fake_home))
 
     r = c.post(
-        "/v1/sac/agents",
+        "/v1/agents",
         json={
             "name": "dup",
             "spec": {
@@ -482,7 +482,7 @@ def test_post_agents_shells_out_to_sac_agent_start(client):
             side_effect=fake_run,
         ),
     ):
-        r = c.post("/v1/sac/agents", json={"name": "alpha"}, headers=auth_headers())
+        r = c.post("/v1/agents", json={"name": "alpha"}, headers=auth_headers())
     assert r.status_code == 200, r.text
     assert captured["argv"] == ["/usr/bin/sac", "agent", "start", "alpha"]
     body = r.json()
@@ -492,25 +492,25 @@ def test_post_agents_shells_out_to_sac_agent_start(client):
 
 def test_card_returns_a2a_shape(client):
     c, _ = client
-    r = c.get("/v1/sac/agents/alpha/card", headers=auth_headers())
+    r = c.get("/v1/agents/alpha/card", headers=auth_headers())
     assert r.status_code == 200, r.text
     card = r.json()
     # AgentCard required fields per A2A v0.3+: name, description, url, version, capabilities
     assert "name" in card
     assert "url" in card
     assert card["url"].startswith("http://")
-    assert "/v1/sac/a2a" in card["url"]
+    assert "/v1/a2a" in card["url"]
 
 
 def test_card_unknown_agent_is_404(client):
     c, _ = client
-    r = c.get("/v1/sac/agents/does-not-exist/card", headers=auth_headers())
+    r = c.get("/v1/agents/does-not-exist/card", headers=auth_headers())
     assert r.status_code == 404
 
 
 def test_delete_no_pid_file_is_404(client):
     c, _ = client
-    r = c.delete("/v1/sac/agents/alpha", headers=auth_headers())
+    r = c.delete("/v1/agents/alpha", headers=auth_headers())
     assert r.status_code == 404
 
 
@@ -527,7 +527,7 @@ def test_delete_signals_pid(client):
         killed["sig"] = sig
 
     with patch("scitex_agent_container._listen.server.os.kill", side_effect=fake_kill):
-        r = c.delete("/v1/sac/agents/alpha", headers=auth_headers())
+        r = c.delete("/v1/agents/alpha", headers=auth_headers())
     assert r.status_code == 200, r.text
     assert r.json()["stopped"] is True
     assert killed == {"pid": 12345, "sig": 15}
@@ -593,7 +593,7 @@ def test_send_sse_streams_stream_json_lines(client):
     ):
         with c.stream(
             "POST",
-            "/v1/sac/agents/alpha/send",
+            "/v1/agents/alpha/send",
             json={"prompt": "go"},
             headers={**auth_headers(), "Accept": "text/event-stream"},
         ) as r:

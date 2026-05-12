@@ -1,7 +1,8 @@
 """``sac listen`` — host-level HTTP/JSON control plane for sac agents.
 
 Boots a Starlette app under uvicorn at ``--bind``; routes the
-``/v1/sac/...`` namespace from :mod:`scitex_agent_container._listen.server`.
+``/v1/agents/...`` and ``/v1/a2a/...`` namespaces from
+:mod:`scitex_agent_container._listen.server`.
 Token auto-generates at first run; printed once for the operator to
 copy. Subsequent runs reuse the token file.
 
@@ -103,7 +104,7 @@ def listen(
 
     click.echo(f"# sac listen v1 → {host}:{port}", err=True)
     click.echo(f"# token file: {tok_path}", err=True)
-    click.echo(f"# health: curl http://{host}:{port}/v1/sac/health", err=True)
+    click.echo(f"# health: curl http://{host}:{port}/v1/health", err=True)
 
     app = create_app(token=token)
     # Lazy-import uvicorn so the CLI module loads even if uvicorn is missing
