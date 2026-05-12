@@ -1,5 +1,5 @@
 <!-- ---
-!-- Timestamp: 2026-05-12 23:21:48
+!-- Timestamp: 2026-05-13 00:27:13
 !-- Author: ywatanabe
 !-- File: /home/ywatanabe/proj/scitex-agent-container/README.md
 !-- --- -->
@@ -33,13 +33,13 @@
 
 ## Problem and Solution
 
-| # | Problem                                                    | Solution                                                                                                                                      |
-|---|------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------|
-| 1 | Scripting an agentic workflow is hard.                     | `scitex-agent-container` (`sac`) declares the agent as a **single YAML file** (`spec.yaml`).                                                  |
-| 2 | Subagents don't scale across projects, hosts, and replays. | `sac` lets agents spawn **full agents** on local AND **remote hosts**.                                                                        |
-| 3 | Controlling agent permissions is difficult.                | `sac` runs every agent **inside Apptainer** — full mount/env/security options exposed in `spec.yaml`.                                         |
-| 4 | Supporting the A2A protocol by hand is time-consuming.     | `sac` needs just one YAML field (`spec.a2a.port`).                                                                                            |
-| 5 | Version-controlling Apptainer recipes is laborious.        | `sac` enables layered SIFs with a sandbox/update/freeze workflow via [`scitex-container`](https://github.com/ywatanabe1989/scitex-container). |
+| # | Problem                                                     | Solution                                                                                                                                      |
+|---|-------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------|
+| 1 | Scripting an agentic workflow is hard.                      | `scitex-agent-container` (`sac`) declares the agent as a **single YAML file** (`spec.yaml`).                                                  |
+| 2 | Subagents don't scale across hosts, projects, and contexts. | `sac` lets agents spawn **full agents** on local AND **remote hosts**.                                                                        |
+| 3 | Controlling agent permissions is difficult.                 | `sac` runs every agent **inside Apptainer** — full mount/env/security options exposed in `spec.yaml`.                                         |
+| 4 | Supporting the A2A protocol by hand is time-consuming.      | `sac` needs just one YAML field (`spec.a2a.port`).                                                                                            |
+| 5 | Version-controlling Apptainer recipes is laborious.         | `sac` enables layered SIFs with a sandbox/update/freeze workflow via [`scitex-container`](https://github.com/ywatanabe1989/scitex-container). |
 
 ## Architecture
 
@@ -87,56 +87,19 @@ uv pip install "scitex-agent-container[all]"
 
 ### Configuration
 
-Copy [`.env.example`](.env.example) to `.env` (gitignored) at your
-project root, then edit:
+Every sac knob can be set in four places. Highest wins:
 
-```bash
-cp .env.example .env
-$EDITOR .env
-```
+1. **CLI flag** — `sac agent start hello --workdir /tmp/x`
+2. **Env var** — `SAC_<X>` or the long `SCITEX_AGENT_CONTAINER_<X>` form
+   (setting both with different values raises `SacEnvConflict`). Copy
+   [`.env.example`](.env.example) to `.env` and uncomment what you need.
+3. **Project config** — `<proj>/.scitex/agent-container/config.yaml`,
+   when you're inside a git repo that ships one.
+4. **User config** — `~/.scitex/agent-container/config.yaml`
+   (relocatable via `$SCITEX_DIR`).
 
-CLI flags always override env vars. The full list of variables (with
-inline comments) lives in `.env.example`. Every sac-owned env var has
-two equivalent names — a short `SAC_<X>` form and a long
-`SCITEX_AGENT_CONTAINER_<X>` form; setting both with different values
-raises `SacEnvConflict` at startup.
-
-<details>
-<summary><strong>Local state directories</strong></summary>
-
-<br>
-
-sac reads optional host/peer config and writes per-agent runtime state
-under the canonical SciTeX local-state locations (`<pkg-short>` =
-`agent-container`):
-
-Two kinds of state under `<scope>/.scitex/agent-container/`, mirroring
-the canonical spec — **tracked** at the root (commit-worthy config +
-credentials) and **runtime** under `runtime/` (regenerable per-host
-state, gitignored):
-
-| Path                                          | Kind     | Purpose                                              |
-|-----------------------------------------------|----------|------------------------------------------------------|
-| `config.yaml`                                 | tracked  | host identity, `host.aliases`, `peers:` (F-CS12)     |
-| `accounts/<name>/`                            | tracked  | saved Claude Code accounts (`account.json` + `.credentials.json`); switched by `sac account use <name>` |
-| `accounts/_rotations/<email>.ndjson`          | tracked  | OAuth-token rotation log (one append per observed rotation) |
-| `runtime/agents/<name>/`                      | runtime  | per-agent pid, heartbeat.json, session.jsonl, quota.json |
-| `runtime/cache/<agent>.{latest,prev,diff}.json` | runtime  | snapshot cache for the dashboard / `sac agent diff`  |
-| `runtime/events/<agent>.jsonl`                | runtime  | Claude Code hook event ring-buffer                   |
-| `runtime/containers/`                         | runtime  | built `.sif` images + `.def` snapshots + build logs  |
-
-Two scopes (project wins when both exist, resolved via
-`scitex_config._ecosystem.local_state.path("agent-container", ...)`):
-
-| Root                                | Scope         | When used                                |
-|-------------------------------------|---------------|------------------------------------------|
-| `<proj-root>/.scitex/agent-container/` | project-local | inside a git repo with this subdir       |
-| `~/.scitex/agent-container/`        | user-global   | fallback; relocatable via `$SCITEX_DIR`  |
-
-See `01_ecosystem_06_local-state-directories.md` for the full rule
-(§4a = tracked, §4b = runtime).
-
-</details>
+Per-agent state lives under the same `<scope>/.scitex/agent-container/`
+tree — see [User state layout](#user-state-layout) below.
 
 ## Layered runtime images
 
@@ -167,39 +130,52 @@ Recipes ship in the pip wheel — no need to clone the repo to run `sac image bu
 
 ## User state layout (`~/.scitex/agent-container/`)
 
-Everything sac owns on the host lives under one root:
+Two halves under one root — **tracked** at the top (commit-worthy
+input / credentials) and **runtime** under `runtime/` (regenerable
+per-host output, gitignored). Project-scope
+`<proj-root>/.scitex/agent-container/` overrides user-scope when
+present.
 
 ```
 ~/.scitex/agent-container/
-├── config.yaml                ← global sac config (account, default model, etc.)
-├── agents/                    ← per-agent declarations (read-only inputs)
-│   └── <name>/
-│       ├── spec.yaml          ← v3 Agent definition (the SSoT)
-│       └── dot_claude/        ← optional: materialized into <workdir> at start
-│           ├── CLAUDE.md       (→ <workdir>/CLAUDE.md, marker-protected)
-│           ├── .mcp.json       (→ <workdir>/.mcp.json, per-server merge)
-│           ├── .env            (→ <workdir>/.env, mode 0600)
-│           ├── state.md        (→ <workdir>/state.md, full overwrite)
-│           ├── commands/       (→ <workdir>/.claude/commands/)
-│           ├── skills/         (→ <workdir>/.claude/skills/)
-│           └── hooks/          (→ <workdir>/.claude/hooks/)
-├── containers/                ← built SIFs (see "Layered runtime images" above)
-├── runtime/                   ← per-agent runtime state (writeable; never in git)
-│   └── <name>/
-│       ├── pid                ← runner PID
-│       ├── heartbeat.json     ← {ts, pid, state}; refreshed every tick
-│       ├── session_id         ← persisted SDK session id (resume marker)
-│       ├── session.jsonl      ← one JSON object per turn event
-│       └── quota.json         ← accumulated per-turn token totals
+├── config.yaml                ← host identity, host.aliases, peers (F-CS12)
+├── agents/<name>/             ← per-agent declarations (you write these)
+│   ├── spec.yaml              ← v3 Agent definition (the SSoT)
+│   └── dot_claude/            ← optional: materialized into <workdir> at start
+│       ├── CLAUDE.md           (→ <workdir>/CLAUDE.md, marker-protected)
+│       ├── .mcp.json           (→ <workdir>/.mcp.json, per-server merge)
+│       ├── .env                (→ <workdir>/.env, mode 0600)
+│       ├── state.md            (→ <workdir>/state.md, full overwrite)
+│       ├── commands/           (→ <workdir>/.claude/commands/)
+│       ├── skills/             (→ <workdir>/.claude/skills/)
+│       └── hooks/              (→ <workdir>/.claude/hooks/)
+├── accounts/                  ← saved Claude Code accounts (sac account save)
+│   ├── <name>/
+│   │   ├── account.json        (safe metadata; no tokens)
+│   │   └── .credentials.json   (copied into ~/.claude/ on `sac account use`)
+│   └── _rotations/
+│       └── <email>.ndjson      (OAuth-rotation log, one append per observed rotation)
 ├── tokens/                    ← `sac listen` bearer tokens (0600)
 │   └── listen-<host>.token
-├── auth-rotations/            ← stored Claude Code accounts (rotation)
-├── events/                    ← Claude Code hook event ring buffer
-├── cache/                     ← misc per-host caches
-└── skills/                    ← skill snippets injected into CLAUDE.md
+├── containers/                ← built SIFs (see "Layered runtime images" above)
+└── runtime/                   ← regenerable per-host state; never in git
+    ├── <agent-name>/           per-agent runner state
+    │   ├── pid                  (runner PID)
+    │   ├── heartbeat.json       ({ts, pid, state}; refreshed every tick)
+    │   ├── session_id           (persisted SDK session id, resume marker)
+    │   ├── session.jsonl        (one JSON object per turn event)
+    │   └── quota.json           (accumulated per-turn token totals)
+    ├── events/                  Claude Code hook event ring-buffer
+    │   └── <agent>.jsonl
+    └── cache/                   snapshot cache for the dashboard / `sac agent diff`
+        └── <agent>.{latest,prev,diff}.json
 ```
 
-Two halves: **`agents/`** is *input* (you write spec.yaml), **`runtime/`** is *output* (sac writes pid / heartbeat / session.jsonl). `sac db clean` sweeps stale `runtime/` rows; `sac agent stop --force` clears a wedged agent without touching its spec.
+`agents/` is *input* (you write spec.yaml + dot_claude/);
+`runtime/` is *output* (sac writes pid / heartbeat / session.jsonl /
+hook events / snapshot cache). `sac db clean` sweeps stale `runtime/`
+entries; `sac agent stop --force` clears a wedged agent without
+touching its spec.
 
 ## Quickstart
 
@@ -333,9 +309,11 @@ End-to-end: `sac agent start` materializes the workspace (`dot_claude/` files + 
 | Template | Pattern | When to use |
 |---|---|---|
 | `apptainer.yaml` | claude-session inside Apptainer SIF | **Default**: HPC + reproducibility |
-| `docker.yaml` | claude-session inside docker | Dev laptop where docker is already running |
 | `ssh.yaml` | remote agent via SSH | Cross-machine fleet member |
-| `mcp.yaml` | agent with MCP tool wiring | Specialised tool surface |
+
+MCP tool wiring is no longer a separate template — drop a `.mcp.json`
+into the agent's [`dot_claude/`](#user-state-layout-scitexagent-container)
+directory and it'll be merged into `<workdir>/.mcp.json` at start.
 
 ## Examples
 

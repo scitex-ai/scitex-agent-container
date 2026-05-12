@@ -75,12 +75,15 @@ def test_example_loads(tmp_path, src):
 
 
 def test_minimal_templates_cover_expected_patterns():
-    """Catch accidental deletion / pattern drift in templates/."""
+    """Catch accidental deletion / pattern drift in templates/.
+
+    Docker / MCP templates dropped 2026-05-13: sac is apptainer-only
+    after F-CS17, and MCP wiring now ships inside the agent's
+    ``dot_claude/.mcp.json`` instead of a dedicated template.
+    """
     expected = {
-        "docker.yaml",
         "apptainer.yaml",
         "ssh.yaml",
-        "mcp.yaml",
     }
     actual = {p.name for p in TEMPLATES_DIR.glob("*.yaml")}
     assert actual == expected, f"template set drifted: {actual ^ expected}"
@@ -89,17 +92,6 @@ def test_minimal_templates_cover_expected_patterns():
 # ---------------------------------------------------------------------------
 # Runtime-specific assertions — guard against YAML/dataclass drift
 # ---------------------------------------------------------------------------
-
-
-def test_docker_template_uses_docker_runtime(tmp_path):
-    from scitex_agent_container.config import load_config
-
-    target, _ = _instantiate(TEMPLATES_DIR / "docker.yaml", tmp_path)
-    cfg = load_config(target)
-    assert cfg.runtime == "docker"
-    assert cfg.image  # spec.image is non-empty (F-CS16 phase 2a)
-    assert "scitex" in cfg.image
-    assert cfg.dockerfile  # auto-build target declared
 
 
 def test_apptainer_template_uses_apptainer_runtime(tmp_path):
@@ -122,15 +114,3 @@ def test_ssh_template_loads_as_docker_runtime(tmp_path):
     target, _ = _instantiate(TEMPLATES_DIR / "ssh.yaml", tmp_path)
     cfg = load_config(target)
     assert cfg.runtime == "docker"
-
-
-def test_mcp_template_has_server_entry(tmp_path):
-    from scitex_agent_container.config import load_config
-
-    target, _ = _instantiate(TEMPLATES_DIR / "mcp.yaml", tmp_path)
-    cfg = load_config(target)
-    assert "example-server" in cfg.mcp_servers
-    server = cfg.mcp_servers["example-server"]
-    # mcp_servers is parsed as dict[str, dict] — check the raw shape.
-    assert server.get("type") == "stdio"
-    assert server.get("command") == "bun"

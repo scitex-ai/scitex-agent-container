@@ -16,16 +16,12 @@ Both are validated by `tests/test_templates_v3_valid.py`. The SLURM template add
 
 ## Pattern matrix
 
-| Template | Runtime | Distinguishing key |
+| Template | Pattern | Distinguishing key |
 |---|---|---|
-| `local.yaml` | `claude-code` | no container, no remote |
-| `docker.yaml` | `claude-code` | `container.runtime: docker` (`podman` also accepted) |
-| `apptainer.yaml` | `claude-code` | `container.runtime: apptainer`, `image: *.sif` |
-| `ssh.yaml` | `claude-code` | `remote.host: ...` |
-| `ssh-slurm.yaml` | `slurm` | `slurm.{partition,time_limit,hooks}` |
-| `mcp.yaml` | `claude-code` | `mcp_servers: {...}` |
+| `apptainer.yaml` | claude-session inside Apptainer SIF | `spec.runtime: apptainer`, `spec.image: *.sif` (default) |
+| `ssh.yaml` | remote agent via SSH | dispatched cross-host via `sac --on <peer>` (F-CS12) |
 
-Patterns are orthogonal — a real agent can combine them (e.g. `ssh` + `mcp`, `apptainer` + `ssh`). The templates demonstrate the *minimum* fields each pattern requires; mix-and-match by copying YAML keys.
+MCP wiring is no longer a separate template — drop a `.mcp.json` into the agent's `dot_claude/` directory and it's merged into `<workdir>/.mcp.json` at start (F-DC1). Docker / podman / local-bare-metal patterns deleted after F-CS17 made sac apptainer-only.
 
 ## Instantiating (dir-as-SSoT)
 
@@ -33,7 +29,8 @@ The v3 loader derives the agent name from the parent directory, not from `metada
 
 ```bash
 mkdir -p ~/.scitex/agent-container/agents/my-agent
-cp examples/agent-templates/local.yaml ~/.scitex/agent-container/agents/my-agent/my-agent.yaml
+cp examples/agent-templates/apptainer.yaml ~/.scitex/agent-container/agents/my-agent/spec.yaml
+# optional: add a dot_claude/ sibling for CLAUDE.md / .mcp.json / .env / commands / skills / hooks
 sac agent start my-agent
 ```
 
