@@ -94,13 +94,14 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.skills</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.context_management"><code class="docutils literal notranslate"><span class="pre">AgentConfig.context_management</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_commands"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_commands</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_prompts"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_prompts</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.mcp_servers"><code class="docutils literal notranslate"><span class="pre">AgentConfig.mcp_servers</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.multiplexer"><code class="docutils literal notranslate"><span class="pre">AgentConfig.multiplexer</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hosts_spec"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hosts_spec</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.scheduling"><code class="docutils literal notranslate"><span class="pre">AgentConfig.scheduling</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.config_path"><code class="docutils literal notranslate"><span class="pre">AgentConfig.config_path</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.mounts"><code class="docutils literal notranslate"><span class="pre">AgentConfig.mounts</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.user"><code class="docutils literal notranslate"><span class="pre">AgentConfig.user</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.a2a"><code class="docutils literal notranslate"><span class="pre">AgentConfig.a2a</span></code></a></li>
@@ -109,8 +110,10 @@
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.model"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.model</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.channels"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.channels</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.flags"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.flags</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.raw_options"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.raw_options</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.session"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.session</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.continue_max_age_minutes"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.continue_max_age_minutes</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.resume_id"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.resume_id</span></code></a></li>
@@ -376,11 +379,8 @@
 <span class="n">_KNOWN_SPEC_KEYS</span> <span class="o">=</span> <span class="nb">frozenset</span><span class="p">(</span>
     <span class="p">{</span>
         <span class="s2">&quot;runtime&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;image&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;model&quot;</span><span class="p">,</span>
         <span class="s2">&quot;workdir&quot;</span><span class="p">,</span>
         <span class="s2">&quot;python-venv&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;env&quot;</span><span class="p">,</span>
         <span class="s2">&quot;container&quot;</span><span class="p">,</span>
         <span class="s2">&quot;screen&quot;</span><span class="p">,</span>  <span class="c1"># legacy: agent metadata (screen_name) — no longer drives a multiplexer</span>
         <span class="s2">&quot;claude&quot;</span><span class="p">,</span>
@@ -389,9 +389,8 @@
         <span class="s2">&quot;restart&quot;</span><span class="p">,</span>
         <span class="s2">&quot;hooks&quot;</span><span class="p">,</span>
         <span class="s2">&quot;telegram&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;remote&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;skills&quot;</span><span class="p">,</span>
         <span class="s2">&quot;startup_commands&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;startup_prompts&quot;</span><span class="p">,</span>  <span class="c1"># v3-realign: separate from startup_commands (§3)</span>
         <span class="s2">&quot;startup&quot;</span><span class="p">,</span>
         <span class="s2">&quot;context_management&quot;</span><span class="p">,</span>
         <span class="s2">&quot;listen&quot;</span><span class="p">,</span>
@@ -404,10 +403,36 @@
         <span class="s2">&quot;a2a&quot;</span><span class="p">,</span>  <span class="c1"># A2A sidecar config read by a2a/_server.py</span>
         <span class="s2">&quot;autonomous&quot;</span><span class="p">,</span>  <span class="c1"># F-CS3 — drive-until-done block</span>
         <span class="s2">&quot;apptainer&quot;</span><span class="p">,</span>  <span class="c1"># F-CS18 — apptainer-specific build extension</span>
-        <span class="s2">&quot;mounts&quot;</span><span class="p">,</span>  <span class="c1"># declarative bind-mounts: list of {src, dst, mode?}</span>
         <span class="s2">&quot;user&quot;</span><span class="p">,</span>  <span class="c1"># container user: &quot;host&quot; | &quot;uid:gid&quot; | &quot;&quot; (image default)</span>
+        <span class="s2">&quot;dot_claude&quot;</span><span class="p">,</span>  <span class="c1"># F-DC1 — directory merged into workspace/.claude/</span>
+        <span class="c1"># v3 removed (rejected explicitly below with relocation hints):</span>
+        <span class="c1"># image (→ spec.apptainer.image), mounts (→ spec.apptainer.binds),</span>
+        <span class="c1"># env (→ spec.apptainer.env), model (→ spec.claude.model),</span>
+        <span class="c1"># skills, remote.</span>
     <span class="p">}</span>
 <span class="p">)</span>
+
+
+<span class="c1"># v3-realign: top-level fields that moved into engine blocks. Reject</span>
+<span class="c1"># loudly with a hint pointing to the new home (§3 Removed from v3).</span>
+<span class="n">_V3_RELOCATED_FIELDS</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;image&quot;</span><span class="p">:</span> <span class="s2">&quot;spec.apptainer.image&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;mounts&quot;</span><span class="p">:</span> <span class="s2">&quot;spec.apptainer.binds&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;env&quot;</span><span class="p">:</span> <span class="s2">&quot;spec.apptainer.env&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="s2">&quot;spec.claude.model&quot;</span><span class="p">,</span>
+<span class="p">}</span>
+
+<span class="c1"># v3-realign: fields removed outright (no relocation — different owners).</span>
+<span class="n">_V3_REMOVED_FIELDS</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;skills&quot;</span><span class="p">:</span> <span class="p">(</span>
+        <span class="s2">&quot;spec.skills is no longer accepted; skills now live under &quot;</span>
+        <span class="s2">&quot;dot_claude/skills/ (§3 Removed).&quot;</span>
+    <span class="p">),</span>
+    <span class="s2">&quot;remote&quot;</span><span class="p">:</span> <span class="p">(</span>
+        <span class="s2">&quot;spec.remote is no longer accepted; cross-host routing is orochi&#39;s &quot;</span>
+        <span class="s2">&quot;job (§2). Use orochi&#39;s peer registry instead.&quot;</span>
+    <span class="p">),</span>
+<span class="p">}</span>
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">validate_raw</span><span class="p">(</span><span class="n">raw</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
@@ -455,8 +480,28 @@
     <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
         <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;spec is required and must be a mapping&quot;</span><span class="p">)</span>
     <span class="k">else</span><span class="p">:</span>
-        <span class="c1"># Unknown spec keys</span>
-        <span class="n">unknown_spec</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span> <span class="o">-</span> <span class="n">_KNOWN_SPEC_KEYS</span>
+        <span class="c1"># v3-realign — fields that moved into engine blocks: reject with</span>
+        <span class="c1"># a relocation hint so the operator knows the new home.</span>
+        <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">new_home</span> <span class="ow">in</span> <span class="n">_V3_RELOCATED_FIELDS</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="k">if</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">spec</span><span class="p">:</span>
+                <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                    <span class="sa">f</span><span class="s2">&quot;spec.</span><span class="si">{</span><span class="n">k</span><span class="si">}</span><span class="s2"> is no longer accepted at the top level; &quot;</span>
+                    <span class="sa">f</span><span class="s2">&quot;move it to </span><span class="si">{</span><span class="n">new_home</span><span class="si">}</span><span class="s2"> (v3 spec realignment §3).&quot;</span>
+                <span class="p">)</span>
+        <span class="c1"># v3-realign — fields removed outright (different owner / shape).</span>
+        <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">msg</span> <span class="ow">in</span> <span class="n">_V3_REMOVED_FIELDS</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="k">if</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">spec</span><span class="p">:</span>
+                <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
+
+        <span class="c1"># Unknown spec keys (excluding the v3-relocated/removed set, which</span>
+        <span class="c1"># already have a more specific message above — listing them as</span>
+        <span class="c1"># &quot;unknown&quot; would be misleading).</span>
+        <span class="n">unknown_spec</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="nb">set</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span>
+            <span class="o">-</span> <span class="n">_KNOWN_SPEC_KEYS</span>
+            <span class="o">-</span> <span class="nb">set</span><span class="p">(</span><span class="n">_V3_RELOCATED_FIELDS</span><span class="p">)</span>
+            <span class="o">-</span> <span class="nb">set</span><span class="p">(</span><span class="n">_V3_REMOVED_FIELDS</span><span class="p">)</span>
+        <span class="p">)</span>
         <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">unknown_spec</span><span class="p">):</span>
             <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
                 <span class="sa">f</span><span class="s2">&quot;Unknown spec field &#39;</span><span class="si">{</span><span class="n">k</span><span class="si">}</span><span class="s2">&#39;. &quot;</span>
@@ -475,12 +520,14 @@
                 <span class="s2">&quot;support was removed for simplicity.&quot;</span>
             <span class="p">)</span>
 
-        <span class="c1"># spec.image (F-CS16 phase 2a) — top-level container image tag.</span>
-        <span class="c1"># Empty string is allowed and falls back to the default at</span>
-        <span class="c1"># dispatch time. Type check only here.</span>
-        <span class="n">image</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;image&quot;</span><span class="p">)</span>
-        <span class="k">if</span> <span class="n">image</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
-            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;spec.image must be a string, got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">image</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="c1"># spec.image — moved to spec.apptainer.image in v3 (handled by the</span>
+        <span class="c1"># relocation rejection above). Type-check the new home instead.</span>
+        <span class="n">ap_block</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;apptainer&quot;</span><span class="p">,</span> <span class="p">{})</span> <span class="ow">or</span> <span class="p">{}</span>
+        <span class="n">ap_image</span> <span class="o">=</span> <span class="n">ap_block</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;image&quot;</span><span class="p">)</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">ap_block</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span> <span class="k">else</span> <span class="kc">None</span>
+        <span class="k">if</span> <span class="n">ap_image</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">ap_image</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
+            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;spec.apptainer.image must be a string, got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">ap_image</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="p">)</span>
 
         <span class="c1"># spec.dockerfile dropped 2026-05-13 with the docker ripout.</span>
         <span class="c1"># Keep type check around for one minor version so explicit</span>
@@ -491,20 +538,22 @@
                 <span class="sa">f</span><span class="s2">&quot;spec.dockerfile must be a string, got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">dockerfile</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span>
             <span class="p">)</span>
 
-        <span class="c1"># spec.model — F-CS7: validate against accepted SDK aliases /</span>
-        <span class="c1"># versioned forms. The SDK silently rejects unknown values</span>
-        <span class="c1"># (heartbeat fresh, every turn returns 0 tokens), so we surface</span>
-        <span class="c1"># bad strings at yaml-validate time. Empty / missing is allowed</span>
-        <span class="c1"># — runtime falls back to its default.</span>
-        <span class="n">model</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;model&quot;</span><span class="p">)</span>
+        <span class="c1"># spec.claude.model — F-CS7 (v3: moved from top-level spec.model).</span>
+        <span class="c1"># Validate against accepted SDK aliases / versioned forms. The</span>
+        <span class="c1"># SDK silently rejects unknown values (heartbeat fresh, every</span>
+        <span class="c1"># turn returns 0 tokens), so we surface bad strings at yaml-</span>
+        <span class="c1"># validate time. Empty / missing is allowed — runtime falls back</span>
+        <span class="c1"># to its default.</span>
+        <span class="n">claude_block</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;claude&quot;</span><span class="p">,</span> <span class="p">{})</span> <span class="ow">or</span> <span class="p">{}</span>
+        <span class="n">model</span> <span class="o">=</span> <span class="n">claude_block</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;model&quot;</span><span class="p">)</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">claude_block</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span> <span class="k">else</span> <span class="kc">None</span>
         <span class="k">if</span> <span class="n">model</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
             <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
                 <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                    <span class="sa">f</span><span class="s2">&quot;spec.model must be a string, got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">model</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span>
+                    <span class="sa">f</span><span class="s2">&quot;spec.claude.model must be a string, got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">model</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span>
                 <span class="p">)</span>
             <span class="k">elif</span> <span class="n">model</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">_VALID_MODEL_RE</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">model</span><span class="p">):</span>
                 <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                    <span class="sa">f</span><span class="s2">&quot;spec.model &#39;</span><span class="si">{</span><span class="n">model</span><span class="si">}</span><span class="s2">&#39; is not an accepted alias. &quot;</span>
+                    <span class="sa">f</span><span class="s2">&quot;spec.claude.model &#39;</span><span class="si">{</span><span class="n">model</span><span class="si">}</span><span class="s2">&#39; is not an accepted alias. &quot;</span>
                     <span class="s2">&quot;Use a bare alias (&#39;opus&#39;, &#39;sonnet&#39;, &#39;haiku&#39;, &#39;inherit&#39;, &quot;</span>
                     <span class="s2">&quot;&#39;default&#39;), optionally with a context suffix like &quot;</span>
                     <span class="s2">&quot;&#39;opus[1m]&#39;; OR the full versioned form &quot;</span>
@@ -553,45 +602,8 @@
         <span class="k">if</span> <span class="n">method</span> <span class="ow">and</span> <span class="n">method</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;sdk-alive&quot;</span><span class="p">,):</span>
             <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;spec.health.method must be &#39;sdk-alive&#39;, got &#39;</span><span class="si">{</span><span class="n">method</span><span class="si">}</span><span class="s2">&#39;&quot;</span><span class="p">)</span>
 
-        <span class="c1"># spec.mounts — declarative bind-mounts. Each entry: {src, dst, mode?}.</span>
-        <span class="c1"># `src` and `dst` are strings (host path / container path); `mode` is</span>
-        <span class="c1"># optional and one of &quot;rw&quot; (default) / &quot;ro&quot;.</span>
-        <span class="n">mounts</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;mounts&quot;</span><span class="p">)</span>
-        <span class="k">if</span> <span class="n">mounts</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">mounts</span><span class="p">,</span> <span class="nb">list</span><span class="p">):</span>
-                <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                    <span class="sa">f</span><span class="s2">&quot;spec.mounts must be a list of mappings, got &quot;</span>
-                    <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">mounts</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span>
-                <span class="p">)</span>
-            <span class="k">else</span><span class="p">:</span>
-                <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">m</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">mounts</span><span class="p">):</span>
-                    <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
-                        <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                            <span class="sa">f</span><span class="s2">&quot;spec.mounts[</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">] must be a mapping, got &quot;</span>
-                            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span>
-                        <span class="p">)</span>
-                        <span class="k">continue</span>
-                    <span class="n">extra</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">m</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span> <span class="o">-</span> <span class="p">{</span><span class="s2">&quot;src&quot;</span><span class="p">,</span> <span class="s2">&quot;dst&quot;</span><span class="p">,</span> <span class="s2">&quot;mode&quot;</span><span class="p">}</span>
-                    <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">extra</span><span class="p">):</span>
-                        <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                            <span class="sa">f</span><span class="s2">&quot;spec.mounts[</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">]: unknown key &#39;</span><span class="si">{</span><span class="n">k</span><span class="si">}</span><span class="s2">&#39;. &quot;</span>
-                            <span class="s2">&quot;Valid keys: src, dst, mode.&quot;</span>
-                        <span class="p">)</span>
-                    <span class="n">src</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;src&quot;</span><span class="p">)</span>
-                    <span class="n">dst</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;dst&quot;</span><span class="p">)</span>
-                    <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">src</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">src</span><span class="p">:</span>
-                        <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                            <span class="sa">f</span><span class="s2">&quot;spec.mounts[</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">].src must be a non-empty string&quot;</span>
-                        <span class="p">)</span>
-                    <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">dst</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">dst</span><span class="p">:</span>
-                        <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                            <span class="sa">f</span><span class="s2">&quot;spec.mounts[</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">].dst must be a non-empty string&quot;</span>
-                        <span class="p">)</span>
-                    <span class="n">mode</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;mode&quot;</span><span class="p">)</span>
-                    <span class="k">if</span> <span class="n">mode</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">mode</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;rw&quot;</span><span class="p">,</span> <span class="s2">&quot;ro&quot;</span><span class="p">):</span>
-                        <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                            <span class="sa">f</span><span class="s2">&quot;spec.mounts[</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">].mode must be &#39;rw&#39; or &#39;ro&#39;, got &#39;</span><span class="si">{</span><span class="n">mode</span><span class="si">}</span><span class="s2">&#39;&quot;</span>
-                        <span class="p">)</span>
+        <span class="c1"># spec.mounts moved to spec.apptainer.binds in v3 — rejected</span>
+        <span class="c1"># by the relocation block above. No further validation needed.</span>
 
         <span class="c1"># spec.user — container user. Three accepted shapes:</span>
         <span class="c1">#   * &quot;&quot;              (default) → image&#39;s USER (typically `agent`)</span>

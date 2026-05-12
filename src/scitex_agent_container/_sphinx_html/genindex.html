@@ -94,13 +94,14 @@
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.skills</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.context_management"><code class="docutils literal notranslate"><span class="pre">AgentConfig.context_management</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_commands"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_commands</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_prompts"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_prompts</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.mcp_servers"><code class="docutils literal notranslate"><span class="pre">AgentConfig.mcp_servers</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.multiplexer"><code class="docutils literal notranslate"><span class="pre">AgentConfig.multiplexer</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hosts_spec"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hosts_spec</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.scheduling"><code class="docutils literal notranslate"><span class="pre">AgentConfig.scheduling</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.config_path"><code class="docutils literal notranslate"><span class="pre">AgentConfig.config_path</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.mounts"><code class="docutils literal notranslate"><span class="pre">AgentConfig.mounts</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.user"><code class="docutils literal notranslate"><span class="pre">AgentConfig.user</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.a2a"><code class="docutils literal notranslate"><span class="pre">AgentConfig.a2a</span></code></a></li>
@@ -109,8 +110,10 @@
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.model"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.model</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.channels"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.channels</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.flags"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.flags</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.raw_options"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.raw_options</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.session"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.session</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.continue_max_age_minutes"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.continue_max_age_minutes</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.resume_id"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.resume_id</span></code></a></li>
@@ -650,10 +653,14 @@
 </li>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.SchedulingSpec.mode">mode (scitex_agent_container.config.SchedulingSpec attribute)</a>
 </li>
+      <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.model">model (scitex_agent_container.config.AgentConfig attribute)</a>
+
+      <ul>
+        <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.model">(scitex_agent_container.config.ClaudeSpec attribute)</a>
+</li>
+      </ul></li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.model">model (scitex_agent_container.config.AgentConfig attribute)</a>
-</li>
       <li>
     module
 
@@ -749,6 +756,8 @@
 <h2 id="R">R</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.raw_options">raw_options (scitex_agent_container.config.ClaudeSpec attribute)</a>
+</li>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.StartupSpec.ready_idle_ticks">ready_idle_ticks (scitex_agent_container.config.StartupSpec attribute)</a>
 </li>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.StartupSpec.ready_patterns">ready_patterns (scitex_agent_container.config.StartupSpec attribute)</a>
@@ -767,10 +776,10 @@
 </li>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec">RemoteSpec (class in scitex_agent_container.config)</a>
 </li>
-      <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.SkillsSpec.required">required (scitex_agent_container.config.SkillsSpec attribute)</a>
-</li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.SkillsSpec.required">required (scitex_agent_container.config.SkillsSpec attribute)</a>
+</li>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.resolve_config">resolve_config() (in module scitex_agent_container.config)</a>
 </li>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.resolve_hostname">resolve_hostname() (in module scitex_agent_container.config)</a>
@@ -821,15 +830,17 @@
 </li>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.session">session (scitex_agent_container.config.ClaudeSpec attribute)</a>
 </li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.skills">skills (scitex_agent_container.config.AgentConfig attribute)</a>
 </li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.SkillsSpec">SkillsSpec (class in scitex_agent_container.config)</a>
 </li>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup">startup (scitex_agent_container.config.AgentConfig attribute)</a>
 </li>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_commands">startup_commands (scitex_agent_container.config.AgentConfig attribute)</a>
+</li>
+      <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_prompts">startup_prompts (scitex_agent_container.config.AgentConfig attribute)</a>
 </li>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.StartupCommand">StartupCommand (class in scitex_agent_container.config)</a>
 </li>

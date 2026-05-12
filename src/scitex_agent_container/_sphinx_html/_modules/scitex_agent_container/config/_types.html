@@ -94,13 +94,14 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.skills</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.context_management"><code class="docutils literal notranslate"><span class="pre">AgentConfig.context_management</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_commands"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_commands</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_prompts"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_prompts</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.mcp_servers"><code class="docutils literal notranslate"><span class="pre">AgentConfig.mcp_servers</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.multiplexer"><code class="docutils literal notranslate"><span class="pre">AgentConfig.multiplexer</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hosts_spec"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hosts_spec</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.scheduling"><code class="docutils literal notranslate"><span class="pre">AgentConfig.scheduling</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.config_path"><code class="docutils literal notranslate"><span class="pre">AgentConfig.config_path</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.mounts"><code class="docutils literal notranslate"><span class="pre">AgentConfig.mounts</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.user"><code class="docutils literal notranslate"><span class="pre">AgentConfig.user</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.a2a"><code class="docutils literal notranslate"><span class="pre">AgentConfig.a2a</span></code></a></li>
@@ -109,8 +110,10 @@
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.model"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.model</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.channels"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.channels</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.flags"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.flags</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.raw_options"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.raw_options</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.session"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.session</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.continue_max_age_minutes"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.continue_max_age_minutes</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.resume_id"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.resume_id</span></code></a></li>
@@ -346,8 +349,15 @@
 <a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec">[docs]</a>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">ClaudeSpec</span><span class="p">:</span>
+    <span class="c1"># v3-realign: model lives under spec.claude.model (promoted from</span>
+    <span class="c1"># top-level spec.model — §3). Empty = runtime default.</span>
+    <span class="n">model</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
     <span class="n">channels</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
     <span class="n">flags</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+    <span class="c1"># v3 escape hatch (§1 invariant): splat ``**raw_options`` into</span>
+    <span class="c1"># ``ClaudeAgentOptions`` so power users can reach any SDK option</span>
+    <span class="c1"># sac doesn&#39;t model. Merged on top of curated keys; raw_options wins.</span>
+    <span class="n">raw_options</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">)</span>
     <span class="c1"># Session restart strategy. One of:</span>
     <span class="c1">#   continue-or-new  try --continue, fall back to a fresh launch if no prior session (default)</span>
     <span class="c1">#   continue         always pass --continue (fails if no prior session exists)</span>
@@ -423,6 +433,24 @@
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">ApptainerSpec</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Apptainer-specific image-build extensions (F-CS18).&quot;&quot;&quot;</span>
+
+    <span class="c1"># v3-realign: apptainer-engine-scoped knobs promoted from top-level.</span>
+    <span class="n">image</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;SIF path or docker:// URL — promoted from top-level spec.image (§3).</span>
+<span class="sd">    Empty = fall back to the default sac-scitex SIF.&quot;&quot;&quot;</span>
+
+    <span class="n">binds</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Bind mounts as ``host:container[:mode]`` strings — promoted from</span>
+<span class="sd">    top-level spec.mounts (§3).&quot;&quot;&quot;</span>
+
+    <span class="n">env</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">)</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Env vars exported into the container — promoted from top-level</span>
+<span class="sd">    spec.env (§3).&quot;&quot;&quot;</span>
+
+    <span class="n">raw_args</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;v3 escape hatch (§1 invariant): appended verbatim to the</span>
+<span class="sd">    ``apptainer exec`` argv after all curated args. Lets operators bolt</span>
+<span class="sd">    on flags sac doesn&#39;t model.&quot;&quot;&quot;</span>
 
     <span class="n">post</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Shell snippet run inside the SIF build (apptainer&#39;s `%post`).</span>
@@ -766,6 +794,10 @@
         <span class="n">default_factory</span><span class="o">=</span><span class="n">ContextManagementConfig</span>
     <span class="p">)</span>
     <span class="n">startup_commands</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">StartupCommand</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+    <span class="c1"># v3-realign: ``startup_prompts`` is separate from ``startup_commands``</span>
+    <span class="c1"># (§3). startup_commands are SHELL commands run BEFORE claude starts;</span>
+    <span class="c1"># startup_prompts are TEXT fed to claude as the first user message(s).</span>
+    <span class="n">startup_prompts</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
     <span class="n">startup</span><span class="p">:</span> <span class="s2">&quot;StartupSpec&quot;</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="n">StartupSpec</span><span class="p">())</span>
     <span class="n">mcp_servers</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">)</span>
     <span class="n">multiplexer</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;tmux&quot;</span>  <span class="c1"># &quot;tmux&quot; (default) or &quot;screen&quot;</span>
