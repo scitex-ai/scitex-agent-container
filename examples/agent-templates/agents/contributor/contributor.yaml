@@ -120,4 +120,4 @@ spec:
 
   startup_commands:
     - delay: 5
-      command: "Run boot sequence per src_CLAUDE.md (backfill, identity verify, DM proj-scitex-maintenance, fork upstream, clone, branch, root-cause fix, push, open Gitea PR)."
+      command: "Run boot sequence per dot_claude/CLAUDE.md (backfill, identity verify, DM proj-scitex-maintenance, fork upstream, clone, branch, root-cause fix, push, open Gitea PR)."

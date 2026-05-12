@@ -46,8 +46,8 @@
 `scitex-agent-container` (`sac`) is a thin user-facing wrapper that materializes a v3 `spec.yaml` into a long-lived, externally addressable Claude agent:
 
 ```
-  spec.yaml ─┐
-  src_*  ────┴─→ sac agent start ──→ apptainer instance
+  spec.yaml   ─┐
+  dot_claude/ ─┴─→ sac agent start ──→ apptainer instance
                                           │
                                           ▼
                               long-lived Claude SDK session
@@ -128,10 +128,14 @@ Everything sac owns on the host lives under one root:
 ├── agents/                    ← per-agent declarations (read-only inputs)
 │   └── <name>/
 │       ├── spec.yaml          ← v3 Agent definition (the SSoT)
-│       ├── src_CLAUDE.md      ← optional: materialized into <workdir>/CLAUDE.md
-│       ├── src_mcp.json       ← optional: materialized into .mcp.json
-│       ├── src_state.md       ← optional: materialized into <workdir>/state.md
-│       └── src_env            ← optional: extra env (KEY=VAL lines)
+│       └── dot_claude/        ← optional: materialized into <workdir> at start
+│           ├── CLAUDE.md       (→ <workdir>/CLAUDE.md, marker-protected)
+│           ├── .mcp.json       (→ <workdir>/.mcp.json, per-server merge)
+│           ├── .env            (→ <workdir>/.env, mode 0600)
+│           ├── state.md        (→ <workdir>/state.md, full overwrite)
+│           ├── commands/       (→ <workdir>/.claude/commands/)
+│           ├── skills/         (→ <workdir>/.claude/skills/)
+│           └── hooks/          (→ <workdir>/.claude/hooks/)
 ├── containers/                ← built SIFs (see "Layered runtime images" above)
 ├── runtime/                   ← per-agent runtime state (writeable; never in git)
 │   └── <name>/
@@ -251,7 +255,7 @@ flowchart LR
     H -. "sac peer post-turn" .-> I["other agent"]
 ```
 
-End-to-end: `sac agent start` materializes the workspace (`src_*` files + mounts + env), launches the runtime image, the SDK runner hosts a long-living session, and downstream tooling reads `session.jsonl` for state or POSTs to `/v1/turn` to drive the agent.
+End-to-end: `sac agent start` materializes the workspace (`dot_claude/` files + mounts + env), launches the runtime image, the SDK runner hosts a long-living session, and downstream tooling reads `session.jsonl` for state or POSTs to `/v1/turn` to drive the agent.
 
 ## YAML Spec Reference (v3)
 
@@ -271,8 +275,9 @@ End-to-end: `sac agent start` materializes the workspace (`src_*` files + mounts
 | `spec.startup_commands[]` | `command` | One-shot turns to send to the SDK before going idle |
 | `spec.health` | `enabled`, `interval`, `method: sdk-alive` | Health probe config |
 | `spec.skills` | `required[]`, `available[]` | Skill auto-injection into CLAUDE.md |
+| `spec.dot_claude` | path | Default: auto-discover `./dot_claude` next to `spec.yaml`. Absolute or relative; the directory is materialized into the workspace at start with `${metadata.name}` and `${ENV_VAR}` interpolation. |
 
-`src_CLAUDE.md`, `src_state.md`, `src_mcp.json`, `src_env` siblings of `spec.yaml` are materialized into the workspace at start with `${metadata.name}` and `${ENV_VAR}` interpolation.
+`<dot_claude>/CLAUDE.md`, `state.md`, `.mcp.json`, `.env` are materialized at the workdir root; `<dot_claude>/commands/`, `skills/`, `hooks/`, etc. mirror into `<workdir>/.claude/`.
 
 ## Templates
 

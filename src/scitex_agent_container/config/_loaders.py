@@ -309,6 +309,7 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         mounts=list(spec.get("mounts") or []),
         user=str(spec.get("user", "")),
         a2a=parse_a2a(spec),
+        dot_claude=str(spec.get("dot_claude", "")),
     )
 
 
