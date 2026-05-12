@@ -413,6 +413,12 @@ class AgentConfig:
     user: str = ""
     # Inbound A2A endpoint (HTTP /v1/turn + AgentCard).
     a2a: A2ASpec = field(default_factory=A2ASpec)
+    # F-DC1: spec.dot_claude — single directory that holds CLAUDE.md, .mcp.json,
+    # .env, state.md, commands/, skills/, hooks/, etc. and is materialized into
+    # the agent's workdir at start (replaces the legacy ``src_*`` siblings).
+    # Empty = auto-discover ``./dot_claude`` next to spec.yaml; otherwise an
+    # absolute path or a path relative to spec.yaml's directory.
+    dot_claude: str = ""
 
     def __post_init__(self) -> None:
         if not self.screen_name:
