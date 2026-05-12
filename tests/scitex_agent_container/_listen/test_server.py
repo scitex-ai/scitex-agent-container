@@ -216,6 +216,127 @@ def test_send_happy_path_invokes_claude(client):
 # --- delete -------------------------------------------------------------
 
 
+def _seed_agent_with_a2a(tmp_path: Path, name: str, port: int) -> None:
+    """Same as _seed_agent but with spec.a2a.port set."""
+    yaml_root = tmp_path / "agents"
+    agent_dir = yaml_root / name
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    (agent_dir / "spec.yaml").write_text(
+        f"""apiVersion: scitex-agent-container/v3
+kind: Agent
+spec:
+  runtime: apptainer
+  workdir: {tmp_path / "workdir"}
+  a2a:
+    host: 127.0.0.1
+    port: {port}
+"""
+    )
+    state_dir = tmp_path / "state" / name
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "session_id").write_text("sess-zzz", encoding="utf-8")
+
+
+def test_send_routes_to_live_runner_when_a2a_port_set(tmp_path, monkeypatch):
+    """If the agent has a reachable inbound HTTP, /send forwards there
+    instead of re-launching claude."""
+    (tmp_path / "workdir").mkdir(exist_ok=True)
+    _seed_agent_with_a2a(tmp_path, "live", port=9999)
+    monkeypatch.setenv("SCITEX_AGENT_CONTAINER_YAML_DIRS", str(tmp_path / "agents"))
+    monkeypatch.setattr(
+        "scitex_agent_container._listen.server.state_dir_for",
+        lambda name, root=None: tmp_path / "state" / name,
+    )
+    app = create_app(token=TOKEN)
+    c = TestClient(app)
+
+    # Mock the live runner: pretend POST /v1/turn returned 200 with a reply.
+    class FakeResp:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def read(self):
+            import json as _json
+
+            return _json.dumps({"reply": "live-runner answered"}).encode()
+
+    captured: dict = {}
+
+    def fake_urlopen(req, timeout=None):
+        captured["url"] = req.full_url
+        captured["body"] = req.data
+        return FakeResp()
+
+    with patch(
+        "scitex_agent_container._listen.server._urlrequest.urlopen",
+        side_effect=fake_urlopen,
+    ):
+        r = c.post(
+            "/v1/sac/agents/live/send",
+            json={"prompt": "hello live"},
+            headers=auth_headers(),
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["route"] == "live-runner"
+    assert body["reply"] == "live-runner answered"
+    assert captured["url"] == "http://127.0.0.1:9999/v1/turn"
+
+
+def test_send_falls_back_when_live_runner_unreachable(tmp_path, monkeypatch):
+    """If spec.a2a.port is set but the listener is down, fall back to
+    the short-lived claude --resume path."""
+    (tmp_path / "workdir").mkdir(exist_ok=True)
+    _seed_agent_with_a2a(tmp_path, "down", port=9998)
+    monkeypatch.setenv("SCITEX_AGENT_CONTAINER_YAML_DIRS", str(tmp_path / "agents"))
+    monkeypatch.setattr(
+        "scitex_agent_container._listen.server.state_dir_for",
+        lambda name, root=None: tmp_path / "state" / name,
+    )
+    app = create_app(token=TOKEN)
+    c = TestClient(app)
+
+    import urllib.error
+
+    def boom(req, timeout=None):
+        raise urllib.error.URLError("connection refused")
+
+    class FakeProc:
+        returncode = 0
+        stdout = "fallback ok"
+        stderr = ""
+
+    with (
+        patch(
+            "scitex_agent_container._listen.server._urlrequest.urlopen",
+            side_effect=boom,
+        ),
+        patch(
+            "scitex_agent_container._listen.server._find_claude_binary",
+            return_value="/usr/local/bin/claude",
+        ),
+        patch(
+            "scitex_agent_container._listen.server.subprocess.run",
+            return_value=FakeProc(),
+        ),
+    ):
+        r = c.post(
+            "/v1/sac/agents/down/send",
+            json={"prompt": "hello fallback"},
+            headers=auth_headers(),
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # No 'route' key when we fell through (short-lived path uses different schema)
+    assert "returncode" in body
+    assert body["returncode"] == 0
+
+
 def test_card_returns_a2a_shape(client):
     c, _ = client
     r = c.get("/v1/sac/agents/alpha/card", headers=auth_headers())

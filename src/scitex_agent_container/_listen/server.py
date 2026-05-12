@@ -16,9 +16,12 @@ namespace under /v1/sac/a2a/ are reserved for steps 3-4 of §6.
 from __future__ import annotations
 
 import asyncio
+import json as _json
 import os
 import shutil
 import subprocess
+import urllib.error as _urlerror
+import urllib.request as _urlrequest
 
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -30,6 +33,11 @@ from .._state.registry import Registry
 from ..config import load_config
 from ..config._resolve import resolve_config
 from .auth import BearerAuthMiddleware
+
+# Re-exported under the module's public surface so unit tests can patch
+# them as ``scitex_agent_container._listen.server._urlrequest.urlopen``
+# / ``._urlerror.URLError`` without forcing every call site to alias.
+__all__ = ["create_app", "_urlrequest", "_urlerror"]
 
 
 def _find_claude_binary() -> str:
@@ -82,6 +90,62 @@ async def agent_status(request: Request) -> JSONResponse:
     )
 
 
+async def _forward_to_live_runner(
+    cfg, name: str, prompt: str, options: dict, timeout: float = 600.0
+) -> JSONResponse | None:
+    """If the agent declared ``spec.a2a.port`` and its inbound HTTP is
+    reachable, push the turn into the live runner's inbox via its
+    ``/v1/turn`` endpoint. Returns the JSONResponse on success, or
+    ``None`` when no live runner is available (caller falls back to
+    the ``claude --resume`` re-launch path).
+    """
+    a2a = getattr(cfg, "a2a", None)
+    port = getattr(a2a, "port", None) if a2a else None
+    if not port:
+        return None
+    host = getattr(a2a, "host", None) or "127.0.0.1"
+
+    url = f"http://{host}:{port}/v1/turn"
+    body = _json.dumps({"text": prompt}).encode("utf-8")
+    req = _urlrequest.Request(
+        url,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    def _do_post() -> tuple[int, bytes]:
+        try:
+            with _urlrequest.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+                return resp.status, resp.read()
+        except _urlerror.HTTPError as exc:
+            return exc.code, exc.read()
+        except _urlerror.URLError:
+            return -1, b""
+
+    status, payload = await asyncio.to_thread(_do_post)
+    if status == -1:
+        # Runner not reachable — fall back to re-launch path.
+        return None
+    if status >= 400:
+        return JSONResponse(
+            {
+                "name": name,
+                "route": "live-runner",
+                "status": status,
+                "error": payload.decode("utf-8", "replace"),
+            },
+            status_code=status,
+        )
+    return JSONResponse(
+        {
+            "name": name,
+            "route": "live-runner",
+            "reply": _json.loads(payload.decode("utf-8")).get("reply"),
+        }
+    )
+
+
 async def agent_send(request: Request) -> Response:
     """POST /v1/sac/agents/<name>/send.
 
@@ -89,8 +153,13 @@ async def agent_send(request: Request) -> Response:
         {"type":"prompt","prompt":"...","options":{"model":...,"max_turns":...}}
         {"type":"key","key":"ESC"}   # not yet implemented
 
-    For v1, returns the buffered stdout (no SSE streaming). SSE comes in
-    step 3 alongside long-lived mode.
+    Routing:
+        1. If the agent has ``spec.a2a.port`` set and its inbound HTTP
+           is reachable, forward the turn into the live in-memory
+           runner inbox (long-lived path; preserves session, tool
+           state, channel listeners).
+        2. Otherwise fall back to ``claude --resume <sid> -p`` —
+           short-lived re-launch against the persisted session.jsonl.
     """
     name = request.path_params["name"]
     try:
@@ -126,6 +195,14 @@ async def agent_send(request: Request) -> Response:
         cfg = load_config(spec_path)
     except Exception as exc:
         return JSONResponse({"error": str(exc)}, status_code=404)
+
+    # 1) Try live-runner route first.
+    options = body.get("options") or {}
+    live = await _forward_to_live_runner(cfg, name, prompt, options)
+    if live is not None:
+        return live
+
+    # 2) Fall back to short-lived re-launch.
     sd = state_dir_for(name)
     sid = read_session_id(sd)
     if not sid:
@@ -138,7 +215,6 @@ async def agent_send(request: Request) -> Response:
     except RuntimeError as exc:
         return JSONResponse({"error": str(exc)}, status_code=500)
 
-    options = body.get("options") or {}
     argv = [claude_bin, "--resume", sid, "-p", prompt]
     if "model" in options:
         argv += ["--model", str(options["model"])]
