@@ -1,10 +1,10 @@
 <!-- ---
-!-- Timestamp: 2026-05-13 01:09:37
+!-- Timestamp: 2026-05-13 06:10:51
 !-- Author: ywatanabe
 !-- File: /home/ywatanabe/proj/scitex-agent-container/README.md
 !-- --- -->
 
-# SciTeX Agent Container (<code>scitex-agent-container</code>; <code>sac</code>)
+# SciTeX Agent Container (<code>scitex-agent-container</code>)
 
 <p align="center">
   <a href="https://scitex.ai">
@@ -39,7 +39,7 @@
 | 2 | Subagents don't scale across hosts, projects, and contexts. | `sac` lets agents spawn **full agents** on local AND **remote hosts**.                                                                        |
 | 3 | Controlling agent permissions is difficult.                 | `sac` runs every agent **inside Apptainer** — full mount/env/security options exposed in `spec.yaml`.                                         |
 | 4 | Supporting the A2A protocol by hand is time-consuming.      | `sac` needs just one YAML field (`spec.a2a.port`).                                                                                            |
-| 5 | Version-controlling Apptainer recipes is laborious.         | `sac` enables layered SIFs with a sandbox/update/freeze workflow via [`scitex-container`](https://github.com/ywatanabe1989/scitex-container). |
+| 5 | Version-controlling Apptainer recipes is laborious.         | `sac` enables layered Apptainer images with a sandbox/update/freeze workflow via [`scitex-container`](https://github.com/ywatanabe1989/scitex-container). |
 
 ## How it works
 
@@ -104,9 +104,9 @@ present.
 │   │   └── .credentials.json   (copied into ~/.claude/ on `sac account use`)
 │   └── _rotations/
 │       └── <email>.ndjson      (OAuth-rotation log, one append per observed rotation)
-├── tokens/                    ← `sac listen` bearer tokens (0600)
-│   └── listen-<host>.token
-├── containers/                ← built SIFs (see "Layered runtime images" above)
+├── tokens/
+│   └── listen-<host>.token    ← `sac listen` bearer tokens (0600)
+├── containers/                ← built Apptainer images (see "Apptainer images" below)
 │   ├── sac-base.sif    -> sac-base/sac-base.sif        (top-level symlink)
 │   ├── sac-scitex.sif  -> sac-scitex/sac-scitex.sif
 │   ├── sac-{base,scitex}/                              (dir-per-image)
