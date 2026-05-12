@@ -182,8 +182,17 @@ class ApptainerContainerRuntime(RuntimeBase):
         # the base SIF currently lacks the `/usr/local/bin/python ->
         # python3` symlink so `tini -- python …` fails with "exec
         # python failed: No such file or directory".
+        #
+        # `-s` registers tini as a child subreaper via
+        # prctl(PR_SET_CHILD_SUBREAPER). Inside apptainer the container
+        # process is NOT PID 1 (apptainer's setuid wrapper owns PID 1),
+        # so tini emits a noisy warning at every start unless one of
+        # (-s, TINI_SUBREAPER=1, PID 1) holds. `-s` is the right knob
+        # here — zombie reaping still works for any descendant the SDK
+        # runner spawns.
         inner: list[str] = [
             "/usr/bin/tini",
+            "-s",
             "--",
             "python3",
             "-m",
