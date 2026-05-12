@@ -41,8 +41,17 @@ _DEFAULT_LAYER = "scitex"
 
 
 def _ensure_containers_dir() -> Path:
-    """Create ``~/.scitex/agent-container/containers/`` if needed; return it."""
+    """Create ``~/.scitex/agent-container/containers/`` if needed; return it.
+
+    Also seeds the agent-container root ``.gitignore`` so the
+    multi-GB Apptainer SIFs / sandboxes / build logs about to land
+    here aren't accidentally tracked by an enclosing dotfiles repo.
+    Idempotent; never raises.
+    """
     _CONTAINERS_DIR.mkdir(parents=True, exist_ok=True)
+    from .._state._bootstrap import ensure_root_gitignore
+
+    ensure_root_gitignore(_CONTAINERS_DIR.parent)
     return _CONTAINERS_DIR
 
 

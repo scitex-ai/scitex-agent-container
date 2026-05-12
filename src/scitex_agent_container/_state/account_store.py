@@ -35,14 +35,19 @@ _CANONICAL_ROOT_NAME = "agent-container"
 
 
 def _ensure_short_name_alias(home: Path) -> None:
-    """Idempotently maintain ``~/.scitex/sac -> agent-container``.
+    """Idempotently maintain ``~/.scitex/sac -> agent-container`` and
+    the agent-container root .gitignore (see ``_bootstrap``).
 
-    Skips if the short-name path already exists as a real directory
-    (refuses to clobber user data — the migration script handles that
-    case explicitly).
+    Skips the symlink if the short-name path already exists as a real
+    directory (refuses to clobber user data — the migration script
+    handles that case explicitly).
     """
     scitex_root = home / ".scitex"
     short = scitex_root / _SHORT_ROOT_NAME
+    # Seed the root .gitignore on every touch — idempotent + best-effort.
+    from ._bootstrap import ensure_root_gitignore
+
+    ensure_root_gitignore(scitex_root / _CANONICAL_ROOT_NAME)
     if short.is_symlink():
         return
     if short.exists():
