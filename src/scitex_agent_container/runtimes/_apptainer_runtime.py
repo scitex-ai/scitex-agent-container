@@ -142,11 +142,16 @@ class ApptainerContainerRuntime(RuntimeBase):
         argv.append(str(sif_path))
 
         # Inner command: tini-supervised SDK runner. tini comes from
-        # the SIF's apt install (sac.def's %post block).
+        # the SIF's apt install (sac.def's %post block). Use `python3`
+        # (always present after `apt install python3`) rather than bare
+        # `python`, which on Ubuntu 24.04 is not provided by default —
+        # the base SIF currently lacks the `/usr/local/bin/python ->
+        # python3` symlink so `tini -- python …` fails with "exec
+        # python failed: No such file or directory".
         inner: list[str] = [
             "/usr/bin/tini",
             "--",
-            "python",
+            "python3",
             "-m",
             RUNNER_MODULE,
         ]

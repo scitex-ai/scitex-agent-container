@@ -89,12 +89,31 @@ From: ubuntu:24.04
     UV_INSTALL_DIR=/usr/local/bin curl -LsSf https://astral.sh/uv/install.sh | sh
     python3 -m pip install --no-cache-dir --break-system-packages pipx
 
+    # ---- 6a. python convenience symlink -----------------------------
+    # Ubuntu 24.04's `python3-is-python3` doesn't ship by default; many
+    # tools (and sac's runner shim) call bare `python`. One symlink
+    # makes the SIF compatible with both without forcing every caller
+    # to use `python3`.
+    ln -sf /usr/bin/python3 /usr/local/bin/python
+
+    # ---- 6b. SAC runner deps (minimal, no scitex umbrella) ----------
+    # The runner module that sac's apptainer dispatcher invokes lives
+    # in scitex-agent-container, which needs claude-agent-sdk. Install
+    # just these two into a dedicated venv so /usr/bin/python3 stays
+    # untouched and per-agent overlays own their own scientific stack.
+    python3 -m venv /opt/venv-sac
+    /usr/local/bin/uv pip install --python /opt/venv-sac/bin/python \
+        claude-agent-sdk \
+        "git+https://github.com/ywatanabe1989/scitex-agent-container.git@feat/yaml-mounts-and-home-passthrough"
+
     # ---- 7. RTK (deferred — repo not yet public) -----------------------
 
 %environment
     export LANG=en_US.UTF-8
     export LC_ALL=en_US.UTF-8
-    export PATH=/opt/cargo/bin:/opt/npm-global/bin:/usr/local/bin:$PATH
+    # /opt/venv-sac/bin first so the runner uses the SAC-shipped python
+    # (with scitex-agent-container + claude-agent-sdk preinstalled).
+    export PATH=/opt/venv-sac/bin:/opt/cargo/bin:/opt/npm-global/bin:/usr/local/bin:$PATH
     export RUSTUP_HOME=/opt/rust
     export CARGO_HOME=/opt/cargo
 
