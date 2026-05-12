@@ -1,5 +1,5 @@
 <!-- ---
-!-- Timestamp: 2026-05-13 00:50:11
+!-- Timestamp: 2026-05-13 00:54:55
 !-- Author: ywatanabe
 !-- File: /home/ywatanabe/proj/scitex-agent-container/README.md
 !-- --- -->
@@ -107,6 +107,14 @@ present.
 ├── tokens/                    ← `sac listen` bearer tokens (0600)
 │   └── listen-<host>.token
 ├── containers/                ← built SIFs (see "Layered runtime images" above)
+│   ├── sac-base.sif    -> sac-base/sac-base.sif        (top-level symlink)
+│   ├── sac-scitex.sif  -> sac-scitex/sac-scitex.sif
+│   ├── sac-{base,scitex}/                              (dir-per-image)
+│   │   ├── sac-{base,scitex}.sif                       (the image)
+│   │   ├── sac-{base,scitex}.def                       (recipe snapshot)
+│   │   ├── sac-{base,scitex}.build-YYYY-MMDD-HHMMSS.log (full build log)
+│   │   └── .def-hash                                   (skip-rebuild cache)
+│   └── {dpkg,node,requirements}-lock.txt               (auto-freeze lock files)
 └── runtime/                   ← regenerable per-host state; never in git
     ├── <agent-name>/           per-agent runner state
     │   ├── pid                  (runner PID)
@@ -162,16 +170,6 @@ Two `.def` recipes, layered:
 <site-packages>/scitex_agent_container/containers/    ← recipes (ship in pip wheel)
   apptainer-{base,scitex}.def                          ← canonical SSoT
   Dockerfile.{base,scitex}                             ← docker mirrors
-
-~/.scitex/agent-container/containers/                 ← built artifacts (user state)
-  sac-base.sif    -> sac-base/sac-base.sif             (top-level symlink)
-  sac-scitex.sif  -> sac-scitex/sac-scitex.sif
-  sac-{base,scitex}/                                   (dir-per-image)
-    sac-{base,scitex}.sif                              (the image)
-    sac-{base,scitex}.def                              (recipe snapshot)
-    sac-{base,scitex}.build-YYYY-MMDD-HHMMSS.log       (full build log)
-    .def-hash                                          (skip-rebuild cache)
-  {dpkg,node,requirements}-lock.txt                    (auto-freeze lock files)
 ```
 
 Recipes ship in the pip wheel — no need to clone the repo to run `sac image build`. Built artifacts live under `~/.scitex/agent-container/containers/`, never in git.
