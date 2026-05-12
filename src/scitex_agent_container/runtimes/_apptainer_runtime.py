@@ -110,6 +110,16 @@ class ApptainerContainerRuntime(RuntimeBase):
                 argv.append("--nv")
             if getattr(ap, "rocm", False):
                 argv.append("--rocm")
+            # Writable overlay — lets the agent install packages, write
+            # caches and persist state while the base SIF stays
+            # immutable. Resolution: absolute path used as-is; relative
+            # paths are interpreted against the workdir.
+            overlay = getattr(ap, "overlay", "") or ""
+            if overlay:
+                overlay_p = Path(overlay).expanduser()
+                if not overlay_p.is_absolute():
+                    overlay_p = Path(config.workdir).expanduser() / overlay_p
+                argv += ["--overlay", str(overlay_p)]
 
         # Forward Anthropic auth (mirrors container.py).
         for auth_env in ("ANTHROPIC_API_KEY", "SAC_ANTHROPIC_API_KEY"):

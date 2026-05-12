@@ -117,6 +117,19 @@ class ApptainerSpec:
     """Forward host AMD ROCm libs (apptainer's ``--rocm``). Mutually
     exclusive with ``nv`` in practice (no host has both)."""
 
+    overlay: str = ""
+    """Path to a writable apptainer overlay image (`--overlay <file>`).
+    Lets the agent install packages, write caches, and persist state
+    while keeping the base SIF immutable. The same SIF can back many
+    agents, each with its own overlay file. Empty = no overlay; the
+    container is read-only with a tmpfs writable layer.
+
+    Resolution: a non-absolute path is interpreted relative to the
+    agent's workdir. A common convention is to place it under
+    ``~/.scitex/agent-container/containers/proj-<pkg>.overlay.img``
+    so a single directory holds the shared SIF and every per-agent
+    overlay."""
+
 
 @dataclass
 class AutonomousSpec:
