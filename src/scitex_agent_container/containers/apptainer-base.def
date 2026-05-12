@@ -67,9 +67,24 @@ From: ubuntu:24.04
     # The npm @anthropic-ai/claude-code package hangs on --print inside
     # apptainer (silent freeze, no debug output). Anthropic's own
     # Dockerfile.test installs via curl install.sh, which lands the
-    # binary at /root/.local/bin/claude. Mirror that here.
+    # binary at /root/.local/bin/claude. Mirror that — and then move
+    # it to /usr/local/bin so it stays on PATH for non-root container
+    # users (apptainer runs as the host user, not root, so /root/* is
+    # unreachable at runtime).
     curl -fsSL https://claude.ai/install.sh | bash
-    # /root/.local/bin is added to PATH in %environment below.
+    if [ -x /root/.local/bin/claude ]; then
+        cp -a /root/.local/bin/claude /usr/local/bin/claude
+        # The launcher resolves the real binary under
+        # /root/.claude/downloads/<version>/linux-x64/claude; copy that
+        # too so the symlink target is reachable from any UID.
+        if [ -d /root/.claude/downloads ]; then
+            mkdir -p /opt/claude/downloads
+            cp -a /root/.claude/downloads/. /opt/claude/downloads/
+            # Re-point the launcher at the world-readable copy.
+            sed -i "s|/root/.claude|/opt/claude|g" /usr/local/bin/claude || true
+        fi
+    fi
+    /usr/local/bin/claude --version || echo "WARN: claude --version failed in build"
     npx puppeteer browsers install chrome-headless-shell || true
 
     rm -rf /var/lib/apt/lists/*
