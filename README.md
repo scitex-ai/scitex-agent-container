@@ -1,5 +1,5 @@
 <!-- ---
-!-- Timestamp: 2026-05-13 07:22:07
+!-- Timestamp: 2026-05-13 07:40:46
 !-- Author: ywatanabe
 !-- File: /home/ywatanabe/proj/scitex-agent-container/README.md
 !-- --- -->
@@ -26,7 +26,6 @@
 </p>
 <p align="center">
   <a href="https://github.com/ywatanabe1989/scitex-agent-container/actions/workflows/test.yml"><img src="https://github.com/ywatanabe1989/scitex-agent-container/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
-  <a href="https://github.com/ywatanabe1989/scitex-agent-container/actions/workflows/install-test.yml"><img src="https://github.com/ywatanabe1989/scitex-agent-container/actions/workflows/install-test.yml/badge.svg" alt="Install Test"></a>
   <a href="https://codecov.io/gh/ywatanabe1989/scitex-agent-container/branch/develop"><img src="https://codecov.io/gh/ywatanabe1989/scitex-agent-container/branch/develop/graph/badge.svg" alt="Coverage (develop)"></a>
 </p>
 <!-- scitex-badges:end -->
@@ -54,30 +53,39 @@ uv pip install "scitex-agent-container[all]"
 ```bash
 # 1. Build the layered images (one-time)
 sac image build base -y     # ~15-25 min — OS + dev tools
-sac image build scitex -y   # ~10-20 min with uv — FROM :base + scitex[all] (numpy / pandas /
-                            #              scipy / torch / etc.). Walk away.
+# sac image build scitex -y   # ~10-20 min with uv — FROM :base + scitex[all] (numpy / pandas /
+#                             # scipy / torch / etc.). Walk away.
 
 # 2. Define an agent
-mkdir -p ~/.scitex/agent-container/agents/hello/
-cat > ~/.scitex/agent-container/agents/hello/spec.yaml <<'YAML'
+mkdir -p ~/.scitex/agent-container/agents/hello-agent/
+cat > ~/.scitex/agent-container/agents/hello-agent/spec.yaml <<'YAML'
 apiVersion: scitex-agent-container/v3
 kind: Agent
+
 spec:
   runtime: apptainer
-  workdir: /tmp/hello
-  model: claude-haiku-4-5
+  workdir: /tmp/hello-agent
+
+  apptainer:
+    image: ~/.scitex/agent-container/containers/sac-base.sif
+
+  claude:
+    model: haiku-4-5
+    flags:
+      - --dangerously-skip-permissions
+
   startup_prompts:
     - "Reply with the string 'hello-ok' and nothing else."
 YAML
 
 # 3. Start an agent
-sac agent start hello --foreground   # streams stdout, exits when done
+sac agent start hello-agent --foreground   # streams stdout, exits when done
 
-# 4. Start multiple agents
+# 4. Start multiple agents (space-separated names)
 DIR="~/.scitex/agent-container/agents/"
-cp -r "$DIR"/hello/ "$DIR"/hello2/
-cp -r "$DIR"/hello/ "$DIR"/hello3/
-sac agent start hello hello2 hello3 --foreground   # streams stdout, exits when done
+cp -r "$DIR"/hello-agent/ "$DIR"/hello-agent2/
+cp -r "$DIR"/hello-agent/ "$DIR"/hello-agent3/
+sac agent start hello-agent hello-agent2 hello-agent3 --foreground
 ```
 
 ## How it works
