@@ -87,7 +87,9 @@ class TestV2Config:
         monkeypatch.setenv("HOME", str(tmp_path))
         path = _write_config(MINIMAL_V2_CONFIG)
         config = load_config(path)
-        assert config.workdir == "~/.scitex/agent-container/runtime/workspaces/head-test"
+        assert (
+            config.workdir == "~/.scitex/agent-container/runtime/workspaces/head-test"
+        )
         Path(path).unlink()
 
     def test_v2_screen_name(self):
@@ -155,7 +157,9 @@ class TestV2Config:
         path = _write_config(MINIMAL_V1_CONFIG)
         config = load_config(path)
         assert config.screen_name == "test-agent"
-        assert config.workdir == "~/.scitex/agent-container/runtime/workspaces/test-agent"
+        assert (
+            config.workdir == "~/.scitex/agent-container/runtime/workspaces/test-agent"
+        )
         assert config.mcp_servers == {}
         Path(path).unlink()
 
@@ -204,26 +208,33 @@ class TestV2McpConfig:
             assert not mcp_path.exists()
 
 
-class TestSrcFiles:
-    def test_deploy_src_claude_md(self):
-        from scitex_agent_container.runtimes.src_files import deploy_src_claude_md
+class TestDotClaude:
+    """Integration coverage of the dot_claude/ deploy + cleanup pipeline
+    against a real ``AgentConfig`` (the unit-level coverage lives in
+    ``tests/scitex_agent_container/runtimes/test_dot_claude.py``)."""
+
+    @staticmethod
+    def _dot_dir(defdir: str) -> Path:
+        d = Path(defdir) / "dot_claude"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def test_deploy_claude_md(self):
+        from scitex_agent_container.runtimes._dot_claude import deploy_dot_claude
 
         with (
             tempfile.TemporaryDirectory() as defdir,
             tempfile.TemporaryDirectory() as workdir,
         ):
-            # Write src_CLAUDE.md in definition dir
-            src = Path(defdir) / "src_CLAUDE.md"
-            src.write_text(
+            (self._dot_dir(defdir) / "CLAUDE.md").write_text(
                 "## Agent: ${metadata.name}\n- Role: ${metadata.labels.role}\n"
             )
-
             config = AgentConfig(
                 name="my-agent",
                 labels={"role": "head"},
-                config_path=str(Path(defdir) / "agent.yaml"),
+                config_path=str(Path(defdir) / "spec.yaml"),
             )
-            deploy_src_claude_md(config, workdir)
+            deploy_dot_claude(config, workdir)
 
             dest = Path(workdir) / "CLAUDE.md"
             assert dest.exists()
@@ -233,13 +244,12 @@ class TestSrcFiles:
             assert "Start of scitex-agent-container generated section" in content
 
     def test_deploy_preserves_user_tail(self):
-        from scitex_agent_container.runtimes.src_files import deploy_src_claude_md
+        from scitex_agent_container.runtimes._dot_claude import deploy_dot_claude
 
         with (
             tempfile.TemporaryDirectory() as defdir,
             tempfile.TemporaryDirectory() as workdir,
         ):
-            # Pre-existing CLAUDE.md with markers + user tail after End
             dest = Path(workdir) / "CLAUDE.md"
             dest.write_text(
                 "<!-- Start of scitex-agent-container generated section (old) -->\n"
@@ -247,15 +257,12 @@ class TestSrcFiles:
                 "<!-- End of scitex-agent-container generated section -->\n"
                 "# My notes\nAgent wrote this.\n"
             )
-
-            src = Path(defdir) / "src_CLAUDE.md"
-            src.write_text("## Managed section\n")
-
+            (self._dot_dir(defdir) / "CLAUDE.md").write_text("## Managed section\n")
             config = AgentConfig(
                 name="my-agent",
-                config_path=str(Path(defdir) / "agent.yaml"),
+                config_path=str(Path(defdir) / "spec.yaml"),
             )
-            deploy_src_claude_md(config, workdir)
+            deploy_dot_claude(config, workdir)
 
             content = dest.read_text()
             assert "My notes" in content
@@ -263,17 +270,16 @@ class TestSrcFiles:
             assert "Managed section" in content
             assert "Old managed" not in content
 
-    def test_deploy_src_mcp_json(self):
+    def test_deploy_mcp_json(self):
         import os
 
-        from scitex_agent_container.runtimes.src_files import deploy_src_mcp_json
+        from scitex_agent_container.runtimes._dot_claude import deploy_dot_claude
 
         with (
             tempfile.TemporaryDirectory() as defdir,
             tempfile.TemporaryDirectory() as workdir,
         ):
-            src = Path(defdir) / "src_mcp.json"
-            src.write_text(
+            (self._dot_dir(defdir) / ".mcp.json").write_text(
                 json.dumps(
                     {
                         "mcpServers": {
@@ -289,14 +295,13 @@ class TestSrcFiles:
                     }
                 )
             )
-
             os.environ["TEST_TOKEN_VAR"] = "secret123"
             try:
                 config = AgentConfig(
                     name="my-agent",
-                    config_path=str(Path(defdir) / "agent.yaml"),
+                    config_path=str(Path(defdir) / "spec.yaml"),
                 )
-                deploy_src_mcp_json(config, workdir)
+                deploy_dot_claude(config, workdir)
             finally:
                 del os.environ["TEST_TOKEN_VAR"]
 
@@ -307,21 +312,21 @@ class TestSrcFiles:
             assert server["env"]["AGENT"] == "my-agent"
             assert server["env"]["TOKEN"] == "secret123"
 
-    def test_deploy_src_state_md(self):
-        from scitex_agent_container.runtimes.src_files import deploy_src_state_md
+    def test_deploy_state_md(self):
+        from scitex_agent_container.runtimes._dot_claude import deploy_dot_claude
 
         with (
             tempfile.TemporaryDirectory() as defdir,
             tempfile.TemporaryDirectory() as workdir,
         ):
-            src = Path(defdir) / "src_state.md"
-            src.write_text("# Handover for ${metadata.name}\n- inflight: scholar\n")
-
+            (self._dot_dir(defdir) / "state.md").write_text(
+                "# Handover for ${metadata.name}\n- inflight: scholar\n"
+            )
             config = AgentConfig(
                 name="orchestrator",
-                config_path=str(Path(defdir) / "agent.yaml"),
+                config_path=str(Path(defdir) / "spec.yaml"),
             )
-            deploy_src_state_md(config, workdir)
+            deploy_dot_claude(config, workdir)
 
             dest = Path(workdir) / "state.md"
             assert dest.exists()
@@ -329,8 +334,8 @@ class TestSrcFiles:
             assert "Handover for orchestrator" in content
             assert "inflight: scholar" in content
 
-    def test_deploy_src_state_md_noop_without_source(self):
-        from scitex_agent_container.runtimes.src_files import deploy_src_state_md
+    def test_deploy_noop_without_dot_claude_dir(self):
+        from scitex_agent_container.runtimes._dot_claude import deploy_dot_claude
 
         with (
             tempfile.TemporaryDirectory() as defdir,
@@ -338,64 +343,57 @@ class TestSrcFiles:
         ):
             config = AgentConfig(
                 name="orchestrator",
-                config_path=str(Path(defdir) / "agent.yaml"),
+                config_path=str(Path(defdir) / "spec.yaml"),
             )
-            # No src_state.md in defdir — must be a silent no-op.
-            deploy_src_state_md(config, workdir)
+            # No dot_claude/ in defdir — silent no-op.
+            deploy_dot_claude(config, workdir)
             assert not (Path(workdir) / "state.md").exists()
+            assert not (Path(workdir) / "CLAUDE.md").exists()
 
-    def test_cleanup_src_state_md_removes_workspace_file(self):
-        from scitex_agent_container.runtimes.src_files import (
-            cleanup_src_state_md,
-            deploy_src_state_md,
+    def test_cleanup_state_md_removes_workspace_file(self):
+        from scitex_agent_container.runtimes._dot_claude import (
+            cleanup_dot_claude,
+            deploy_dot_claude,
         )
 
         with (
             tempfile.TemporaryDirectory() as defdir,
             tempfile.TemporaryDirectory() as workdir,
         ):
-            (Path(defdir) / "src_state.md").write_text("snapshot\n")
+            (self._dot_dir(defdir) / "state.md").write_text("snapshot\n")
             config = AgentConfig(
                 name="orchestrator",
-                config_path=str(Path(defdir) / "agent.yaml"),
+                config_path=str(Path(defdir) / "spec.yaml"),
             )
-            deploy_src_state_md(config, workdir)
+            deploy_dot_claude(config, workdir)
             assert (Path(workdir) / "state.md").exists()
-
-            cleanup_src_state_md(config, workdir)
+            cleanup_dot_claude(config, workdir)
             assert not (Path(workdir) / "state.md").exists()
 
-    def test_cleanup_src_claude_md(self):
-        from scitex_agent_container.runtimes.src_files import (
-            cleanup_src_claude_md,
-            deploy_src_claude_md,
+    def test_cleanup_claude_md(self):
+        from scitex_agent_container.runtimes._dot_claude import (
+            cleanup_dot_claude,
+            deploy_dot_claude,
         )
 
         with (
             tempfile.TemporaryDirectory() as defdir,
             tempfile.TemporaryDirectory() as workdir,
         ):
-            src = Path(defdir) / "src_CLAUDE.md"
-            src.write_text("## Managed\n")
-
+            (self._dot_dir(defdir) / "CLAUDE.md").write_text("## Managed\n")
             config = AgentConfig(
                 name="my-agent",
-                config_path=str(Path(defdir) / "agent.yaml"),
+                config_path=str(Path(defdir) / "spec.yaml"),
             )
-            # Deploy first (creates markers), then add user content after End
             dest = Path(workdir) / "CLAUDE.md"
-            deploy_src_claude_md(config, workdir)
-            # Append user content after the guide comment
-            content = dest.read_text()
-            dest.write_text(content + "# User content\n")
+            deploy_dot_claude(config, workdir)
+            dest.write_text(dest.read_text() + "# User content\n")
             assert "Managed" in dest.read_text()
 
-            # Cleanup removes managed section + guide, keeps user content
-            cleanup_src_claude_md(config, workdir)
+            cleanup_dot_claude(config, workdir)
             content = dest.read_text()
             assert "User content" in content
             assert "Managed" not in content
-            assert "guide" not in content.lower() or "custom content" not in content
 
 
 class TestPythonVenvResolution:

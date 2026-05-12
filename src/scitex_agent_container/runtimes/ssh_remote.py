@@ -112,7 +112,10 @@ class SSHRemote:
                 text=True,
                 timeout=timeout,
             )
-        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:  # stx-allow: fallback (reason: file may not exist on first use)
+        except (
+            subprocess.TimeoutExpired,
+            FileNotFoundError,
+        ) as exc:  # stx-allow: fallback (reason: file may not exist on first use)
             results.append(
                 (
                     "SSH connection",
@@ -229,13 +232,12 @@ class SSHRemote:
         """
         import yaml as _yaml
 
-        # Per-agent namespaced remote dir to prevent src_CLAUDE.md /
-        # src_mcp.json from leaking between agents that share /tmp/.
-        # Without namespacing, the most-recent agent's src_* files
-        # would be picked up by the next agent's deploy, injecting the
-        # wrong identity into its workspace CLAUDE.md (todo#221).
+        # Per-agent namespaced remote dir so dot_claude/ contents from
+        # different agents don't leak into each other's deploys (the
+        # todo#221 invariant — without namespacing the most-recent
+        # agent's CLAUDE.md / .mcp.json could be picked up by the next).
         remote_dir = f"~/.scitex/agent-container/runtime/{config.name}"
-        remote_path = f"{remote_dir}/{config.name}.yaml"
+        remote_path = f"{remote_dir}/spec.yaml"
         local_path = config.config_path
         if not local_path:
             raise RuntimeError(
@@ -254,15 +256,19 @@ class SSHRemote:
             if isinstance(raw, dict) and "spec" in raw and "remote" in raw["spec"]:
                 del raw["spec"]["remote"]
             content = _yaml.dump(raw, default_flow_style=False, sort_keys=False)
+            # Clean any prior dot_claude/ contents so a removed file on the
+            # local side doesn't linger on the remote.
             mkdir_cmd = SSHRemote._ssh_base(config) + [
-                f"mkdir -p {remote_dir} && rm -f {remote_dir}/src_CLAUDE.md {remote_dir}/src_mcp.json"
+                f"mkdir -p {remote_dir} && rm -rf {remote_dir}/dot_claude"
             ]
             subprocess.run(mkdir_cmd, capture_output=True, text=True, timeout=30)
             ssh_cmd = SSHRemote._ssh_base(config) + [f"cat > {remote_path}"]
             result = subprocess.run(
                 ssh_cmd, input=content, capture_output=True, text=True, timeout=30
             )
-        except subprocess.TimeoutExpired:  # stx-allow: fallback (reason: subprocess execution failure)
+        except (
+            subprocess.TimeoutExpired
+        ):  # stx-allow: fallback (reason: subprocess execution failure)
             t = SSHRemote._ssh_target(config)
             raise RuntimeError(
                 f"ERROR: Timed out copying config to {config.remote.host}\n"
@@ -278,32 +284,61 @@ class SSHRemote:
                 f"  Fix:   ssh-keygen && ssh-copy-id {t}"
             )
 
-        # Copy sibling src_* files (src_CLAUDE.md, src_mcp.json) for v2
+        # Ship the dot_claude/ directory wholesale via rsync-over-ssh so
+        # nested subdirs (commands/, skills/, hooks/, …) survive the
+        # transfer. The remote-side runtime then sees the same layout
+        # the local side does. Falls back to a tar pipe if rsync is
+        # missing.
         defdir = Path(local_path).parent
-        remote_dir = str(Path(remote_path).parent)
-        for src_file in ("src_CLAUDE.md", "src_mcp.json"):
-            local_src = defdir / src_file
-            if local_src.exists():
-                remote_src = f"{remote_dir}/{src_file}"
-                # stx-allow: fallback (reason: src_* files are optional v2 enhancements; an SSH/IO error copying them must not abort the remote deploy of the primary config)
-                try:
-                    content_src = local_src.read_text()
-                    ssh_cmd_src = SSHRemote._ssh_base(config) + [f"cat > {remote_src}"]
+        local_dc = defdir / "dot_claude"
+        if local_dc.is_dir():
+            target = f"{SSHRemote._ssh_target(config)}:{remote_dir}/dot_claude/"
+            try:
+                rsync_cmd = [
+                    "rsync",
+                    "-az",
+                    "--delete",
+                    "-e",
+                    "ssh",
+                    f"{local_dc}/",
+                    target,
+                ]
+                rs = subprocess.run(
+                    rsync_cmd, capture_output=True, text=True, timeout=120
+                )
+                if rs.returncode != 0:
+                    raise RuntimeError(rs.stderr.strip() or "rsync nonzero")
+                logger.info(
+                    "Copied dot_claude/ to %s:%s/dot_claude/",
+                    config.remote.host,
+                    remote_dir,
+                )
+            except (
+                FileNotFoundError,
+                RuntimeError,
+                subprocess.TimeoutExpired,
+            ) as exc:  # stx-allow: fallback (reason: rsync may not be installed on the remote; the tar pipe below is a fallback)
+                logger.info(
+                    "rsync unavailable for dot_claude/ (%s); falling back to tar pipe",
+                    exc,
+                )
+                tar_cmd = ["tar", "-cz", "-C", str(local_dc.parent), "dot_claude"]
+                extract_cmd = SSHRemote._ssh_base(config) + [
+                    f"cd {remote_dir} && tar -xz"
+                ]
+                with subprocess.Popen(tar_cmd, stdout=subprocess.PIPE) as tar_proc:
                     subprocess.run(
-                        ssh_cmd_src,
-                        input=content_src,
+                        extract_cmd,
+                        stdin=tar_proc.stdout,
                         capture_output=True,
                         text=True,
-                        timeout=30,
+                        timeout=120,
                     )
-                    logger.info(
-                        "Copied %s to %s:%s",
-                        src_file,
-                        config.remote.host,
-                        remote_src,
-                    )
-                except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-                    logger.warning("Failed to copy %s to remote", src_file)
+                logger.info(
+                    "Copied dot_claude/ via tar pipe to %s:%s/dot_claude/",
+                    config.remote.host,
+                    remote_dir,
+                )
 
         return remote_path
 
@@ -333,7 +368,9 @@ class SSHRemote:
                 text=True,
                 timeout=timeout,
             )
-        except subprocess.TimeoutExpired:  # stx-allow: fallback (reason: subprocess execution failure)
+        except (
+            subprocess.TimeoutExpired
+        ):  # stx-allow: fallback (reason: subprocess execution failure)
             t = SSHRemote._ssh_target(config)
             raise RuntimeError(
                 f"ERROR: SSH command timed out on {config.remote.host}\n"
