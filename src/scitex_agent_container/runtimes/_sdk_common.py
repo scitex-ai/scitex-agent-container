@@ -360,4 +360,20 @@ def build_sdk_options(
     if extra:
         kwargs.update(extra)
 
+    # spec.claude.channels → claude CLI --channels passthrough.
+    # The SDK runs the bundled claude binary as a subprocess; channels
+    # are CLI-only (research preview, MCP `notifications/claude/channel`
+    # delivery). We forward each entry as a separate ``--channels`` arg
+    # via the SDK's ``extra_args`` escape hatch when available.
+    channels = (extra or {}).get("_channels") if extra else None
+    if channels:
+        extra_args = kwargs.setdefault("extra_args", {})
+        # extra_args is a dict[str, str|None] per SDK convention
+        # ({flag: value} where None means valueless flag). For
+        # repeatable flags we join with comma; claude --channels
+        # accepts comma-separated entries too.
+        if isinstance(extra_args, dict):
+            extra_args["channels"] = ",".join(channels)
+        # else: caller passed a raw extra_args list — leave it alone.
+
     return ClaudeAgentOptions(**kwargs)
