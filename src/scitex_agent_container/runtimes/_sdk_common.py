@@ -313,11 +313,22 @@ def build_sdk_options(
     # Apptainer/Docker dispatch binds the host workdir at /work inside
     # the container; the config's workdir field carries the HOST path
     # (so the apptainer driver knows what to mount) but the SDK runs
-    # INSIDE the container and must chdir to the BIND TARGET. Detect
-    # the bind by checking for /work; this is the runtime contract
-    # documented in _apptainer_runtime.build_argv. Outside a
-    # container, /work won't exist and workdir stays as-is.
-    if workdir and Path("/work").is_dir() and not Path(workdir).is_dir():
+    # INSIDE the container and must chdir to the BIND TARGET.
+    #
+    # Detection: apptainer sets APPTAINER_CONTAINER (or singularity's
+    # SINGULARITY_CONTAINER) to the SIF path inside the container.
+    # Path heuristics aren't reliable because apptainer auto-binds
+    # /home/$USER, which makes the host workdir's path appear to
+    # exist inside the container — but it points at the host fs, not
+    # the bind target with --pwd /work semantics.
+    if (
+        workdir
+        and (
+            os.environ.get("APPTAINER_CONTAINER")
+            or os.environ.get("SINGULARITY_CONTAINER")
+        )
+        and Path("/work").is_dir()
+    ):
         workdir = "/work"
 
     kwargs: dict = {}
