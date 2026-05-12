@@ -71,7 +71,14 @@ From: ubuntu:24.04
     # it to /usr/local/bin so it stays on PATH for non-root container
     # users (apptainer runs as the host user, not root, so /root/* is
     # unreachable at runtime).
-    curl -fsSL https://claude.ai/install.sh | bash
+    #
+    # Pin to `stable` rather than letting the installer pick `latest`.
+    # `latest` pulled 2.1.139 which has a regression that hangs on the
+    # `GET /v1/mcp_servers` startup call inside apptainer (proven by
+    # bind-mounting the host's npm-installed 2.1.112: same SIF, same
+    # network, same creds — only the binary differs, and 2.1.112 works
+    # while 2.1.139 hangs). 2026-05-12.
+    curl -fsSL https://claude.ai/install.sh | bash -s -- stable
     if [ -x /root/.local/bin/claude ]; then
         cp -a /root/.local/bin/claude /usr/local/bin/claude
         # The launcher resolves the real binary under
