@@ -97,164 +97,15 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
-async def _run_conversation(
-    name: str,
-    state_dir: Path,
-    *,
-    pid: int,
-    inbox: "asyncio.Queue",
-    resume_session_id: str | None,
-    stop: asyncio.Event,
-    print_stream: bool = False,
-) -> None:
-    """Drive an inbox-driven conversation against ``ClaudeSDKClient``.
+from ._session_conversation import (
+    _drain_failed_inbox,
+    _safe_repr,
+)
+from ._session_conversation import (
+    run_conversation as _run_conversation,
+)
 
-    Holds one ``ClaudeSDKClient`` open for the lifetime of the runner
-    and drains turn envelopes from ``inbox`` serially: per turn it
-    calls ``client.query(text)``, drains ``receive_response()`` into
-    ``session.jsonl``, and resolves the envelope's response future
-    with the concatenated assistant reply.
-
-    Exits when a ``ShutdownEnvelope`` arrives, when ``stop`` is set, or
-    on any SDK error (logged + recorded to session.jsonl).
-    """
-    from ._session_inbox import ShutdownEnvelope, TurnEnvelope
-
-    try:
-        from claude_agent_sdk import (
-            AssistantMessage,
-            ClaudeSDKClient,
-            ResultMessage,
-            TextBlock,
-            UserMessage,
-        )
-    except Exception as exc:  # stx-allow: fallback (reason: optional dep import + transient init failures must downgrade to a recorded error, not crash the runner)
-        logger.error("claude-agent-sdk import failed: %s", exc)
-        append_session_message(
-            state_dir,
-            {"type": "error", "kind": "sdk_missing", "detail": str(exc)},
-        )
-        _drain_failed_inbox(inbox, RuntimeError(f"sdk import: {exc}"))
-        return
-
-    try:
-        from claude_agent_sdk import HookMatcher
-    except Exception as exc:  # stx-allow: fallback (reason: same SDK surface as above)
-        logger.error("claude-agent-sdk hook surface unavailable: %s", exc)
-        append_session_message(
-            state_dir,
-            {"type": "error", "kind": "sdk_missing", "detail": str(exc)},
-        )
-        _drain_failed_inbox(inbox, RuntimeError(f"sdk hooks: {exc}"))
-        return
-
-    from ..runtimes._sdk_common import SDKCommonError, build_sdk_options
-    from ._session_hooks import build_event_log_hooks
-
-    hooks = build_event_log_hooks(name, HookMatcher)
-
-    try:
-        options = build_sdk_options(
-            name,
-            permission_mode="bypassPermissions",
-            resume=resume_session_id,
-            hooks=hooks,
-        )
-    except SDKCommonError as exc:
-        logger.error("could not build sdk options: %s", exc)
-        append_session_message(
-            state_dir,
-            {"type": "error", "kind": "options", "detail": str(exc)},
-        )
-        _drain_failed_inbox(inbox, exc)
-        return
-
-    async def _drive_turn(client: "ClaudeSDKClient", env: TurnEnvelope) -> None:
-        write_heartbeat(state_dir, pid=pid, state=STATE_WORKING)
-        append_session_message(state_dir, {"type": "user", "text": env.text})
-        chunks: list[str] = []
-        try:
-            await client.query(env.text)
-            async for msg in client.receive_response():
-                if stop.is_set():
-                    await client.interrupt()
-                    break
-                if isinstance(msg, AssistantMessage):
-                    for block in msg.content:
-                        if isinstance(block, TextBlock):
-                            chunks.append(block.text)
-                            append_session_message(
-                                state_dir,
-                                {"type": "assistant", "text": block.text},
-                            )
-                            if print_stream:
-                                sys.stdout.write(block.text)
-                                sys.stdout.flush()
-                elif isinstance(msg, UserMessage):
-                    append_session_message(
-                        state_dir,
-                        {"type": "user_echo", "raw": _safe_repr(msg)},
-                    )
-                elif isinstance(msg, ResultMessage):
-                    sid = getattr(msg, "session_id", None)
-                    if sid:
-                        write_session_id(state_dir, sid)
-                    usage = getattr(msg, "usage", None)
-                    accumulate_quota(state_dir, usage)
-                    append_session_message(
-                        state_dir,
-                        {"type": "result", "session_id": sid, "usage": usage},
-                    )
-                    break
-        finally:
-            if not env.response.done():
-                env.response.set_result("".join(chunks))
-            if not stop.is_set():
-                write_heartbeat(state_dir, pid=pid, state=STATE_IDLE)
-
-    try:
-        async with ClaudeSDKClient(options=options) as client:
-            while True:
-                env = await inbox.get()
-                if isinstance(env, ShutdownEnvelope):
-                    break
-                if not isinstance(env, TurnEnvelope):
-                    continue
-                # Drive the turn unconditionally; the in-turn loop checks
-                # ``stop`` and calls ``client.interrupt()`` so a SIGTERM
-                # mid-stream still aborts cleanly.
-                await _drive_turn(client, env)
-                if env.exit_after:
-                    stop.set()
-                    break
-                if stop.is_set():
-                    break
-    except Exception as exc:  # stx-allow: fallback (reason: SDK surface is broad; runner must always reach the IDLE / STOPPING phases)
-        logger.exception("claude-session conversation failed for %s", name)
-        append_session_message(
-            state_dir,
-            {"type": "error", "kind": "sdk_runtime", "detail": str(exc)},
-        )
-        _drain_failed_inbox(inbox, exc)
-
-
-def _drain_failed_inbox(inbox: "asyncio.Queue", exc: BaseException) -> None:
-    """Resolve any pending turn futures with the failure so producers don't hang."""
-    from ._session_inbox import TurnEnvelope
-
-    while not inbox.empty():
-        try:
-            env = inbox.get_nowait()
-        except asyncio.QueueEmpty:
-            break
-        if isinstance(env, TurnEnvelope) and not env.response.done():
-            env.response.set_exception(exc)
-
-
-def _safe_repr(value: object) -> str:
-    """Bounded repr so a runaway tool-result blob can't bloat session.jsonl."""
-    s = repr(value)
-    return s if len(s) <= 1024 else s[:1024] + "…"
+__all__ += ["_drain_failed_inbox", "_safe_repr", "_run_conversation"]
 
 
 # Backwards-compat shim: tests + agent_meta call ``runner._build_event_log_hooks``
@@ -325,6 +176,8 @@ async def run(
     autonomous_drive_until: str = "DONE",
     autonomous_max_turns: int = 50,
     autonomous_kick_text: str = "Continue. Print DONE when finished.",
+    max_restarts: int = 0,
+    restart_backoff_s: float = 1.0,
 ) -> int:
     """Run the daemon loop until SIGTERM / SIGINT.
 
@@ -401,6 +254,8 @@ async def run(
                 resume_session_id=resume_session_id,
                 stop=stop,
                 print_stream=print_stream,
+                max_restarts=max_restarts,
+                restart_backoff_s=restart_backoff_s,
             )
         )
         if mission and autonomous_enabled:
@@ -580,6 +435,21 @@ def _parse_argv(argv: list[str] | None = None) -> argparse.Namespace:
         default="Continue. Print DONE when finished.",
         help="Text submitted as the next user turn after a non-matching reply.",
     )
+    p.add_argument(
+        "--max-restarts",
+        type=int,
+        default=0,
+        help=(
+            "Supervisor restart cap: how many times to re-open the SDK "
+            "client after a mid-session crash (default 0 = no restart)."
+        ),
+    )
+    p.add_argument(
+        "--restart-backoff-s",
+        type=float,
+        default=1.0,
+        help="Initial supervisor backoff seconds; doubles each retry.",
+    )
     return p.parse_args(argv)
 
 
@@ -600,6 +470,8 @@ def main(argv: list[str] | None = None) -> int:
             autonomous_drive_until=args.autonomous_drive_until,
             autonomous_max_turns=args.autonomous_max_turns,
             autonomous_kick_text=args.autonomous_kick_text,
+            max_restarts=args.max_restarts,
+            restart_backoff_s=args.restart_backoff_s,
         )
     )
 

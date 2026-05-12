@@ -557,6 +557,131 @@ def test_conversation_accumulates_quota_and_registers_hooks(
 
 
 # ---------------------------------------------------------------------------
+# supervisor — auto-restart on SDK client crash
+# ---------------------------------------------------------------------------
+
+
+class _FlakyClient:
+    """First instance raises inside __aenter__; subsequent instances behave
+    like the happy-path stub."""
+
+    instances = 0
+
+    def __init__(self, *, options: Any) -> None:
+        type(self).instances += 1
+        self._first = type(self).instances == 1
+        self._messages: list[Any] = [
+            _StubAssistant([_StubText("recovered")]),
+            _StubResult("sess-after-restart", {"output_tokens": 3}),
+        ]
+
+    async def __aenter__(self) -> "_FlakyClient":
+        if self._first:
+            raise RuntimeError("simulated SDK crash")
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    async def query(self, prompt: str) -> None:
+        self._prompt = prompt
+
+    async def receive_response(self):
+        for m in self._messages:
+            yield m
+
+    async def interrupt(self) -> None:
+        pass
+
+
+def test_supervisor_restarts_after_sdk_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With max_restarts=1, an SDK crash on the first attempt should be
+    logged as a supervisor event, then the runner reopens the client
+    and drives the queued turn successfully."""
+    mod = _patch_sdk(monkeypatch)
+    mod.ClaudeSDKClient = _FlakyClient  # swap in the flaky version
+    _FlakyClient.instances = 0
+    _patch_options(monkeypatch)
+    state_dir = tmp_path / "alpha"
+
+    async def _scenario():
+        inbox, _fut = await _seed_inbox("retry me")
+        await runner._run_conversation(
+            "alpha",
+            state_dir,
+            pid=1,
+            inbox=inbox,
+            resume_session_id=None,
+            stop=asyncio.Event(),
+            max_restarts=1,
+            restart_backoff_s=0.001,
+        )
+
+    asyncio.run(_scenario())
+
+    # Two ClaudeSDKClient instances were constructed (one crash, one recovery)
+    assert _FlakyClient.instances == 2
+    # session.jsonl should carry an error row then a supervisor row then the
+    # recovered result.
+    lines = (state_dir / "session.jsonl").read_text().splitlines()
+    parsed = [json.loads(line) for line in lines]
+    kinds = [p.get("type") for p in parsed]
+    assert "error" in kinds
+    assert "supervisor" in kinds
+    # The post-restart attempt produced the recovery result.
+    assert runner.read_session_id(state_dir) == "sess-after-restart"
+
+
+def test_supervisor_gives_up_after_max_restarts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If every restart attempt fails, the supervisor drains the inbox
+    with the last exception and exits."""
+
+    class _AlwaysFails:
+        instances = 0
+
+        def __init__(self, *, options: Any) -> None:
+            type(self).instances += 1
+
+        async def __aenter__(self):
+            raise RuntimeError("always broken")
+
+        async def __aexit__(self, *_a):
+            return None
+
+    mod = _patch_sdk(monkeypatch)
+    mod.ClaudeSDKClient = _AlwaysFails
+    _patch_options(monkeypatch)
+    state_dir = tmp_path / "alpha"
+
+    async def _scenario():
+        inbox = make_inbox()
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+        await inbox.put(TurnEnvelope(text="doomed", response=fut))
+        await runner._run_conversation(
+            "alpha",
+            state_dir,
+            pid=1,
+            inbox=inbox,
+            resume_session_id=None,
+            stop=asyncio.Event(),
+            max_restarts=2,
+            restart_backoff_s=0.001,
+        )
+        # The pending future should now carry the failure.
+        with pytest.raises(RuntimeError, match="always broken"):
+            await fut
+
+    asyncio.run(_scenario())
+    # initial attempt + 2 restarts = 3 instances
+    assert _AlwaysFails.instances == 3  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
 # F-CS3 phase 2 — _autonomous_loop tests
 # ---------------------------------------------------------------------------
 
