@@ -141,8 +141,8 @@ def tail_session(name: str, lines: int, show_tools: bool, as_json: bool) -> None
         console.print(f"[red]Agent '{name}' not found in registry[/red]")
         sys.exit(1)
 
-    # state-dir layout: ~/.scitex/agent-container/runtime/<name>/<name>/session.jsonl
-    state_root = Path.home() / ".scitex" / "agent-container" / "runtime" / name / name
+    # state-dir layout: ~/.scitex/agent-container/runtime/<name>/session.jsonl
+    state_root = Path.home() / ".scitex" / "agent-container" / "runtime" / name
     transcript = state_root / "session.jsonl"
     if not transcript.is_file():
         console.print(

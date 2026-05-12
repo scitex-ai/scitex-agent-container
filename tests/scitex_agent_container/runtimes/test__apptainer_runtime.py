@@ -62,7 +62,10 @@ def test_argv_emits_bind_mounts_in_apptainer_syntax(tmp_path: Path) -> None:
     bind_idxs = [i for i, a in enumerate(argv) if a == "--bind"]
     binds = [argv[i + 1] for i in bind_idxs]
     assert any(b.endswith(":/work") and str(workdir) in b for b in binds)
-    assert any(b.endswith(":/state") and str(state_dir) in b for b in binds)
+    # state_dir is bound at /state/<name> (not /state) so the in-container
+    # `state_dir_for(name, root=/state)` resolves to the same path as
+    # the bind target — otherwise we'd land on disk at runtime/<name>/<name>/.
+    assert any(b.endswith(f":/state/{cfg.name}") and str(state_dir) in b for b in binds)
 
 
 def test_argv_does_not_override_home(tmp_path: Path) -> None:

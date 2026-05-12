@@ -81,12 +81,18 @@ class ApptainerContainerRuntime(RuntimeBase):
         argv: list[str] = [
             "apptainer",
             "exec",
-            # Bind-mounts: workdir → /work, state_dir → /state. apptainer
-            # accepts the docker syntax for src:dst:[options].
+            # Bind-mounts: workdir → /work, state_dir → /state/<name>.
+            # apptainer accepts the docker syntax for src:dst:[options].
+            # The state-dir is mounted at /state/<name> (not /state) so
+            # the runner's `state_dir_for(name, root=/state)` resolves
+            # to /state/<name> — matching the bind target exactly. If
+            # we mounted at /state, state_dir_for would re-append <name>
+            # and produce /state/<name>/<name>/, which would land on
+            # disk as runtime/<name>/<name>/ — the bug this comment fixes.
             "--bind",
             f"{Path(config.workdir).expanduser()}:/work",
             "--bind",
-            f"{state_dir.expanduser()}:/state",
+            f"{state_dir.expanduser()}:/state/{config.name}",
             # Note — no `--env HOME=...`. Apptainer protects HOME from
             # being overridden via --env ("Overriding HOME environment
             # variable with APPTAINERENV_HOME is not permitted") and
