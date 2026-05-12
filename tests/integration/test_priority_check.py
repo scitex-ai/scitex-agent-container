@@ -123,7 +123,9 @@ def test_report_host_not_in_chain(tmp_path, monkeypatch):
 
 
 def test_cli_json_output_stay(tmp_path, monkeypatch):
-    """JSON output with should_yield False exits 0."""
+    """Standalone priority-check command: should_yield False exits 0."""
+    from scitex_agent_container.cli_pkg.priority_cmds import priority_check
+
     monkeypatch.setattr(
         "scitex_agent_container.cli_pkg.priority_cmds._probe_ssh",
         lambda h: False,
@@ -131,7 +133,7 @@ def test_cli_json_output_stay(tmp_path, monkeypatch):
     path = _write_agent_yaml(tmp_path, ["spartan", "nas"])
     runner = CliRunner()
     result = runner.invoke(
-        main, ["agent", "check-priority", path, "--current-host", "spartan", "--json"]
+        priority_check, [path, "--current-host", "spartan", "--json"]
     )
     assert result.exit_code == 0
     data = json.loads(result.output)
@@ -139,16 +141,16 @@ def test_cli_json_output_stay(tmp_path, monkeypatch):
 
 
 def test_cli_json_output_yield(tmp_path, monkeypatch):
-    """JSON output with should_yield True exits 1."""
+    """Standalone priority-check command: should_yield True exits 1."""
+    from scitex_agent_container.cli_pkg.priority_cmds import priority_check
+
     monkeypatch.setattr(
         "scitex_agent_container.cli_pkg.priority_cmds._probe_ssh",
         lambda h: True,
     )
     path = _write_agent_yaml(tmp_path, ["spartan", "nas"])
     runner = CliRunner()
-    result = runner.invoke(
-        main, ["agent", "check-priority", path, "--current-host", "nas", "--json"]
-    )
+    result = runner.invoke(priority_check, [path, "--current-host", "nas", "--json"])
     assert result.exit_code == 1
     data = json.loads(result.output)
     assert data["should_yield"] is True

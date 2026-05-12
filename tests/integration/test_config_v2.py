@@ -87,7 +87,7 @@ class TestV2Config:
         monkeypatch.setenv("HOME", str(tmp_path))
         path = _write_config(MINIMAL_V2_CONFIG)
         config = load_config(path)
-        assert config.workdir == "~/.scitex/orochi/runtime/workspaces/head-test"
+        assert config.workdir == "~/.scitex/agent-container/runtime/workspaces/head-test"
         Path(path).unlink()
 
     def test_v2_screen_name(self):
@@ -155,7 +155,7 @@ class TestV2Config:
         path = _write_config(MINIMAL_V1_CONFIG)
         config = load_config(path)
         assert config.screen_name == "test-agent"
-        assert config.workdir == "~/.scitex/orochi/runtime/workspaces/test-agent"
+        assert config.workdir == "~/.scitex/agent-container/runtime/workspaces/test-agent"
         assert config.mcp_servers == {}
         Path(path).unlink()
 
@@ -306,6 +306,64 @@ class TestSrcFiles:
             server = data["mcpServers"]["test-server"]
             assert server["env"]["AGENT"] == "my-agent"
             assert server["env"]["TOKEN"] == "secret123"
+
+    def test_deploy_src_state_md(self):
+        from scitex_agent_container.runtimes.src_files import deploy_src_state_md
+
+        with (
+            tempfile.TemporaryDirectory() as defdir,
+            tempfile.TemporaryDirectory() as workdir,
+        ):
+            src = Path(defdir) / "src_state.md"
+            src.write_text("# Handover for ${metadata.name}\n- inflight: scholar\n")
+
+            config = AgentConfig(
+                name="orchestrator",
+                config_path=str(Path(defdir) / "agent.yaml"),
+            )
+            deploy_src_state_md(config, workdir)
+
+            dest = Path(workdir) / "state.md"
+            assert dest.exists()
+            content = dest.read_text()
+            assert "Handover for orchestrator" in content
+            assert "inflight: scholar" in content
+
+    def test_deploy_src_state_md_noop_without_source(self):
+        from scitex_agent_container.runtimes.src_files import deploy_src_state_md
+
+        with (
+            tempfile.TemporaryDirectory() as defdir,
+            tempfile.TemporaryDirectory() as workdir,
+        ):
+            config = AgentConfig(
+                name="orchestrator",
+                config_path=str(Path(defdir) / "agent.yaml"),
+            )
+            # No src_state.md in defdir — must be a silent no-op.
+            deploy_src_state_md(config, workdir)
+            assert not (Path(workdir) / "state.md").exists()
+
+    def test_cleanup_src_state_md_removes_workspace_file(self):
+        from scitex_agent_container.runtimes.src_files import (
+            cleanup_src_state_md,
+            deploy_src_state_md,
+        )
+
+        with (
+            tempfile.TemporaryDirectory() as defdir,
+            tempfile.TemporaryDirectory() as workdir,
+        ):
+            (Path(defdir) / "src_state.md").write_text("snapshot\n")
+            config = AgentConfig(
+                name="orchestrator",
+                config_path=str(Path(defdir) / "agent.yaml"),
+            )
+            deploy_src_state_md(config, workdir)
+            assert (Path(workdir) / "state.md").exists()
+
+            cleanup_src_state_md(config, workdir)
+            assert not (Path(workdir) / "state.md").exists()
 
     def test_cleanup_src_claude_md(self):
         from scitex_agent_container.runtimes.src_files import (

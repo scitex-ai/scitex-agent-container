@@ -117,6 +117,19 @@ class ApptainerSpec:
     """Forward host AMD ROCm libs (apptainer's ``--rocm``). Mutually
     exclusive with ``nv`` in practice (no host has both)."""
 
+    overlay: str = ""
+    """Path to a writable apptainer overlay image (`--overlay <file>`).
+    Lets the agent install packages, write caches, and persist state
+    while keeping the base SIF immutable. The same SIF can back many
+    agents, each with its own overlay file. Empty = no overlay; the
+    container is read-only with a tmpfs writable layer.
+
+    Resolution: a non-absolute path is interpreted relative to the
+    agent's workdir. The canonical layout puts overlays under
+    ``~/.scitex/agent-container/containers/overlays/proj-<pkg>.overlay.img``
+    next to the base SIF directory (``containers/sac-base/sac-base.sif``),
+    mirroring scitex-template's singularity convention."""
+
 
 @dataclass
 class AutonomousSpec:
@@ -137,6 +150,16 @@ class RestartSpec:
 
 
 # Parsed for backward compat but not interpreted by runtime.
+# Inbound A2A surface for an agent. When ``port`` is set, the SDK runner
+# launches a sidecar HTTP server exposing ``/v1/turn`` (worker → agent
+# message ingress) and ``/.well-known/agent.json`` (agent card) so other
+# agents can post-turn this one.
+@dataclass
+class A2ASpec:
+    host: str = "127.0.0.1"
+    port: int | None = None
+
+
 # Telegram setup is managed externally via hooks.
 @dataclass
 class TelegramSpec:
@@ -144,16 +167,6 @@ class TelegramSpec:
     allowed_users: list[str] = field(default_factory=list)
     auto_connect: bool = True
     greeting: str = ""
-
-
-@dataclass
-class OrochiSpec:
-    enabled: bool = False
-    hosts: list[str] = field(default_factory=list)
-    port: int = 8559
-    token_env: str = "SCITEX_OROCHI_TOKEN"
-    channels: list[str] = field(default_factory=list)
-    heartbeat_interval: int = 60
 
 
 @dataclass
@@ -391,8 +404,15 @@ class AgentConfig:
     multiplexer: str = "tmux"  # "tmux" (default) or "screen"
     hosts_spec: HostsSpec = field(default_factory=HostsSpec)
     scheduling: SchedulingSpec = field(default_factory=SchedulingSpec)
-    orochi: OrochiSpec = field(default_factory=OrochiSpec)
     config_path: str = ""
+    # Declarative bind-mounts: list of {"src": <host>, "dst": <ctr>, "mode": "rw"|"ro"}.
+    mounts: list[dict] = field(default_factory=list)
+    # Container user. "" → image's USER (typically `agent`); "host" → host
+    # operator's UID:GID; "<uid>:<gid>" → explicit numeric. Pair with
+    # spec.mounts + spec.env.HOME for host-shaped paths + ownership.
+    user: str = ""
+    # Inbound A2A endpoint (HTTP /v1/turn + AgentCard).
+    a2a: A2ASpec = field(default_factory=A2ASpec)
 
     def __post_init__(self) -> None:
         if not self.screen_name:

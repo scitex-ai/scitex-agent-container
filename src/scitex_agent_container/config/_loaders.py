@@ -8,6 +8,7 @@ from ._host import resolve_hostname, substitute_hostnames
 from ._parsers import (
     MODEL_DISPLAY_NAMES,
     interpolate_mcp_servers,
+    parse_a2a,
     parse_apptainer,
     parse_autonomous,
     parse_claude,
@@ -31,9 +32,9 @@ from ._types import AgentConfig, HostsSpec, SchedulingSpec
 
 # Default workdir layout: sac's own state root. Per-agent runtime state
 # (CLAUDE.md, .mcp.json, .claude/) lives at
-# ``~/.scitex/agent-container/workspaces/<effective-id>/``. External
+# ``~/.scitex/agent-container/runtime/workspaces/<effective-id>/``. External
 # orchestrators that want a different layout can override via ``spec.workdir``.
-_DEFAULT_WORKDIR_RUNTIME = "~/.scitex/agent-container/workspaces/{name}"
+_DEFAULT_WORKDIR_RUNTIME = "~/.scitex/agent-container/runtime/workspaces/{name}"
 
 # Host-aware fallback chain for `venv: auto` resolution.
 # Tried in order; first existing path wins. Empty string means no venv
@@ -47,11 +48,11 @@ _DEFAULT_WORKDIR_RUNTIME = "~/.scitex/agent-container/workspaces/{name}"
 # (head-nas msg#12877; head-mba msg#12879 root cause).
 _VENV_AUTO_FALLBACK_CHAIN = ("~/.venv-3.11", "~/.venv")
 
-# Default workdir layout (2026-04-17 runtime/ restructure). Definitions ship
-# under ``shared/agents/<name>/`` or ``<host>/agents/<name>/``; per-agent
-# runtime state (CLAUDE.md, .mcp.json, .claude/) lives at
-# ``runtime/workspaces/<effective-id>/``.
-_DEFAULT_WORKDIR_RUNTIME = "~/.scitex/orochi/runtime/workspaces/{name}"
+# Default workdir for an agent when ``spec.workdir`` is unset. Lives
+# under sac's own user-state tree (per the local-state-directories spec):
+# ``~/.scitex/agent-container/runtime/workspaces/<name>/`` holds the
+# materialized CLAUDE.md, .mcp.json, .claude/ for that agent.
+_DEFAULT_WORKDIR_RUNTIME = "~/.scitex/agent-container/runtime/workspaces/{name}"
 
 
 def _resolve_venv(venv: str) -> str:
@@ -95,9 +96,10 @@ def compose_effective_name(
 def _name_from_path(path: Path | str) -> str:
     """Derive the agent name from the YAML path.
 
-    Convention: each agent lives in its own directory ``<name>/<name>.yaml``.
-    The directory name IS the agent identifier — single source of truth.
-    YAMLs do not carry a redundant ``metadata.name`` field.
+    Convention: each agent lives in its own directory
+    ``<name>/spec.yaml``. The directory name IS the agent identifier —
+    single source of truth. YAMLs do not carry a redundant
+    ``metadata.name`` field, and the file is always named ``spec.yaml``.
     """
     return Path(path).parent.name
 
@@ -304,13 +306,16 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         multiplexer=spec.get("multiplexer", "tmux"),
         hosts_spec=hosts_spec,
         config_path=str(path),
+        mounts=list(spec.get("mounts") or []),
+        user=str(spec.get("user", "")),
+        a2a=parse_a2a(spec),
     )
 
 
 def load_v2(raw: dict, path: Path) -> AgentConfig:
     """Load a scitex-agent-container/v2 config with auto-derived defaults.
 
-    Substitutes ``${HOSTNAME}`` / ``${SCITEX_OROCHI_HOSTNAME}`` in every
+    Substitutes ``${HOSTNAME}`` / ``${SCITEX_AGENT_CONTAINER_HOSTNAME}`` in every
     string field before dataclass construction, and composes the effective
     agent id from ``metadata.name`` + ``spec.scheduling`` so the v2 shared
     layout can keep one canonical YAML per role across the fleet.

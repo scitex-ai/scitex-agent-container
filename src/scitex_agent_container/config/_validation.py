@@ -50,7 +50,7 @@ _VALID_API_VERSIONS = ("scitex-agent-container/v3",)
 _KNOWN_TOP_LEVEL_KEYS = frozenset({"apiVersion", "kind", "metadata", "spec"})
 
 
-_SDK_IMAGE = "scitex-agent-container:sdk-persistent"
+_SDK_IMAGE = "scitex-agent-container:scitex"
 
 
 # All spec keys read by load_v3, parsers, or a2a/_server.py.
@@ -86,9 +86,10 @@ _KNOWN_SPEC_KEYS = frozenset(
         "session",  # shortcut alias for spec.claude.session
         "scheduling",  # rejected with a specific actionable message below
         "a2a",  # A2A sidecar config read by a2a/_server.py
-        "orochi",  # Orochi-specific extension namespace
         "autonomous",  # F-CS3 — drive-until-done block
         "apptainer",  # F-CS18 — apptainer-specific build extension
+        "mounts",  # declarative bind-mounts: list of {src, dst, mode?}
+        "user",  # container user: "host" | "uid:gid" | "" (image default)
     }
 )
 
@@ -236,6 +237,64 @@ def validate_raw(raw: dict, path: str) -> list[str]:
         method = health.get("method")
         if method and method not in ("sdk-alive",):
             errors.append(f"spec.health.method must be 'sdk-alive', got '{method}'")
+
+        # spec.mounts — declarative bind-mounts. Each entry: {src, dst, mode?}.
+        # `src` and `dst` are strings (host path / container path); `mode` is
+        # optional and one of "rw" (default) / "ro".
+        mounts = spec.get("mounts")
+        if mounts is not None:
+            if not isinstance(mounts, list):
+                errors.append(
+                    f"spec.mounts must be a list of mappings, got "
+                    f"{type(mounts).__name__}"
+                )
+            else:
+                for i, m in enumerate(mounts):
+                    if not isinstance(m, dict):
+                        errors.append(
+                            f"spec.mounts[{i}] must be a mapping, got "
+                            f"{type(m).__name__}"
+                        )
+                        continue
+                    extra = set(m.keys()) - {"src", "dst", "mode"}
+                    for k in sorted(extra):
+                        errors.append(
+                            f"spec.mounts[{i}]: unknown key '{k}'. "
+                            "Valid keys: src, dst, mode."
+                        )
+                    src = m.get("src")
+                    dst = m.get("dst")
+                    if not isinstance(src, str) or not src:
+                        errors.append(
+                            f"spec.mounts[{i}].src must be a non-empty string"
+                        )
+                    if not isinstance(dst, str) or not dst:
+                        errors.append(
+                            f"spec.mounts[{i}].dst must be a non-empty string"
+                        )
+                    mode = m.get("mode")
+                    if mode is not None and mode not in ("rw", "ro"):
+                        errors.append(
+                            f"spec.mounts[{i}].mode must be 'rw' or 'ro', got '{mode}'"
+                        )
+
+        # spec.user — container user. Three accepted shapes:
+        #   * ""              (default) → image's USER (typically `agent`)
+        #   * "host"          → run as host operator's UID:GID
+        #   * "<uid>:<gid>"   → explicit numeric, e.g. "1000:1000"
+        # Pair with spec.mounts and (optionally) spec.env.HOME to give an
+        # agent host-shaped paths + ownership without any special flags.
+        user_val = spec.get("user")
+        if user_val is not None:
+            if not isinstance(user_val, str):
+                errors.append(
+                    f"spec.user must be a string, got {type(user_val).__name__}"
+                )
+            elif user_val and user_val != "host" and ":" not in user_val:
+                errors.append(
+                    f'spec.user must be "", "host", or "<uid>:<gid>"; '
+                    f"got '{user_val}'"
+                )
 
         # host / hosts (mutually exclusive)
         has_host = "host" in spec

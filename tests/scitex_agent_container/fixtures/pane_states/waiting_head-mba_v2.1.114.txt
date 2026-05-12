@@ -1,6 +1,6 @@
  ▐▛███▜▌   Claude Code v2.1.114
 ▝▜█████▛▘  Opus 4.7 (1M context) · Claude Max
-  ▘▘ ▝▝    ~/.scitex/agent-container/workspaces/head-mba
+  ▘▘ ▝▝    ~/.scitex/agent-container/runtime/workspaces/head-mba
 
   Listening for channel messages from: server:scitex-orochi
   Experimental · inbound messages will be pushed into this session, this carries
@@ -16,7 +16,7 @@
 
  ▐▛███▜▌   Claude Code v2.1.114
 ▝▜█████▛▘  Opus 4.7 (1M context) · Claude Max
-  ▘▘ ▝▝    ~/.scitex/agent-container/workspaces/head-mba
+  ▘▘ ▝▝    ~/.scitex/agent-container/runtime/workspaces/head-mba
 
   Listening for channel messages from: server:scitex-orochi
   Experimental · inbound messages will be pushed into this session, this carries prompt injection risks. Restart Claude Code without

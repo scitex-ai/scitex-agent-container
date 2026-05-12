@@ -31,26 +31,27 @@ def _primary(home: Path) -> Path:
 
 
 def test_resolve_config_uses_primary_root(fake_home):
-    hit = _write(_primary(fake_home) / "foo.yaml", "foo")
+    hit = _write(_primary(fake_home) / "foo" / "spec.yaml", "foo")
     assert resolve_config("foo") == str(hit)
 
 
 def test_resolve_config_supports_nested_name_dir(fake_home):
-    hit = _write(_primary(fake_home) / "foo" / "foo.yaml", "foo")
+    """Every agent must live in its own directory with a ``spec.yaml``."""
+    hit = _write(_primary(fake_home) / "foo" / "spec.yaml", "foo")
     assert resolve_config("foo") == str(hit)
 
 
 def test_resolve_config_primary_preferred_over_env_var(fake_home, monkeypatch):
-    primary_hit = _write(_primary(fake_home) / "foo.yaml", "primary")
+    primary_hit = _write(_primary(fake_home) / "foo" / "spec.yaml", "primary")
     envdir = fake_home / "envdir"
-    _write(envdir / "foo.yaml", "env")
+    _write(envdir / "foo" / "spec.yaml", "env")
     monkeypatch.setenv("SCITEX_AGENT_CONTAINER_YAML_DIRS", str(envdir))
     assert resolve_config("foo") == str(primary_hit)
 
 
 def test_resolve_config_env_var_plugin_port(fake_home, monkeypatch):
     envdir = fake_home / "envdir"
-    envhit = _write(envdir / "foo.yaml", "env")
+    envhit = _write(envdir / "foo" / "spec.yaml", "env")
     monkeypatch.setenv("SCITEX_AGENT_CONTAINER_YAML_DIRS", str(envdir))
     assert resolve_config("foo") == str(envhit)
 
@@ -59,7 +60,7 @@ def test_resolve_config_env_var_colon_separated(fake_home, monkeypatch):
     d1 = fake_home / "d1"
     d2 = fake_home / "d2"
     d1.mkdir()
-    expected = _write(d2 / "foo.yaml", "d2")
+    expected = _write(d2 / "foo" / "spec.yaml", "d2")
     monkeypatch.setenv("SCITEX_AGENT_CONTAINER_YAML_DIRS", f"{d1}:{d2}")
     assert resolve_config("foo") == str(expected)
 
@@ -76,18 +77,6 @@ def test_resolve_config_not_found_lists_searched_paths(fake_home, monkeypatch):
     assert f"{fake_home}/a" in msg
     assert f"{fake_home}/b" in msg
     assert "missing" in msg
-
-
-def test_resolve_config_fleet_shared_agents_fallback(fake_home):
-    """sac searches ~/.dotfiles/src/.scitex/orochi/shared/agents as a built-in
-    fleet fallback (PR #99 / orochi-runtime-layout), so a yaml placed there
-    IS resolved without setting SCITEX_AGENT_CONTAINER_YAML_DIRS."""
-    orochi_path = (
-        fake_home / ".dotfiles" / "src" / ".scitex" / "orochi" / "shared" / "agents"
-    )
-    yaml_file = _write(orochi_path / "foo" / "foo.yaml", "name: foo\nversion: 1\n")
-    result = resolve_config("foo")
-    assert result == str(yaml_file)
 
 
 def test_resolve_config_absolute_path_unchanged(fake_home, tmp_path):
@@ -138,10 +127,10 @@ def agent_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def _mkagent(root: Path, name: str) -> None:
-    """Create a minimal valid <root>/<name>/<name>.yaml fixture."""
+    """Create a minimal valid <root>/<name>/spec.yaml fixture."""
     d = root / name
     d.mkdir(parents=True, exist_ok=True)
-    (d / f"{name}.yaml").write_text(
+    (d / "spec.yaml").write_text(
         "apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
         "spec: { runtime: docker }\n"
@@ -159,13 +148,13 @@ def test_enumerate_returns_all_agents(agent_root: Path):
 def test_resolve_with_prefix_exact_match(agent_root: Path):
     _mkagent(agent_root, "alpha")
     p = resolve_with_prefix("alpha")
-    assert p.endswith("/alpha/alpha.yaml")
+    assert p.endswith("/alpha/spec.yaml")
 
 
 def test_resolve_with_prefix_unique_prefix_resolves(agent_root: Path, capsys):
     _mkagent(agent_root, "polish-clew")
     p = resolve_with_prefix("polish-")
-    assert p.endswith("/polish-clew/polish-clew.yaml")
+    assert p.endswith("/polish-clew/spec.yaml")
     err = capsys.readouterr().err
     assert "polish-clew" in err
     assert "prefix match" in err

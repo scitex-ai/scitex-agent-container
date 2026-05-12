@@ -2,7 +2,7 @@
 
 Uses ``${SCITEX_AGENT_CONTAINER_HOSTNAME:-$(hostname -s)}`` as the canonical
 hostname (env var wins, short hostname is the fallback). Shared agent
-definitions may reference ``${HOSTNAME}`` or ``${SCITEX_OROCHI_HOSTNAME}``
+definitions may reference ``${HOSTNAME}`` or ``${SCITEX_AGENT_CONTAINER_HOSTNAME}``
 so the same YAML can be launched on every host without drift.
 
 Design constraints:
@@ -10,7 +10,7 @@ Design constraints:
 * Substitution happens after YAML parse, before dataclass construction, so
   every string field is covered (metadata labels, env values, hook command
   strings, scheduling.preferred-host, etc.).
-* Only ``${HOSTNAME}`` and ``${SCITEX_OROCHI_HOSTNAME}`` are substituted by
+* Only ``${HOSTNAME}`` and ``${SCITEX_AGENT_CONTAINER_HOSTNAME}`` are substituted by
   this module — other ``${...}`` placeholders are left alone for downstream
   processors (e.g. MCP interpolation, consumer-defined env resolution) to handle.
 """
@@ -22,15 +22,16 @@ import re
 import socket
 from pathlib import Path
 from typing import Any
+from .._env import getenv as _sac_env
 
-_HOSTNAME_TOKENS = ("HOSTNAME", "SCITEX_OROCHI_HOSTNAME")
+_HOSTNAME_TOKENS = ("HOSTNAME", "SCITEX_AGENT_CONTAINER_HOSTNAME")
 _PLACEHOLDER_RE = re.compile(r"\$\{(" + "|".join(_HOSTNAME_TOKENS) + r")\}")
 
-# Declarative host identity map. Check shared/config.yaml first (fleet layout),
-# then fall back to agent-container/config.yaml (sac install root).
-_CONFIG_PATH_FLEET = Path.home() / ".scitex" / "orochi" / "shared" / "config.yaml"
-_CONFIG_PATH_SAC = Path.home() / ".scitex" / "agent-container" / "config.yaml"
-_CONFIG_PATH = _CONFIG_PATH_FLEET if _CONFIG_PATH_FLEET.exists() else _CONFIG_PATH_SAC
+# Declarative host identity map. sac is standalone — reads only from
+# its own config.yaml; downstream orchestrators (orochi, etc.) wire
+# their own state via env vars or the plugin-port pattern (see
+# _skills/general/01_ecosystem_06_local-state-directories.md §9.5).
+_CONFIG_PATH = Path.home() / ".scitex" / "agent-container" / "config.yaml"
 
 
 def _load_hostname_aliases() -> dict[str, str]:
@@ -44,7 +45,9 @@ def _load_hostname_aliases() -> dict[str, str]:
         return {}
     try:
         import yaml  # PyYAML ships with the container; same import sac uses.
-    except ImportError:  # stx-allow: fallback (reason: optional dependency not installed)
+    except (
+        ImportError
+    ):  # stx-allow: fallback (reason: optional dependency not installed)
         return {}
     # stx-allow: fallback (reason: malformed YAML config must not break hostname resolution; empty aliases dict is the safe default)
     try:
@@ -62,7 +65,7 @@ def resolve_hostname() -> str:
 
     Resolution order (first non-empty wins):
       1. ``SCITEX_AGENT_CONTAINER_HOSTNAME`` env var (manual override).
-      2. ``SCITEX_OROCHI_HOSTNAME`` env var.
+      2. ``SCITEX_AGENT_CONTAINER_HOSTNAME`` env var.
       3. ``hostname_aliases[short hostname]`` from
          ``shared/config.yaml`` or ``~/.scitex/agent-container/config.yaml``.
       4. ``socket.gethostname()`` short form (identity fallback).
@@ -73,10 +76,10 @@ def resolve_hostname() -> str:
             something on any configured box) but is handled loudly rather
             than returning the empty string.
     """
-    env = os.environ.get("SCITEX_AGENT_CONTAINER_HOSTNAME", "").strip()
+    env = _sac_env("HOSTNAME", "").strip()
     if env:
         return env
-    env = os.environ.get("SCITEX_OROCHI_HOSTNAME", "").strip()
+    env = _sac_env("HOSTNAME", "").strip()
     if env:
         return env
     hn = socket.gethostname()
@@ -88,13 +91,13 @@ def resolve_hostname() -> str:
         return short
     raise RuntimeError(
         "Cannot resolve hostname: SCITEX_AGENT_CONTAINER_HOSTNAME and "
-        "SCITEX_OROCHI_HOSTNAME unset, socket.gethostname() empty, "
+        "SCITEX_AGENT_CONTAINER_HOSTNAME unset, socket.gethostname() empty, "
         "no config.yaml alias applicable."
     )
 
 
 def _substitute_string(value: str, hostname: str) -> str:
-    """Replace ${HOSTNAME} / ${SCITEX_OROCHI_HOSTNAME} occurrences in a string.
+    """Replace ${HOSTNAME} / ${SCITEX_AGENT_CONTAINER_HOSTNAME} occurrences in a string.
 
     Other ``${...}`` placeholders are preserved as-is so downstream code
     (e.g. mcp interpolation) keeps working.
