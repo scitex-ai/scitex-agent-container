@@ -37,7 +37,7 @@
 
 | # | Problem                                                     | Solution                                                                                                                                      |
 |---|-------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------|
-| 1 | Scripting an agentic workflow is hard.                      | `scitex-agent-container` (`sac`) declares the agent as a **single YAML file** ([`spec.yaml`](## YAML Spec Reference (v3))).                                                  |
+| 1 | Scripting an agentic workflow is hard.                      | `scitex-agent-container` (`sac`) declares the agent as a **single YAML file** ([`spec.yaml`](#yaml-spec-reference-v3)).                                                  |
 | 2 | Subagents don't scale across hosts, projects, and contexts. | `sac` lets agents spawn **full agents** on local AND **remote hosts**.                                                                        |
 | 3 | Controlling agent permissions is difficult.                 | `sac` runs every agent **inside Apptainer** — full mount/env/security options exposed in `spec.yaml`.                                         |
 | 4 | Supporting the A2A protocol by hand is time-consuming.      | `sac` needs just one YAML field (`spec.a2a.port`).                                                                                            |
@@ -124,8 +124,8 @@ sac agent start hello,hello2,hellow3 --foreground   # streams stdout, exits when
 |---|---|---|
 | `apiVersion` | `scitex-agent-container/v3` | Config format version |
 | `metadata` | `name` (auto-derived from dir), `labels` | Agent identity |
-| `spec.runtime` | `apptainer` (default) / `docker` / `claude-session` (host-local) | Container backend |
-| `spec.image` | path or tag | Default: `~/.scitex/agent-container/containers/sac-scitex.sif` (apptainer); `scitex-agent-container:scitex` for docker |
+| `spec.runtime` | `apptainer` (the only supported runtime) | Container backend |
+| `spec.image` | path to `.sif` | Default: `~/.scitex/agent-container/containers/sac-scitex.sif` |
 | `spec.workdir` | path | Workspace mounted at `/work` inside the container |
 | `spec.model` | `sonnet`, `opus[1m]`, `haiku-4-5`, ... | Claude model |
 | `spec.user` | `""` / `"host"` / `"<uid>:<gid>"` | Run-as user; `"host"` matches the operator |
