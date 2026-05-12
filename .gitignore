@@ -17,6 +17,7 @@ docs/to_claude/
 
 # dev artifacts
 .coverage
+.coverage.*
 .venv
 logs/
 .scitex/clew/
