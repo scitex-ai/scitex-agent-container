@@ -370,6 +370,94 @@ def test_post_agents_requires_name(client):
     assert "name" in r.json()["error"]
 
 
+def test_post_agents_inline_spec_writes_file_and_starts(client, tmp_path, monkeypatch):
+    """Inline ``spec`` body should be written to the install root and then
+    handed off to ``sac agent start``."""
+    c, _ = client
+    fake_home = tmp_path / "fakehome"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    class FakeProc:
+        returncode = 0
+        stdout = "started"
+        stderr = ""
+
+    with (
+        patch(
+            "scitex_agent_container._listen.server.shutil.which",
+            return_value="/usr/bin/sac",
+        ),
+        patch(
+            "scitex_agent_container._listen.server.subprocess.run",
+            return_value=FakeProc(),
+        ),
+    ):
+        r = c.post(
+            "/v1/sac/agents",
+            json={
+                "name": "adhoc-1",
+                "spec": {
+                    "apiVersion": "scitex-agent-container/v3",
+                    "kind": "Agent",
+                    "spec": {"runtime": "apptainer", "workdir": "/tmp"},
+                },
+            },
+            headers=auth_headers(),
+        )
+    assert r.status_code == 200, r.text
+    written = (
+        fake_home / ".scitex" / "agent-container" / "agents" / "adhoc-1" / "spec.yaml"
+    )
+    assert written.is_file()
+    assert "scitex-agent-container/v3" in written.read_text()
+
+
+def test_post_agents_inline_spec_rejects_wrong_apiversion(
+    client, tmp_path, monkeypatch
+):
+    c, _ = client
+    monkeypatch.setenv("HOME", str(tmp_path))
+    r = c.post(
+        "/v1/sac/agents",
+        json={
+            "name": "bad",
+            "spec": {"apiVersion": "v1", "kind": "Agent"},
+        },
+        headers=auth_headers(),
+    )
+    assert r.status_code == 400
+    assert "v3" in r.json()["error"]
+
+
+def test_post_agents_inline_spec_conflicts_without_overwrite(
+    client, tmp_path, monkeypatch
+):
+    """Re-POSTing the same name without ``overwrite: true`` is a 409."""
+    c, _ = client
+    fake_home = tmp_path / "fakehome2"
+    target = fake_home / ".scitex" / "agent-container" / "agents" / "dup"
+    target.mkdir(parents=True)
+    (target / "spec.yaml").write_text("preexisting", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    r = c.post(
+        "/v1/sac/agents",
+        json={
+            "name": "dup",
+            "spec": {
+                "apiVersion": "scitex-agent-container/v3",
+                "kind": "Agent",
+                "spec": {"runtime": "apptainer"},
+            },
+        },
+        headers=auth_headers(),
+    )
+    assert r.status_code == 409
+    # And the original file is untouched
+    assert (target / "spec.yaml").read_text() == "preexisting"
+
+
 def test_post_agents_shells_out_to_sac_agent_start(client):
     c, _ = client
 

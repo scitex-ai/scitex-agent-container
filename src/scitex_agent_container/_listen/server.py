@@ -32,6 +32,7 @@ from .._runners._session_state import read_session_id, state_dir_for
 from .._state.registry import Registry
 from ..config import load_config
 from ..config._resolve import resolve_config
+from ._inline_spec import materialize_inline_spec
 from .auth import BearerAuthMiddleware
 
 # Re-exported under the module's public surface so unit tests can patch
@@ -333,9 +334,21 @@ async def _stream_claude(argv: list[str], workdir: str, name: str, sid: str):
 async def agents_start(request: Request) -> JSONResponse:
     """POST /v1/sac/agents — start one or more agents.
 
-    Body shape (v1: name only; spec-body follow-up tracked):
+    Body shapes:
 
+        # Start a pre-registered spec (existing on disk):
         {"name": "<existing-spec-name>"}
+
+        # Register-and-start an ad-hoc spec in one call (orochi adopts
+        # this so it can launch agents on a sac host without staging
+        # YAML out-of-band):
+        {
+            "name": "<name>",
+            "spec": {"apiVersion": "scitex-agent-container/v3",
+                     "kind": "Agent",
+                     "spec": {...}},
+            "overwrite": false   # optional; default false → 409 on clash
+        }
 
     Internally shells out to ``sac agent start <name>`` so the proven
     lifecycle path drives the launch (preflight, singleton check,
@@ -352,6 +365,15 @@ async def agents_start(request: Request) -> JSONResponse:
         return JSONResponse(
             {"error": "missing or empty 'name' string"}, status_code=400
         )
+
+    inline_spec = body.get("spec")
+    if inline_spec is not None:
+        err = materialize_inline_spec(
+            name, inline_spec, overwrite=bool(body.get("overwrite"))
+        )
+        if err is not None:
+            return err
+
     sac_bin = shutil.which("sac") or "sac"
     proc = await asyncio.to_thread(
         subprocess.run,
