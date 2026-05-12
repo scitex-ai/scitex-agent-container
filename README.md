@@ -1,5 +1,5 @@
 <!-- ---
-!-- Timestamp: 2026-05-13 06:41:17
+!-- Timestamp: 2026-05-13 07:22:07
 !-- Author: ywatanabe
 !-- File: /home/ywatanabe/proj/scitex-agent-container/README.md
 !-- --- -->
@@ -66,8 +66,8 @@ spec:
   runtime: apptainer
   workdir: /tmp/hello
   model: claude-haiku-4-5
-  startup_commands:
-    - command: "Reply with the string 'hello-ok' and nothing else."
+  startup_prompts:
+    - "Reply with the string 'hello-ok' and nothing else."
 YAML
 
 # 3. Start an agent
@@ -77,7 +77,7 @@ sac agent start hello --foreground   # streams stdout, exits when done
 DIR="~/.scitex/agent-container/agents/"
 cp -r "$DIR"/hello/ "$DIR"/hello2/
 cp -r "$DIR"/hello/ "$DIR"/hello3/
-sac agent start hello,hello2,hellow3 --foreground   # streams stdout, exits when done
+sac agent start hello hello2 hello3 --foreground   # streams stdout, exits when done
 ```
 
 ## How it works
@@ -120,33 +120,117 @@ sac agent start hello,hello2,hellow3 --foreground   # streams stdout, exits when
 <details>
 <summary><strong>YAML Spec Reference (v3)</strong></summary>
 
-| Section | Key Fields | Description |
-|---|---|---|
-| `apiVersion` | `scitex-agent-container/v3` | Config format version |
-| `metadata` | `name` (auto-derived from dir), `labels` | Agent identity |
-| `spec.runtime` | `apptainer` (the only supported runtime) | Container backend |
-| `spec.image` | path to `.sif` | Default: `~/.scitex/agent-container/containers/sac-scitex.sif` |
-| `spec.workdir` | path | Workspace mounted at `/work` inside the container |
-| `spec.model` | `sonnet`, `opus[1m]`, `haiku-4-5`, ... | Claude model |
-| `spec.user` | `""` / `"host"` / `"<uid>:<gid>"` | Run-as user; `"host"` matches the operator |
-| `spec.mounts[]` | `src`, `dst`, `mode` (ro/rw) | Bind mounts (`${VAR}` expanded at start) |
-| `spec.env` | key-value pairs | Container env (`${VAR}` expanded) |
-| `spec.a2a` | `port` | Bind `POST /v1/turn` on this localhost port |
-| `spec.remote` | `host`, `user`, `timeout` | SSH-as-transport for cross-machine deploy |
-| `spec.startup_commands[]` | `command` | One-shot turns to send to the SDK before going idle |
-| `spec.health` | `enabled`, `interval`, `method: sdk-alive` | Health probe config |
-| `spec.skills` | `required[]`, `available[]` | Skill auto-injection into CLAUDE.md |
-| `spec.dot_claude` | path | Default: auto-discover `./dot_claude` next to `spec.yaml`. Absolute or relative; the directory is materialized into the workspace at start with `${metadata.name}` and `${ENV_VAR}` interpolation. |
+Container + session knobs nest under the engine that interprets them
+(`spec.apptainer.*`, `spec.claude.*`). Cross-cutting knobs (workdir,
+a2a, health, restart) stay at the top level. Every curated block has
+a `raw_*` escape hatch — full underlying surface is always reachable.
 
-`<dot_claude>/CLAUDE.md`, `state.md`, `.mcp.json`, `.env` are materialized at the workdir root; `<dot_claude>/commands/`, `skills/`, `hooks/`, etc. mirror into `<workdir>/.claude/`.
+The agent name is the parent directory of `spec.yaml` (dir-as-SSoT);
+there's no `metadata.name` field. Renaming an agent = `mv` the directory.
 
-Example YAML file is seen at [`./examples/agent-templates`](./examples/agent-templates)
+| Section                       | Key Fields                                                               | Description                                                                                                                                                                  |
+|-------------------------------|--------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `apiVersion`                  | `scitex-agent-container/v3`                                              | Config format version                                                                                                                                                        |
+| `metadata.labels`             | string→string map                                                        | Used by `sac fleet ...` filters                                                                                                                                              |
+| `spec.runtime`                | `apptainer` (the only supported runtime)                                 | Container backend                                                                                                                                                            |
+| `spec.workdir`                | path                                                                     | Workspace mounted at `/work` inside the container                                                                                                                            |
+| `spec.apptainer.image`        | path to `.sif`                                                           | Default: `~/.scitex/agent-container/containers/sac-scitex.sif`                                                                                                               |
+| `spec.apptainer.overlay`      | path                                                                     | Writable overlay (rw layer above the SIF)                                                                                                                                    |
+| `spec.apptainer.nv` / `.rocm` | bool                                                                     | Forward host NVIDIA / AMD ROCm libs                                                                                                                                          |
+| `spec.apptainer.binds[]`      | `host:container[:mode]`                                                  | Bind mounts (`${VAR}` expanded at start)                                                                                                                                     |
+| `spec.apptainer.env`          | key-value pairs                                                          | Env vars exported into the container (`${VAR}` expanded)                                                                                                                     |
+| `spec.apptainer.raw_args[]`   | list of strings                                                          | **Escape hatch** — appended verbatim to the `apptainer exec` argv                                                                                                            |
+| `spec.dot_claude`             | path                                                                     | Default: auto-discover `./dot_claude` next to `spec.yaml`. Materialized into the workspace at start (CLAUDE.md / .mcp.json / .env / state.md / commands/ / skills/ / hooks/) |
+| `spec.startup_commands[]`     | shell commands                                                           | Run **before** Claude starts (e.g. `uv venv ...`)                                                                                                                            |
+| `spec.startup_prompts[]`      | strings                                                                  | Fed to Claude as the first user message(s)                                                                                                                                   |
+| `spec.claude.model`           | `sonnet`, `opus[1m]`, `haiku-4-5`, ...                                   | Claude model                                                                                                                                                                 |
+| `spec.claude.session`         | `new-session` / `continue` / `resume <sid>`                              | Mirrors `claude --resume`/`--continue`                                                                                                                                       |
+| `spec.claude.channels[]`      | `server:orochi-push`, `plugin:foo@bar`                                   | Push channels; passed as `claude --channels`                                                                                                                                 |
+| `spec.claude.flags[]`         | strings                                                                  | Extra flags appended to the `claude` invocation                                                                                                                              |
+| `spec.claude.raw_options`     | dict                                                                     | **Escape hatch** — splatted into `ClaudeAgentOptions(**raw_options)`                                                                                                         |
+| `spec.a2a.port`               | int                                                                      | Bind `POST /v1/turn` on this localhost port (per-agent)                                                                                                                      |
+| `spec.health`                 | `enabled`, `interval`, `method: sdk-alive`                               | Health probe config                                                                                                                                                          |
+| `spec.restart`                | `policy` (`never` / `on-failure` / `always`), `max_retries`, `backoff_*` | Supervisor restart policy                                                                                                                                                    |
+
+**Lifetime / session selection:** no `mode` field. Default is
+long-lived + new session. CLI flips it: `sac agent start <name>
+--one-shot` (exits after `startup_prompts`), `--resume <sid>` /
+`--continue` (resumes / continues the prior session).
+
+Example:
+
+``` yaml
+
+apiVersion: scitex-agent-container/v3
+kind: Agent
+
+metadata:
+  labels:                              # arbitrary string→string, used by sac fleet ...
+    role: researcher
+    team: lab-a
+  # `name` is intentionally NOT a metadata field — the agent name is
+  # the parent directory of `spec.yaml` (dir-as-SSoT). Renaming an
+  # agent means moving the directory; the YAML is identity-free.
+
+spec:
+  runtime: apptainer                   # the only accepted value (post 2026-05-13 ripout)
+  workdir: ~/proj/example              # mounted rw at /work inside the container
+
+  apptainer:
+    image: /path/to/sac-base.sif       # or relative to spec.yaml
+    overlay: ./overlay.img             # writable overlay (rw layer above the SIF)
+    nv: false                          # forward host NVIDIA libs (--nv)
+    rocm: false                        # forward host AMD ROCm libs (--rocm)
+    binds:                             # bind mounts (host:container[:mode])
+      - /data/gpfs:/data/gpfs:ro
+    env:                               # env vars exported into the container
+      FOO: bar
+    raw_args: []                       # escape hatch → appended to apptainer exec argv
+
+  dot_claude: ./dot_claude             # relative to spec.yaml (preferred) or absolute
+    # merged into workspace/.claude/ at agent-start.
+    # may contain: CLAUDE.md, .mcp.json, .env, state.md,
+    #              commands/, skills/, hooks/, settings.local.json
+
+  startup_commands:                    # shell commands, run BEFORE claude starts
+    - "uv venv /opt/venv-agent --python python3"
+
+  startup_prompts:                     # fed to claude as first user message(s)
+    - "Apply the SciTeX quality playbook."
+
+  claude:
+    model: claude-opus-4-5
+    session: new-session               # or 'continue', or 'resume <sid>' (mirrors claude CLI)
+    channels:                          # push-based; passed as claude --channels
+      - server:orochi-push
+      - server:a2a
+    flags:
+      - --dangerously-skip-permissions
+    raw_options: {}                    # escape hatch → ClaudeAgentOptions(**raw_options)
+
+  a2a:
+    port: 7901                         # bind POST /v1/turn on this localhost port (per-agent)
+
+  health:
+    enabled: true
+    interval: 60                       # seconds between probes
+    method: sdk-alive                  # only currently supported method
+
+  restart:
+    policy: on-failure                 # never | on-failure | always
+    max_retries: 3
+    backoff_initial: 30
+    backoff_max: 300
+    backoff_multiplier: 2
+```
+
+Example YAMLs: [`./examples/agent-templates`](./examples/agent-templates)
 
 </details>
 
 ## Configuration Directory
 
-Configuration directories are separated into user-scope (`~/.scitex/agent-container/`) and project-scope (`<proj-root>/.scitex/agent-container/`; prioritized when present). They include `config.yaml`, `agents`, `accounts`, `tokens`, `conatiners`, and `runtime` as described below.
+Configuration directories are separated into user-scope (`~/.scitex/agent-container/`) and project-scope (`<proj-root>/.scitex/agent-container/`; prioritized when present). They include `config.yaml`, `agents`, `accounts`, `tokens`, `containers`, and `runtime` as described below.
 
 ```
 ~/.scitex/agent-container/ or <project>/.scitex/agent-container/
@@ -251,15 +335,21 @@ The build / sandbox / version / rollback verbs all delegate to [`scitex-containe
 
 ```bash
 # Agent lifecycle
-sac agent start <name> [--foreground]    # daemon by default; --foreground streams stdio
-sac agent stop  <name>                    # graceful SIGTERM, escalate to SIGKILL after 5 s
+sac agent start  <name> [--foreground]   # daemon by default; --foreground streams stdio
+sac agent stop   <name>                  # graceful SIGTERM, escalate to SIGKILL after 5 s
 sac agent restart <name>
+sac agent send   <name> "<prompt>"       # send a follow-up turn to a running session
+sac agent send   <name> --key ESC        # interrupt current turn
 sac agent status [<name>] [--snapshot] [--priority]
 sac agent health <name>
-sac agent tail   <name>                   # render session.jsonl (structured transcript)
-sac agent recall <name>                   # human-readable session summary
-sac agent check  <name>                   # preflight (validates yaml + probes runtime deps)
+sac agent tail   <name>                  # render session.jsonl (structured transcript)
+sac agent recall <name>                  # human-readable session summary
+sac agent check  <name>                  # preflight (validates yaml + probes runtime deps)
 sac agent find   <capability>
+
+# Control plane (HTTP/JSON, loopback-only)
+sac listen [--bind 127.0.0.1:7878]       # boot per-host REST API (bearer-auth)
+sac channel send <to> "<msg>"            # local agent-to-agent message via sac listen
 
 # Image lifecycle (delegates to scitex-container)
 sac image build [base|scitex] [--sandbox] [--runtime apptainer|docker]
@@ -314,6 +404,22 @@ directory and it'll be merged into `<workdir>/.mcp.json` at start.
 ## Part of SciTeX
 
 `scitex-agent-container` is part of [**SciTeX**](https://scitex.ai). Install via the umbrella with `pip install scitex[agent-container]` to use as `scitex.agent_container` (Python) or `scitex agent-container ...` (CLI).
+
+[`scitex-orochi`](https://github.com/ywatanabe1989/scitex-orochi) can consume `sac` and allow Slack-like interface and cross-host communication across agents and users on a web interface (live instance at [https://scitex-orochi.com](https://scitex-orochi.com)).
+
+| Concern                                                   | Owner                                      |
+|-----------------------------------------------------------|--------------------------------------------|
+| Agent process (SDK + session.jsonl)                       | **sac**                                    |
+| Per-host control plane (start/stop/send/tail/list)        | **sac**                                    |
+| Container runtime (apptainer only; docker/podman dropped) | **sac**                                    |
+| Cross-host message routing                                | **orochi**                                 |
+| Human chatops UI (Slack-like)                             | **orochi**                                 |
+| In-session push (MCP channel server)                      | **orochi** ships MCP; sac runs agent       |
+| SSH mesh / tunnel layer (cloudflared + autossh)           | **orochi**                                 |
+| Peer registry                                             | **orochi** (`~/.scitex/orochi/peers.yaml`) |
+
+Rule: **sac knows containers + sessions on one host; orochi knows messages + people across hosts.** sac never imports orochi.
+
 
 >Four Freedoms for Research
 >
