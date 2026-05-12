@@ -121,32 +121,17 @@ class ApptainerContainerRuntime(RuntimeBase):
                     overlay_p = Path(config.workdir).expanduser() / overlay_p
                 argv += ["--overlay", str(overlay_p)]
 
-        # Forward Anthropic auth (mirrors container.py). The Claude
-        # Agent SDK uses `ANTHROPIC_API_KEY` as the canonical name;
-        # SciTeX hosts often expose the key under a vendor-prefixed
-        # alias (e.g. `SCITEX_AGENT_CONTAINER_ANTHROPIC_API_KEY`) to
-        # keep host-side secrets disambiguated from operator scripts.
-        # We forward both the canonical name and any alias, mapping
-        # the first non-empty source onto `ANTHROPIC_API_KEY` so the
-        # SDK inside the container picks it up unchanged.
-        forwarded_canonical = False
-        for auth_env in (
-            "ANTHROPIC_API_KEY",
-            "SAC_ANTHROPIC_API_KEY",
-            "SCITEX_AGENT_CONTAINER_ANTHROPIC_API_KEY",
-        ):
+        # Forward Anthropic auth (mirrors container.py). Order matters:
+        # see runtimes/_sdk_common.py:provision_anthropic_auth — when
+        # `~/.claude/.credentials.json` exists (Pro/Max OAuth flow), the
+        # SDK reads the file directly and a bare `ANTHROPIC_API_KEY`
+        # env shadows it (Anthropic rejects sk-ant-oat* OAuth tokens as
+        # bare env). So we only pass *pay-per-token* env values; the
+        # credentials.json is bind-mounted below.
+        for auth_env in ("ANTHROPIC_API_KEY", "SAC_ANTHROPIC_API_KEY"):
             val = os.environ.get(auth_env)
-            if not val:
-                continue
-            argv += ["--env", f"{auth_env}={val}"]
-            if not forwarded_canonical and auth_env != "ANTHROPIC_API_KEY":
-                # Alias the first alias-only key onto ANTHROPIC_API_KEY
-                # so the SDK can authenticate without further env
-                # massage inside the container.
-                argv += ["--env", f"ANTHROPIC_API_KEY={val}"]
-                forwarded_canonical = True
-            elif auth_env == "ANTHROPIC_API_KEY":
-                forwarded_canonical = True
+            if val:
+                argv += ["--env", f"{auth_env}={val}"]
 
         # Mount operator's Pro/Max credentials when present (read-only).
         cred_file = Path.home() / ".claude" / ".credentials.json"
