@@ -59,11 +59,8 @@ _SDK_IMAGE = "scitex-agent-container:scitex"
 _KNOWN_SPEC_KEYS = frozenset(
     {
         "runtime",
-        "image",
-        "model",
         "workdir",
         "python-venv",
-        "env",
         "container",
         "screen",  # legacy: agent metadata (screen_name) — no longer drives a multiplexer
         "claude",
@@ -72,9 +69,8 @@ _KNOWN_SPEC_KEYS = frozenset(
         "restart",
         "hooks",
         "telegram",
-        "remote",
-        "skills",
         "startup_commands",
+        "startup_prompts",  # v3-realign: separate from startup_commands (§3)
         "startup",
         "context_management",
         "listen",
@@ -87,10 +83,36 @@ _KNOWN_SPEC_KEYS = frozenset(
         "a2a",  # A2A sidecar config read by a2a/_server.py
         "autonomous",  # F-CS3 — drive-until-done block
         "apptainer",  # F-CS18 — apptainer-specific build extension
-        "mounts",  # declarative bind-mounts: list of {src, dst, mode?}
         "user",  # container user: "host" | "uid:gid" | "" (image default)
+        "dot_claude",  # F-DC1 — directory merged into workspace/.claude/
+        # v3 removed (rejected explicitly below with relocation hints):
+        # image (→ spec.apptainer.image), mounts (→ spec.apptainer.binds),
+        # env (→ spec.apptainer.env), model (→ spec.claude.model),
+        # skills, remote.
     }
 )
+
+
+# v3-realign: top-level fields that moved into engine blocks. Reject
+# loudly with a hint pointing to the new home (§3 Removed from v3).
+_V3_RELOCATED_FIELDS: dict[str, str] = {
+    "image": "spec.apptainer.image",
+    "mounts": "spec.apptainer.binds",
+    "env": "spec.apptainer.env",
+    "model": "spec.claude.model",
+}
+
+# v3-realign: fields removed outright (no relocation — different owners).
+_V3_REMOVED_FIELDS: dict[str, str] = {
+    "skills": (
+        "spec.skills is no longer accepted; skills now live under "
+        "dot_claude/skills/ (§3 Removed)."
+    ),
+    "remote": (
+        "spec.remote is no longer accepted; cross-host routing is orochi's "
+        "job (§2). Use orochi's peer registry instead."
+    ),
+}
 
 
 def validate_raw(raw: dict, path: str) -> list[str]:
@@ -138,8 +160,28 @@ def validate_raw(raw: dict, path: str) -> list[str]:
     if not isinstance(spec, dict):
         errors.append("spec is required and must be a mapping")
     else:
-        # Unknown spec keys
-        unknown_spec = set(spec.keys()) - _KNOWN_SPEC_KEYS
+        # v3-realign — fields that moved into engine blocks: reject with
+        # a relocation hint so the operator knows the new home.
+        for k, new_home in _V3_RELOCATED_FIELDS.items():
+            if k in spec:
+                errors.append(
+                    f"spec.{k} is no longer accepted at the top level; "
+                    f"move it to {new_home} (v3 spec realignment §3)."
+                )
+        # v3-realign — fields removed outright (different owner / shape).
+        for k, msg in _V3_REMOVED_FIELDS.items():
+            if k in spec:
+                errors.append(msg)
+
+        # Unknown spec keys (excluding the v3-relocated/removed set, which
+        # already have a more specific message above — listing them as
+        # "unknown" would be misleading).
+        unknown_spec = (
+            set(spec.keys())
+            - _KNOWN_SPEC_KEYS
+            - set(_V3_RELOCATED_FIELDS)
+            - set(_V3_REMOVED_FIELDS)
+        )
         for k in sorted(unknown_spec):
             errors.append(
                 f"Unknown spec field '{k}'. "
@@ -158,12 +200,14 @@ def validate_raw(raw: dict, path: str) -> list[str]:
                 "support was removed for simplicity."
             )
 
-        # spec.image (F-CS16 phase 2a) — top-level container image tag.
-        # Empty string is allowed and falls back to the default at
-        # dispatch time. Type check only here.
-        image = spec.get("image")
-        if image is not None and not isinstance(image, str):
-            errors.append(f"spec.image must be a string, got {type(image).__name__}")
+        # spec.image — moved to spec.apptainer.image in v3 (handled by the
+        # relocation rejection above). Type-check the new home instead.
+        ap_block = spec.get("apptainer", {}) or {}
+        ap_image = ap_block.get("image") if isinstance(ap_block, dict) else None
+        if ap_image is not None and not isinstance(ap_image, str):
+            errors.append(
+                f"spec.apptainer.image must be a string, got {type(ap_image).__name__}"
+            )
 
         # spec.dockerfile dropped 2026-05-13 with the docker ripout.
         # Keep type check around for one minor version so explicit
@@ -174,20 +218,22 @@ def validate_raw(raw: dict, path: str) -> list[str]:
                 f"spec.dockerfile must be a string, got {type(dockerfile).__name__}"
             )
 
-        # spec.model — F-CS7: validate against accepted SDK aliases /
-        # versioned forms. The SDK silently rejects unknown values
-        # (heartbeat fresh, every turn returns 0 tokens), so we surface
-        # bad strings at yaml-validate time. Empty / missing is allowed
-        # — runtime falls back to its default.
-        model = spec.get("model")
+        # spec.claude.model — F-CS7 (v3: moved from top-level spec.model).
+        # Validate against accepted SDK aliases / versioned forms. The
+        # SDK silently rejects unknown values (heartbeat fresh, every
+        # turn returns 0 tokens), so we surface bad strings at yaml-
+        # validate time. Empty / missing is allowed — runtime falls back
+        # to its default.
+        claude_block = spec.get("claude", {}) or {}
+        model = claude_block.get("model") if isinstance(claude_block, dict) else None
         if model is not None:
             if not isinstance(model, str):
                 errors.append(
-                    f"spec.model must be a string, got {type(model).__name__}"
+                    f"spec.claude.model must be a string, got {type(model).__name__}"
                 )
             elif model and not _VALID_MODEL_RE.match(model):
                 errors.append(
-                    f"spec.model '{model}' is not an accepted alias. "
+                    f"spec.claude.model '{model}' is not an accepted alias. "
                     "Use a bare alias ('opus', 'sonnet', 'haiku', 'inherit', "
                     "'default'), optionally with a context suffix like "
                     "'opus[1m]'; OR the full versioned form "
@@ -236,45 +282,8 @@ def validate_raw(raw: dict, path: str) -> list[str]:
         if method and method not in ("sdk-alive",):
             errors.append(f"spec.health.method must be 'sdk-alive', got '{method}'")
 
-        # spec.mounts — declarative bind-mounts. Each entry: {src, dst, mode?}.
-        # `src` and `dst` are strings (host path / container path); `mode` is
-        # optional and one of "rw" (default) / "ro".
-        mounts = spec.get("mounts")
-        if mounts is not None:
-            if not isinstance(mounts, list):
-                errors.append(
-                    f"spec.mounts must be a list of mappings, got "
-                    f"{type(mounts).__name__}"
-                )
-            else:
-                for i, m in enumerate(mounts):
-                    if not isinstance(m, dict):
-                        errors.append(
-                            f"spec.mounts[{i}] must be a mapping, got "
-                            f"{type(m).__name__}"
-                        )
-                        continue
-                    extra = set(m.keys()) - {"src", "dst", "mode"}
-                    for k in sorted(extra):
-                        errors.append(
-                            f"spec.mounts[{i}]: unknown key '{k}'. "
-                            "Valid keys: src, dst, mode."
-                        )
-                    src = m.get("src")
-                    dst = m.get("dst")
-                    if not isinstance(src, str) or not src:
-                        errors.append(
-                            f"spec.mounts[{i}].src must be a non-empty string"
-                        )
-                    if not isinstance(dst, str) or not dst:
-                        errors.append(
-                            f"spec.mounts[{i}].dst must be a non-empty string"
-                        )
-                    mode = m.get("mode")
-                    if mode is not None and mode not in ("rw", "ro"):
-                        errors.append(
-                            f"spec.mounts[{i}].mode must be 'rw' or 'ro', got '{mode}'"
-                        )
+        # spec.mounts moved to spec.apptainer.binds in v3 — rejected
+        # by the relocation block above. No further validation needed.
 
         # spec.user — container user. Three accepted shapes:
         #   * ""              (default) → image's USER (typically `agent`)

@@ -146,13 +146,18 @@ def parse_claude(spec: dict) -> ClaudeSpec:
             ValueError,
         ):  # stx-allow: fallback (reason: type coercion or format mismatch)
             continue_max_age = None
+    raw_options = raw.get("raw_options", {}) or {}
+    if not isinstance(raw_options, dict):
+        raw_options = {}
     return ClaudeSpec(
+        model=str(raw.get("model", "") or ""),
         channels=raw.get("channels", []) or [],
         flags=raw.get("flags", []) or [],
         session=session,
         continue_max_age_minutes=continue_max_age,
         resume_id=str(raw.get("resume_id", "") or ""),
         auto_accept=raw.get("auto_accept", True),
+        raw_options=dict(raw_options),
     )
 
 
@@ -210,8 +215,34 @@ def parse_apptainer(spec: dict):
     env_raw = raw.get("environment", {}) or {}
     if not isinstance(env_raw, dict):
         env_raw = {}
+    # v3-realign: apptainer.env (engine-scoped env vars, promoted from
+    # top-level spec.env per §3).
+    apt_env_raw = raw.get("env", {}) or {}
+    if not isinstance(apt_env_raw, dict):
+        apt_env_raw = {}
+    # v3-realign: apptainer.binds — accepts the new shorthand
+    # ``host:container[:mode]`` strings OR legacy ``{src, dst, mode}`` dicts
+    # (normalised to strings).
+    binds_raw = raw.get("binds", []) or []
+    binds: list[str] = []
+    if isinstance(binds_raw, list):
+        for item in binds_raw:
+            if isinstance(item, str) and item:
+                binds.append(item)
+            elif isinstance(item, dict):
+                src = str(item.get("src", "") or "")
+                dst = str(item.get("dst", "") or "")
+                mode = str(item.get("mode", "") or "")
+                if src and dst:
+                    binds.append(f"{src}:{dst}:{mode}" if mode else f"{src}:{dst}")
+    raw_args_raw = raw.get("raw_args", []) or []
+    raw_args = [str(a) for a in raw_args_raw] if isinstance(raw_args_raw, list) else []
     # hook-bypass: line-limit (1-line bug fix; _parsers.py split deferred — see GITIGNORED/REFACTORING.md)
     return ApptainerSpec(
+        image=str(raw.get("image", "") or ""),
+        binds=binds,
+        env={str(k): str(v) for k, v in apt_env_raw.items()},
+        raw_args=raw_args,
         post=str(raw.get("post", "") or ""),
         environment={str(k): str(v) for k, v in env_raw.items()},
         def_file=str(raw.get("def_file", "") or ""),

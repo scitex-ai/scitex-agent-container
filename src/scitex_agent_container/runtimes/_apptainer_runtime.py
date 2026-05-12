@@ -110,6 +110,14 @@ class ApptainerContainerRuntime(RuntimeBase):
             for vol in getattr(container_spec, "volumes", None) or []:
                 argv += ["--bind", str(vol)]
 
+        # v3-realign: spec.apptainer.binds (promoted from top-level
+        # spec.mounts per §3). Strings already in `host:container[:mode]`
+        # form — appended verbatim.
+        ap_for_binds = getattr(config, "apptainer", None)
+        if ap_for_binds is not None:
+            for b in getattr(ap_for_binds, "binds", None) or []:
+                argv += ["--bind", str(b)]
+
         # GPU passthrough — apptainer's --nv binds the host CUDA libs
         # and devices into the container. --rocm does the same for AMD.
         # Opt-in only: most agent workloads don't need the GPU and
@@ -155,6 +163,15 @@ class ApptainerContainerRuntime(RuntimeBase):
 
         for key, val in (config.env or {}).items():
             argv += ["--env", f"{key}={val}"]
+
+        # v3-realign: spec.apptainer.raw_args (§1 escape-hatch invariant) —
+        # appended verbatim after all curated args, before the SIF +
+        # inner command. Lets operators bolt on flags sac doesn't model
+        # (e.g. ``--userns``, ``--cleanenv``).
+        ap_for_raw = getattr(config, "apptainer", None)
+        if ap_for_raw is not None:
+            for arg in getattr(ap_for_raw, "raw_args", None) or []:
+                argv.append(str(arg))
 
         argv.append(str(sif_path))
 
@@ -229,7 +246,11 @@ class ApptainerContainerRuntime(RuntimeBase):
                 return sif_path
             return sif_path if _build_sif_from_def(sif_path, def_file) else None
 
-        image = (config.image or "").strip()
+        # v3-realign: prefer spec.apptainer.image; fall back to legacy
+        # AgentConfig.image (kept populated for back-compat) and finally
+        # to the default sac-scitex SIF path.
+        ap_image = getattr(ap, "image", "") if ap is not None else ""
+        image = (ap_image or config.image or "").strip()
         if not image:
             return None
 

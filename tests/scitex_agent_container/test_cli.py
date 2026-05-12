@@ -14,7 +14,7 @@ from scitex_agent_container.cli import main
 VALID_CONFIG = {
     "apiVersion": "scitex-agent-container/v3",
     "kind": "Agent",
-    "spec": {"runtime": "apptainer", "model": "sonnet"},
+    "spec": {"runtime": "apptainer", "claude": {"model": "sonnet"}},
 }
 
 
@@ -171,7 +171,7 @@ class TestCLI:
                     "capabilities": "gpu,slurm,ml-training",
                 },
             },
-            "spec": {"runtime": "apptainer", "model": "sonnet"},
+            "spec": {"runtime": "apptainer", "claude": {"model": "sonnet"}},
         }
         import tempfile
 
@@ -263,14 +263,15 @@ class TestListJsonTimeoutBudget:
         rd = tmp_path / "test-remote"
         rd.mkdir()
         remote_cfg_path = rd / "test-remote.yaml"
+        # v3-realign: spec.remote removed; the agent-list-data probe still
+        # treats agents without a runtime PID as "remote-ish" (liveness
+        # unknown) — that's what this test exercises, so a minimal v3
+        # spec without spec.remote is sufficient.
         remote_cfg_path.write_text(
             """apiVersion: scitex-agent-container/v3
 kind: Agent
 spec:
   runtime: apptainer
-  remote:
-    host: fake-remote-host
-    user: ywatanabe
 """
         )
         ld = tmp_path / "test-local"
@@ -339,14 +340,12 @@ spec:
         d = tmp_path / "test-fast"
         d.mkdir()
         cfg_path = d / "test-fast.yaml"
+        # v3-realign: spec.remote removed (§2). Minimal v3 spec is enough.
         cfg_path.write_text(
             """apiVersion: scitex-agent-container/v3
 kind: Agent
 spec:
   runtime: apptainer
-  remote:
-    host: fake-fast-host
-    user: ywatanabe
 """
         )
 

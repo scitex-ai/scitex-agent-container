@@ -52,7 +52,8 @@ MINIMAL_V2_CONFIG = {
     },
     "spec": {
         "runtime": "apptainer",
-        "model": "opus[1m]",
+        # v3-realign: model moved to spec.claude.model.
+        "claude": {"model": "opus[1m]"},
     },
 }
 
@@ -65,7 +66,8 @@ V2_WITH_MCP = {
     },
     "spec": {
         "runtime": "apptainer",
-        "model": "sonnet",
+        # v3-realign: model moved to spec.claude.model.
+        "claude": {"model": "sonnet"},
         "mcp_servers": {
             "scitex-orochi": {
                 "type": "stdio",
@@ -125,7 +127,8 @@ class TestV2Config:
                 **MINIMAL_V2_CONFIG["spec"],
                 "workdir": "/custom/path",
                 "screen": {"name": "custom-screen"},
-                "env": {"CLAUDE_AGENT_ID": "custom-id"},
+                # v3-realign: env moved to spec.apptainer.env.
+                "apptainer": {"env": {"CLAUDE_AGENT_ID": "custom-id"}},
             },
         }
         path = _write_config(data)

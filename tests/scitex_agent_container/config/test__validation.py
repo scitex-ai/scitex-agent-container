@@ -24,7 +24,8 @@ _BASE = {
 
 
 def _spec(model):
-    return {**_BASE, "spec": {**_BASE["spec"], "model": model}}
+    # v3-realign: spec.model moved to spec.claude.model.
+    return {**_BASE, "spec": {**_BASE["spec"], "claude": {"model": model}}}
 
 
 @pytest.mark.parametrize(
@@ -47,7 +48,7 @@ def _spec(model):
 def test_valid_models_pass(model):
     """Aliases and full versioned forms must validate cleanly."""
     errors = validate_raw(_spec(model), path="<test>")
-    bad = [e for e in errors if "spec.model" in e]
+    bad = [e for e in errors if "spec.claude.model" in e]
     assert bad == [], f"unexpected spec.model errors for {model!r}: {bad}"
 
 
@@ -65,7 +66,7 @@ def test_valid_models_pass(model):
 def test_invalid_models_rejected(model):
     """Abbreviated / unknown forms must fail validation with a redirect."""
     errors = validate_raw(_spec(model), path="<test>")
-    bad = [e for e in errors if "spec.model" in e]
+    bad = [e for e in errors if "spec.claude.model" in e]
     assert bad, f"expected spec.model rejection for {model!r}, got none"
     msg = bad[0]
     assert model in msg, "error must echo the offending model string"
@@ -77,13 +78,13 @@ def test_invalid_models_rejected(model):
 def test_missing_model_is_allowed():
     """Empty / missing model is fine — runtime falls back to its default."""
     errors = validate_raw(_BASE, path="<test>")
-    assert not [e for e in errors if "spec.model" in e]
+    assert not [e for e in errors if "spec.claude.model" in e]
 
 
 def test_non_string_model_rejected():
     """Numbers, lists, nulls etc. must be rejected with a typed error."""
     errors = validate_raw(_spec(42), path="<test>")
-    bad = [e for e in errors if "spec.model" in e]
+    bad = [e for e in errors if "spec.claude.model" in e]
     assert bad
     assert "string" in bad[0].lower()
 
@@ -280,16 +281,24 @@ def test_validate_raw_rejects_legacy_runtime_values(legacy):
     assert legacy in runtime_errors[0]
 
 
-def test_validate_raw_accepts_top_level_image_field():
+def test_validate_raw_accepts_apptainer_image_field():
+    # v3-realign: image moved into spec.apptainer.image.
+    raw = _spec_with({"apptainer": {"image": "scitex-agent-container:scitex"}})
+    errors = validate_raw(raw, path="<test>")
+    assert not [e for e in errors if "spec.apptainer.image" in e]
+
+
+def test_validate_raw_rejects_top_level_image_field():
+    """v3-realign: top-level spec.image is rejected with a relocation hint."""
     raw = _spec_with({"image": "scitex-agent-container:scitex"})
     errors = validate_raw(raw, path="<test>")
-    assert not [e for e in errors if "spec.image" in e]
+    assert any("spec.image" in e and "spec.apptainer.image" in e for e in errors)
 
 
 def test_validate_raw_rejects_non_string_image():
-    raw = _spec_with({"image": 42})
+    raw = _spec_with({"apptainer": {"image": 42}})
     errors = validate_raw(raw, path="<test>")
-    assert any("spec.image" in e and "string" in e for e in errors)
+    assert any("spec.apptainer.image" in e and "string" in e for e in errors)
 
 
 def test_validate_raw_rejects_non_string_dockerfile():
@@ -340,10 +349,16 @@ def test_image_round_trip_through_loader(tmp_path):
                 "kind": "Agent",
                 "spec": {
                     "runtime": "apptainer",
-                    "image": "~/.scitex/agent-container/containers/sac-scitex.sif",
+                    "apptainer": {
+                        "image": "~/.scitex/agent-container/containers/sac-scitex.sif",
+                    },
                 },
             }
         )
     )
     cfg = load_config(str(yaml_path))
+    # v3: AgentConfig.image is populated from spec.apptainer.image.
+    assert cfg.apptainer.image == (
+        "~/.scitex/agent-container/containers/sac-scitex.sif"
+    )
     assert cfg.image == "~/.scitex/agent-container/containers/sac-scitex.sif"

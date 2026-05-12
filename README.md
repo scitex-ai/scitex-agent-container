@@ -1,5 +1,5 @@
 <!-- ---
-!-- Timestamp: 2026-05-13 07:40:46
+!-- Timestamp: 2026-05-13 07:45:51
 !-- Author: ywatanabe
 !-- File: /home/ywatanabe/proj/scitex-agent-container/README.md
 !-- --- -->
@@ -80,6 +80,10 @@ YAML
 
 # 3. Start an agent
 sac agent start hello-agent --foreground   # streams stdout, exits when done
+
+# 4. Check agents
+sac agent status
+
 
 # 4. Start multiple agents (space-separated names)
 DIR="~/.scitex/agent-container/agents/"

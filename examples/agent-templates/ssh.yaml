@@ -24,11 +24,13 @@ metadata:
 
 spec:
   runtime: apptainer
-  image: ~/.scitex/agent-container/containers/sac-scitex.sif
-  model: sonnet
   workdir: ~/proj/example
 
+  apptainer:
+    image: ~/.scitex/agent-container/containers/sac-scitex.sif
+
   claude:
+    model: sonnet
     flags:
       - --dangerously-skip-permissions
     session: continue-or-new

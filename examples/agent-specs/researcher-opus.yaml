@@ -21,18 +21,19 @@ metadata:
 
 spec:
   runtime: apptainer
-  image: ~/.scitex/agent-container/containers/sac-scitex.sif
-  model: opus
   workdir: ~/proj
 
+  apptainer:
+    image: ~/.scitex/agent-container/containers/sac-scitex.sif
+    env:
+      SCITEX_AGENT_CONTAINER_ROLE: researcher
+      SCITEX_AGENT_CONTAINER_ID: researcher-opus
+
   claude:
+    model: opus
     flags:
       - --dangerously-skip-permissions
     session: new
-
-  env:
-    SCITEX_AGENT_CONTAINER_ROLE: researcher
-    SCITEX_AGENT_CONTAINER_ID: researcher-opus
 
   health:
     enabled: true

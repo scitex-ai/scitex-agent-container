@@ -78,7 +78,7 @@ class TestUnknownFieldRejection:
             **_BASE,
             "spec": {
                 "runtime": "apptainer",
-                "model": "sonnet",
+                "claude": {"model": "sonnet"},
                 "a2a": {"port": 9999},
                 "extensions": {"my_custom": "value"},
             },

@@ -175,11 +175,6 @@ class TestApptainerBlockGap:
     updated; flipping XPASS = remove the marker + tighten the schema.
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="v3-realign pending: spec.apptainer.image not yet "
-        "promoted from top-level spec.image",
-    )
     def test_apptainer_image_round_trips(self, tmp_path):
         spec = _write_spec(
             tmp_path,
@@ -191,11 +186,6 @@ class TestApptainerBlockGap:
         cfg = load_config(str(spec))
         assert cfg.apptainer.image == "/path/to/sac.sif"
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="v3-realign pending: spec.apptainer.binds[] not yet "
-        "promoted from top-level spec.mounts[]",
-    )
     def test_apptainer_binds_round_trip(self, tmp_path):
         spec = _write_spec(
             tmp_path,
@@ -207,11 +197,6 @@ class TestApptainerBlockGap:
         cfg = load_config(str(spec))
         assert "/data:/data:ro" in cfg.apptainer.binds
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="v3-realign pending: spec.apptainer.env not yet "
-        "promoted from top-level spec.env",
-    )
     def test_apptainer_env_round_trips(self, tmp_path):
         spec = _write_spec(
             tmp_path,
@@ -223,11 +208,6 @@ class TestApptainerBlockGap:
         cfg = load_config(str(spec))
         assert cfg.apptainer.env.get("FOO") == "bar"
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="v3-realign pending: spec.apptainer.raw_args escape "
-        "hatch not yet implemented (§1 invariant)",
-    )
     def test_apptainer_raw_args_round_trips(self, tmp_path):
         spec = _write_spec(
             tmp_path,
@@ -283,11 +263,6 @@ class TestClaudeBlockGap:
     """§3 realignment gap — model moves from top-level into
     `spec.claude.model`; raw_options escape hatch lands fresh."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="v3-realign pending: spec.claude.model not yet "
-        "promoted from top-level spec.model",
-    )
     def test_claude_model_round_trips(self, tmp_path):
         spec = _write_spec(
             tmp_path,
@@ -296,11 +271,6 @@ class TestClaudeBlockGap:
         cfg = load_config(str(spec))
         assert cfg.claude.model == "opus"
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="v3-realign pending: spec.claude.raw_options escape "
-        "hatch not yet implemented (§1 invariant)",
-    )
     def test_claude_raw_options_round_trips(self, tmp_path):
         spec = _write_spec(
             tmp_path,
@@ -334,12 +304,6 @@ class TestStartup:
         assert cfg.startup_commands
         assert cfg.startup_commands[0].command == "echo hello"
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="v3-realign pending: spec.startup_prompts (separate "
-        "from startup_commands) per §3 — fed to Claude as first "
-        "user message(s)",
-    )
     def test_startup_prompts_round_trip(self, tmp_path):
         spec = _write_spec(
             tmp_path,
@@ -364,11 +328,6 @@ class TestRemovedFields:
     rejecting the field) and the xfail markers should then be lifted.
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="v3-realign pending: spec.skills must be rejected — "
-        "skills now live in dot_claude/skills/ (§3 Removed)",
-    )
     def test_spec_skills_is_rejected(self, tmp_path):
         spec = _write_spec(
             tmp_path,
@@ -379,11 +338,6 @@ class TestRemovedFields:
             "spec.skills should fail validation after v3 realignment"
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="v3-realign pending: spec.remote must be rejected — "
-        "cross-host is orochi's job (§2)",
-    )
     def test_spec_remote_is_rejected(self, tmp_path):
         spec = _write_spec(
             tmp_path,
@@ -394,11 +348,6 @@ class TestRemovedFields:
             "spec.remote should fail validation after v3 realignment"
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="v3-realign pending: top-level spec.image must be "
-        "rejected once promoted into spec.apptainer.image",
-    )
     def test_top_level_spec_image_is_rejected(self, tmp_path):
         spec = _write_spec(
             tmp_path,
@@ -410,11 +359,6 @@ class TestRemovedFields:
             "spec.apptainer.image is the canonical home"
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="v3-realign pending: top-level spec.mounts must be "
-        "rejected once promoted into spec.apptainer.binds",
-    )
     def test_top_level_spec_mounts_is_rejected(self, tmp_path):
         spec = _write_spec(
             tmp_path,
@@ -423,11 +367,6 @@ class TestRemovedFields:
         errors = validate_config(str(spec))
         assert any("mounts" in e for e in errors)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="v3-realign pending: top-level spec.env must be rejected "
-        "once promoted into spec.apptainer.env",
-    )
     def test_top_level_spec_env_is_rejected(self, tmp_path):
         spec = _write_spec(
             tmp_path,
@@ -436,11 +375,6 @@ class TestRemovedFields:
         errors = validate_config(str(spec))
         assert any("env" in e for e in errors)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="v3-realign pending: top-level spec.model must be rejected "
-        "once promoted into spec.claude.model",
-    )
     def test_top_level_spec_model_is_rejected(self, tmp_path):
         spec = _write_spec(
             tmp_path,

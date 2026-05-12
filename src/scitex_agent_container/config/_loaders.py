@@ -256,12 +256,18 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     }
     if labels.get("role"):
         auto_env["CLAUDE_AGENT_ROLE"] = labels["role"]
-    model = str(spec.get("model", "sonnet") or "sonnet")
+    # v3-realign: model + env + image + mounts live under engine blocks
+    # (spec.claude.model, spec.apptainer.{image,binds,env}). The validator
+    # rejects the top-level forms; the parsers read the new homes. The
+    # top-level AgentConfig.image/model/env/mounts fields are kept for
+    # back-compat consumers and populated from the new homes.
+    claude_spec = parse_claude(spec)
+    apptainer_spec = parse_apptainer(spec)
+    model = claude_spec.model or "sonnet"
     display_model = MODEL_DISPLAY_NAMES.get(model, model)
     auto_env["SCITEX_AGENT_CONTAINER_MODEL"] = display_model
 
-    user_env = spec.get("env", {}) or {}
-    merged_env = {**auto_env, **user_env}
+    merged_env = {**auto_env, **(apptainer_spec.env or {})}
 
     # Auto-derive hooks: prepend mkdir for workdir
     hooks = parse_hooks(spec)
@@ -274,10 +280,13 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     mcp_metadata = {**metadata, "name": name}
     mcp_servers = interpolate_mcp_servers(spec.get("mcp_servers", {}), mcp_metadata)
 
+    startup_prompts_raw = spec.get("startup_prompts", []) or []
+    startup_prompts = [str(p) for p in startup_prompts_raw if p]
+
     return AgentConfig(
         name=name,
         runtime=str(spec.get("runtime") or "apptainer"),
-        image=str(spec.get("image", "")),
+        image=apptainer_spec.image,
         model=model,
         workdir=workdir,
         python_venv=_resolve_python_venv(spec.get("python-venv", "")),
@@ -286,17 +295,17 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         screen_name=screen_name,
         labels=labels,
         container=parse_container(spec),
-        claude=parse_claude(spec),
+        claude=claude_spec,
         health=parse_health(spec),
         watchdog=parse_watchdog(spec),
         restart=parse_restart(spec),
         autonomous=parse_autonomous(spec),
-        apptainer=parse_apptainer(spec),
+        apptainer=apptainer_spec,
         hooks=hooks,
         telegram=parse_telegram(spec),
-        remote=parse_remote(spec),
         skills=parse_skills(spec),
         startup_commands=parse_startup_commands(spec),
+        startup_prompts=startup_prompts,
         startup=parse_startup(spec),
         context_management=parse_context_management(spec),
         listen=parse_listen(spec),
@@ -305,7 +314,6 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         multiplexer=spec.get("multiplexer", "tmux"),
         hosts_spec=hosts_spec,
         config_path=str(path),
-        mounts=list(spec.get("mounts") or []),
         user=str(spec.get("user", "")),
         a2a=parse_a2a(spec),
         dot_claude=str(spec.get("dot_claude", "")),

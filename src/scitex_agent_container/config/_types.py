@@ -24,8 +24,15 @@ class ContainerSpec:
 
 @dataclass
 class ClaudeSpec:
+    # v3-realign: model lives under spec.claude.model (promoted from
+    # top-level spec.model — §3). Empty = runtime default.
+    model: str = ""
     channels: list[str] = field(default_factory=list)
     flags: list[str] = field(default_factory=list)
+    # v3 escape hatch (§1 invariant): splat ``**raw_options`` into
+    # ``ClaudeAgentOptions`` so power users can reach any SDK option
+    # sac doesn't model. Merged on top of curated keys; raw_options wins.
+    raw_options: dict = field(default_factory=dict)
     # Session restart strategy. One of:
     #   continue-or-new  try --continue, fall back to a fresh launch if no prior session (default)
     #   continue         always pass --continue (fails if no prior session exists)
@@ -94,6 +101,24 @@ class WatchdogSpec:
 @dataclass
 class ApptainerSpec:
     """Apptainer-specific image-build extensions (F-CS18)."""
+
+    # v3-realign: apptainer-engine-scoped knobs promoted from top-level.
+    image: str = ""
+    """SIF path or docker:// URL — promoted from top-level spec.image (§3).
+    Empty = fall back to the default sac-scitex SIF."""
+
+    binds: list[str] = field(default_factory=list)
+    """Bind mounts as ``host:container[:mode]`` strings — promoted from
+    top-level spec.mounts (§3)."""
+
+    env: dict[str, str] = field(default_factory=dict)
+    """Env vars exported into the container — promoted from top-level
+    spec.env (§3)."""
+
+    raw_args: list[str] = field(default_factory=list)
+    """v3 escape hatch (§1 invariant): appended verbatim to the
+    ``apptainer exec`` argv after all curated args. Lets operators bolt
+    on flags sac doesn't model."""
 
     post: str = ""
     """Shell snippet run inside the SIF build (apptainer's `%post`).
@@ -396,6 +421,10 @@ class AgentConfig:
         default_factory=ContextManagementConfig
     )
     startup_commands: list[StartupCommand] = field(default_factory=list)
+    # v3-realign: ``startup_prompts`` is separate from ``startup_commands``
+    # (§3). startup_commands are SHELL commands run BEFORE claude starts;
+    # startup_prompts are TEXT fed to claude as the first user message(s).
+    startup_prompts: list[str] = field(default_factory=list)
     startup: "StartupSpec" = field(default_factory=lambda: StartupSpec())
     mcp_servers: dict[str, dict] = field(default_factory=dict)
     multiplexer: str = "tmux"  # "tmux" (default) or "screen"

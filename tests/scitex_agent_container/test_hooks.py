@@ -248,7 +248,8 @@ def _write_v2_config(tmp_path: Path, extra: str = "") -> Path:
         "kind: Agent\n"
         "spec:\n"
         "  runtime: apptainer\n"
-        "  model: sonnet\n" + extra
+        "  claude:\n"
+        "    model: sonnet\n" + extra
     )
     return p
 

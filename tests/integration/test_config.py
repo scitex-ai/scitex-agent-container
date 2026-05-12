@@ -32,14 +32,14 @@ FULL_CONFIG = {
     },
     "spec": {
         "runtime": "apptainer",
-        "model": "opus",
         "workdir": "/tmp/test-workdir",
         "claude": {
+            "model": "opus",
             "channels": ["plugin:telegram@claude-plugins-official"],
             "flags": ["--dangerously-skip-permissions"],
             "session": "continue",
         },
-        "env": {"MY_VAR": "my_value"},
+        "apptainer": {"env": {"MY_VAR": "my_value"}},
         "screen": {"name": "full-agent"},
         "container": {
             "runtime": "apptainer",
@@ -232,25 +232,17 @@ class TestSkillsSpec:
         assert config.skills.available == []
         Path(path).unlink()
 
+    @pytest.mark.skip(
+        reason="v3-realign: spec.skills was removed (skills now live "
+        "under dot_claude/skills/ per §3)."
+    )
     def test_skills_from_yaml(self):
-        data = {
-            "apiVersion": "scitex-agent-container/v3",
-            "kind": "Agent",
-            "metadata": {"name": "skills-agent"},
-            "spec": {
-                "runtime": "apptainer",
-                "skills": {
-                    "required": ["quality-guards", "autonomous"],
-                    "available": ["scitex", "code-review"],
-                },
-            },
-        }
-        path = _write_config(data)
-        config = load_config(path)
-        assert config.skills.required == ["quality-guards", "autonomous"]
-        assert config.skills.available == ["scitex", "code-review"]
-        Path(path).unlink()
+        pass
 
+    @pytest.mark.skip(
+        reason="v3-realign: spec.skills was removed (skills now live "
+        "under dot_claude/skills/ per §3)."
+    )
     def test_skills_partial(self):
         data = {
             "apiVersion": "scitex-agent-container/v3",
@@ -393,6 +385,10 @@ class TestRemoteSpec:
         assert config.remote.is_remote is False
         Path(path).unlink()
 
+    @pytest.mark.skip(
+        reason="v3-realign: spec.remote was removed (cross-host routing "
+        "is orochi's job per §2)."
+    )
     def test_remote_from_yaml(self):
         """Remote spec parsed from YAML config."""
         data = {
@@ -416,6 +412,7 @@ class TestRemoteSpec:
         assert config.remote.is_remote is True
         Path(path).unlink()
 
+    @pytest.mark.skip(reason="v3-realign: spec.remote was removed (§2).")
     def test_remote_full_spec(self):
         """Remote spec with all fields specified."""
         data = {
@@ -465,6 +462,7 @@ class TestRemoteSpec:
         assert config.remote.login_shell is True
         Path(path).unlink()
 
+    @pytest.mark.skip(reason="v3-realign: spec.remote was removed (§2).")
     def test_login_shell_from_yaml(self):
         """login_shell can be set to False in YAML."""
         data = {
