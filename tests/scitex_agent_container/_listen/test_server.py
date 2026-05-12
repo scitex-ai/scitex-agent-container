@@ -216,6 +216,24 @@ def test_send_happy_path_invokes_claude(client):
 # --- delete -------------------------------------------------------------
 
 
+def test_card_returns_a2a_shape(client):
+    c, _ = client
+    r = c.get("/v1/sac/agents/alpha/card", headers=auth_headers())
+    assert r.status_code == 200, r.text
+    card = r.json()
+    # AgentCard required fields per A2A v0.3+: name, description, url, version, capabilities
+    assert "name" in card
+    assert "url" in card
+    assert card["url"].startswith("http://")
+    assert "/v1/sac/a2a" in card["url"]
+
+
+def test_card_unknown_agent_is_404(client):
+    c, _ = client
+    r = c.get("/v1/sac/agents/does-not-exist/card", headers=auth_headers())
+    assert r.status_code == 404
+
+
 def test_delete_no_pid_file_is_404(client):
     c, _ = client
     r = c.delete("/v1/sac/agents/alpha", headers=auth_headers())

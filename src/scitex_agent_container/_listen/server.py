@@ -166,6 +166,34 @@ async def agent_send(request: Request) -> Response:
     )
 
 
+async def agent_card(request: Request) -> JSONResponse:
+    """GET /v1/sac/agents/<name>/card.
+
+    Returns an A2A-compatible AgentCard built from the agent's v3 spec.
+    Step 4 of SAC_OROCHI_SCOPES.md §6. Backed by
+    :func:`scitex_agent_container.a2a._card.project_card` so the card
+    shape stays in sync with the bare A2A surface.
+    """
+    import yaml
+
+    from ..a2a._card import project_card
+
+    name = request.path_params["name"]
+    try:
+        spec_path = resolve_config(name)
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=404)
+    try:
+        with open(spec_path, encoding="utf-8") as fh:
+            v3 = yaml.safe_load(fh) or {}
+    except OSError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+    base_url = str(request.base_url).rstrip("/") + "/v1/sac/a2a"
+    card = project_card(name, v3, base_url)
+    return JSONResponse(card)
+
+
 async def agent_delete(request: Request) -> JSONResponse:
     """DELETE /v1/sac/agents/<name> — stop the agent.
 
@@ -195,6 +223,7 @@ def create_app(*, token: str) -> Starlette:
         Route("/v1/sac/agents", list_agents, methods=["GET"]),
         Route("/v1/sac/agents/{name}/status", agent_status, methods=["GET"]),
         Route("/v1/sac/agents/{name}/send", agent_send, methods=["POST"]),
+        Route("/v1/sac/agents/{name}/card", agent_card, methods=["GET"]),
         Route("/v1/sac/agents/{name}", agent_delete, methods=["DELETE"]),
     ]
     app = Starlette(routes=routes)
