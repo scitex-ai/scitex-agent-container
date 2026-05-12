@@ -1,4 +1,10 @@
-# scitex-agent-container
+<!-- ---
+!-- Timestamp: 2026-05-12 22:18:26
+!-- Author: ywatanabe
+!-- File: /home/ywatanabe/proj/scitex-agent-container/README.md
+!-- --- -->
+
+# SciTeX Agent Container (<code>scitex-agent-container</code>; <code>sac</code>)
 
 <p align="center">
   <a href="https://scitex.ai">
@@ -6,7 +12,7 @@
   </a>
 </p>
 
-<p align="center"><b>Declarative YAML-based AI agent lifecycle management — apptainer-first, layered runtime images, sandbox/freeze versioning via scitex-container.</b></p>
+<p align="center"><b>Agent in Apptainer</b></p>
 
 <p align="center">
   <a href="https://scitex-agent-container.readthedocs.io/">Full Documentation</a> · <code>uv pip install scitex-agent-container[all]</code>
@@ -27,35 +33,52 @@
 
 ## Problem and Solution
 
-| # | Problem | Solution |
-|---|---------|----------|
-| 1 | **Per-agent shell scripts don't compose** — every Claude Code agent needs its own bash glue for env vars, MCP wiring, restart policy, and inter-agent comms | **Declarative `spec.yaml` + SDK runtime** — one file fully specifies the agent (image, mounts, env, model, A2A port). `sac agent start` brings it up; the runner hosts a long-living Claude SDK session and exposes `POST /v1/turn` for agent-to-agent calls |
-| 2 | **"Reproducible" containers drift** — a Dockerfile rebuilt next month installs different scitex / numpy / torch versions, even with the same base image | **Layered SIF + sandbox/freeze** — `:base` (OS+tools) and `:scitex` (scientific stack) are separate layers; `sac image sandbox` gives a writable rootfs, `sac image update` refreshes packages, `sac image freeze` bakes back to an immutable, hash-stable SIF for publication |
-| 3 | **Single host doesn't scale** — running on HPC requires apptainer (no docker), but most agent toolkits are docker-only | **Apptainer-first** — apptainer is the primary runtime; layered `.def` files are canonical SSoT. Docker stays as dev-laptop convenience. `sac` delegates the build/sandbox/version lifecycle to [`scitex-container`](https://github.com/ywatanabe1989/scitex-container) |
+| # | Problem                                                    | Solution                                                                                                                                      |
+|---|------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------|
+| 1 | Scripting an agentic workflow is hard.                     | `scitex-agent-container` (`sac`) declares the agent as a **single YAML file** (`spec.yaml`).                                                  |
+| 2 | Subagents don't scale across projects, hosts, and replays. | `sac` lets agents spawn **full agents** on local AND **remote hosts**.                                                                        |
+| 3 | Controlling agent permissions is difficult.                | `sac` runs every agent **inside Apptainer** — full mount/env/security options exposed in `spec.yaml`.                                         |
+| 4 | Supporting the A2A protocol by hand is time-consuming.     | `sac` needs just one YAML field (`spec.a2a.port`).                                                                                            |
+| 5 | Version-controlling Apptainer recipes is laborious.        | `sac` enables layered SIFs with a sandbox/update/freeze workflow via [`scitex-container`](https://github.com/ywatanabe1989/scitex-container). |
 
-## Solution
+## Architecture
 
-`scitex-agent-container` (`sac`) is a thin user-facing wrapper that ties three concerns together:
+`scitex-agent-container` (`sac`) is a thin user-facing wrapper that materializes a v3 `spec.yaml` into a long-lived, externally addressable Claude agent:
 
 ```
-   spec.yaml ─┐
-              ├─→ runtime image (apptainer SIF or docker)
-   src_*  ────┘        │
-                       ▼
-              long-living Claude SDK session
-                       │
-                       ├─→ POST /v1/turn   (A2A inbound)
-                       └─→ session.jsonl   (structured transcript)
+  spec.yaml ─┐
+  src_*  ────┴─→ sac agent start ──→ apptainer instance
+                                          │
+                                          ▼
+                              long-lived Claude SDK session
+                              ├── --max-restarts supervisor (auto-reopen on crash)
+                              ├── state-dir
+                              │     pid, heartbeat.json,
+                              │     session.jsonl, session_id, quota.json
+                              │
+                              ├─→ POST /v1/turn                 (per-agent A2A inbound)
+                              │       ▲
+                              │       │  live-runner route
+                              │       │
+  sac listen :7878 ───────────┼───────┘
+  bearer-auth /v1/sac/{                 \
+    health, agents,                      ─→ claude --resume <sid> -p
+    agents/<n>/{status,send,card},                          (re-launch fallback when
+    ...                                                      no live runner)
+  }
+                                                            ▲
+  sac channel send TO MSG ─────────────────────────────────┤
+  sac peer  post-turn  AGENT TEXT  ────────────────────────┘
 ```
 
-The image lifecycle is delegated to `scitex-container`; the agent lifecycle stays in this package.
+Per-agent surface (`spec.a2a.port` → `/v1/turn`) is the **hot path**: turns enqueue into the live SDK session with no re-boot cost. The host-wide `sac listen` plane is the **control surface** — bearer-token authenticated, loopback-only by default — that orchestrators reach from outside the host (cloudflared / autossh / etc.) and that routes turns either into the live runner or, if no runner is up, into a short-lived `claude --resume <sid>` against the persisted `session_id`.
 
 ## Installation
 
 Requires Python >= 3.10 and (for production runs) `apptainer` >= 1.4 on the host.
 
 ```bash
-pip install scitex-agent-container
+uv pip install "scitex-agent-container[all]"
 ```
 
 ### Configuration
@@ -67,21 +90,6 @@ var has two equivalent names — a short `SAC_<X>` form and a long
 raises `SacEnvConflict` at startup). The full grouped list (~40 vars)
 lives in the [20_env-vars](src/scitex_agent_container/_skills/scitex-agent-container/20_env-vars.md)
 skill leaf.
-
-## Architecture
-
-```
-scitex_agent_container/
-├── _runners/             ← long-living Claude SDK runner (the entry point inside the container)
-├── _network/peer.py      ← A2A outbound (post_turn / resolve_peer_url)
-├── _lifecycle/           ← start / stop / restart / health / handover
-├── _state/               ← registry (state.db) + session.jsonl tailing
-├── runtimes/             ← apptainer (primary) + docker (dev) backends
-├── cli_pkg/              ← `sac` Click commands grouped by noun
-└── config/               ← v3 yaml schema + validation
-```
-
-The CLI is the canonical entry point; the Python API mirrors it. Apptainer is the default runtime; docker is supported for dev laptops.
 
 ## Layered runtime images
 
@@ -98,11 +106,49 @@ Two `.def` recipes, layered:
   Dockerfile.{base,scitex}                             ← docker mirrors
 
 ~/.scitex/agent-container/containers/                 ← built artifacts (user state)
-  scitex-agent-container-{base,scitex}.sif
-  *.sandbox/
+  sac-base.sif    -> sac-base/sac-base.sif             (top-level symlink)
+  sac-scitex.sif  -> sac-scitex/sac-scitex.sif
+  sac-{base,scitex}/                                   (dir-per-image)
+    sac-{base,scitex}.sif                              (the image)
+    sac-{base,scitex}.def                              (recipe snapshot)
+    sac-{base,scitex}.build-YYYY-MMDD-HHMMSS.log       (full build log)
+    .def-hash                                          (skip-rebuild cache)
+  {dpkg,node,requirements}-lock.txt                    (auto-freeze lock files)
 ```
 
-Recipes ship in the pip wheel — no need to clone the repo to run `sac image build`. Built artifacts live under `~/.scitex/agent-container/containers/`, never in git.
+Recipes ship in the pip wheel — no need to clone the repo to run `sac image build`. Built artifacts live under `~/.scitex/agent-container/containers/`, never in git. The dir-per-image layout (and the build itself) is delegated to [`scitex-container`](https://github.com/ywatanabe1989/scitex-container) — one canonical builder, not two.
+
+## User state layout (`~/.scitex/agent-container/`)
+
+Everything sac owns on the host lives under one root:
+
+```
+~/.scitex/agent-container/
+├── config.yaml                ← global sac config (account, default model, etc.)
+├── agents/                    ← per-agent declarations (read-only inputs)
+│   └── <name>/
+│       ├── spec.yaml          ← v3 Agent definition (the SSoT)
+│       ├── src_CLAUDE.md      ← optional: materialized into <workdir>/CLAUDE.md
+│       ├── src_mcp.json       ← optional: materialized into .mcp.json
+│       ├── src_state.md       ← optional: materialized into <workdir>/state.md
+│       └── src_env            ← optional: extra env (KEY=VAL lines)
+├── containers/                ← built SIFs (see "Layered runtime images" above)
+├── runtime/                   ← per-agent runtime state (writeable; never in git)
+│   └── <name>/
+│       ├── pid                ← runner PID
+│       ├── heartbeat.json     ← {ts, pid, state}; refreshed every tick
+│       ├── session_id         ← persisted SDK session id (resume marker)
+│       ├── session.jsonl      ← one JSON object per turn event
+│       └── quota.json         ← accumulated per-turn token totals
+├── tokens/                    ← `sac listen` bearer tokens (0600)
+│   └── listen-<host>.token
+├── auth-rotations/            ← stored Claude Code accounts (rotation)
+├── events/                    ← Claude Code hook event ring buffer
+├── cache/                     ← misc per-host caches
+└── skills/                    ← skill snippets injected into CLAUDE.md
+```
+
+Two halves: **`agents/`** is *input* (you write spec.yaml), **`runtime/`** is *output* (sac writes pid / heartbeat / session.jsonl). `sac db clean` sweeps stale `runtime/` rows; `sac agent stop --force` clears a wedged agent without touching its spec.
 
 ## Quickstart
 
@@ -196,7 +242,7 @@ sac --help-recursive                      # full subcommand tree
 ```mermaid
 flowchart LR
     A["sac agent start foo"] --> B{spec.runtime}
-    B -- "apptainer (default)" --> C["apptainer instance start<br/>scitex-agent-container-scitex.sif"]
+    B -- "apptainer (default)" --> C["apptainer instance start<br/>sac-scitex.sif"]
     B -- "docker" --> D["docker run<br/>scitex-agent-container:scitex"]
     B -- "remote ssh" --> E["ssh PEER &amp;&amp; sac agent start"]
     C & D & E --> F["claude-agent-sdk runner<br/>(long-living session)"]
@@ -214,7 +260,7 @@ End-to-end: `sac agent start` materializes the workspace (`src_*` files + mounts
 | `apiVersion` | `scitex-agent-container/v3` | Config format version |
 | `metadata` | `name` (auto-derived from dir), `labels` | Agent identity |
 | `spec.runtime` | `apptainer` (default) / `docker` / `claude-session` (host-local) | Container backend |
-| `spec.image` | path or tag | Default: `scitex-agent-container:scitex` (docker) or `~/.scitex/agent-container/containers/scitex-agent-container-scitex.sif` (apptainer) |
+| `spec.image` | path or tag | Default: `~/.scitex/agent-container/containers/sac-scitex.sif` (apptainer); `scitex-agent-container:scitex` for docker |
 | `spec.workdir` | path | Workspace mounted at `/work` inside the container |
 | `spec.model` | `sonnet`, `opus[1m]`, `haiku-4-5`, ... | Claude model |
 | `spec.user` | `""` / `"host"` / `"<uid>:<gid>"` | Run-as user; `"host"` matches the operator |

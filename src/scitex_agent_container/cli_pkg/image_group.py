@@ -118,32 +118,30 @@ def image_build(
         sys.exit(1)
 
     if runtime == "apptainer":
-        # apptainer-scitex.def has `Bootstrap: localimage` `From: ./<base>.sif`
-        # which resolves against cwd — so we cd into the user-state dir
-        # where built SIFs live before invoking apptainer.
-        # ``-y`` (yes, already gating sac's own confirmation above) also
-        # implies ``--force`` for apptainer so its built-in "build target
-        # already exists" prompt doesn't double-block on rebuilds.
-        if sandbox:
-            output = out_dir / f"scitex-agent-container-{layer}.sandbox"
-            argv = [
-                "apptainer",
-                "build",
-                "--sandbox",
-                "--fakeroot",
-                "--force",
-                str(output),
-                str(def_path),
-            ]
-        else:
-            output = out_dir / f"scitex-agent-container-{layer}.sif"
-            argv = ["apptainer", "build", "--force", str(output), str(def_path)]
-        import subprocess
+        # Delegate to scitex-container's canonical builder so we don't
+        # carry a duplicate apptainer-invocation here. scitex-container
+        # owns the dir-per-image layout (mirrors
+        # scripts/migrate_containers_layout.sh):
+        #
+        #   containers/
+        #   ├── sac-<layer>.sif -> sac-<layer>/sac-<layer>.sif
+        #   └── sac-<layer>/
+        #       ├── sac-<layer>.sif
+        #       ├── sac-<layer>.def                         (recipe snapshot)
+        #       └── sac-<layer>.build-YYYY-MMDD-HHMMSS.log  (full build log)
+        from scitex_container.apptainer import build as _sc_build
 
-        result = subprocess.run(argv, cwd=str(out_dir))
-        if result.returncode != 0:
-            click.echo("error: apptainer build failed", err=True)
-            sys.exit(result.returncode)
+        try:
+            output = _sc_build(
+                def_path=def_path,
+                output_dir=out_dir,
+                image_name=f"sac-{layer}",
+                force=True,  # -y already gated above
+                sandbox=sandbox,
+            )
+        except (FileNotFoundError, RuntimeError) as exc:
+            click.echo(f"error: apptainer build failed: {exc}", err=True)
+            sys.exit(1)
         console.print(f"[green]built[/green] {output}")
         return
 

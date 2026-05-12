@@ -21,7 +21,7 @@
 #   scitex-container build scitex-agent-container-scitex
 
 Bootstrap: localimage
-From: ./scitex-agent-container-base.sif
+From: ./sac-base.sif
 
 %post
     set -e
