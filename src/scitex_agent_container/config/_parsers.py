@@ -210,12 +210,14 @@ def parse_apptainer(spec: dict):
     env_raw = raw.get("environment", {}) or {}
     if not isinstance(env_raw, dict):
         env_raw = {}
+    # hook-bypass: line-limit (1-line bug fix; _parsers.py split deferred — see GITIGNORED/REFACTORING.md)
     return ApptainerSpec(
         post=str(raw.get("post", "") or ""),
         environment={str(k): str(v) for k, v in env_raw.items()},
         def_file=str(raw.get("def_file", "") or ""),
         nv=bool(raw.get("nv", False)),
         rocm=bool(raw.get("rocm", False)),
+        overlay=str(raw.get("overlay", "") or ""),
     )
 
 
