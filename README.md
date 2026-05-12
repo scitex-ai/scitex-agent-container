@@ -1,5 +1,5 @@
 <!-- ---
-!-- Timestamp: 2026-05-13 07:45:51
+!-- Timestamp: 2026-05-13 08:19:36
 !-- Author: ywatanabe
 !-- File: /home/ywatanabe/proj/scitex-agent-container/README.md
 !-- --- -->
@@ -57,39 +57,70 @@ sac image build base -y     # ~15-25 min — OS + dev tools
 #                             # scipy / torch / etc.). Walk away.
 
 # 2. Define an agent
-mkdir -p ~/.scitex/agent-container/agents/hello-agent/
-cat > ~/.scitex/agent-container/agents/hello-agent/spec.yaml <<'YAML'
+define_agent() {
+    local agent_name=$1
+    local agent_dir=~/.scitex/agent-container/agents/"$agent_name"
+
+    mkdir -p "$agent_dir"
+    # Unquoted heredoc tag — shell expands $agent_name before write.
+    # Escape any literal `$` that should reach YAML verbatim (none here).
+    cat > "$agent_dir/spec.yaml" <<YAML
 apiVersion: scitex-agent-container/v3
 kind: Agent
 
 spec:
   runtime: apptainer
-  workdir: /tmp/hello-agent
+  workdir: /tmp/$agent_name
 
   apptainer:
     image: ~/.scitex/agent-container/containers/sac-base.sif
 
   claude:
-    model: haiku-4-5
+    model: haiku
     flags:
       - --dangerously-skip-permissions
 
   startup_prompts:
-    - "Reply with the string 'hello-ok' and nothing else."
+    - "Reply with the string 'Hello! I am $agent_name' and nothing else."
 YAML
+}
+
+define_agent hello-agent
 
 # 3. Start an agent
-sac agent start hello-agent --foreground   # streams stdout, exits when done
+sac agent start hello-agent --foreground  # streams stdout, exits when done
 
 # 4. Check agents
 sac agent status
+#                             Registered Agents                            
+# ┏━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━┓
+# ┃ Name        ┃ Status  ┃ Location ┃ Screen      ┃ Started              ┃
+# ┡━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━┩
+# │ hello-agent │ stopped │ LOCAL    │ hello-agent │ 2026-05-12T23:02:58Z │
+# └─────────────┴─────────┴──────────┴─────────────┴──────────────────────┘
+#  
+# Claude Code account
+#   Email:          wyusuuke@gmail.com
+#   Organization:   wyusuuke@gmail.com's Organization
+#   Display name:   Yusuke
+#   Billing type:   stripe_subscription
+#   Subscription:   max  (tier: default_claude_max_20x)
+#   Available:      -
+#   Extra usage:    enabled
+#   Since:          2025-05-04T06:41:46.877655Z
 
+# 5. Read the output
+sac agent tail hello-agent
+# [assistant] hello-ok
+# [result] {'ts': 1778626991.6960883, 'type': 'result', 'session_id': '159b5d36-60b6-45e5-a49a-1ac66e14a0fd', 'usage': {'input_tokens': 6, 'cache_creation_input_tokens': 9458, 'cache_read_input_tokens': 0, 'output_tokens': 9, 'server_tool_use': {'web_search_requests': 
+# 0, 'web_fetch_requests': 0}, 'service_tier
 
 # 4. Start multiple agents (space-separated names)
-DIR="~/.scitex/agent-container/agents/"
+DIR="$HOME/.scitex/agent-container/agents/"
 cp -r "$DIR"/hello-agent/ "$DIR"/hello-agent2/
 cp -r "$DIR"/hello-agent/ "$DIR"/hello-agent3/
 sac agent start hello-agent hello-agent2 hello-agent3 --foreground
+sac agent tail hello-agent hello-agent2 hello-agent3
 ```
 
 ## How it works
@@ -180,16 +211,13 @@ metadata:
   labels:                              # arbitrary string→string, used by sac fleet ...
     role: researcher
     team: lab-a
-  # `name` is intentionally NOT a metadata field — the agent name is
-  # the parent directory of `spec.yaml` (dir-as-SSoT). Renaming an
-  # agent means moving the directory; the YAML is identity-free.
 
 spec:
   runtime: apptainer                   # the only accepted value (post 2026-05-13 ripout)
   workdir: ~/proj/example              # mounted rw at /work inside the container
 
   apptainer:
-    image: /path/to/sac-base.sif       # or relative to spec.yaml
+    image: ./sac-base.sif              # full path or relative path to this spec.yaml
     overlay: ./overlay.img             # writable overlay (rw layer above the SIF)
     nv: false                          # forward host NVIDIA libs (--nv)
     rocm: false                        # forward host AMD ROCm libs (--rocm)
