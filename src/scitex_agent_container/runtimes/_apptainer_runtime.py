@@ -211,9 +211,23 @@ class ApptainerContainerRuntime(RuntimeBase):
                 "--state-root",
                 "/state",
             ]
-            cmds = list(getattr(config, "startup_commands", []) or [])
-            if cmds and getattr(cmds[0], "command", ""):
-                runner_argv += ["--mission", cmds[0].command, "--print-stream"]
+            # v3 spec: `startup_prompts` are text fed to Claude as the
+            # first user message(s); `startup_commands` are SHELL
+            # commands run before claude starts. The runner's
+            # `--mission` flag drives ONE SDK turn with the given
+            # prompt — wire the first prompt there. Prefer the new
+            # field; fall back to legacy startup_commands for any
+            # spec.yaml that hasn't migrated yet.
+            mission = ""
+            prompts = list(getattr(config, "startup_prompts", []) or [])
+            if prompts:
+                mission = str(prompts[0]).strip()
+            else:
+                cmds = list(getattr(config, "startup_commands", []) or [])
+                if cmds and getattr(cmds[0], "command", ""):
+                    mission = cmds[0].command
+            if mission:
+                runner_argv += ["--mission", mission, "--print-stream"]
             auto = getattr(config, "autonomous", None)
             if auto is not None and getattr(auto, "enabled", False):
                 runner_argv += [
