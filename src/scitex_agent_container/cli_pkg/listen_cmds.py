@@ -18,9 +18,6 @@ from pathlib import Path
 
 import click
 
-from .._listen.server import create_app
-from .._listen.tokens import default_token_path, ensure_token
-
 
 def _split_bind(spec: str) -> tuple[str, int]:
     """Split ``host:port`` (or ``[ipv6]:port``) into a tuple."""
@@ -94,6 +91,9 @@ def listen(
             "if you have an orochi-style tunnel arranged. See "
             "SAC_OROCHI_SCOPES.md §4.4."
         )
+
+    from .._listen.server import create_app
+    from .._listen.tokens import default_token_path, ensure_token
 
     tok_path = token_file or default_token_path()
     token = ensure_token(tok_path)

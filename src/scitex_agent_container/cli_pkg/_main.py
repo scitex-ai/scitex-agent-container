@@ -232,6 +232,9 @@ class _MainGroup(LazyGroup):
         "peer": "Outbound A2A calls into other agents' POST /v1/turn endpoint.",
         "list-python-apis": "List all public Python APIs of scitex-agent-container.",
         "installation": "Bootstrap and install helpers for a new fleet host.",
+        "fleet": "Peer-aware multi-agent orchestration across hosts.",
+        "listen": "Boot the sac listen HTTP/JSON control-plane server.",
+        "channel": "Agent-to-agent messaging on this host via sac listen.",
         "install-shell-completion": "Wire up `<TAB>` completion in the user's shell rc.",
         "print-shell-completion": "Print the shell-completion eval line (no install).",
     }
