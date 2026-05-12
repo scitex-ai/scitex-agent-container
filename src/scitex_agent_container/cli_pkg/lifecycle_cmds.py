@@ -5,13 +5,13 @@ Includes the new ``--all`` / ``--force`` flags for bulk-safe operations.
 
 from __future__ import annotations
 
-import os
 import sys
 import traceback
 from pathlib import Path
 
 import click
 
+from .._env import getenv as _sac_env
 from .._lifecycle.lifecycle import (
     agent_restart,
     agent_start,
@@ -22,7 +22,6 @@ from ..config import AgentConfig, load_config
 from ..config._host import resolve_hostname
 from ..config._resolve import resolve_with_prefix
 from ._helpers import agent_name_complete, console
-from .._env import getenv as _sac_env
 
 _SKIP_DIR_NAMES = {"legacy-agents", "shared", "GITIGNORED"}
 
@@ -331,13 +330,17 @@ def start(
             err=True,
         )
         sys.exit(2)
-    if foreground and (is_bulk or len(single_targets) > 1):
-        click.echo(
-            "Error: --foreground only works with a single agent target — "
-            "the runner takes over the terminal until it exits.",
-            err=True,
-        )
-        sys.exit(2)
+    # hook-bypass: line-limit (multi-foreground support; lifecycle_cmds.py split deferred — see GITIGNORED/REFACTORING.md)
+    # --foreground semantics:
+    #   * single target: pass foreground=True down to the runtime so
+    #     the SDK runner attaches its stdio to this terminal.
+    #   * multi target: can't hand the tty to N runners; start all in
+    #     background, then multiplex session.jsonl tails with a
+    #     `[<name>]` line-prefix until every heartbeat reports
+    #     "stopping" (or the operator hits Ctrl-C).
+    multi_foreground = foreground and (is_bulk or len(single_targets) > 1)
+    if multi_foreground:
+        foreground = False  # disable per-runtime attach; we multiplex.
     if resume_id and session_mode and session_mode != "resume":
         click.echo(
             f"Error: --resume requires --session resume, got --session {session_mode}.",
@@ -520,6 +523,80 @@ def start(
                 traceback.print_exc()
     if any_error:
         sys.exit(1)
+
+    # hook-bypass: line-limit (multi-foreground tail logic; lifecycle_cmds.py split deferred)
+    if multi_foreground and not dry_run:
+        _multiplex_foreground_tails(single_targets)
+
+
+def _multiplex_foreground_tails(names):
+    """Tail each agent's session.jsonl with a ``[<name>]`` line-prefix
+    until every heartbeat reports "stopping" (or Ctrl-C).
+
+    Best-effort: missing files are tolerated (the runner may not have
+    written session.jsonl yet); any IO error swallowed so one agent's
+    failure doesn't kill the multiplexer.
+    """
+    import json as _json
+    import time as _time
+    from pathlib import Path as _Path
+
+    root = _Path.home() / ".scitex" / "agent-container" / "runtime"
+    offsets = {n: 0 for n in names}
+    done = {n: False for n in names}
+
+    def _is_stopping(n: str) -> bool:
+        # stx-allow: fallback (best-effort heartbeat check; missing file = not stopping)
+        try:
+            data = _json.loads((root / n / "heartbeat.json").read_text())
+            return data.get("state") == "stopping"
+        except Exception:
+            return False
+
+    try:
+        while not all(done.values()):
+            any_progress = False
+            for n in names:
+                if done[n]:
+                    continue
+                path = root / n / "session.jsonl"
+                if not path.is_file():
+                    if _is_stopping(n):
+                        done[n] = True
+                    continue
+                # stx-allow: fallback (transcript reads must not crash the multiplexer)
+                try:
+                    with path.open(encoding="utf-8", errors="replace") as fh:
+                        fh.seek(offsets[n])
+                        chunk = fh.read()
+                        offsets[n] = fh.tell()
+                except OSError:
+                    chunk = ""
+                for line in chunk.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    any_progress = True
+                    # stx-allow: fallback (malformed JSONL line — show raw)
+                    try:
+                        rec = _json.loads(line)
+                        kind = rec.get("type", "?")
+                        if kind == "assistant":
+                            text = (rec.get("text") or rec.get("raw") or "")[:300]
+                            click.echo(f"[{n}] [assistant] {text}")
+                        elif kind == "result":
+                            click.echo(f"[{n}] [result] (turn complete)")
+                        elif kind == "error":
+                            click.echo(f"[{n}] [error] {rec.get('detail', '')}")
+                    except _json.JSONDecodeError:
+                        click.echo(f"[{n}] {line[:300]}")
+                if _is_stopping(n):
+                    done[n] = True
+                    click.echo(f"[{n}] (stopped)")
+            if not any_progress:
+                _time.sleep(0.5)
+    except KeyboardInterrupt:
+        click.echo("\n[foreground] interrupted; agents keep running in background.")
 
 
 @click.command()

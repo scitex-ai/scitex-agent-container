@@ -104,7 +104,7 @@ def find(
 
 
 @click.command(name="tail")
-@click.argument("name", shell_complete=agent_name_complete)
+@click.argument("names", nargs=-1, required=True, shell_complete=agent_name_complete)
 @click.option(
     "--lines", "-n", default=20, help="Number of recent assistant turns to show."
 )
@@ -116,21 +116,40 @@ def find(
     default=False,
     help="Emit raw session.jsonl records as JSON array.",
 )
-def tail_session(name: str, lines: int, show_tools: bool, as_json: bool) -> None:
+def tail_session(
+    names: tuple[str, ...], lines: int, show_tools: bool, as_json: bool
+) -> None:
     """Pretty-print the SDK runner's session.jsonl transcript.
 
-    Reads ``<state>/<agent>/<agent>/session.jsonl`` (the structured
-    transcript the SDK runner writes inside the container, mounted to
-    the host via /state) and renders each record as a single line so
-    you can monitor a running agent without grepping the raw JSON
-    yourself.
+    Reads ``<state>/<agent>/session.jsonl`` (the structured transcript
+    the SDK runner writes inside the container, mounted to the host
+    via /state) and renders each record as a single line so you can
+    monitor a running agent without grepping the raw JSON yourself.
+
+    Multiple agent names interleave their transcripts with a
+    ``[<name>]`` line-prefix so you can spot which agent emitted what.
 
     \b
     Example:
       $ sac agent tail polish-scholar
       $ sac agent tail polish-scholar -n 50 --tools
       $ sac agent tail polish-scholar --json
+      $ sac agent tail hello-agent hello-agent2 hello-agent3
     """
+    any_err = False
+    for n in names:
+        if not _tail_one(n, lines, show_tools, as_json, prefix=len(names) > 1):
+            any_err = True
+    if any_err:
+        sys.exit(1)
+
+
+def _tail_one(
+    name: str, lines: int, show_tools: bool, as_json: bool, prefix: bool
+) -> bool:
+    """Render one agent's transcript. Returns True on success, False if
+    the agent is missing or has no transcript. Multi-name caller sets
+    prefix=True so each line carries ``[<name>]`` for disambiguation."""
     import json as _json
     from pathlib import Path
 
@@ -139,7 +158,7 @@ def tail_session(name: str, lines: int, show_tools: bool, as_json: bool) -> None
     entry = Registry().get(name)
     if entry is None:
         console.print(f"[red]Agent '{name}' not found in registry[/red]")
-        sys.exit(1)
+        return False
 
     # state-dir layout: ~/.scitex/agent-container/runtime/<name>/session.jsonl
     state_root = Path.home() / ".scitex" / "agent-container" / "runtime" / name
@@ -149,7 +168,7 @@ def tail_session(name: str, lines: int, show_tools: bool, as_json: bool) -> None
             f"[red]No transcript at {transcript}. Agent may not have started a "
             "session yet, or runs in a non-default state-root.[/red]"
         )
-        sys.exit(1)
+        return False
 
     raw_lines = transcript.read_text(encoding="utf-8", errors="replace").splitlines()
     records = []
@@ -161,24 +180,26 @@ def tail_session(name: str, lines: int, show_tools: bool, as_json: bool) -> None
 
     if as_json:
         click.echo(_json.dumps(records[-lines:], default=str, indent=2))
-        return
+        return True
 
+    tag = f"[{name}] " if prefix else ""
     out: list[str] = []
     for r in records[-lines * 6 :]:
         kind = r.get("type", "?")
         if kind == "assistant":
             txt = str(r.get("text") or r.get("raw") or "")
             if txt.strip():
-                out.append(f"[assistant] {txt[:300]}")
+                out.append(f"{tag}[assistant] {txt[:300]}")
         elif kind == "user_echo" and show_tools:
             raw = str(r.get("raw") or "")[:200]
-            out.append(f"[tool_result] {raw}")
+            out.append(f"{tag}[tool_result] {raw}")
         elif kind == "result":
-            out.append(f"[result] {str(r)[:300]}")
+            out.append(f"{tag}[result] {str(r)[:300]}")
         elif kind == "error":
-            out.append(f"[error] {str(r)[:300]}")
+            out.append(f"{tag}[error] {str(r)[:300]}")
     for line in out[-lines:]:
         console.print(line, markup=False, highlight=False)
+    return True
 
 
 @click.command(name="list-python-apis")
