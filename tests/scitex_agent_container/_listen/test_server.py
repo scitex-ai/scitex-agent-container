@@ -122,11 +122,31 @@ def test_send_requires_json(client):
     assert r.status_code == 400
 
 
-def test_send_key_returns_501(client):
+def test_send_key_esc_sends_sigint(client):
+    c, tmp_path = client
+    pid_file = tmp_path / "state" / "alpha" / "pid"
+    pid_file.write_text("9876", encoding="utf-8")
+    killed = {}
+    with patch(
+        "scitex_agent_container._listen.server.os.kill",
+        side_effect=lambda pid, sig: killed.update(pid=pid, sig=sig),
+    ):
+        r = c.post(
+            "/v1/sac/agents/alpha/send",
+            json={"type": "key", "key": "ESC"},
+            headers=auth_headers(),
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["route"] == "interrupt"
+    assert killed == {"pid": 9876, "sig": 2}
+
+
+def test_send_key_unknown_is_501(client):
     c, _ = client
     r = c.post(
         "/v1/sac/agents/alpha/send",
-        json={"type": "key", "key": "ESC"},
+        json={"type": "key", "key": "F12"},
         headers=auth_headers(),
     )
     assert r.status_code == 501

@@ -169,14 +169,41 @@ async def agent_send(request: Request) -> Response:
 
     type_ = body.get("type", "prompt")
     if type_ == "key":
+        key = body.get("key")
+        # ESC / C-c → SIGINT to the runner pid, which interrupts the
+        # current turn without killing the agent (claude-agent-sdk
+        # handles SIGINT gracefully). Other keys are reserved for a
+        # future tty-bridge implementation.
+        if key not in ("ESC", "C-c", "SIGINT"):
+            return JSONResponse(
+                {
+                    "error": (
+                        f"key={key!r} not yet supported. Only ESC / C-c / "
+                        "SIGINT are wired (cancel current turn)."
+                    )
+                },
+                status_code=501,
+            )
+        import signal as _signal
+
+        sd = state_dir_for(name)
+        pid_file = sd / "pid"
+        if not pid_file.is_file():
+            return JSONResponse(
+                {"error": "no pid file (agent not running)"}, status_code=404
+            )
+        try:
+            pid = int(pid_file.read_text().strip())
+            os.kill(pid, _signal.SIGINT)
+        except (OSError, ValueError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=500)
         return JSONResponse(
             {
-                "error": (
-                    "type=key not yet implemented (requires long-lived agent + "
-                    "tty bridge; see SAC_OROCHI_SCOPES.md §6 step 3)"
-                )
-            },
-            status_code=501,
+                "name": name,
+                "route": "interrupt",
+                "pid": pid,
+                "signal": "SIGINT",
+            }
         )
     if type_ != "prompt":
         return JSONResponse(

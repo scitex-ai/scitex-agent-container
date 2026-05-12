@@ -67,11 +67,32 @@ def test_rejects_both_prompt_and_key(isolated_env):
     assert "mutually exclusive" in result.output
 
 
-def test_key_not_yet_implemented(isolated_env):
+def test_key_esc_sends_sigint(isolated_env, monkeypatch):
+    (isolated_env / "state" / "alpha" / "pid").write_text("4242")
+    killed = {}
+    monkeypatch.setattr(
+        "scitex_agent_container.cli_pkg.send_cmds.os.kill",
+        lambda pid, sig: killed.update(pid=pid, sig=sig),
+    )
+    runner = CliRunner()
+    result = runner.invoke(send, ["alpha", "--key", "ESC"])
+    assert result.exit_code == 0, result.output
+    assert killed["pid"] == 4242
+    assert killed["sig"] == 2  # SIGINT
+
+
+def test_key_unsupported_is_usage_error(isolated_env):
+    runner = CliRunner()
+    result = runner.invoke(send, ["alpha", "--key", "F12"])
+    assert result.exit_code != 0
+    assert "not supported" in result.output
+
+
+def test_key_missing_pid_errors_clearly(isolated_env):
     runner = CliRunner()
     result = runner.invoke(send, ["alpha", "--key", "ESC"])
     assert result.exit_code != 0
-    assert "not yet implemented" in result.output
+    assert "not running" in result.output
 
 
 def test_missing_session_id_errors_clearly(tmp_path, monkeypatch):

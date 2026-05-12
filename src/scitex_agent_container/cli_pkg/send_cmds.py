@@ -99,15 +99,28 @@ def send(
     if not key and not prompt:
         raise click.UsageError("Either PROMPT or --key is required.")
     if key:
-        # v1 stub — key delivery (ESC interrupt, C-c, etc.) needs the
-        # agent to be running in long-lived/interactive mode and a
-        # tty/pty bridge that doesn't exist yet. Tell the user instead
-        # of pretending to succeed.
-        raise click.UsageError(
-            "--key requires long-lived agent mode + tty bridge (not yet "
-            "implemented; see SAC_OROCHI_SCOPES.md §6 step 3). "
-            "Use a prompt for now."
-        )
+        # ESC / C-c → SIGINT to the runner pid. Other keys are reserved
+        # for a future tty-bridge implementation.
+        if key not in ("ESC", "C-c", "SIGINT"):
+            raise click.UsageError(
+                f"--key {key!r} not supported. Only ESC / C-c / SIGINT are "
+                "wired (cancel current turn). Use a prompt otherwise."
+            )
+        import signal as _signal
+
+        state_dir = state_dir_for(name)
+        pid_file = state_dir / "pid"
+        if not pid_file.is_file():
+            raise click.ClickException(
+                f"No pid file at {pid_file} — agent {name!r} not running."
+            )
+        try:
+            pid = int(pid_file.read_text().strip())
+            os.kill(pid, _signal.SIGINT)
+        except (OSError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from exc
+        click.echo(f"# interrupt {name}: SIGINT → pid={pid}", err=True)
+        return
 
     spec_path = resolve_config(name)
     cfg = load_config(spec_path)
