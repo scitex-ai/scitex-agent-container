@@ -1,7 +1,7 @@
 """Tests for scitex_agent_container._state.host_config (F-CS12).
 
 Covers:
-- ``load`` reads sac.yaml or returns sensible defaults on missing file.
+- ``load`` reads config.yaml or returns sensible defaults on missing file.
 - ``Config.canonical_host`` resolution chain: env > config > alias > hostname.
 - ``Config.validate`` flags via-references to unknown peers and bad fallbacks.
 - ``sac host show`` / ``host list`` / ``host validate`` end-to-end.
@@ -25,8 +25,8 @@ from scitex_agent_container._state.host_config import (
 
 @pytest.fixture
 def cfg_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    p = tmp_path / "sac.yaml"
-    monkeypatch.setenv("SCITEX_AGENT_CONTAINER_SAC_YAML", str(p))
+    p = tmp_path / "config.yaml"
+    monkeypatch.setenv("SCITEX_AGENT_CONTAINER_CONFIG", str(p))
     import importlib
 
     import scitex_agent_container._state.host_config as mod

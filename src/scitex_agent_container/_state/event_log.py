@@ -3,7 +3,7 @@
 Claude Code invokes configured commands on ``PreToolUse``,
 ``PostToolUse``, ``UserPromptSubmit``, and ``Stop``. We capture the
 JSON payloads into a per-agent ring-buffer at
-``~/.scitex/agent-container/events/<agent>.jsonl`` so downstream
+``~/.scitex/agent-container/runtime/events/<agent>.jsonl`` so downstream
 consumers (``agent_meta.collect_rich``) can surface recent tool calls
 / prompts / stops without the agent itself having to act.
 

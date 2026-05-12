@@ -10,7 +10,7 @@ from pathlib import Path
 REGISTRY_DIR = Path(
     os.environ.get(
         "SCITEX_AGENT_CONTAINER_REGISTRY_DIR",
-        os.path.expanduser("~/.scitex/agent-container/registry"),
+        os.path.expanduser("~/.scitex/agent-container/runtime/registry"),
     )
 )
 

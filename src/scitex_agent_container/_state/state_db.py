@@ -1,7 +1,7 @@
 """SQLite-backed state for scitex-agent-container (F-CS11).
 
 Replaces the per-agent JSON files under
-``~/.scitex/agent-container/registry/`` with a single ``state.db``
+``~/.scitex/agent-container/runtime/registry/`` with a single ``state.db``
 holding four tables:
 
   * ``definitions`` — yaml on disk (one row per ``(yaml_path, sha256)``
@@ -38,11 +38,12 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
+from .._env import getenv as _sac_env
 
 DEFAULT_DB_PATH = Path(
     os.environ.get(
         "SCITEX_AGENT_CONTAINER_STATE_DB",
-        os.path.expanduser("~/.scitex/agent-container/state.db"),
+        os.path.expanduser("~/.scitex/agent-container/runtime/state.db"),
     )
 )
 
@@ -214,8 +215,8 @@ def _resolve_host(host: str | None) -> str:
     Resolution chain (F-CS12):
         1. ``host`` arg (explicit override)
         2. ``$SAC_HOST`` env var
-        3. ``host.canonical`` from sac.yaml (when not the placeholder)
-        4. ``host.aliases[$(hostname -s)]`` from sac.yaml
+        3. ``host.canonical`` from config.yaml (when not the placeholder)
+        4. ``host.aliases[$(hostname -s)]`` from config.yaml
         5. ``$(hostname -s)`` (or fqdn when fallback=hostname-fqdn)
 
     Defers to ``_state.host_config.Config.canonical_host`` so the
@@ -229,14 +230,14 @@ def _resolve_host(host: str | None) -> str:
     # a yaml.safe_load on every state.db open which is wasteful.
     from . import host_config
 
-    # stx-allow: fallback (reason: a malformed sac.yaml must not block
+    # stx-allow: fallback (reason: a malformed config.yaml must not block
     # state.db writes — degrade to hostname-only resolution.)
     try:
         return host_config.load().canonical_host()
     except Exception:  # stx-allow: fallback (reason: see inline comment)
         import socket
 
-        return os.environ.get("SAC_HOST") or socket.gethostname().split(".")[0]
+        return _sac_env("HOST") or socket.gethostname().split(".")[0]
 
 
 def record_instance_start(
@@ -678,7 +679,7 @@ def import_legacy_registry(
     import socket
 
     if host is None:
-        host = os.environ.get("SAC_HOST") or socket.gethostname().split(".")[0]
+        host = _sac_env("HOST") or socket.gethostname().split(".")[0]
 
     imported = 0
     skipped = 0

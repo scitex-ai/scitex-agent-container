@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from .._account.claude_usage import fetch_usage
+from .._env import getenv as _sac_env
 
 
 def detect_multiplexer(session: str) -> str:
@@ -889,7 +890,7 @@ def collect_rich(
         # model from transcript is more accurate than config.model when
         # the agent is actually running under a different model alias.
         "model_transcript": model,
-        "version": os.environ.get("SCITEX_AGENT_CONTAINER_META_VERSION", "0.2"),
+        "version": _sac_env("META_VERSION", "0.2"),
         # ---- claude-session runtime fields ------------------------------
         # ``None`` for non-SDK agents; a dict for claude-session agents
         # exposing the SDK session id, accumulated per-turn token totals

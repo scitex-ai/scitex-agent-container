@@ -3,14 +3,10 @@
 from __future__ import annotations
 
 import json
-import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from scitex_agent_container._account.quota_watch import check_and_rotate
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -36,10 +32,9 @@ def _make_store(tmp_path: Path, accounts: list[dict]) -> Path:
     store.mkdir()
     for acct in accounts:
         name = acct["name"]
-        (store / f"{name}.json").write_text(json.dumps(acct))
-        # Create a fake credential snapshot directory
         cred_dir = store / name
         cred_dir.mkdir()
+        (cred_dir / "account.json").write_text(json.dumps(acct))
         (cred_dir / ".credentials.json").write_text(json.dumps({"claudeAiOauth": {}}))
     return store
 
@@ -82,7 +77,8 @@ def test_no_accounts_alert(tmp_path):
     }
 
     with patch(
-        "scitex_agent_container._account.quota_watch.fetch_usage", return_value=usage_high
+        "scitex_agent_container._account.quota_watch.fetch_usage",
+        return_value=usage_high,
     ):
         result = check_and_rotate(threshold=80.0, store_dir=store, home=home)
 
@@ -106,7 +102,8 @@ def test_dry_run_rotation(tmp_path):
     }
 
     with patch(
-        "scitex_agent_container._account.quota_watch.fetch_usage", return_value=usage_high
+        "scitex_agent_container._account.quota_watch.fetch_usage",
+        return_value=usage_high,
     ):
         result = check_and_rotate(
             threshold=80.0, store_dir=store, home=home, dry_run=True
@@ -128,7 +125,8 @@ def test_error_handled(tmp_path):
     }
 
     with patch(
-        "scitex_agent_container._account.quota_watch.fetch_usage", return_value=usage_error
+        "scitex_agent_container._account.quota_watch.fetch_usage",
+        return_value=usage_error,
     ):
         result = check_and_rotate(threshold=80.0, home=home)
 
@@ -155,7 +153,8 @@ def test_actual_rotation(tmp_path):
     }
 
     with patch(
-        "scitex_agent_container._account.quota_watch.fetch_usage", return_value=usage_high
+        "scitex_agent_container._account.quota_watch.fetch_usage",
+        return_value=usage_high,
     ):
         result = check_and_rotate(threshold=80.0, store_dir=store, home=home)
 
@@ -176,7 +175,8 @@ def test_warning_level(tmp_path):
     }
 
     with patch(
-        "scitex_agent_container._account.quota_watch.fetch_usage", return_value=usage_warn
+        "scitex_agent_container._account.quota_watch.fetch_usage",
+        return_value=usage_warn,
     ):
         result = check_and_rotate(threshold=80.0, home=home)
 

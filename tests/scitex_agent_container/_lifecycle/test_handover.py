@@ -139,7 +139,7 @@ def test_push_pre_stop_snapshot_calls_hub_client(tmp_path, monkeypatch):
         return True
 
     monkeypatch.setattr(_handover.hub_client, "push_snapshot", fake_push)
-    monkeypatch.setenv("SCITEX_OROCHI_MACHINE", "spartan")
+    monkeypatch.setenv("SCITEX_AGENT_CONTAINER_HOSTNAME", "spartan")
     cfg = SimpleNamespace(name="lead", expanded_workdir=str(tmp_path))
     assert _handover.push_pre_stop_snapshot(cfg) is True
     assert seen["name"] == "lead"

@@ -35,9 +35,13 @@ def _get_runtime(config: AgentConfig):
 def _fallback_workdir(name: str) -> str:
     """Return the workdir path used when the agent's YAML can't be loaded.
 
-    Canonical 2026-04-17 layout: ``~/.scitex/orochi/runtime/workspaces/<id>/``.
+    Lands under sac's own user-state dir
+    (``~/.scitex/agent-container/runtime/workspaces/<name>/``) per the
+    local-state-directories spec — sac never writes to another package's tree.
     """
-    return str(Path.home() / ".scitex" / "orochi" / "runtime" / "workspaces" / name)
+    return str(
+        Path.home() / ".scitex" / "agent-container" / "runtime" / "workspaces" / name
+    )
 
 
 def _fire_forget_hook(
@@ -138,19 +142,26 @@ def agent_start(
 
     # Already running?
     if registry.exists(config.name) and runtime.is_running(config):
-        if not force:
-            if dry_run:
-                # Allow dry-run to inspect the planned workspace even
-                # while the live agent is running — the prep does not
-                # touch the live tmux session.
-                pass
-            else:
-                raise RuntimeError(f"Agent '{config.name}' is already running")
-        else:
+        if force:
             agent_stop(config.name, registry=registry, force=True)
-            # Small grace period so the screen is fully torn down before we
-            # try to create a new one with the same name.
+            # Small grace period so the previous container is fully torn
+            # down before we try to create a new one with the same name.
             time.sleep(1)
+        elif dry_run:
+            # Dry-run inspects the planned workspace even while the live
+            # agent is running — the prep does not touch the container.
+            pass
+        else:
+            # Idempotent start: re-running ``sac agent start <name>`` on
+            # an agent that's already healthy is a no-op, not an error.
+            # Use ``--force`` to actually restart, ``sac agent restart``
+            # to be explicit, or ``sac agent stop`` then re-start.
+            print(
+                f"Agent '{config.name}' is already running. No-op. "
+                "Use --force to restart.",
+                file=__import__("sys").stderr,
+            )
+            return True
     elif force and registry.exists(config.name):
         # Registry says it exists but runtime says not running — stale entry.
         agent_stop(config.name, registry=registry, force=True)
