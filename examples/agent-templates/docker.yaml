@@ -1,0 +1,38 @@
+# docker — minimal claude-agent-sdk runner inside a Docker container.
+#
+# Pattern: containerized local execution. Container is the isolation
+# boundary; whatever is bind-mounted from the host is what the agent
+# can see. Host identity is not auto-injected.
+#
+# F-CS16: ``runtime`` now names the container engine (docker / podman
+# / apptainer). The runner family is fixed (sdk-persistent), so there
+# is no separate selector.
+
+apiVersion: scitex-agent-container/v3
+kind: Agent
+
+metadata:
+  labels:
+    pattern: docker
+
+spec:
+  runtime: docker
+  image: scitex-agent-container:scitex
+  dockerfile: scitex_agent_container/containers/Dockerfile.scitex
+  model: sonnet
+  workdir: ~/proj/example
+
+  claude:
+    flags:
+      - --dangerously-skip-permissions
+    session: continue-or-new
+
+  health:
+    enabled: true
+    interval: 60
+    method: sdk-alive
+
+  restart:
+    policy: never
+
+# EOF

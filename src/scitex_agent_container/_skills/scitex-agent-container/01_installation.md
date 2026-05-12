@@ -10,13 +10,38 @@ tags: [scitex-agent-container-installation]
 ## pip install
 
 ```bash
-pip install scitex-agent-container          # core: claude-code + claude-session runtimes
+pip install scitex-agent-container          # core CLI + apptainer/docker runtimes
 pip install 'scitex-agent-container[sdk]'   # adds claude-agent-sdk + starlette/uvicorn for the inbound HTTP endpoint
 pip install 'scitex-agent-container[slurm]' # adds scitex-hpc for runtime: slurm and slurm-tenant
 pip install 'scitex-agent-container[all]'   # everything
 ```
 
 The CLI ships as both `scitex-agent-container` and the short alias `sac`.
+
+## What ships in the wheel
+
+The pip install includes the layered runtime recipes, so you can build
+images without cloning the repo:
+
+```
+<site-packages>/scitex_agent_container/containers/
+  apptainer-base.def       # OS + dev tools
+  apptainer-scitex.def     # FROM :base + scitex[all] + sac
+  Dockerfile.base
+  Dockerfile.scitex
+```
+
+Built artifacts (SIFs, sandboxes) land under user state, never in the wheel:
+
+```
+~/.scitex/agent-container/containers/
+  scitex-agent-container-base.sif
+  scitex-agent-container-scitex.sif
+  *.sandbox/
+```
+
+Build with `sac image build base -y && sac image build scitex -y`. See
+[`02_quick-start.md`](02_quick-start.md) for the full first-agent flow.
 
 ## Auth (cost-critical)
 
@@ -57,8 +82,9 @@ export SAC_RUNNER_PREFIX="conda run -n agent-env"                  # conda env
 
 ```bash
 sac --version
-sac agent list             # registered agents (empty on a fresh install)
-sac mcp list-tools          # confirms package internals importable
+sac agent status           # fleet view — empty on a fresh install
+sac mcp list-tools         # confirms package internals importable
+sac image list             # built SIFs (none on a fresh install)
 ```
 
 ## See also

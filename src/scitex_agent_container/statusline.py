@@ -19,13 +19,14 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from ._env import getenv as _sac_env
 
 _STATE_DIR = Path.home() / ".scitex" / "agent-container" / "statusline"
 
 
 def _agent_name() -> str:
     return (
-        os.environ.get("SCITEX_AGENT_CONTAINER_AGENT")
+        _sac_env("AGENT")
         or os.environ.get("CLAUDE_AGENT_ID")
         or "unknown"
     )

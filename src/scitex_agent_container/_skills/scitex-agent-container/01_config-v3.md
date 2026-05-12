@@ -68,7 +68,7 @@ The v3 loader fills in defaults from the agent name (parent-directory stem):
 | Field | Auto-derived value |
 |---|---|
 | `screen_name` | the agent name itself (used for tmux/screen session) |
-| `workdir` | `~/.scitex/agent-container/workspaces/<name>/` |
+| `workdir` | `~/.scitex/agent-container/runtime/workspaces/<name>/` |
 | `env.SCITEX_AGENT_CONTAINER_NAME` | `<name>` |
 | `env.SCITEX_AGENT_CONTAINER_AGENT` | `<name>` |
 | `env.SCITEX_AGENT_CONTAINER_ID` | `<name>` |
@@ -99,6 +99,6 @@ If you have legacy YAMLs:
 
 ## See also
 
-- `08_templates.md` — six minimal pattern templates under `config/templates/`
+- `08_templates.md` — six minimal pattern templates under `examples/agent-templates/`
 - `06_env-injection-ports.md` — yaml.env vs src_mcp.json env vs src_env vs hooks
 - `09_slurm-tenant.md` — multi-tenant `runtime: slurm-tenant` and `slurm.reservation`

@@ -1,0 +1,14 @@
+── apptainer --bind examples (not run) ──
+$ apptainer exec --bind "$PWD":/work scitex-agent-container-scitex.sif python -V
+$ apptainer exec --bind "$HOME":"$HOME":ro scitex-agent-container-scitex.sif ...
+
+── sac equivalent (spec.yaml fragment, same for both runtimes) ──
+spec:
+  runtime: apptainer
+  mounts:
+    - src: ${HOME}
+      dst: ${HOME}
+      mode: rw
+    - src: /scratch/${USER}
+      dst: /scratch/${USER}
+      mode: rw

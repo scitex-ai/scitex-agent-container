@@ -35,7 +35,7 @@ metadata:
 spec:
   runtime: docker
   image: scitex-agent-container:sdk-persistent
-  dockerfile: ./containers/Dockerfile.sdk-persistent
+  dockerfile: ./containers/Dockerfile
   model: claude-haiku-4-5
   workdir: /tmp/sac-sdk-test-workspace
 

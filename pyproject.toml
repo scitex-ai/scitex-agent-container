@@ -136,3 +136,12 @@ target-version = "py310"
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
 ignore = ["E501"]
+
+[tool.coverage.run]
+# Subprocess + multi-process coverage: child Python interpreters
+# (subprocess.run, jupyter nbconvert --execute, etc.) are wired in via
+# tests/conftest.py force-set of COVERAGE_PROCESS_START + a .pth shim.
+# See ~/proj/scitex-dev/src/scitex_dev/_skills/general/05_development_06_subprocess-coverage.md.
+parallel = true
+source = ["scitex_agent_container"]
+concurrency = ["multiprocessing", "thread"]

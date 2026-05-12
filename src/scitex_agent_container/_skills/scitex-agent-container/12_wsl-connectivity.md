@@ -38,8 +38,8 @@ One-shot diagnostics on 2026-04-21:
 - `/etc/resolv.conf` → `nameserver 8.8.8.8 / 8.8.4.4` (Google DNS,
   static). `/etc/wsl.conf` has `generateResolvConf = false`, so
   DNS is not rewritten on boot.
-- `ping scitex-orochi.com` → 25 ms RTT, 0% loss. Right now the
-  pipe is healthy.
+- `ping $SAC_HUB_URL`'s host (when sac is configured to talk to a
+  fleet hub) → typically <50 ms RTT, 0% loss when healthy.
 - `cloudflared` → installed at `~/.local/bin/cloudflared`, **not a
   systemd service and not currently running**. The cloudflared
   tunnel failures described in todo#457 are on the **NAS side**
@@ -118,7 +118,7 @@ layer that actually broke:
 | `https` only | TLS handshake or captive-portal interposing |
 
 The probe writes one JSONL line per run to
-`~/.scitex/agent-container/logs/network/<agent>.jsonl`. This is
+`~/.scitex/agent-container/runtime/logs/network/<agent>.jsonl`. This is
 the ring the fleet correlates against its own SSH-dead timestamps.
 
 ### Cron-style continuous probe
@@ -179,5 +179,5 @@ A minute-granular probe log on WSL disambiguates all four:
   "is Claude still echoing text inside tmux?"). Complements this
   module: network-probe ensures WSL can REACH the hub; liveness-
   probe ensures Claude can respond once reached.
-- `infra-host-connectivity`, `infra-network-routing` skills in
-  `~/.scitex/orochi/shared/skills/` — fleet-level tunnel setup.
+- Fleet-level tunnel setup is owned by the downstream fleet hub
+  (consumer of sac), not by sac itself.

@@ -356,9 +356,9 @@
 
 <span class="c1"># Default workdir layout: sac&#39;s own state root. Per-agent runtime state</span>
 <span class="c1"># (CLAUDE.md, .mcp.json, .claude/) lives at</span>
-<span class="c1"># ``~/.scitex/agent-container/workspaces/&lt;effective-id&gt;/``. External</span>
+<span class="c1"># ``~/.scitex/agent-container/runtime/workspaces/&lt;effective-id&gt;/``. External</span>
 <span class="c1"># orchestrators that want a different layout can override via ``spec.workdir``.</span>
-<span class="n">_DEFAULT_WORKDIR_RUNTIME</span> <span class="o">=</span> <span class="s2">&quot;~/.scitex/agent-container/workspaces/</span><span class="si">{name}</span><span class="s2">&quot;</span>
+<span class="n">_DEFAULT_WORKDIR_RUNTIME</span> <span class="o">=</span> <span class="s2">&quot;~/.scitex/agent-container/runtime/workspaces/</span><span class="si">{name}</span><span class="s2">&quot;</span>
 
 <span class="c1"># Host-aware fallback chain for `venv: auto` resolution.</span>
 <span class="c1"># Tried in order; first existing path wins. Empty string means no venv</span>
@@ -376,7 +376,7 @@
 <span class="c1"># under ``shared/agents/&lt;name&gt;/`` or ``&lt;host&gt;/agents/&lt;name&gt;/``; per-agent</span>
 <span class="c1"># runtime state (CLAUDE.md, .mcp.json, .claude/) lives at</span>
 <span class="c1"># ``runtime/workspaces/&lt;effective-id&gt;/``.</span>
-<span class="n">_DEFAULT_WORKDIR_RUNTIME</span> <span class="o">=</span> <span class="s2">&quot;~/.scitex/orochi/runtime/workspaces/</span><span class="si">{name}</span><span class="s2">&quot;</span>
+<span class="n">_DEFAULT_WORKDIR_RUNTIME</span> <span class="o">=</span> <span class="s2">&quot;~/.scitex/agent-container/runtime/workspaces/</span><span class="si">{name}</span><span class="s2">&quot;</span>
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">_resolve_venv</span><span class="p">(</span><span class="n">venv</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
@@ -638,7 +638,7 @@
 <span class="k">def</span><span class="w"> </span><span class="nf">load_v2</span><span class="p">(</span><span class="n">raw</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">path</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AgentConfig</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Load a scitex-agent-container/v2 config with auto-derived defaults.</span>
 
-<span class="sd">    Substitutes ``${HOSTNAME}`` / ``${SCITEX_OROCHI_HOSTNAME}`` in every</span>
+<span class="sd">    Substitutes ``${HOSTNAME}`` / ``${SCITEX_AGENT_CONTAINER_HOSTNAME}`` in every</span>
 <span class="sd">    string field before dataclass construction, and composes the effective</span>
 <span class="sd">    agent id from ``metadata.name`` + ``spec.scheduling`` so the v2 shared</span>
 <span class="sd">    layout can keep one canonical YAML per role across the fleet.</span>

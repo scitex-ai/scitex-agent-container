@@ -31,7 +31,7 @@ classifies every attempt into exactly one outcome:
 - `skipped_by_policy` — caller-side policy (e.g. quota) blocked the run.
 
 Every attempt is appended as one row to the host-wide SQLite store at
-`~/.scitex/agent-container/actions.db` for offline analysis.
+`~/.scitex/agent-container/runtime/actions.db` for offline analysis.
 
 ## Built-ins
 

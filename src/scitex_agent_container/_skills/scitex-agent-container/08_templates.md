@@ -9,8 +9,8 @@ tags: [scitex-agent-container-templates]
 
 Two directories under `config/` ship YAML you can copy:
 
-- `config/templates/` — six minimal **pattern** templates (one per deployment pattern)
-- `config/examples/` — concrete real-world configs
+- `examples/agent-templates/` — six minimal **pattern** templates (one per deployment pattern)
+- `examples/agent-specs/` — concrete real-world configs
 
 Both are validated by `tests/test_templates_v3_valid.py`. The SLURM template additionally renders an sbatch script in CI to catch YAML/dataclass drift.
 
@@ -32,8 +32,8 @@ Patterns are orthogonal — a real agent can combine them (e.g. `ssh` + `mcp`, `
 The v3 loader derives the agent name from the parent directory, not from `metadata.name`. To instantiate:
 
 ```bash
-mkdir -p ~/.scitex/orochi/agents/my-agent
-cp config/templates/local.yaml ~/.scitex/orochi/agents/my-agent/my-agent.yaml
+mkdir -p ~/.scitex/agent-container/agents/my-agent
+cp examples/agent-templates/local.yaml ~/.scitex/agent-container/agents/my-agent/my-agent.yaml
 sac agent start my-agent
 ```
 
@@ -41,17 +41,17 @@ For SSH-deployed agents, drop sibling `src_CLAUDE.md` and `src_mcp.json` into th
 
 ## When to add a new template
 
-Add a new pattern template only when the new YAML shape isn't expressible by combining existing templates. If you find yourself documenting a specific operator decision, write to `config/examples/` instead — examples are real configs frozen in time, templates are minimal patterns.
+Add a new pattern template only when the new YAML shape isn't expressible by combining existing templates. If you find yourself documenting a specific operator decision, write to `examples/agent-specs/` instead — examples are real configs frozen in time, templates are minimal patterns.
 
 When adding a template:
 
-1. Drop the YAML in `config/templates/<name>.yaml`.
+1. Drop the YAML in `examples/agent-templates/<name>.yaml`.
 2. Add `<name>.yaml` to the `expected` set in `test_minimal_templates_cover_expected_patterns`.
 3. Add a runtime-specific assertion to `test_templates_v3_valid.py` that exercises the field shape unique to your pattern (e.g. for slurm, render the sbatch script and check for hardener strings).
 
 ## Examples
 
-`config/examples/` holds concrete configs that aren't patterns:
+`examples/agent-specs/` holds concrete configs that aren't patterns:
 
 - `newbie-docker.yaml` — Hawthorne-effect-free naive-user simulation; documents the 2026-04-12 contamination incident lesson.
 - `researcher-opus.yaml` — Opus-powered researcher with on-failure restart + backoff tuned for long sessions.

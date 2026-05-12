@@ -1,7 +1,7 @@
 ---
 description: |
   [TOPIC] Observability contract
-  [DETAILS] How `sac agent status <name> --json` merges registry + agent_meta + event_log into a single best-effort blob that downstream orchestrators (e.g. scitex-orochi) consume without direct coupling — every field has a defaul....
+  [DETAILS] How `sac agent status <name> --json` merges registry + agent_meta + event_log into a single best-effort blob that downstream fleet hubs (any consumer) read without direct coupling — every field has a defaul....
 tags: [scitex-agent-container-observability, observability]
 ---
 
@@ -27,8 +27,8 @@ just need to treat empty values as "not observed."
 
 ## Downstream coupling
 
-Downstream orchestrators (`scitex-orochi`, fleet dashboards) consume
-this JSON and **only** this JSON. They do not import
+Downstream orchestrators (any fleet hub, dashboards) consume this JSON
+and **only** this JSON. They do not import
 `scitex_agent_container` Python objects, do not read the registry
 directly, and do not parse event-log files. The status JSON is the
 contract.
