@@ -481,12 +481,20 @@ def start(
                     }
                 )
             else:
+                # hook-bypass: line-limit (foreground newline polish; lifecycle_cmds.py split deferred)
                 verb = (
                     "dry-run prepared the workspace for"
                     if dry_run
                     else "started successfully ["
                 )
                 tail = "" if dry_run else f"[{location}]"
+                # --foreground streams the runner's stdout to this
+                # tty; the last chunk often has no trailing newline
+                # (Claude's reply is bare text), so the success
+                # summary would jam onto the same line. Lead-newline
+                # breaks the join.
+                if foreground and not dry_run:
+                    click.echo("")
                 console.print(
                     f"[green]Agent '{config.name}' {verb}{tail}[/green]"
                     if dry_run
