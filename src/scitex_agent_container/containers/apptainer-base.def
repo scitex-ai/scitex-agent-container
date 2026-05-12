@@ -61,8 +61,15 @@ From: ubuntu:24.04
         @typescript-eslint/parser \
         @typescript-eslint/eslint-plugin \
         jsonlint \
-        @mermaid-js/mermaid-cli \
-        @anthropic-ai/claude-code
+        @mermaid-js/mermaid-cli
+
+    # ---- 3a. Claude Code CLI via official install.sh -----------------
+    # The npm @anthropic-ai/claude-code package hangs on --print inside
+    # apptainer (silent freeze, no debug output). Anthropic's own
+    # Dockerfile.test installs via curl install.sh, which lands the
+    # binary at /root/.local/bin/claude. Mirror that here.
+    curl -fsSL https://claude.ai/install.sh | bash
+    # /root/.local/bin is added to PATH in %environment below.
     npx puppeteer browsers install chrome-headless-shell || true
 
     rm -rf /var/lib/apt/lists/*
@@ -120,7 +127,9 @@ From: ubuntu:24.04
     export LC_ALL=en_US.UTF-8
     # /opt/venv-sac/bin first so the runner uses the SAC-shipped python
     # (with scitex-agent-container + claude-agent-sdk preinstalled).
-    export PATH=/opt/venv-sac/bin:/opt/cargo/bin:/opt/npm-global/bin:/usr/local/bin:$PATH
+    # /root/.local/bin holds the install.sh-installed `claude` binary
+    # (preferred over npm package — see %post note).
+    export PATH=/opt/venv-sac/bin:/root/.local/bin:/opt/cargo/bin:/opt/npm-global/bin:/usr/local/bin:$PATH
     export RUSTUP_HOME=/opt/rust
     export CARGO_HOME=/opt/cargo
 
