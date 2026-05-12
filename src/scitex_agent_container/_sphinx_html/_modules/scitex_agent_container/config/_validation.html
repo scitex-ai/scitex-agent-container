@@ -72,7 +72,6 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.name"><code class="docutils literal notranslate"><span class="pre">AgentConfig.name</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.runtime"><code class="docutils literal notranslate"><span class="pre">AgentConfig.runtime</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.image"><code class="docutils literal notranslate"><span class="pre">AgentConfig.image</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.dockerfile"><code class="docutils literal notranslate"><span class="pre">AgentConfig.dockerfile</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.model"><code class="docutils literal notranslate"><span class="pre">AgentConfig.model</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.workdir</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.python_venv"><code class="docutils literal notranslate"><span class="pre">AgentConfig.python_venv</span></code></a></li>
@@ -378,7 +377,6 @@
     <span class="p">{</span>
         <span class="s2">&quot;runtime&quot;</span><span class="p">,</span>
         <span class="s2">&quot;image&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;dockerfile&quot;</span><span class="p">,</span>
         <span class="s2">&quot;model&quot;</span><span class="p">,</span>
         <span class="s2">&quot;workdir&quot;</span><span class="p">,</span>
         <span class="s2">&quot;python-venv&quot;</span><span class="p">,</span>
@@ -466,16 +464,15 @@
                 <span class="sa">f</span><span class="s2">&quot;known keys: </span><span class="si">{</span><span class="nb">sorted</span><span class="p">(</span><span class="n">_KNOWN_SPEC_KEYS</span><span class="p">)</span><span class="si">}</span><span class="s2">.&quot;</span>
             <span class="p">)</span>
 
-        <span class="c1"># spec.runtime — sac is SDK-only; the only accepted values are</span>
-        <span class="c1"># the container backends. Each wraps the same long-running</span>
-        <span class="c1"># Claude Agent SDK runner with a different permission model.</span>
+        <span class="c1"># spec.runtime — sac is apptainer-only since the docker/podman</span>
+        <span class="c1"># ripout (2026-05-13). Empty/unset is accepted and defaults to</span>
+        <span class="c1"># apptainer at dispatch.</span>
         <span class="n">runtime</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;runtime&quot;</span><span class="p">)</span>
-        <span class="n">valid_runtimes</span> <span class="o">=</span> <span class="p">(</span><span class="s2">&quot;docker&quot;</span><span class="p">,</span> <span class="s2">&quot;podman&quot;</span><span class="p">,</span> <span class="s2">&quot;apptainer&quot;</span><span class="p">)</span>
-        <span class="k">if</span> <span class="n">runtime</span> <span class="ow">and</span> <span class="n">runtime</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">valid_runtimes</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">runtime</span> <span class="ow">and</span> <span class="n">runtime</span> <span class="o">!=</span> <span class="s2">&quot;apptainer&quot;</span><span class="p">:</span>
             <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                <span class="sa">f</span><span class="s2">&quot;spec.runtime must be one of </span><span class="si">{</span><span class="n">valid_runtimes</span><span class="si">}</span><span class="s2">, got &#39;</span><span class="si">{</span><span class="n">runtime</span><span class="si">}</span><span class="s2">&#39;. &quot;</span>
-                <span class="s2">&quot;Sac is SDK-only since the CLI/TUI cleanup; pick a container &quot;</span>
-                <span class="sa">f</span><span class="s2">&quot;backend and image (default </span><span class="si">{</span><span class="n">_SDK_IMAGE</span><span class="si">}</span><span class="s2">).&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;spec.runtime must be &#39;apptainer&#39; (got &#39;</span><span class="si">{</span><span class="n">runtime</span><span class="si">}</span><span class="s2">&#39;). &quot;</span>
+                <span class="s2">&quot;Sac is apptainer-only since 2026-05-13; docker / podman &quot;</span>
+                <span class="s2">&quot;support was removed for simplicity.&quot;</span>
             <span class="p">)</span>
 
         <span class="c1"># spec.image (F-CS16 phase 2a) — top-level container image tag.</span>
@@ -485,9 +482,9 @@
         <span class="k">if</span> <span class="n">image</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
             <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;spec.image must be a string, got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">image</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 
-        <span class="c1"># spec.dockerfile (F-CS16 phase 2a) — host-relative path to a</span>
-        <span class="c1"># Dockerfile sac auto-builds when ``image`` is missing locally</span>
-        <span class="c1"># (phase 2d wires the build). Type check only.</span>
+        <span class="c1"># spec.dockerfile dropped 2026-05-13 with the docker ripout.</span>
+        <span class="c1"># Keep type check around for one minor version so explicit</span>
+        <span class="c1"># use surfaces a clear error rather than silently disappearing.</span>
         <span class="n">dockerfile</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;dockerfile&quot;</span><span class="p">)</span>
         <span class="k">if</span> <span class="n">dockerfile</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">dockerfile</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
             <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
