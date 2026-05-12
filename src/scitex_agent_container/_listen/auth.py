@@ -29,11 +29,11 @@ def _extract_bearer(request: Request) -> str | None:
 class BearerAuthMiddleware(BaseHTTPMiddleware):
     """Rejects requests missing or with a wrong bearer token.
 
-    Health endpoint at ``/v1/sac/health`` is unauthenticated so monitors
+    Health endpoint at ``/v1/health`` is unauthenticated so monitors
     can probe liveness without provisioning credentials.
     """
 
-    PUBLIC_PATHS = frozenset({"/v1/sac/health"})
+    PUBLIC_PATHS = frozenset({"/v1/health"})
 
     def __init__(self, app, *, token: str) -> None:  # type: ignore[no-untyped-def]
         super().__init__(app)
