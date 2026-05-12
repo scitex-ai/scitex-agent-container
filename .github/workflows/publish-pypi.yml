@@ -1,11 +1,9 @@
 name: Publish to PyPI
 
-# Triggers:
-#   - push of a v*.*.* tag → automatic build + publish + GitHub Release
-#   - workflow_dispatch    → manual republish of an existing tag
 on:
   push:
-    tags: ['v*']
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       version:
@@ -14,7 +12,32 @@ on:
         type: string
 
 jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.version || github.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: pip install build
+
+      - name: Build distribution
+        run: python -m build
+
+      - name: Upload dist artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
   publish:
+    needs: build
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -22,22 +45,12 @@ jobs:
     permissions:
       id-token: write   # OIDC for trusted publisher
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.inputs.version || github.ref }}
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install build tools
-        run: pip install build
-      - name: Build distribution
-        run: python -m build
-      - name: Upload dist artifact
-        uses: actions/upload-artifact@v4
+      - name: Download dist artifacts
+        uses: actions/download-artifact@v4
         with:
           name: dist
           path: dist
+
       - name: Publish to PyPI (trusted publisher / OIDC)
         uses: pypa/gh-action-pypi-publish@release/v1
 
@@ -65,12 +78,9 @@ jobs:
         id: notes
         run: |
           VERSION="${GITHUB_REF#refs/tags/v}"
-          # Capture lines from "## [VERSION] " up to (but not including)
-          # the next "## [" heading. Falls back to a one-liner if the
-          # section is missing so the release is still created.
           awk -v v="$VERSION" '
-            $0 ~ "^## \\[" v "\\]" {p=1; next}
-            p && /^## \[/ {exit}
+            $0 ~ "^## \\\\[" v "\\\\]" {p=1; next}
+            p && /^## \\[/ {exit}
             p
           ' CHANGELOG.md > release-notes.md
           if [ ! -s release-notes.md ]; then
@@ -82,7 +92,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${GITHUB_REF#refs/tags/}" \
-            --title "v${{ steps.notes.outputs.version }}" \
-            --notes-file release-notes.md \
+          gh release create "${GITHUB_REF#refs/tags/}" \\
+            --title "v${{ steps.notes.outputs.version }}" \\
+            --notes-file release-notes.md \\
             dist/*
