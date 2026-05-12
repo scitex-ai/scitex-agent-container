@@ -9,24 +9,40 @@ from pathlib import Path
 
 import click
 
-from ..config import load_config, validate_config
-from ._helpers import console
+from ..config import load_config, resolve_config, validate_config
+from ._helpers import agent_name_complete, console
 
 
 @click.command()
-@click.argument("config_path", type=str)
-def check(config_path: str) -> None:
+@click.argument("name_or_path", type=str, shell_complete=agent_name_complete)
+def check(name_or_path: str) -> None:
     """Run preflight checks for an agent deployment.
 
-    Verifies that all dependencies (SSH, screen, python, etc.) are
-    available before starting the agent. Useful for debugging deployment
-    failures.
+    Validates the YAML spec, then probes runtime dependencies
+    (container backend, python). Accepts either a bare agent name
+    (resolved against the search chain) or an explicit path to
+    ``spec.yaml``.
 
     \b
     Example:
-      $ sac agent check ~/.scitex/agent-container/agents/foo/foo.yaml
+      $ sac agent check orchestrator
+      $ sac agent check ~/.scitex/agent-container/agents/foo/spec.yaml
     """
     # stx-allow: fallback (reason: config file may not exist or contain invalid YAML; CLI exits with code 1 to signal preflight failure)
+    try:
+        config_path = resolve_config(name_or_path)
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+        console.print(f"[red]Error: {exc}[/red]")
+        sys.exit(1)
+
+    errors = validate_config(config_path)
+    if errors:
+        console.print(f"[red]Config validation failed: {config_path}[/red]")
+        for error in errors:
+            console.print(f"  [red]- {error}[/red]")
+        sys.exit(1)
+
+    # stx-allow: fallback (reason: load_config may fail post-validation in rare schema-evolution scenarios; CLI exits cleanly)
     try:
         config = load_config(config_path)
     except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
@@ -74,14 +90,23 @@ def check(config_path: str) -> None:
 
 
 @click.command()
-@click.argument("config_path", type=str)
-def validate(config_path: str) -> None:
+@click.argument("name_or_path", type=str)
+def validate(name_or_path: str) -> None:
     """Validate a YAML config file.
+
+    Accepts either a bare agent name (resolved against the search chain)
+    or an explicit path to ``spec.yaml``.
 
     \b
     Example:
-      $ sac agent validate ~/.scitex/agent-container/agents/foo/foo.yaml
+      $ sac agent validate orchestrator
+      $ sac agent validate ~/.scitex/agent-container/agents/foo/spec.yaml
     """
+    try:
+        config_path = resolve_config(name_or_path)
+    except Exception as exc:  # stx-allow: fallback (reason: not-found / unresolvable name surfaced to user)
+        console.print(f"[red]Error: {exc}[/red]")
+        sys.exit(1)
     errors = validate_config(config_path)
     if not errors:
         console.print(f"[green]Config is valid: {config_path}[/green]")
@@ -92,17 +117,18 @@ def validate(config_path: str) -> None:
         sys.exit(1)
 
 
-# F-CS17: only the SDK runner remains. cli-tui target was removed
-# along with the rest of the CLI/TUI surface in stage 3b.
+# Layered runtime images — :base is the OS+dev-tools layer, :scitex
+# is the default user-facing image (FROM :base + scitex[all] + sac).
 _TARGET_DOCKERFILES = {
-    "sdk-persistent": "Dockerfile.sdk-persistent",
+    "base": "Dockerfile.base",
+    "scitex": "Dockerfile.scitex",
 }
 
-# Container engines all map to sdk-persistent.
+# Container engines all default to :scitex.
 _RUNTIME_TO_TARGET = {
-    "docker": "sdk-persistent",
-    "podman": "sdk-persistent",
-    "apptainer": "sdk-persistent",
+    "docker": "scitex",
+    "podman": "scitex",
+    "apptainer": "scitex",
 }
 
 
@@ -116,8 +142,8 @@ _RUNTIME_TO_TARGET = {
 @click.option(
     "--target",
     type=click.Choice(sorted(_TARGET_DOCKERFILES)),
-    default="sdk-persistent",
-    help="Which image to build (only sdk-persistent supported).",
+    default="scitex",
+    help="Which layered image to build (base or scitex).",
 )
 @click.option(
     "--image",
@@ -146,11 +172,12 @@ def build(
     dry_run: bool,
     yes: bool,
 ) -> None:
-    """Build container base image.
+    """Build a layered runtime image.
 
     \b
     Example:
-      $ sac image build                              # sdk-persistent (default)
+      $ sac image build                              # scitex (default)
+      $ sac image build --target base                # OS + tools only
       $ sac image build --runtime apptainer
       $ sac image build --dry-run
     """
@@ -166,7 +193,8 @@ def build(
             err=True,
         )
         raise SystemExit(2)
-    containers_dir = Path(__file__).resolve().parent.parent.parent.parent / "containers"
+    # Recipes ship inside the wheel: <package>/containers/Dockerfile.{base,scitex}
+    containers_dir = Path(__file__).resolve().parent.parent / "containers"
     dockerfile = containers_dir / _TARGET_DOCKERFILES[target]
 
     if runtime == "docker":
