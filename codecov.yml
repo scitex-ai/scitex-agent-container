@@ -1,0 +1,28 @@
+codecov:
+  require_ci_to_pass: false
+  # Coverage uploads land on develop (the active dev branch). main
+  # mirrors stable releases via fast-forward, so develop is where the
+  # default-branch badge endpoint should track.
+  branch: develop
+
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 1%
+    patch:
+      default:
+        target: 80%
+
+ignore:
+  - "src/scitex_agent_container/_sphinx_html/**"
+  - "src/scitex_agent_container/_skills/**"
+  - "src/scitex_agent_container/_completion.py"
+  - "src/scitex_agent_container/cli_pkg/_completion.py"
+  - "tests/**"
+  - "examples/**"
+
+comment:
+  layout: "diff, files"
+  require_changes: true

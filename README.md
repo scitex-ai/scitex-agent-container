@@ -58,6 +58,16 @@ Requires Python >= 3.10 and (for production runs) `apptainer` >= 1.4 on the host
 pip install scitex-agent-container
 ```
 
+### Configuration
+
+Environment variables follow the SciTeX convention: copy
+[`.env.example`](.env.example) to `.env` and edit. Every sac-owned env
+var has two equivalent names — a short `SAC_<X>` form and a long
+`SCITEX_AGENT_CONTAINER_<X>` form (setting both with different values
+raises `SacEnvConflict` at startup). The full grouped list (~40 vars)
+lives in the [20_env-vars](src/scitex_agent_container/_skills/scitex-agent-container/20_env-vars.md)
+skill leaf.
+
 ## Architecture
 
 ```
@@ -228,29 +238,6 @@ End-to-end: `sac agent start` materializes the workspace (`src_*` files + mounts
 | `docker.yaml` | claude-session inside docker | Dev laptop where docker is already running |
 | `ssh.yaml` | remote agent via SSH | Cross-machine fleet member |
 | `mcp.yaml` | agent with MCP tool wiring | Specialised tool surface |
-
-## Environment variables
-
-Every sac-owned env var has TWO equivalent names: a short `SAC_<X>` form
-and a long `SCITEX_AGENT_CONTAINER_<X>` form. Either reads to the same
-slot. If both are set with **different** values, sac raises
-`SacEnvConflict` at startup rather than silently picking one — a drifted
-alias is almost always a bug.
-
-Common knobs:
-
-| Variable (long form; `SAC_*` short alias works too) | Purpose |
-|---|---|
-| `SCITEX_AGENT_CONTAINER_HUB_URL` | Fleet hub endpoint. **No default** — when unset, sac runs as a standalone agent and skips hub calls. |
-| `SCITEX_AGENT_CONTAINER_HUB_TOKEN` | Bearer token for the hub. |
-| `SCITEX_AGENT_CONTAINER_RUNTIME_DIR` | Per-agent runtime state root. Default: `~/.scitex/agent-container/runtime`. |
-| `SCITEX_AGENT_CONTAINER_YAML_DIRS` | Extra directories scanned for spec.yaml overrides (colon-separated). |
-
-Full list (~40 vars grouped by purpose) lives in the
-[20_env-vars](src/scitex_agent_container/_skills/scitex-agent-container/20_env-vars.md)
-skill leaf. sac is fleet-agnostic — when you point `SAC_HUB_URL` at a
-fleet hub (e.g. an orochi instance), the hub becomes one consumer of
-the sac-owned A2A protocol, not a coupling sac depends on.
 
 ## Examples
 
