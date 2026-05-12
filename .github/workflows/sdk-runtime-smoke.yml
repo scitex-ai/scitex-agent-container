@@ -95,7 +95,7 @@ jobs:
           from scitex_agent_container.config._resolve import resolve_config
           path = resolve_config("sdk-test")
           print("resolved:", path)
-          assert ".scitex/agent-container/agents/sdk-test/sdk-test.yaml" in path, path
+          assert ".scitex/agent-container/agents/sdk-test/spec.yaml" in path, path
           PY
 
       - name: Build sdk-persistent image
