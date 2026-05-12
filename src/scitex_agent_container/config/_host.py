@@ -17,31 +17,39 @@ Design constraints:
 
 from __future__ import annotations
 
-import os
 import re
 import socket
 from pathlib import Path
 from typing import Any
+
+from scitex_config._ecosystem import local_state as _local_state
+
 from .._env import getenv as _sac_env
 
 _HOSTNAME_TOKENS = ("HOSTNAME", "SCITEX_AGENT_CONTAINER_HOSTNAME")
 _PLACEHOLDER_RE = re.compile(r"\$\{(" + "|".join(_HOSTNAME_TOKENS) + r")\}")
 
-# Declarative host identity map. sac is standalone — reads only from
-# its own config.yaml; downstream orchestrators (orochi, etc.) wire
-# their own state via env vars or the plugin-port pattern (see
-# _skills/general/01_ecosystem_06_local-state-directories.md §9.5).
-_CONFIG_PATH = Path.home() / ".scitex" / "agent-container" / "config.yaml"
+
+def _config_path() -> Path:
+    """Resolve config.yaml via the SciTeX local-state cascade.
+
+    Project-scope (`<repo>/.scitex/agent-container/config.yaml`) wins
+    when it exists, else falls back to user-scope under
+    ``$SCITEX_DIR/agent-container/`` (default ``~/.scitex/...``). See
+    `01_ecosystem_06_local-state-directories.md`.
+    """
+    return _local_state.path("agent-container", "config.yaml")
 
 
 def _load_hostname_aliases() -> dict[str, str]:
-    """Read ``spec.hostname_aliases`` from ``shared/config.yaml``.
+    """Read ``spec.hostname_aliases`` from ``config.yaml``.
 
     Returns an empty dict if the file is missing, unparseable, lacks the
     section, or the map isn't a dict. Never raises — hostname resolution
     must still succeed via the identity fallback on a bare host.
     """
-    if not _CONFIG_PATH.exists():
+    cfg_path = _config_path()
+    if not cfg_path.exists():
         return {}
     try:
         import yaml  # PyYAML ships with the container; same import sac uses.
@@ -51,7 +59,7 @@ def _load_hostname_aliases() -> dict[str, str]:
         return {}
     # stx-allow: fallback (reason: malformed YAML config must not break hostname resolution; empty aliases dict is the safe default)
     try:
-        data = yaml.safe_load(_CONFIG_PATH.read_text()) or {}
+        data = yaml.safe_load(cfg_path.read_text()) or {}
     except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         return {}
     aliases = (data.get("spec") or {}).get("hostname_aliases") or {}

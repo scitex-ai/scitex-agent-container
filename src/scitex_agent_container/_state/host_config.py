@@ -43,14 +43,24 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
+from scitex_config._ecosystem import local_state as _local_state
+
 from .._env import getenv as _sac_env
 
-DEFAULT_CONFIG_PATH = Path(
-    os.environ.get(
-        "SCITEX_AGENT_CONTAINER_CONFIG",
-        os.path.expanduser("~/.scitex/agent-container/config.yaml"),
-    )
-)
+
+def _default_config_path() -> Path:
+    """Resolve config.yaml via the SciTeX local-state cascade.
+
+    Honours ``$SCITEX_AGENT_CONTAINER_CONFIG`` as an explicit override;
+    otherwise project-scope (``<repo>/.scitex/agent-container/config.yaml``)
+    wins when it exists, else user-scope under ``$SCITEX_DIR/agent-container/``
+    (default ``~/.scitex/...``). See
+    ``01_ecosystem_06_local-state-directories.md``.
+    """
+    override = os.environ.get("SCITEX_AGENT_CONTAINER_CONFIG")
+    if override:
+        return Path(override)
+    return _local_state.path("agent-container", "config.yaml")
 
 
 @dataclass(frozen=True)
@@ -125,7 +135,7 @@ class Config:
 
 def load(path: Path | None = None) -> Config:
     """Read config.yaml; missing file or empty file yields defaults."""
-    p = Path(path) if path else DEFAULT_CONFIG_PATH
+    p = Path(path) if path else _default_config_path()
     if not p.is_file():
         return Config(source_path=p)
     raw = yaml.safe_load(p.read_text()) or {}

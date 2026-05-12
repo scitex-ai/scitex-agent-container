@@ -1,5 +1,5 @@
 <!-- ---
-!-- Timestamp: 2026-05-12 22:18:26
+!-- Timestamp: 2026-05-12 23:21:48
 !-- Author: ywatanabe
 !-- File: /home/ywatanabe/proj/scitex-agent-container/README.md
 !-- --- -->
@@ -58,7 +58,6 @@
                               │
                               ├── spec.mounts[]  ← explicit host-path allowlist (ro/rw)
                               │
-                              ├── --max-restarts supervisor (auto-reopen on crash)
                               ├── state-dir  (host: ~/.scitex/agent-container/runtime/<name>/)
                               │     pid, heartbeat.json,
                               │     session.jsonl, session_id, quota.json
@@ -78,11 +77,9 @@
   sac peer  post-turn  AGENT TEXT  ────────────────────────┘
 ```
 
-Per-agent surface (`spec.a2a.port` → `/v1/turn`) is the **hot path**: turns enqueue into the live SDK session with no re-boot cost. The host-wide `sac listen` plane is the **control surface** — bearer-token authenticated, loopback-only by default — that orchestrators reach from outside the host (cloudflared / autossh / etc.) and that routes turns either into the live runner or, if no runner is up, into a short-lived `claude --resume <sid>` against the persisted `session_id`.
+<!-- Per-agent surface (`spec.a2a.port` → `/v1/turn`) is the **hot path**: turns enqueue into the live SDK session with no re-boot cost. The host-wide `sac listen` plane is the **control surface** — bearer-token authenticated, loopback-only by default — that orchestrators reach from outside the host (cloudflared / autossh / etc.) and that routes turns either into the live runner or, if no runner is up, into a short-lived `claude --resume <sid>` against the persisted `session_id`. -->
 
 ## Installation
-
-Requires Python >= 3.10 and (for production runs) `apptainer` >= 1.4 on the host.
 
 ```bash
 uv pip install "scitex-agent-container[all]"
@@ -90,13 +87,42 @@ uv pip install "scitex-agent-container[all]"
 
 ### Configuration
 
-Environment variables follow the SciTeX convention: copy
-[`.env.example`](.env.example) to `.env` and edit. Every sac-owned env
-var has two equivalent names — a short `SAC_<X>` form and a long
-`SCITEX_AGENT_CONTAINER_<X>` form (setting both with different values
-raises `SacEnvConflict` at startup). The full grouped list (~40 vars)
-lives in the [20_env-vars](src/scitex_agent_container/_skills/scitex-agent-container/20_env-vars.md)
-skill leaf.
+Copy [`.env.example`](.env.example) to `.env` (gitignored) at your
+project root, then edit:
+
+```bash
+cp .env.example .env
+$EDITOR .env
+```
+
+CLI flags always override env vars. The full list of variables (with
+inline comments) lives in `.env.example`. Every sac-owned env var has
+two equivalent names — a short `SAC_<X>` form and a long
+`SCITEX_AGENT_CONTAINER_<X>` form; setting both with different values
+raises `SacEnvConflict` at startup.
+
+<details>
+<summary><strong>Local state directories</strong></summary>
+
+<br>
+
+sac reads optional host/peer config and writes per-agent runtime state
+under the canonical SciTeX local-state locations (`<pkg-short>` =
+`agent-container`):
+
+| Path                                                  | Scope          | Purpose                                              |
+|-------------------------------------------------------|----------------|------------------------------------------------------|
+| `~/.scitex/agent-container/config.yaml`               | user-global    | host identity, `host.aliases`, `peers:` (F-CS12)     |
+| `~/.scitex/agent-container/runtime/<name>/`           | user-global    | per-agent pid, heartbeat, session.jsonl, quota.json  |
+| `<proj-root>/.scitex/agent-container/config.yaml`     | project-local  | overrides for this repo (e.g. CI runners)            |
+| `<proj-root>/.scitex/agent-container/runtime/<name>/` | project-local  | per-agent runtime state when launched from this repo |
+
+Project-local wins when both exist (resolved via
+`scitex_config.local_state.path("agent-container", ...)`). Both are
+optional. `$SCITEX_DIR` relocates the user-scope root. See
+`01_ecosystem_06_local-state-directories.md` for the full rule.
+
+</details>
 
 ## Layered runtime images
 
