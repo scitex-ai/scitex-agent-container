@@ -325,7 +325,7 @@
 
 
 <div class="viewcode-block" id="ContainerSpec">
-<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.ContainerSpec">[docs]</a>
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec">[docs]</a>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">ContainerSpec</span><span class="p">:</span>
     <span class="n">runtime</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;none&quot;</span>  <span class="c1"># none | docker | apptainer</span>
@@ -343,7 +343,7 @@
 
 
 <div class="viewcode-block" id="ClaudeSpec">
-<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.ClaudeSpec">[docs]</a>
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec">[docs]</a>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">ClaudeSpec</span><span class="p">:</span>
     <span class="n">channels</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
@@ -364,7 +364,7 @@
 
 
 <div class="viewcode-block" id="HealthSpec">
-<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.HealthSpec">[docs]</a>
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HealthSpec">[docs]</a>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">HealthSpec</span><span class="p">:</span>
     <span class="n">enabled</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
@@ -377,7 +377,7 @@
 <span class="c1"># Parsed for backward compat but not interpreted by runtime.</span>
 <span class="c1"># Watchdog lifecycle is managed externally via hooks.</span>
 <div class="viewcode-block" id="WatchdogSpec">
-<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.WatchdogSpec">[docs]</a>
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec">[docs]</a>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">WatchdogSpec</span><span class="p">:</span>
     <span class="n">enabled</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
@@ -470,7 +470,7 @@
 
 
 <div class="viewcode-block" id="RestartSpec">
-<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.RestartSpec">[docs]</a>
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec">[docs]</a>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">RestartSpec</span><span class="p">:</span>
     <span class="n">policy</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;never&quot;</span>  <span class="c1"># never | on-failure | always</span>
@@ -494,7 +494,7 @@
 
 <span class="c1"># Telegram setup is managed externally via hooks.</span>
 <div class="viewcode-block" id="TelegramSpec">
-<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.TelegramSpec">[docs]</a>
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.TelegramSpec">[docs]</a>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">TelegramSpec</span><span class="p">:</span>
     <span class="n">bot_token_env</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;SCITEX_AGENT_CONTAINER_TELEGRAM_BOT_TOKEN&quot;</span>
@@ -505,7 +505,7 @@
 
 
 <div class="viewcode-block" id="RemoteSpec">
-<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.RemoteSpec">[docs]</a>
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec">[docs]</a>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">RemoteSpec</span><span class="p">:</span>
     <span class="c1"># Chain-based remote: list of SSH config aliases (new format).</span>
@@ -528,7 +528,7 @@
 
 
 <div class="viewcode-block" id="ContextManagementConfig">
-<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.ContextManagementConfig">[docs]</a>
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig">[docs]</a>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">ContextManagementConfig</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Context-lifecycle policy for an agent.</span>
@@ -550,7 +550,7 @@
 
 
 <div class="viewcode-block" id="SkillsSpec">
-<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.SkillsSpec">[docs]</a>
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.SkillsSpec">[docs]</a>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">SkillsSpec</span><span class="p">:</span>
     <span class="n">required</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>  <span class="c1"># Auto-loaded at startup</span>
@@ -582,7 +582,7 @@
 
 
 <div class="viewcode-block" id="HostsSpec">
-<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.HostsSpec">[docs]</a>
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HostsSpec">[docs]</a>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">HostsSpec</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Where an agent should run, in either singleton or multi-instance form.</span>
@@ -608,7 +608,7 @@
 
 
 <div class="viewcode-block" id="SchedulingSpec">
-<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.SchedulingSpec">[docs]</a>
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.SchedulingSpec">[docs]</a>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">SchedulingSpec</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Fleet-wide scheduling policy for an agent (shared-host layout).</span>
@@ -632,7 +632,7 @@
 
 
 <div class="viewcode-block" id="ListenPort">
-<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.ListenPort">[docs]</a>
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ListenPort">[docs]</a>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">ListenPort</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Declaration of a port/socket an external tool binds on behalf of an agent.</span>
@@ -652,7 +652,7 @@
 
 
 <div class="viewcode-block" id="HookSpec">
-<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.HookSpec">[docs]</a>
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec">[docs]</a>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">HookSpec</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;All hook points supported by the container.</span>
@@ -672,7 +672,7 @@
     <span class="n">on_diff</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
 
 <div class="viewcode-block" id="HookSpec.counts">
-<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.HookSpec.counts">[docs]</a>
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.counts">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">counts</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]:</span>
         <span class="k">return</span> <span class="p">{</span>
             <span class="s2">&quot;pre_start&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">pre_start</span><span class="p">),</span>
@@ -688,7 +688,7 @@
 
 
 <div class="viewcode-block" id="StartupCommand">
-<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.StartupCommand">[docs]</a>
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.StartupCommand">[docs]</a>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">StartupCommand</span><span class="p">:</span>
     <span class="n">delay</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>  <span class="c1"># seconds after startup</span>
@@ -697,7 +697,7 @@
 
 
 <div class="viewcode-block" id="ReadyPattern">
-<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.ReadyPattern">[docs]</a>
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ReadyPattern">[docs]</a>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">ReadyPattern</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;A single regex the pane content must match for the agent to be ready.&quot;&quot;&quot;</span>
@@ -707,7 +707,7 @@
 
 
 <div class="viewcode-block" id="StartupSpec">
-<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.StartupSpec">[docs]</a>
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.StartupSpec">[docs]</a>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">StartupSpec</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Opt-in ready-state gate for startup commands (todo#291).</span>
@@ -730,7 +730,7 @@
 
 
 <div class="viewcode-block" id="AgentConfig">
-<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.AgentConfig">[docs]</a>
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig">[docs]</a>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">AgentConfig</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Parsed agent configuration from a YAML definition file.&quot;&quot;&quot;</span>
