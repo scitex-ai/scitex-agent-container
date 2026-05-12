@@ -99,6 +99,17 @@ class ApptainerContainerRuntime(RuntimeBase):
             "/work",
         ]
 
+        # Extra bind-mounts from spec.container.volumes — `src:dst[:opts]`
+        # entries get translated into one `--bind` flag each. Use case:
+        # HPC hosts where `$HOME/.cache` is a symlink into a parallel
+        # filesystem (e.g. Spartan's `~/.cache -> /data/gpfs/...`).
+        # Without binding that filesystem, every `mkdir` inside the
+        # container fails because the symlink target is invisible.
+        container_spec = getattr(config, "container", None)
+        if container_spec is not None:
+            for vol in getattr(container_spec, "volumes", None) or []:
+                argv += ["--bind", str(vol)]
+
         # GPU passthrough — apptainer's --nv binds the host CUDA libs
         # and devices into the container. --rocm does the same for AMD.
         # Opt-in only: most agent workloads don't need the GPU and
