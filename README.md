@@ -1,5 +1,5 @@
 <!-- ---
-!-- Timestamp: 2026-05-13 06:33:45
+!-- Timestamp: 2026-05-13 06:37:26
 !-- Author: ywatanabe
 !-- File: /home/ywatanabe/proj/scitex-agent-container/README.md
 !-- --- -->
@@ -22,10 +22,12 @@
 <p align="center">
   <a href="https://pypi.org/project/scitex-agent-container/"><img src="https://img.shields.io/pypi/v/scitex-agent-container.svg" alt="PyPI"></a>
   <a href="https://pypi.org/project/scitex-agent-container/"><img src="https://img.shields.io/pypi/pyversions/scitex-agent-container.svg" alt="Python"></a>
+  <a href="https://scitex-agent-container.readthedocs.io/en/latest/"><img src="https://readthedocs.org/projects/scitex-agent-container/badge/?version=latest" alt="Read the Docs"></a>
+</p>
+<p align="center">
   <a href="https://github.com/ywatanabe1989/scitex-agent-container/actions/workflows/test.yml"><img src="https://github.com/ywatanabe1989/scitex-agent-container/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
-  <a href="https://codecov.io/gh/ywatanabe1989/scitex-agent-container"><img src="https://codecov.io/gh/ywatanabe1989/scitex-agent-container/graph/badge.svg" alt="Coverage"></a>
-  <a href="https://scitex-agent-container.readthedocs.io/en/latest/"><img src="https://readthedocs.org/projects/scitex-agent-container/badge/?version=latest" alt="Docs"></a>
-  <a href="https://www.gnu.org/licenses/agpl-3.0"><img src="https://img.shields.io/badge/license-AGPL_v3-blue.svg" alt="License: AGPL v3"></a>
+  <a href="https://github.com/ywatanabe1989/scitex-agent-container/actions/workflows/install-test.yml"><img src="https://github.com/ywatanabe1989/scitex-agent-container/actions/workflows/install-test.yml/badge.svg" alt="Install Test"></a>
+  <a href="https://codecov.io/gh/ywatanabe1989/scitex-agent-container/branch/develop"><img src="https://codecov.io/gh/ywatanabe1989/scitex-agent-container/branch/develop/graph/badge.svg" alt="Coverage (develop)"></a>
 </p>
 <!-- scitex-badges:end -->
 
