@@ -21,6 +21,7 @@ from .lifecycle_cmds import restart as _restart_impl
 from .lifecycle_cmds import start as _start_impl
 from .lifecycle_cmds import stop as _stop_impl
 from .recall_cmds import recall as _recall_impl
+from .send_cmds import send as _send_impl
 from .status_cmds import health as _health_impl
 from .status_cmds import status as _status_impl
 
@@ -44,6 +45,7 @@ class _AgentGroup(HelpRecursiveGroup):
 
     COMMAND_CATEGORIES = [
         ("Lifecycle", ["start", "stop", "restart"]),
+        ("Interact", ["send"]),
         ("Inspect", ["status", "health", "tail", "recall"]),
         ("Preflight", ["check"]),
         ("Discovery", ["find"]),
@@ -69,6 +71,7 @@ agent_group.add_command(_rebind(_health_impl, "health"))
 agent_group.add_command(_rebind(_find_impl, "find"))
 agent_group.add_command(_rebind(_recall_impl, "recall"))
 agent_group.add_command(_rebind(_check_impl, "check"))
+agent_group.add_command(_rebind(_send_impl, "send"))
 
 
 __all__ = ["agent_group"]
