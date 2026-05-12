@@ -355,6 +355,15 @@ def get_agent_list_data(
         else:
             status_val = "running" if is_running else "stopped"
 
+        # hook-bypass: line-limit (yaml-validate registered rows; _helpers.py split deferred)
+        errors: list[str] = []
+        if config_path:
+            from ..config._validation import validate_config
+
+            try:  # stx-allow: fallback (validator raise → treat exception as a single error)
+                errors = validate_config(str(config_path))
+            except Exception as exc:
+                errors = [str(exc)]
         row: dict = {
             "name": name,
             "status": status_val,
@@ -362,12 +371,106 @@ def get_agent_list_data(
             "multiplexer": multiplexer,
             "started_at": started,
         }
+        if errors:
+            row["validation_errors"] = errors
         if liveness_unknown:
             row["liveness_unknown"] = True
         if labels:
             row["labels"] = labels
         results.append(row)
+
+    # Merge in agents that are *defined* on disk but absent from the
+    # registry. Filesystem is the canonical "defined" surface; the
+    # registry is a runtime cache of started/stopped state. An agent
+    # that was deleted from the registry (or never started) should
+    # still show up so the operator can spot it.
+    #
+    # While walking, also yaml-validate each spec — broken yamls
+    # surface as status="invalid" rather than silently hiding, so the
+    # operator notices the agent won't actually start before they
+    # discover it via a confusing `sac agent start` traceback.
+    from ..config._validation import validate_config
+
+    registered = {r["name"] for r in results}
+    for name, spec_path in _discover_defined_agents():
+        if name in registered:
+            continue
+        labels: dict[str, str] = {}
+        cfg = None
+        # stx-allow: fallback (defined-row labels are best-effort; a
+        # broken yaml still surfaces with status=invalid + empty labels)
+        try:
+            cfg = load_config(str(spec_path))
+            labels = cfg.labels
+        except Exception:
+            pass
+        if machine and labels.get("machine") != machine:
+            continue
+        if capability:
+            caps = [
+                c.strip()
+                for c in labels.get("capabilities", "").split(",")
+                if c.strip()
+            ]
+            if capability not in caps:
+                continue
+        # stx-allow: fallback (validator may raise on unparseable yaml;
+        # treat as "invalid" with the exception text as the only error)
+        try:
+            errors = validate_config(str(spec_path))
+        except Exception as exc:
+            errors = [str(exc)]
+        status = "invalid" if errors else "defined"
+        row: dict = {
+            "name": name,
+            "status": status,
+            "screen": "-",
+            "multiplexer": getattr(cfg, "runtime", None) if cfg else None,
+            "started_at": "-",
+        }
+        if errors:
+            row["validation_errors"] = errors
+        if labels:
+            row["labels"] = labels
+        results.append(row)
     return results
+
+
+def _discover_defined_agents() -> "list[tuple[str, Path]]":  # noqa: F821
+    """Walk the user-scope (and project-scope, when in a git repo)
+    ``agents/`` tree and return ``(name, spec.yaml path)`` pairs for
+    every agent declared on disk. Tolerant of partial state — a
+    directory without a ``spec.yaml`` is skipped silently.
+    """
+    from pathlib import Path as _Path
+
+    pairs: list[tuple[str, _Path]] = []
+    seen: set[str] = set()
+
+    roots: list[_Path] = []
+    # stx-allow: fallback (project-scope is optional; absent → skip)
+    try:
+        from scitex_config._ecosystem import local_state as _ls
+
+        project = _ls.find_project_scope("agent-container")
+        if project is not None:
+            roots.append(project / "agents")
+    except Exception:
+        pass
+    roots.append(_Path.home() / ".scitex" / "agent-container" / "agents")
+
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for child in sorted(root.iterdir()):
+            if not child.is_dir() or child.name in seen:
+                continue
+            spec = child / "spec.yaml"
+            if not spec.is_file():
+                continue
+            pairs.append((child.name, spec))
+            seen.add(child.name)
+    return pairs
 
 
 def print_agent_list_json(
@@ -386,28 +489,68 @@ def print_agent_list(
     machine: str | None = None,
 ) -> None:
     """Print a rich table of all registered agents."""
+    # hook-bypass: line-limit (status table; _helpers.py split deferred)
     data = get_agent_list_data(registry, capability=capability, machine=machine)
     if not data:
-        console.print("[dim]No agents registered.[/dim]")
+        console.print("[dim]No agents found (registry empty, no specs on disk).[/dim]")
         return
 
-    table = Table(title="Registered Agents")
+    table = Table(title="Agents")
     table.add_column("Name", style="bold")
     table.add_column("Status")
+    table.add_column("YAML")
     table.add_column("Location")
-    table.add_column("Screen")
     table.add_column("Started")
 
+    _status_colour = {
+        "running": "green",
+        "stopped": "red",
+        "defined": "yellow",
+        "invalid": "bold red",
+        "unknown": "dim",
+    }
     for row in data:
-        status_str = (
-            "[green]running[/green]"
-            if row["status"] == "running"
-            else "[red]stopped[/red]"
-        )
+        colour = _status_colour.get(row["status"], "white")
+        status_str = f"[{colour}]{row['status']}[/{colour}]"
         remote = row.get("remote", "")
         location = f"[cyan]REMOTE: {remote}[/cyan]" if remote else "LOCAL"
-        table.add_row(
-            row["name"], status_str, location, row["screen"], row["started_at"]
-        )
+        errors = row.get("validation_errors") or []
+        if errors:
+            fields = _extract_damaged_fields(errors)
+            yaml_cell = f"[bold red]✗ {', '.join(fields) or 'errors'}[/bold red]"
+        else:
+            yaml_cell = "[green]✓[/green]"
+        # The `started_at` field is meaningful only for rows that ever
+        # ran; `defined` rows carry "-" which renders awkwardly as a
+        # column. Collapse to em-dash for clarity.
+        started_cell = row["started_at"] if row["started_at"] not in ("-", "?") else "—"
+        table.add_row(row["name"], status_str, yaml_cell, location, started_cell)
 
     console.print(table)
+    # Full error text follows the table so the operator can copy-paste.
+    for row in data:
+        if row.get("validation_errors"):
+            console.print(f"[bold red]✗ {row['name']}[/bold red] validation errors:")
+            for err in row["validation_errors"]:
+                console.print(f"    [red]- {err}[/red]")
+
+
+def _extract_damaged_fields(errors: list[str]) -> list[str]:
+    """Pull `spec.<field>` / top-level field names out of validator
+    error strings so the YAML column can show *which* keys are broken
+    without dumping the full error message into a narrow cell.
+    """
+    import re as _re
+
+    fields: list[str] = []
+    seen: set[str] = set()
+    pat = _re.compile(r"(spec\.[a-zA-Z_][a-zA-Z_0-9.]*|metadata\.[a-zA-Z_]+)")
+    for err in errors:
+        for m in pat.findall(err):
+            if m not in seen:
+                seen.add(m)
+                fields.append(m)
+    # Cap the column width.
+    if len(fields) > 4:
+        fields = fields[:3] + [f"+{len(fields) - 3} more"]
+    return fields
