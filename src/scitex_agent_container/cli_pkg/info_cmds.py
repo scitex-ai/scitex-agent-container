@@ -1,4 +1,4 @@
-"""Info commands: find, logs, attach, list-python-apis."""
+"""Info commands: find, tail, list-python-apis."""
 
 from __future__ import annotations
 
@@ -11,10 +11,9 @@ from pathlib import Path
 import click
 from rich.table import Table
 
-from .._lifecycle.lifecycle import agent_logs
 from ..config import load_config
 from ._api_tree import get_api_tree
-from ._helpers import _json_flag, console
+from ._helpers import _json_flag, agent_name_complete, console
 
 
 @click.command()
@@ -52,17 +51,14 @@ def find(
     search_path = Path(search_dir).expanduser().resolve()
 
     matches: list[dict] = []
-    # Dir-as-SSoT: agents live at <name>/<name>.yaml. Walk one level deep
-    # and match the convention. Bare top-level *.yaml files are also
-    # accepted for legacy / scratch use.
+    # Dir-as-SSoT: agents live at <name>/spec.yaml. Walk one level deep
+    # and match the convention.
     candidates: list[Path] = []
     for sub in sorted(search_path.iterdir()) if search_path.is_dir() else []:
         if sub.is_dir():
-            yaml_in = sub / f"{sub.name}.yaml"
-            if yaml_in.exists():
-                candidates.append(yaml_in)
-        elif sub.suffix == ".yaml":
-            candidates.append(sub)
+            spec = sub / "spec.yaml"
+            if spec.exists():
+                candidates.append(spec)
     for yaml_path in candidates:
         # stx-allow: fallback (reason: individual YAML files in the search directory may be invalid or unrelated; skipping bad files lets the search return partial results rather than aborting)
         try:
@@ -107,51 +103,82 @@ def find(
     console.print(table)
 
 
-@click.command(name="show-logs")
-@click.argument("name")
+@click.command(name="tail")
+@click.argument("name", shell_complete=agent_name_complete)
 @click.option(
-    "--lines",
-    "-n",
-    default=50,
-    help="Number of log lines to show.",
+    "--lines", "-n", default=20, help="Number of recent assistant turns to show."
 )
+@click.option("--tools", "show_tools", is_flag=True, help="Also show tool_use entries.")
 @click.option(
     "--json",
     "as_json",
     is_flag=True,
     default=False,
-    help="Emit captured log lines as a JSON array.",
+    help="Emit raw session.jsonl records as JSON array.",
 )
-def logs(name: str, lines: int, as_json: bool) -> None:
-    """Show recent agent output.
+def tail_session(name: str, lines: int, show_tools: bool, as_json: bool) -> None:
+    """Pretty-print the SDK runner's session.jsonl transcript.
+
+    Reads ``<state>/<agent>/<agent>/session.jsonl`` (the structured
+    transcript the SDK runner writes inside the container, mounted to
+    the host via /state) and renders each record as a single line so
+    you can monitor a running agent without grepping the raw JSON
+    yourself.
 
     \b
     Example:
-      $ sac agent logs head-ywata-note-win
-      $ sac agent logs head-ywata-note-win -n 200
-      $ sac agent logs head-ywata-note-win --json
+      $ sac agent tail polish-scholar
+      $ sac agent tail polish-scholar -n 50 --tools
+      $ sac agent tail polish-scholar --json
     """
-    # stx-allow: fallback (reason: agent_logs reads from multiplexer or log files that may be absent if the agent was never started; error is reported and CLI exits with code 1)
-    try:
-        output = agent_logs(name, lines)
-    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-        if as_json:
-            click.echo(json_mod.dumps({"error": str(exc), "lines": []}))
-        else:
-            console.print(f"[red]Error: {exc}[/red]")
+    import json as _json
+    from pathlib import Path
+
+    from .._state.registry import Registry
+
+    entry = Registry().get(name)
+    if entry is None:
+        console.print(f"[red]Agent '{name}' not found in registry[/red]")
         sys.exit(1)
+
+    # state-dir layout: ~/.scitex/agent-container/runtime/<name>/<name>/session.jsonl
+    state_root = Path.home() / ".scitex" / "agent-container" / "runtime" / name / name
+    transcript = state_root / "session.jsonl"
+    if not transcript.is_file():
+        console.print(
+            f"[red]No transcript at {transcript}. Agent may not have started a "
+            "session yet, or runs in a non-default state-root.[/red]"
+        )
+        sys.exit(1)
+
+    raw_lines = transcript.read_text(encoding="utf-8", errors="replace").splitlines()
+    records = []
+    for line in raw_lines:
+        try:
+            records.append(_json.loads(line))
+        except _json.JSONDecodeError:
+            continue
+
     if as_json:
-        captured = (output or "").splitlines()
-        click.echo(json_mod.dumps({"name": name, "lines": captured}))
+        click.echo(_json.dumps(records[-lines:], default=str, indent=2))
         return
-    if output:
-        # Disable Rich markup parsing — log content frequently contains
-        # bracketed paths (e.g. "[/home/.../hook.sh]") that the markup
-        # parser interprets as tags, raising MarkupError. Logs are raw
-        # text; print as-is.
-        console.print(output, markup=False, highlight=False)
-    else:
-        console.print("[dim]No log output captured.[/dim]")
+
+    out: list[str] = []
+    for r in records[-lines * 6 :]:
+        kind = r.get("type", "?")
+        if kind == "assistant":
+            txt = str(r.get("text") or r.get("raw") or "")
+            if txt.strip():
+                out.append(f"[assistant] {txt[:300]}")
+        elif kind == "user_echo" and show_tools:
+            raw = str(r.get("raw") or "")[:200]
+            out.append(f"[tool_result] {raw}")
+        elif kind == "result":
+            out.append(f"[result] {str(r)[:300]}")
+        elif kind == "error":
+            out.append(f"[error] {str(r)[:300]}")
+    for line in out[-lines:]:
+        console.print(line, markup=False, highlight=False)
 
 
 @click.command(name="list-python-apis")

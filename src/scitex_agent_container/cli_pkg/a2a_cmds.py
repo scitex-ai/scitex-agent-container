@@ -139,7 +139,14 @@ def a2a_doctor(
       $ sac a2a doctor foo.yaml --json
     """
     v3 = yaml.safe_load(agent_yaml.read_text()) or {}
-    name = (v3.get("metadata") or {}).get("name") or agent_yaml.stem
+    # Dir-as-SSoT: agent identifier is the parent dir's name (the yaml itself
+    # is always called spec.yaml). Fall back to metadata.name (legacy) and
+    # then to the file stem only if the yaml lives directly at a search
+    # root rather than in its own subdir.
+    if agent_yaml.parent.name and agent_yaml.stem in ("spec",):
+        name = agent_yaml.parent.name
+    else:
+        name = (v3.get("metadata") or {}).get("name") or agent_yaml.stem
     a2a_block = (v3.get("spec") or {}).get("a2a") or {}
 
     eff_host = host or str(a2a_block.get("host", "127.0.0.1"))

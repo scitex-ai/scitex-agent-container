@@ -13,7 +13,12 @@ from .._lifecycle.health import health_check
 from .._lifecycle.lifecycle import agent_status
 from .._state.registry import Registry
 from ..config import load_config
-from ._helpers import _json_flag, console, print_agent_list, print_agent_list_json
+from ._helpers import (
+    _json_flag,
+    agent_name_complete,
+    console,
+    print_agent_list,
+)
 
 
 def _format_claude_account_block(meta: dict) -> list[str]:
@@ -69,7 +74,7 @@ def _format_claude_account_block(meta: dict) -> list[str]:
 
 
 @click.command(name="show-status")
-@click.argument("name", required=False)
+@click.argument("name", required=False, shell_complete=agent_name_complete)
 @click.option(
     "--json",
     "as_json",
@@ -85,15 +90,57 @@ def _format_claude_account_block(meta: dict) -> list[str]:
     help="Project JSON output onto the fleet_watch whitelist (todo#300). "
     "Implies --json. Reduces per-agent payload ~18x.",
 )
+@click.option(
+    "--capability",
+    "-c",
+    default=None,
+    help="Fleet view: filter by capability label (comma-separated in YAML).",
+)
+@click.option(
+    "--machine",
+    "-m",
+    default=None,
+    help="Fleet view: filter by machine label.",
+)
+@click.option(
+    "--snapshot",
+    "with_snapshot",
+    is_flag=True,
+    default=False,
+    help="Per-agent: also take and persist a self-snapshot (with diff against prior).",
+)
+@click.option(
+    "--priority",
+    "with_priority",
+    is_flag=True,
+    default=False,
+    help="Per-agent: also include a priority report (should this host yield to a higher-priority host?).",
+)
 @click.pass_context
-def status(ctx: click.Context, name: str | None, as_json: bool, terse: bool) -> None:
-    """Show agent status (one agent or all).
+def status(
+    ctx: click.Context,
+    name: str | None,
+    as_json: bool,
+    terse: bool,
+    capability: str | None,
+    machine: str | None,
+    with_snapshot: bool,
+    with_priority: bool,
+) -> None:
+    """Show agent status.
+
+    Without ``NAME``: fleet view — every registered agent in a table,
+    optionally filtered by ``--capability`` / ``--machine``.
+
+    With ``NAME``: rich per-agent payload (registry entry + config-derived
+    fields + resource snapshot).
 
     \b
     Example:
-      $ sac agent status
-      $ sac agent status head-ywata-note-win
-      $ sac agent status --json
+      $ sac agent status                      # fleet view
+      $ sac agent status orchestrator         # rich per-agent
+      $ sac agent status --json               # fleet view, JSON
+      $ sac agent status --capability HPC     # fleet view, filtered
     """
     use_json = _json_flag(ctx, as_json) or terse
     registry = Registry()
@@ -117,12 +164,40 @@ def status(ctx: click.Context, name: str | None, as_json: bool, terse: bool) -> 
                 console.print(f"[red]Error: {exc}[/red]")
             sys.exit(1)
 
+        if with_snapshot:
+            from .._state.snapshot import take_snapshot
+
+            # stx-allow: fallback (reason: snapshot capture is best-effort; status output should still be produced)
+            try:
+                info["snapshot"] = take_snapshot(name, with_diff=True)
+            except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+                info["snapshot_error"] = str(exc)
+
+        if with_priority:
+            from ..config._host import resolve_hostname
+            from .priority_cmds import _priority_report
+
+            # stx-allow: fallback (reason: priority report involves SSH probes; missing/unreachable peers should not break status)
+            try:
+                entry = registry.get(name)
+                config_path = entry["config"] if entry else name
+                # stx-allow: fallback (reason: hostname resolution may fail in odd network environments)
+                try:
+                    current_host = resolve_hostname()
+                except Exception:
+                    import socket
+
+                    current_host = socket.gethostname().split(".")[0]
+                info["priority"] = _priority_report(config_path, current_host)
+            except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+                info["priority_error"] = str(exc)
+
         if use_json:
             if terse:
                 from ..terse import TERSE_STATUS_FIELDS, project_terse
 
                 info = project_terse(info, TERSE_STATUS_FIELDS)
-            click.echo(json_mod.dumps(info, indent=2))
+            click.echo(json_mod.dumps(info, indent=2, default=str))
             return
 
         table = Table(title=f"Agent: {name}")
@@ -134,26 +209,24 @@ def status(ctx: click.Context, name: str | None, as_json: bool, terse: bool) -> 
             table.add_row(key, str(value), style=style)
         console.print(table)
     else:
+        # stx-allow: fallback (reason: malformed credentials JSON tolerated)
         try:
             claude_account = read_credentials_metadata()
-        except (
-            OSError,
-            json_mod.JSONDecodeError,
-        ):  # stx-allow: fallback (reason: malformed JSON tolerated)
+        except (OSError, json_mod.JSONDecodeError):
             claude_account = {}
-        # RuntimeError from _check_no_secrets() is a load-bearing alarm
-        # that a token just leaked; intentionally propagate.
 
         if use_json:
             from ._helpers import get_agent_list_data
 
             payload = {
-                "agents": get_agent_list_data(registry),
+                "agents": get_agent_list_data(
+                    registry, capability=capability, machine=machine
+                ),
                 "claude_account": claude_account,
             }
             click.echo(json_mod.dumps(payload, indent=2))
         else:
-            print_agent_list(registry)
+            print_agent_list(registry, capability=capability, machine=machine)
             lines = _format_claude_account_block(claude_account)
             if lines:
                 console.print("")
@@ -161,51 +234,8 @@ def status(ctx: click.Context, name: str | None, as_json: bool, terse: bool) -> 
                     console.print(line)
 
 
-@click.command(name="list-agents")
-@click.option(
-    "--json",
-    "as_json",
-    is_flag=True,
-    default=False,
-    help="Output as JSON.",
-)
-@click.option(
-    "--capability",
-    "-c",
-    default=None,
-    help="Filter by capability label (comma-separated in YAML).",
-)
-@click.option(
-    "--machine",
-    "-m",
-    default=None,
-    help="Filter by machine label.",
-)
-@click.pass_context
-def list_agents(
-    ctx: click.Context,
-    as_json: bool,
-    capability: str | None,
-    machine: str | None,
-) -> None:
-    """List all registered agents.
-
-    \b
-    Example:
-      $ sac list
-      $ sac list --json
-      $ sac list --capability HPC
-    """
-    use_json = _json_flag(ctx, as_json)
-    registry = Registry()
-    if use_json:
-        print_agent_list_json(registry, capability=capability, machine=machine)
-    else:
-        print_agent_list(registry, capability=capability, machine=machine)
-
-
 @click.command(name="check-health")
-@click.argument("name")
+@click.argument("name", shell_complete=agent_name_complete)
 @click.option(
     "--json",
     "as_json",
@@ -259,70 +289,4 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
         console.print(f"[green]{message}[/green]")
     else:
         console.print(f"[red]{message}[/red]")
-        sys.exit(1)
-
-
-@click.command(name="inspect")
-@click.argument("name")
-@click.option(
-    "--json",
-    "as_json",
-    is_flag=True,
-    default=False,
-    help="Output as JSON.",
-)
-@click.pass_context
-def check_agent(ctx: click.Context, name: str, as_json: bool) -> None:
-    """Report whether an agent's container/runner is alive.
-
-    Sac is SDK-only; rich state lives behind the agent's HTTP A2A
-    surface (use ``sac peer ...`` to talk to it). This command answers
-    the cheap ``is the runtime running?`` question by asking the
-    runtime directly.
-
-    \b
-    Example:
-      $ sac agent inspect head-ywata-note-win
-      $ sac agent inspect head-ywata-note-win --json
-    """
-    use_json = _json_flag(ctx, as_json)
-    registry = Registry()
-    entry = registry.get(name)
-    if entry is None:
-        if use_json:
-            click.echo(json_mod.dumps({"error": f"Agent '{name}' not found"}))
-        else:
-            console.print(f"[red]Agent '{name}' not found in registry[/red]")
-        sys.exit(1)
-
-    # stx-allow: fallback (reason: config YAML may be corrupted or missing for the inspected agent; CLI exits with code 1 and emits the error in the requested output format)
-    try:
-        config = load_config(entry["config"])
-    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-        if use_json:
-            click.echo(json_mod.dumps({"error": str(exc)}))
-        else:
-            console.print(f"[red]Error loading config: {exc}[/red]")
-        sys.exit(1)
-
-    from ..runtimes.claude_session import ClaudeSessionRuntime
-
-    alive = ClaudeSessionRuntime().is_running(config)
-    state = "running" if alive else "stopped"
-
-    result = {
-        "name": name,
-        "runtime": config.runtime,
-        "alive": alive,
-        "state": state,
-    }
-
-    if use_json:
-        click.echo(json_mod.dumps(result, indent=2))
-    else:
-        status_color = "green" if alive else "red"
-        console.print(f"[bold]{name}[/bold] ({config.runtime})")
-        console.print(f"  Status: [{status_color}]{state}[/{status_color}]")
-
-    if not alive:
         sys.exit(1)

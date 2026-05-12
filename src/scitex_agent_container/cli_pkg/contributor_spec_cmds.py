@@ -8,9 +8,9 @@ from pathlib import Path
 import click
 
 _TEMPLATE_PATH = (
-    Path.home() / ".scitex/orochi/shared/agents/.templates/contributor.yaml.j2"
+    Path.home() / ".scitex/agent-container/agents/.templates/contributor.yaml.j2"
 )
-_AGENTS_DIR = Path.home() / ".scitex/orochi/shared/agents"
+_AGENTS_DIR = Path.home() / ".scitex/agent-container/agents"
 
 # Built-in fallback matches the chunk-A canonical template variable names.
 _FALLBACK_TEMPLATE = """\
@@ -19,7 +19,6 @@ kind: Agent
 metadata:
   labels:
     role: contributor-{{ project }}
-    team: orochi
     trigger: pr-driven
     project: {{ project }}
     branch_kind: {{ branch_kind }}
@@ -27,8 +26,8 @@ metadata:
     capabilities: fork,clone,branch,commit,push,open-pr
 spec:
   runtime: docker
-  image: scitex-agent-container:sdk-persistent
-  dockerfile: ./containers/Dockerfile.sdk-persistent
+  image: scitex-agent-container:scitex
+  dockerfile: scitex_agent_container/containers/Dockerfile.scitex
   model: sonnet
   multiplexer: tmux
   host:
@@ -39,25 +38,16 @@ spec:
     port: {{ a2a_port }}
     handler: claude_cli
     host: 127.0.0.1
-  orochi:
-    enabled: true
-    hosts:
-    - scitex-orochi.com
   claude:
     flags:
     - --dangerously-skip-permissions
-    - --dangerously-load-development-channels
-    - server:scitex-orochi
     - --add-dir
     - /home/ywatanabe/proj/scitex-agent-container/src/scitex_agent_container/_skills/
-    - --add-dir
-    - /home/ywatanabe/.scitex/orochi/shared/skills/
     session: continue-or-new
   skills:
     required:
     - scitex
     - scitex-agent-container
-    - scitex-orochi
   python-venv:
   - ~/.venv
   - ~/.venv-3.11
@@ -122,7 +112,7 @@ def _derive_branch_short(name: str) -> str:
     "--output-dir",
     "output_dir",
     default=None,
-    help="Override output directory (default: ~/.scitex/orochi/shared/agents/<name>/).",
+    help="Override output directory (default: ~/.scitex/agent-container/agents/<name>/).",
 )
 @click.option(
     "--dry-run",
@@ -142,9 +132,9 @@ def contributor_spec(
 ) -> None:
     """Render a contributor agent spec YAML from the Jinja2 template.
 
-    Reads ~/.scitex/orochi/shared/agents/.templates/contributor.yaml.j2
+    Reads ~/.scitex/agent-container/agents/.templates/contributor.yaml.j2
     (produced by chunk A: c-sac-spec-template-jinja) and writes
-    ~/.scitex/orochi/shared/agents/<name>/<name>.yaml.
+    ~/.scitex/agent-container/agents/<name>/spec.yaml.
 
     \b
     Example:

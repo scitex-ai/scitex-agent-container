@@ -20,10 +20,12 @@ from .._state.recall import (
     iter_entries,
     parse_duration,
 )
+from ._helpers import agent_name_complete
 
 
 def _resolve_jsonl(arg: str) -> Path:
-    """Accept a path, a session id, or '<agent-name>:<session-id>'."""
+    """Accept a path, a session id, '<agent-name>:<session-id>', or a bare
+    agent name (resolves to that agent's latest session jsonl)."""
     p = Path(arg).expanduser()
     if p.exists():
         return p
@@ -35,11 +37,59 @@ def _resolve_jsonl(arg: str) -> Path:
         raise click.ClickException(
             f"Ambiguous session id {arg!r} matches {len(candidates)} files"
         )
+
+    # Bare agent name: try the registry's recorded session_id first, then
+    # fall back to the most recent jsonl under any project that mentions
+    # this agent's workdir in its dir name.
+    try:
+        from .._state.registry import Registry
+
+        entry = Registry().get(arg)
+    except Exception:  # stx-allow: fallback (reason: registry IO best-effort; we still try the project glob)
+        entry = None
+    if entry:
+        sid_file = (
+            Path.home()
+            / ".scitex"
+            / "agent-container"
+            / "runtime"
+            / arg
+            / arg
+            / "session_id"
+        )
+        if sid_file.is_file():
+            sid = sid_file.read_text().strip()
+            if sid:
+                hits = list(Path.home().glob(f".claude/projects/*/{sid}.jsonl"))
+                if hits:
+                    return hits[0]
+        # Fallback: any jsonl under a projects/ subdir whose name mentions
+        # the agent's workdir slug. Picks the most recently modified.
+        from ..config import load_config
+
+        try:
+            cfg = load_config(entry["config"])
+            slug = (
+                str(Path(cfg.expanded_workdir))
+                .replace("/", "-")
+                .strip("-")
+                .replace("_", "-")
+            )
+            hits = sorted(
+                Path.home().glob(f".claude/projects/-{slug}/*.jsonl"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            if hits:
+                return hits[0]
+        except Exception:  # stx-allow: fallback (reason: agent yaml may be invalid; treat as unresolved)
+            pass
+
     raise click.ClickException(f"jsonl not found: {arg}")
 
 
 @click.command()
-@click.argument("jsonl", type=str)
+@click.argument("jsonl", type=str, shell_complete=agent_name_complete)
 @click.option(
     "--stats",
     "stats_only",

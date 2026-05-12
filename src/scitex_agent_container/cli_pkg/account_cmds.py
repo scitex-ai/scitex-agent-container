@@ -102,7 +102,7 @@ def account_save(name: str, email: str | None, dry_run: bool, yes: bool) -> None
     help="Emit a JSON array on stdout instead of human prose.",
 )
 def account_list(as_json: bool) -> None:
-    """List all stored accounts.
+    """List stored accounts and show the currently active one.
 
     \b
     Example:
@@ -111,17 +111,44 @@ def account_list(as_json: bool) -> None:
     """
     import json as _json
 
+    from .._account.credentials import read_credentials_metadata
     from .._state.account_store import list_accounts
+    from ._helpers import console
+    from .status_cmds import _format_claude_account_block
 
     accounts = list_accounts()
+
     if as_json:
-        click.echo(_json.dumps(accounts, ensure_ascii=False))
+        # stx-allow: fallback (reason: malformed credentials JSON tolerated)
+        try:
+            active = read_credentials_metadata()
+        except (OSError, _json.JSONDecodeError):
+            active = {}
+        click.echo(
+            _json.dumps(
+                {"active": active, "stored": accounts}, ensure_ascii=False, indent=2
+            )
+        )
         return
+
+    # Active credentials block
+    # stx-allow: fallback (reason: malformed credentials JSON tolerated; section omitted on error)
+    try:
+        active_meta = read_credentials_metadata()
+    except (OSError, _json.JSONDecodeError):
+        active_meta = {}
+    lines = _format_claude_account_block(active_meta)
+    for line in lines:
+        console.print(line)
+    if lines:
+        console.print("")
+
     if not accounts:
         click.echo(
             "No accounts stored. Use: scitex-agent-container account save <name>"
         )
         return
+    click.echo("Stored accounts:")
     for acct in accounts:
         email = acct.get("email_address") or "(no email)"
         click.echo(f"  {acct['name']:20s}  {email}")
@@ -188,8 +215,76 @@ def account_switch(name: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# quota-watch top-level command
+# quota-watch — exposed both at top-level (legacy) and under ``account``.
 # ---------------------------------------------------------------------------
+
+
+@account.command("watch-quota")
+@click.option(
+    "--threshold",
+    default=80.0,
+    show_default=True,
+    help="Rotate when usage exceeds this %.",
+)
+@click.option(
+    "--interval",
+    default=300,
+    show_default=True,
+    help="Check interval in seconds.",
+)
+@click.option("--dry-run", is_flag=True, help="Check but do not actually rotate.")
+@click.option("--once", is_flag=True, help="Run once instead of looping.")
+@click.option(
+    "--daemon",
+    is_flag=True,
+    help="Double-fork into background (UNIX only). Logs to --log-file.",
+)
+@click.option(
+    "--log-file",
+    default=None,
+    show_default=False,
+    help="Log file path when running as daemon (default: ~/.scitex/logs/quota-watch.log).",
+)
+def account_watch_quota(
+    threshold: float,
+    interval: int,
+    dry_run: bool,
+    once: bool,
+    daemon: bool,
+    log_file: str | None,
+) -> None:
+    """Monitor quota and auto-rotate credentials when threshold exceeded.
+
+    \b
+    Examples:
+      $ sac account watch-quota --once
+      $ sac account watch-quota
+      $ sac account watch-quota --daemon
+    """
+    from pathlib import Path
+
+    from .._account.quota_watch import check_and_rotate, run_loop, survival_mode_check
+
+    if once or dry_run:
+        result = check_and_rotate(threshold=threshold, dry_run=dry_run)
+        click.echo(f"[{result['action']}] {result['message']}")
+        sv = survival_mode_check()
+        if sv["survival_mode"]:
+            click.echo(f"[SURVIVAL] {sv['message']}", err=True)
+        return
+
+    log_path = Path(log_file) if log_file else None
+    if daemon:
+        click.echo(
+            f"Forking quota-watch daemon (interval={interval}s, threshold={threshold}%). "
+            f"Log: {log_path or '~/.scitex/logs/quota-watch.log'}"
+        )
+    run_loop(
+        threshold=threshold,
+        interval=interval,
+        daemon=daemon,
+        log_path=log_path,
+    )
 
 
 @click.command("watch-quota")

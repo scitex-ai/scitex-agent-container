@@ -32,8 +32,8 @@ def _pkg_version() -> str:
 COMMAND_CATEGORIES = [
     ("Agent", ["agent"]),
     ("Lifecycle (multiplexer)", ["auto-accept"]),
-    ("Account & Quota", ["account", "quota"]),
-    ("Network & Peer", ["host", "network", "peer", "a2a"]),
+    ("Account", ["account"]),
+    ("Network & Peer", ["host", "network", "peer", "a2a", "fleet"]),
     ("Registry & Events", ["db", "registry", "event", "actions"]),
     ("Build & Install", ["image", "installation", "template"]),
     ("Introspection", ["mcp", "list-python-apis", "skills"]),
@@ -56,7 +56,6 @@ class _MainGroup(LazyGroup):
         "host": f"{_PKG}.host_group:host_group",
         "registry": f"{_PKG}.registry_group:registry_group",
         "event": f"{_PKG}.event_group:event_group",
-        "quota": f"{_PKG}.quota_group:quota_group",
         "network": f"{_PKG}.network_group:network_group",
         "image": f"{_PKG}.image_group:image_group",
         "template": f"{_PKG}.template_group:template_group",
@@ -65,6 +64,7 @@ class _MainGroup(LazyGroup):
         "a2a": f"{_PKG}.a2a_cmds:a2a",
         "mcp": f"{_PKG}.mcp_cmds:mcp",
         "peer": f"{_PKG}.peer_cmds:peer_group",
+        "fleet": f"{_PKG}.fleet_group:fleet_group",
         # Top-level standalone
         "list-python-apis": f"{_PKG}.info_cmds:list_python_apis",
         "installation": f"{_PKG}.install_cmds:install_group",
@@ -90,6 +90,106 @@ class _MainGroup(LazyGroup):
         except ImportError:
             return  # scitex-dev[cli-audit] not installed; commands stay missing
         attach_shell_completion(self, prog_name="scitex-agent-container")
+        # The upstream helper writes an ``eval "$(_NAME_COMPLETE=...)"``
+        # line in ~/.bashrc for ONE binary. Two problems for sac:
+        #   1. We ship TWO binaries (``scitex-agent-container`` and ``sac``);
+        #      Click's completion is keyed on argv[0], so each name needs
+        #      its own registration.
+        #   2. The eval line invokes the binary on every shell start
+        #      (~0.4 s per binary; 9 scitex eval lines = ~3.6 s of source
+        #      ~/.bashrc latency).
+        # Replace the upstream behaviour with a cache-file install: write
+        # the static completion script once to
+        # ``~/.local/share/bash-completion/scitex/<binary>`` and let
+        # ~/.bashrc just ``source`` that file (microseconds).
+        self._install_shell_completion_cache_based()
+
+    def _install_shell_completion_cache_based(self) -> None:
+        """Replace install-shell-completion with a cache-file install.
+
+        Writes generated completion scripts (one per binary) to
+        ``~/.local/share/bash-completion/scitex/<binary>`` and appends
+        ``source`` lines to ~/.bashrc. The source op is O(microseconds);
+        the eval-the-binary op was O(0.4 s).
+        """
+        import os
+        import subprocess
+        from pathlib import Path
+
+        cmd = self.commands.get("install-shell-completion")
+        if cmd is None:
+            return
+
+        # Primary: sac-owned, under runtime/ per local-state-directories spec §4b.
+        SAC_CACHE_DIR = (
+            Path.home() / ".scitex" / "agent-container" / "runtime" / "completion"
+        )
+        # Secondary: XDG bash-completion dir (where third-party tooling
+        # auto-discovers); kept as a symlink to the sac-owned file so
+        # both paths point at the same content.
+        XDG_CACHE_DIR = Path.home() / ".local" / "share" / "bash-completion" / "scitex"
+
+        BINARIES = (
+            ("scitex-agent-container", "_SCITEX_AGENT_CONTAINER_COMPLETE"),
+            ("sac", "_SAC_COMPLETE"),
+        )
+        SOURCE_MAP = {"bash": "bash_source", "zsh": "zsh_source"}
+
+        def install_cached(*args, **kwargs):
+            shell = kwargs.get("shell", "bash")
+            dry_run = kwargs.get("dry_run", False)
+            if shell not in SOURCE_MAP:
+                click.echo(
+                    f"error: cache install supports bash/zsh; got {shell!r}", err=True
+                )
+                return
+            rc_path = Path.home() / (".bashrc" if shell == "bash" else ".zshrc")
+
+            for binary, env_var in BINARIES:
+                cache_path = SAC_CACHE_DIR / binary
+                xdg_link = XDG_CACHE_DIR / binary
+                source_line = f"[ -f {cache_path} ] && source {cache_path}"
+                marker = f"# sac-completion: {binary}"
+
+                if dry_run:
+                    click.echo(f"Would write {cache_path} ({binary} completions)")
+                    click.echo(f"Would symlink {xdg_link} -> {cache_path}")
+                    click.echo(f"Would append to {rc_path}: {source_line}  {marker}")
+                    continue
+
+                # Generate static script via the binary itself.
+                env = os.environ.copy()
+                env[env_var] = SOURCE_MAP[shell]
+                result = subprocess.run(
+                    [binary], capture_output=True, text=True, env=env
+                )
+                if result.returncode != 0 or not result.stdout.strip():
+                    click.echo(
+                        f"warn: failed to generate completion for {binary}",
+                        err=True,
+                    )
+                    continue
+                SAC_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                cache_path.write_text(result.stdout)
+
+                # XDG symlink for auto-discovery (idempotent).
+                XDG_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                if xdg_link.is_symlink() or xdg_link.exists():
+                    xdg_link.unlink()
+                xdg_link.symlink_to(cache_path)
+
+                # Add the source line in rc if not already present.
+                if rc_path.is_file() and marker in rc_path.read_text():
+                    continue
+                with rc_path.open("a") as fh:
+                    fh.write(f"\n{source_line}  {marker}\n")
+                click.echo(f"Tab completion installed: {cache_path}")
+                click.echo(f"  XDG symlink: {xdg_link}")
+
+            if not dry_run:
+                click.echo(f"Run: source {rc_path}")
+
+        cmd.callback = install_cached
 
     def list_commands(self, ctx):
         names = super().list_commands(ctx)
@@ -116,7 +216,6 @@ class _MainGroup(LazyGroup):
         "host": "Local host identity and peer routing for sac.",
         "registry": "Registry maintenance — folded into ``sac db`` (F-CS11).",
         "event": "Event log operations: ingest hook events into the per-agent ring buffer.",
-        "quota": "Quota tracking and auto-rotation.",
         "network": "Network operations: liveness probes, fleet connectivity.",
         "image": "Container image operations: build the runtime base image.",
         "template": "Render text templates (contributor spec).",
@@ -146,12 +245,9 @@ class _MainGroup(LazyGroup):
         "check": (f"{_PKG}.build_cmds:check", "sac agent check"),
         # Status / introspection
         "show-status": (f"{_PKG}.status_cmds:status", "sac agent status"),
-        "list-agents": (f"{_PKG}.status_cmds:list_agents", "sac agent list"),
         "check-health": (f"{_PKG}.status_cmds:health", "sac agent health"),
-        "inspect": (f"{_PKG}.status_cmds:check_agent", "sac agent inspect"),
         "take-snapshot": (f"{_PKG}.snapshot_cmds:snapshot", "sac agent take-snapshot"),
         "find": (f"{_PKG}.info_cmds:find", "sac agent find"),
-        "show-logs": (f"{_PKG}.info_cmds:logs", "sac agent logs"),
         "recall": (f"{_PKG}.recall_cmds:recall", "sac agent recall"),
         "check-priority": (
             f"{_PKG}.priority_cmds:priority_check",
@@ -193,15 +289,21 @@ class _MainGroup(LazyGroup):
         f"sac (v{_pkg_version()}) — SciTeX Agent Container: declarative "
         f"agent management.\n\n"
         "\b\n"
-        "Config resolution order:\n"
-        "  1. positional CONFIG path / agent name argument (where applicable)\n"
-        "  2. ``$SCITEX_AGENT_CONTAINER_CONFIG``\n"
-        "  3. ``~/.scitex/agent-container/agents/<name>/<name>.yaml``\n\n"
+        "Each agent lives in its own directory with a ``spec.yaml``:\n"
+        "  ~/.scitex/agent-container/agents/<name>/spec.yaml\n"
+        "Subcommands accept either the bare ``<name>`` (looked up under the\n"
+        "search root) or an explicit path to the YAML file.\n\n"
+        "\b\n"
+        "Search order when only a name is given:\n"
+        "  1. ./.scitex/agent-container/agents/<name>/spec.yaml  (project-local)\n"
+        "  2. ~/.scitex/agent-container/agents/<name>/spec.yaml  (user-wide)\n"
+        "  3. ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` (colon-separated extra dirs)\n\n"
         "\b\n"
         "Example:\n"
         "  $ sac --version\n"
         "  $ sac agent list\n"
-        "  $ sac agent start ~/.scitex/agent-container/agents/foo/foo.yaml\n"
+        "  $ sac agent start orchestrator                                      # by name\n"
+        "  $ sac agent start ~/.scitex/agent-container/agents/orchestrator/spec.yaml   # by path\n"
     ),
 )
 @click.version_option(
@@ -229,16 +331,20 @@ def main(ctx: click.Context, help_recursive: bool, as_json: bool) -> None:
     """SciTeX Agent Container -- Declarative agent management.
 
     \b
-    Config resolution order:
-      1. positional CONFIG path / agent name argument (where applicable)
-      2. ``$SCITEX_AGENT_CONTAINER_CONFIG``
-      3. ``~/.scitex/agent-container/agents/<name>/<name>.yaml``
+    Each agent lives in its own directory with a ``spec.yaml``:
+      ~/.scitex/agent-container/agents/<name>/spec.yaml
+    Subcommands accept either the bare ``<name>`` or an explicit path.
+
+    \b
+    Search order when only a name is given:
+      1. ./.scitex/agent-container/agents/<name>/spec.yaml  (project-local)
+      2. ~/.scitex/agent-container/agents/<name>/spec.yaml  (user-wide)
+      3. ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` (colon-separated extra dirs)
 
     \b
     Example:
-      $ sac --version
-      $ sac agent list
-      $ sac agent start ~/.scitex/agent-container/agents/foo/foo.yaml
+      $ sac agent start orchestrator                                      # by name
+      $ sac agent start ~/.scitex/agent-container/agents/orchestrator/spec.yaml   # by path
     """
     ctx.ensure_object(dict)
     if as_json:

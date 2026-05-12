@@ -12,6 +12,7 @@ import sys
 
 import click
 
+from .._env import getenv as _sac_env
 from .._network.probe import (
     DEFAULT_HUB_HOST,
     DEFAULT_HUB_PORT,
@@ -26,7 +27,7 @@ from .._network.probe import (
     "-a",
     default=None,
     help="Agent name for the JSONL log filename. "
-    "Defaults to $SCITEX_OROCHI_AGENT or 'anonymous-agent'.",
+    "Defaults to $CLAUDE_AGENT_ID or 'anonymous-agent'.",
 )
 @click.option(
     "--hub-host",
@@ -77,7 +78,7 @@ def probe_network(
 
     Runs four probes (DNS → default gateway → TCP → HTTPS) and writes
     the result as one JSONL line under
-    ``~/.scitex/agent-container/logs/network/<agent>.jsonl``.
+    ``~/.scitex/agent-container/runtime/logs/network/<agent>.jsonl``.
 
     The output is designed to be correlated with fleet-side SSH-dead
     logs: when the fleet's SSH probe to this host fails, we have a
@@ -89,12 +90,24 @@ def probe_network(
       $ sac network probe --agent head-ywata-note-win
       $ sac network probe --quiet --exit-nonzero-on-fail
     """
-    effective_agent = (
-        agent
-        or os.environ.get("SCITEX_OROCHI_AGENT")
-        or os.environ.get("CLAUDE_AGENT_ID")
-        or "anonymous-agent"
-    )
+    # Fall back to env var for hub-url; require an explicit target.
+    if not hub_url:
+        hub_url = _sac_env("HUB_URL", "").strip()
+    if not hub_host:
+        # Derive from hub_url if given, else error out.
+        if hub_url:
+            from urllib.parse import urlparse
+
+            hub_host = urlparse(hub_url).hostname or ""
+    if not hub_host or not hub_url:
+        click.echo(
+            "error: no hub configured. Pass --hub-host/--hub-url or set "
+            "SAC_HUB_URL — sac is standalone and has no built-in default.",
+            err=True,
+        )
+        sys.exit(2)
+
+    effective_agent = agent or os.environ.get("CLAUDE_AGENT_ID") or "anonymous-agent"
     summary = run_and_log(
         effective_agent,
         hub_host=hub_host,
