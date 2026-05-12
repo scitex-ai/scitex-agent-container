@@ -242,6 +242,47 @@ async def agent_send(request: Request) -> Response:
     )
 
 
+async def agents_start(request: Request) -> JSONResponse:
+    """POST /v1/sac/agents — start one or more agents.
+
+    Body shape (v1: name only; spec-body follow-up tracked):
+
+        {"name": "<existing-spec-name>"}
+
+    Internally shells out to ``sac agent start <name>`` so the proven
+    lifecycle path drives the launch (preflight, singleton check,
+    runtime dispatch). The body returns the subprocess result.
+    """
+    try:
+        body = await request.json()
+    except (
+        Exception
+    ):  # stx-allow: fallback (reason: malformed JSON → 400 instead of 500)
+        return JSONResponse({"error": "body must be JSON"}, status_code=400)
+    name = body.get("name")
+    if not isinstance(name, str) or not name:
+        return JSONResponse(
+            {"error": "missing or empty 'name' string"}, status_code=400
+        )
+    sac_bin = shutil.which("sac") or "sac"
+    proc = await asyncio.to_thread(
+        subprocess.run,
+        [sac_bin, "agent", "start", name],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return JSONResponse(
+        {
+            "name": name,
+            "returncode": proc.returncode,
+            "stdout": proc.stdout,
+            "stderr": proc.stderr,
+        },
+        status_code=200 if proc.returncode == 0 else 502,
+    )
+
+
 async def agent_card(request: Request) -> JSONResponse:
     """GET /v1/sac/agents/<name>/card.
 
@@ -297,6 +338,7 @@ def create_app(*, token: str) -> Starlette:
     routes = [
         Route("/v1/sac/health", health, methods=["GET"]),
         Route("/v1/sac/agents", list_agents, methods=["GET"]),
+        Route("/v1/sac/agents", agents_start, methods=["POST"]),
         Route("/v1/sac/agents/{name}/status", agent_status, methods=["GET"]),
         Route("/v1/sac/agents/{name}/send", agent_send, methods=["POST"]),
         Route("/v1/sac/agents/{name}/card", agent_card, methods=["GET"]),

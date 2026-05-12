@@ -337,6 +337,51 @@ def test_send_falls_back_when_live_runner_unreachable(tmp_path, monkeypatch):
     assert body["returncode"] == 0
 
 
+def test_post_agents_rejects_non_json(client):
+    c, _ = client
+    r = c.post("/v1/sac/agents", data="x", headers=auth_headers())
+    assert r.status_code == 400
+
+
+def test_post_agents_requires_name(client):
+    c, _ = client
+    r = c.post("/v1/sac/agents", json={}, headers=auth_headers())
+    assert r.status_code == 400
+    assert "name" in r.json()["error"]
+
+
+def test_post_agents_shells_out_to_sac_agent_start(client):
+    c, _ = client
+
+    class FakeProc:
+        returncode = 0
+        stdout = "started ok"
+        stderr = ""
+
+    captured: dict = {}
+
+    def fake_run(argv, **kwargs):
+        captured["argv"] = argv
+        return FakeProc()
+
+    with (
+        patch(
+            "scitex_agent_container._listen.server.shutil.which",
+            return_value="/usr/bin/sac",
+        ),
+        patch(
+            "scitex_agent_container._listen.server.subprocess.run",
+            side_effect=fake_run,
+        ),
+    ):
+        r = c.post("/v1/sac/agents", json={"name": "alpha"}, headers=auth_headers())
+    assert r.status_code == 200, r.text
+    assert captured["argv"] == ["/usr/bin/sac", "agent", "start", "alpha"]
+    body = r.json()
+    assert body["name"] == "alpha"
+    assert body["returncode"] == 0
+
+
 def test_card_returns_a2a_shape(client):
     c, _ = client
     r = c.get("/v1/sac/agents/alpha/card", headers=auth_headers())
