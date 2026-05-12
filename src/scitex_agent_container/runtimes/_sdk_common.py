@@ -310,6 +310,16 @@ def build_sdk_options(
     provision_anthropic_auth()
     mcp_servers, workdir = resolve_agent_workspace(agent_name)
 
+    # Apptainer/Docker dispatch binds the host workdir at /work inside
+    # the container; the config's workdir field carries the HOST path
+    # (so the apptainer driver knows what to mount) but the SDK runs
+    # INSIDE the container and must chdir to the BIND TARGET. Detect
+    # the bind by checking for /work; this is the runtime contract
+    # documented in _apptainer_runtime.build_argv. Outside a
+    # container, /work won't exist and workdir stays as-is.
+    if workdir and Path("/work").is_dir() and not Path(workdir).is_dir():
+        workdir = "/work"
+
     kwargs: dict = {}
     if system_prompt is not None:
         kwargs["system_prompt"] = system_prompt
