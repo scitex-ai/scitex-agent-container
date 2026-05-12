@@ -1,16 +1,19 @@
 """Credential account store for multi-account rotation.
 
-Manages a directory of saved Claude Code accounts.  Each account is stored
-as a JSON file in ``~/.scitex/sac/accounts/<name>.json`` containing only
-safe metadata (no tokens).  The credentials files themselves live in a
-per-account snapshot directory and are swapped into place by
-``switch_account``.
+Manages a directory of saved Claude Code accounts.  Each account is a
+self-contained directory under ``~/.scitex/agent-container/accounts/<name>/``
+holding:
+
+  * ``account.json``     — safe metadata only (no tokens).
+  * ``.credentials.json`` (and any other Claude credential files) — copied
+    into ``~/.claude/`` by ``switch_account``.
 
 Design rules
 ------------
 1. No token material is ever stored in the account metadata JSON.
 2. ``list_accounts()`` never raises.
-3. ``switch_account()`` copies credential files atomically.
+3. ``switch_account()`` copies credential files atomically and never
+   propagates the metadata file into ``~/.claude/``.
 """
 
 from __future__ import annotations
@@ -20,12 +23,42 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-_DEFAULT_STORE_SUBDIR = Path(".scitex") / "sac" / "accounts"
+_DEFAULT_STORE_SUBDIR = Path(".scitex") / "agent-container" / "accounts"
+_METADATA_FILENAME = "account.json"
+
+# ``sac`` is a first-class short alias for ``agent-container``.
+# Both names live under ``~/.scitex/``; the short one is a symlink to
+# the canonical long one so muscle-memory tab-completion works.
+# Self-healed on every store touch so it's never missed on a new host.
+_SHORT_ROOT_NAME = "sac"
+_CANONICAL_ROOT_NAME = "agent-container"
+
+
+def _ensure_short_name_alias(home: Path) -> None:
+    """Idempotently maintain ``~/.scitex/sac -> agent-container``.
+
+    Skips if the short-name path already exists as a real directory
+    (refuses to clobber user data — the migration script handles that
+    case explicitly).
+    """
+    scitex_root = home / ".scitex"
+    short = scitex_root / _SHORT_ROOT_NAME
+    if short.is_symlink():
+        return
+    if short.exists():
+        return  # real dir — refuse to clobber; migration script handles it
+    # stx-allow: fallback (reason: best-effort symlink convenience; failure must not break the actual account write the caller is doing)
+    try:
+        scitex_root.mkdir(parents=True, exist_ok=True)
+        short.symlink_to(_CANONICAL_ROOT_NAME, target_is_directory=True)
+    except OSError:
+        pass
 
 
 def _store_path(store_dir: Path | None, home: Path) -> Path:
     if store_dir is not None:
         return Path(store_dir)
+    _ensure_short_name_alias(home)
     return home / _DEFAULT_STORE_SUBDIR
 
 
@@ -46,15 +79,18 @@ def list_accounts(
     accounts: list[dict[str, Any]] = []
     if not store.is_dir():
         return accounts
-    for meta_file in sorted(store.glob("*.json")):
-        # stx-allow: fallback (reason: individual account JSON may be corrupt or unreadable; skipping it keeps the rest of the list intact)
+    for account_dir in sorted(p for p in store.iterdir() if p.is_dir()):
+        meta_file = account_dir / _METADATA_FILENAME
+        # stx-allow: fallback (reason: individual account dir may be corrupt or unreadable; skipping it keeps the rest of the list intact)
         try:
-            with meta_file.open("r", encoding="utf-8") as fh:
-                data = json.load(fh)
-            if not isinstance(data, dict):
-                continue
-            # Ensure the name field is always set
-            data.setdefault("name", meta_file.stem)
+            if meta_file.is_file():
+                with meta_file.open("r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+                if not isinstance(data, dict):
+                    continue
+            else:
+                data = {}
+            data.setdefault("name", account_dir.name)
             accounts.append(data)
         except Exception:  # stx-allow: fallback (reason: skip corrupt/missing account metadata JSON — list call must tolerate partial store damage)
             continue
@@ -80,8 +116,9 @@ def save_account(
     """
     _home = home or Path.home()
     store = _store_path(store_dir, _home)
-    store.mkdir(parents=True, exist_ok=True)
-    meta_file = store / f"{name}.json"
+    account_dir = store / name
+    account_dir.mkdir(parents=True, exist_ok=True)
+    meta_file = account_dir / _METADATA_FILENAME
     payload = dict(metadata)
     payload["name"] = name
     tmp = meta_file.with_suffix(".json.tmp")
@@ -102,14 +139,10 @@ def delete_account(
     """
     _home = home or Path.home()
     store = _store_path(store_dir, _home)
-    meta_file = store / f"{name}.json"
-    if not meta_file.exists():
+    account_dir = store / name
+    if not account_dir.is_dir():
         return False
-    meta_file.unlink()
-    # Remove credential snapshot directory if present
-    cred_dir = store / name
-    if cred_dir.is_dir():
-        shutil.rmtree(cred_dir, ignore_errors=True)
+    shutil.rmtree(account_dir, ignore_errors=True)
     return True
 
 
@@ -136,20 +169,22 @@ def switch_account(
     """
     _home = home or Path.home()
     store = _store_path(store_dir, _home)
-    cred_dir = store / name
+    account_dir = store / name
 
-    if not cred_dir.is_dir():
+    if not account_dir.is_dir():
         return {
             "success": False,
             "name": name,
-            "message": f"No credential snapshot found for account '{name}' at {cred_dir}",
+            "message": f"No account directory for '{name}' at {account_dir}",
         }
 
     claude_dir = _home / ".claude"
     # stx-allow: fallback (reason: ~/.claude/ may be on a read-only filesystem or a tmp copy may fail mid-flight; returning a failure dict is preferable to an unhandled exception)
     try:
         claude_dir.mkdir(parents=True, exist_ok=True)
-        for src in cred_dir.iterdir():
+        for src in account_dir.iterdir():
+            if src.name == _METADATA_FILENAME:
+                continue  # metadata stays in the account dir; never copy into ~/.claude/
             dst = claude_dir / src.name
             tmp = dst.with_suffix(dst.suffix + ".tmp")
             shutil.copy2(src, tmp)

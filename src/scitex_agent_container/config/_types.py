@@ -125,10 +125,10 @@ class ApptainerSpec:
     container is read-only with a tmpfs writable layer.
 
     Resolution: a non-absolute path is interpreted relative to the
-    agent's workdir. A common convention is to place it under
-    ``~/.scitex/agent-container/containers/proj-<pkg>.overlay.img``
-    so a single directory holds the shared SIF and every per-agent
-    overlay."""
+    agent's workdir. The canonical layout puts overlays under
+    ``~/.scitex/agent-container/containers/overlays/proj-<pkg>.overlay.img``
+    next to the base SIF directory (``containers/sac-base/sac-base.sif``),
+    mirroring scitex-template's singularity convention."""
 
 
 @dataclass
