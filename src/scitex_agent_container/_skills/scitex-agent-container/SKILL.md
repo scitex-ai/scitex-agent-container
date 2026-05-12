@@ -29,7 +29,7 @@ rich non-agentic status surface.
 |---|---|
 | Python API | `scitex_agent_container` (`AgentConfig`, `load_config`, `agent_start`/`stop`/`restart`/`status`/`logs`, `Registry`) |
 | CLI | `scitex-agent-container`, `sac` — see [10_cli.md](10_cli.md) |
-| MCP servers | None bundled — agents spawn their own via `src_mcp.json` |
+| MCP servers | None bundled — agents spawn their own via `dot_claude/.mcp.json` |
 | Runtimes | `runtimes/{tmux,screen,claude_code,apptainer,docker,sbatch_spartan,ssh_remote}.py` |
 | PaneActions | See [14_pane-actions.md](14_pane-actions.md) |
 | Observability | See [13_observability.md](13_observability.md) |

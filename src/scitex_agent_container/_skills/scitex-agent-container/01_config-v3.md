@@ -19,10 +19,13 @@ The current and only accepted apiVersion. The v3 loader **rejects**:
 ```
 <agent-root>/
 └── <name>/
-    ├── <name>.yaml      # ← agent name comes from this directory
-    ├── src_CLAUDE.md    # → deployed to <workdir>/CLAUDE.md
-    ├── src_mcp.json     # → deployed to <workdir>/.mcp.json
-    └── src_env          # → deployed to <workdir>/.env (mode 0600)
+    ├── spec.yaml       # ← agent name comes from this directory
+    └── dot_claude/     # optional; auto-discovered next to spec.yaml
+        ├── CLAUDE.md    # → <workdir>/CLAUDE.md  (marker-protected)
+        ├── .mcp.json    # → <workdir>/.mcp.json  (per-server merge)
+        ├── .env         # → <workdir>/.env       (mode 0600)
+        ├── state.md     # → <workdir>/state.md
+        └── commands/    # → <workdir>/.claude/commands/   (mirror)
 ```
 
 `<agent-root>` is one of:
@@ -76,17 +79,24 @@ The v3 loader fills in defaults from the agent name (parent-directory stem):
 
 You can override any of these by setting them explicitly in the YAML. The auto-derivation is just a bottom layer of the resolution cascade.
 
-## `src_*` file-deploy pipeline
+## `dot_claude/` deploy pipeline (replaces the legacy `src_*` siblings)
 
-Sibling files named `src_<basename>` next to the agent YAML are materialized into the workspace at `sac agent start` time, with `${VAR}` and `${metadata.name}` interpolation:
+A sibling directory named `dot_claude/` (override path with
+`spec.dot_claude:`) is materialized into the workspace at
+`sac agent start` time. Four well-known leaves get special handling
+(marker protocol, per-server merge, mode 0600); everything else
+mirrors verbatim into `<workdir>/.claude/`. `${VAR}` and
+`${metadata.name}` are interpolated.
 
-| Source | Destination | Mode |
-|---|---|---|
-| `src_CLAUDE.md` | `<workdir>/CLAUDE.md` | 0644 |
-| `src_mcp.json` | `<workdir>/.mcp.json` | 0644 |
-| `src_env` | `<workdir>/.env` | 0600 (sourceable by spawned shells, cron jobs, ssh-launched commands) |
+| Source | Destination | Mode | Semantics |
+|---|---|---|---|
+| `dot_claude/CLAUDE.md` | `<workdir>/CLAUDE.md` | 0644 | Marker-protected; preserves user tail past the End marker |
+| `dot_claude/.mcp.json` | `<workdir>/.mcp.json` | 0644 | Per-server replace; workspace-only servers preserved |
+| `dot_claude/.env` | `<workdir>/.env` | **0600** | Full overwrite; sourceable by spawned shells |
+| `dot_claude/state.md` | `<workdir>/state.md` | 0644 | Full overwrite (handover snapshot) |
+| `dot_claude/<other>/` | `<workdir>/.claude/<other>/` | copy | Generic mirror — `commands/`, `skills/`, `hooks/`, `agents/`, … |
 
-Generic rule: any sibling file matching `src_X` is copied to `<workdir>/X` (the prefix is stripped). See `06_env-injection-ports.md` for the four distinct env-injection ports and when to use each.
+See `06_env-injection-ports.md` for the four distinct env-injection ports and when to use each.
 
 ## Migration from v2 → v3
 
@@ -100,5 +110,5 @@ If you have legacy YAMLs:
 ## See also
 
 - `08_templates.md` — six minimal pattern templates under `examples/agent-templates/`
-- `06_env-injection-ports.md` — yaml.env vs src_mcp.json env vs src_env vs hooks
+- `06_env-injection-ports.md` — yaml.env vs dot_claude/.mcp.json env vs dot_claude/.env vs hooks
 - `09_slurm-tenant.md` — multi-tenant `runtime: slurm-tenant` and `slurm.reservation`

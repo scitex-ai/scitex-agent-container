@@ -37,7 +37,7 @@ cp examples/agent-templates/local.yaml ~/.scitex/agent-container/agents/my-agent
 sac agent start my-agent
 ```
 
-For SSH-deployed agents, drop sibling `src_CLAUDE.md` and `src_mcp.json` into the same directory — they're copied to `/tmp/` on the remote and materialized at start.
+For SSH-deployed agents, drop a sibling `dot_claude/` directory next to `spec.yaml` — the whole directory rsyncs to the remote and is materialized into the workspace at start.
 
 ## When to add a new template
 

@@ -150,5 +150,5 @@ If you want a fleet, use orochi. If you want one agent on a laptop, use `sac a2a
 
 ## Cross-references
 
-- [`06_env-injection-ports.md`](06_env-injection-ports.md) — the four env-injection ports (yaml.env / src_mcp.json env / src_env / hooks)
+- [`06_env-injection-ports.md`](06_env-injection-ports.md) — the four env-injection ports (yaml.env / dot_claude/.mcp.json env / dot_claude/.env / hooks)
 - [scitex-orochi `docs/a2a-protocol.md`](https://github.com/ywatanabe1989/scitex-orochi/blob/develop/docs/a2a-protocol.md) — fleet-side architecture (Tier 3 dispatch bridge)
