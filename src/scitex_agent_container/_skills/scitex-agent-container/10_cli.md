@@ -50,6 +50,43 @@ sac template render-attach <name>         # Print the srun --pty command that re
 
 For multi-tenant SLURM (`runtime: slurm-tenant`), see `09_slurm-tenant.md` and the companion `scitex-hpc reservations` CLI.
 
+## Interact (resume an existing session)
+
+```bash
+sac agent send <name> "<prompt>"          # Resume the agent's session for one more turn
+sac agent send <name> --key ESC           # Cancel the current turn (SIGINT to the runner pid)
+sac agent send <name> --no-stream         # Buffer the reply instead of streaming
+sac agent send <name> "..." -- --debug    # Anything after `--` is forwarded verbatim to claude
+```
+
+Reads `session_id` from the per-agent state dir and shells out to `claude --resume <sid> -p ...` inside the agent's `workdir`. See `15_claude-session.md` for the long-lived alternative that keeps the SDK client open across turns.
+
+## sac listen (HTTP/JSON control plane)
+
+```bash
+sac listen                                # Boot the local /v1/sac/ server (loopback only by default)
+sac listen --bind 127.0.0.1:7878          # Custom bind
+sac listen --print-token                  # Echo the bearer token & exit
+```
+
+When running, exposes (bearer-token authenticated):
+
+| Route | Purpose |
+|---|---|
+| `GET  /v1/sac/health` | Liveness; public |
+| `GET  /v1/sac/agents` | List local registry |
+| `GET  /v1/sac/agents/<name>/status` | Spec path, workdir, session_id |
+| `GET  /v1/sac/agents/<name>/card` | A2A-compatible AgentCard |
+| `POST /v1/sac/agents` | Start (body: `{name}` or `{name, spec}` for inline-spec register-and-start) |
+| `POST /v1/sac/agents/<name>/send` | One turn — buffered JSON by default; `Accept: text/event-stream` → SSE frames |
+| `DELETE /v1/sac/agents/<name>` | SIGTERM the runner pid |
+
+## sac channel (local agent ↔ agent)
+
+```bash
+sac channel send <to> "<msg>" --from <id>   # POST a channel-wrapped turn to a local agent via sac listen
+```
+
 ## A2A protocol (sidecar)
 
 ```bash

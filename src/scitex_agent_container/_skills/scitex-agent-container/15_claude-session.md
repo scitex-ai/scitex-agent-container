@@ -167,6 +167,10 @@ The `sdk-runtime-smoke` GitHub workflow runs this exact command on every
 push to develop / main (and daily) so an upstream SDK breakage surfaces
 immediately rather than during the next manual fleet operation.
 
+## Supervisor — auto-restart on SDK crash
+
+`--max-restarts N` (default `0` = terminate on first failure) + `--restart-backoff-s S` (default `1.0`, doubles per attempt) let the runner reopen `ClaudeSDKClient` after a mid-session exception. On each retry it re-reads `session_id` from the state dir so the new client resumes the latest completed turn; the inbox is preserved across restarts. Each restart writes `{type: error, kind: sdk_runtime, attempt: N}` + `{type: supervisor, event: restarting, in_s: <delay>}` to `session.jsonl`. After `max_restarts` attempts the inbox is drained with the last exception and the runner exits. Init failures (missing SDK, bad options) stay terminal.
+
 ## When NOT to use it
 
 - **Human-typed interactive sessions.** The CLI runtime's tmux session
