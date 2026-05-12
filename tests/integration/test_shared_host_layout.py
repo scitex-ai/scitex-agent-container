@@ -229,7 +229,7 @@ class TestHostnameSubstitution:
             "    Yusukes-MacBook-Air: mba\n"
             "    DXP480TPLUS-994: nas\n"
         )
-        monkeypatch.setattr(host_mod, "_CONFIG_PATH", config_path)
+        monkeypatch.setattr(host_mod, "_config_path", lambda _p=config_path: _p)
         assert host_mod.resolve_hostname() == "mba"
 
     def test_env_var_beats_alias_map(self, monkeypatch, tmp_path):
@@ -243,7 +243,7 @@ class TestHostnameSubstitution:
         config_path.write_text(
             "spec:\n  hostname_aliases:\n    Yusukes-MacBook-Air: mba\n"
         )
-        monkeypatch.setattr(host_mod, "_CONFIG_PATH", config_path)
+        monkeypatch.setattr(host_mod, "_config_path", lambda _p=config_path: _p)
         assert host_mod.resolve_hostname() == "manual-override"
 
     def test_unmapped_host_falls_through_to_identity(self, monkeypatch, tmp_path):
@@ -257,7 +257,7 @@ class TestHostnameSubstitution:
         config_path.write_text(
             "spec:\n  hostname_aliases:\n    Yusukes-MacBook-Air: mba\n"
         )
-        monkeypatch.setattr(host_mod, "_CONFIG_PATH", config_path)
+        monkeypatch.setattr(host_mod, "_config_path", lambda _p=config_path: _p)
         assert host_mod.resolve_hostname() == "ywata-note-win"
 
     def test_missing_config_file_is_not_an_error(self, monkeypatch, tmp_path):
@@ -266,7 +266,7 @@ class TestHostnameSubstitution:
 
         monkeypatch.delenv("SCITEX_AGENT_CONTAINER_HOSTNAME", raising=False)
         monkeypatch.setattr("socket.gethostname", lambda: "bare-host")
-        monkeypatch.setattr(host_mod, "_CONFIG_PATH", tmp_path / "no-such.yaml")
+        monkeypatch.setattr(host_mod, "_config_path", lambda _p=tmp_path / "no-such.yaml": _p)
         assert host_mod.resolve_hostname() == "bare-host"
 
 

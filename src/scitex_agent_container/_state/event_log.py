@@ -3,7 +3,7 @@
 Claude Code invokes configured commands on ``PreToolUse``,
 ``PostToolUse``, ``UserPromptSubmit``, and ``Stop``. We capture the
 JSON payloads into a per-agent ring-buffer at
-``~/.scitex/agent-container/runtime/events/<agent>.jsonl`` so downstream
+``<scitex-root>/agent-container/runtime/events/<agent>.jsonl`` so downstream
 consumers (``agent_meta.collect_rich``) can surface recent tool calls
 / prompts / stops without the agent itself having to act.
 
@@ -28,17 +28,27 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from scitex_config._ecosystem import local_state as _local_state
+
 DEFAULT_CAP_LINES = 500
-DEFAULT_ROOT = (
-    Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".scitex")
-    / "agent-container"
-    / "events"
-)
 PREVIEW_MAX_CHARS = 300
 
 
+def _default_root() -> Path:
+    """Resolve the per-agent events ring-buffer root.
+
+    Walks the SciTeX local-state cascade — project-scope
+    ``<repo>/.scitex/agent-container/runtime/events/`` wins when inside
+    a git repo, else falls back to
+    ``$SCITEX_DIR/agent-container/runtime/events/`` (default
+    ``~/.scitex/...``). See `01_ecosystem_06_local-state-directories.md`
+    §4b (regenerable per-host state lives under `runtime/`).
+    """
+    return _local_state.runtime_path("agent-container", "events")
+
+
 def _agent_log_path(agent: str, root: Path | None = None) -> Path:
-    base = Path(root) if root else DEFAULT_ROOT
+    base = Path(root) if root else _default_root()
     base.mkdir(parents=True, exist_ok=True)
     safe = re.sub(r"[^a-zA-Z0-9_.\-]", "-", agent or "anonymous-agent")
     return base / f"{safe}.jsonl"

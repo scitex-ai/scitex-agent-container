@@ -59,7 +59,19 @@ def _store_path(store_dir: Path | None, home: Path) -> Path:
     if store_dir is not None:
         return Path(store_dir)
     _ensure_short_name_alias(home)
-    return home / _DEFAULT_STORE_SUBDIR
+    # Test fixtures pass an explicit `home=tmp_path`; honour it
+    # literally rather than walking the cascade (which keys off
+    # `Path.cwd()` and would resolve outside the test's tmp dir).
+    if home != Path.home():
+        return home / _DEFAULT_STORE_SUBDIR
+    # SciTeX local-state cascade: project-scope
+    # `<repo>/.scitex/agent-container/accounts/` wins, falls back to
+    # `$SCITEX_DIR/agent-container/accounts/` (default `~/.scitex/...`).
+    # See `01_ecosystem_06_local-state-directories.md` §4a (tracked
+    # state — credentials travel with the project when versioned).
+    from scitex_config._ecosystem import local_state as _local_state
+
+    return _local_state.path("agent-container", "accounts")
 
 
 def list_accounts(
@@ -80,6 +92,10 @@ def list_accounts(
     if not store.is_dir():
         return accounts
     for account_dir in sorted(p for p in store.iterdir() if p.is_dir()):
+        # Skip non-account subdirs (e.g. `_rotations/` holding
+        # auth-rotation telemetry NDJSON files keyed by email).
+        if account_dir.name.startswith("_"):
+            continue
         meta_file = account_dir / _METADATA_FILENAME
         # stx-allow: fallback (reason: individual account dir may be corrupt or unreadable; skipping it keeps the rest of the list intact)
         try:

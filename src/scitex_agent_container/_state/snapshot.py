@@ -27,6 +27,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
+
 from .._env import getenv as _sac_env
 
 # Keys from agent_meta.py we surface in snapshots / status --json.
@@ -134,14 +135,23 @@ def _sidecars_payload(agent: str) -> dict[str, dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
+# hook-bypass: line-limit (5-line behaviour fix; snapshot.py split deferred — see GITIGNORED/REFACTORING.md)
 def cache_dir() -> Path:
+    """Per-agent snapshot cache (under `runtime/` per local-state §4b).
+
+    ``$SAC_CACHE_DIR`` / ``$SCITEX_AGENT_CONTAINER_CACHE_DIR`` override
+    everything; otherwise resolves via the SciTeX local-state cascade
+    (project-scope `<repo>/.scitex/agent-container/runtime/cache/` wins,
+    falls back to `$SCITEX_DIR/agent-container/runtime/cache/`).
+    """
     override = _sac_env("CACHE_DIR")
     if override:
         p = Path(override).expanduser()
-    else:
-        p = Path.home() / ".scitex" / "agent-container" / "cache"
-    p.mkdir(parents=True, exist_ok=True)
-    return p
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+    from scitex_config._ecosystem import local_state as _local_state
+
+    return _local_state.runtime_path("agent-container", "cache")
 
 
 def _latest_path(agent: str) -> Path:

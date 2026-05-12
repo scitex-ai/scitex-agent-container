@@ -166,7 +166,8 @@ def test_rotation_log_writes_one_line_per_change(
         home
         / ".scitex"
         / "agent-container"
-        / "auth-rotations"
+        / "accounts"
+        / "_rotations"
         / "rotator@example.com.ndjson"
     )
     assert rot_file.is_file()
@@ -230,7 +231,7 @@ def test_rotation_log_skipped_without_email(
     collect_rich(name="agent-y", workdir=str(workdir), session="agent-y")
 
     # The rotations directory should not have been created.
-    rot_dir = home / ".scitex" / "agent-container" / "auth-rotations"
+    rot_dir = home / ".scitex" / "agent-container" / "accounts" / "_rotations"
     assert not rot_dir.exists()
 
 

@@ -110,17 +110,31 @@ sac reads optional host/peer config and writes per-agent runtime state
 under the canonical SciTeX local-state locations (`<pkg-short>` =
 `agent-container`):
 
-| Path                                                  | Scope          | Purpose                                              |
-|-------------------------------------------------------|----------------|------------------------------------------------------|
-| `~/.scitex/agent-container/config.yaml`               | user-global    | host identity, `host.aliases`, `peers:` (F-CS12)     |
-| `~/.scitex/agent-container/runtime/<name>/`           | user-global    | per-agent pid, heartbeat, session.jsonl, quota.json  |
-| `<proj-root>/.scitex/agent-container/config.yaml`     | project-local  | overrides for this repo (e.g. CI runners)            |
-| `<proj-root>/.scitex/agent-container/runtime/<name>/` | project-local  | per-agent runtime state when launched from this repo |
+Two kinds of state under `<scope>/.scitex/agent-container/`, mirroring
+the canonical spec — **tracked** at the root (commit-worthy config +
+credentials) and **runtime** under `runtime/` (regenerable per-host
+state, gitignored):
 
-Project-local wins when both exist (resolved via
-`scitex_config.local_state.path("agent-container", ...)`). Both are
-optional. `$SCITEX_DIR` relocates the user-scope root. See
-`01_ecosystem_06_local-state-directories.md` for the full rule.
+| Path                                          | Kind     | Purpose                                              |
+|-----------------------------------------------|----------|------------------------------------------------------|
+| `config.yaml`                                 | tracked  | host identity, `host.aliases`, `peers:` (F-CS12)     |
+| `accounts/<name>/`                            | tracked  | saved Claude Code accounts (`account.json` + `.credentials.json`); switched by `sac account use <name>` |
+| `accounts/_rotations/<email>.ndjson`          | tracked  | OAuth-token rotation log (one append per observed rotation) |
+| `runtime/agents/<name>/`                      | runtime  | per-agent pid, heartbeat.json, session.jsonl, quota.json |
+| `runtime/cache/<agent>.{latest,prev,diff}.json` | runtime  | snapshot cache for the dashboard / `sac agent diff`  |
+| `runtime/events/<agent>.jsonl`                | runtime  | Claude Code hook event ring-buffer                   |
+| `runtime/containers/`                         | runtime  | built `.sif` images + `.def` snapshots + build logs  |
+
+Two scopes (project wins when both exist, resolved via
+`scitex_config._ecosystem.local_state.path("agent-container", ...)`):
+
+| Root                                | Scope         | When used                                |
+|-------------------------------------|---------------|------------------------------------------|
+| `<proj-root>/.scitex/agent-container/` | project-local | inside a git repo with this subdir       |
+| `~/.scitex/agent-container/`        | user-global   | fallback; relocatable via `$SCITEX_DIR`  |
+
+See `01_ecosystem_06_local-state-directories.md` for the full rule
+(§4a = tracked, §4b = runtime).
 
 </details>
 

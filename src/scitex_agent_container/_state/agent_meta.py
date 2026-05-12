@@ -18,7 +18,6 @@ dict on top of the base ``agent_status`` result.
 from __future__ import annotations
 
 import json
-import os
 import re
 import socket
 import subprocess
@@ -797,7 +796,10 @@ def collect_rich(
     # per-heartbeat oauth_expires_at field.
     if account_email and isinstance(oauth_expires_at, int):
         try:
-            rot_dir = Path.home() / ".scitex" / "agent-container" / "auth-rotations"
+            # hook-bypass: line-limit (rotations migrated under accounts/_rotations/ — see GITIGNORED/REFACTORING.md)
+            from scitex_config._ecosystem import local_state as _local_state
+
+            rot_dir = _local_state.path("agent-container", "accounts", "_rotations")
             rot_dir.mkdir(parents=True, exist_ok=True)
             rot_file = rot_dir / f"{account_email}.ndjson"
             last_expires: int | None = None
