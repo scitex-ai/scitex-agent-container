@@ -396,7 +396,11 @@ class AgentConfig:
     # (`spec.dockerfile` was dropped 2026-05-13 with the docker ripout.)
     image: str = ""
     model: str = "sonnet"
-    workdir: str = "~/proj"
+    # Empty default means "use the per-agent workspace under sac's
+    # user-state root" — resolved by `expanded_workdir` below to
+    # `~/.scitex/agent-container/runtime/agents/<name>/`. Setting
+    # `spec.workdir` explicitly overrides that.
+    workdir: str = ""
     python_venv: str = ""  # resolved venv path (post _resolve_python_venv)
     env: dict[str, str] = field(default_factory=dict)
     env_files: list[str] = field(
@@ -452,4 +456,18 @@ class AgentConfig:
 
     @property
     def expanded_workdir(self) -> str:
-        return str(Path(self.workdir).expanduser())
+        if self.workdir:
+            return str(Path(self.workdir).expanduser())
+        # Per-agent default workspace — lives under sac's user-state
+        # tree so multiple agents stay isolated, mounts at /work
+        # inside the container, persists across restarts. Created
+        # lazily by the runtime adapter (apptainer bind target dir
+        # auto-created by apptainer if missing).
+        return str(
+            Path.home()
+            / ".scitex"
+            / "agent-container"
+            / "runtime"
+            / "agents"
+            / self.name
+        )
