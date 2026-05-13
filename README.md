@@ -1,5 +1,5 @@
 <!-- ---
-!-- Timestamp: 2026-05-13 09:57:25
+!-- Timestamp: 2026-05-13 10:41:30
 !-- Author: ywatanabe
 !-- File: /home/ywatanabe/proj/scitex-agent-container/README.md
 !-- --- -->
@@ -131,13 +131,7 @@ sac agents tail hello-agent-1 hello-agent-2 hello-agent-3 --json
 #    {
 #      "ts": 1778628348.6855755,
 #      "type": "result",
-#      "session_id": "a583314e-238b-471e-a088-10dd41ff6c01",
-#      "usage": {
-#        "input_tokens": 6,
-#        ...
-#          }
-#        ],
-#        "speed": "standard"
+#      ...
 #      }
 #    }
 # ] 
@@ -146,11 +140,6 @@ sac agents tail hello-agent-1 hello-agent-2 hello-agent-3 --json
 #     "ts": 1778628472.064468,
 #     "type": "user",
 #     "text": "Reply with the string 'Hello! I am hello-agent-2' and nothing else."
-#   },
-#   {
-#     "ts": 1778628474.1873386,
-#     "type": "assistant",
-#     "text": "Hello! I am hello-agent-2"
 #   },
 #   ...
 # ] 
