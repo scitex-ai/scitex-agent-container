@@ -50,26 +50,30 @@ uv pip install "scitex-agent-container[all]"
 
 ## Quickstart
 
+**Step 1 — Build the base image (one-time, ~5 min)**
+
 ```bash
-# 1. Build built-in Apptainer image (one-time)
-sac image build base # base image; ~5 min
-# built /home/ywatanabe/.scitex/agent-container/containers/sac-base/sac-base.sif
+sac image build base
+```
 
-# 2. Define agents by writing YAML files under ~/.scitex/agent-container/agents/<agent-name>
-define_hello_agents() {
-    for agent_id in 1 2; do
-        agent_dir=~/.scitex/agent-container/agents/"hello-agent-$agent_id"
+**Step 2 — Create agent directories**
 
-        mkdir -p "$agent_dir" >/dev/null
-        # Unquoted heredoc tag — shell expands $agent_name before write.
-        # Escape any literal `$` that should reach YAML verbatim (none here).
-        cat > "$agent_dir/spec.yaml" <<YAML
+```bash
+# Each agent lives in its own directory; the directory name is the agent name.
+for id in 1 2; do
+  mkdir -p ~/.scitex/agent-container/agents/hello-agent-$id
+done
+```
+
+**Step 3 — Write `spec.yaml`** (copy into each agent directory, adjust `startup_prompts`)
+
+```yaml
+# ~/.scitex/agent-container/agents/hello-agent-1/spec.yaml
 apiVersion: scitex-agent-container/v3
 kind: Agent
 
 spec:
   runtime: apptainer
-  # workdir is optional — defaults to runtime/agents/<name>/.
 
   apptainer:
     image: ~/.scitex/agent-container/containers/sac-base.sif
@@ -80,46 +84,32 @@ spec:
       - --dangerously-skip-permissions
 
   startup_prompts:
-    - "Reply with the string 'Hello! I am hello-agent-$agent_id' and nothing else."
-YAML
+    - "Reply with the string 'Hello! I am hello-agent-1' and nothing else."
 
-    done
-}
-define_hello_agents
+  health:
+    enabled: true
+    interval: 60
+    method: sdk-alive
 
-# 3. Start an agent in foreground
+  restart:
+    policy: never
+```
+
+> Or copy the bundled example: `cp -r examples/agents/hello-agent ~/.scitex/agent-container/agents/hello-agent-1`
+
+**Step 4 — Run**
+
+```bash
+# Start in foreground (waits for completion)
 sac agents start hello-agent-1 hello-agent-2 --foreground
-# INFO: starting hello-agent-1 → ywata-note-win@/home/ywatanabe/.scitex/agent-container/runtime/agents/hello-agent-1:/work
-# INFO: CLAUDE.md updated for agent hello-agent-1 at /home/ywatanabe/.scitex/agent-container/runtime/agents/hello-agent-1/.claude/CLAUDE.md
-# SUCC: hello-agent-1 started (ywata-note-win@/home/ywatanabe/.scitex/agent-container/runtime/agents/hello-agent-1:/work)
-#  
-# INFO: starting hello-agent-2 → ywata-note-win@/home/ywatanabe/.scitex/agent-container/runtime/agents/hello-agent-2:/work
-# INFO: CLAUDE.md updated for agent hello-agent-2 at /home/ywatanabe/.scitex/agent-container/runtime/agents/hello-agent-2/.claude/CLAUDE.md
-# SUCC: hello-agent-2 started (ywata-note-win@/home/ywatanabe/.scitex/agent-container/runtime/agents/hello-agent-2:/work)
 
-# [hello-agent-1] (stopped)
-# [hello-agent-2] (stopped)
-
-# 4. Check agents
+# Check status
 sac agents list
-#                                                            Agents                                                            
-# ┏━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┓
-# ┃ Name          ┃ Status  ┃ YAML ┃ Host  ┃ Path                                                                   ┃ Started ┃
-# ┡━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━┩
-# │ hello-agent-1 │ defined │ ✓    │ local │ /home/ywatanabe/.scitex/agent-container/agents/hello-agent-1/spec.yaml │ —       │
-# │ hello-agent-2 │ defined │ ✓    │ local │ /home/ywatanabe/.scitex/agent-container/agents/hello-agent-2/spec.yaml │ —       │
-# └───────────────┴─────────┴──────┴───────┴────────────────────────────────────────────────────────────────────────┴─────────┘
 
-# 5. Start multiple agents in background (default)
+# Start in background, read output, stop, delete
 sac agents start hello-agent-1 hello-agent-2
-
-# 6. Read the outputs in JSON format
-sac agents tail hello-agent-1 hello-agent-2 --json
-
-# 7. Stop agents
-sac agents stop hello-agent-1 hello-agent-2
-
-# 8. Delete agents
+sac agents tail  hello-agent-1 hello-agent-2 --json
+sac agents stop  hello-agent-1 hello-agent-2
 sac agents delete hello-agent-1 hello-agent-2 -y
 ```
 

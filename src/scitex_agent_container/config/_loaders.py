@@ -28,7 +28,7 @@ from ._parsers import (
     parse_telegram,
     parse_watchdog,
 )
-from ._types import AgentConfig, HostsSpec, SchedulingSpec
+from ._types import AgentConfig, HostsSpec
 
 # Default workdir layout: sac's own state root. Per-agent runtime state
 # (CLAUDE.md, .mcp.json, .claude/) lives at
@@ -70,27 +70,6 @@ def _resolve_venv(venv: str) -> str:
         if (Path(candidate).expanduser() / "bin" / "activate").exists():
             return candidate
     return ""
-
-
-def compose_effective_name(
-    raw_name: str, scheduling: SchedulingSpec | None, hostname: str
-) -> str:
-    """Return the effective agent id given metadata.name + scheduling + host.
-
-    Rules:
-      * ``singleton`` mode: the bare ``raw_name`` (host-pin is enforced at
-        launch time, not encoded in the id).
-      * ``per-host`` mode (default): append ``-<hostname>`` unless the name
-        already ends with ``-<hostname>`` (idempotent — protects legacy
-        flat-layout names like ``head-ywata-note-win`` which are already
-        host-suffixed).
-    """
-    if scheduling is not None and scheduling.mode == "singleton":
-        return raw_name
-    suffix = f"-{hostname}"
-    if raw_name.endswith(suffix) or raw_name == hostname:
-        return raw_name
-    return f"{raw_name}{suffix}"
 
 
 def _name_from_path(path: Path | str) -> str:
