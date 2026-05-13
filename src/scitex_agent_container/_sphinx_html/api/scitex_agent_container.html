@@ -259,8 +259,6 @@
 <li class="toctree-l3"><a class="reference internal" href="#scitex_agent_container.config.resolve_hostname"><code class="docutils literal notranslate"><span class="pre">resolve_hostname()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="#scitex_agent_container.config.substitute_hostnames"><code class="docutils literal notranslate"><span class="pre">substitute_hostnames()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="#scitex_agent_container.config.validate_config"><code class="docutils literal notranslate"><span class="pre">validate_config()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="#scitex_agent_container.config.validate_contributor_spec"><code class="docutils literal notranslate"><span class="pre">validate_contributor_spec()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="#scitex_agent_container.config.validate_contributor_spec_raw"><code class="docutils literal notranslate"><span class="pre">validate_contributor_spec_raw()</span></code></a></li>
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="#module-scitex_agent_container.runtimes.prompts">Runtimes</a><ul>
@@ -1289,28 +1287,6 @@ pure-functional — the input is not mutated; a new structure is returned.</p>
 <dt class="sig sig-object py" id="scitex_agent_container.config.validate_config">
 <span class="sig-prename descclassname"><span class="pre">scitex_agent_container.config.</span></span><span class="sig-name descname"><span class="pre">validate_config</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">path</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scitex_agent_container/config/_validation.html#validate_config"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scitex_agent_container.config.validate_config" title="Link to this definition"></a></dt>
 <dd><p>Validate a config file and return list of errors (empty = valid).</p>
-<dl class="field-list simple">
-<dt class="field-odd">Return type<span class="colon">:</span></dt>
-<dd class="field-odd"><p><span class="sphinx_autodoc_typehints-type"><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#list" title="(in Python v3.14)"><code class="xref py py-class docutils literal notranslate"><span class="pre">list</span></code></a>[<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><code class="xref py py-class docutils literal notranslate"><span class="pre">str</span></code></a>]</span></p>
-</dd>
-</dl>
-</dd></dl>
-
-<dl class="py function">
-<dt class="sig sig-object py" id="scitex_agent_container.config.validate_contributor_spec">
-<span class="sig-prename descclassname"><span class="pre">scitex_agent_container.config.</span></span><span class="sig-name descname"><span class="pre">validate_contributor_spec</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">path</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scitex_agent_container/config/_contributor_spec_validator.html#validate_contributor_spec"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scitex_agent_container.config.validate_contributor_spec" title="Link to this definition"></a></dt>
-<dd><p>Validate a contributor spec YAML file. Returns list of errors (empty = valid).</p>
-<dl class="field-list simple">
-<dt class="field-odd">Return type<span class="colon">:</span></dt>
-<dd class="field-odd"><p><span class="sphinx_autodoc_typehints-type"><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#list" title="(in Python v3.14)"><code class="xref py py-class docutils literal notranslate"><span class="pre">list</span></code></a>[<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><code class="xref py py-class docutils literal notranslate"><span class="pre">str</span></code></a>]</span></p>
-</dd>
-</dl>
-</dd></dl>
-
-<dl class="py function">
-<dt class="sig sig-object py" id="scitex_agent_container.config.validate_contributor_spec_raw">
-<span class="sig-prename descclassname"><span class="pre">scitex_agent_container.config.</span></span><span class="sig-name descname"><span class="pre">validate_contributor_spec_raw</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">raw</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">path</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'&lt;unknown&gt;'</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scitex_agent_container/config/_contributor_spec_validator.html#validate_contributor_spec_raw"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scitex_agent_container.config.validate_contributor_spec_raw" title="Link to this definition"></a></dt>
-<dd><p>Validate a contributor spec dict. Returns list of error strings.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Return type<span class="colon">:</span></dt>
 <dd class="field-odd"><p><span class="sphinx_autodoc_typehints-type"><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#list" title="(in Python v3.14)"><code class="xref py py-class docutils literal notranslate"><span class="pre">list</span></code></a>[<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><code class="xref py py-class docutils literal notranslate"><span class="pre">str</span></code></a>]</span></p>

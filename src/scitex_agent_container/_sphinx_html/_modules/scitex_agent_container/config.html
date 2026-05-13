@@ -257,8 +257,6 @@
 <li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.resolve_hostname"><code class="docutils literal notranslate"><span class="pre">resolve_hostname()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.substitute_hostnames"><code class="docutils literal notranslate"><span class="pre">substitute_hostnames()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.validate_config"><code class="docutils literal notranslate"><span class="pre">validate_config()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.validate_contributor_spec"><code class="docutils literal notranslate"><span class="pre">validate_contributor_spec()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.validate_contributor_spec_raw"><code class="docutils literal notranslate"><span class="pre">validate_contributor_spec_raw()</span></code></a></li>
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="../../api/scitex_agent_container.html#module-scitex_agent_container.runtimes.prompts">Runtimes</a><ul>
@@ -331,10 +329,6 @@
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">yaml</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">._contributor_spec_validator</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-    <span class="n">validate_contributor_spec</span><span class="p">,</span>
-    <span class="n">validate_contributor_spec_raw</span><span class="p">,</span>
-<span class="p">)</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">._host</span><span class="w"> </span><span class="kn">import</span> <span class="n">resolve_hostname</span><span class="p">,</span> <span class="n">substitute_hostnames</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">._loaders</span><span class="w"> </span><span class="kn">import</span> <span class="n">compose_effective_name</span><span class="p">,</span> <span class="n">load_v2</span><span class="p">,</span> <span class="n">load_v3</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">._resolve</span><span class="w"> </span><span class="kn">import</span> <span class="n">resolve_config</span>
@@ -383,8 +377,6 @@
     <span class="s2">&quot;resolve_hostname&quot;</span><span class="p">,</span>
     <span class="s2">&quot;substitute_hostnames&quot;</span><span class="p">,</span>
     <span class="s2">&quot;validate_config&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;validate_contributor_spec&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;validate_contributor_spec_raw&quot;</span><span class="p">,</span>
 <span class="p">]</span>
 
 
