@@ -24,7 +24,7 @@
 # Endpoints sac exposes (see src/.../a2a/_server.py):
 #   GET  /.well-known/agent.json
 #        → fleet AgentCard (all agents on this host)
-#   GET  /v1/agents/<name>/.well-known/agent.json
+#   GET  /v1/sac/agents/<name>/.well-known/agent.json
 #        → per-agent AgentCard
 #   POST /v1/turn
 #        → send a new user turn to this agent
@@ -61,7 +61,7 @@ echo '  # → {"name": "fleet", "agents": [{"name": "'"$DEMO_NAME"'", ...}]}'
 
 echo
 echo "── (B) Curl a specific agent's card ──"
-echo '$ curl -s http://127.0.0.1:'"$PORT"'/v1/agents/'"$DEMO_NAME"'/.well-known/agent.json | jq .'
+echo '$ curl -s http://127.0.0.1:'"$PORT"'/v1/sac/agents/'"$DEMO_NAME"'/.well-known/agent.json | jq .'
 echo '  # → {"name": "'"$DEMO_NAME"'", "url": "...", "capabilities": {...}}'
 
 echo

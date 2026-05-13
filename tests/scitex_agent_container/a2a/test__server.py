@@ -93,13 +93,13 @@ def test_executors_construct_from_yaml_handler():
         p = _write_yaml(tmp, "mock-claude", handler="claude_cli")
         app = build_app([p])
         with TestClient(app) as c:
-            r = c.get("/v1/agents/")
+            r = c.get("/v1/sac/agents/")
             assert r.status_code == 200
             assert r.json() == {
                 "agents": [
                     {
                         "name": "mock-claude",
-                        "url": "http://testserver/v1/agents/mock-claude",
+                        "url": "http://testserver/v1/sac/agents/mock-claude",
                     }
                 ]
             }
@@ -147,38 +147,38 @@ def test_fleet_card(echo_client: TestClient):
     body = r.json()
     assert body["name"] == "scitex-agent-container"
     assert body["x-scitex-agent-container"]["agents"] == [
-        {"name": "mock-echo", "url": "http://testserver/v1/agents/mock-echo"}
+        {"name": "mock-echo", "url": "http://testserver/v1/sac/agents/mock-echo"}
     ]
 
 
 def test_list_agents(echo_client: TestClient):
-    r = echo_client.get("/v1/agents/")
+    r = echo_client.get("/v1/sac/agents/")
     assert r.status_code == 200
     assert r.json() == {
         "agents": [
-            {"name": "mock-echo", "url": "http://testserver/v1/agents/mock-echo"}
+            {"name": "mock-echo", "url": "http://testserver/v1/sac/agents/mock-echo"}
         ]
     }
 
 
 def test_per_agent_card(echo_client: TestClient):
-    r = echo_client.get("/v1/agents/mock-echo/.well-known/agent.json")
+    r = echo_client.get("/v1/sac/agents/mock-echo/.well-known/agent.json")
     assert r.status_code == 200
     body = r.json()
     assert body["name"] == "mock-echo"
-    assert body["url"] == "http://testserver/v1/agents/mock-echo"
+    assert body["url"] == "http://testserver/v1/sac/agents/mock-echo"
     # Sac extension namespace is preserved on the dict card.
     assert "x-scitex-agent-container" in body
 
 
 def test_per_agent_card_unknown_404(echo_client: TestClient):
-    r = echo_client.get("/v1/agents/no-such-agent/.well-known/agent.json")
+    r = echo_client.get("/v1/sac/agents/no-such-agent/.well-known/agent.json")
     assert r.status_code == 404
 
 
 def test_unknown_agent_404(echo_client: TestClient):
     r = echo_client.post(
-        "/v1/agents/no-such",
+        "/v1/sac/agents/no-such",
         json={"jsonrpc": "2.0", "id": "1", "method": "message/send", "params": {}},
     )
     assert r.status_code == 404
@@ -204,7 +204,7 @@ def test_sdk_send_message(echo_client: TestClient):
         },
     }
     r = echo_client.post(
-        "/v1/agents/mock-echo", json=body, headers={"A2A-Version": "1.0"}
+        "/v1/sac/agents/mock-echo", json=body, headers={"A2A-Version": "1.0"}
     )
     assert r.status_code == 200
     env = r.json()
@@ -233,7 +233,7 @@ def test_sdk_send_streaming_message_sse(echo_client: TestClient):
     }
     with echo_client.stream(
         "POST",
-        "/v1/agents/mock-echo",
+        "/v1/sac/agents/mock-echo",
         json=body,
         headers={"A2A-Version": "1.0"},
     ) as resp:
@@ -262,7 +262,7 @@ def test_sdk_send_streaming_message_sse(echo_client: TestClient):
 def test_sdk_get_task_round_trip(echo_client: TestClient):
     """After ``SendMessage``, the resulting task is fetchable via ``GetTask``."""
     send = echo_client.post(
-        "/v1/agents/mock-echo",
+        "/v1/sac/agents/mock-echo",
         json={
             "jsonrpc": "2.0",
             "id": "send-1",
@@ -284,7 +284,7 @@ def test_sdk_get_task_round_trip(echo_client: TestClient):
     assert task_id, f"could not locate task id in send result: {result}"
 
     get = echo_client.post(
-        "/v1/agents/mock-echo",
+        "/v1/sac/agents/mock-echo",
         json={
             "jsonrpc": "2.0",
             "id": "get-1",

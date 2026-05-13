@@ -19,7 +19,9 @@ no `metadata.name` field).
 
 ```yaml
 apiVersion: scitex-agent-container/v3    # REQUIRED — v1/v2 raise loud validation errors
-kind: Agent                              # REQUIRED
+kind: Agent                              # REQUIRED — Agent | AgentProxy
+                                         # (AgentProxy → HTTP forwarder, no SDK;
+                                         #  see spec.proxy + examples/agents/proxy-agent)
 
 metadata:
   labels:                                # drives `sac fleet` filters AND the AgentCard
@@ -45,6 +47,7 @@ spec:
   restart:      { ... }
   autonomous:   { ... }
   a2a:          { port: 7901 }
+  proxy:        { upstream: https://peer/, trust: untrusted }   # kind: AgentProxy only
   listen:       { port: 7878 }
   skills:       { required: [...] }
   telegram:     { ... }
@@ -71,7 +74,7 @@ when `spec.a2a.port` is set) and `GET /v1/sac/agents/<name>/card`
 | `name`                                | parent directory of `spec.yaml`                  |
 | `description`                         | `metadata.labels.description` (else auto)        |
 | `version`                             | `apiVersion`                                     |
-| `url`                                 | `<base>/v1/agents/<name>`                        |
+| `url`                                 | `<base>/v1/sac/agents/<name>`                        |
 | `provider.organization`               | `metadata.labels.team`                           |
 | `skills[0].id` / `name`               | `metadata.labels.role`                           |
 | `skills[0].description`               | `metadata.labels.function`                       |
@@ -192,6 +195,45 @@ sac agents start <name> --resume <sid>             # implies --session resume
 CLI flags ALWAYS override the YAML — one-direction precedence so a
 per-invocation tweak doesn't mutate the persistent default.
 
+## `kind: AgentProxy` — HTTP forwarder agents
+
+A proxy agent forwards `POST /v1/turn` to an **external A2A
+endpoint** instead of running a Claude SDK conversation in-process.
+There is no SDK in the container; the runner is a thin Starlette
+forwarder (image: `sac-proxy.sif`, lighter than `sac-scitex.sif` —
+no Python ML stack).
+
+Authoring contract:
+
+- `kind: AgentProxy` (instead of `kind: Agent`).
+- `spec.proxy` is **REQUIRED**.
+- `spec.claude`, `spec.startup_prompts`, `spec.startup_commands` are
+  rejected at validation time (no SDK to configure / prompt).
+- `spec.a2a.port` works the same — that's the port operators POST to.
+
+### `spec.proxy` reference
+
+| Field           | Type              | Default       | Notes                                                                                  |
+|-----------------|-------------------|---------------|----------------------------------------------------------------------------------------|
+| `upstream`      | string (REQUIRED) | —             | Full URL to the upstream A2A endpoint (must start with `http://` or `https://`).        |
+| `trust`         | enum              | `untrusted`   | `untrusted` / `local-mesh` / `trusted`. Advisory — surfaced on our AgentCard.           |
+| `redact`        | list[str]         | `[]`          | Substring tokens; any inbound `text` containing one is refused HTTP 400 before forward. |
+| `timeout_s`     | float > 0         | `30.0`        | Per-turn upstream HTTP timeout. Longer forwards return HTTP 504 to the caller.          |
+
+### Security notes
+
+- Proxy is HTTP-only — no mTLS in the MVP (the `trusted` level is
+  reserved for future work).
+- Default trust is `untrusted`; operators must opt in to anything
+  more permissive.
+- Egress lockdown is application-layer: a 3xx redirect from upstream
+  to a *different* host is rejected with HTTP 502. The MVP does
+  not enforce an apptainer `--net` policy.
+- Runs in `sac-proxy.sif` — see `containers/sac-proxy.def`.
+
+See [`examples/agents/proxy-agent/spec.yaml`](../examples/agents/proxy-agent/spec.yaml)
+for a complete minimal example.
+
 ## Examples
 
 Copy from [`examples/agents/`](../examples/agents/):
@@ -199,3 +241,4 @@ Copy from [`examples/agents/`](../examples/agents/):
 - [`full-agent/`](../examples/agents/full-agent/) — annotated spec exercising every supported field (plus `dot_claude/` layout)
 - [`minimal-agent/`](../examples/agents/minimal-agent/) — bare minimum, no `dot_claude`
 - [`hello-agent/`](../examples/agents/hello-agent/) — quickstart with `startup_prompts`
+- [`proxy-agent/`](../examples/agents/proxy-agent/) — `kind: AgentProxy` forwarder example

@@ -72,7 +72,7 @@ def project_card(name: str, v3: dict[str, Any], base_url: str) -> dict[str, Any]
         "name": name,
         "description": _read_description(name, v3),
         "version": v3.get("apiVersion", "scitex-agent-container/v3"),
-        "url": f"{base}/v1/agents/{name}",
+        "url": f"{base}/v1/sac/agents/{name}",
         "provider": {
             "organization": labels.get("team", "scitex-agent-container"),
             "url": "https://scitex.ai",
@@ -178,11 +178,11 @@ def fleet_card(
             {
                 "id": "sac.fleet",
                 "name": "fleet",
-                "description": ("sac-served fleet — see /v1/agents/ for members."),
+                "description": ("sac-served fleet — see /v1/sac/agents/ for members."),
                 "tags": ["multi-agent", "scitex-agent-container"],
             }
         ],
         "x-scitex-agent-container": {
-            "agents": [{"name": n, "url": f"{base}/v1/agents/{n}"} for n in agents],
+            "agents": [{"name": n, "url": f"{base}/v1/sac/agents/{n}"} for n in agents],
         },
     }

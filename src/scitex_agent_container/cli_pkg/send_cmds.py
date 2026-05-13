@@ -8,7 +8,7 @@ before shelling out so claude's per-project session lookup resolves.
 
 v1 scope: bare-CLI passthrough. The follow-up implementation order in
 ``GITIGNORED/SAC_OROCHI_SCOPES.md`` then exposes this through
-``sac listen`` + ``POST /v1/agents/<name>/send``.
+``sac listen`` + ``POST /v1/sac/agents/<name>/send``.
 """
 
 from __future__ import annotations

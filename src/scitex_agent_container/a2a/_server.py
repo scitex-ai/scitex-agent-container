@@ -9,10 +9,10 @@ There is no legacy compat layer — sac speaks current A2A only.
 Routes (mirroring the spec):
 
 * ``GET /.well-known/agent.json`` — fleet AgentCard (sac dict shape).
-* ``GET /v1/agents/`` — JSON list of agents.
-* ``GET /v1/agents/<name>/.well-known/agent.json`` — per-agent AgentCard
+* ``GET /v1/sac/agents/`` — JSON list of agents.
+* ``GET /v1/sac/agents/<name>/.well-known/agent.json`` — per-agent AgentCard
   (sac dict shape; preserves the ``x-scitex-agent-container`` extension).
-* ``POST /v1/agents/<name>`` — SDK JSON-RPC dispatcher.
+* ``POST /v1/sac/agents/<name>`` — SDK JSON-RPC dispatcher.
 
 Card projection: see :mod:`._card`. The HTTP ``.well-known`` route serves
 the dict projection (which keeps sac-extension fields). The SDK's
@@ -84,7 +84,7 @@ class _AgentDispatcher:
         # SDK JSON-RPC routes — current A2A spec only, no v0.3 compat.
         self.routes: list[Route] = create_jsonrpc_routes(
             request_handler=self.request_handler,
-            rpc_url=f"/_sdk/v1/agents/{name}",
+            rpc_url=f"/_sdk/v1/sac/agents/{name}",
         )
 
     async def snapshot_active_tasks(self) -> list[dict[str, Any]]:
@@ -147,7 +147,7 @@ def _build_app(ctx: _ServerCtx) -> Starlette:
         base = _base_url(request)
         agents = sorted(ctx.yamls.keys())
         return JSONResponse(
-            {"agents": [{"name": n, "url": f"{base}/v1/agents/{n}"} for n in agents]}
+            {"agents": [{"name": n, "url": f"{base}/v1/sac/agents/{n}"} for n in agents]}
         )
 
     async def get_agent_card(request: Request) -> Response:
@@ -202,16 +202,16 @@ def _build_app(ctx: _ServerCtx) -> Starlette:
 
     routes = [
         Route("/.well-known/agent.json", get_fleet_card, methods=["GET"]),
-        Route("/v1/agents/", list_agents, methods=["GET"]),
+        Route("/v1/sac/agents/", list_agents, methods=["GET"]),
         Route(
-            "/v1/agents/{name}/.well-known/agent.json",
+            "/v1/sac/agents/{name}/.well-known/agent.json",
             get_agent_card,
             methods=["GET"],
         ),
-        Route("/v1/agents/{name}", post_agent, methods=["POST"]),
-        Route("/v1/agents/{name}/", post_agent, methods=["POST"]),
+        Route("/v1/sac/agents/{name}", post_agent, methods=["POST"]),
+        Route("/v1/sac/agents/{name}/", post_agent, methods=["POST"]),
         Route(
-            "/v1/agents/{name}/_active",
+            "/v1/sac/agents/{name}/_active",
             get_active_tasks,
             methods=["GET"],
         ),

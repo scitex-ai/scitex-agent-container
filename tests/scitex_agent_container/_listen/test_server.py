@@ -65,20 +65,20 @@ def test_health_is_public(client):
 
 def test_missing_token_is_401(client):
     c, _ = client
-    r = c.get("/v1/agents")
+    r = c.get("/v1/sac/agents")
     assert r.status_code == 401
     assert "missing" in r.json()["error"]
 
 
 def test_wrong_token_is_403(client):
     c, _ = client
-    r = c.get("/v1/agents", headers={"Authorization": "Bearer nope"})
+    r = c.get("/v1/sac/agents", headers={"Authorization": "Bearer nope"})
     assert r.status_code == 403
 
 
 def test_bearer_scheme_case_insensitive(client):
     c, _ = client
-    r = c.get("/v1/agents", headers={"Authorization": f"bearer {TOKEN}"})
+    r = c.get("/v1/sac/agents", headers={"Authorization": f"bearer {TOKEN}"})
     assert r.status_code == 200
 
 
@@ -87,7 +87,7 @@ def test_bearer_scheme_case_insensitive(client):
 
 def test_list_agents_returns_array(client):
     c, _ = client
-    r = c.get("/v1/agents", headers=auth_headers())
+    r = c.get("/v1/sac/agents", headers=auth_headers())
     assert r.status_code == 200
     assert "agents" in r.json()
     assert isinstance(r.json()["agents"], list)
@@ -95,7 +95,7 @@ def test_list_agents_returns_array(client):
 
 def test_status_returns_session_id_and_workdir(client):
     c, tmp_path = client
-    r = c.get("/v1/agents/alpha/status", headers=auth_headers())
+    r = c.get("/v1/sac/agents/alpha/status", headers=auth_headers())
     assert r.status_code == 200
     body = r.json()
     assert body["name"] == "alpha"
@@ -105,7 +105,7 @@ def test_status_returns_session_id_and_workdir(client):
 
 def test_status_unknown_agent_is_404(client):
     c, _ = client
-    r = c.get("/v1/agents/does-not-exist/status", headers=auth_headers())
+    r = c.get("/v1/sac/agents/does-not-exist/status", headers=auth_headers())
     assert r.status_code == 404
 
 
@@ -115,7 +115,7 @@ def test_status_unknown_agent_is_404(client):
 def test_send_requires_json(client):
     c, _ = client
     r = c.post(
-        "/v1/agents/alpha/send",
+        "/v1/sac/agents/alpha/send",
         data="not-json",
         headers=auth_headers(),
     )
@@ -132,7 +132,7 @@ def test_send_key_esc_sends_sigint(client):
         side_effect=lambda pid, sig: killed.update(pid=pid, sig=sig),
     ):
         r = c.post(
-            "/v1/agents/alpha/send",
+            "/v1/sac/agents/alpha/send",
             json={"type": "key", "key": "ESC"},
             headers=auth_headers(),
         )
@@ -145,7 +145,7 @@ def test_send_key_esc_sends_sigint(client):
 def test_send_key_unknown_is_400(client):
     c, _ = client
     r = c.post(
-        "/v1/agents/alpha/send",
+        "/v1/sac/agents/alpha/send",
         json={"type": "key", "key": "F12"},
         headers=auth_headers(),
     )
@@ -155,7 +155,7 @@ def test_send_key_unknown_is_400(client):
 def test_send_missing_prompt_is_400(client):
     c, _ = client
     r = c.post(
-        "/v1/agents/alpha/send",
+        "/v1/sac/agents/alpha/send",
         json={"type": "prompt"},
         headers=auth_headers(),
     )
@@ -165,7 +165,7 @@ def test_send_missing_prompt_is_400(client):
 def test_send_no_session_id_is_409(client):
     c, _ = client
     r = c.post(
-        "/v1/agents/ghost/send",
+        "/v1/sac/agents/ghost/send",
         json={"prompt": "hello"},
         headers=auth_headers(),
     )
@@ -175,7 +175,7 @@ def test_send_no_session_id_is_409(client):
 def test_send_unknown_agent_is_404(client):
     c, _ = client
     r = c.post(
-        "/v1/agents/missing/send",
+        "/v1/sac/agents/missing/send",
         json={"prompt": "hello"},
         headers=auth_headers(),
     )
@@ -208,7 +208,7 @@ def test_send_happy_path_invokes_claude(client):
         ),
     ):
         r = c.post(
-            "/v1/agents/alpha/send",
+            "/v1/sac/agents/alpha/send",
             json={"prompt": "follow up", "options": {"model": "opus", "max_turns": 2}},
             headers=auth_headers(),
         )
@@ -297,7 +297,7 @@ def test_send_routes_to_live_runner_when_a2a_port_set(tmp_path, monkeypatch):
         side_effect=fake_urlopen,
     ):
         r = c.post(
-            "/v1/agents/live/send",
+            "/v1/sac/agents/live/send",
             json={"prompt": "hello live"},
             headers=auth_headers(),
         )
@@ -346,7 +346,7 @@ def test_send_falls_back_when_live_runner_unreachable(tmp_path, monkeypatch):
         ),
     ):
         r = c.post(
-            "/v1/agents/down/send",
+            "/v1/sac/agents/down/send",
             json={"prompt": "hello fallback"},
             headers=auth_headers(),
         )
@@ -359,13 +359,13 @@ def test_send_falls_back_when_live_runner_unreachable(tmp_path, monkeypatch):
 
 def test_post_agents_rejects_non_json(client):
     c, _ = client
-    r = c.post("/v1/agents", data="x", headers=auth_headers())
+    r = c.post("/v1/sac/agents", data="x", headers=auth_headers())
     assert r.status_code == 400
 
 
 def test_post_agents_requires_name(client):
     c, _ = client
-    r = c.post("/v1/agents", json={}, headers=auth_headers())
+    r = c.post("/v1/sac/agents", json={}, headers=auth_headers())
     assert r.status_code == 400
     assert "name" in r.json()["error"]
 
@@ -394,7 +394,7 @@ def test_post_agents_inline_spec_writes_file_and_starts(client, tmp_path, monkey
         ),
     ):
         r = c.post(
-            "/v1/agents",
+            "/v1/sac/agents",
             json={
                 "name": "adhoc-1",
                 "spec": {
@@ -419,7 +419,7 @@ def test_post_agents_inline_spec_rejects_wrong_apiversion(
     c, _ = client
     monkeypatch.setenv("HOME", str(tmp_path))
     r = c.post(
-        "/v1/agents",
+        "/v1/sac/agents",
         json={
             "name": "bad",
             "spec": {"apiVersion": "v1", "kind": "Agent"},
@@ -442,7 +442,7 @@ def test_post_agents_inline_spec_conflicts_without_overwrite(
     monkeypatch.setenv("HOME", str(fake_home))
 
     r = c.post(
-        "/v1/agents",
+        "/v1/sac/agents",
         json={
             "name": "dup",
             "spec": {
@@ -482,7 +482,7 @@ def test_post_agents_shells_out_to_sac_agent_start(client):
             side_effect=fake_run,
         ),
     ):
-        r = c.post("/v1/agents", json={"name": "alpha"}, headers=auth_headers())
+        r = c.post("/v1/sac/agents", json={"name": "alpha"}, headers=auth_headers())
     assert r.status_code == 200, r.text
     assert captured["argv"] == ["/usr/bin/sac", "agent", "start", "alpha"]
     body = r.json()
@@ -492,7 +492,7 @@ def test_post_agents_shells_out_to_sac_agent_start(client):
 
 def test_card_returns_a2a_shape(client):
     c, _ = client
-    r = c.get("/v1/agents/alpha/card", headers=auth_headers())
+    r = c.get("/v1/sac/agents/alpha/card", headers=auth_headers())
     assert r.status_code == 200, r.text
     card = r.json()
     # AgentCard required fields per A2A v0.3+: name, description, url, version, capabilities
@@ -504,13 +504,13 @@ def test_card_returns_a2a_shape(client):
 
 def test_card_unknown_agent_is_404(client):
     c, _ = client
-    r = c.get("/v1/agents/does-not-exist/card", headers=auth_headers())
+    r = c.get("/v1/sac/agents/does-not-exist/card", headers=auth_headers())
     assert r.status_code == 404
 
 
 def test_delete_no_pid_file_is_404(client):
     c, _ = client
-    r = c.delete("/v1/agents/alpha", headers=auth_headers())
+    r = c.delete("/v1/sac/agents/alpha", headers=auth_headers())
     assert r.status_code == 404
 
 
@@ -527,7 +527,7 @@ def test_delete_signals_pid(client):
         killed["sig"] = sig
 
     with patch("scitex_agent_container._listen.server.os.kill", side_effect=fake_kill):
-        r = c.delete("/v1/agents/alpha", headers=auth_headers())
+        r = c.delete("/v1/sac/agents/alpha", headers=auth_headers())
     assert r.status_code == 200, r.text
     assert r.json()["stopped"] is True
     assert killed == {"pid": 12345, "sig": 15}
@@ -593,7 +593,7 @@ def test_send_sse_streams_stream_json_lines(client):
     ):
         with c.stream(
             "POST",
-            "/v1/agents/alpha/send",
+            "/v1/sac/agents/alpha/send",
             json={"prompt": "go"},
             headers={**auth_headers(), "Accept": "text/event-stream"},
         ) as r:
@@ -725,7 +725,7 @@ def test_list_agents_returns_500_on_registry_error(client_extra):
     with patch(
         "scitex_agent_container._listen.server.Registry", side_effect=lambda: Boom()
     ):
-        r = c.get("/v1/agents", headers=_auth_extra())
+        r = c.get("/v1/sac/agents", headers=_auth_extra())
     assert r.status_code == 500
     assert "registry broken" in r.json()["error"]
 
@@ -769,7 +769,7 @@ spec:
         "scitex_agent_container._listen.server._urlrequest.urlopen",
         side_effect=boom,
     ):
-        r = c.post("/v1/agents/live/send", json={"prompt": "x"}, headers=_auth_extra())
+        r = c.post("/v1/sac/agents/live/send", json={"prompt": "x"}, headers=_auth_extra())
     assert r.status_code == 502
     body = r.json()
     assert body["route"] == "live-runner"
@@ -783,7 +783,7 @@ spec:
 def test_send_unknown_type_is_400(client_extra):
     c, _ = client_extra
     r = c.post(
-        "/v1/agents/alpha/send",
+        "/v1/sac/agents/alpha/send",
         json={"type": "weird"},
         headers=_auth_extra(),
     )
@@ -795,7 +795,7 @@ def test_send_key_no_live_session_is_404(client_extra):
     c, _ = client_extra
     # no pid file seeded for alpha
     r = c.post(
-        "/v1/agents/alpha/send", json={"type": "key", "key": "C-c"}, headers=_auth_extra()
+        "/v1/sac/agents/alpha/send", json={"type": "key", "key": "C-c"}, headers=_auth_extra()
     )
     assert r.status_code == 404
     assert "no live session" in r.json()["error"]
@@ -810,7 +810,7 @@ def test_send_key_oskill_oserror_is_500(client_extra):
 
     with patch("scitex_agent_container._listen.server.os.kill", side_effect=boom):
         r = c.post(
-            "/v1/agents/alpha/send", json={"type": "key", "key": "ESC"}, headers=_auth_extra()
+            "/v1/sac/agents/alpha/send", json={"type": "key", "key": "ESC"}, headers=_auth_extra()
         )
     assert r.status_code == 500
     assert "no such process" in r.json()["error"]
@@ -822,7 +822,7 @@ def test_send_claude_binary_missing_is_500(client_extra):
         "scitex_agent_container._listen.server._find_claude_binary",
         side_effect=RuntimeError("claude binary not found"),
     ):
-        r = c.post("/v1/agents/alpha/send", json={"prompt": "hi"}, headers=_auth_extra())
+        r = c.post("/v1/sac/agents/alpha/send", json={"prompt": "hi"}, headers=_auth_extra())
     assert r.status_code == 500
     assert "claude binary not found" in r.json()["error"]
 
@@ -943,7 +943,7 @@ def test_tail_404_when_missing_and_not_follow(client_extra, tmp_path, monkeypatc
         "scitex_agent_container._listen.server._runtime_session_jsonl",
         lambda name: tmp_path / "missing.jsonl",
     )
-    r = c.get("/v1/agents/alpha/tail", headers=_auth_extra())
+    r = c.get("/v1/sac/agents/alpha/tail", headers=_auth_extra())
     assert r.status_code == 404
     assert "no session.jsonl" in r.json()["error"]
 
@@ -961,7 +961,7 @@ def test_tail_streams_existing_lines(client_extra, tmp_path, monkeypatch):
         "scitex_agent_container._listen.server._runtime_session_jsonl",
         lambda name: jsonl,
     )
-    with c.stream("GET", "/v1/agents/alpha/tail", headers=_auth_extra()) as r:
+    with c.stream("GET", "/v1/sac/agents/alpha/tail", headers=_auth_extra()) as r:
         assert r.status_code == 200
         body = b"".join(r.iter_bytes()).decode("utf-8")
     assert '"msg": "a"' in body
@@ -983,7 +983,7 @@ def test_tail_since_filter_drops_old_records(client_extra, tmp_path, monkeypatch
     )
     with c.stream(
         "GET",
-        "/v1/agents/alpha/tail",
+        "/v1/sac/agents/alpha/tail",
         params={"since": "2026-05-01T00:00:00"},
         headers=_auth_extra(),
     ) as r:
@@ -1007,7 +1007,7 @@ def test_card_yaml_oserror_is_500(client_extra, tmp_path):
         return real_open(path, *a, **kw)
 
     with patch("builtins.open", side_effect=bad_open):
-        r = c.get("/v1/agents/alpha/card", headers=_auth_extra())
+        r = c.get("/v1/sac/agents/alpha/card", headers=_auth_extra())
     assert r.status_code == 500
     assert "disk burst" in r.json()["error"]
 
@@ -1022,7 +1022,7 @@ def test_delete_oserror_is_500(client_extra, tmp_path):
         "scitex_agent_container._listen.server.os.kill",
         side_effect=OSError("ESRCH"),
     ):
-        r = c.delete("/v1/agents/alpha", headers=_auth_extra())
+        r = c.delete("/v1/sac/agents/alpha", headers=_auth_extra())
     assert r.status_code == 500
     assert "ESRCH" in r.json()["error"]
 
@@ -1030,7 +1030,7 @@ def test_delete_oserror_is_500(client_extra, tmp_path):
 def test_delete_bad_pid_value_is_500(client_extra, tmp_path):
     c, _ = client_extra
     (tmp_path / "state" / "alpha" / "pid").write_text("not-an-int", encoding="utf-8")
-    r = c.delete("/v1/agents/alpha", headers=_auth_extra())
+    r = c.delete("/v1/sac/agents/alpha", headers=_auth_extra())
     assert r.status_code == 500
 
 

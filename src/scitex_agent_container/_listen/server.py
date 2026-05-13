@@ -1,16 +1,16 @@
 """Starlette app factory for ``sac listen``.
 
-Hosts symmetric ``/v1/agents/...`` and ``/v1/a2a/...`` namespaces as
+Hosts symmetric ``/v1/sac/agents/...`` and ``/v1/a2a/...`` namespaces as
 designed in REQUIREMENT_SUMMARY.md §4. v1 endpoints:
 
     GET    /v1/health
-    GET    /v1/agents
-    POST   /v1/agents                       (create/start from spec)
-    GET    /v1/agents/<name>/status
-    GET    /v1/agents/<name>/tail           (SSE stream of session.jsonl)
-    POST   /v1/agents/<name>/send           (prompt or key)
-    GET    /v1/agents/<name>/card           (A2A-compatible card)
-    DELETE /v1/agents/<name>
+    GET    /v1/sac/agents
+    POST   /v1/sac/agents                       (create/start from spec)
+    GET    /v1/sac/agents/<name>/status
+    GET    /v1/sac/agents/<name>/tail           (SSE stream of session.jsonl)
+    POST   /v1/sac/agents/<name>/send           (prompt or key)
+    GET    /v1/sac/agents/<name>/card           (A2A-compatible card)
+    DELETE /v1/sac/agents/<name>
 
 The ``/v1/a2a/...`` mirror registers the same handlers under the A2A
 protocol-compat prefix. No backward-compat for the legacy ``/v1/sac/``
@@ -154,7 +154,7 @@ async def _forward_to_live_runner(
 
 
 async def agent_send(request: Request) -> Response:
-    """POST /v1/agents/<name>/send.
+    """POST /v1/sac/agents/<name>/send.
 
     Body discriminator (per REQUIREMENT_SUMMARY §4.2):
         {"type":"prompt","prompt":"...","options":{...}}
@@ -439,7 +439,7 @@ async def _stream_tail(path: Path, since: datetime | None, follow: bool):
 
 
 async def agent_tail(request: Request) -> Response:
-    """GET /v1/agents/<name>/tail?since=<iso>&follow=<bool>.
+    """GET /v1/sac/agents/<name>/tail?since=<iso>&follow=<bool>.
 
     Server-Sent Events stream of the per-agent ``session.jsonl`` lines
     at ``~/.scitex/agent-container/runtime/<name>/session.jsonl``.
@@ -464,7 +464,7 @@ async def agent_tail(request: Request) -> Response:
 
 
 async def agents_start(request: Request) -> JSONResponse:
-    """POST /v1/agents — start one or more agents.
+    """POST /v1/sac/agents — start one or more agents.
 
     Body shapes:
 
@@ -520,7 +520,7 @@ async def agents_start(request: Request) -> JSONResponse:
 
 
 async def agent_card(request: Request) -> JSONResponse:
-    """GET /v1/agents/<name>/card (mirrored at /v1/a2a/agents/<name>/card).
+    """GET /v1/sac/agents/<name>/card (mirrored at /v1/a2a/agents/<name>/card).
 
     Returns an A2A-compatible AgentCard built from the agent's v3 spec.
     """
@@ -545,7 +545,7 @@ async def agent_card(request: Request) -> JSONResponse:
 
 
 async def agent_delete(request: Request) -> JSONResponse:
-    """DELETE /v1/agents/<name> — stop the agent."""
+    """DELETE /v1/sac/agents/<name> — stop the agent."""
     name = request.path_params["name"]
     sd = state_dir_for(name)
     pid_file = sd / "pid"
@@ -565,7 +565,7 @@ async def agent_delete(request: Request) -> JSONResponse:
 def _v1_agent_routes(prefix: str) -> list[Route]:
     """Build the agent route set under a given prefix.
 
-    Used to register identical handlers at both ``/v1/agents`` and
+    Used to register identical handlers at both ``/v1/sac/agents`` and
     ``/v1/a2a/agents`` per the symmetric-namespace requirement.
     """
     return [
@@ -583,11 +583,11 @@ def create_app(*, token: str) -> Starlette:
     """Build the Starlette app with bearer auth and v1 routes.
 
     Two symmetric prefixes share identical handlers:
-        - /v1/agents/...   sac-native verbs
+        - /v1/sac/agents/...   sac-native verbs
         - /v1/a2a/agents/... A2A-protocol-compat mirror
     """
     routes: list[Route] = [Route("/v1/health", health, methods=["GET"])]
-    routes += _v1_agent_routes("/v1/agents")
+    routes += _v1_agent_routes("/v1/sac/agents")
     routes += _v1_agent_routes("/v1/a2a/agents")
     app = Starlette(routes=routes)
     app.add_middleware(BearerAuthMiddleware, token=token)

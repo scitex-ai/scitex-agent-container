@@ -61,7 +61,7 @@ def _client_for_upstream(upstream_app: Starlette) -> httpx.AsyncClient:
 def test_splice_card_preserves_upstream_skills_overrides_name_and_url() -> None:
     upstream = {
         "name": "real-peer",
-        "url": "http://peer/v1/agents/real-peer",
+        "url": "http://peer/v1/sac/agents/real-peer",
         "skills": [{"id": "peer.do-things", "name": "do-things"}],
         "capabilities": {"streaming": True},
         "provider": {"organization": "peer-org"},
@@ -69,12 +69,12 @@ def test_splice_card_preserves_upstream_skills_overrides_name_and_url() -> None:
     out = splice_card(
         upstream,
         name="proxy-front",
-        our_url="http://us/v1/agents/proxy-front",
+        our_url="http://us/v1/sac/agents/proxy-front",
         upstream="https://peer.example.com",
         trust="local-mesh",
     )
     assert out["name"] == "proxy-front"
-    assert out["url"] == "http://us/v1/agents/proxy-front"
+    assert out["url"] == "http://us/v1/sac/agents/proxy-front"
     assert out["skills"] == upstream["skills"]
     assert out["capabilities"] == upstream["capabilities"]
     assert out["provider"] == upstream["provider"]
@@ -89,7 +89,7 @@ def test_splice_card_surfaces_fetch_error_when_upstream_none() -> None:
     out = splice_card(
         None,
         name="proxy-front",
-        our_url="http://us/v1/agents/proxy-front",
+        our_url="http://us/v1/sac/agents/proxy-front",
         upstream="https://peer.example.com",
         trust="untrusted",
         fetch_error="ConnectError: dial timeout",
@@ -244,7 +244,7 @@ def test_upstream_redirect_to_other_host_returns_502() -> None:
 def test_agent_card_splices_upstream_card_with_our_overrides() -> None:
     upstream_card = {
         "name": "real-peer",
-        "url": "http://peer/v1/agents/real-peer",
+        "url": "http://peer/v1/sac/agents/real-peer",
         "skills": [{"id": "peer.do-things", "name": "do-things"}],
         "capabilities": {"streaming": True},
     }
@@ -269,7 +269,7 @@ def test_agent_card_splices_upstream_card_with_our_overrides() -> None:
         )
         assert card["x-scitex-agent-container"]["trust"] == "local-mesh"
         # url is request-derived (testserver host); just sanity check shape.
-        assert "/v1/agents/proxy-front" in card["url"]
+        assert "/v1/sac/agents/proxy-front" in card["url"]
 
 
 def test_agent_card_fallback_when_upstream_card_missing() -> None:

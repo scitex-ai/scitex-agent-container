@@ -114,7 +114,7 @@ async def serve_inbound(
     # Per-agent sidecar routes — mirror sac listen's path shape so the
     # same URL works whether the client routes through the host control
     # plane or POSTs directly to the agent's port. Both namespaces
-    # (canonical `/v1/agents/...` and A2A-compat `/v1/a2a/agents/...`)
+    # (canonical `/v1/sac/agents/...` and A2A-compat `/v1/a2a/agents/...`)
     # point at the same handlers; the path ``{name}`` segment is ignored
     # because the port already identifies the agent.
     async def post_turn_named(request: Request) -> JSONResponse:
