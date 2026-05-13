@@ -250,8 +250,10 @@ with an explicit error, never silently propagates.
 | Per-agent preflight in `startup_commands` | ✅ pattern documented (this doc) |
 | Default `--containall` in apptainer argv if operator doesn't override | ✅ shipped (auto-prepended when `apptainer.relaxed: false`) |
 | `apptainer.relaxed: true` opt-out to disable hardened defaults | ✅ shipped (`spec.apptainer.relaxed`) |
-| sac-injected preflight (before user's `startup_commands`) | ⏳ planned |
-| AgentCard `isolation_level: hardened \| relaxed \| custom` field | ⏳ planned |
+| Default `--cleanenv` + `--writable-tmpfs` auto-prepend (D1) | ✅ shipped |
+| sac-injected static $HOME-visibility preflight (D2) | ✅ shipped |
+| AgentCard structured `isolation` block (D3) | ✅ shipped |
+| `sac agents check` warns on host-mirroring bind targets (D4) | ✅ shipped |
 | `sac image overlay {init,reset,prune}` for ephemeral-overlay workflows | ⏳ planned |
 
 The AgentCard field is the differentiator: external verifiers (orochi,

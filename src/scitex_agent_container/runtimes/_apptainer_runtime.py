@@ -79,16 +79,30 @@ class ApptainerContainerRuntime(RuntimeBase):
         result and writes its PID file.
         """
         # Hardened isolation by default (closes the auto-bind leak —
-        # see docs/isolation.md §1). Skipped when:
+        # see docs/isolation.md §1 + docs/design/2026-05-13-isolation-hardening.md).
+        # Skipped when:
         #   * spec.apptainer.relaxed: true (operator opt-out), OR
-        #   * operator already declared --containall in raw_args.
+        #   * operator already declared the flag in raw_args.
+        # --writable-tmpfs is additionally skipped when an overlay image
+        # is in use, because apptainer rejects the combination.
         ap_iso = getattr(config, "apptainer", None)
         relaxed = bool(getattr(ap_iso, "relaxed", False)) if ap_iso else False
         raw_args_decl = list(getattr(ap_iso, "raw_args", None) or []) if ap_iso else []
         operator_set_containall = any(
             "--containall" in a or a == "--contain" for a in raw_args_decl
         )
+        operator_set_cleanenv = any(a == "--cleanenv" for a in raw_args_decl)
+        operator_set_writable_tmpfs = any(
+            a == "--writable-tmpfs" for a in raw_args_decl
+        )
+        ap_overlay_decl = (
+            (getattr(ap_iso, "overlay", "") or "") if ap_iso is not None else ""
+        )
         prepend_containall = (not relaxed) and not operator_set_containall
+        prepend_cleanenv = (not relaxed) and not operator_set_cleanenv
+        prepend_writable_tmpfs = (
+            (not relaxed) and not operator_set_writable_tmpfs and not ap_overlay_decl
+        )
 
         argv: list[str] = [
             "apptainer",
@@ -96,6 +110,10 @@ class ApptainerContainerRuntime(RuntimeBase):
         ]
         if prepend_containall:
             argv.append("--containall")
+        if prepend_cleanenv:
+            argv.append("--cleanenv")
+        if prepend_writable_tmpfs:
+            argv.append("--writable-tmpfs")
         argv += [
             # Bind-mounts: workdir → <container_workdir>, state_dir → /state/<name>.
             # apptainer accepts the docker syntax for src:dst:[options].
