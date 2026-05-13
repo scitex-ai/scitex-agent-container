@@ -1,5 +1,5 @@
 <!-- ---
-!-- Timestamp: 2026-05-13 10:52:36
+!-- Timestamp: 2026-05-13 11:03:02
 !-- Author: ywatanabe
 !-- File: /home/ywatanabe/proj/scitex-agent-container/README.md
 !-- --- -->
@@ -57,7 +57,7 @@ sac image build base # base image; ~5 min
 
 # 2. Define agents by writing YAML files under ~/.scitex/agent-container/agents/<agent-name>
 define_hello_agents() {
-    for agent_id in 1 2 3; do
+    for agent_id in 1 2; do
         agent_dir=~/.scitex/agent-container/agents/"hello-agent-$agent_id"
 
         mkdir -p "$agent_dir" >/dev/null
@@ -88,7 +88,17 @@ YAML
 define_hello_agents
 
 # 3. Start an agent in foreground
-sac agents start hello-agent-1 hello-agent-2 hello-agent-3 --foreground
+sac agents start hello-agent-1 hello-agent-2 --foreground
+# INFO: starting hello-agent-1 → ywata-note-win@/home/ywatanabe/.scitex/agent-container/runtime/agents/hello-agent-1:/work
+# INFO: CLAUDE.md updated for agent hello-agent-1 at /home/ywatanabe/.scitex/agent-container/runtime/agents/hello-agent-1/.claude/CLAUDE.md
+# SUCC: hello-agent-1 started (ywata-note-win@/home/ywatanabe/.scitex/agent-container/runtime/agents/hello-agent-1:/work)
+#  
+# INFO: starting hello-agent-2 → ywata-note-win@/home/ywatanabe/.scitex/agent-container/runtime/agents/hello-agent-2:/work
+# INFO: CLAUDE.md updated for agent hello-agent-2 at /home/ywatanabe/.scitex/agent-container/runtime/agents/hello-agent-2/.claude/CLAUDE.md
+# SUCC: hello-agent-2 started (ywata-note-win@/home/ywatanabe/.scitex/agent-container/runtime/agents/hello-agent-2:/work)
+
+# [hello-agent-1] (stopped)
+# [hello-agent-2] (stopped)
 
 # 4. Check agents
 sac agents list
@@ -98,20 +108,19 @@ sac agents list
 # ┡━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━┩
 # │ hello-agent-1 │ defined │ ✓    │ local │ /home/ywatanabe/.scitex/agent-container/agents/hello-agent-1/spec.yaml │ —       │
 # │ hello-agent-2 │ defined │ ✓    │ local │ /home/ywatanabe/.scitex/agent-container/agents/hello-agent-2/spec.yaml │ —       │
-# │ hello-agent-3 │ defined │ ✓    │ local │ /home/ywatanabe/.scitex/agent-container/agents/hello-agent-3/spec.yaml │ —       │
 # └───────────────┴─────────┴──────┴───────┴────────────────────────────────────────────────────────────────────────┴─────────┘
 
 # 5. Start multiple agents in background (default)
-sac agents start hello-agent-1 hello-agent-2 hello-agent-3
+sac agents start hello-agent-1 hello-agent-2
 
 # 6. Read the outputs in JSON format
-sac agents tail hello-agent-1 hello-agent-2 hello-agent-3 --json
+sac agents tail hello-agent-1 hello-agent-2 --json
 
 # 7. Stop agents
-sac agents stop hello-agent-1 hello-agent-2 hello-agent-3
+sac agents stop hello-agent-1 hello-agent-2
 
 # 8. Delete agents
-sac agents delete hello-agent-1 hello-agent-2 hello-agent-3 -y
+sac agents delete hello-agent-1 hello-agent-2 -y
 ```
 
 ## How it works
