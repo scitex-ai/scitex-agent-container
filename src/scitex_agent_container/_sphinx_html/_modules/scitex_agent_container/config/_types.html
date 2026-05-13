@@ -503,6 +503,13 @@
 <span class="sd">    next to the base SIF directory (``containers/sac-base/sac-base.sif``),</span>
 <span class="sd">    mirroring scitex-template&#39;s singularity convention.&quot;&quot;&quot;</span>
 
+    <span class="c1"># Opt OUT of sac&#39;s hardened-by-default isolation. When False</span>
+    <span class="c1"># (default), sac auto-prepends --containall to the apptainer argv</span>
+    <span class="c1"># unless the operator already declared it in raw_args (closes the</span>
+    <span class="c1"># filesystem-auto-bind leak: /home, /tmp, /sys, /proc, /dev).</span>
+    <span class="c1"># See ``docs/isolation.md``.</span>
+    <span class="n">relaxed</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
+
 
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">AutonomousSpec</span><span class="p">:</span>
