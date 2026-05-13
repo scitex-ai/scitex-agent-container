@@ -641,7 +641,7 @@ when <code class="docutils literal notranslate"><span class="pre">spec.a2a.port<
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">binds[]</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">host:container[:ro|rw]</span></code></p></td>
-<td><p>Bind mounts (default: apptainer auto-binds <code class="docutils literal notranslate"><span class="pre">/home/$USER</span></code>)</p></td>
+<td><p>Bind mounts. Source side supports <code class="docutils literal notranslate"><span class="pre">~</span></code> / <code class="docutils literal notranslate"><span class="pre">$VAR</span></code> (sac expands before calling apptainer). Destination MUST be absolute (apptainer rejects relative / <code class="docutils literal notranslate"><span class="pre">~</span></code> / <code class="docutils literal notranslate"><span class="pre">$VAR</span></code>); conventional roots are <code class="docutils literal notranslate"><span class="pre">/home/agent/...</span></code> (D5 canonical HOME), <code class="docutils literal notranslate"><span class="pre">/srv/</span></code>, <code class="docutils literal notranslate"><span class="pre">/work/</span></code>, <code class="docutils literal notranslate"><span class="pre">/opt/</span></code>, <code class="docutils literal notranslate"><span class="pre">/data/</span></code>. Under hardened defaults (<code class="docutils literal notranslate"><span class="pre">relaxed:</span> <span class="pre">false</span></code>) nothing is auto-bound.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">env</span></code></p></td>
 <td><p>key-value dict</p></td>
@@ -657,7 +657,11 @@ when <code class="docutils literal notranslate"><span class="pre">spec.a2a.port<
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">relaxed</span></code></p></td>
 <td><p>bool (default <code class="docutils literal notranslate"><span class="pre">false</span></code>)</p></td>
-<td><p>Opt OUT of hardened-by-default isolation. When <code class="docutils literal notranslate"><span class="pre">false</span></code> (default), sac auto-prepends <code class="docutils literal notranslate"><span class="pre">--containall</span></code> to the argv. Set <code class="docutils literal notranslate"><span class="pre">true</span></code> to disable; see <span class="xref myst"><code class="docutils literal notranslate"><span class="pre">docs/isolation.md</span></code></span>.</p></td>
+<td><p>Opt OUT of hardened-by-default isolation. When <code class="docutils literal notranslate"><span class="pre">false</span></code> (default), sac auto-prepends <code class="docutils literal notranslate"><span class="pre">--containall</span></code> / <code class="docutils literal notranslate"><span class="pre">--cleanenv</span></code> / <code class="docutils literal notranslate"><span class="pre">--writable-tmpfs</span></code> / <code class="docutils literal notranslate"><span class="pre">--home</span> <span class="pre">/home/agent</span></code>. Set <code class="docutils literal notranslate"><span class="pre">true</span></code> to disable; see <span class="xref myst"><code class="docutils literal notranslate"><span class="pre">docs/isolation.md</span></code></span> + <a class="reference internal" href="#adr/0001-isolation-hardening.md"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">docs/adr/0001-isolation-hardening.md</span></code></span></a>.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">fakeroot</span></code></p></td>
+<td><p>bool (default <code class="docutils literal notranslate"><span class="pre">false</span></code>)</p></td>
+<td><p>Apptainer <code class="docutils literal notranslate"><span class="pre">--fakeroot</span></code> — uid 0 inside via user-namespace remap; host uid unchanged. D5 preflight detects userns-fakeroot via <code class="docutils literal notranslate"><span class="pre">/proc/self/uid_map</span></code> and accepts uid 0 only when remapped.</p></td>
 </tr>
 </tbody>
 </table>

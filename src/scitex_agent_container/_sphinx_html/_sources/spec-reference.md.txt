@@ -108,11 +108,12 @@ when `spec.a2a.port` is set) and `GET /v1/sac/agents/<name>/card`
 |---------------|-------------------------------|------------------------------------------------------------|
 | `image`       | path to `.sif` (REQUIRED)     | `sac-scitex.sif` (full stack) or `sac-base.sif` (minimal)  |
 | `overlay`     | path                          | Writable rw layer above the SIF                            |
-| `binds[]`     | `host:container[:ro\|rw]`     | Bind mounts (default: apptainer auto-binds `/home/$USER`)  |
+| `binds[]`     | `host:container[:ro\|rw]`     | Bind mounts. Source side supports `~` / `$VAR` (sac expands before calling apptainer). Destination MUST be absolute (apptainer rejects relative / `~` / `$VAR`); conventional roots are `/home/agent/...` (D5 canonical HOME), `/srv/`, `/work/`, `/opt/`, `/data/`. Under hardened defaults (`relaxed: false`) nothing is auto-bound. |
 | `env`         | key-value dict                | Env vars exported into the container                       |
 | `nv` / `rocm` | bool                          | Forward host NVIDIA / AMD ROCm libs (mutually exclusive)   |
 | `raw_args[]`  | list of strings               | **Escape hatch** — appended verbatim to `apptainer exec`   |
-| `relaxed`     | bool (default `false`)        | Opt OUT of hardened-by-default isolation. When `false` (default), sac auto-prepends `--containall` to the argv. Set `true` to disable; see [`docs/isolation.md`](isolation.md). |
+| `relaxed`     | bool (default `false`)        | Opt OUT of hardened-by-default isolation. When `false` (default), sac auto-prepends `--containall` / `--cleanenv` / `--writable-tmpfs` / `--home /home/agent`. Set `true` to disable; see [`docs/isolation.md`](isolation.md) + [`docs/adr/0001-isolation-hardening.md`](adr/0001-isolation-hardening.md). |
+| `fakeroot`    | bool (default `false`)        | Apptainer `--fakeroot` — uid 0 inside via user-namespace remap; host uid unchanged. D5 preflight detects userns-fakeroot via `/proc/self/uid_map` and accepts uid 0 only when remapped. |
 
 ### `spec.claude` — SDK knobs
 
