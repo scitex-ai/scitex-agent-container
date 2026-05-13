@@ -105,15 +105,23 @@ spec:
 
     # Extra bind mounts. With the default hardened isolation
     # (apptainer.relaxed: false), NOTHING is auto-bound — declare every
-    # path the agent needs to see. Use $HOME (expanded by sac before
-    # invoking apptainer) so the example is portable across operators.
+    # path the agent needs to see.
+    #
+    # Convention (D5 — see docs/adr/0001-isolation-hardening.md):
+    #   - SOURCE side uses ~ / $HOME / $VAR — sac expands these before
+    #     calling apptainer (apptainer itself doesn't).
+    #   - DESTINATION side must be ABSOLUTE and is conventionally under
+    #     `/home/agent/...` (the canonical container HOME sac auto-injects
+    #     via `--home /home/agent`). `/srv/`, `/work/`, `/opt/`, `/data/`
+    #     are also accepted. NEVER use ~ or $VAR on the destination —
+    #     apptainer rejects relative bind targets.
     binds:
-      # Example: read-only source tree so the agent can inspect repos.
-      # - $HOME/proj:$HOME/proj:ro
+      # Example: read-only source tree the agent can inspect.
+      # - ~/proj:/home/agent/proj:ro
       # Example: git identity for read-only `git status` / `gh` calls.
-      # - $HOME/.gitconfig:$HOME/.gitconfig:ro
+      # - ~/.gitconfig:/home/agent/.gitconfig:ro
       # Example: ssh — only bind if the agent provably needs to ssh out.
-      # - $HOME/.ssh:$HOME/.ssh:ro
+      # - ~/.ssh:/home/agent/.ssh:ro
 
     # Container env vars (in addition to sac-auto vars).
     # env:
@@ -123,16 +131,21 @@ spec:
     # nv: true     # NVIDIA CUDA
     # rocm: true   # AMD ROCm
 
-    # Isolation: hardened by default (sac auto-prepends --containall to
-    # the apptainer argv unless this is true OR you declared --containall
-    # in raw_args yourself). See docs/isolation.md for the 10 leak
-    # families that --containall closes.
+    # Isolation: hardened by default. sac auto-prepends
+    # --containall (filesystem isolation), --cleanenv (env isolation),
+    # --writable-tmpfs (unless overlay set), and --home /home/agent
+    # (D5 canonical HOME). See docs/isolation.md for the leak catalogue
+    # and docs/adr/0001-isolation-hardening.md for the design rationale.
     relaxed: false
 
+    # Fakeroot opt-in: uid 0 inside the container via user-namespace
+    # remapping (host-side it's still the operator's uid). Lets the
+    # agent install into image-baked roots without an overlay. The D5
+    # preflight detects userns-fakeroot via /proc/self/uid_map.
+    # fakeroot: false
+
     # Escape hatch — appended verbatim to `apptainer exec` argv.
-    # See docs/isolation.md for the recommended hardening flags.
     # raw_args:
-    #   - --cleanenv                 # strip host env vars
     #   - --pid                      # PID namespace isolation
 
   # ----------------------------------------------------------------------
@@ -182,16 +195,13 @@ spec:
 
   # ----------------------------------------------------------------------
   # startup_commands — SHELL commands run before claude starts.
-  # Preflight checks here fail-fast on isolation breaches and missing
-  # deps before Claude touches anything. See docs/isolation.md for the
-  # recommended preflight pattern.
+  # NOTE: sac auto-injects the D5 preflight (uid != 0 OR userns-fakeroot,
+  # plus $HOME == /home/agent) ahead of these commands — don't duplicate
+  # those two invariants here. Use startup_commands for task-specific
+  # checks and installs only.
   # ----------------------------------------------------------------------
   # startup_commands:
-  #   # Preflight (recommended): assert isolation held.
-  #   - 'test "$(id -u)" != "0" || (echo "ERROR: running as root" && exit 1)'
-  #   - 'test ! -e /opt/python3.12 || (echo "ERROR: host /opt leaked" && exit 1)'
-  #   # Then real install (idempotent — pip noop's if already satisfied).
-  #   - "uv pip install -e $HOME/proj/your-package[all] --quiet"
+  #   - "uv pip install -e /home/agent/proj/your-package[all] --quiet"
 
   # ----------------------------------------------------------------------
   # startup_prompts — TEXT fed to claude as the first user message(s).
