@@ -1,6 +1,6 @@
 """Static D5 preflight for the apptainer runtime.
 
-See ``docs/design/2026-05-13-isolation-hardening.md`` (D2 → D5) +
+See ``docs/adr/0001-isolation-hardening.md`` (D2 → D5) +
 ``docs/isolation.md``.
 
 The script is a single module-level constant so its sha256 is stable;

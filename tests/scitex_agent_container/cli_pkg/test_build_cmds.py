@@ -176,7 +176,7 @@ def test_check_python_not_found_marks_fail(monkeypatch, tmp_path):
 
 # ---------------------------------------------------------------------------
 # D4 — sac agents check warns on host-mirroring bind targets
-# (docs/design/2026-05-13-isolation-hardening.md §D4)
+# (docs/adr/0001-isolation-hardening.md §D4)
 # ---------------------------------------------------------------------------
 
 

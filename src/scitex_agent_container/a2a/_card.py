@@ -108,7 +108,7 @@ def project_card(name: str, v3: dict[str, Any], base_url: str) -> dict[str, Any]
             "multiplexer": spec.get("multiplexer"),
             "required_skills": list(required_skills),
             # D3 — structured isolation block (see
-            # docs/design/2026-05-13-isolation-hardening.md). External
+            # docs/adr/0001-isolation-hardening.md). External
             # verifiers (Clew, orochi attestation) read these booleans to
             # attest specific properties; ``level`` is the human shorthand.
             "isolation": _isolation_block(spec),

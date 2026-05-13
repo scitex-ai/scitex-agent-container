@@ -1,6 +1,6 @@
 """D1/D5 isolation-flag prepend computation for the apptainer runtime.
 
-See ``docs/design/2026-05-13-isolation-hardening.md``. Pulled out of
+See ``docs/adr/0001-isolation-hardening.md``. Pulled out of
 ``_apptainer_runtime.py`` so the per-flag logic lives in one place and
 the runtime file stays under sac's 512-line cap.
 

@@ -128,7 +128,7 @@ def test_capabilities_and_skills_unioned_in_tags() -> None:
 
 # ---------------------------------------------------------------------------
 # D3 — structured isolation block
-# (docs/design/2026-05-13-isolation-hardening.md)
+# (docs/adr/0001-isolation-hardening.md)
 # ---------------------------------------------------------------------------
 
 

@@ -1,6 +1,6 @@
 """D2 — static $HOME-visibility preflight tests.
 
-See docs/design/2026-05-13-isolation-hardening.md (D2 + D4).
+See docs/adr/0001-isolation-hardening.md (D2 + D4).
 """
 
 from __future__ import annotations

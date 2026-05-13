@@ -83,7 +83,7 @@ def check(name_or_path: str) -> None:
 
     # D4 — warn (don't fail) on bind targets that mirror host paths.
     # Container-canonical roots are /srv/, /work/, /opt/, /data/. See
-    # docs/design/2026-05-13-isolation-hardening.md §D4.
+    # docs/adr/0001-isolation-hardening.md §D4.
     _warn_host_mirroring_bind_targets(config)
 
     if all_ok:
@@ -104,7 +104,7 @@ _HOST_MIRRORING_TARGET_PREFIXES = ("/home/", "/Users/", "/root/")
 def _warn_host_mirroring_bind_targets(config) -> None:
     """Emit a non-fatal warning for each bind whose target mirrors a host path.
 
-    See ``docs/design/2026-05-13-isolation-hardening.md`` §D4. The
+    See ``docs/adr/0001-isolation-hardening.md`` §D4. The
     operator may have HPC reasons to keep mirroring (e.g. cross-host
     path stability for shared filesystems) so this never fails the
     check — just makes the deviation visible.
@@ -122,7 +122,7 @@ def _warn_host_mirroring_bind_targets(config) -> None:
                 f"[yellow]WARN  {config.name}: bind target {target} mirrors a "
                 f"host path; container-canonical convention is /srv/, /work/, "
                 f"/opt/, /data/.\n       See "
-                f"docs/design/2026-05-13-isolation-hardening.md (D4).[/yellow]"
+                f"docs/adr/0001-isolation-hardening.md (D4).[/yellow]"
             )
 
 

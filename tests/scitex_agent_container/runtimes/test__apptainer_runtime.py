@@ -1243,7 +1243,7 @@ def test_argv_no_double_containall_when_operator_set(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # D1 — auto-prepend of --containall / --cleanenv / --writable-tmpfs
 # (merged from test__apptainer_isolation.py to satisfy PS-204 — see
-# docs/design/2026-05-13-isolation-hardening.md).
+# docs/adr/0001-isolation-hardening.md).
 # ---------------------------------------------------------------------------
 
 

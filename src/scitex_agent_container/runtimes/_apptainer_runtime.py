@@ -236,7 +236,7 @@ class ApptainerContainerRuntime(RuntimeBase):
             ] + list(runner_argv)
 
         # D2 — wrap inner cmd with the static $HOME-visibility preflight
-        # (see docs/design/2026-05-13-isolation-hardening.md §D2 + §D4).
+        # (see docs/adr/0001-isolation-hardening.md §D2 + §D4).
         # The preflight is `bash -c "<static-script>\nexec <inner-quoted>"`
         # so PID 1 inside the container is still tini (exec replaces the
         # bash process). Skipped under `relaxed: true` — operator opted

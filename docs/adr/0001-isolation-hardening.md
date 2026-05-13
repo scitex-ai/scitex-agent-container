@@ -256,10 +256,81 @@ hardcoding paths.
    static preflight passes end-to-end.
 5. Preserve session.jsonl + preflight result for Clew supplementary.
 
+## Addendum: D5 — canonical container HOME (2026-05-14)
+
+Live verification of the hardened auditor exposed two issues with D2
+as originally specified:
+
+1. **Empty-`$HOME` false-fires.** Apptainer scaffolds `$HOME` from the
+   inherited passwd entry regardless of bind targets (even under
+   `--containall`), so `$HOME` is always a directory. The D2 check was
+   relaxed to "`$HOME` is *empty*" — workable, but it forces bind
+   targets out of `$HOME`, breaking operator-intuitive paths.
+2. **`/srv/`-style targets force script rewrites.** Anything that
+   references `~/proj/X` or `$HOME/proj/X` inside the container
+   breaks.
+
+### D5. Canonical container HOME = `/home/agent`.
+
+sac auto-injects `--home /home/agent` (skipped only under
+`apptainer.relaxed: true` or when the operator declared `--home`).
+Inside the container:
+
+- `$HOME == /home/agent`, operator-independent.
+- Bind targets use the canonical HOME: `~/proj/X:/home/agent/proj/X`.
+- The operator's actual host home is never scaffolded inside the
+  container.
+- `sac-base.sif` is rebuilt so UID-1000's passwd entry reads `agent`
+  (not `ubuntu`); `whoami` matches `$HOME`.
+
+### D5 preflight (replaces D2's empty-`$HOME` check).
+
+```bash
+# uid != 0, OR /proc/self/uid_map confirms userns-fakeroot.
+if [ "$(id -u)" = "0" ]; then
+  awk '$1==0 && $2!=0 {found=1} END {exit !found}' /proc/self/uid_map \
+    || exit 11   # real root, refuse
+fi
+test "$HOME" = "/home/agent" || exit 12  # canonical HOME
+```
+
+Two static lines, attestable by sha256. The "no host leak" property
+falls out of `--containall` + canonical `--home` + declared `binds:`.
+
+### Rationale.
+
+- **D4 stays** but is no longer the only path. Bind destinations may
+  live under `/home/agent/...` (intuitive) OR `/srv/`, `/work/`,
+  `/opt/`, `/data/` (container-canonical). Both pass D5.
+- **fakeroot opt-in (`apptainer.fakeroot: true`)** integrates: inside
+  the container `id -u == 0`, but `/proc/self/uid_map` proves
+  userns-mapping; the preflight accepts this without weakening the
+  no-real-root guarantee.
+
+### Implementation (D5).
+
+| Layer | Where | Status |
+|---|---|---|
+| `apptainer.fakeroot: bool` | `config/_types.py::ApptainerSpec` | ✅ |
+| Auto-prepend `--home /home/agent` | `runtimes/_apptainer_iso_flags.py` | ✅ |
+| Auto-append `--fakeroot` when opted in | same | ✅ |
+| Preflight rewrite (uid-map + canonical-HOME) | `runtimes/_apptainer_preflight.py` | ✅ |
+| sac-base.sif: ubuntu → agent | `containers/apptainer-base.def` | ✅ recipe; SIF rebuild pending |
+| Bind destination validation | `config/_parsers/_apptainer.py` | ✅ |
+| Doc updates + AgentCard JSON example | `docs/isolation.md` | ✅ |
+
+### Network isolation addendum (2026-05-14).
+
+Peer review pushed on `--network=bridge`, surfaced the A2A +
+MCP-over-loopback interop constraint, and converged on: stay with
+host netns for the Clew arXiv window; plan a `--network=bridge` +
+bridge-IF bind + `sac-host` `/etc/hosts` injection migration that
+preserves MCP URL stability. See `docs/isolation.md` §4.
+
 ## References
 
 - [`docs/isolation.md`](../isolation.md) — the 10-category leak catalog this ADR's decisions close.
-- [`docs/spec-reference.md`](../spec-reference.md) — `spec.apptainer.relaxed`, `spec.apptainer.preflight_allow`.
+- [`docs/spec-reference.md`](../spec-reference.md) — `spec.apptainer.relaxed`, `spec.apptainer.fakeroot`.
 - The 2026-05-13 scitex-stats-auditor incident — session.jsonl at
   `~/.scitex/agent-container/runtime/scitex-stats-auditor/` for the
   full trace.
