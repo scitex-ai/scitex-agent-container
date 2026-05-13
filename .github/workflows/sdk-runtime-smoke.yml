@@ -19,14 +19,16 @@ name: SDK runtime smoke
 #   * cron (daily 07:00 UTC) — catches upstream SDK breakage between
 #     code changes.
 
+# DISABLED: workflow pre-dates docker/podman ripout (2026-05-13).
+# Uses --target sdk-persistent (flag removed), docker run/logs (runtime gone),
+# and apptainer is not available on ubuntu-latest runners.
+# Re-enable once rewritten for apptainer-only world.
 on:
-  push:
-    branches: [main, develop]
-  pull_request:
-    branches: [main, develop]
-  schedule:
-    - cron: "0 7 * * *"
   workflow_dispatch:
+    inputs:
+      _disabled:
+        description: "Workflow disabled — see comment above"
+        required: false
 
 permissions:
   contents: read
