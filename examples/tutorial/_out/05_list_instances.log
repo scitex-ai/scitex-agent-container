@@ -1,21 +1,13 @@
-── apptainer instance list ──
+── (A) apptainer instance list — process-level view ──
+$ apptainer instance list
+  # → empty table if nothing is running
 INSTANCE NAME    PID    IP    IMAGE
 
-── sac agent status (cross-runtime) ──
-                               Registered Agents                               
-┏━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━┓
-┃ Name           ┃ Status  ┃ Location ┃ Screen         ┃ Started              ┃
-┡━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━┩
-│ orchestrator   │ stopped │ LOCAL    │ orchestrator   │ 2026-05-09T08:54:05Z │
-│ polish-scholar │ stopped │ LOCAL    │ polish-scholar │ 2026-05-09T04:26:06Z │
-└────────────────┴─────────┴──────────┴────────────────┴──────────────────────┘
+── (B) sac agents list — registry-level view ──
+$ sac agents list
+  # → all agents whose spec.yaml is under ~/.scitex/agent-container/agents/
+(sac not installed or no agents registered)
 
-Claude Code account
-  Email:          ywata1989@gmail.com
-  Organization:   ywata1989@gmail.com's Organization
-  Display name:   Yusuke
-  Billing type:   stripe_subscription
-  Subscription:   max  (tier: default_claude_max_20x)
-  Available:      -
-  Extra usage:    disabled (reason: org_level_disabled)
-  Since:          2025-05-30T19:59:34.010055Z
+── (C) JSON forms (machine-readable, for orchestrators) ──
+$ apptainer instance list --json | jq ".instances[].instance"
+$ sac agents list --json
