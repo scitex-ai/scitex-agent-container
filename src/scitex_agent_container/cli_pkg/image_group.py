@@ -99,6 +99,30 @@ def image_build(layer: str, sandbox: bool, dry_run: bool, yes: bool) -> None:
       $ sac image build scitex         # apptainer :scitex SIF (FROM :base + scitex[all], ~10-20 min)
       $ sac image build --sandbox      # writable sandbox dir
     """
+    out_dir = _ensure_containers_dir()
+    # Existing artefact warning — operators forget that `sac image
+    # build` overwrites the SIF in place. Surface the target path
+    # (and its current size + mtime, if any) BEFORE the
+    # refuse-without-yes gate so a `-y` re-invocation knows what it's
+    # about to clobber.
+    artifact_dir = out_dir / f"sac-{layer}"
+    existing = artifact_dir / (
+        f"sac-{layer}.sandbox" if sandbox else f"sac-{layer}.sif"
+    )
+    if existing.exists():
+        import datetime as _dt
+
+        size_mb = existing.stat().st_size / (1024 * 1024) if existing.is_file() else 0
+        mtime = _dt.datetime.fromtimestamp(existing.stat().st_mtime).isoformat(
+            timespec="seconds"
+        )
+        kind = "sandbox dir" if sandbox else "SIF"
+        click.echo(
+            f"⚠  Existing {kind} at {existing} "
+            f"({size_mb:.0f} MB, built {mtime}) will be overwritten.",
+            err=True,
+        )
+
     if dry_run:
         click.echo(f"[dry-run] would build apptainer layer={layer} sandbox={sandbox}")
         return
@@ -109,8 +133,6 @@ def image_build(layer: str, sandbox: bool, dry_run: bool, yes: bool) -> None:
             err=True,
         )
         sys.exit(2)
-
-    out_dir = _ensure_containers_dir()
     def_path = _RECIPES_DIR / _LAYERS[layer]
     if not def_path.is_file():
         click.echo(f"error: recipe not found in wheel: {def_path}", err=True)

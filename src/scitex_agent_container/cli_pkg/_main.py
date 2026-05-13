@@ -30,9 +30,9 @@ def _pkg_version() -> str:
 # Help categories — clean noun-group surface
 # ---------------------------------------------------------------------------
 COMMAND_CATEGORIES = [
-    ("Agent", ["agent"]),
+    ("Agent", ["agents"]),
     ("Lifecycle (multiplexer)", ["auto-accept"]),
-    ("Account", ["account"]),
+    ("Account", ["accounts"]),
     (
         "Network & Peer",
         ["host", "network", "peer", "a2a", "fleet", "listen", "channel"],
@@ -53,7 +53,7 @@ class _MainGroup(LazyGroup):
     # User-facing top-level commands. Resolved on demand.
     LAZY_COMMANDS = {
         # Noun groups
-        "agent": f"{_PKG}.agent_group:agent_group",
+        "agents": f"{_PKG}.agent_group:agent_group",
         "db": f"{_PKG}.db_group:db_group",
         "dev": f"{_PKG}.dev_group:dev_group",
         "host": f"{_PKG}.host_group:host_group",
@@ -63,9 +63,7 @@ class _MainGroup(LazyGroup):
         "image": f"{_PKG}.image_group:image_group",
         "template": f"{_PKG}.template_group:template_group",
         "skills": f"{_PKG}.skills_group:skills_group",
-        "account": f"{_PKG}.account_cmds:account",
-        # Plural alias — matches `sac agents` / `sac peers` shape.
-        "accounts": f"{_PKG}.account_cmds:account",
+        # `accounts` moved under `sac agents accounts` (nested noun group).
         "a2a": f"{_PKG}.a2a_cmds:a2a",
         "mcp": f"{_PKG}.mcp_cmds:mcp",
         "peer": f"{_PKG}.peer_cmds:peer_group",
@@ -217,7 +215,7 @@ class _MainGroup(LazyGroup):
     # ``21_cli-startup-budget.md`` to refresh after editing any
     # subcommand's docstring/short_help.
     LAZY_SHORT_HELPS = {
-        "agent": "Agent lifecycle, status, introspection, and snapshots.",
+        "agents": "Agent lifecycle, status, introspection, accounts, and snapshots.",
         "db": "Inspect and maintain the sac state database (state.db).",
         "dev": "Developer / maintainer plumbing (CI secrets, etc.).",
         "host": "Local host identity and peer routing for sac.",
@@ -228,8 +226,6 @@ class _MainGroup(LazyGroup):
         "template": "Render text templates (contributor spec).",
         "skills": "Agent-facing skills bundled with scitex-agent-container.",
         "auto-accept": "Auto-accept TUI handler for Claude Code permission prompts.",
-        "account": "Manage stored Claude Code accounts for credential rotation.",
-        "accounts": "Manage stored Claude Code accounts (plural alias of `account`).",
         "a2a": "A2A protocol — generic agent-to-agent surface (no fleet deps).",
         "mcp": "MCP (Model Context Protocol) server commands.",
         "peer": "Outbound A2A calls into other agents' POST /v1/turn endpoint.",
@@ -312,9 +308,9 @@ class _MainGroup(LazyGroup):
         "\b\n"
         "Example:\n"
         "  $ sac --version\n"
-        "  $ sac agent list\n"
-        "  $ sac agent start orchestrator                                      # by name\n"
-        "  $ sac agent start ~/.scitex/agent-container/agents/orchestrator/spec.yaml   # by path\n"
+        "  $ sac agents status\n"
+        "  $ sac agents start orchestrator                                      # by name\n"
+        "  $ sac agents start ~/.scitex/agent-container/agents/orchestrator/spec.yaml   # by path\n"
     ),
 )
 @click.version_option(

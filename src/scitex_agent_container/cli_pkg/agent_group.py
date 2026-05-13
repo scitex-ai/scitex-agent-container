@@ -1,12 +1,12 @@
-"""``sac agent`` noun-group — most agent-scoped operations.
+"""``sac agents`` noun-group — every agent-scoped operation.
 
-Verbs are taken from existing flat commands and re-registered under
-``agent``. The old top-level names are preserved as deprecation aliases
-(see ``_main.py``).
+Plural form. Renamed from ``sac agent`` so the verb shape lines up
+with the list-of-things commands underneath (``start NAME...``,
+``stop NAME...``, ``delete NAME...``, ``tail NAME...``).
 
-``take-snapshot`` and ``check-priority`` are folded into ``status`` as
-``--snapshot`` / ``--priority`` flags. ``validate`` is folded into
-``check`` (which now runs YAML validation before runtime probes).
+``accounts`` is nested under here too (``sac agents accounts``) — the
+Claude-Code credential store is one of the agent's concerns, not a
+top-level namespace of its own.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from __future__ import annotations
 import click
 
 from ._helpers import HelpRecursiveGroup
+from .account_cmds import account as _account_group
 from .build_cmds import check as _check_impl
 from .info_cmds import find as _find_impl
 from .info_cmds import tail_session as _tail_impl
@@ -38,11 +39,9 @@ def _rebind(cmd: click.Command, new_name: str) -> click.Command:
     )
 
 
-class _AgentGroup(HelpRecursiveGroup):
-    """Render ``sac agent --help`` with grouped sections instead of one
-    flat alphabetical list. Categories follow the verbs' actual purpose:
-    *Lifecycle* mutates state; *Inspect* reads it; *Preflight* validates
-    before launch; *Discovery* finds peers."""
+class _AgentsGroup(HelpRecursiveGroup):
+    """Render ``sac agents --help`` with grouped sections instead of one
+    flat alphabetical list."""
 
     COMMAND_CATEGORIES = [
         ("Lifecycle", ["start", "stop", "restart", "delete"]),
@@ -50,12 +49,13 @@ class _AgentGroup(HelpRecursiveGroup):
         ("Inspect", ["status", "health", "tail", "recall"]),
         ("Preflight", ["check"]),
         ("Discovery", ["find"]),
+        ("Account", ["accounts"]),
     ]
 
 
-@click.group(name="agent", cls=_AgentGroup)
+@click.group(name="agents", cls=_AgentsGroup)
 def agent_group() -> None:
-    """Agent lifecycle, status, introspection, and snapshots."""
+    """Agent lifecycle, status, introspection, accounts, and snapshots."""
 
 
 # Lifecycle verbs
@@ -74,6 +74,12 @@ agent_group.add_command(_rebind(_find_impl, "find"))
 agent_group.add_command(_rebind(_recall_impl, "recall"))
 agent_group.add_command(_rebind(_check_impl, "check"))
 agent_group.add_command(_rebind(_send_impl, "send"))
+
+# Nested noun group — the account store is agent-scoped, not its own
+# top-level concern. Original singular `account` cmd object reused
+# as-is; the parent group exposes it as `accounts`.
+_account_group.name = "accounts"
+agent_group.add_command(_account_group)
 
 
 __all__ = ["agent_group"]

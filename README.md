@@ -1,5 +1,5 @@
 <!-- ---
-!-- Timestamp: 2026-05-13 08:29:41
+!-- Timestamp: 2026-05-13 09:19:14
 !-- Author: ywatanabe
 !-- File: /home/ywatanabe/proj/scitex-agent-container/README.md
 !-- --- -->
@@ -51,12 +51,11 @@ uv pip install "scitex-agent-container[all]"
 ## Quickstart
 
 ```bash
-# 1. Build the layered images (one-time)
-sac image build base -y       # ~15-25 min — OS + dev tools
-# sac image build scitex -y   # ~10-20 min with uv — FROM :base + scitex[all] (numpy / pandas /
-#                             # scipy / torch / etc.). Walk away.
+# 1. Build built-in Apptainer image (one-time)
+sac image build base # base image; ~5 min
+# built /home/ywatanabe/.scitex/agent-container/containers/sac-base/sac-base.sif
 
-# 2. Define hello-agent-1, hello-agent-2, hello-agent-3
+# 2. Define YAML files for agents
 for agent_id in 1 2 3; do
     agent_dir=~/.scitex/agent-container/agents/"hello-agent-$agent_id"
 
@@ -85,20 +84,84 @@ YAML
 
 done
 
-# 3. Start an agent
-sac agent start hello-agent-1 --foreground  # streams stdout
+# 3. Start an agent in foreground
+sac agents start hello-agent-1 --foreground  # streams stdout
 # Starting agent 'hello-agent-1' (runtime: apptainer, LOCAL)...
 # Hello! I am hello-agent-1
 # Agent 'hello-agent-1' started successfully [LOCAL]
 
 # 4. Check agents
-sac agent status
+sac agents status
 #                               Registered Agents                              
 # ┏━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━┓
 # ┃ Name          ┃ Status  ┃ Location ┃ Screen        ┃ Started              ┃
 # ┡━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━┩
-# │ hello-agent-1 │ stopped │ LOCAL    │ hello-agent-1 │ 2026-05-12T23:25:49Z │
+# │ hello-agent-1 │ stopped │ LOCAL    │ hello-agent-1 │ 2026-05-12T23:44:48Z │
 # └───────────────┴─────────┴──────────┴───────────────┴──────────────────────┘
+
+# 5. Start multiple agents in background (default)
+sac agents start hello-agent-1 hello-agent-2 hello-agent-3
+# Starting agent 'hello-agent-1' (runtime: apptainer, LOCAL)...
+# Agent 'hello-agent-1' started successfully [LOCAL]
+#
+# Starting agent 'hello-agent-2' (runtime: apptainer, LOCAL)...
+# Agent 'hello-agent-2' started successfully [LOCAL]
+#
+# Starting agent 'hello-agent-3' (runtime: apptainer, LOCAL)...
+# Agent 'hello-agent-3' started successfully [LOCAL]
+
+# 6. Read the outputs in JSON format
+sac agents tail hello-agent-1 hello-agent-2 hello-agent-3 --json
+# [ 
+#    {
+#      "ts": 1778628345.358866,
+#      "type": "user",
+#      "text": "Reply with the string 'Hello! I am hello-agent-1' and nothing else."
+#    },
+#    {
+#      "ts": 1778628348.578402,
+#      "type": "assistant",
+#      "text": "Hello! I am hello-agent-1"
+#    },
+#    {
+#      "ts": 1778628348.6855755,
+#      "type": "result",
+#      "session_id": "a583314e-238b-471e-a088-10dd41ff6c01",
+#      "usage": {
+#        "input_tokens": 6,
+#        ...
+#          }
+#        ],
+#        "speed": "standard"
+#      }
+#    }
+# ] 
+# [ 
+#   {
+#     "ts": 1778628472.064468,
+#     "type": "user",
+#     "text": "Reply with the string 'Hello! I am hello-agent-2' and nothing else."
+#   },
+#   {
+#     "ts": 1778628474.1873386,
+#     "type": "assistant",
+#     "text": "Hello! I am hello-agent-2"
+#   },
+#   ...
+# ] 
+
+# 7. Stop agents
+sac agents stop hello-agent-1 hello-agent-2 hello-agent-3
+sac agents status
+# ls ~/.scitex/agent-container/agents # only stopped
+
+# 8. Delete agents
+sac agents delete hello-agent-1 hello-agent-2 hello-agent-3 -y
+sac agents delete hello-agent hello-agent2 hello-agent3
+
+sac agents status
+
+# No agents registered.
 #
 # Claude Code account
 #   Email:          wyusuuke@gmail.com
@@ -109,15 +172,6 @@ sac agent status
 #   Available:      -
 #   Extra usage:    enabled
 #   Since:          2025-05-04T06:41:46.877655Z
-
-# 5. Start multiple agents
-sac agent start hello-agent-1 hello-agent-2 hello-agent-3 #  in background (default)
-
-# 5. Read the output
-sac agent tail hello-agent-1 hello-agent-2 hello-agent-3
-
-# 6. Cleanup
-sac agent stop hello-agent-1 hello-agent-2 hello-agent-3
 ```
 
 ## How it works
@@ -126,7 +180,7 @@ sac agent stop hello-agent-1 hello-agent-2 hello-agent-3
 
 ```
   spec.yaml   ─┐
-  dot_claude/ ─┴─→ sac agent start ──→ apptainer instance
+  dot_claude/ ─┴─→ sac agents start ──→ apptainer instance
                                           │
                                           ▼
                               long-lived Claude SDK session
@@ -193,7 +247,7 @@ there's no `metadata.name` field. Renaming an agent = `mv` the directory.
 | `spec.restart`                | `policy` (`never` / `on-failure` / `always`), `max_retries`, `backoff_*` | Supervisor restart policy                                                                                                                                                    |
 
 **Lifetime / session selection:** no `mode` field. Default is
-long-lived + new session. CLI flips it: `sac agent start <name>
+long-lived + new session. CLI flips it: `sac agents start <name>
 --one-shot` (exits after `startup_prompts`), `--resume <sid>` /
 `--continue` (resumes / continues the prior session).
 
@@ -308,7 +362,7 @@ Configuration directories are separated into user-scope (`~/.scitex/agent-contai
     │   └── quota.json           (accumulated per-turn token totals)
     ├── events/                  Claude Code hook event ring-buffer
     │   └── <agent>.jsonl
-    └── cache/                   snapshot cache for the dashboard / `sac agent diff`
+    └── cache/                   snapshot cache for the dashboard / `sac agents diff`
         └── <agent>.{latest,prev,diff}.json
 ```
 
@@ -317,7 +371,7 @@ Configuration directories are separated into user-scope (`~/.scitex/agent-contai
 
 Configurations can be overriden by CLI flags and environmental variables with the following precedence:
 
-1. **CLI flag** — `sac agent start hello --workdir /tmp/x`
+1. **CLI flag** — `sac agents start hello --workdir /tmp/x`
 2. **Env var** — `SAC_<X>` or the long `SCITEX_AGENT_CONTAINER_<X>` form
    (setting both with different values raises `SacEnvConflict`). Copy
    [`.env.example`](.env.example) to `.env` and uncomment what you need.
@@ -372,17 +426,17 @@ The build / sandbox / version / rollback verbs all delegate to [`scitex-containe
 
 ```bash
 # Agent lifecycle
-sac agent start  <name> [--foreground]   # daemon by default; --foreground streams stdio
-sac agent stop   <name>                  # graceful SIGTERM, escalate to SIGKILL after 5 s
-sac agent restart <name>
-sac agent send   <name> "<prompt>"       # send a follow-up turn to a running session
-sac agent send   <name> --key ESC        # interrupt current turn
-sac agent status [<name>] [--snapshot] [--priority]
-sac agent health <name>
-sac agent tail   <name>                  # render session.jsonl (structured transcript)
-sac agent recall <name>                  # human-readable session summary
-sac agent check  <name>                  # preflight (validates yaml + probes runtime deps)
-sac agent find   <capability>
+sac agents start  <name> [--foreground]   # daemon by default; --foreground streams stdio
+sac agents stop   <name>                  # graceful SIGTERM, escalate to SIGKILL after 5 s
+sac agents restart <name>
+sac agents send   <name> "<prompt>"       # send a follow-up turn to a running session
+sac agents send   <name> --key ESC        # interrupt current turn
+sac agents status [<name>] [--snapshot] [--priority]
+sac agents health <name>
+sac agents tail   <name>                  # render session.jsonl (structured transcript)
+sac agents recall <name>                  # human-readable session summary
+sac agents check  <name>                  # preflight (validates yaml + probes runtime deps)
+sac agents find   <capability>
 
 # Control plane (HTTP/JSON, loopback-only)
 sac listen [--bind 127.0.0.1:7878]       # boot per-host REST API (bearer-auth)

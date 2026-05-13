@@ -8,7 +8,6 @@ import sys
 import click
 from rich.table import Table
 
-from .._account.credentials import read_credentials_metadata
 from .._lifecycle.health import health_check
 from .._lifecycle.lifecycle import agent_status
 from .._state.registry import Registry
@@ -209,29 +208,25 @@ def status(
             table.add_row(key, str(value), style=style)
         console.print(table)
     else:
-        # stx-allow: fallback (reason: malformed credentials JSON tolerated)
-        try:
-            claude_account = read_credentials_metadata()
-        except (OSError, json_mod.JSONDecodeError):
-            claude_account = {}
-
+        # `agents status` only shows agents now. Claude-account info
+        # moved to `sac agents accounts list` — different noun, different
+        # concern. Keeping both here turned every status print into a
+        # crowded mix of "what's running" + "who I'm logged in as".
         if use_json:
             from ._helpers import get_agent_list_data
 
-            payload = {
-                "agents": get_agent_list_data(
-                    registry, capability=capability, machine=machine
-                ),
-                "claude_account": claude_account,
-            }
-            click.echo(json_mod.dumps(payload, indent=2))
+            click.echo(
+                json_mod.dumps(
+                    {
+                        "agents": get_agent_list_data(
+                            registry, capability=capability, machine=machine
+                        ),
+                    },
+                    indent=2,
+                )
+            )
         else:
             print_agent_list(registry, capability=capability, machine=machine)
-            lines = _format_claude_account_block(claude_account)
-            if lines:
-                console.print("")
-                for line in lines:
-                    console.print(line)
 
 
 @click.command(name="check-health")

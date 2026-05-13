@@ -196,11 +196,15 @@ def test_partial_claude_json_no_oauth_account(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 5. CLI integration: `status --json` contains claude_account
+# 5. CLI integration: `agents accounts list --json` contains claude_account
+#
+# Account info moved out of `sac agents status` (mixed-noun output was
+# noisy); the active Claude credentials are now surfaced by the
+# dedicated `sac agents accounts list` command.
 # ---------------------------------------------------------------------------
 
 
-def test_status_json_contains_claude_account(
+def test_accounts_list_json_contains_claude_account(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake_home = tmp_path / "home"
@@ -233,15 +237,15 @@ def test_status_json_contains_claude_account(
     env = {
         "HOME": str(fake_home),
         "PATH": "/usr/bin:/bin:/usr/local/bin",
-        # Registry dir lives under HOME — keep it empty so no agents listed.
     }
     result = subprocess.run(
         [
             sys.executable,
             "-m",
             "scitex_agent_container",
-            "agent",
-            "status",
+            "agents",
+            "accounts",
+            "list",
             "--json",
         ],
         capture_output=True,
@@ -250,8 +254,9 @@ def test_status_json_contains_claude_account(
     )
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
-    assert "claude_account" in payload
-    acct = payload["claude_account"]
+    # `accounts list --json` shape: {"active": {...}, "stored": [...]}
+    assert "active" in payload
+    acct = payload["active"]
     assert acct["email_address"] == "test@example.com"
     assert acct["subscription_type"] == "max"
     assert acct["rate_limit_tier"] == "default_claude_max_20x"
