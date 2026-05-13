@@ -1,5 +1,5 @@
 <!-- ---
-!-- Timestamp: 2026-05-13 12:19:10
+!-- Timestamp: 2026-05-13 13:35:30
 !-- Author: ywatanabe
 !-- File: /home/ywatanabe/proj/scitex-agent-container/README.md
 !-- --- -->
@@ -125,9 +125,12 @@ sac agents delete hello-agent-1 hello-agent-2 -y
 
 ### Tutorial
 
-`examples/apptainer_and_sac/` walks through the runtime in 9 lessons (build, sandbox/update/freeze, versioning, run/stop, logs/exec, mounts, env+user). Run them read-only with `bash 00_run_all.sh`, or `--apply` to execute the mutating ones.
+[`examples/tutorial/`](examples/tutorial/) walks through the runtime in 9 lessons (build, sandbox/update/freeze, versioning, run/stop, logs/exec, mounts, env+user). Run them read-only with `bash 00_run_all.sh`, or `--apply` to execute the mutating ones.
 
-## How it works
+<details>
+<summary><strong>How it works</strong></summary>
+
+<br>
 
 `scitex-agent-container` (`sac`) materializes a `spec.yaml` into a long-lived, externally addressable Claude agent:
 
@@ -162,6 +165,8 @@ sac agents delete hello-agent-1 hello-agent-2 -y
   sac channel send TO MSG ─────────────────────────────────┤
   sac peer  post-turn  AGENT TEXT  ────────────────────────┘
 ```
+
+</details>
 
 <details>
 <summary><strong>YAML Spec Reference (v3)</strong></summary>
