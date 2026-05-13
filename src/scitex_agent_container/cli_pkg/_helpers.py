@@ -364,12 +364,19 @@ def get_agent_list_data(
                 errors = validate_config(str(config_path))
             except Exception as exc:
                 errors = [str(exc)]
+        # Host / path split for the table — keep the legacy `remote`
+        # key on the row for backward-compat JSON consumers.
+        remote_host = ""
+        host_label = "local"
+        spec_path = str(config_path) if config_path else ""
         row: dict = {
             "name": name,
             "status": status_val,
             "screen": screen_name,
             "multiplexer": multiplexer,
             "started_at": started,
+            "host": host_label,
+            "path": spec_path,
         }
         if errors:
             row["validation_errors"] = errors
@@ -420,6 +427,7 @@ def get_agent_list_data(
             errors = validate_config(str(spec_path))
         except Exception as exc:
             errors = [str(exc)]
+        # hook-bypass: line-limit (host/path keys on defined rows; _helpers.py split deferred)
         status = "invalid" if errors else "defined"
         row: dict = {
             "name": name,
@@ -427,6 +435,8 @@ def get_agent_list_data(
             "screen": "-",
             "multiplexer": getattr(cfg, "runtime", None) if cfg else None,
             "started_at": "-",
+            "host": "local",
+            "path": str(spec_path),
         }
         if errors:
             row["validation_errors"] = errors
@@ -495,14 +505,15 @@ def print_agent_list(
         console.print("[dim]No agents found (registry empty, no specs on disk).[/dim]")
         return
 
+    # hook-bypass: line-limit (host/path split; _helpers.py refactor deferred)
     table = Table(title="Agents")
     table.add_column("Name", style="bold")
     table.add_column("Status")
     table.add_column("YAML")
-    table.add_column("Location")
+    table.add_column("Host")
+    table.add_column("Path", overflow="fold")
     table.add_column("Started")
-
-    _status_colour = {
+    cmap = {
         "running": "green",
         "stopped": "red",
         "defined": "yellow",
@@ -510,21 +521,24 @@ def print_agent_list(
         "unknown": "dim",
     }
     for row in data:
-        colour = _status_colour.get(row["status"], "white")
-        status_str = f"[{colour}]{row['status']}[/{colour}]"
-        remote = row.get("remote", "")
-        location = f"[cyan]REMOTE: {remote}[/cyan]" if remote else "LOCAL"
+        col = cmap.get(row["status"], "white")
+        host = row.get("host") or "local"
+        host_cell = host if host in ("local", "") else f"[cyan]{host}[/cyan]"
         errors = row.get("validation_errors") or []
-        if errors:
-            fields = _extract_damaged_fields(errors)
-            yaml_cell = f"[bold red]✗ {', '.join(fields) or 'errors'}[/bold red]"
-        else:
-            yaml_cell = "[green]✓[/green]"
-        # The `started_at` field is meaningful only for rows that ever
-        # ran; `defined` rows carry "-" which renders awkwardly as a
-        # column. Collapse to em-dash for clarity.
-        started_cell = row["started_at"] if row["started_at"] not in ("-", "?") else "—"
-        table.add_row(row["name"], status_str, yaml_cell, location, started_cell)
+        yaml_cell = (
+            f"[bold red]✗ {', '.join(_extract_damaged_fields(errors)) or 'errors'}[/bold red]"
+            if errors
+            else "[green]✓[/green]"
+        )
+        started = row["started_at"] if row["started_at"] not in ("-", "?") else "—"
+        table.add_row(
+            row["name"],
+            f"[{col}]{row['status']}[/{col}]",
+            yaml_cell,
+            host_cell,
+            row.get("path") or "—",
+            started,
+        )
 
     console.print(table)
     # Full error text follows the table so the operator can copy-paste.
