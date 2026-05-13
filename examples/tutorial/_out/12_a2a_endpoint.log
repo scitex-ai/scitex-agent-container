@@ -1,0 +1,24 @@
+── spec.yaml fragment to enable A2A ──
+spec:
+  runtime: apptainer
+  a2a:
+    port: 7901
+
+── (A) Curl the fleet AgentCard ──
+$ curl -s http://127.0.0.1:7901/.well-known/agent.json | jq .
+  # → {"name": "fleet", "agents": [{"name": "hello-agent", ...}]}
+
+── (B) Curl a specific agent's card ──
+$ curl -s http://127.0.0.1:7901/v1/agents/hello-agent/.well-known/agent.json | jq .
+  # → {"name": "hello-agent", "url": "...", "capabilities": {...}}
+
+── (C) Post a turn (the raw protocol) ──
+$ curl -sX POST http://127.0.0.1:7901/v1/turn \
+    -H 'content-type: application/json' \
+    -d '{"role":"user","content":"Hello via A2A"}'
+  # → 202 Accepted, body: {"status": "queued", "turn_id": "..."}
+  # → assistant reply appears in session.jsonl
+
+── (D) High-level sac wrapper ──
+$ sac peer post-turn hello-agent "Hello via A2A"
+$ sac agents tail hello-agent --json -n 5
