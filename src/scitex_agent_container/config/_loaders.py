@@ -1,4 +1,4 @@
-"""Config loaders for v1 and v2 YAML formats."""
+"""Config loader for scitex-agent-container/v3 YAML."""
 
 from __future__ import annotations
 
@@ -19,9 +19,7 @@ from ._parsers import (
     parse_hooks,
     parse_hosts_spec,
     parse_listen,
-    parse_remote,
     parse_restart,
-    parse_scheduling,
     parse_skills,
     parse_startup,
     parse_startup_commands,
@@ -296,106 +294,4 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         user=str(spec.get("user", "")),
         a2a=parse_a2a(spec),
         dot_claude=str(spec.get("dot_claude", "")),
-    )
-
-
-def load_v2(raw: dict, path: Path) -> AgentConfig:
-    """Load a scitex-agent-container/v2 config with auto-derived defaults.
-
-    Substitutes ``${HOSTNAME}`` / ``${SCITEX_AGENT_CONTAINER_HOSTNAME}`` in every
-    string field before dataclass construction, and composes the effective
-    agent id from ``metadata.name`` + ``spec.scheduling`` so the v2 shared
-    layout can keep one canonical YAML per role across the fleet.
-    """
-    # Only walk-and-substitute hostname placeholders when the YAML opts in
-    # via an explicit ``spec.scheduling`` block. Legacy v2 YAMLs without
-    # scheduling keep the pre-change code path (no substitution, no
-    # effective-id composition, no host resolution required).
-    scheduling, explicit_scheduling = parse_scheduling(raw.get("spec", {}) or {})
-
-    if explicit_scheduling:
-        hostname = resolve_hostname()
-        raw = substitute_hostnames(raw, hostname)
-    else:
-        hostname = ""
-
-    metadata = raw.get("metadata", {})
-    spec = raw.get("spec", {})
-    raw_name = metadata["name"]
-    labels = metadata.get("labels", {}) or {}
-
-    # Compose the effective id used everywhere downstream (systemd, screen/
-    # tmux, workdir, registry keys). Only when scheduling is explicit —
-    # otherwise keep the raw metadata.name as-is for backward compatibility.
-    if explicit_scheduling:
-        name = compose_effective_name(raw_name, scheduling, hostname)
-    else:
-        name = raw_name
-
-    # Auto-derive workdir (user can override).
-    # Default lives under runtime/workspaces/ (2026-04-17 layout).
-    workdir = spec.get("workdir")
-    if workdir is None:
-        workdir = _DEFAULT_WORKDIR_RUNTIME.format(name=name)
-
-    # Auto-derive screen_name: {name} (not cld-{name})
-    screen_raw = spec.get("screen", {}) or {}
-    screen_name = screen_raw.get("name", name)
-
-    # Auto-derive env: user values override auto-derived.
-    auto_env: dict[str, str] = {
-        "CLAUDE_AGENT_ID": name,
-        "SCITEX_AGENT_CONTAINER_AGENT": name,
-    }
-    if labels.get("role"):
-        auto_env["CLAUDE_AGENT_ROLE"] = labels["role"]
-    model = str(spec.get("model", "sonnet") or "sonnet")
-    display_model = MODEL_DISPLAY_NAMES.get(model, model)
-    auto_env["SCITEX_AGENT_CONTAINER_MODEL"] = display_model
-
-    user_env = spec.get("env", {}) or {}
-    merged_env = {**auto_env, **user_env}
-
-    # Auto-derive hooks: prepend mkdir for workdir
-    hooks = parse_hooks(spec)
-    expanded = str(Path(workdir).expanduser())
-    mkdir_cmd = f"mkdir -p {expanded}/.claude"
-    if mkdir_cmd not in hooks.get("pre_start", []):
-        hooks.setdefault("pre_start", []).insert(0, mkdir_cmd)
-
-    # Parse mcp_servers with metadata interpolation (uses effective name)
-    mcp_metadata = {**metadata, "name": name}
-    mcp_servers = interpolate_mcp_servers(spec.get("mcp_servers", {}), mcp_metadata)
-
-    return AgentConfig(
-        name=name,
-        runtime=str(spec.get("runtime") or "apptainer"),
-        image=str(spec.get("image", "")),
-        model=model,
-        workdir=workdir,
-        python_venv=_resolve_python_venv(spec.get("python-venv", "")),
-        env=merged_env,
-        env_files=_parse_env_files(spec),
-        screen_name=screen_name,
-        labels=labels,
-        container=parse_container(spec),
-        claude=parse_claude(spec),
-        health=parse_health(spec),
-        watchdog=parse_watchdog(spec),
-        restart=parse_restart(spec),
-        autonomous=parse_autonomous(spec),
-        apptainer=parse_apptainer(spec),
-        hooks=hooks,
-        telegram=parse_telegram(spec),
-        remote=parse_remote(spec),
-        skills=parse_skills(spec),
-        startup_commands=parse_startup_commands(spec),
-        startup=parse_startup(spec),
-        context_management=parse_context_management(spec),
-        listen=parse_listen(spec),
-        extensions=parse_extensions(spec),
-        mcp_servers=mcp_servers,
-        multiplexer=spec.get("multiplexer", "screen"),
-        scheduling=scheduling,
-        config_path=str(path),
     )

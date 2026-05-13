@@ -13,7 +13,7 @@ from pathlib import Path
 import yaml
 
 from ._host import resolve_hostname, substitute_hostnames
-from ._loaders import compose_effective_name, load_v2, load_v3
+from ._loaders import compose_effective_name, load_v3
 from ._resolve import resolve_config
 from ._types import (
     AgentConfig,

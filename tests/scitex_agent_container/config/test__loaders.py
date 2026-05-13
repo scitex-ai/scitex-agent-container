@@ -1,9 +1,9 @@
 """Tests for scitex_agent_container.config._loaders.
 
 Covers the helpers (``_resolve_venv``, ``_resolve_python_venv``,
-``_parse_env_files``, ``compose_effective_name``) plus the v2 loader
-and the redirect / dict-shape rejection paths invoked through the
-public ``load_config`` API.
+``_parse_env_files``, ``compose_effective_name``) plus the v2/v3
+dispatch and dict-shape rejection paths invoked through the public
+``load_config`` API.
 """
 
 from __future__ import annotations
@@ -19,9 +19,8 @@ from scitex_agent_container.config._loaders import (
     _resolve_python_venv,
     _resolve_venv,
     compose_effective_name,
-    load_v2,
 )
-from scitex_agent_container.config._types import HostsSpec, SchedulingSpec
+from scitex_agent_container.config._types import HostsSpec
 
 
 @pytest.fixture(autouse=True)
@@ -181,7 +180,7 @@ def test_compose_effective_name_raw_equals_hostname() -> None:
 
 
 # ---------------------------------------------------------------------------
-# load_v2 (legacy path)
+# Public load_config — v2 / non-v3 rejected
 # ---------------------------------------------------------------------------
 
 
@@ -201,32 +200,6 @@ def _v2_yaml(
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(yaml.safe_dump(body))
     return p
-
-
-def test_load_v2_minimal(tmp_path: Path) -> None:
-    p = _v2_yaml(tmp_path)
-    raw = yaml.safe_load(p.read_text())
-    cfg = load_v2(raw, p)
-    assert cfg.name == "alpha"
-    assert cfg.runtime == "apptainer"
-    assert cfg.image == "x.sif"
-    # Auto-injected env vars.
-    assert cfg.env["CLAUDE_AGENT_ID"] == "alpha"
-    assert cfg.env["CLAUDE_AGENT_ROLE"] == "head"
-    # mkdir pre_start hook is injected.
-    assert any("mkdir -p" in c for c in cfg.hooks.get("pre_start", []))
-
-
-def test_load_v2_user_env_overrides_auto(tmp_path: Path) -> None:
-    p = _v2_yaml(tmp_path, spec_extra={"env": {"CLAUDE_AGENT_ID": "override"}})
-    raw = yaml.safe_load(p.read_text())
-    cfg = load_v2(raw, p)
-    assert cfg.env["CLAUDE_AGENT_ID"] == "override"
-
-
-# ---------------------------------------------------------------------------
-# Public load_config — v2 / non-v3 rejected
-# ---------------------------------------------------------------------------
 
 
 def test_load_config_rejects_v2(tmp_path: Path) -> None:
@@ -287,7 +260,3 @@ def test_load_config_v3_multi_host_appends_hostname(
     p.write_text(yaml.safe_dump(body))
     cfg = load_config(p)
     assert cfg.name == "worker-mba"
-
-
-# Use SchedulingSpec to silence unused import lint warnings.
-_ = SchedulingSpec
