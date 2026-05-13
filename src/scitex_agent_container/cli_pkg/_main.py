@@ -251,7 +251,6 @@ class _MainGroup(LazyGroup):
         # Status / introspection
         "show-status": (f"{_PKG}.status_cmds:status", "sac agent status"),
         "check-health": (f"{_PKG}.status_cmds:health", "sac agent health"),
-        "take-snapshot": (f"{_PKG}.snapshot_cmds:snapshot", "sac agent take-snapshot"),
         "find": (f"{_PKG}.info_cmds:find", "sac agent find"),
         "recall": (f"{_PKG}.recall_cmds:recall", "sac agent recall"),
         "check-priority": (
