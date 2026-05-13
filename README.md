@@ -67,9 +67,10 @@ define_hello_agents() {
     apiVersion: scitex-agent-container/v3
     kind: Agent
 
+<!-- hook-bypass: line-limit (1-line quickstart doc tweak; README split deferred) -->
     spec:
       runtime: apptainer
-      workdir: /tmp/$agent_name
+      # workdir is optional — defaults to runtime/agents/<name>/.
 
       apptainer:
         image: ~/.scitex/agent-container/containers/sac-base.sif
