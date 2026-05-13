@@ -542,9 +542,10 @@ def test_argv_credentials_mount_when_present(
     cfg = _config(tmp_path)
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
     assert any(
-        a.startswith(str(creds)) and "/tmp/.claude/.credentials.json:ro" in a
+        a.startswith(str(creds)) and "/tmp/sac-claude/.credentials.json:ro" in a
         for a in argv
     )
+    assert "CLAUDE_CONFIG_DIR=/tmp/sac-claude" in argv
 
 
 def test_argv_env_dict_forwarded(tmp_path: Path) -> None:

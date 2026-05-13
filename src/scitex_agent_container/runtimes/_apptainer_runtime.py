@@ -78,42 +78,16 @@ class ApptainerContainerRuntime(RuntimeBase):
         Pure function — no subprocess work. Caller backgrounds the
         result and writes its PID file.
         """
-        # Hardened isolation by default (closes the auto-bind leak —
-        # see docs/isolation.md §1 + docs/design/2026-05-13-isolation-hardening.md).
-        # Skipped when:
-        #   * spec.apptainer.relaxed: true (operator opt-out), OR
-        #   * operator already declared the flag in raw_args.
-        # --writable-tmpfs is additionally skipped when an overlay image
-        # is in use, because apptainer rejects the combination.
+        # Hardened isolation by default — see _apptainer_iso_flags for the
+        # per-flag skip logic (relaxed opt-out, operator-declared raw_args,
+        # overlay/writable-tmpfs incompatibility) and docs/isolation.md.
+        from ._apptainer_iso_flags import compute_iso_prepend
+
         ap_iso = getattr(config, "apptainer", None)
         relaxed = bool(getattr(ap_iso, "relaxed", False)) if ap_iso else False
-        raw_args_decl = list(getattr(ap_iso, "raw_args", None) or []) if ap_iso else []
-        operator_set_containall = any(
-            "--containall" in a or a == "--contain" for a in raw_args_decl
-        )
-        operator_set_cleanenv = any(a == "--cleanenv" for a in raw_args_decl)
-        operator_set_writable_tmpfs = any(
-            a == "--writable-tmpfs" for a in raw_args_decl
-        )
-        ap_overlay_decl = (
-            (getattr(ap_iso, "overlay", "") or "") if ap_iso is not None else ""
-        )
-        prepend_containall = (not relaxed) and not operator_set_containall
-        prepend_cleanenv = (not relaxed) and not operator_set_cleanenv
-        prepend_writable_tmpfs = (
-            (not relaxed) and not operator_set_writable_tmpfs and not ap_overlay_decl
-        )
 
-        argv: list[str] = [
-            "apptainer",
-            "exec",
-        ]
-        if prepend_containall:
-            argv.append("--containall")
-        if prepend_cleanenv:
-            argv.append("--cleanenv")
-        if prepend_writable_tmpfs:
-            argv.append("--writable-tmpfs")
+        argv: list[str] = ["apptainer", "exec"]
+        argv += compute_iso_prepend(config)
         argv += [
             # Bind-mounts: workdir → <container_workdir>, state_dir → /state/<name>.
             # apptainer accepts the docker syntax for src:dst:[options].
