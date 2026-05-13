@@ -35,13 +35,13 @@ jobs:
         # rationale in 06_skills_05_quality-checklist.md.
         run: pytest tests/integration/test_templates_v3_valid.py -q
       - name: Run tests
+        if: always()
         run: |
           pytest --cov=src/scitex_agent_container --cov-report=xml --cov-report=term tests/
       - name: Upload coverage to Codecov
         if: always() && matrix.python-version == '3.12'
         uses: codecov/codecov-action@v5
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage.xml
           fail_ci_if_error: false
 
