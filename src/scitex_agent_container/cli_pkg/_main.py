@@ -372,12 +372,22 @@ def cli_entry_point() -> None:
     """
     import sys
 
+    # Cheap pre-scan: don't import the heavy ``host_group`` module
+    # unless ``--on`` is actually present on the command line. Importing
+    # ``host_group`` (state.host_config + subprocess + the full click
+    # group surface) is ~80 ms of import time and is wasted on every
+    # plain ``sac --help`` / tab-completion / subcommand invocation.
+    argv = sys.argv[1:]
+    if "--on" not in argv and not any(a.startswith("--on=") for a in argv):
+        main()
+        return
+
     from .host_group import dispatch_remote, split_on_flag
 
     # stx-allow: fallback (reason: a malformed --on value should still
     # surface a useful error rather than crash the entry point)
     try:
-        peer, rest = split_on_flag(sys.argv[1:])
+        peer, rest = split_on_flag(argv)
     except click.UsageError as exc:
         click.echo(f"error: {exc.format_message()}", err=True)
         sys.exit(2)
