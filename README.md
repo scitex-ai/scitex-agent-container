@@ -1,5 +1,5 @@
 <!-- ---
-!-- Timestamp: 2026-05-13 14:16:03
+!-- Timestamp: 2026-05-13 14:18:48
 !-- Author: ywatanabe
 !-- File: /home/ywatanabe/proj/scitex-agent-container/README.md
 !-- --- -->
@@ -223,7 +223,7 @@ sac --help-recursive                      # full subcommand tree
 
 `scitex-agent-container` is part of [**SciTeX**](https://scitex.ai). Install via the umbrella with `pip install scitex[agent-container]` to use as `scitex.agent_container` (Python) or `scitex agent-container ...` (CLI).
 
-[`scitex-orochi`](https://github.com/ywatanabe1989/scitex-orochi) can consume `sac` and allow Slack-like interface and cross-host communication across agents and users on a web interface (live instance at [https://scitex-orochi.com](https://scitex-orochi.com)).
+[`scitex-orochi`](https://github.com/ywatanabe1989/scitex-orochi) can consume `sac` and allow for cross-host communication across agents and users on a Slack-like web interface (live instance at [https://scitex-orochi.com](https://scitex-orochi.com)).
 
 ```
             ┌────────────────────┐                       ┌──────────────────────┐
