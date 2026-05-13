@@ -1,5 +1,5 @@
 <!-- ---
-!-- Timestamp: 2026-05-13 14:18:48
+!-- Timestamp: 2026-05-13 14:23:46
 !-- Author: ywatanabe
 !-- File: /home/ywatanabe/proj/scitex-agent-container/README.md
 !-- --- -->
@@ -206,9 +206,7 @@ sac --help-recursive                      # full subcommand tree
 
 `scitex-agent-container` is part of [**SciTeX**](https://scitex.ai). Install via the umbrella with `pip install scitex[agent-container]` to use as `scitex.agent_container` (Python) or `scitex agent-container ...` (CLI).
 
-[`scitex-orochi`](https://github.com/ywatanabe1989/scitex-orochi) adds cross-host message routing, a Slack-like chatops UI, and a peer registry on top of `sac`. The dependency is one-way — orochi reads sac's on-disk state; sac never imports orochi.
-
-**[sac and orochi →](docs/sac-and-orochi.md)** — architecture diagram, responsibility split, how to wire `server:orochi-push`.
+[`scitex-orochi`](https://github.com/ywatanabe1989/scitex-orochi) adds cross-host message routing, a Slack-like chatops UI, and a peer registry on top of `sac`. The dependency is one-way — orochi reads sac's on-disk state; sac never imports orochi. For details, see **[docs/sac-and-orochi.md](docs/sac-and-orochi.md)** — architecture diagram, responsibility split, how to wire `server:orochi-push`.
 
 
 >Four Freedoms for Research
