@@ -357,11 +357,13 @@
     <span class="c1"># sac doesn&#39;t model. Merged on top of curated keys; raw_options wins.</span>
     <span class="n">raw_options</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">)</span>
     <span class="c1"># Session restart strategy. One of:</span>
-    <span class="c1">#   continue-or-new  try --continue, fall back to a fresh launch if no prior session (default)</span>
-    <span class="c1">#   continue         always pass --continue (fails if no prior session exists)</span>
-    <span class="c1">#   new              never pass --continue</span>
-    <span class="c1">#   resume           pass --resume &lt;resume_id&gt; (explicit session ID)</span>
-    <span class="n">session</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;continue-or-new&quot;</span>
+    <span class="c1">#   continue     try --continue; fall back to a fresh launch if no</span>
+    <span class="c1">#                prior session jsonl exists (default; safe).</span>
+    <span class="c1">#   new-session  never pass --continue — always start fresh.</span>
+    <span class="c1">#   resume       pass --resume &lt;resume_id&gt; (explicit session ID).</span>
+    <span class="c1"># Legacy aliases accepted at load time: `continue-or-new` -&gt; `continue`,</span>
+    <span class="c1"># `new` -&gt; `new-session`.</span>
+    <span class="n">session</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;continue&quot;</span>
     <span class="c1"># Only resume if the most recent session jsonl is newer than this many minutes.</span>
     <span class="c1"># None = no age check (always resume if session exists).</span>
     <span class="n">continue_max_age_minutes</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
