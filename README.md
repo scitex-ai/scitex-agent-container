@@ -127,29 +127,12 @@ sac agents delete hello-agent-1 hello-agent-2 -y
                               long-lived Claude SDK session
                               │
                               ├── <workdir>  (= spec.workdir, mounted rw)
-                              │     CLAUDE.md / .mcp.json / .env / state.md     ← from dot_claude/
-                              │     .claude/{commands,skills,hooks,...}         ← mirrored
-                              │
-                              ├── spec.mounts[]  ← explicit host-path allowlist (ro/rw)
-                              │
-                              ├── state-dir  (host: ~/.scitex/agent-container/runtime/<name>/)
-                              │     pid, heartbeat.json,
-                              │     session.jsonl, session_id, quota.json
-                              │
-                              ├─→ POST /v1/turn                 (per-agent A2A inbound)
-                              │       ▲
-                              │       │  live-runner route
-                              │       │
-  sac listen :7878 ───────────┼───────┘
-  bearer-auth /v1/sac/{                 \
-    health, agents,                      ─→ claude --resume <sid> -p
-    agents/<n>/{status,send,card},                          (re-launch fallback when
-    ...                                                      no live runner)
-  }
-                                                            ▲
-  sac channel send TO MSG ─────────────────────────────────┤
-  sac peer  post-turn  AGENT TEXT  ────────────────────────┘
+                              ├── spec.mounts[]  ← host-path allowlist (ro/rw)
+                              ├── state-dir  (~/.scitex/agent-container/runtime/<name>/)
+                              └─→ POST /v1/turn  (per-agent A2A inbound)
 ```
+
+**[Full architecture →](docs/how-sac-works.md)** — launch flow, dot_claude merge rules, A2A inbound, control plane, restart/health.
 
 **[YAML Spec Reference (v3) →](docs/spec-reference.md)** — annotated full example + field table (apiVersion, spec.apptainer.*, spec.claude.*, a2a, health, restart).
 
@@ -223,51 +206,9 @@ sac --help-recursive                      # full subcommand tree
 
 `scitex-agent-container` is part of [**SciTeX**](https://scitex.ai). Install via the umbrella with `pip install scitex[agent-container]` to use as `scitex.agent_container` (Python) or `scitex agent-container ...` (CLI).
 
-[`scitex-orochi`](https://github.com/ywatanabe1989/scitex-orochi) can consume `sac` and allow for cross-host communication across agents and users on a Slack-like web interface (live instance at [https://scitex-orochi.com](https://scitex-orochi.com)).
+[`scitex-orochi`](https://github.com/ywatanabe1989/scitex-orochi) adds cross-host message routing, a Slack-like chatops UI, and a peer registry on top of `sac`. The dependency is one-way — orochi reads sac's on-disk state; sac never imports orochi.
 
-```
-            ┌────────────────────┐                       ┌──────────────────────┐
-            │   Human operator   │  chat · DM · channel  │ claude-code-         │
-            │   (web UI / CLI)   │ ◄───── alerts ─────── │ telegrammer          │
-            └─────────┬──────────┘                       │ Telegram MCP + TUI   │
-                      │                                  └──────────▲───────────┘
-                      ▼                                             │
-        ┌──────────────────────────────────┐                        │
-        │   scitex-orochi                  │                        │
-        │   WebSocket hub · dashboard      │                        │
-        │   MCP channels · presence · A2A  │                        │
-        │   peer registry · cross-host     │                        │
-        └─────────────────┬────────────────┘                        │
-                          │  reads status                           │
-                          │  (one-way dep: orochi → sac)            │
-                          ▼                                         │
-        ┌──────────────────────────────────┐                        │
-        │   scitex-agent-container (sac)   │                        │
-        │      ← YOU ARE HERE              │                        │
-        │   lifecycle · health · restart   │                        │
-        │   apptainer runtime · per host   │                        │
-        │   (zero knowledge of orochi)     │                        │
-        └─────────────────┬────────────────┘                        │
-                          │  starts / supervises                    │
-                          ▼                                         │
-        ┌──────────────────────────────────┐                        │
-        │   Claude agents (one per host)   │ ── heartbeat-push ──▶ orochi
-        │   session.jsonl · SDK            │ ── alerts ─────────────┘
-        └──────────────────────────────────┘
-```
-
-| Concern                                                   | Owner                                      |
-|-----------------------------------------------------------|--------------------------------------------|
-| Agent process (SDK + session.jsonl)                       | **sac**                                    |
-| Per-host control plane (start/stop/send/tail/list)        | **sac**                                    |
-| Container runtime (apptainer only; docker/podman dropped) | **sac**                                    |
-| Cross-host message routing                                | **orochi**                                 |
-| Human chatops UI (Slack-like)                             | **orochi**                                 |
-| In-session push (MCP channel server)                      | **orochi** ships MCP; sac runs agent       |
-| SSH mesh / tunnel layer (cloudflared + autossh)           | **orochi**                                 |
-| Peer registry                                             | **orochi** (`~/.scitex/orochi/peers.yaml`) |
-
-Rule: **sac knows containers + sessions on one host; orochi knows messages + people across hosts.** sac never imports orochi.
+**[sac and orochi →](docs/sac-and-orochi.md)** — architecture diagram, responsibility split, how to wire `server:orochi-push`.
 
 
 >Four Freedoms for Research
