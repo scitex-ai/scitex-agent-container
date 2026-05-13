@@ -136,6 +136,8 @@ sac agents delete hello-agent-1 hello-agent-2 -y
 
 **[YAML Spec Reference (v3) →](docs/spec-reference.md)** — annotated full example + field table (apiVersion, spec.apptainer.*, spec.claude.*, a2a, health, restart).
 
+**[Talking to a Running Agent →](docs/talking-to-agents.md)** — three transports (A2A `POST /v1/turn`, `sac agents send`, host-level `sac listen`), when to use which, copy-pasteable curl examples.
+
 ## Configuration and Runtime Directories
 
 **[Full directory reference →](docs/directories.md)** — complete tree, configuration cascade (CLI flag → env var → project config → user config).
