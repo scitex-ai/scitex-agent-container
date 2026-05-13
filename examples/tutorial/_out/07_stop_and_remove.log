@@ -1,5 +1,18 @@
-── what apptainer would do ──
-$ apptainer instance stop demo-noop
+── (A) Stop one instance ──
+$ apptainer instance stop hello-agent
+  # → INFO: Stopping hello-agent instance of /path/to/sac-base.sif (PID=...)
+$ sac agents stop hello-agent
+  # → quit-turn sent; instance stopped; state files cleaned
 
-── what sac would do ──
-$ sac agent stop demo-noop
+── (B) Stop all (panic button) ──
+$ apptainer instance stop --all
+$ sac agents stop --all
+
+── (C) Force-stop a wedged agent ──
+$ sac agents stop hello-agent --force
+  # → skips SDK quit-turn; SIGTERM straight to apptainer
+
+── (D) Actually forget the agent (registry-level delete) ──
+$ sac agents delete hello-agent -y
+  # → removes ~/.scitex/agent-container/agents/hello-agent/ and runtime/hello-agent/
+  # → spec.yaml in source dir is NOT touched
