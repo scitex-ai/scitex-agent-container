@@ -1,0 +1,15 @@
+── Current dot_claude (if any) ──
+(no dot_claude at /home/ywatanabe/.scitex/agent-container/agents/tutorial-demo/dot_claude)
+
+── Reference example (bundled) ──
+$ ls examples/agents/full-agent/dot_claude/
+  # → CLAUDE.md  .env.example  .mcp.json  commands/  hooks/  skills/
+
+── Minimal CLAUDE.md to ship ──
+# Agent Role
+You are tutorial-demo, a sandbox agent.
+- Reply concisely.
+- Do not call shell tools unless explicitly asked.
+
+── Minimal .mcp.json (no servers; safe default) ──
+{"mcpServers": {}}
