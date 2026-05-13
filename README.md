@@ -1,5 +1,5 @@
 <!-- ---
-!-- Timestamp: 2026-05-13 14:04:00
+!-- Timestamp: 2026-05-13 14:16:03
 !-- Author: ywatanabe
 !-- File: /home/ywatanabe/proj/scitex-agent-container/README.md
 !-- --- -->
@@ -60,9 +60,7 @@ sac image build base
 
 ```bash
 # Each agent lives in its own directory; the directory name is the agent name.
-for id in 1 2; do
-  mkdir -p ~/.scitex/agent-container/agents/hello-agent-$id
-done
+mkdir -p ~/.scitex/agent-container/agents/hello-agent-{1,2}
 ```
 
 **Step 3 — Write `spec.yaml`** (copy into each agent directory, adjust `startup_prompts`)
@@ -153,213 +151,20 @@ sac agents delete hello-agent-1 hello-agent-2 -y
   sac peer  post-turn  AGENT TEXT  ────────────────────────┘
 ```
 
-<details>
-<summary><strong>YAML Spec Reference (v3)</strong></summary>
-
-<br>
-
-Container + session knobs nest under the engine that interprets them
-(`spec.apptainer.*`, `spec.claude.*`). Cross-cutting knobs (workdir,
-a2a, health, restart) stay at the top level. Every curated block has
-a `raw_*` escape hatch — full underlying surface is always reachable.
-
-The agent name is the parent directory of `spec.yaml`.
-
-Example:
-
-``` yaml
-
-apiVersion: scitex-agent-container/v3
-kind: Agent
-
-metadata:
-  labels:                              # arbitrary string→string, used by sac fleet ...
-    role: researcher
-    team: lab-a
-
-spec:
-  runtime: apptainer                   # the only accepted value (post 2026-05-13 ripout)
-  workdir: ~/proj/example              # mounted rw at /work inside the container
-
-  apptainer:
-    image: ./sac-base.sif              # full path or relative path to this spec.yaml
-    overlay: ./overlay.img             # writable overlay (rw layer above the SIF)
-    nv: false                          # forward host NVIDIA libs (--nv)
-    rocm: false                        # forward host AMD ROCm libs (--rocm)
-    binds:                             # bind mounts (host:container[:mode])
-      - /data/gpfs:/data/gpfs:ro
-    env:                               # env vars exported into the container
-      FOO: bar
-    raw_args: []                       # escape hatch → appended to apptainer exec argv
-
-  dot_claude: ./dot_claude             # relative to spec.yaml (preferred) or absolute
-    # merged into workspace/.claude/ at agent-start.
-    # may contain: CLAUDE.md, .mcp.json, .env, state.md,
-    #              commands/, skills/, hooks/, settings.local.json
-
-  startup_commands:                    # shell commands, run BEFORE claude starts
-    - "uv venv /opt/venv-agent --python python3"
-
-  startup_prompts:                     # fed to claude as first user message(s)
-    - "Apply the SciTeX quality playbook."
-
-  claude:
-    model: claude-opus-4-5
-    session: new-session               # or 'continue', or 'resume <sid>' (mirrors claude CLI)
-    channels:                          # push-based; passed as claude --channels
-      - server:orochi-push
-      - server:a2a
-    flags:
-      - --dangerously-skip-permissions
-    raw_options: {}                    # escape hatch → ClaudeAgentOptions(**raw_options)
-
-  a2a:
-    port: 7901                         # bind POST /v1/turn on this localhost port (per-agent)
-
-  health:
-    enabled: true
-    interval: 60                       # seconds between probes
-    method: sdk-alive                  # only currently supported method
-
-  restart:
-    policy: on-failure                 # never | on-failure | always
-    max_retries: 3
-    backoff_initial: 30
-    backoff_max: 300
-    backoff_multiplier: 2
-```
-
-Example YAMLs: [`./examples/agent-templates`](./examples/agent-templates)
-
-
-| Section                       | Key Fields                                                               | Description                                                                                                                                                                  |
-|-------------------------------|--------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `apiVersion`                  | `scitex-agent-container/v3`                                              | Config format version                                                                                                                                                        |
-| `metadata.labels`             | string→string map                                                        | Used by `sac fleet ...` filters                                                                                                                                              |
-| `spec.runtime`                | `apptainer` (the only supported runtime)                                 | Container backend                                                                                                                                                            |
-| `spec.workdir`                | path                                                                     | Workspace mounted at `/work` inside the container                                                                                                                            |
-| `spec.apptainer.image`        | path to `.sif`                                                           | Default: `~/.scitex/agent-container/containers/sac-scitex.sif`                                                                                                               |
-| `spec.apptainer.overlay`      | path                                                                     | Writable overlay (rw layer above the SIF)                                                                                                                                    |
-| `spec.apptainer.nv` / `.rocm` | bool                                                                     | Forward host NVIDIA / AMD ROCm libs                                                                                                                                          |
-| `spec.apptainer.binds[]`      | `host:container[:mode]`                                                  | Bind mounts (`${VAR}` expanded at start)                                                                                                                                     |
-| `spec.apptainer.env`          | key-value pairs                                                          | Env vars exported into the container (`${VAR}` expanded)                                                                                                                     |
-| `spec.apptainer.raw_args[]`   | list of strings                                                          | **Escape hatch** — appended verbatim to the `apptainer exec` argv                                                                                                            |
-| `spec.dot_claude`             | path                                                                     | Default: auto-discover `./dot_claude` next to `spec.yaml`. Materialized into the workspace at start (CLAUDE.md / .mcp.json / .env / state.md / commands/ / skills/ / hooks/) |
-| `spec.startup_commands[]`     | shell commands                                                           | Run **before** Claude starts (e.g. `uv venv ...`)                                                                                                                            |
-| `spec.startup_prompts[]`      | strings                                                                  | Fed to Claude as the first user message(s)                                                                                                                                   |
-| `spec.claude.model`           | `sonnet`, `opus[1m]`, `haiku-4-5`, ...                                   | Claude model                                                                                                                                                                 |
-| `spec.claude.session`         | `new-session` / `continue` / `resume <sid>`                              | Mirrors `claude --resume`/`--continue`                                                                                                                                       |
-| `spec.claude.channels[]`      | `server:orochi-push`, `plugin:foo@bar`                                   | Push channels; passed as `claude --channels`                                                                                                                                 |
-| `spec.claude.flags[]`         | strings                                                                  | Extra flags appended to the `claude` invocation                                                                                                                              |
-| `spec.claude.raw_options`     | dict                                                                     | **Escape hatch** — splatted into `ClaudeAgentOptions(**raw_options)`                                                                                                         |
-| `spec.a2a.port`               | int                                                                      | Bind `POST /v1/turn` on this localhost port (per-agent)                                                                                                                      |
-| `spec.health`                 | `enabled`, `interval`, `method: sdk-alive`                               | Health probe config                                                                                                                                                          |
-| `spec.restart`                | `policy` (`never` / `on-failure` / `always`), `max_retries`, `backoff_*` | Supervisor restart policy                                                                                                                                                    |
-
-**Lifetime / session selection:** no `mode` field. Default is
-long-lived + new session. CLI flips it: `sac agents start <name>
---one-shot` (exits after `startup_prompts`), `--resume <sid>` /
-`--continue` (resumes / continues the prior session).
-
-</details>
+**[YAML Spec Reference (v3) →](docs/spec-reference.md)** — annotated full example + field table (apiVersion, spec.apptainer.*, spec.claude.*, a2a, health, restart).
 
 ## Configuration and Runtime Directories
 
-Configuration directories are separated into user-scope (`~/.scitex/agent-container/`) and project-scope (`<proj-root>/.scitex/agent-container/`; prioritized when present). They include `config.yaml`, `agents`, `accounts`, `tokens`, `containers`, and `runtime` as described below.
+**[Full directory reference →](docs/directories.md)** — complete tree, configuration cascade (CLI flag → env var → project config → user config).
 
 ```
-~/.scitex/agent-container/ or <project>/.scitex/agent-container/
-├── config.yaml                ← host identity, host.aliases, peers (F-CS12)
-├── agents/<name>/             ← per-agent declarations (you write these)
-│   ├── spec.yaml              ← v3 Agent definition (the SSoT)
-│   └── dot_claude/            ← optional: materialized into <workdir> at start
-│       ├── CLAUDE.md           (→ <workdir>/CLAUDE.md, marker-protected)
-│       ├── .mcp.json           (→ <workdir>/.mcp.json, per-server merge)
-│       ├── .env                (→ <workdir>/.env, mode 0600)
-│       ├── state.md            (→ <workdir>/state.md, full overwrite)
-│       ├── commands/           (→ <workdir>/.claude/commands/)
-│       ├── skills/             (→ <workdir>/.claude/skills/)
-│       └── hooks/              (→ <workdir>/.claude/hooks/)
-├── accounts/                  ← saved Claude Code accounts (sac account save)
-│   ├── <name>/
-│   │   ├── account.json        (safe metadata; no tokens)
-│   │   └── .credentials.json   (copied into ~/.claude/ on `sac account use`)
-│   └── _rotations/
-│       └── <email>.ndjson      (OAuth-rotation log, one append per observed rotation)
-├── tokens/
-│   └── listen-<host>.token    ← `sac listen` bearer tokens (0600)
-├── containers/                ← built Apptainer images (see "Apptainer images" below)
-│   ├── sac-base.sif    -> sac-base/sac-base.sif        (top-level symlink)
-│   ├── sac-scitex.sif  -> sac-scitex/sac-scitex.sif    (top-level symlink)
-│   ├── sac-{base,scitex}/                              (dir-per-image)
-│   │   ├── sac-{base,scitex}.sif                       (the image; gitignored)
-│   │   ├── sac-{base,scitex}.def                       (recipe snapshot)
-│   │   ├── sac-{base,scitex}.build-YYYY-MMDD-HHMMSS.log (full build log; gitignored)
-│   │   └── .def-hash                                   (skip-rebuild cache)
-│   └── {dpkg,node,requirements}-lock.txt               (auto-freeze lock files)
-└── runtime/                   ← regenerable per-host state; gitignored
-    ├── <agent-name>/           per-agent runner state
-    │   ├── pid                  (runner PID)
-    │   ├── heartbeat.json       ({ts, pid, state}; refreshed every tick)
-    │   ├── session_id           (persisted SDK session id, resume marker)
-    │   ├── session.jsonl        (one JSON object per turn event)
-    │   └── quota.json           (accumulated per-turn token totals)
-    ├── events/                  Claude Code hook event ring-buffer
-    │   └── <agent>.jsonl
-    └── cache/                   snapshot cache for the dashboard / `sac agents diff`
-        └── <agent>.{latest,prev,diff}.json
+~/.scitex/agent-container/
+├── agents/<name>/spec.yaml    ← agent definition (SSoT)
+├── containers/sac-base.sif    ← built images (gitignored)
+└── runtime/<name>/            ← live state: pid, heartbeat, session.jsonl
 ```
 
-<details>
-<summary><strong>Configuration Cascade — CLI flag, env var, project- and user -level configs</strong></summary>
-
-Configurations can be overriden by CLI flags and environmental variables with the following precedence:
-
-1. **CLI flag** — `sac agents start hello --workdir /tmp/x`
-2. **Env var** — `SAC_<X>` or the long `SCITEX_AGENT_CONTAINER_<X>` form
-   (setting both with different values raises `SacEnvConflict`). Copy
-   [`.env.example`](.env.example) to `.env` and uncomment what you need.
-3. **Project config** — `<proj>/.scitex/agent-container/config.yaml`,
-   when you're inside a git repo that ships one.
-4. **User config** — `~/.scitex/agent-container/config.yaml`
-   (relocatable via `$SCITEX_DIR`).
-
-</details>
-
-<details>
-<summary><strong>Builtin Apptainer Images (`base` and `scitex`)</strong></summary>
-
-Two `.def` recipes, layered:
-
-| Tag       | What's inside                                                                                               | When                                   |
-|-----------|-------------------------------------------------------------------------------------------------------------|----------------------------------------|
-| `:base`   | Ubuntu 24.04 + dev tools (git, gh, rust CLIs, mermaid, prettier, eslint, jsonlint, uv, pipx, tree, node 20) | **Default** when `spec.image` is unset |
-| `:scitex` | `FROM :base` + ffmpeg + portaudio + `scitex[all]` + claude-agent-sdk + sac itself                           | Optional heavier layer                 |
-
-```
-<site-packages>/scitex_agent_container/containers/    ← recipes (ship in pip wheel)
-  apptainer-{base,scitex}.def                          ← canonical SSoT
-  Dockerfile.{base,scitex}                             ← docker mirrors
-```
-
-Recipes ship in the pip wheel — no need to clone the repo to run `sac image build`. Built artifacts live under `~/.scitex/agent-container/containers/`, never in git.
-
-### "scitex updates often, do we rebuild?"
-
-No — sandbox once, refresh when you want, freeze when stable:
-
-```bash
-sac image build scitex --sandbox        # one-time: writable sandbox
-sac image update sandbox/                # any time: pip install --upgrade scitex[all]
-sac image freeze sandbox/ scitex-2.28.15.sif   # bake to immutable SIF
-sac image switch 2.28.15                 # atomic flip (previous remembered)
-sac image rollback                       # restore previous version
-sac image snapshot -o env.json           # full reproducibility capsule
-```
-
-The build / sandbox / version / rollback verbs all delegate to [`scitex-container`](https://github.com/ywatanabe1989/scitex-container).
-
-</details> 
+**[Apptainer images →](docs/images.md)** — `base` vs `scitex` layers, sandbox/freeze workflow, version pinning.
 
 ## 1 Interfaces
 
@@ -419,6 +224,37 @@ sac --help-recursive                      # full subcommand tree
 `scitex-agent-container` is part of [**SciTeX**](https://scitex.ai). Install via the umbrella with `pip install scitex[agent-container]` to use as `scitex.agent_container` (Python) or `scitex agent-container ...` (CLI).
 
 [`scitex-orochi`](https://github.com/ywatanabe1989/scitex-orochi) can consume `sac` and allow Slack-like interface and cross-host communication across agents and users on a web interface (live instance at [https://scitex-orochi.com](https://scitex-orochi.com)).
+
+```
+            ┌────────────────────┐                       ┌──────────────────────┐
+            │   Human operator   │  chat · DM · channel  │ claude-code-         │
+            │   (web UI / CLI)   │ ◄───── alerts ─────── │ telegrammer          │
+            └─────────┬──────────┘                       │ Telegram MCP + TUI   │
+                      │                                  └──────────▲───────────┘
+                      ▼                                             │
+        ┌──────────────────────────────────┐                        │
+        │   scitex-orochi                  │                        │
+        │   WebSocket hub · dashboard      │                        │
+        │   MCP channels · presence · A2A  │                        │
+        │   peer registry · cross-host     │                        │
+        └─────────────────┬────────────────┘                        │
+                          │  reads status                           │
+                          │  (one-way dep: orochi → sac)            │
+                          ▼                                         │
+        ┌──────────────────────────────────┐                        │
+        │   scitex-agent-container (sac)   │                        │
+        │      ← YOU ARE HERE              │                        │
+        │   lifecycle · health · restart   │                        │
+        │   apptainer runtime · per host   │                        │
+        │   (zero knowledge of orochi)     │                        │
+        └─────────────────┬────────────────┘                        │
+                          │  starts / supervises                    │
+                          ▼                                         │
+        ┌──────────────────────────────────┐                        │
+        │   Claude agents (one per host)   │ ── heartbeat-push ──▶ orochi
+        │   session.jsonl · SDK            │ ── alerts ─────────────┘
+        └──────────────────────────────────┘
+```
 
 | Concern                                                   | Owner                                      |
 |-----------------------------------------------------------|--------------------------------------------|
