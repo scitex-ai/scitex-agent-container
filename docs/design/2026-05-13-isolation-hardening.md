@@ -177,6 +177,84 @@ preflight_allow sets become indistinguishable on the card.
 - HPC-style "just run my command inside the container with my home
   visible" is now a two-step (write `relaxed: true`); intentional.
 
+## Addendum: D2 refinement (2026-05-13 evening)
+
+Initial D2 design proposed `test ! -d "$HOME"` as a universal
+invariant. Pre-implementation verification against the
+scitex-stats-auditor spec.yaml exposed an Apptainer-specific edge
+case: **Apptainer creates the entire directory path of every bind
+target as scaffolding**, so a bind like
+`/home/$USER/proj/scitex-stats:/home/$USER/proj/scitex-stats:ro`
+causes `/home/$USER` (== `$HOME`) to exist as a directory inside the
+container — even under `--containall`, with no credential files
+visible. The D2 check would false-fire on every agent that mirrors
+host paths into the container.
+
+Two solutions were considered:
+
+- **Bind-aware preflight** (sac generates the preflight at runtime,
+  knowing what binds it's about to create, and the preflight checks
+  `$HOME` contents are a subset of the declared bind scaffolding).
+  Rejected: dynamic preflight is harder to integrate into Clew's
+  verification chain — verifier has to attest the *generator*, not
+  just the executed script.
+- **Container-canonical paths** (bind targets MUST use container-
+  side conventional roots — `/srv/`, `/work/`, `/opt/`, `/data/` —
+  never host-mirroring paths). Accepted.
+
+### D4. Bind targets MUST be container-canonical paths.
+
+Bind targets that mirror host paths (`/home/`, `/Users/`, `/root/`,
+absolute Windows-style paths) are deprecated. Bind targets MUST live
+under conventional container roots: `/srv/`, `/work/`, `/opt/`,
+`/data/`.
+
+Spec.yaml convention:
+
+```yaml
+spec:
+  apptainer:
+    binds:
+      - $HOME/proj/scitex-stats:/srv/sources/scitex-stats:ro
+      - $HOME/proj/scitex-dev:/srv/sources/scitex-dev:ro
+```
+
+Inside the container nothing under `/home/$USER` appears, so:
+
+1. The D2 preflight (`test ! -d "$HOME"`) stays static and universal.
+2. spec.yaml is **operator-agnostic** — the same spec runs cleanly
+   for any user.
+3. Verification chain receives a static preflight script with a
+   stable sha256; no meta-verification required.
+
+**Rationale, beyond the technical fix.** Container-canonical paths
+match Docker / OCI best practice and break the "works on my
+machine" failure mode (every agent that hardcodes
+`/home/ywatanabe/proj/...` is operator-bound). The shared-path
+convention was an HPC convenience artifact; Clew's reproducibility
+context inverts it.
+
+**sac-side enforcement (planned).** `sac agents check <name>` will
+emit a warning when a bind target starts with `/home/`, `/Users/`, or
+`/root/`. Future strict mode (`sac.audit.strict_binds: true`) makes
+it an error.
+
+**Convenience.** The runtime sets `$SAC_WORKDIR=/srv/sources` inside
+the container (when any bind targets land there), so `startup_prompts`
+and operator scripts can use `cd $SAC_WORKDIR/<pkg>` without
+hardcoding paths.
+
+### Order of execution
+
+1. ADR addendum (this section) — done.
+2. scitex-stats-auditor spec.yaml — bind targets translated to
+   `/srv/sources/...`; startup_prompts updated to reference the
+   container paths.
+3. Implementation: D1 + D2 (static check) + D3 + D4 (CLI validator).
+4. Restart scitex-stats-auditor against hardened sac; verify the
+   static preflight passes end-to-end.
+5. Preserve session.jsonl + preflight result for Clew supplementary.
+
 ## References
 
 - [`docs/isolation.md`](../isolation.md) — the 10-category leak catalog this ADR's decisions close.
