@@ -38,7 +38,7 @@ def _fallback_workdir(name: str) -> str:
     local-state-directories spec — sac never writes to another package's tree.
     """
     return str(
-        Path.home() / ".scitex" / "agent-container" / "runtime" / "workspaces" / name
+        Path.home() / ".scitex" / "agent-container" / "runtime" / "agents" / name
     )
 
 

@@ -34,7 +34,7 @@ from ._types import AgentConfig, HostsSpec, SchedulingSpec
 # (CLAUDE.md, .mcp.json, .claude/) lives at
 # ``~/.scitex/agent-container/runtime/workspaces/<effective-id>/``. External
 # orchestrators that want a different layout can override via ``spec.workdir``.
-_DEFAULT_WORKDIR_RUNTIME = "~/.scitex/agent-container/runtime/workspaces/{name}"
+_DEFAULT_WORKDIR_RUNTIME = "~/.scitex/agent-container/runtime/agents/{name}"
 
 # Host-aware fallback chain for `venv: auto` resolution.
 # Tried in order; first existing path wins. Empty string means no venv
@@ -52,7 +52,7 @@ _VENV_AUTO_FALLBACK_CHAIN = ("~/.venv-3.11", "~/.venv")
 # under sac's own user-state tree (per the local-state-directories spec):
 # ``~/.scitex/agent-container/runtime/workspaces/<name>/`` holds the
 # materialized CLAUDE.md, .mcp.json, .claude/ for that agent.
-_DEFAULT_WORKDIR_RUNTIME = "~/.scitex/agent-container/runtime/workspaces/{name}"
+_DEFAULT_WORKDIR_RUNTIME = "~/.scitex/agent-container/runtime/agents/{name}"
 
 
 def _resolve_venv(venv: str) -> str:

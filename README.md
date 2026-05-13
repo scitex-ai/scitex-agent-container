@@ -64,24 +64,23 @@ define_hello_agents() {
         # Unquoted heredoc tag — shell expands $agent_name before write.
         # Escape any literal `$` that should reach YAML verbatim (none here).
         cat > "$agent_dir/spec.yaml" <<YAML
-    apiVersion: scitex-agent-container/v3
-    kind: Agent
+apiVersion: scitex-agent-container/v3
+kind: Agent
 
-<!-- hook-bypass: line-limit (1-line quickstart doc tweak; README split deferred) -->
-    spec:
-      runtime: apptainer
-      # workdir is optional — defaults to runtime/agents/<name>/.
+spec:
+  runtime: apptainer
+  # workdir is optional — defaults to runtime/agents/<name>/.
 
-      apptainer:
-        image: ~/.scitex/agent-container/containers/sac-base.sif
+  apptainer:
+    image: ~/.scitex/agent-container/containers/sac-base.sif
 
-      claude:
-        model: haiku
-        flags:
-          - --dangerously-skip-permissions
+  claude:
+    model: haiku
+    flags:
+      - --dangerously-skip-permissions
 
-      startup_prompts:
-        - "Reply with the string 'Hello! I am hello-agent-$agent_id' and nothing else."
+  startup_prompts:
+    - "Reply with the string 'Hello! I am hello-agent-$agent_id' and nothing else."
 YAML
 
     done
