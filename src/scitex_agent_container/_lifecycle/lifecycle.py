@@ -11,6 +11,7 @@ from pathlib import Path
 from .._state.registry import Registry
 from ..config import AgentConfig, load_config, resolve_config
 from ..hooks import run_hook
+from ._a2a_port import release_a2a_port, resolve_a2a_port
 from .health import health_monitor
 
 
@@ -145,6 +146,11 @@ def agent_start(
             f"--one-shot requires spec.startup_prompts (or legacy "
             f"startup_commands) on agent '{config.name}'; nothing to run."
         )
+    # Resolve spec.a2a.port BEFORE the runtime builds argv. ``"auto"``
+    # gets a fresh allocator claim; an explicit int is recorded so
+    # ``sac listen`` can find the port via state.db without re-parsing
+    # the spec.yaml.
+    resolve_a2a_port(config)
     runtime = _get_runtime(config)
 
     # Already running?
@@ -338,6 +344,8 @@ def agent_stop(
             raise
     _fire_forget_hook(config.name, "post_stop", config.hooks.get("post_stop", []))
 
+    # Release the A2A port claim so the next agent can re-use it.
+    release_a2a_port(name)
     registry.remove(name)
     return True
 

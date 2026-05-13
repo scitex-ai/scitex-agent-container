@@ -97,60 +97,7 @@ async def agent_status(request: Request) -> JSONResponse:
     )
 
 
-async def _forward_to_live_runner(
-    cfg, name: str, prompt: str, options: dict, timeout: float = 600.0
-) -> JSONResponse | None:
-    """If the agent declared ``spec.a2a.port`` and its inbound HTTP is
-    reachable, push the turn into the live runner's inbox via its
-    ``/v1/turn`` endpoint. Returns the JSONResponse on success, or
-    ``None`` when no live runner is available (caller falls back to
-    the ``claude --resume`` re-launch path).
-    """
-    a2a = getattr(cfg, "a2a", None)
-    port = getattr(a2a, "port", None) if a2a else None
-    if not port:
-        return None
-    host = getattr(a2a, "host", None) or "127.0.0.1"
-
-    url = f"http://{host}:{port}/v1/turn"
-    body = _json.dumps({"text": prompt}).encode("utf-8")
-    req = _urlrequest.Request(
-        url,
-        data=body,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-
-    def _do_post() -> tuple[int, bytes]:
-        try:
-            with _urlrequest.urlopen(req, timeout=timeout) as resp:  # noqa: S310
-                return resp.status, resp.read()
-        except _urlerror.HTTPError as exc:
-            return exc.code, exc.read()
-        except _urlerror.URLError:
-            return -1, b""
-
-    status, payload = await asyncio.to_thread(_do_post)
-    if status == -1:
-        # Runner not reachable — fall back to re-launch path.
-        return None
-    if status >= 400:
-        return JSONResponse(
-            {
-                "name": name,
-                "route": "live-runner",
-                "status": status,
-                "error": payload.decode("utf-8", "replace"),
-            },
-            status_code=status,
-        )
-    return JSONResponse(
-        {
-            "name": name,
-            "route": "live-runner",
-            "reply": _json.loads(payload.decode("utf-8")).get("reply"),
-        }
-    )
+from ._forward import forward_to_live_runner  # noqa: E402
 
 
 async def agent_send(request: Request) -> Response:
@@ -240,7 +187,7 @@ async def agent_send(request: Request) -> Response:
 
     # 1) Try live-runner route first.
     options = body.get("options") or {}
-    live = await _forward_to_live_runner(cfg, name, prompt, options)
+    live = await forward_to_live_runner(cfg, name, prompt, options)
     if live is not None:
         return live
 
