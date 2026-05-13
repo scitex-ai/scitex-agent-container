@@ -41,7 +41,8 @@ def test_preflight_wraps_inner_cmd_by_default(tmp_path: Path) -> None:
     script = inner[2]
     # preflight signatures
     assert 'test "$(id -u)" != "0"' in script
-    assert 'test ! -d "$HOME"' in script
+    assert '[ ! -d "$HOME" ]' in script
+    assert 'ls -A "$HOME"' in script
     # Inner is exec'd so PID 1 is tini, not bash
     assert "\nexec " in script
     assert "/usr/bin/tini" in script
@@ -57,7 +58,7 @@ def test_preflight_skipped_when_relaxed(tmp_path: Path) -> None:
     assert inner[0] == "/usr/bin/tini"
     # No preflight strings anywhere in argv
     joined = "\n".join(argv)
-    assert 'test ! -d "$HOME"' not in joined
+    assert 'ls -A "$HOME"' not in joined
 
 
 def test_preflight_quotes_embedded_specials_safely(tmp_path: Path) -> None:
@@ -82,7 +83,8 @@ def test_preflight_constant_is_static() -> None:
     """The preflight is a module constant (no operator-specific generation
     — see ADR §D4: static = single sha256, verifiable by Clew)."""
     assert isinstance(PREFLIGHT_SCRIPT, str)
-    assert "test ! -d" in PREFLIGHT_SCRIPT
+    assert '[ ! -d "$HOME" ]' in PREFLIGHT_SCRIPT
+    assert 'ls -A "$HOME"' in PREFLIGHT_SCRIPT
     assert "id -u" in PREFLIGHT_SCRIPT
 
 
@@ -95,4 +97,4 @@ def test_preflight_present_when_overlay_set(tmp_path: Path) -> None:
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=sif)
     inner = _inner_after_sif(argv, sif)
     assert inner[0:2] == ["bash", "-c"]
-    assert 'test ! -d "$HOME"' in inner[2]
+    assert 'ls -A "$HOME"' in inner[2]

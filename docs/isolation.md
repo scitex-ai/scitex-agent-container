@@ -211,34 +211,59 @@ spec:
       #   "--pid", "--ipc", "--uts"
 ```
 
+### Canonical container HOME — `/home/agent` (D5)
+
+Apptainer's default behavior sets `$HOME` inside the container from
+the host operator's passwd entry (e.g. `/home/ywatanabe`). Even under
+`--containall` the directory is scaffolded as a side-effect, so any
+bind whose target descends `/home/<operator>/` populates `$HOME` and
+makes spec.yaml operator-specific.
+
+sac auto-injects `--home /home/agent` (skipped only when
+`apptainer.relaxed: true`). Inside the container:
+
+- `$HOME == /home/agent`, regardless of the operator's host username.
+- Bind targets use the canonical HOME: `~/proj/foo:/home/agent/proj/foo:ro`.
+- The host operator's home (`/home/ywatanabe`, `/home/alice`, …) is
+  never created inside the container.
+- spec.yaml is operator-agnostic — the same file runs identically on
+  any operator's host.
+
 **Per-agent binds** declare exactly what's allowed; nothing else
 visible:
 
 ```yaml
     binds:
-      # Allow only what the agent's task needs. Default to :ro.
-      - /home/me/proj/<one-package>:/home/me/proj/<one-package>:ro
+      # Source side: ~ expands to operator's host home (sac expands it
+      # before passing to apptainer). Target side: canonical
+      # /home/agent/... — operator-independent.
+      - ~/proj/<one-package>:/home/agent/proj/<one-package>:ro
       # NEVER bind ~/.ssh, ~/.gitconfig, ~/.claude unless the agent
       # provably needs them — reduces blast radius of indirect leaks (§9).
 ```
 
-**Preflight checks** in `startup_commands` fail-fast on leak detection:
+**Preflight checks** are sac-injected as a `bash -c` wrapper around
+the inner command; they run BEFORE any operator `startup_commands`:
 
-```yaml
-    startup_commands:
-      # §3 — not root inside container.
-      - 'test "$(id -u)" != "0" || (echo "ERROR: running as root" && exit 1)'
-      # §1, §9 — known host-only path should be invisible.
-      - 'test ! -e /opt/python3.12 || (echo "ERROR: host /opt leaked" && exit 1)'
-      # §9 — no host identity.
-      - 'test ! -d /home/$USER/.ssh || (echo "ERROR: host ~/.ssh visible" && exit 1)'
-      - 'test ! -e /home/$USER/.gitconfig || (echo "ERROR: host ~/.gitconfig visible" && exit 1)'
-      # Then the real install.
-      - "uv pip install -e ./scitex-foo[all] --quiet"
+```bash
+# D5 preflight (auto-injected; not in spec.yaml)
+test "$(id -u)" != "0" || exit 11           # not root (or userns-fakeroot — see below)
+test "$HOME" = "/home/agent" || exit 12      # canonical HOME — drift = misconfigured
 ```
 
-These checks run BEFORE any real work. Any leak hard-stops the agent
-with an explicit error, never silently propagates.
+**Interaction with `apptainer.fakeroot: true`.** Under fakeroot the
+in-container `id -u` returns 0, which would normally trip the first
+check. sac detects fakeroot at preflight time via `/proc/self/uid_map`:
+when the map is a single-line `0 <host_uid> 1` with `host_uid != 0`,
+the agent is running as userns-fakeroot (root inside, operator on
+host) — the root-check is treated as passed. A bare `id -u == 0`
+without that map (somehow escaped to real root) still fails fast.
+
+Two static lines, attestable by hash. The "no host leak" property
+falls out of `--containall` (no auto-mounts) + canonical HOME (no
+operator-specific `$HOME` scaffolding) + the declared `binds:` list
+(reviewable on the AgentCard). Any leak hard-stops the agent with an
+explicit error.
 
 ---
 
@@ -251,15 +276,41 @@ with an explicit error, never silently propagates.
 | Default `--containall` in apptainer argv if operator doesn't override | ✅ shipped (auto-prepended when `apptainer.relaxed: false`) |
 | `apptainer.relaxed: true` opt-out to disable hardened defaults | ✅ shipped (`spec.apptainer.relaxed`) |
 | Default `--cleanenv` + `--writable-tmpfs` auto-prepend (D1) | ✅ shipped |
-| sac-injected static $HOME-visibility preflight (D2) | ✅ shipped |
+| sac-injected static preflight (D2; refined to D5 invariants) | ✅ shipped |
 | AgentCard structured `isolation` block (D3) | ✅ shipped |
 | `sac agents check` warns on host-mirroring bind targets (D4) | ✅ shipped |
+| Canonical container `$HOME=/home/agent` auto-injected via `--home` (D5) | ✅ shipped |
+| `apptainer.fakeroot: true` opt-in (userns root inside container) | ✅ shipped |
+| Network isolation (`--net --network=bridge` + egress allowlist) | ⏳ operator-declared via `raw_args`; auto-prepend planned |
 | `sac image overlay {init,reset,prune}` for ephemeral-overlay workflows | ⏳ planned |
 
 The AgentCard field is the differentiator: external verifiers (orochi,
 Clew) can attest "this agent ran at isolation level X" by reading the
-card alone, no SIF introspection required. **Today** the field doesn't
-exist; the operator's spec.yaml is the only source of truth.
+card alone, no SIF introspection required. The shape published at
+`/.well-known/agent-card.json` (D3 + D5):
+
+```json
+"x-scitex-agent-container": {
+  "isolation": {
+    "level": "hardened",
+    "containall": true,
+    "cleanenv": true,
+    "writable_tmpfs": false,
+    "home_canonical": "/home/agent",
+    "fakeroot": false,
+    "preflight_passed": ["uid-nonzero", "home-canonical"],
+    "preflight_allowed": [],
+    "binds_count": 3,
+    "binds_writable_count": 0
+  }
+}
+```
+
+`level: hardened` is the human shorthand for "all booleans align with
+sac defaults + `preflight_allowed: []`". A run with any opt-out
+(`relaxed: true`, `fakeroot: true`, an entry in `preflight_allowed`)
+publishes `level: custom` plus the explicit booleans, so the verifier
+sees exactly what changed instead of a flat "non-standard" label.
 
 ## One-line summary for papers / READMEs
 
@@ -269,10 +320,12 @@ exist; the operator's spec.yaml is the only source of truth.
 > and IPC namespaces; and uses the host's UID/GID. For
 > reproducibility, all of these defaults must be inverted. sac uses
 > `--containall` (filesystem isolation), `--cleanenv` (environment
-> isolation), `--net --network=none` or controlled bridge (network
+> isolation), `--home /home/agent` (canonical operator-independent
+> HOME), `--net --network=none` or controlled bridge (network
 > isolation), and explicit `--bind` declarations for every host path
-> that must be visible. Preflight checks within `startup_commands`
-> verify each isolation property at boot and fail hard on any breach.
+> that must be visible. A sac-injected two-line preflight verifies
+> `id -u != 0` and `$HOME == /home/agent` at boot and fails hard on
+> any breach.
 
 ## See also
 

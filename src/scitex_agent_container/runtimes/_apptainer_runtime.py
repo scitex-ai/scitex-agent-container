@@ -193,12 +193,18 @@ class ApptainerContainerRuntime(RuntimeBase):
                 argv += ["--env", f"{auth_env}={val}"]
 
         # Mount operator's Pro/Max credentials when present (read-only).
+        # Target lives under /tmp/ (writable tmpfs / overlay) rather
+        # than $HOME — the D2 preflight requires $HOME to be empty, and
+        # binding under $HOME would scaffold a host-mirroring directory.
+        # CLAUDE_CONFIG_DIR points the SDK at this dir so it finds the
+        # credentials file without needing $HOME pollution.
         cred_file = Path.home() / ".claude" / ".credentials.json"
         if cred_file.is_file():
-            # Apptainer bind syntax with options: src:dst:ro
             argv += [
                 "--bind",
-                f"{cred_file}:/tmp/.claude/.credentials.json:ro",
+                f"{cred_file}:/tmp/sac-claude/.credentials.json:ro",
+                "--env",
+                "CLAUDE_CONFIG_DIR=/tmp/sac-claude",
             ]
 
         for key, val in (config.env or {}).items():

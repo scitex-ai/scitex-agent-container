@@ -36,18 +36,35 @@ def parse_apptainer(spec: dict):
         apt_env_raw = {}
     # v3-realign: apptainer.binds — accepts the new shorthand
     # ``host:container[:mode]`` strings OR legacy ``{src, dst, mode}`` dicts
-    # (normalised to strings).
+    # (normalised to strings). The SOURCE side (everything before the
+    # first colon) is expanded against the operator's environment:
+    # ``~`` -> ``$HOME``, ``$VAR`` / ``${VAR}`` -> env value. Apptainer
+    # itself does NOT expand env vars in --bind, so we have to do it
+    # in sac so spec.yaml stays operator-agnostic (``~/proj/foo`` works
+    # for every operator without hardcoding their username).
+    import os
+
+    def _expand_bind_src(bind_str: str) -> str:
+        # Split off the first colon — that's the source/target boundary.
+        # The target side (and optional :mode) stays verbatim; only the
+        # source needs expansion.
+        if ":" not in bind_str:
+            return os.path.expanduser(os.path.expandvars(bind_str))
+        src, _, rest = bind_str.partition(":")
+        return f"{os.path.expanduser(os.path.expandvars(src))}:{rest}"
+
     binds_raw = raw.get("binds", []) or []
     binds: list[str] = []
     if isinstance(binds_raw, list):
         for item in binds_raw:
             if isinstance(item, str) and item:
-                binds.append(item)
+                binds.append(_expand_bind_src(item))
             elif isinstance(item, dict):
                 src = str(item.get("src", "") or "")
                 dst = str(item.get("dst", "") or "")
                 mode = str(item.get("mode", "") or "")
                 if src and dst:
+                    src = os.path.expanduser(os.path.expandvars(src))
                     binds.append(f"{src}:{dst}:{mode}" if mode else f"{src}:{dst}")
     raw_args_raw = raw.get("raw_args", []) or []
     raw_args = [str(a) for a in raw_args_raw] if isinstance(raw_args_raw, list) else []

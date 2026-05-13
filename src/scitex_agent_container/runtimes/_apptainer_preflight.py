@@ -10,31 +10,32 @@ that ran inside the container. Per-operator generation is rejected
 Invariants checked:
 
 1. uid != 0 — sac never runs the agent as root.
-2. ``$HOME`` is NOT a directory — under ``--containall`` apptainer
-   doesn't auto-bind the host home, so a present ``$HOME`` directory
-   means either ``--containall`` isn't in effect or an operator-
-   declared bind brought it in. Either way the agent must not start.
+2. ``$HOME`` is EMPTY — under ``--containall`` apptainer doesn't
+   auto-bind the host home, but it still scaffolds ``$HOME`` as an
+   empty directory from the inherited passwd entry. Any *content*
+   under ``$HOME`` means either ``--containall`` isn't in effect or
+   an operator-declared bind brought host files in.
 
 Bind targets that mirror host home paths (e.g.
-``/home/$USER/proj/...``) cause apptainer to scaffold ``$HOME`` as
-a side-effect and trip check 2. D4 requires bind targets to use
-container-canonical roots (``/srv/``, ``/work/``, ``/opt/``, ``/data/``)
-so the preflight stays universally applicable.
+``/home/$USER/proj/...``) populate ``$HOME`` with host content and
+trip check 2. D4 requires bind targets to use container-canonical
+roots (``/srv/``, ``/work/``, ``/opt/``, ``/data/``) so ``$HOME``
+stays empty.
 """
 
 from __future__ import annotations
 
 # Exit codes are stable so external verifiers can map them to causes:
 #   11 — running as root inside the container
-#   12 — host $HOME visible inside the container
+#   12 — host content visible under $HOME inside the container
 PREFLIGHT_SCRIPT = (
     "set -eu\n"
     'test "$(id -u)" != "0" || '
     '{ echo "ERROR[sac-preflight]: running as root inside container — refuse"'
     " >&2; exit 11; }\n"
-    'test ! -d "$HOME" || '
-    '{ echo "ERROR[sac-preflight]: host \\$HOME visible — isolation breach'
-    ' (D4: bind targets MUST be /srv/, /work/, /opt/, /data/)"'
+    '{ [ ! -d "$HOME" ] || [ -z "$(ls -A "$HOME" 2>/dev/null)" ]; } || '
+    '{ echo "ERROR[sac-preflight]: host content visible under \\$HOME —'
+    ' isolation breach (D4: bind targets MUST be /srv/, /work/, /opt/, /data/)"'
     " >&2; exit 12; }"
 )
 

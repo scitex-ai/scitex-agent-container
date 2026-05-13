@@ -74,7 +74,24 @@ def project_runtime_root(config: "AgentConfig") -> "Path | None":
     return (scope / "runtime") if scope is not None else None
 
 
-_CRED_FILE = Path.home() / ".claude" / ".credentials.json"
+def _cred_file_path() -> Path:
+    """Resolve the credentials.json path the SDK reads.
+
+    Honours ``CLAUDE_CONFIG_DIR`` (same env Claude Code itself respects)
+    so the apptainer runtime can place the file outside ``$HOME``. Under
+    hardened isolation the D2 preflight requires ``$HOME`` to be empty,
+    so the runtime binds the host's credentials.json at
+    ``/tmp/sac-claude/.credentials.json`` and sets
+    ``CLAUDE_CONFIG_DIR=/tmp/sac-claude``; both the SDK and this helper
+    then resolve to the same file.
+    """
+    cfg_dir = os.environ.get("CLAUDE_CONFIG_DIR")
+    if cfg_dir:
+        return Path(cfg_dir) / ".credentials.json"
+    return Path.home() / ".claude" / ".credentials.json"
+
+
+_CRED_FILE = _cred_file_path()
 
 # ---------------------------------------------------------------------------
 # Why we never honour a pre-set ANTHROPIC_API_KEY

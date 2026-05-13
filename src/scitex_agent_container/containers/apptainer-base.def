@@ -40,6 +40,18 @@ From: ubuntu:24.04
         tini
     locale-gen en_US.UTF-8
 
+    # ---- 1a. Canonical container user `agent` (UID 1000) --------------
+    # Ubuntu 24.04's base image ships a `ubuntu` user at UID 1000. sac's
+    # convention (D5 in docs/isolation.md) is that the in-container user
+    # is always `agent` with HOME=/home/agent — operator-independent,
+    # matches sac's auto-injected `--home /home/agent`, and gives
+    # `whoami` a meaningful answer (the host operator's UID still maps
+    # to UID 1000 inside via apptainer's passwd inheritance, but the
+    # entry at UID 1000 is now `agent`, not `ubuntu`).
+    userdel -r ubuntu 2>/dev/null || true
+    rm -rf /home/ubuntu
+    useradd -m -d /home/agent -s /bin/bash -u 1000 agent
+
     # ---- 2. GitHub CLI -------------------------------------------------
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
         | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
