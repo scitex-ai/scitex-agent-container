@@ -138,7 +138,10 @@
 <li class="toctree-l3"><a class="reference internal" href="#apptainer-version-differences">10. Apptainer version differences</a></li>
 </ul>
 </li>
-<li class="toctree-l2"><a class="reference internal" href="#sacs-hardened-defaults">sac’s hardened defaults</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#sacs-hardened-defaults">sac’s hardened defaults</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#canonical-container-home-home-agent-d5">Canonical container HOME — <code class="docutils literal notranslate"><span class="pre">/home/agent</span></code> (D5)</a></li>
+</ul>
+</li>
 <li class="toctree-l2"><a class="reference internal" href="#roadmap-for-sacs-isolation-surface">Roadmap for sac’s isolation surface</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#one-line-summary-for-papers-readmes">One-line summary for papers / READMEs</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#see-also">See also</a></li>
@@ -813,30 +816,54 @@ where it’s safe to make these defaults) closes most leak paths:</p>
 <span class="w">      </span><span class="c1">#   &quot;--pid&quot;, &quot;--ipc&quot;, &quot;--uts&quot;</span>
 </pre></div>
 </div>
+<section id="canonical-container-home-home-agent-d5">
+<h3>Canonical container HOME — <code class="docutils literal notranslate"><span class="pre">/home/agent</span></code> (D5)<a class="headerlink" href="#canonical-container-home-home-agent-d5" title="Link to this heading"></a></h3>
+<p>Apptainer’s default behavior sets <code class="docutils literal notranslate"><span class="pre">$HOME</span></code> inside the container from
+the host operator’s passwd entry (e.g. <code class="docutils literal notranslate"><span class="pre">/home/ywatanabe</span></code>). Even under
+<code class="docutils literal notranslate"><span class="pre">--containall</span></code> the directory is scaffolded as a side-effect, so any
+bind whose target descends <code class="docutils literal notranslate"><span class="pre">/home/&lt;operator&gt;/</span></code> populates <code class="docutils literal notranslate"><span class="pre">$HOME</span></code> and
+makes spec.yaml operator-specific.</p>
+<p>sac auto-injects <code class="docutils literal notranslate"><span class="pre">--home</span> <span class="pre">/home/agent</span></code> (skipped only when
+<code class="docutils literal notranslate"><span class="pre">apptainer.relaxed:</span> <span class="pre">true</span></code>). Inside the container:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">$HOME</span> <span class="pre">==</span> <span class="pre">/home/agent</span></code>, regardless of the operator’s host username.</p></li>
+<li><p>Bind targets use the canonical HOME: <code class="docutils literal notranslate"><span class="pre">~/proj/foo:/home/agent/proj/foo:ro</span></code>.</p></li>
+<li><p>The host operator’s home (<code class="docutils literal notranslate"><span class="pre">/home/ywatanabe</span></code>, <code class="docutils literal notranslate"><span class="pre">/home/alice</span></code>, …) is
+never created inside the container.</p></li>
+<li><p>spec.yaml is operator-agnostic — the same file runs identically on
+any operator’s host.</p></li>
+</ul>
 <p><strong>Per-agent binds</strong> declare exactly what’s allowed; nothing else
 visible:</p>
 <div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="w">    </span><span class="nt">binds</span><span class="p">:</span>
-<span class="w">      </span><span class="c1"># Allow only what the agent&#39;s task needs. Default to :ro.</span>
-<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/home/me/proj/&lt;one-package&gt;:/home/me/proj/&lt;one-package&gt;:ro</span>
+<span class="w">      </span><span class="c1"># Source side: ~ expands to operator&#39;s host home (sac expands it</span>
+<span class="w">      </span><span class="c1"># before passing to apptainer). Target side: canonical</span>
+<span class="w">      </span><span class="c1"># /home/agent/... — operator-independent.</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">~/proj/&lt;one-package&gt;:/home/agent/proj/&lt;one-package&gt;:ro</span>
 <span class="w">      </span><span class="c1"># NEVER bind ~/.ssh, ~/.gitconfig, ~/.claude unless the agent</span>
 <span class="w">      </span><span class="c1"># provably needs them — reduces blast radius of indirect leaks (§9).</span>
 </pre></div>
 </div>
-<p><strong>Preflight checks</strong> in <code class="docutils literal notranslate"><span class="pre">startup_commands</span></code> fail-fast on leak detection:</p>
-<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="w">    </span><span class="nt">startup_commands</span><span class="p">:</span>
-<span class="w">      </span><span class="c1"># §3 — not root inside container.</span>
-<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&#39;test</span><span class="nv"> </span><span class="s">&quot;$(id</span><span class="nv"> </span><span class="s">-u)&quot;</span><span class="nv"> </span><span class="s">!=</span><span class="nv"> </span><span class="s">&quot;0&quot;</span><span class="nv"> </span><span class="s">||</span><span class="nv"> </span><span class="s">(echo</span><span class="nv"> </span><span class="s">&quot;ERROR:</span><span class="nv"> </span><span class="s">running</span><span class="nv"> </span><span class="s">as</span><span class="nv"> </span><span class="s">root&quot;</span><span class="nv"> </span><span class="s">&amp;&amp;</span><span class="nv"> </span><span class="s">exit</span><span class="nv"> </span><span class="s">1)&#39;</span>
-<span class="w">      </span><span class="c1"># §1, §9 — known host-only path should be invisible.</span>
-<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&#39;test</span><span class="nv"> </span><span class="s">!</span><span class="nv"> </span><span class="s">-e</span><span class="nv"> </span><span class="s">/opt/python3.12</span><span class="nv"> </span><span class="s">||</span><span class="nv"> </span><span class="s">(echo</span><span class="nv"> </span><span class="s">&quot;ERROR:</span><span class="nv"> </span><span class="s">host</span><span class="nv"> </span><span class="s">/opt</span><span class="nv"> </span><span class="s">leaked&quot;</span><span class="nv"> </span><span class="s">&amp;&amp;</span><span class="nv"> </span><span class="s">exit</span><span class="nv"> </span><span class="s">1)&#39;</span>
-<span class="w">      </span><span class="c1"># §9 — no host identity.</span>
-<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&#39;test</span><span class="nv"> </span><span class="s">!</span><span class="nv"> </span><span class="s">-d</span><span class="nv"> </span><span class="s">/home/$USER/.ssh</span><span class="nv"> </span><span class="s">||</span><span class="nv"> </span><span class="s">(echo</span><span class="nv"> </span><span class="s">&quot;ERROR:</span><span class="nv"> </span><span class="s">host</span><span class="nv"> </span><span class="s">~/.ssh</span><span class="nv"> </span><span class="s">visible&quot;</span><span class="nv"> </span><span class="s">&amp;&amp;</span><span class="nv"> </span><span class="s">exit</span><span class="nv"> </span><span class="s">1)&#39;</span>
-<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&#39;test</span><span class="nv"> </span><span class="s">!</span><span class="nv"> </span><span class="s">-e</span><span class="nv"> </span><span class="s">/home/$USER/.gitconfig</span><span class="nv"> </span><span class="s">||</span><span class="nv"> </span><span class="s">(echo</span><span class="nv"> </span><span class="s">&quot;ERROR:</span><span class="nv"> </span><span class="s">host</span><span class="nv"> </span><span class="s">~/.gitconfig</span><span class="nv"> </span><span class="s">visible&quot;</span><span class="nv"> </span><span class="s">&amp;&amp;</span><span class="nv"> </span><span class="s">exit</span><span class="nv"> </span><span class="s">1)&#39;</span>
-<span class="w">      </span><span class="c1"># Then the real install.</span>
-<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;uv</span><span class="nv"> </span><span class="s">pip</span><span class="nv"> </span><span class="s">install</span><span class="nv"> </span><span class="s">-e</span><span class="nv"> </span><span class="s">./scitex-foo[all]</span><span class="nv"> </span><span class="s">--quiet&quot;</span>
+<p><strong>Preflight checks</strong> are sac-injected as a <code class="docutils literal notranslate"><span class="pre">bash</span> <span class="pre">-c</span></code> wrapper around
+the inner command; they run BEFORE any operator <code class="docutils literal notranslate"><span class="pre">startup_commands</span></code>:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># D5 preflight (auto-injected; not in spec.yaml)</span>
+<span class="nb">test</span><span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>id<span class="w"> </span>-u<span class="k">)</span><span class="s2">&quot;</span><span class="w"> </span>!<span class="o">=</span><span class="w"> </span><span class="s2">&quot;0&quot;</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">exit</span><span class="w"> </span><span class="m">11</span><span class="w">           </span><span class="c1"># not root (or userns-fakeroot — see below)</span>
+<span class="nb">test</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$HOME</span><span class="s2">&quot;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;/home/agent&quot;</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">exit</span><span class="w"> </span><span class="m">12</span><span class="w">      </span><span class="c1"># canonical HOME — drift = misconfigured</span>
 </pre></div>
 </div>
-<p>These checks run BEFORE any real work. Any leak hard-stops the agent
-with an explicit error, never silently propagates.</p>
+<p><strong>Interaction with <code class="docutils literal notranslate"><span class="pre">apptainer.fakeroot:</span> <span class="pre">true</span></code>.</strong> Under fakeroot the
+in-container <code class="docutils literal notranslate"><span class="pre">id</span> <span class="pre">-u</span></code> returns 0, which would normally trip the first
+check. sac detects fakeroot at preflight time via <code class="docutils literal notranslate"><span class="pre">/proc/self/uid_map</span></code>:
+when the map is a single-line <code class="docutils literal notranslate"><span class="pre">0</span> <span class="pre">&lt;host_uid&gt;</span> <span class="pre">1</span></code> with <code class="docutils literal notranslate"><span class="pre">host_uid</span> <span class="pre">!=</span> <span class="pre">0</span></code>,
+the agent is running as userns-fakeroot (root inside, operator on
+host) — the root-check is treated as passed. A bare <code class="docutils literal notranslate"><span class="pre">id</span> <span class="pre">-u</span> <span class="pre">==</span> <span class="pre">0</span></code>
+without that map (somehow escaped to real root) still fails fast.</p>
+<p>Two static lines, attestable by hash. The “no host leak” property
+falls out of <code class="docutils literal notranslate"><span class="pre">--containall</span></code> (no auto-mounts) + canonical HOME (no
+operator-specific <code class="docutils literal notranslate"><span class="pre">$HOME</span></code> scaffolding) + the declared <code class="docutils literal notranslate"><span class="pre">binds:</span></code> list
+(reviewable on the AgentCard). Any leak hard-stops the agent with an
+explicit error.</p>
+</section>
 </section>
 <hr class="docutils" />
 <section id="roadmap-for-sacs-isolation-surface">
@@ -863,7 +890,7 @@ with an explicit error, never silently propagates.</p>
 <tr class="row-even"><td><p>Default <code class="docutils literal notranslate"><span class="pre">--cleanenv</span></code> + <code class="docutils literal notranslate"><span class="pre">--writable-tmpfs</span></code> auto-prepend (D1)</p></td>
 <td><p>✅ shipped</p></td>
 </tr>
-<tr class="row-odd"><td><p>sac-injected static $HOME-visibility preflight (D2)</p></td>
+<tr class="row-odd"><td><p>sac-injected static preflight (D2; refined to D5 invariants)</p></td>
 <td><p>✅ shipped</p></td>
 </tr>
 <tr class="row-even"><td><p>AgentCard structured <code class="docutils literal notranslate"><span class="pre">isolation</span></code> block (D3)</p></td>
@@ -872,15 +899,45 @@ with an explicit error, never silently propagates.</p>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agents</span> <span class="pre">check</span></code> warns on host-mirroring bind targets (D4)</p></td>
 <td><p>✅ shipped</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">image</span> <span class="pre">overlay</span> <span class="pre">{init,reset,prune}</span></code> for ephemeral-overlay workflows</p></td>
+<tr class="row-even"><td><p>Canonical container <code class="docutils literal notranslate"><span class="pre">$HOME=/home/agent</span></code> auto-injected via <code class="docutils literal notranslate"><span class="pre">--home</span></code> (D5)</p></td>
+<td><p>✅ shipped</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">apptainer.fakeroot:</span> <span class="pre">true</span></code> opt-in (userns root inside container)</p></td>
+<td><p>✅ shipped</p></td>
+</tr>
+<tr class="row-even"><td><p>Network isolation (<code class="docutils literal notranslate"><span class="pre">--net</span> <span class="pre">--network=bridge</span></code> + egress allowlist)</p></td>
+<td><p>⏳ operator-declared via <code class="docutils literal notranslate"><span class="pre">raw_args</span></code>; auto-prepend planned</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">image</span> <span class="pre">overlay</span> <span class="pre">{init,reset,prune}</span></code> for ephemeral-overlay workflows</p></td>
 <td><p>⏳ planned</p></td>
 </tr>
 </tbody>
 </table>
 <p>The AgentCard field is the differentiator: external verifiers (orochi,
 Clew) can attest “this agent ran at isolation level X” by reading the
-card alone, no SIF introspection required. <strong>Today</strong> the field doesn’t
-exist; the operator’s spec.yaml is the only source of truth.</p>
+card alone, no SIF introspection required. The shape published at
+<code class="docutils literal notranslate"><span class="pre">/.well-known/agent-card.json</span></code> (D3 + D5):</p>
+<div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="nt">&quot;x-scitex-agent-container&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;isolation&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">&quot;level&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;hardened&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;containall&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;cleanenv&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;writable_tmpfs&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;home_canonical&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;/home/agent&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;fakeroot&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;preflight_passed&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;uid-nonzero&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;home-canonical&quot;</span><span class="p">],</span>
+<span class="w">    </span><span class="nt">&quot;preflight_allowed&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[],</span>
+<span class="w">    </span><span class="nt">&quot;binds_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;binds_writable_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">level:</span> <span class="pre">hardened</span></code> is the human shorthand for “all booleans align with
+sac defaults + <code class="docutils literal notranslate"><span class="pre">preflight_allowed:</span> <span class="pre">[]</span></code>”. A run with any opt-out
+(<code class="docutils literal notranslate"><span class="pre">relaxed:</span> <span class="pre">true</span></code>, <code class="docutils literal notranslate"><span class="pre">fakeroot:</span> <span class="pre">true</span></code>, an entry in <code class="docutils literal notranslate"><span class="pre">preflight_allowed</span></code>)
+publishes <code class="docutils literal notranslate"><span class="pre">level:</span> <span class="pre">custom</span></code> plus the explicit booleans, so the verifier
+sees exactly what changed instead of a flat “non-standard” label.</p>
 </section>
 <section id="one-line-summary-for-papers-readmes">
 <h2>One-line summary for papers / READMEs<a class="headerlink" href="#one-line-summary-for-papers-readmes" title="Link to this heading"></a></h2>
@@ -891,10 +948,12 @@ inherits all environment variables; shares the host’s network, PID,
 and IPC namespaces; and uses the host’s UID/GID. For
 reproducibility, all of these defaults must be inverted. sac uses
 <code class="docutils literal notranslate"><span class="pre">--containall</span></code> (filesystem isolation), <code class="docutils literal notranslate"><span class="pre">--cleanenv</span></code> (environment
-isolation), <code class="docutils literal notranslate"><span class="pre">--net</span> <span class="pre">--network=none</span></code> or controlled bridge (network
+isolation), <code class="docutils literal notranslate"><span class="pre">--home</span> <span class="pre">/home/agent</span></code> (canonical operator-independent
+HOME), <code class="docutils literal notranslate"><span class="pre">--net</span> <span class="pre">--network=none</span></code> or controlled bridge (network
 isolation), and explicit <code class="docutils literal notranslate"><span class="pre">--bind</span></code> declarations for every host path
-that must be visible. Preflight checks within <code class="docutils literal notranslate"><span class="pre">startup_commands</span></code>
-verify each isolation property at boot and fail hard on any breach.</p>
+that must be visible. A sac-injected two-line preflight verifies
+<code class="docutils literal notranslate"><span class="pre">id</span> <span class="pre">-u</span> <span class="pre">!=</span> <span class="pre">0</span></code> and <code class="docutils literal notranslate"><span class="pre">$HOME</span> <span class="pre">==</span> <span class="pre">/home/agent</span></code> at boot and fails hard on
+any breach.</p>
 </div></blockquote>
 </section>
 <section id="see-also">
