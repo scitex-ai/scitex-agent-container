@@ -860,11 +860,17 @@ with an explicit error, never silently propagates.</p>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">apptainer.relaxed:</span> <span class="pre">true</span></code> opt-out to disable hardened defaults</p></td>
 <td><p>✅ shipped (<code class="docutils literal notranslate"><span class="pre">spec.apptainer.relaxed</span></code>)</p></td>
 </tr>
-<tr class="row-even"><td><p>sac-injected preflight (before user’s <code class="docutils literal notranslate"><span class="pre">startup_commands</span></code>)</p></td>
-<td><p>⏳ planned</p></td>
+<tr class="row-even"><td><p>Default <code class="docutils literal notranslate"><span class="pre">--cleanenv</span></code> + <code class="docutils literal notranslate"><span class="pre">--writable-tmpfs</span></code> auto-prepend (D1)</p></td>
+<td><p>✅ shipped</p></td>
 </tr>
-<tr class="row-odd"><td><p>AgentCard <code class="docutils literal notranslate"><span class="pre">isolation_level:</span> <span class="pre">hardened</span> <span class="pre">|</span> <span class="pre">relaxed</span> <span class="pre">|</span> <span class="pre">custom</span></code> field</p></td>
-<td><p>⏳ planned</p></td>
+<tr class="row-odd"><td><p>sac-injected static $HOME-visibility preflight (D2)</p></td>
+<td><p>✅ shipped</p></td>
+</tr>
+<tr class="row-even"><td><p>AgentCard structured <code class="docutils literal notranslate"><span class="pre">isolation</span></code> block (D3)</p></td>
+<td><p>✅ shipped</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agents</span> <span class="pre">check</span></code> warns on host-mirroring bind targets (D4)</p></td>
+<td><p>✅ shipped</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">image</span> <span class="pre">overlay</span> <span class="pre">{init,reset,prune}</span></code> for ephemeral-overlay workflows</p></td>
 <td><p>⏳ planned</p></td>
