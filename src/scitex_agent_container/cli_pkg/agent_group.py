@@ -46,7 +46,7 @@ class _AgentsGroup(HelpRecursiveGroup):
     COMMAND_CATEGORIES = [
         ("Lifecycle", ["start", "stop", "restart", "delete"]),
         ("Interact", ["send"]),
-        ("Inspect", ["status", "health", "tail", "recall"]),
+        ("Inspect", ["list", "health", "tail", "recall"]),
         ("Preflight", ["check"]),
         ("Discovery", ["find"]),
         ("Account", ["accounts"]),
@@ -65,7 +65,7 @@ agent_group.add_command(_rebind(_restart_impl, "restart"))
 agent_group.add_command(_rebind(_delete_impl, "delete"))
 
 # Polysemous noun-leaves (allowed under noun groups by §1 loosening)
-agent_group.add_command(_rebind(_status_impl, "status"))
+agent_group.add_command(_rebind(_status_impl, "list"))
 agent_group.add_command(_rebind(_tail_impl, "tail"))
 agent_group.add_command(_rebind(_health_impl, "health"))
 

@@ -62,7 +62,7 @@ class TestCLI:
 
     def test_status_no_agents(self):
         runner = CliRunner()
-        result = runner.invoke(main, ["agents", "status", "--json"])
+        result = runner.invoke(main, ["agents", "list", "--json"])
         assert result.exit_code == 0
 
     def test_stop_nonexistent(self):
@@ -96,7 +96,7 @@ class TestCLI:
 
     def test_list_json_empty(self):
         runner = CliRunner()
-        result = runner.invoke(main, ["agents", "status", "--json"])
+        result = runner.invoke(main, ["agents", "list", "--json"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert isinstance(data, dict)
@@ -111,7 +111,7 @@ class TestCLI:
 
     def test_status_json_nonexistent(self):
         runner = CliRunner()
-        result = runner.invoke(main, ["agents", "status", "nonexistent", "--json"])
+        result = runner.invoke(main, ["agents", "list", "nonexistent", "--json"])
         assert result.exit_code != 0
         data = json.loads(result.output)
         assert "error" in data
@@ -150,13 +150,13 @@ class TestCLI:
     def test_list_with_capability_filter(self):
         """The --capability flag should be accepted even with no agents."""
         runner = CliRunner()
-        result = runner.invoke(main, ["agents", "status", "--capability", "gpu"])
+        result = runner.invoke(main, ["agents", "list", "--capability", "gpu"])
         assert result.exit_code == 0
 
     def test_list_with_machine_filter(self):
         """The --machine flag should be accepted even with no agents."""
         runner = CliRunner()
-        result = runner.invoke(main, ["agents", "status", "--machine", "spartan"])
+        result = runner.invoke(main, ["agents", "list", "--machine", "spartan"])
         assert result.exit_code == 0
 
     def test_find_in_directory(self):
