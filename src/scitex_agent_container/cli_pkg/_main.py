@@ -35,7 +35,7 @@ COMMAND_CATEGORIES = [
     ("Account", ["accounts"]),
     (
         "Network & Peer",
-        ["host", "network", "peer", "a2a", "fleet", "listen", "channel"],
+        ["host", "peer", "a2a", "fleet", "listen"],
     ),
     ("Registry & Events", ["db", "registry", "event", "actions"]),
     ("Build & Install", ["image", "installation"]),
@@ -59,7 +59,6 @@ class _MainGroup(LazyGroup):
         "host": f"{_PKG}.host_group:host_group",
         "registry": f"{_PKG}.registry_group:registry_group",
         "event": f"{_PKG}.event_group:event_group",
-        "network": f"{_PKG}.network_group:network_group",
         "image": f"{_PKG}.image_group:image_group",
         "skills": f"{_PKG}.skills_group:skills_group",
         # `accounts` is a top-level noun — the credential store is fleet-wide,
@@ -71,6 +70,9 @@ class _MainGroup(LazyGroup):
         "peer": f"{_PKG}.peer_group:peer_group",
         "fleet": f"{_PKG}.fleet_group:fleet_group",
         "listen": f"{_PKG}.listen_cmds:listen",
+        # ``channel`` deprecated — its single ``send`` cmd duplicates
+        # ``peer post-turn`` (same outcome, different transport). The
+        # group keeps loading (back-compat) but is hidden from --help.
         "channel": f"{_PKG}.channel_group:channel_group",
         # Top-level standalone
         "list-python-apis": f"{_PKG}.info_cmds:list_python_apis",
@@ -224,7 +226,6 @@ class _MainGroup(LazyGroup):
         "host": "Local host identity and peer routing for sac.",
         "registry": "Registry maintenance — folded into ``sac db`` (F-CS11).",
         "event": "Event log operations: ingest hook events into the per-agent ring buffer.",
-        "network": "Network operations: liveness probes, fleet connectivity.",
         "image": "Container image operations: build the runtime base image.",
         "skills": "Agent-facing skills bundled with scitex-agent-container.",
         "auto-accept": "Auto-accept TUI handler for Claude Code permission prompts.",
@@ -235,7 +236,7 @@ class _MainGroup(LazyGroup):
         "installation": "Bootstrap and install helpers for a new fleet host.",
         "fleet": "Peer-aware multi-agent orchestration across hosts.",
         "listen": "Boot the sac listen HTTP/JSON control-plane server.",
-        "channel": "Agent-to-agent messaging on this host via sac listen.",
+        "channel": "[DEPRECATED] Use `sac peer post-turn` — same outcome via the canonical transport.",
         "install-shell-completion": "Wire up `<TAB>` completion in the user's shell rc.",
         "print-shell-completion": "Print the shell-completion eval line (no install).",
     }
@@ -274,8 +275,9 @@ class _MainGroup(LazyGroup):
         ),
         # Build / image
         "build-image": (f"{_PKG}.build_cmds:build", "sac image build"),
-        # Network
-        "probe-network": (f"{_PKG}.probe_cmds:probe_network", "sac network probe"),
+        # Network — ``probe-network`` and ``network probe`` both fold
+        # into ``host probe-hub`` (same reachability concern).
+        "probe-network": (f"{_PKG}.probe_cmds:probe_network", "sac host probe-hub"),
         # Install
         "install-post-merge-cron": (
             f"{_PKG}.installation_group:install_post_merge_cron",

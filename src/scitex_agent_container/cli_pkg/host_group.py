@@ -299,3 +299,20 @@ def host_probe(ctx: click.Context, peer: str, timeout: int, as_json: bool) -> No
             console.print(f"[dim]{proc.stderr.strip()[:200]}[/dim]")
     if not reachable:
         raise SystemExit(1)
+
+
+# WSL → fleet-hub layered probe (folded from ``sac network probe``).
+# Kept under ``host`` since it's a reachability check — same family
+# as ``host probe PEER`` but targeted at the hub rather than a peer.
+from .probe_cmds import probe_network as _probe_hub_impl  # noqa: E402
+
+host_group.add_command(
+    click.Command(
+        name="probe-hub",
+        callback=_probe_hub_impl.callback,
+        params=list(_probe_hub_impl.params),
+        help=_probe_hub_impl.help,
+        short_help="WSL → fleet-hub layered probe (DNS, gateway, TCP, HTTPS).",
+        epilog=_probe_hub_impl.epilog,
+    )
+)

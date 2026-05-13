@@ -44,9 +44,18 @@ def _post(url: str, body: dict, token: str, timeout: float = 60.0) -> dict:
         return json.loads(resp.read().decode("utf-8"))
 
 
-@click.group(name="channel", cls=HelpRecursiveGroup)
+@click.group(name="channel", cls=HelpRecursiveGroup, hidden=True)
 def channel_group() -> None:
-    """Agent-to-agent messaging (local v1; orochi routes cross-host)."""
+    """[DEPRECATED] Use ``sac peer post-turn`` — same outcome.
+
+    ``channel send`` was the local-v1 placeholder for what was meant to
+    become orochi's cross-host routed surface. With ``peer post-turn``
+    now reliable (auto-port-allocation + state.db port lookup), the
+    channel group is redundant — it sends to the same endpoint via a
+    longer transport. Kept working for back-compat; hidden from the
+    main ``sac --help`` surface; will be removed once orochi ships a
+    cross-host routed replacement.
+    """
 
 
 @channel_group.command("send")
@@ -76,13 +85,24 @@ def send(
     listen_url: str | None,
     token_file: Path | None,
 ) -> None:
-    """Deliver MESSAGE to TO_AGENT via local sac listen.
+    """[DEPRECATED] Deliver MESSAGE to TO_AGENT via local sac listen.
+
+    Prefer ``sac peer post-turn TO_AGENT MESSAGE`` — same outcome,
+    canonical transport. This wrapper stays for back-compat and
+    emits a one-line stderr deprecation notice on each invocation.
 
     \b
     Examples:
       sac channel send coverage-runner "found 3 untested branches in foo.py"
       sac channel send coverage-runner "..." --from quality-orchestrator
     """
+    import sys as _sys
+
+    print(
+        "[deprecated] `sac channel send` is being sunset; use "
+        "`sac peer post-turn TO_AGENT MESSAGE` instead.",
+        file=_sys.stderr,
+    )
     tok_path = token_file or default_token_path()
     token = read_token(tok_path)
     if not token:

@@ -1,14 +1,20 @@
+<!-- ---
+!-- Timestamp: 2026-05-13 19:55:42
+!-- Author: ywatanabe
+!-- File: /home/ywatanabe/proj/scitex-agent-container/docs/talking-to-agents.md
+!-- --- -->
+
 # Talking to a Running Agent
 
 A `sac` agent is a long-lived process: once started, it stays alive
 and accepts new turns. Three transports reach into that process,
 ordered from external-friendliest to most internal:
 
-| Transport                                                  | When to use                                                                  | Auth            |
-|------------------------------------------------------------|------------------------------------------------------------------------------|-----------------|
-| **A2A sidecar** — `POST /v1/sac/agents/<name>/turn` on the agent's own port | External tools, browsers, curl, peer agents, A2A-spec consumers              | none (loopback) |
-| **CLI** — `sac agents send` / `tail`                       | Scripted flows on the same host (the one running the agent)                  | none            |
-| **`sac listen`** — `POST /v1/sac/agents/<name>/send` on the host port (7878) | Trusted orchestrators (e.g. orochi), cross-host via the existing SSH mesh    | bearer token    |
+| Transport                                                                    | When to use                                                               | Auth            |
+|------------------------------------------------------------------------------|---------------------------------------------------------------------------|-----------------|
+| **A2A sidecar** — `POST /v1/sac/agents/<name>/turn` on the agent's own port  | External tools, browsers, curl, peer agents, A2A-spec consumers           | none (loopback) |
+| **CLI** — `sac agents send` / `tail`                                         | Scripted flows on the same host (the one running the agent)               | none            |
+| **`sac listen`** — `POST /v1/sac/agents/<name>/send` on the host port (7878) | Trusted orchestrators (e.g. orochi), cross-host via the existing SSH mesh | bearer token    |
 
 All three end up dropping a `TurnEnvelope` on the runner's shared
 inbox, so the SDK conversation is identical regardless of which door
@@ -243,3 +249,5 @@ sidecar and `sac listen`, so the same client code works against either.
 - [`spec-reference.md`](spec-reference.md) — the YAML knobs (`spec.a2a.port`, `spec.listen.port`)
 - [`how-sac-works.md`](how-sac-works.md) — the architecture diagram showing where each transport hooks in
 - [`sac-and-orochi.md`](sac-and-orochi.md) — how orochi consumes `sac listen` across hosts
+
+<!-- EOF -->

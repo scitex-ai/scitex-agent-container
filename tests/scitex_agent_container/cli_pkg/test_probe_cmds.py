@@ -37,7 +37,7 @@ class TestProbeNetworkCLI:
         runner = CliRunner()
         result = runner.invoke(
             main,
-            ["network", "probe", "--agent", "test-agent", "--quiet"],
+            ["host", "probe-hub", "--agent", "test-agent", "--quiet"],
         )
         assert result.exit_code == 0, result.output
         path = tmp_path / "test-agent.jsonl"
@@ -51,7 +51,7 @@ class TestProbeNetworkCLI:
         monkeypatch.setattr(np, "DEFAULT_LOG_ROOT", tmp_path)
         monkeypatch.setenv("SAC_HUB_URL", "https://hub.example/")
         runner = CliRunner()
-        result = runner.invoke(main, ["network", "probe", "--agent", "a"])
+        result = runner.invoke(main, ["host", "probe-hub", "--agent", "a"])
         assert result.exit_code == 0
         payload = json.loads(result.output)
         assert payload["ok"] is True
@@ -64,8 +64,8 @@ class TestProbeNetworkCLI:
         result = runner.invoke(
             main,
             [
-                "network",
-                "probe",
+                "host",
+                "probe-hub",
                 "--agent",
                 "a",
                 "--quiet",
@@ -84,6 +84,6 @@ class TestProbeNetworkCLI:
         monkeypatch.setenv("SAC_HUB_URL", "https://hub.example/")
         monkeypatch.setenv("CLAUDE_AGENT_ID", "head-ywata-note-win")
         runner = CliRunner()
-        result = runner.invoke(main, ["network", "probe", "--quiet"])
+        result = runner.invoke(main, ["host", "probe-hub", "--quiet"])
         assert result.exit_code == 0
         assert (tmp_path / "head-ywata-note-win.jsonl").exists()
