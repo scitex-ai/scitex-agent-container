@@ -1,5 +1,5 @@
 <!-- ---
-!-- Timestamp: 2026-05-13 11:03:02
+!-- Timestamp: 2026-05-13 11:06:31
 !-- Author: ywatanabe
 !-- File: /home/ywatanabe/proj/scitex-agent-container/README.md
 !-- --- -->
@@ -168,37 +168,7 @@ Container + session knobs nest under the engine that interprets them
 a2a, health, restart) stay at the top level. Every curated block has
 a `raw_*` escape hatch — full underlying surface is always reachable.
 
-The agent name is the parent directory of `spec.yaml` (dir-as-SSoT);
-there's no `metadata.name` field. Renaming an agent = `mv` the directory.
-
-| Section                       | Key Fields                                                               | Description                                                                                                                                                                  |
-|-------------------------------|--------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `apiVersion`                  | `scitex-agent-container/v3`                                              | Config format version                                                                                                                                                        |
-| `metadata.labels`             | string→string map                                                        | Used by `sac fleet ...` filters                                                                                                                                              |
-| `spec.runtime`                | `apptainer` (the only supported runtime)                                 | Container backend                                                                                                                                                            |
-| `spec.workdir`                | path                                                                     | Workspace mounted at `/work` inside the container                                                                                                                            |
-| `spec.apptainer.image`        | path to `.sif`                                                           | Default: `~/.scitex/agent-container/containers/sac-scitex.sif`                                                                                                               |
-| `spec.apptainer.overlay`      | path                                                                     | Writable overlay (rw layer above the SIF)                                                                                                                                    |
-| `spec.apptainer.nv` / `.rocm` | bool                                                                     | Forward host NVIDIA / AMD ROCm libs                                                                                                                                          |
-| `spec.apptainer.binds[]`      | `host:container[:mode]`                                                  | Bind mounts (`${VAR}` expanded at start)                                                                                                                                     |
-| `spec.apptainer.env`          | key-value pairs                                                          | Env vars exported into the container (`${VAR}` expanded)                                                                                                                     |
-| `spec.apptainer.raw_args[]`   | list of strings                                                          | **Escape hatch** — appended verbatim to the `apptainer exec` argv                                                                                                            |
-| `spec.dot_claude`             | path                                                                     | Default: auto-discover `./dot_claude` next to `spec.yaml`. Materialized into the workspace at start (CLAUDE.md / .mcp.json / .env / state.md / commands/ / skills/ / hooks/) |
-| `spec.startup_commands[]`     | shell commands                                                           | Run **before** Claude starts (e.g. `uv venv ...`)                                                                                                                            |
-| `spec.startup_prompts[]`      | strings                                                                  | Fed to Claude as the first user message(s)                                                                                                                                   |
-| `spec.claude.model`           | `sonnet`, `opus[1m]`, `haiku-4-5`, ...                                   | Claude model                                                                                                                                                                 |
-| `spec.claude.session`         | `new-session` / `continue` / `resume <sid>`                              | Mirrors `claude --resume`/`--continue`                                                                                                                                       |
-| `spec.claude.channels[]`      | `server:orochi-push`, `plugin:foo@bar`                                   | Push channels; passed as `claude --channels`                                                                                                                                 |
-| `spec.claude.flags[]`         | strings                                                                  | Extra flags appended to the `claude` invocation                                                                                                                              |
-| `spec.claude.raw_options`     | dict                                                                     | **Escape hatch** — splatted into `ClaudeAgentOptions(**raw_options)`                                                                                                         |
-| `spec.a2a.port`               | int                                                                      | Bind `POST /v1/turn` on this localhost port (per-agent)                                                                                                                      |
-| `spec.health`                 | `enabled`, `interval`, `method: sdk-alive`                               | Health probe config                                                                                                                                                          |
-| `spec.restart`                | `policy` (`never` / `on-failure` / `always`), `max_retries`, `backoff_*` | Supervisor restart policy                                                                                                                                                    |
-
-**Lifetime / session selection:** no `mode` field. Default is
-long-lived + new session. CLI flips it: `sac agents start <name>
---one-shot` (exits after `startup_prompts`), `--resume <sid>` /
-`--continue` (resumes / continues the prior session).
+The agent name is the parent directory of `spec.yaml`.
 
 Example:
 
@@ -265,6 +235,36 @@ spec:
 ```
 
 Example YAMLs: [`./examples/agent-templates`](./examples/agent-templates)
+
+
+| Section                       | Key Fields                                                               | Description                                                                                                                                                                  |
+|-------------------------------|--------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `apiVersion`                  | `scitex-agent-container/v3`                                              | Config format version                                                                                                                                                        |
+| `metadata.labels`             | string→string map                                                        | Used by `sac fleet ...` filters                                                                                                                                              |
+| `spec.runtime`                | `apptainer` (the only supported runtime)                                 | Container backend                                                                                                                                                            |
+| `spec.workdir`                | path                                                                     | Workspace mounted at `/work` inside the container                                                                                                                            |
+| `spec.apptainer.image`        | path to `.sif`                                                           | Default: `~/.scitex/agent-container/containers/sac-scitex.sif`                                                                                                               |
+| `spec.apptainer.overlay`      | path                                                                     | Writable overlay (rw layer above the SIF)                                                                                                                                    |
+| `spec.apptainer.nv` / `.rocm` | bool                                                                     | Forward host NVIDIA / AMD ROCm libs                                                                                                                                          |
+| `spec.apptainer.binds[]`      | `host:container[:mode]`                                                  | Bind mounts (`${VAR}` expanded at start)                                                                                                                                     |
+| `spec.apptainer.env`          | key-value pairs                                                          | Env vars exported into the container (`${VAR}` expanded)                                                                                                                     |
+| `spec.apptainer.raw_args[]`   | list of strings                                                          | **Escape hatch** — appended verbatim to the `apptainer exec` argv                                                                                                            |
+| `spec.dot_claude`             | path                                                                     | Default: auto-discover `./dot_claude` next to `spec.yaml`. Materialized into the workspace at start (CLAUDE.md / .mcp.json / .env / state.md / commands/ / skills/ / hooks/) |
+| `spec.startup_commands[]`     | shell commands                                                           | Run **before** Claude starts (e.g. `uv venv ...`)                                                                                                                            |
+| `spec.startup_prompts[]`      | strings                                                                  | Fed to Claude as the first user message(s)                                                                                                                                   |
+| `spec.claude.model`           | `sonnet`, `opus[1m]`, `haiku-4-5`, ...                                   | Claude model                                                                                                                                                                 |
+| `spec.claude.session`         | `new-session` / `continue` / `resume <sid>`                              | Mirrors `claude --resume`/`--continue`                                                                                                                                       |
+| `spec.claude.channels[]`      | `server:orochi-push`, `plugin:foo@bar`                                   | Push channels; passed as `claude --channels`                                                                                                                                 |
+| `spec.claude.flags[]`         | strings                                                                  | Extra flags appended to the `claude` invocation                                                                                                                              |
+| `spec.claude.raw_options`     | dict                                                                     | **Escape hatch** — splatted into `ClaudeAgentOptions(**raw_options)`                                                                                                         |
+| `spec.a2a.port`               | int                                                                      | Bind `POST /v1/turn` on this localhost port (per-agent)                                                                                                                      |
+| `spec.health`                 | `enabled`, `interval`, `method: sdk-alive`                               | Health probe config                                                                                                                                                          |
+| `spec.restart`                | `policy` (`never` / `on-failure` / `always`), `max_retries`, `backoff_*` | Supervisor restart policy                                                                                                                                                    |
+
+**Lifetime / session selection:** no `mode` field. Default is
+long-lived + new session. CLI flips it: `sac agents start <name>
+--one-shot` (exits after `startup_prompts`), `--resume <sid>` /
+`--continue` (resumes / continues the prior session).
 
 </details>
 
