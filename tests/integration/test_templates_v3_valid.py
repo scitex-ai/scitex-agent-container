@@ -31,7 +31,7 @@ def test_full_example_has_dot_claude():
     dot_claude = EXAMPLES_DIR / "full-agent" / "dot_claude"
     assert (dot_claude / "CLAUDE.md").exists()
     assert (dot_claude / ".mcp.json").exists()
-    assert (dot_claude / ".env").exists()
+    assert (dot_claude / ".env.example").exists()
     assert (dot_claude / "commands").is_dir()
     assert (dot_claude / "skills").is_dir()
     assert (dot_claude / "hooks").is_dir()
