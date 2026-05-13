@@ -90,7 +90,9 @@ def account_save(name: str, email: str | None, dry_run: bool, yes: bool) -> None
             pass
 
     save_account(name, meta, home=home)
-    click.echo(f"Saved account '{name}' (files: {copied or 'none found'})")
+    click.echo(
+        f"Saved account '{name}' to {cred_dir} (files: {copied or 'none found'})"
+    )
 
 
 @account.command("list")

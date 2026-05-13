@@ -1,9 +1,26 @@
-"""Tests for the account_store layout and the ~/.scitex/sac short-name alias."""
+"""Tests for the account_store layout and the ~/.scitex/sac short-name alias.
+
+Every test here MUST sandbox `Path.home()` — the helpers fall back to
+the real `Path.home()` when no `home=` override applies, and a single
+regression in `_store_path` would otherwise pollute the operator's
+real ``~/.scitex/agent-container/accounts/`` with test fixtures like
+"alpha"/"beta". The autouse ``_isolate_home`` fixture below
+monkey-patches `Path.home` for the duration of every test so even a
+regressed code path lands the writes under ``tmp_path``.
+
+Historical bug: between the v3 spec realignment commit (Agent A's
+home-arg refactor) and the follow-up `if home != Path.home()` guard,
+this fixture didn't exist; "alpha" + "beta" were created in the real
+home and shipped to the operator. This fixture is the belt to the
+guard's suspenders.
+"""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
+
+import pytest
 
 from scitex_agent_container._state.account_store import (
     _CANONICAL_ROOT_NAME,
@@ -14,6 +31,16 @@ from scitex_agent_container._state.account_store import (
     save_account,
     switch_account,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Force Path.home() to point inside tmp_path for the test's duration.
+
+    Belt-and-suspenders: even if account_store's `home=...` plumbing
+    regresses, no test write can ever land outside tmp_path.
+    """
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
 
 
 def test_save_then_list_round_trip(tmp_path: Path) -> None:
