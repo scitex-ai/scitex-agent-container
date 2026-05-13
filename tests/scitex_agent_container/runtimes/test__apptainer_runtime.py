@@ -1324,3 +1324,58 @@ def test_all_three_hardening_flags_coexist(tmp_path: Path) -> None:
     assert "--containall" in argv
     assert "--cleanenv" in argv
     assert "--writable-tmpfs" in argv
+
+
+# ---------------------------------------------------------------------------
+# D5 — canonical --home /home/agent + apptainer.fakeroot opt-in
+# ---------------------------------------------------------------------------
+
+
+def test_home_canonical_default(tmp_path: Path) -> None:
+    rt = ApptainerContainerRuntime()
+    cfg = _cfg(tmp_path, apptainer=ApptainerSpec())
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    assert "--home" in argv
+    assert argv[argv.index("--home") + 1] == "/home/agent"
+
+
+def test_home_absent_when_relaxed(tmp_path: Path) -> None:
+    rt = ApptainerContainerRuntime()
+    cfg = _cfg(tmp_path, apptainer=ApptainerSpec(relaxed=True))
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    assert "--home" not in argv
+
+
+def test_home_not_doubled_when_operator_set(tmp_path: Path) -> None:
+    rt = ApptainerContainerRuntime()
+    cfg = _cfg(
+        tmp_path,
+        apptainer=ApptainerSpec(raw_args=["--home", "/custom/home"]),
+    )
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    assert argv.count("--home") == 1
+    assert argv[argv.index("--home") + 1] == "/custom/home"
+
+
+def test_fakeroot_appended_when_opt_in(tmp_path: Path) -> None:
+    rt = ApptainerContainerRuntime()
+    cfg = _cfg(tmp_path, apptainer=ApptainerSpec(fakeroot=True))
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    assert "--fakeroot" in argv
+
+
+def test_fakeroot_absent_by_default(tmp_path: Path) -> None:
+    rt = ApptainerContainerRuntime()
+    cfg = _cfg(tmp_path, apptainer=ApptainerSpec())
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    assert "--fakeroot" not in argv
+
+
+def test_fakeroot_not_doubled(tmp_path: Path) -> None:
+    rt = ApptainerContainerRuntime()
+    cfg = _cfg(
+        tmp_path,
+        apptainer=ApptainerSpec(fakeroot=True, raw_args=["--fakeroot"]),
+    )
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    assert argv.count("--fakeroot") == 1

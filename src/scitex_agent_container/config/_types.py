@@ -151,24 +151,19 @@ class ApptainerSpec:
     exclusive with ``nv`` in practice (no host has both)."""
 
     overlay: str = ""
-    """Path to a writable apptainer overlay image (`--overlay <file>`).
-    Lets the agent install packages, write caches, and persist state
-    while keeping the base SIF immutable. The same SIF can back many
-    agents, each with its own overlay file. Empty = no overlay; the
-    container is read-only with a tmpfs writable layer.
+    """Writable apptainer overlay image (``--overlay <file>``). Empty =
+    no overlay (tmpfs writable layer). Non-absolute paths resolve
+    against ``spec.workdir``. See ``docs/isolation.md`` §7."""
 
-    Resolution: a non-absolute path is interpreted relative to the
-    agent's workdir. The canonical layout puts overlays under
-    ``~/.scitex/agent-container/containers/overlays/proj-<pkg>.overlay.img``
-    next to the base SIF directory (``containers/sac-base/sac-base.sif``),
-    mirroring scitex-template's singularity convention."""
-
-    # Opt OUT of sac's hardened-by-default isolation. When False
-    # (default), sac auto-prepends --containall to the apptainer argv
-    # unless the operator already declared it in raw_args (closes the
-    # filesystem-auto-bind leak: /home, /tmp, /sys, /proc, /dev).
-    # See ``docs/isolation.md``.
     relaxed: bool = False
+    """Opt out of sac's hardened defaults (auto-prepended
+    ``--containall``/``--cleanenv``/``--writable-tmpfs``/``--home``).
+    See ``docs/isolation.md``."""
+
+    fakeroot: bool = False
+    """Apptainer ``--fakeroot`` — uid 0 inside via user-namespace
+    remapping; operator uid on host. Pairs with the D5 preflight's
+    ``/proc/self/uid_map`` detection (see ``docs/isolation.md``)."""
 
 
 @dataclass
