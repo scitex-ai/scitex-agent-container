@@ -154,12 +154,45 @@ sac --on gpu-box agents send researcher "Resume training and tail the logs."
 
 ---
 
+## Forwarding to external A2A (`kind: AgentProxy`)
+
+Sometimes the agent on the other end isn't a sac agent — it's a
+peer A2A endpoint hosted somewhere else (a hosted service, a peer
+fleet, a contracted vendor). Wrapping it in a `kind: AgentProxy`
+agent lets the rest of sac (`sac agents send`, `sac listen`, the
+AgentCard discovery surface) treat it the same as a local SDK agent.
+
+The proxy agent has no Claude SDK; it just forwards `POST /v1/turn`
+to its configured `spec.proxy.upstream` and re-projects the
+upstream AgentCard at its own `/.well-known/agent-card.json` so
+peers see one consistent skill list.
+
+```yaml
+apiVersion: scitex-agent-container/v3
+kind: AgentProxy
+
+spec:
+  runtime: apptainer
+  apptainer: { image: ~/.scitex/agent-container/containers/sac-proxy.sif }
+  proxy:
+    upstream: https://peer.example.com
+    trust: local-mesh
+    redact: [ANTHROPIC_API_KEY, sk-]
+    timeout_s: 30.0
+  a2a: { port: 7905 }
+```
+
+See [`spec-reference.md` § `kind: AgentProxy`](spec-reference.md#kind-agentproxy--http-forwarder-agents)
+and [`examples/agents/proxy-agent/`](../examples/agents/proxy-agent/)
+for the full reference.
+
 ## Picking a transport
 
 - **Browser or third-party A2A tool** → A2A `POST /v1/turn`.
 - **Shell script on the same host** → `sac agents send` + `tail`.
 - **Another agent, on the same host** → A2A; agents have `httpx` in the SIF.
 - **Orchestrator (orochi, custom)** → `sac listen` with the bearer token; cross-host via the existing mesh.
+- **External A2A peer (hosted service, vendor)** → wrap as a [`kind: AgentProxy`](spec-reference.md#kind-agentproxy--http-forwarder-agents) agent so the rest of sac treats it the same.
 
 Pick the most external transport that meets your needs — every layer
 above the inbox is a thin wrapper, so there's no functional difference
