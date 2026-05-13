@@ -781,14 +781,8 @@ def test_autonomous_loop_stops_when_event_set_before_loop_starts():
 # Merged from test_claude_session_run.py (PS-204 orphan consolidation)
 # ---------------------------------------------------------------------------
 
-import asyncio
-import signal
-from pathlib import Path
-from typing import Any
 
-import pytest
 
-from scitex_agent_container._runners import claude_session as runner
 
 
 @pytest.fixture(autouse=True)
@@ -1085,7 +1079,9 @@ def test_run_a2a_port_spawns_http_task(
     serve_inbound to a no-op so the test doesn't open sockets."""
     served: dict[str, Any] = {}
 
-    async def _fake_serve(inbox, *, host, port, stop):
+    async def _fake_serve(inbox, *, host, port, stop, **kw):
+        # **kw absorbs agent_name + spec_yaml_path that the real signature
+        # now takes for the /.well-known/agent-card.json endpoint.
         served["host"] = host
         served["port"] = port
         # Idle until stop fires.

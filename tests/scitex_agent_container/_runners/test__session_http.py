@@ -293,3 +293,90 @@ class TestAgentCard:
             "anything", str(missing), "/.well-known/agent-card.json"
         )
         assert status == 500
+
+
+# ---------------------------------------------------------------------------
+# Name-in-path routes — sidecar mirrors sac listen's shape
+#
+# The AgentCard advertises ``url: <base>/v1/sac/agents/<name>`` so a client
+# POSTing to the discovered URL must succeed. Regression for that wart.
+# ---------------------------------------------------------------------------
+
+
+class TestNameInPathRoutes:
+    def _post_turn(self, agent_name: str, path: str, text: str = "hi") -> int:
+        """Spin up the sidecar with a fake consumer and POST to `path`.
+        Returns the HTTP status code."""
+        port = _free_port()
+        replies = {text: "ack"}
+
+        async def _scenario() -> int:
+            import json as _json
+            import urllib.error
+            import urllib.request
+
+            inbox = make_inbox()
+            stop = asyncio.Event()
+            consumer = asyncio.create_task(_fake_consumer(inbox, reply_map=replies))
+            server = asyncio.create_task(
+                serve_inbound(
+                    inbox,
+                    host="127.0.0.1",
+                    port=port,
+                    stop=stop,
+                    agent_name=agent_name,
+                )
+            )
+            for _ in range(50):
+                try:
+                    with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                        break
+                except OSError:
+                    await asyncio.sleep(0.05)
+
+            def _post():
+                req = urllib.request.Request(
+                    f"http://127.0.0.1:{port}{path}",
+                    data=_json.dumps({"text": text}).encode(),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                try:
+                    with urllib.request.urlopen(req, timeout=5.0) as resp:
+                        return resp.status
+                except urllib.error.HTTPError as exc:
+                    return exc.code
+
+            code = await asyncio.to_thread(_post)
+            stop.set()
+            await inbox.put(ShutdownEnvelope())
+            await asyncio.wait_for(consumer, timeout=5.0)
+            await asyncio.wait_for(server, timeout=5.0)
+            return code
+
+        return asyncio.run(_scenario())
+
+    def test_canonical_sac_namespace_turn(self) -> None:
+        """``POST /v1/sac/agents/<name>/turn`` — canonical sac path."""
+        assert self._post_turn("alpha", "/v1/sac/agents/alpha/turn") == 200
+
+    def test_canonical_sac_namespace_send(self) -> None:
+        """``POST /v1/sac/agents/<name>/send`` — matches sac listen's verb."""
+        assert self._post_turn("alpha", "/v1/sac/agents/alpha/send") == 200
+
+    def test_a2a_namespace_mirror_turn(self) -> None:
+        """``POST /v1/a2a/agents/<name>/turn`` — A2A-protocol-compat."""
+        assert self._post_turn("alpha", "/v1/a2a/agents/alpha/turn") == 200
+
+    def test_a2a_namespace_mirror_send(self) -> None:
+        assert self._post_turn("alpha", "/v1/a2a/agents/alpha/send") == 200
+
+    def test_name_mismatch_returns_404(self) -> None:
+        """If the URL path's name doesn't match the agent on this port,
+        return 404 with an explanatory body (sanity check — port
+        routing already pinned us; the path name is informational)."""
+        assert self._post_turn("alpha", "/v1/sac/agents/beta/turn") == 404
+
+    def test_legacy_bare_turn_still_works(self) -> None:
+        """``POST /v1/turn`` (the original shortcut) keeps working."""
+        assert self._post_turn("alpha", "/v1/turn") == 200

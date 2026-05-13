@@ -82,7 +82,8 @@ spec:
   # user: ywatanabe
 
   # multiplexer: tmux | screen — the long-lived session host.
-  multiplexer: tmux
+  # (Apptainer runtime ignores it; reserved for non-apptainer kinds.)
+  # multiplexer: tmux
 
   # ----------------------------------------------------------------------
   # apptainer block — engine-scoped knobs (raw_args is the escape hatch).
