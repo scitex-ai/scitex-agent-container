@@ -81,7 +81,7 @@ class ApptainerContainerRuntime(RuntimeBase):
         argv: list[str] = [
             "apptainer",
             "exec",
-            # Bind-mounts: workdir → /work, state_dir → /state/<name>.
+            # Bind-mounts: workdir → <container_workdir>, state_dir → /state/<name>.
             # apptainer accepts the docker syntax for src:dst:[options].
             # The state-dir is mounted at /state/<name> (not /state) so
             # the runner's `state_dir_for(name, root=/state)` resolves
@@ -90,7 +90,7 @@ class ApptainerContainerRuntime(RuntimeBase):
             # and produce /state/<name>/<name>/, which would land on
             # disk as runtime/<name>/<name>/ — the bug this comment fixes.
             "--bind",
-            f"{Path(config.workdir).expanduser()}:/work",
+            f"{Path(config.workdir).expanduser()}:{config.apptainer.container_workdir}",
             "--bind",
             f"{state_dir.expanduser()}:/state/{config.name}",
             # Note — no `--env HOME=...`. Apptainer protects HOME from
@@ -102,7 +102,7 @@ class ApptainerContainerRuntime(RuntimeBase):
             "--env",
             "SCITEX_AGENT_CONTAINER_STATE_DB=/state/state.db",
             "--pwd",
-            "/work",
+            config.apptainer.container_workdir,
         ]
 
         # Extra bind-mounts from spec.container.volumes — `src:dst[:opts]`

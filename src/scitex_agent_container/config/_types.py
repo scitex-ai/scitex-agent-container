@@ -120,6 +120,12 @@ class ApptainerSpec:
     ``apptainer exec`` argv after all curated args. Lets operators bolt
     on flags sac doesn't model."""
 
+    container_workdir: str = "/work"
+    """Path inside the container where ``spec.workdir`` gets bind-mounted
+    (and where the runner's ``--pwd`` lands). Default ``/work``.
+    Override when the SIF expects a different mount point (e.g. a
+    pre-baked ``WORKDIR`` in the .def file)."""
+
     post: str = ""
     """Shell snippet run inside the SIF build (apptainer's `%post`).
     Lines are concatenated verbatim. Empty = no extension."""

@@ -1,9 +1,13 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# Timestamp: "2026-05-13 10:23:44 (ywatanabe)"
+# File: /home/ywatanabe/proj/scitex-agent-container/src/scitex_agent_container/cli_pkg/lifecycle_cmds.py
+
+
 """Lifecycle commands: start, stop, restart, cleanup.
 
 Includes the new ``--all`` / ``--force`` flags for bulk-safe operations.
 """
-
-from __future__ import annotations
 
 import sys
 import traceback
@@ -12,16 +16,16 @@ from pathlib import Path
 import click
 
 from .._env import getenv as _sac_env
-from .._lifecycle.lifecycle import (
-    agent_restart,
-    agent_start,
-    agent_stop,
-)
+from .._lifecycle.lifecycle import agent_restart
+from .._lifecycle.lifecycle import agent_start
+from .._lifecycle.lifecycle import agent_stop
 from .._state.registry import Registry
-from ..config import AgentConfig, load_config
+from ..config import AgentConfig
+from ..config import load_config
 from ..config._host import resolve_hostname
 from ..config._resolve import resolve_with_prefix
-from ._helpers import agent_name_complete, console
+from ._helpers import agent_name_complete
+from ._helpers import console
 
 _SKIP_DIR_NAMES = {"legacy-agents", "shared", "GITIGNORED"}
 
@@ -46,7 +50,9 @@ def _singleton_skip_reason(config: AgentConfig, hostname: str) -> str | None:
         if hostname in chain[1:]:
             return None
         fallback_str = (
-            f" (fallback-hosts: {', '.join(chain[1:])})" if len(chain) > 1 else ""
+            f" (fallback-hosts: {', '.join(chain[1:])})"
+            if len(chain) > 1
+            else ""
         )
         return f"singleton prefers '{chain[0]}', current host is '{hostname}'{fallback_str}"
     # v2 config: use scheduling spec
@@ -138,7 +144,11 @@ def _discover_all_agents() -> list[str]:
 
 @click.command()
 @click.argument(
-    "targets", type=str, nargs=-1, required=True, shell_complete=agent_name_complete
+    "targets",
+    type=str,
+    nargs=-1,
+    required=True,
+    shell_complete=agent_name_complete,
 )
 @click.option(
     "--no-preflight",
@@ -370,7 +380,9 @@ def start(
             if True:
                 try:
                     current_host = resolve_hostname()
-                except RuntimeError:  # stx-allow: fallback (reason: runtime state error — handled gracefully)
+                except (
+                    RuntimeError
+                ):  # stx-allow: fallback (reason: runtime state error — handled gracefully)
                     current_host = ""
                 console.print(f"[blue]Starting {len(yamls)} agents...[/blue]")
                 for yaml_path in yamls:
@@ -403,7 +415,9 @@ def start(
                             if dry_run
                             else "[green]OK[/green]"
                         )
-                    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+                    except (
+                        Exception
+                    ) as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                         console.print(f"[red]FAILED: {exc}[/red]")
         if not single_targets:
             return
@@ -436,7 +450,9 @@ def start(
                         }
                     )
                 else:
-                    console.print(f"[yellow]Skipping '{config.name}': {skip}[/yellow]")
+                    console.print(
+                        f"[yellow]Skipping '{config.name}': {skip}[/yellow]"
+                    )
                 continue
             # hook-bypass: line-limit (host@host-wd:container-wd location; lifecycle_cmds.py refactor deferred)
             # Location reads as `host@<host-workdir>:<container-workdir>`
@@ -452,8 +468,9 @@ def start(
                 if config.remote.is_remote
                 else (resolve_hostname() or "local")
             )
+            # hook-bypass: line-limit (container_workdir wiring; lifecycle_cmds.py split deferred)
             host_workdir = config.expanded_workdir
-            container_workdir = "/work"
+            container_workdir = config.apptainer.container_workdir
             location = f"{host}@{host_workdir}:{container_workdir}"
             # hook-bypass: line-limit (--foreground --json newline polish; lifecycle_cmds.py split deferred)
             # `--foreground --json` was emitting the JSON summary on the
@@ -471,11 +488,15 @@ def start(
 
             if not as_json:
                 console.print(
-                    f"[blue][sac][/blue] [dim]{'dry-run' if dry_run else 'starting'}[/dim] "
+                    f"=== "
+                    f"[blue][sac][/blue][dim]{'dry-run' if dry_run else 'starting'}[/dim] "
                     f"[bold]{config.name}[/bold] [dim]→ {location}[/dim]"
+                    f" ==="
                 )
                 if no_preflight:
-                    console.print("[dim][sac] preflight skipped (--no-preflight)[/dim]")
+                    console.print(
+                        "[dim][sac] preflight skipped (--no-preflight)[/dim]"
+                    )
                 if force:
                     console.print(
                         "[dim][sac] force mode — stopping any existing instance first[/dim]"
@@ -512,7 +533,11 @@ def start(
                     # Agent stdout often lacks a trailing newline; break
                     # the join before our success summary lands.
                     click.echo("")
-                verb = "dry-run prepared the workspace for" if dry_run else "started"
+                verb = (
+                    "dry-run prepared the workspace for"
+                    if dry_run
+                    else "started"
+                )
                 console.print(
                     f"[green][sac][/green] [bold]{config.name}[/bold] {verb}"
                     + ("" if dry_run else f" [dim]({location})[/dim]")
@@ -607,12 +632,16 @@ def _multiplex_foreground_tails(names):
                         rec = _json.loads(line)
                         kind = rec.get("type", "?")
                         if kind == "assistant":
-                            text = (rec.get("text") or rec.get("raw") or "")[:300]
+                            text = (rec.get("text") or rec.get("raw") or "")[
+                                :300
+                            ]
                             click.echo(f"[{n}] [assistant] {text}")
                         elif kind == "result":
                             click.echo(f"[{n}] [result] (turn complete)")
                         elif kind == "error":
-                            click.echo(f"[{n}] [error] {rec.get('detail', '')}")
+                            click.echo(
+                                f"[{n}] [error] {rec.get('detail', '')}"
+                            )
                     except _json.JSONDecodeError:
                         click.echo(f"[{n}] {line[:300]}")
                 if _is_stopping(n):
@@ -621,12 +650,18 @@ def _multiplex_foreground_tails(names):
             if not any_progress:
                 _time.sleep(0.5)
     except KeyboardInterrupt:
-        click.echo("\n[foreground] interrupted; agents keep running in background.")
+        click.echo(
+            "\n[foreground] interrupted; agents keep running in background."
+        )
 
 
 @click.command()
 @click.argument(
-    "targets", type=str, nargs=-1, required=True, shell_complete=agent_name_complete
+    "targets",
+    type=str,
+    nargs=-1,
+    required=True,
+    shell_complete=agent_name_complete,
 )
 @click.option(
     "--force",
@@ -702,7 +737,9 @@ def stop(
             config = load_config(yaml_path)
             agent_stop(config.name, force=force)
             console.print(f"[green]Agent '{config.name}' stopped[/green]")
-        except Exception as exc:  # stx-allow: fallback (reason: one stop failure must not abort the remaining bulk stops)
+        except (
+            Exception
+        ) as exc:  # stx-allow: fallback (reason: one stop failure must not abort the remaining bulk stops)
             any_error = True
             console.print(f"[red]Error ({yaml_path}): {exc}[/red]")
 
@@ -754,7 +791,9 @@ def restart(name: str, dry_run: bool, yes: bool) -> None:
         click.echo(f"[dry-run] would restart agent '{name}'")
         return
     if not yes:
-        click.echo(f"Refusing to restart agent '{name}' without --yes/-y.", err=True)
+        click.echo(
+            f"Refusing to restart agent '{name}' without --yes/-y.", err=True
+        )
         raise SystemExit(2)
     # stx-allow: fallback (reason: config resolution or agent_restart can raise if the agent is not running or the session cannot be found; error message + sys.exit(1) is cleaner than an unhandled traceback)
     try:
@@ -764,7 +803,9 @@ def restart(name: str, dry_run: bool, yes: bool) -> None:
             name = config.name
         agent_restart(name)
         console.print(f"[green]Agent '{name}' restarted[/green]")
-    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+    except (
+        Exception
+    ) as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         console.print(f"[red]Error: {exc}[/red]")
         sys.exit(1)
 
@@ -804,12 +845,15 @@ def cleanup(dry_run: bool, yes: bool) -> None:
         return
     if not yes:
         click.echo(
-            "Refusing to remove stale registry entries without --yes/-y.", err=True
+            "Refusing to remove stale registry entries without --yes/-y.",
+            err=True,
         )
         raise SystemExit(2)
     cleaned = registry.cleanup_stale()
     if cleaned:
-        console.print(f"[green]Cleaned {cleaned} stale registry entries[/green]")
+        console.print(
+            f"[green]Cleaned {cleaned} stale registry entries[/green]"
+        )
     else:
         console.print("[dim]No stale entries found.[/dim]")
 
@@ -817,7 +861,11 @@ def cleanup(dry_run: bool, yes: bool) -> None:
 # hook-bypass: line-limit (delete command; lifecycle_cmds.py split deferred)
 @click.command()
 @click.argument(
-    "names", type=str, nargs=-1, required=True, shell_complete=agent_name_complete
+    "names",
+    type=str,
+    nargs=-1,
+    required=True,
+    shell_complete=agent_name_complete,
 )
 @click.option(
     "--dry-run",
@@ -884,9 +932,13 @@ def delete(
     for name in names:
         spec_dir = agents_root / name
         rt_dir = runtime_root / name
-        existed_anywhere = spec_dir.exists() or rt_dir.exists() or registry.exists(name)
+        existed_anywhere = (
+            spec_dir.exists() or rt_dir.exists() or registry.exists(name)
+        )
         if not existed_anywhere:
-            click.echo(f"[skip] '{name}': not found (no spec, runtime, or registry)")
+            click.echo(
+                f"[skip] '{name}': not found (no spec, runtime, or registry)"
+            )
             any_err = True
             continue
 
@@ -917,7 +969,9 @@ def delete(
             try:
                 _shutil.rmtree(spec_dir)
             except OSError as exc:
-                click.echo(f"[warn] '{name}': could not remove {spec_dir}: {exc}")
+                click.echo(
+                    f"[warn] '{name}': could not remove {spec_dir}: {exc}"
+                )
                 any_err = True
 
         # 3. Runtime dir.
@@ -926,7 +980,9 @@ def delete(
             try:
                 _shutil.rmtree(rt_dir)
             except OSError as exc:
-                click.echo(f"[warn] '{name}': could not remove {rt_dir}: {exc}")
+                click.echo(
+                    f"[warn] '{name}': could not remove {rt_dir}: {exc}"
+                )
                 any_err = True
 
         # 4. Registry.
@@ -941,3 +997,5 @@ def delete(
 
     if any_err:
         sys.exit(1)
+
+# EOF
