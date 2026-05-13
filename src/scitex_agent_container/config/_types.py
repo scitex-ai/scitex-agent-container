@@ -182,15 +182,26 @@ class RestartSpec:
     backoff_multiplier: int = 2
 
 
-# Parsed for backward compat but not interpreted by runtime.
-# Inbound A2A surface for an agent. When ``port`` is set, the SDK runner
-# launches a sidecar HTTP server exposing ``/v1/turn`` (worker → agent
-# message ingress) and ``/.well-known/agent.json`` (agent card) so other
-# agents can post-turn this one.
+# Inbound A2A surface for an agent. The SDK runner launches a sidecar
+# HTTP server exposing ``/v1/turn`` + ``/.well-known/agent.json``.
+# ``port`` semantics:
+#   * ``"auto"`` (default) — sac allocates via port_allocator at start.
+#     Clients should reach the agent through ``sac listen`` (one host
+#     port, name-in-path); per-agent ports are internal IPC.
+#   * ``int``   — operator-pinned; collisions raise at start time.
+#   * ``None``  — sidecar disabled (no inbound HTTP).
 @dataclass
 class A2ASpec:
     host: str = "127.0.0.1"
-    port: int | None = None
+    port: int | str | None = "auto"
+
+    @property
+    def is_auto(self) -> bool:
+        return self.port == "auto"
+
+    @property
+    def is_disabled(self) -> bool:
+        return self.port is None
 
 
 # Telegram setup is managed externally via hooks.

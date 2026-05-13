@@ -65,7 +65,12 @@ def _agent_runner_argv(config: "AgentConfig", *, one_shot: bool) -> list[str]:
     # sidecar never binds and POST /v1/turn is unreachable.
     a2a_spec = getattr(config, "a2a", None)
     a2a_port = getattr(a2a_spec, "port", None) if a2a_spec else None
-    if a2a_port:
+    # Resolved-int only: ``"auto"`` strings or None mean no sidecar
+    # arg at this layer. The lifecycle resolves ``"auto"`` → int via
+    # port_allocator BEFORE we get here; if a string slipped through,
+    # it's a config that bypassed agent_start (e.g. dry-run inspection)
+    # and the sidecar simply won't be wired up.
+    if isinstance(a2a_port, int) and a2a_port > 0:
         runner_argv += ["--a2a-port", str(a2a_port)]
         cfg_path = getattr(config, "config_path", "")
         if cfg_path:
@@ -116,7 +121,8 @@ def _proxy_runner_argv(config: "AgentConfig") -> list[str]:
     ]
     a2a_spec = getattr(config, "a2a", None)
     a2a_port = getattr(a2a_spec, "port", None) if a2a_spec else None
-    if a2a_port:
+    # See _agent_runner_argv for resolved-int rationale.
+    if isinstance(a2a_port, int) and a2a_port > 0:
         runner_argv += ["--a2a-port", str(a2a_port)]
         cfg_path = getattr(config, "config_path", "")
         if cfg_path:
