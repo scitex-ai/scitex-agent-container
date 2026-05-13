@@ -163,6 +163,13 @@ class ApptainerSpec:
     next to the base SIF directory (``containers/sac-base/sac-base.sif``),
     mirroring scitex-template's singularity convention."""
 
+    # Opt OUT of sac's hardened-by-default isolation. When False
+    # (default), sac auto-prepends --containall to the apptainer argv
+    # unless the operator already declared it in raw_args (closes the
+    # filesystem-auto-bind leak: /home, /tmp, /sys, /proc, /dev).
+    # See ``docs/isolation.md``.
+    relaxed: bool = False
+
 
 @dataclass
 class AutonomousSpec:

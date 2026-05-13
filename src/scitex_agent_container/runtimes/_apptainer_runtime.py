@@ -78,9 +78,25 @@ class ApptainerContainerRuntime(RuntimeBase):
         Pure function — no subprocess work. Caller backgrounds the
         result and writes its PID file.
         """
+        # Hardened isolation by default (closes the auto-bind leak —
+        # see docs/isolation.md §1). Skipped when:
+        #   * spec.apptainer.relaxed: true (operator opt-out), OR
+        #   * operator already declared --containall in raw_args.
+        ap_iso = getattr(config, "apptainer", None)
+        relaxed = bool(getattr(ap_iso, "relaxed", False)) if ap_iso else False
+        raw_args_decl = list(getattr(ap_iso, "raw_args", None) or []) if ap_iso else []
+        operator_set_containall = any(
+            "--containall" in a or a == "--contain" for a in raw_args_decl
+        )
+        prepend_containall = (not relaxed) and not operator_set_containall
+
         argv: list[str] = [
             "apptainer",
             "exec",
+        ]
+        if prepend_containall:
+            argv.append("--containall")
+        argv += [
             # Bind-mounts: workdir → <container_workdir>, state_dir → /state/<name>.
             # apptainer accepts the docker syntax for src:dst:[options].
             # The state-dir is mounted at /state/<name> (not /state) so

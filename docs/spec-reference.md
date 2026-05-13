@@ -112,6 +112,7 @@ when `spec.a2a.port` is set) and `GET /v1/sac/agents/<name>/card`
 | `env`         | key-value dict                | Env vars exported into the container                       |
 | `nv` / `rocm` | bool                          | Forward host NVIDIA / AMD ROCm libs (mutually exclusive)   |
 | `raw_args[]`  | list of strings               | **Escape hatch** — appended verbatim to `apptainer exec`   |
+| `relaxed`     | bool (default `false`)        | Opt OUT of hardened-by-default isolation. When `false` (default), sac auto-prepends `--containall` to the argv. Set `true` to disable; see [`docs/isolation.md`](isolation.md). |
 
 ### `spec.claude` — SDK knobs
 

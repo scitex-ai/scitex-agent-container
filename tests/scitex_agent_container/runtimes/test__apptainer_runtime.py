@@ -1143,3 +1143,67 @@ class TestSacListenBaseURLInjection:
         )
         envs = _env_pairs(argv)
         assert envs.get("SAC_LISTEN_BASE_URL") == "http://100.64.1.2:7878"
+
+
+# ---------------------------------------------------------------------------
+# Hardened isolation default — --containall auto-prepended unless opted out
+#
+# Guards docs/isolation.md §1: every leak path that comes from auto-binds
+# is closed by --containall. sac defaults to hardened (relaxed=False);
+# operators can opt out via spec.apptainer.relaxed: true or by declaring
+# --containall themselves in raw_args.
+# ---------------------------------------------------------------------------
+
+
+def test_argv_includes_containall_by_default(tmp_path: Path) -> None:
+    """Hardened-by-default: --containall is auto-prepended."""
+    from scitex_agent_container.config._types import ApptainerSpec as _A
+
+    rt = ApptainerContainerRuntime()
+    cfg = AgentConfig(
+        name="x",
+        runtime="apptainer",
+        workdir=str(tmp_path),
+        apptainer=_A(),  # defaults: relaxed=False, raw_args=[]
+    )
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    assert "--containall" in argv
+    # Must appear BEFORE the SIF path (or any inner cmd).
+    assert argv.index("--containall") < argv.index(str(tmp_path / "x.sif"))
+
+
+def test_argv_omits_containall_when_relaxed_true(tmp_path: Path) -> None:
+    """Operator opt-out: spec.apptainer.relaxed: true keeps the old behavior."""
+    from scitex_agent_container.config._types import ApptainerSpec as _A
+
+    rt = ApptainerContainerRuntime()
+    cfg = AgentConfig(
+        name="x",
+        runtime="apptainer",
+        workdir=str(tmp_path),
+        apptainer=_A(relaxed=True),
+    )
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    assert "--containall" not in argv
+
+
+def test_argv_no_double_containall_when_operator_set(tmp_path: Path) -> None:
+    """If operator already put --containall in raw_args, sac doesn't double it."""
+    from scitex_agent_container.config._types import ApptainerSpec as _A
+
+    rt = ApptainerContainerRuntime()
+    cfg = AgentConfig(
+        name="x",
+        runtime="apptainer",
+        workdir=str(tmp_path),
+        apptainer=_A(raw_args=["--containall", "--cleanenv"]),
+    )
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    # Exactly one occurrence — operator's. sac did NOT prepend a second.
+    assert argv.count("--containall") == 1
