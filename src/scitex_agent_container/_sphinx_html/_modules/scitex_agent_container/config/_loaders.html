@@ -316,7 +316,7 @@
            <div itemprop="articleBody">
              
   <h1>Source code for scitex_agent_container.config._loaders</h1><div class="highlight"><pre>
-<span></span><span class="sd">&quot;&quot;&quot;Config loaders for v1 and v2 YAML formats.&quot;&quot;&quot;</span>
+<span></span><span class="sd">&quot;&quot;&quot;Config loader for scitex-agent-container/v3 YAML.&quot;&quot;&quot;</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
 
@@ -337,9 +337,7 @@
     <span class="n">parse_hooks</span><span class="p">,</span>
     <span class="n">parse_hosts_spec</span><span class="p">,</span>
     <span class="n">parse_listen</span><span class="p">,</span>
-    <span class="n">parse_remote</span><span class="p">,</span>
     <span class="n">parse_restart</span><span class="p">,</span>
-    <span class="n">parse_scheduling</span><span class="p">,</span>
     <span class="n">parse_skills</span><span class="p">,</span>
     <span class="n">parse_startup</span><span class="p">,</span>
     <span class="n">parse_startup_commands</span><span class="p">,</span>
@@ -617,108 +615,6 @@
         <span class="n">user</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)),</span>
         <span class="n">a2a</span><span class="o">=</span><span class="n">parse_a2a</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
         <span class="n">dot_claude</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;dot_claude&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)),</span>
-    <span class="p">)</span>
-
-
-<span class="k">def</span><span class="w"> </span><span class="nf">load_v2</span><span class="p">(</span><span class="n">raw</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">path</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AgentConfig</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Load a scitex-agent-container/v2 config with auto-derived defaults.</span>
-
-<span class="sd">    Substitutes ``${HOSTNAME}`` / ``${SCITEX_AGENT_CONTAINER_HOSTNAME}`` in every</span>
-<span class="sd">    string field before dataclass construction, and composes the effective</span>
-<span class="sd">    agent id from ``metadata.name`` + ``spec.scheduling`` so the v2 shared</span>
-<span class="sd">    layout can keep one canonical YAML per role across the fleet.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-    <span class="c1"># Only walk-and-substitute hostname placeholders when the YAML opts in</span>
-    <span class="c1"># via an explicit ``spec.scheduling`` block. Legacy v2 YAMLs without</span>
-    <span class="c1"># scheduling keep the pre-change code path (no substitution, no</span>
-    <span class="c1"># effective-id composition, no host resolution required).</span>
-    <span class="n">scheduling</span><span class="p">,</span> <span class="n">explicit_scheduling</span> <span class="o">=</span> <span class="n">parse_scheduling</span><span class="p">(</span><span class="n">raw</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;spec&quot;</span><span class="p">,</span> <span class="p">{})</span> <span class="ow">or</span> <span class="p">{})</span>
-
-    <span class="k">if</span> <span class="n">explicit_scheduling</span><span class="p">:</span>
-        <span class="n">hostname</span> <span class="o">=</span> <span class="n">resolve_hostname</span><span class="p">()</span>
-        <span class="n">raw</span> <span class="o">=</span> <span class="n">substitute_hostnames</span><span class="p">(</span><span class="n">raw</span><span class="p">,</span> <span class="n">hostname</span><span class="p">)</span>
-    <span class="k">else</span><span class="p">:</span>
-        <span class="n">hostname</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
-
-    <span class="n">metadata</span> <span class="o">=</span> <span class="n">raw</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;metadata&quot;</span><span class="p">,</span> <span class="p">{})</span>
-    <span class="n">spec</span> <span class="o">=</span> <span class="n">raw</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;spec&quot;</span><span class="p">,</span> <span class="p">{})</span>
-    <span class="n">raw_name</span> <span class="o">=</span> <span class="n">metadata</span><span class="p">[</span><span class="s2">&quot;name&quot;</span><span class="p">]</span>
-    <span class="n">labels</span> <span class="o">=</span> <span class="n">metadata</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;labels&quot;</span><span class="p">,</span> <span class="p">{})</span> <span class="ow">or</span> <span class="p">{}</span>
-
-    <span class="c1"># Compose the effective id used everywhere downstream (systemd, screen/</span>
-    <span class="c1"># tmux, workdir, registry keys). Only when scheduling is explicit —</span>
-    <span class="c1"># otherwise keep the raw metadata.name as-is for backward compatibility.</span>
-    <span class="k">if</span> <span class="n">explicit_scheduling</span><span class="p">:</span>
-        <span class="n">name</span> <span class="o">=</span> <span class="n">compose_effective_name</span><span class="p">(</span><span class="n">raw_name</span><span class="p">,</span> <span class="n">scheduling</span><span class="p">,</span> <span class="n">hostname</span><span class="p">)</span>
-    <span class="k">else</span><span class="p">:</span>
-        <span class="n">name</span> <span class="o">=</span> <span class="n">raw_name</span>
-
-    <span class="c1"># Auto-derive workdir (user can override).</span>
-    <span class="c1"># Default lives under runtime/workspaces/ (2026-04-17 layout).</span>
-    <span class="n">workdir</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;workdir&quot;</span><span class="p">)</span>
-    <span class="k">if</span> <span class="n">workdir</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="n">workdir</span> <span class="o">=</span> <span class="n">_DEFAULT_WORKDIR_RUNTIME</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="n">name</span><span class="p">)</span>
-
-    <span class="c1"># Auto-derive screen_name: {name} (not cld-{name})</span>
-    <span class="n">screen_raw</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;screen&quot;</span><span class="p">,</span> <span class="p">{})</span> <span class="ow">or</span> <span class="p">{}</span>
-    <span class="n">screen_name</span> <span class="o">=</span> <span class="n">screen_raw</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;name&quot;</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span>
-
-    <span class="c1"># Auto-derive env: user values override auto-derived.</span>
-    <span class="n">auto_env</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
-        <span class="s2">&quot;CLAUDE_AGENT_ID&quot;</span><span class="p">:</span> <span class="n">name</span><span class="p">,</span>
-        <span class="s2">&quot;SCITEX_AGENT_CONTAINER_AGENT&quot;</span><span class="p">:</span> <span class="n">name</span><span class="p">,</span>
-    <span class="p">}</span>
-    <span class="k">if</span> <span class="n">labels</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;role&quot;</span><span class="p">):</span>
-        <span class="n">auto_env</span><span class="p">[</span><span class="s2">&quot;CLAUDE_AGENT_ROLE&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">labels</span><span class="p">[</span><span class="s2">&quot;role&quot;</span><span class="p">]</span>
-    <span class="n">model</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;model&quot;</span><span class="p">,</span> <span class="s2">&quot;sonnet&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="s2">&quot;sonnet&quot;</span><span class="p">)</span>
-    <span class="n">display_model</span> <span class="o">=</span> <span class="n">MODEL_DISPLAY_NAMES</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">model</span><span class="p">)</span>
-    <span class="n">auto_env</span><span class="p">[</span><span class="s2">&quot;SCITEX_AGENT_CONTAINER_MODEL&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">display_model</span>
-
-    <span class="n">user_env</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;env&quot;</span><span class="p">,</span> <span class="p">{})</span> <span class="ow">or</span> <span class="p">{}</span>
-    <span class="n">merged_env</span> <span class="o">=</span> <span class="p">{</span><span class="o">**</span><span class="n">auto_env</span><span class="p">,</span> <span class="o">**</span><span class="n">user_env</span><span class="p">}</span>
-
-    <span class="c1"># Auto-derive hooks: prepend mkdir for workdir</span>
-    <span class="n">hooks</span> <span class="o">=</span> <span class="n">parse_hooks</span><span class="p">(</span><span class="n">spec</span><span class="p">)</span>
-    <span class="n">expanded</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="n">workdir</span><span class="p">)</span><span class="o">.</span><span class="n">expanduser</span><span class="p">())</span>
-    <span class="n">mkdir_cmd</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;mkdir -p </span><span class="si">{</span><span class="n">expanded</span><span class="si">}</span><span class="s2">/.claude&quot;</span>
-    <span class="k">if</span> <span class="n">mkdir_cmd</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">hooks</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;pre_start&quot;</span><span class="p">,</span> <span class="p">[]):</span>
-        <span class="n">hooks</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="s2">&quot;pre_start&quot;</span><span class="p">,</span> <span class="p">[])</span><span class="o">.</span><span class="n">insert</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">mkdir_cmd</span><span class="p">)</span>
-
-    <span class="c1"># Parse mcp_servers with metadata interpolation (uses effective name)</span>
-    <span class="n">mcp_metadata</span> <span class="o">=</span> <span class="p">{</span><span class="o">**</span><span class="n">metadata</span><span class="p">,</span> <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="n">name</span><span class="p">}</span>
-    <span class="n">mcp_servers</span> <span class="o">=</span> <span class="n">interpolate_mcp_servers</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;mcp_servers&quot;</span><span class="p">,</span> <span class="p">{}),</span> <span class="n">mcp_metadata</span><span class="p">)</span>
-
-    <span class="k">return</span> <span class="n">AgentConfig</span><span class="p">(</span>
-        <span class="n">name</span><span class="o">=</span><span class="n">name</span><span class="p">,</span>
-        <span class="n">runtime</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;runtime&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="s2">&quot;apptainer&quot;</span><span class="p">),</span>
-        <span class="n">image</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;image&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)),</span>
-        <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span>
-        <span class="n">workdir</span><span class="o">=</span><span class="n">workdir</span><span class="p">,</span>
-        <span class="n">python_venv</span><span class="o">=</span><span class="n">_resolve_python_venv</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;python-venv&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)),</span>
-        <span class="n">env</span><span class="o">=</span><span class="n">merged_env</span><span class="p">,</span>
-        <span class="n">env_files</span><span class="o">=</span><span class="n">_parse_env_files</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="n">screen_name</span><span class="o">=</span><span class="n">screen_name</span><span class="p">,</span>
-        <span class="n">labels</span><span class="o">=</span><span class="n">labels</span><span class="p">,</span>
-        <span class="n">container</span><span class="o">=</span><span class="n">parse_container</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="n">claude</span><span class="o">=</span><span class="n">parse_claude</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="n">health</span><span class="o">=</span><span class="n">parse_health</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="n">watchdog</span><span class="o">=</span><span class="n">parse_watchdog</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="n">restart</span><span class="o">=</span><span class="n">parse_restart</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="n">autonomous</span><span class="o">=</span><span class="n">parse_autonomous</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="n">apptainer</span><span class="o">=</span><span class="n">parse_apptainer</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="n">hooks</span><span class="o">=</span><span class="n">hooks</span><span class="p">,</span>
-        <span class="n">telegram</span><span class="o">=</span><span class="n">parse_telegram</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="n">remote</span><span class="o">=</span><span class="n">parse_remote</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="n">skills</span><span class="o">=</span><span class="n">parse_skills</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="n">startup_commands</span><span class="o">=</span><span class="n">parse_startup_commands</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="n">startup</span><span class="o">=</span><span class="n">parse_startup</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="n">context_management</span><span class="o">=</span><span class="n">parse_context_management</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="n">listen</span><span class="o">=</span><span class="n">parse_listen</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="n">extensions</span><span class="o">=</span><span class="n">parse_extensions</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="n">mcp_servers</span><span class="o">=</span><span class="n">mcp_servers</span><span class="p">,</span>
-        <span class="n">multiplexer</span><span class="o">=</span><span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;multiplexer&quot;</span><span class="p">,</span> <span class="s2">&quot;screen&quot;</span><span class="p">),</span>
-        <span class="n">scheduling</span><span class="o">=</span><span class="n">scheduling</span><span class="p">,</span>
-        <span class="n">config_path</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">path</span><span class="p">),</span>
     <span class="p">)</span>
 </pre></div>
 
