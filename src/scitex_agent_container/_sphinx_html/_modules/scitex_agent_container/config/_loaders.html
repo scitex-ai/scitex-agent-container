@@ -354,7 +354,7 @@
 <span class="c1"># (CLAUDE.md, .mcp.json, .claude/) lives at</span>
 <span class="c1"># ``~/.scitex/agent-container/runtime/workspaces/&lt;effective-id&gt;/``. External</span>
 <span class="c1"># orchestrators that want a different layout can override via ``spec.workdir``.</span>
-<span class="n">_DEFAULT_WORKDIR_RUNTIME</span> <span class="o">=</span> <span class="s2">&quot;~/.scitex/agent-container/runtime/workspaces/</span><span class="si">{name}</span><span class="s2">&quot;</span>
+<span class="n">_DEFAULT_WORKDIR_RUNTIME</span> <span class="o">=</span> <span class="s2">&quot;~/.scitex/agent-container/runtime/agents/</span><span class="si">{name}</span><span class="s2">&quot;</span>
 
 <span class="c1"># Host-aware fallback chain for `venv: auto` resolution.</span>
 <span class="c1"># Tried in order; first existing path wins. Empty string means no venv</span>
@@ -372,7 +372,7 @@
 <span class="c1"># under sac&#39;s own user-state tree (per the local-state-directories spec):</span>
 <span class="c1"># ``~/.scitex/agent-container/runtime/workspaces/&lt;name&gt;/`` holds the</span>
 <span class="c1"># materialized CLAUDE.md, .mcp.json, .claude/ for that agent.</span>
-<span class="n">_DEFAULT_WORKDIR_RUNTIME</span> <span class="o">=</span> <span class="s2">&quot;~/.scitex/agent-container/runtime/workspaces/</span><span class="si">{name}</span><span class="s2">&quot;</span>
+<span class="n">_DEFAULT_WORKDIR_RUNTIME</span> <span class="o">=</span> <span class="s2">&quot;~/.scitex/agent-container/runtime/agents/</span><span class="si">{name}</span><span class="s2">&quot;</span>
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">_resolve_venv</span><span class="p">(</span><span class="n">venv</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
