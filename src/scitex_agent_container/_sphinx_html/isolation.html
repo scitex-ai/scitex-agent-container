@@ -618,6 +618,16 @@ its loopback directly. With shared netns it can.</p>
 API access) OR <code class="docutils literal notranslate"><span class="pre">--net</span> <span class="pre">--network=bridge</span></code> (independent netns + explicit
 egress allowlist for <code class="docutils literal notranslate"><span class="pre">api.anthropic.com</span></code>). Bridge + allowlist is the
 realistic answer; pure isolation kills the agent.</p>
+<p><strong>Realistic trade-off (current sac default).</strong> sac currently uses the
+host netns — agents reach <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code> on <code class="docutils literal notranslate"><span class="pre">127.0.0.1</span></code> (A2A) and any
+MCP server on host loopback (orochi push channels, etc.) over the same
+path. Naive <code class="docutils literal notranslate"><span class="pre">--network=bridge</span></code> would isolate host services but break
+both A2A and MCP-over-loopback. The realistic path forward is
+<code class="docutils literal notranslate"><span class="pre">--network=bridge</span></code> + binding <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code> on the bridge interface +
+injecting an <code class="docutils literal notranslate"><span class="pre">sac-host</span></code> hostname into <code class="docutils literal notranslate"><span class="pre">/etc/hosts</span></code> so MCP URLs stay
+transport-stable (e.g. <code class="docutils literal notranslate"><span class="pre">http://sac-host:7878</span></code>) — none of which is
+shipped yet. We accept the host-loopback exposure today as a known
+limitation; see roadmap row below.</p>
 </section>
 <section id="process-ipc-uts-namespaces">
 <h3>5. Process / IPC / UTS namespaces<a class="headerlink" href="#process-ipc-uts-namespaces" title="Link to this heading"></a></h3>
@@ -905,8 +915,8 @@ explicit error.</p>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">apptainer.fakeroot:</span> <span class="pre">true</span></code> opt-in (userns root inside container)</p></td>
 <td><p>✅ shipped</p></td>
 </tr>
-<tr class="row-even"><td><p>Network isolation (<code class="docutils literal notranslate"><span class="pre">--net</span> <span class="pre">--network=bridge</span></code> + egress allowlist)</p></td>
-<td><p>⏳ operator-declared via <code class="docutils literal notranslate"><span class="pre">raw_args</span></code>; auto-prepend planned</p></td>
+<tr class="row-even"><td><p>Network: shared host netns for MCP/A2A interop (known limitation)</p></td>
+<td><p>⏳ planned migration to <code class="docutils literal notranslate"><span class="pre">--network=bridge</span></code> + bridge-IF bind + <code class="docutils literal notranslate"><span class="pre">sac-host</span></code> hostname injection — keeps MCP URLs transport-stable while closing host-loopback exposure</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">image</span> <span class="pre">overlay</span> <span class="pre">{init,reset,prune}</span></code> for ephemeral-overlay workflows</p></td>
 <td><p>⏳ planned</p></td>

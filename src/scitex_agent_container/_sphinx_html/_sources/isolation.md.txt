@@ -89,6 +89,17 @@ API access) OR `--net --network=bridge` (independent netns + explicit
 egress allowlist for `api.anthropic.com`). Bridge + allowlist is the
 realistic answer; pure isolation kills the agent.
 
+**Realistic trade-off (current sac default).** sac currently uses the
+host netns — agents reach `sac listen` on `127.0.0.1` (A2A) and any
+MCP server on host loopback (orochi push channels, etc.) over the same
+path. Naive `--network=bridge` would isolate host services but break
+both A2A and MCP-over-loopback. The realistic path forward is
+`--network=bridge` + binding `sac listen` on the bridge interface +
+injecting an `sac-host` hostname into `/etc/hosts` so MCP URLs stay
+transport-stable (e.g. `http://sac-host:7878`) — none of which is
+shipped yet. We accept the host-loopback exposure today as a known
+limitation; see roadmap row below.
+
 ### 5. Process / IPC / UTS namespaces
 
 | Item | Default | Impact |
@@ -281,7 +292,7 @@ explicit error.
 | `sac agents check` warns on host-mirroring bind targets (D4) | ✅ shipped |
 | Canonical container `$HOME=/home/agent` auto-injected via `--home` (D5) | ✅ shipped |
 | `apptainer.fakeroot: true` opt-in (userns root inside container) | ✅ shipped |
-| Network isolation (`--net --network=bridge` + egress allowlist) | ⏳ operator-declared via `raw_args`; auto-prepend planned |
+| Network: shared host netns for MCP/A2A interop (known limitation) | ⏳ planned migration to `--network=bridge` + bridge-IF bind + `sac-host` hostname injection — keeps MCP URLs transport-stable while closing host-loopback exposure |
 | `sac image overlay {init,reset,prune}` for ephemeral-overlay workflows | ⏳ planned |
 
 The AgentCard field is the differentiator: external verifiers (orochi,
