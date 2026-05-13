@@ -1,5 +1,5 @@
 <!-- ---
-!-- Timestamp: 2026-05-13 11:06:31
+!-- Timestamp: 2026-05-13 12:19:10
 !-- Author: ywatanabe
 !-- File: /home/ywatanabe/proj/scitex-agent-container/README.md
 !-- --- -->
@@ -123,7 +123,14 @@ sac agents stop hello-agent-1 hello-agent-2
 sac agents delete hello-agent-1 hello-agent-2 -y
 ```
 
-## How it works
+### Tutorial
+
+`examples/apptainer_and_sac/` walks through the runtime in 9 lessons (build, sandbox/update/freeze, versioning, run/stop, logs/exec, mounts, env+user). Run them read-only with `bash 00_run_all.sh`, or `--apply` to execute the mutating ones.
+
+<details>
+<summary><strong>How it works</strong></summary>
+
+<br>
 
 `scitex-agent-container` (`sac`) materializes a `spec.yaml` into a long-lived, externally addressable Claude agent:
 
@@ -159,9 +166,12 @@ sac agents delete hello-agent-1 hello-agent-2 -y
   sac peer  post-turn  AGENT TEXT  ────────────────────────┘
 ```
 
+</details>
 
 <details>
 <summary><strong>YAML Spec Reference (v3)</strong></summary>
+
+<br>
 
 Container + session knobs nest under the engine that interprets them
 (`spec.apptainer.*`, `spec.claude.*`). Cross-cutting knobs (workdir,
@@ -268,7 +278,7 @@ long-lived + new session. CLI flips it: `sac agents start <name>
 
 </details>
 
-## Configuration Directory
+## Configuration and Runtime Directories
 
 Configuration directories are separated into user-scope (`~/.scitex/agent-container/`) and project-scope (`<proj-root>/.scitex/agent-container/`; prioritized when present). They include `config.yaml`, `agents`, `accounts`, `tokens`, `containers`, and `runtime` as described below.
 
@@ -416,28 +426,6 @@ sac db   query / show / clean / migrate   # state.db inspection
 sac registry reconcile                    # singleton placement reconcile across fleet
 sac --help-recursive                      # full subcommand tree
 ```
-
-</details>
-
-<details>
-<summary><strong>Examples</strong></summary>
-
-### Agent Templates
-
-`examples/agent-templates/` ships minimal pattern templates — copy and adapt:
-
-| Template | Pattern | When to use |
-|---|---|---|
-| `apptainer.yaml` | claude-session inside Apptainer SIF | **Default**: HPC + reproducibility |
-| `ssh.yaml` | remote agent via SSH | Cross-machine fleet member |
-
-MCP tool wiring is no longer a separate template — drop a `.mcp.json`
-into the agent's [`dot_claude/`](#user-state-layout-scitexagent-container)
-directory and it'll be merged into `<workdir>/.mcp.json` at start.
-
-### Tutorial
-
-`examples/apptainer_and_sac/` walks through the runtime in 9 lessons (build, sandbox/update/freeze, versioning, run/stop, logs/exec, mounts, env+user). Run them read-only with `bash 00_run_all.sh`, or `--apply` to execute the mutating ones.
 
 </details>
 
