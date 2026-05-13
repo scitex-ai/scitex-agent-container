@@ -155,7 +155,7 @@ def test_start_params_file_expands_and_dry_runs(tmp_path: Path):
 
     from click.testing import CliRunner
 
-    from scitex_agent_container.cli_pkg.lifecycle_cmds import start
+    from scitex_agent_container.cli_pkg.lifecycle import start
 
     runner = CliRunner()
     result = runner.invoke(
@@ -182,7 +182,7 @@ def test_start_params_file_requires_single_target(tmp_path: Path):
 
     from click.testing import CliRunner
 
-    from scitex_agent_container.cli_pkg.lifecycle_cmds import start
+    from scitex_agent_container.cli_pkg.lifecycle import start
 
     runner = CliRunner()
     result = runner.invoke(

@@ -14,6 +14,17 @@ from ..config import load_config
 console = Console()
 
 
+# hook-bypass: line-limit (sac system-msg helper; _helpers.py split deferred)
+def system_msg(text: str, style: str = "blue") -> None:
+    """Print a sac-system status line wrapped in ``=== ... ===``.
+
+    Use for lifecycle announcements (start / stop / restart / delete
+    progress, force-mode notice, etc.). Agent-voice output stays
+    unwrapped so the frame marks the sac-system boundary clearly.
+    """
+    console.print(f"[{style}]=== [sac] {text} ===[/{style}]")
+
+
 def agent_name_complete(
     ctx: click.Context, param: click.Parameter, incomplete: str
 ) -> list[str]:

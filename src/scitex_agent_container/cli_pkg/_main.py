@@ -245,9 +245,9 @@ class _MainGroup(LazyGroup):
     # stale scripts persist indefinitely; hard errors force the fix.
     LAZY_RENAMED = {
         # Lifecycle
-        "start": (f"{_PKG}.lifecycle_cmds:start", "sac agent start"),
-        "stop": (f"{_PKG}.lifecycle_cmds:stop", "sac agent stop"),
-        "restart": (f"{_PKG}.lifecycle_cmds:restart", "sac agent restart"),
+        "start": (f"{_PKG}.lifecycle:start", "sac agent start"),
+        "stop": (f"{_PKG}.lifecycle:stop", "sac agent stop"),
+        "restart": (f"{_PKG}.lifecycle:restart", "sac agent restart"),
         "validate": (f"{_PKG}.build_cmds:validate", "sac agent validate"),
         "check": (f"{_PKG}.build_cmds:check", "sac agent check"),
         # Status / introspection
@@ -271,7 +271,7 @@ class _MainGroup(LazyGroup):
         "ingest-hook-event": (f"{_PKG}.hook_cmds:hook_event", "sac event ingest"),
         # Registry — ``registry clean`` is now ``db clean`` (F-CS11 phase 5);
         # send the top-level alias straight there to avoid double-redirect.
-        "clean-registry": (f"{_PKG}.lifecycle_cmds:cleanup", "sac db clean"),
+        "clean-registry": (f"{_PKG}.lifecycle:cleanup", "sac db clean"),
         "reconcile-singletons": (
             f"{_PKG}.priority_cmds:singleton_reconcile",
             "sac registry reconcile",

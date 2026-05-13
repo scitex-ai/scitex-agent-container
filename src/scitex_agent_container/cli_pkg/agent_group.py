@@ -18,10 +18,10 @@ from .account_cmds import account as _account_group
 from .build_cmds import check as _check_impl
 from .info_cmds import find as _find_impl
 from .info_cmds import tail_session as _tail_impl
-from .lifecycle_cmds import delete as _delete_impl
-from .lifecycle_cmds import restart as _restart_impl
-from .lifecycle_cmds import start as _start_impl
-from .lifecycle_cmds import stop as _stop_impl
+from .lifecycle import delete as _delete_impl
+from .lifecycle import restart as _restart_impl
+from .lifecycle import start as _start_impl
+from .lifecycle import stop as _stop_impl
 from .recall_cmds import recall as _recall_impl
 from .send_cmds import send as _send_impl
 from .status_cmds import health as _health_impl

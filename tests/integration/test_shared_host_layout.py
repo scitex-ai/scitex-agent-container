@@ -68,7 +68,7 @@ def _write_agent_yaml(
 
 class TestDiscovery:
     def test_discovery_finds_primary_agents(self, fake_home):
-        from scitex_agent_container.cli_pkg.lifecycle_cmds import (
+        from scitex_agent_container.cli_pkg.lifecycle._common import (
             _discover_all_agents,
         )
 
@@ -82,7 +82,7 @@ class TestDiscovery:
     def test_discovery_primary_wins_over_env_var(self, fake_home, monkeypatch):
         """When the same agent name exists in both primary and env-var dir,
         primary wins (earlier in the search order)."""
-        from scitex_agent_container.cli_pkg.lifecycle_cmds import (
+        from scitex_agent_container.cli_pkg.lifecycle._common import (
             _discover_all_agents,
         )
 
@@ -98,7 +98,7 @@ class TestDiscovery:
 
     def test_discovery_merges_across_search_dirs(self, fake_home, monkeypatch):
         """Different names across primary and env-var dirs all surface."""
-        from scitex_agent_container.cli_pkg.lifecycle_cmds import (
+        from scitex_agent_container.cli_pkg.lifecycle._common import (
             _discover_all_agents,
         )
 
@@ -115,7 +115,7 @@ class TestDiscovery:
 
     def test_discovery_skips_hidden_and_reserved(self, fake_home, monkeypatch):
         """Dirs starting with . / _ and reserved names are ignored."""
-        from scitex_agent_container.cli_pkg.lifecycle_cmds import (
+        from scitex_agent_container.cli_pkg.lifecycle._common import (
             _discover_all_agents,
         )
 
@@ -136,7 +136,7 @@ class TestDiscovery:
     def test_discovery_env_var_colon_separated(self, fake_home, monkeypatch):
         """Multiple paths in SCITEX_AGENT_CONTAINER_YAML_DIRS are searched in
         order; earlier wins on name collision."""
-        from scitex_agent_container.cli_pkg.lifecycle_cmds import (
+        from scitex_agent_container.cli_pkg.lifecycle._common import (
             _discover_all_agents,
         )
 
@@ -395,7 +395,7 @@ class TestSingletonEnforcement:
         return AgentConfig(name="lead", hosts_spec=spec)
 
     def test_preferred_host_match_returns_no_skip(self):
-        from scitex_agent_container.cli_pkg.lifecycle_cmds import (
+        from scitex_agent_container.cli_pkg.lifecycle._common import (
             _singleton_skip_reason,
         )
 
@@ -404,7 +404,7 @@ class TestSingletonEnforcement:
 
     def test_fallback_host_returns_no_skip(self):
         """Fallback hosts in the chain may run as backup."""
-        from scitex_agent_container.cli_pkg.lifecycle_cmds import (
+        from scitex_agent_container.cli_pkg.lifecycle._common import (
             _singleton_skip_reason,
         )
 
@@ -413,7 +413,7 @@ class TestSingletonEnforcement:
         assert _singleton_skip_reason(cfg, "nas") is None  # fallback
 
     def test_offlist_host_returns_skip_reason(self):
-        from scitex_agent_container.cli_pkg.lifecycle_cmds import (
+        from scitex_agent_container.cli_pkg.lifecycle._common import (
             _singleton_skip_reason,
         )
 
@@ -425,7 +425,7 @@ class TestSingletonEnforcement:
         assert "fallback-hosts" in reason
 
     def test_multi_instance_never_skips(self):
-        from scitex_agent_container.cli_pkg.lifecycle_cmds import (
+        from scitex_agent_container.cli_pkg.lifecycle._common import (
             _singleton_skip_reason,
         )
 
@@ -435,7 +435,7 @@ class TestSingletonEnforcement:
 
     def test_local_singleton_never_skips(self):
         """No host preference (empty) → run wherever sac is invoked."""
-        from scitex_agent_container.cli_pkg.lifecycle_cmds import (
+        from scitex_agent_container.cli_pkg.lifecycle._common import (
             _singleton_skip_reason,
         )
 
