@@ -1,12 +1,28 @@
 #!/usr/bin/env bash
-# Run every example top-to-bottom. Outputs land under examples/_out/.
+# Run every numbered apptainer-vs-sac demo top-to-bottom.
+# Read-only by default; pass --apply to actually build/run.
+#
+# Note: "singularity" and "apptainer" are mostly interchangeable —
+# apptainer is the modern fork. Either CLI works for the commands shown.
 set -euo pipefail
 
-cd "$(dirname "$0")"
+THIS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$THIS_DIR"
 
-for ex in 01_list_running_agents.py 02_mcp_self_introspect.py; do
-    echo "── $ex ────────────────────────────────────────"
-    python "$ex"
+OUT_DIR="$THIS_DIR/_out"
+mkdir -p "$OUT_DIR"
+
+APPLY=""
+[[ "${1:-}" == "--apply" ]] && APPLY="--apply"
+
+for f in "$THIS_DIR"/[01][0-9]_*.sh; do
+    [ -f "$f" ] || continue
+    [[ "$(basename "$f")" == "00_run_all.sh" ]] && continue
+    name="$(basename "$f")"
+    echo
+    echo "════════════════ $name ════════════════"
+    bash "$f" $APPLY 2>&1 | tee "$OUT_DIR/${name%.sh}.log"
 done
 
-echo "── done ──"
+echo
+echo "── done. logs under $OUT_DIR ──"
