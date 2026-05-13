@@ -11,14 +11,14 @@ from click.testing import CliRunner
 fastmcp = pytest.importorskip("fastmcp")
 
 from scitex_agent_container._mcp.server import get_server  # noqa: E402
-from scitex_agent_container.cli_pkg.mcp_cmds import (  # noqa: E402
+from scitex_agent_container.cli_pkg.mcp_group import (  # noqa: E402
     mcp as mcp_cli_group,
 )
 
 
 def _tool_names(server) -> list[str]:
     """Async-safe enumeration via the same helper the CLI uses."""
-    from scitex_agent_container.cli_pkg.mcp_cmds import _list_tool_names
+    from scitex_agent_container.cli_pkg.mcp_group import _list_tool_names
 
     return _list_tool_names(server)
 

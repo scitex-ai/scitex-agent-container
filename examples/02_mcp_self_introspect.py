@@ -19,7 +19,7 @@ import scitex as stx
 def main(logger=stx.INJECTED):
     """List every MCP tool the sac server exposes."""
     from scitex_agent_container._mcp.server import get_server
-    from scitex_agent_container.cli_pkg.mcp_cmds import _list_tools
+    from scitex_agent_container.cli_pkg.mcp_group import _list_tools
 
     server = get_server()
     tools = _list_tools(server)

@@ -20,7 +20,7 @@ def test_example_file_parses() -> None:
 
 def test_dependent_apis_present() -> None:
     from scitex_agent_container._mcp.server import get_server
-    from scitex_agent_container.cli_pkg.mcp_cmds import _list_tools
+    from scitex_agent_container.cli_pkg.mcp_group import _list_tools
 
     assert callable(get_server)
     assert callable(_list_tools)

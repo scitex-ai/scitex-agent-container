@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from click.testing import CliRunner
 
-from scitex_agent_container.cli_pkg.peer_cmds import peer_group
+from scitex_agent_container.cli_pkg.peer_group import peer_group
 
 
 class TestPeerGroup:

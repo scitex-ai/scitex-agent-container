@@ -1,4 +1,4 @@
-"""Tests for install_cmds: sac install boot + sac install-post-merge-cron.
+"""Tests for installation_group: sac install boot + sac install-post-merge-cron.
 
 Coverage:
 - boot --dry-run: prints actions, touches nothing
@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from scitex_agent_container.cli_pkg.install_cmds import (
+from scitex_agent_container.cli_pkg.installation_group import (
     _cron_line,
     boot,
     install_post_merge_cron,
@@ -46,11 +46,11 @@ class TestBoot:
     def test_dry_run_touches_nothing(self, tmp_path, monkeypatch):
         """--dry-run prints plan without creating any files."""
         monkeypatch.setattr(
-            "scitex_agent_container.cli_pkg.install_cmds._find_python311",
+            "scitex_agent_container.cli_pkg.installation_group._find_python311",
             lambda: "/usr/bin/python3.11",
         )
         monkeypatch.setattr(
-            "scitex_agent_container.cli_pkg.install_cmds._find_sac_src",
+            "scitex_agent_container.cli_pkg.installation_group._find_sac_src",
             lambda: tmp_path,
         )
         # Patch subprocess so nothing is actually run.
@@ -72,7 +72,7 @@ class TestBoot:
         fake_venv = tmp_path / ".venv-3.11"
         fake_venv.mkdir()
         monkeypatch.setattr(
-            "scitex_agent_container.cli_pkg.install_cmds.Path",
+            "scitex_agent_container.cli_pkg.installation_group.Path",
             lambda p: fake_venv if "venv-3.11" in str(p) else Path(p),
         )
         # Avoid actually running anything.
@@ -81,15 +81,15 @@ class TestBoot:
                 returncode=0, stdout="tmux 3.3a", stderr=""
             )
             with patch(
-                "scitex_agent_container.cli_pkg.install_cmds._find_python311",
+                "scitex_agent_container.cli_pkg.installation_group._find_python311",
                 return_value="/usr/bin/python3.11",
             ):
                 with patch(
-                    "scitex_agent_container.cli_pkg.install_cmds._find_sac_src",
+                    "scitex_agent_container.cli_pkg.installation_group._find_sac_src",
                     return_value=tmp_path,
                 ):
                     with patch(
-                        "scitex_agent_container.cli_pkg.install_cmds._deploy_cron_script"
+                        "scitex_agent_container.cli_pkg.installation_group._deploy_cron_script"
                     ):
                         runner = CliRunner()
                         result = runner.invoke(boot, ["--dry-run"])

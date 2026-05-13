@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from scitex_agent_container.cli_pkg.channel_cmds import send
+from scitex_agent_container.cli_pkg.channel_group import send
 
 
 @pytest.fixture
@@ -53,7 +53,7 @@ def test_happy_path_wraps_in_channel_tag(token_file):
         return fake_resp
 
     with patch(
-        "scitex_agent_container.cli_pkg.channel_cmds.urllib.request.urlopen",
+        "scitex_agent_container.cli_pkg.channel_group.urllib.request.urlopen",
         side_effect=fake_urlopen,
     ):
         result = runner.invoke(
@@ -91,7 +91,7 @@ def test_unreachable_listen_explains(token_file):
         raise urllib.error.URLError("connection refused")
 
     with patch(
-        "scitex_agent_container.cli_pkg.channel_cmds.urllib.request.urlopen",
+        "scitex_agent_container.cli_pkg.channel_group.urllib.request.urlopen",
         side_effect=boom,
     ):
         result = runner.invoke(

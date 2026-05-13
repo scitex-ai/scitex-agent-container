@@ -63,15 +63,15 @@ class _MainGroup(LazyGroup):
         "image": f"{_PKG}.image_group:image_group",
         "skills": f"{_PKG}.skills_group:skills_group",
         # `accounts` moved under `sac agents accounts` (nested noun group).
-        "a2a": f"{_PKG}.a2a_cmds:a2a",
-        "mcp": f"{_PKG}.mcp_cmds:mcp",
-        "peer": f"{_PKG}.peer_cmds:peer_group",
+        "a2a": f"{_PKG}.a2a_group:a2a",
+        "mcp": f"{_PKG}.mcp_group:mcp",
+        "peer": f"{_PKG}.peer_group:peer_group",
         "fleet": f"{_PKG}.fleet_group:fleet_group",
         "listen": f"{_PKG}.listen_cmds:listen",
-        "channel": f"{_PKG}.channel_cmds:channel_group",
+        "channel": f"{_PKG}.channel_group:channel_group",
         # Top-level standalone
         "list-python-apis": f"{_PKG}.info_cmds:list_python_apis",
-        "installation": f"{_PKG}.install_cmds:install_group",
+        "installation": f"{_PKG}.installation_group:install_group",
     }
 
     # Tracks whether scitex_dev._cli._completion has been attached.
@@ -260,7 +260,7 @@ class _MainGroup(LazyGroup):
         # Quota (folded under `sac agents accounts watch-quota` after the
         # contributor / template surface was deleted as orochi-specific).
         "watch-quota": (
-            f"{_PKG}.account_cmds:quota_watch",
+            f"{_PKG}.account_group:quota_watch",
             "sac agents accounts watch-quota",
         ),
         # Hook events
@@ -278,7 +278,7 @@ class _MainGroup(LazyGroup):
         "probe-network": (f"{_PKG}.probe_cmds:probe_network", "sac network probe"),
         # Install
         "install-post-merge-cron": (
-            f"{_PKG}.install_cmds:install_post_merge_cron",
+            f"{_PKG}.installation_group:install_post_merge_cron",
             "sac installation setup-cron",
         ),
     }

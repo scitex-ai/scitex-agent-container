@@ -72,7 +72,7 @@ Get the live list any time with `sac mcp list-tools` (or, from Python,
 - `src/scitex_agent_container/_mcp/_tools/` — one file per noun group.
   Each tool wraps the Click CLI through `_helpers.invoke_cli_*` so
   CLI ↔ MCP parity stays automatic as new commands land.
-- `src/scitex_agent_container/cli_pkg/mcp_cmds.py` — Click face
+- `src/scitex_agent_container/cli_pkg/mcp_group.py` — Click face
   (`start / doctor / list-tools / install`).
 - `src/scitex_agent_container/_mcp_server.py` — re-export shim so the
   scitex-dev `audit-mcp-tools` linter's hard-coded path works.

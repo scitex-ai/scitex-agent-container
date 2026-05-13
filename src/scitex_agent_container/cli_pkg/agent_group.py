@@ -14,7 +14,7 @@ from __future__ import annotations
 import click
 
 from ._helpers import HelpRecursiveGroup
-from .account_cmds import account as _account_group
+from .account_group import account as _account_group
 from .build_cmds import check as _check_impl
 from .info_cmds import find as _find_impl
 from .info_cmds import tail_session as _tail_impl
