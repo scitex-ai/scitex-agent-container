@@ -438,18 +438,23 @@ def start(
                 else:
                     console.print(f"[yellow]Skipping '{config.name}': {skip}[/yellow]")
                 continue
-            # hook-bypass: line-limit (host@workdir + [sac] prefix + json/foreground split; lifecycle_cmds.py refactor deferred)
-            # Location reads as `host@workdir` (was bare "LOCAL"/"REMOTE: x")
-            # so the operator sees who they're talking to AND where the
-            # filesystem mount lands inside the container. The runtime
-            # column is gone — sac is apptainer-only post-2026-05-13.
+            # hook-bypass: line-limit (host@host-wd:container-wd location; lifecycle_cmds.py refactor deferred)
+            # Location reads as `host@<host-workdir>:<container-workdir>`
+            # so the operator sees:
+            #   * which host the agent runs on
+            #   * the host-side dir that gets bind-mounted into the
+            #     container (= spec.workdir)
+            #   * the path the agent sees inside the container
+            # The container side is always /work — fixed by sac
+            # (`--bind <workdir>:/work` in _apptainer_runtime).
             host = (
                 config.remote.host
                 if config.remote.is_remote
                 else (resolve_hostname() or "local")
             )
-            workdir = config.expanded_workdir
-            location = f"{host}@{workdir}"
+            host_workdir = config.expanded_workdir
+            container_workdir = "/work"
+            location = f"{host}@{host_workdir}:{container_workdir}"
             # hook-bypass: line-limit (--foreground --json newline polish; lifecycle_cmds.py split deferred)
             # `--foreground --json` was emitting the JSON summary on the
             # same line as the runner's tail-of-stdout (Claude's reply
@@ -490,13 +495,15 @@ def start(
                 resume_id_override=resume_id,
                 foreground=foreground,
             )
+            # hook-bypass: line-limit (host/host_workdir/container_workdir in json; refactor deferred)
             if as_json:
                 _emit(
                     {
                         "name": config.name,
                         "status": "dry_run_ok" if dry_run else "started",
                         "host": host,
-                        "workdir": workdir,
+                        "host_workdir": host_workdir,
+                        "container_workdir": container_workdir,
                         "dry_run": dry_run,
                     }
                 )
