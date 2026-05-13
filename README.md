@@ -53,7 +53,7 @@ uv pip install "scitex-agent-container[all]"
 **Step 1 — Build the base image (one-time, ~5 min)**
 
 ```bash
-sac image build        # default: base
+sac image build base
 ```
 
 **Step 2 — Create agent directories**
@@ -333,8 +333,8 @@ Two `.def` recipes, layered:
 
 | Tag       | What's inside                                                                                               | When                                   |
 |-----------|-------------------------------------------------------------------------------------------------------------|----------------------------------------|
-| `:base`   | Ubuntu 24.04 + dev tools (git, gh, rust CLIs, mermaid, prettier, eslint, jsonlint, uv, pipx, tree, node 20) | Foundation                             |
-| `:scitex` | `FROM :base` + ffmpeg + portaudio + `scitex[all]` + claude-agent-sdk + sac itself                           | **Default** when `spec.image` is unset |
+| `:base`   | Ubuntu 24.04 + dev tools (git, gh, rust CLIs, mermaid, prettier, eslint, jsonlint, uv, pipx, tree, node 20) | **Default** when `spec.image` is unset |
+| `:scitex` | `FROM :base` + ffmpeg + portaudio + `scitex[all]` + claude-agent-sdk + sac itself                           | Optional heavier layer                 |
 
 ```
 <site-packages>/scitex_agent_container/containers/    ← recipes (ship in pip wheel)
