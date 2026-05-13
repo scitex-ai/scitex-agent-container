@@ -53,11 +53,15 @@ STALE_PATTERNS = (
 
 
 # ---------------------------------------------------------------------------
-# 1. parse check
+# Reusable per-script bodies — also imported by the per-lesson stubs under
+# ``tests/examples/test_<NN>_<basename>.py`` so each lesson satisfies PS-303
+# (one tests/examples/test_<n>.py per examples/<n>.sh) without duplicating
+# the underlying check logic.
 # ---------------------------------------------------------------------------
-@pytest.mark.parametrize("script", ALL_SCRIPTS, ids=lambda p: p.name)
-def test_script_parses(script: Path) -> None:
-    """``bash -n`` must accept every tutorial script."""
+
+
+def _script_parses(script: Path) -> None:
+    """``bash -n`` must accept the script."""
     result = subprocess.run(
         ["bash", "-n", str(script)],
         capture_output=True,
@@ -67,17 +71,8 @@ def test_script_parses(script: Path) -> None:
     assert result.returncode == 0, f"bash -n failed for {script.name}:\n{result.stderr}"
 
 
-# ---------------------------------------------------------------------------
-# 2. read-only execution
-# ---------------------------------------------------------------------------
-@pytest.mark.parametrize("script", NUMBERED_SCRIPTS, ids=lambda p: p.name)
-def test_script_runs_readonly(script: Path, tmp_path: Path) -> None:
-    """Running a script without --apply must exit 0 under a tmp HOME.
-
-    Scripts perform only dry-run / status calls (``sac image list``,
-    ``sac agents list``, echo statements). Where they invoke sac
-    subcommands they tolerate failure via ``|| true``.
-    """
+def _script_runs_readonly(script: Path, tmp_path: Path) -> None:
+    """Running the script without --apply must exit 0 under a tmp HOME."""
     env = {
         "HOME": str(tmp_path),
         "PATH": os.environ.get("PATH", ""),
@@ -99,15 +94,43 @@ def test_script_runs_readonly(script: Path, tmp_path: Path) -> None:
     )
 
 
+def _script_has_no_stale_cli(script: Path) -> None:
+    """No tutorial script may reference legacy CLI surface."""
+    text = script.read_text()
+    offenders = [pat for pat in STALE_PATTERNS if pat in text]
+    assert not offenders, f"{script.name} contains stale CLI strings: {offenders}"
+
+
+# ---------------------------------------------------------------------------
+# 1. parse check
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("script", ALL_SCRIPTS, ids=lambda p: p.name)
+def test_script_parses(script: Path) -> None:
+    """``bash -n`` must accept every tutorial script."""
+    _script_parses(script)
+
+
+# ---------------------------------------------------------------------------
+# 2. read-only execution
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("script", NUMBERED_SCRIPTS, ids=lambda p: p.name)
+def test_script_runs_readonly(script: Path, tmp_path: Path) -> None:
+    """Running a script without --apply must exit 0 under a tmp HOME.
+
+    Scripts perform only dry-run / status calls (``sac image list``,
+    ``sac agents list``, echo statements). Where they invoke sac
+    subcommands they tolerate failure via ``|| true``.
+    """
+    _script_runs_readonly(script, tmp_path)
+
+
 # ---------------------------------------------------------------------------
 # 3. stale-CLI lint
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("script", ALL_SCRIPTS, ids=lambda p: p.name)
 def test_script_has_no_stale_cli_strings(script: Path) -> None:
     """No tutorial script may reference legacy CLI surface."""
-    text = script.read_text()
-    offenders = [pat for pat in STALE_PATTERNS if pat in text]
-    assert not offenders, f"{script.name} contains stale CLI strings: {offenders}"
+    _script_has_no_stale_cli(script)
 
 
 def test_location_label_is_not_bare_LOCAL() -> None:
