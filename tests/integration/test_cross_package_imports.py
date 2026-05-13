@@ -25,6 +25,7 @@ CROSS_PACKAGE_IMPORTS = [
     "scitex_container.apptainer",
     "scitex_dev",
     "scitex_dev._cli._completion",
+    "scitex_logging",
 ]
 # ===== END AUTO-GENERATED =====
 

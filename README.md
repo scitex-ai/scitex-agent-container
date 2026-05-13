@@ -127,10 +127,7 @@ sac agents delete hello-agent-1 hello-agent-2 -y
 
 `examples/apptainer_and_sac/` walks through the runtime in 9 lessons (build, sandbox/update/freeze, versioning, run/stop, logs/exec, mounts, env+user). Run them read-only with `bash 00_run_all.sh`, or `--apply` to execute the mutating ones.
 
-<details>
-<summary><strong>How it works</strong></summary>
-
-<br>
+## How it works
 
 `scitex-agent-container` (`sac`) materializes a `spec.yaml` into a long-lived, externally addressable Claude agent:
 
@@ -165,8 +162,6 @@ sac agents delete hello-agent-1 hello-agent-2 -y
   sac channel send TO MSG ─────────────────────────────────┤
   sac peer  post-turn  AGENT TEXT  ────────────────────────┘
 ```
-
-</details>
 
 <details>
 <summary><strong>YAML Spec Reference (v3)</strong></summary>

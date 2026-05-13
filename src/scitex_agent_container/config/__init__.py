@@ -12,10 +12,6 @@ from pathlib import Path
 
 import yaml
 
-from ._contributor_spec_validator import (
-    validate_contributor_spec,
-    validate_contributor_spec_raw,
-)
 from ._host import resolve_hostname, substitute_hostnames
 from ._loaders import compose_effective_name, load_v2, load_v3
 from ._resolve import resolve_config
@@ -64,8 +60,6 @@ __all__ = [
     "resolve_hostname",
     "substitute_hostnames",
     "validate_config",
-    "validate_contributor_spec",
-    "validate_contributor_spec_raw",
 ]
 
 
