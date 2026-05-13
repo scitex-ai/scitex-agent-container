@@ -166,6 +166,9 @@ peers:
 
 
 def test_host_show_renders_canonical(cfg_path: Path, monkeypatch):
+    """`sac host show` is a hidden alias of `sac host list` since the
+    show/list fold; both commands return the same JSON shape, with the
+    local host's canonical name at ``local.name``."""
     monkeypatch.setenv("SAC_HOST", "smoke-host")
     from scitex_agent_container.cli_pkg.host_group import host_show
 
@@ -173,7 +176,7 @@ def test_host_show_renders_canonical(cfg_path: Path, monkeypatch):
     result = runner.invoke(host_show, ["--json"])
     assert result.exit_code == 0
     body = json.loads(result.output)
-    assert body["canonical"] == "smoke-host"
+    assert body["local"]["name"] == "smoke-host"
 
 
 def test_host_list_empty_by_default(cfg_path: Path):
