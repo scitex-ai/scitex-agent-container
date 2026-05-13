@@ -1,20 +1,16 @@
-"""Self-snapshot subcommand (todo#286).
+"""Snapshot gather/take/read public surface + stdlib-only probes.
 
 Collects a per-agent snapshot of the local host state (tmux/screen,
 proc counts, load, memory, fork-pressure, claude context-percent) and
 persists it to the container cache dir. On each run, the previous
 snapshot is rolled to ``<agent>.prev.json`` and the new one lands in
-``<agent>.latest.json`` atomically. A flat dotted-key diff is computed
-against the previous snapshot so the dashboard can highlight what
-changed.
+``<agent>.latest.json`` atomically.
 
 Kept deliberately stdlib-only: no psutil, no yaml, no new deps.
 """
 
 from __future__ import annotations
 
-import contextlib
-import fcntl
 import json
 import logging
 import os
@@ -23,169 +19,16 @@ import re
 import shutil
 import socket
 import subprocess
-import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
-from .._env import getenv as _sac_env
-
-# Keys from agent_meta.py we surface in snapshots / status --json.
-# `pane_tail` and `pane_tail_block` carry the last N lines of the agent's
-# tmux pane (todo#269 / todo#270): consumers (mamba-healer-*, the Agents
-# dashboard card #311, fleet_watch.sh diff_one) use them as the cheapest
-# liveness signal and to render a live preview of what the agent is doing.
-# `recent_actions` is an array of {ts, preview} tool-use snippets from the
-# session jsonl, useful for identifying stuck-vs-busy states without a full
-# pane capture.
-_AGENT_META_KEYS = (
-    "alive",
-    "subagents",
-    "context_pct",
-    "current_tool",
-    "last_activity",
-    "model",
-    "pane_tail",
-    "pane_tail_block",
-    "recent_actions",
-)
-
-
-def _project_agent_meta(meta: dict[str, Any] | None) -> dict[str, Any] | None:
-    if not meta:
-        return None
-    return {k: meta.get(k) for k in _AGENT_META_KEYS if k in meta}
-
+from ._diff import compute_diff_fields
+from ._lock import _snapshot_lock
+from ._paths import _diff_path, _latest_path, _prev_path
+from ._sidecars import _project_agent_meta, _sidecars_payload
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Sidecar thread registry
-#
-# Phase 2 context_manager kept a dict of live ContextManager instances. We
-# expose a small wrapper here so ``snapshot`` can report sidecar liveness
-# without reaching into private module state. Process-kind sidecars
-# (health_monitor runs as a real thread too in the current codebase, but we
-# still model them with ``kind="thread"``) register here as well.
-# ---------------------------------------------------------------------------
-
-SidecarInfo = dict[str, Any]
-_SIDECARS: dict[str, dict[str, SidecarInfo]] = {}
-
-
-def register_sidecar(
-    agent: str,
-    kind: str,
-    name: str,
-    *,
-    pid: int | None = None,
-    thread: threading.Thread | None = None,
-) -> None:
-    """Register a sidecar so ``snapshot`` can introspect liveness.
-
-    ``kind`` is ``"thread"`` or ``"process"``. ``thread`` must be supplied
-    for thread-kind sidecars; ``pid`` for process-kind.
-    """
-    _SIDECARS.setdefault(agent, {})[name] = {
-        "kind": kind,
-        "pid": pid,
-        "thread": thread,
-    }
-
-
-def _sidecar_alive(info: SidecarInfo) -> bool:
-    kind = info.get("kind")
-    if kind == "thread":
-        th = info.get("thread")
-        return bool(th is not None and th.is_alive())
-    if kind == "process":
-        pid = info.get("pid")
-        if pid is None:
-            return False
-        try:
-            os.kill(pid, 0)
-        except (
-            ProcessLookupError
-        ):  # stx-allow: fallback (reason: process probe expected failure)
-            return False
-        except (
-            PermissionError
-        ):  # stx-allow: fallback (reason: process probe expected failure)
-            # Exists but we can't signal — still alive.
-            return True
-        except OSError:  # stx-allow: fallback (reason: file system operation failure)
-            return False
-        return True
-    return False
-
-
-def _sidecars_payload(agent: str) -> dict[str, dict[str, Any]]:
-    out: dict[str, dict[str, Any]] = {}
-    for name, info in _SIDECARS.get(agent, {}).items():
-        out[name] = {
-            "pid": info.get("pid"),
-            "kind": info.get("kind"),
-            "alive": _sidecar_alive(info),
-        }
-    return out
-
-
-# ---------------------------------------------------------------------------
-# Cache dir
-# ---------------------------------------------------------------------------
-
-
-# hook-bypass: line-limit (5-line behaviour fix; snapshot.py split deferred — see GITIGNORED/REFACTORING.md)
-def cache_dir() -> Path:
-    """Per-agent snapshot cache (under `runtime/` per local-state §4b).
-
-    ``$SAC_CACHE_DIR`` / ``$SCITEX_AGENT_CONTAINER_CACHE_DIR`` override
-    everything; otherwise resolves via the SciTeX local-state cascade
-    (project-scope `<repo>/.scitex/agent-container/runtime/cache/` wins,
-    falls back to `$SCITEX_DIR/agent-container/runtime/cache/`).
-    """
-    override = _sac_env("CACHE_DIR")
-    if override:
-        p = Path(override).expanduser()
-        p.mkdir(parents=True, exist_ok=True)
-        return p
-    from scitex_config._ecosystem import local_state as _local_state
-
-    return _local_state.runtime_path("agent-container", "cache")
-
-
-def _latest_path(agent: str) -> Path:
-    return cache_dir() / f"{agent}.latest.json"
-
-
-def _prev_path(agent: str) -> Path:
-    return cache_dir() / f"{agent}.prev.json"
-
-
-def _diff_path(agent: str) -> Path:
-    return cache_dir() / f"{agent}.diff.json"
-
-
-def _lock_path(agent: str) -> Path:
-    return cache_dir() / f"{agent}.lock"
-
-
-@contextlib.contextmanager
-def _snapshot_lock(agent: str) -> Iterator[None]:
-    """Per-agent advisory lock around the latest->prev roll + write.
-
-    POSIX fcntl advisory lock; not supported on Windows but container
-    targets unix. The lock file persists between calls (reusable); the
-    advisory lock is released when the fd is closed via the ``with`` block.
-    """
-    lock_p = _lock_path(agent)
-    with open(lock_p, "w") as fd:
-        fcntl.flock(fd.fileno(), fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            # Released implicitly on close(), but be explicit for clarity.
-            fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
 
 
 # ---------------------------------------------------------------------------
@@ -419,7 +262,7 @@ def _probe_tmux_pids(session: str | None) -> dict[str, int | None]:
 
 
 # ---------------------------------------------------------------------------
-# Snapshot assembly + diff
+# Snapshot assembly + I/O
 # ---------------------------------------------------------------------------
 
 
@@ -478,39 +321,6 @@ def gather_snapshot(agent: str, *, session: str | None = None) -> dict[str, Any]
             "sidecars": _sidecars_payload(agent),
         },
     }
-
-
-def _flatten(obj: Any, prefix: str = "") -> dict[str, Any]:
-    out: dict[str, Any] = {}
-    if isinstance(obj, dict):
-        for k, v in obj.items():
-            key = f"{prefix}.{k}" if prefix else str(k)
-            out.update(_flatten(v, key))
-    elif isinstance(obj, list):
-        # Lists compare as whole values — don't explode indices.
-        out[prefix] = obj
-    else:
-        out[prefix] = obj
-    return out
-
-
-def compute_diff_fields(
-    prev: dict[str, Any] | None, latest: dict[str, Any]
-) -> list[str]:
-    if prev is None:
-        return []
-    flat_prev = _flatten(prev)
-    flat_latest = _flatten(latest)
-    # Ignore timestamp — it always changes.
-    ignored = {"timestamp"}
-    changed: list[str] = []
-    keys = set(flat_prev) | set(flat_latest)
-    for k in sorted(keys):
-        if k in ignored:
-            continue
-        if flat_prev.get(k) != flat_latest.get(k):
-            changed.append(k)
-    return changed
 
 
 def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
@@ -605,7 +415,7 @@ def snapshot_tick(
     if agent_config is not None and snap.get("has_diff"):
         # stx-allow: fallback (reason: hook dispatch is best-effort; failure must not disrupt the snapshot cycle)
         try:
-            from ..hooks import run_hook
+            from ...hooks import run_hook
 
             commands = (getattr(agent_config, "hooks", {}) or {}).get(
                 "on_diff", []
