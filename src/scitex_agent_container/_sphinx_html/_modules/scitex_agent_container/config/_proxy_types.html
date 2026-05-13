@@ -5,7 +5,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>scitex_agent_container.config._host &mdash; scitex-agent-container v0.14.0</title>
+  <title>scitex_agent_container.config._proxy_types &mdash; scitex-agent-container v0.14.0</title>
       <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
       <link rel="stylesheet" type="text/css" href="../../../_static/copybutton.css?v=76b2166b" />
@@ -316,7 +316,7 @@
       <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
           <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
           <li class="breadcrumb-item"><a href="../config.html">scitex_agent_container.config</a></li>
-      <li class="breadcrumb-item active">scitex_agent_container.config._host</li>
+      <li class="breadcrumb-item active">scitex_agent_container.config._proxy_types</li>
       <li class="wy-breadcrumbs-aside">
       </li>
   </ul>
@@ -325,156 +325,70 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
            <div itemprop="articleBody">
              
-  <h1>Source code for scitex_agent_container.config._host</h1><div class="highlight"><pre>
-<span></span><span class="sd">&quot;&quot;&quot;Hostname resolution and ${HOSTNAME} substitution for agent YAMLs.</span>
+  <h1>Source code for scitex_agent_container.config._proxy_types</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;ProxySpec dataclass for ``kind: AgentProxy`` agents.</span>
 
-<span class="sd">Uses ``${SCITEX_AGENT_CONTAINER_HOSTNAME:-$(hostname -s)}`` as the canonical</span>
-<span class="sd">hostname (env var wins, short hostname is the fallback). Shared agent</span>
-<span class="sd">definitions may reference ``${HOSTNAME}`` or ``${SCITEX_AGENT_CONTAINER_HOSTNAME}``</span>
-<span class="sd">so the same YAML can be launched on every host without drift.</span>
+<span class="sd">Lives in its own module to keep ``_types.py`` under the project&#39;s</span>
+<span class="sd">512-line cap. Re-exported from :mod:`scitex_agent_container.config`</span>
+<span class="sd">alongside the rest of the spec dataclasses.</span>
 
-<span class="sd">Design constraints:</span>
-<span class="sd">* Missing vars are a loud error (no silent empty string).</span>
-<span class="sd">* Substitution happens after YAML parse, before dataclass construction, so</span>
-<span class="sd">  every string field is covered (metadata labels, env values, hook command</span>
-<span class="sd">  strings, scheduling.preferred-host, etc.).</span>
-<span class="sd">* Only ``${HOSTNAME}`` and ``${SCITEX_AGENT_CONTAINER_HOSTNAME}`` are substituted by</span>
-<span class="sd">  this module — other ``${...}`` placeholders are left alone for downstream</span>
-<span class="sd">  processors (e.g. MCP interpolation, consumer-defined env resolution) to handle.</span>
+<span class="sd"># kind: AgentProxy — forward POST /v1/turn to an external A2A endpoint.</span>
+<span class="sd">#</span>
+<span class="sd"># A proxy agent has NO SDK. The runner is a thin Starlette app that:</span>
+<span class="sd">#   * forwards POST /v1/turn to `upstream` (no Claude in our container)</span>
+<span class="sd">#   * re-projects the upstream AgentCard at our own /.well-known/...</span>
+<span class="sd">#     (overriding name + url + x-scitex-agent-container.kind)</span>
+<span class="sd">#</span>
+<span class="sd"># Trust levels are advisory — they&#39;re surfaced on the AgentCard so</span>
+<span class="sd"># operators downstream can route accordingly, but they DON&#39;T change</span>
+<span class="sd"># the egress story (that&#39;s covered by the proxy runner&#39;s own</span>
+<span class="sd"># allowlist-only-this-host policy).</span>
 <span class="sd">&quot;&quot;&quot;</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
 
-<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">socket</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
-
-<span class="kn">from</span><span class="w"> </span><span class="nn">scitex_config._ecosystem</span><span class="w"> </span><span class="kn">import</span> <span class="n">local_state</span> <span class="k">as</span> <span class="n">_local_state</span>
-
-<span class="kn">from</span><span class="w"> </span><span class="nn">.._env</span><span class="w"> </span><span class="kn">import</span> <span class="n">getenv</span> <span class="k">as</span> <span class="n">_sac_env</span>
-
-<span class="n">_HOSTNAME_TOKENS</span> <span class="o">=</span> <span class="p">(</span><span class="s2">&quot;HOSTNAME&quot;</span><span class="p">,</span> <span class="s2">&quot;SCITEX_AGENT_CONTAINER_HOSTNAME&quot;</span><span class="p">)</span>
-<span class="n">_PLACEHOLDER_RE</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\$\{(&quot;</span> <span class="o">+</span> <span class="s2">&quot;|&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">_HOSTNAME_TOKENS</span><span class="p">)</span> <span class="o">+</span> <span class="sa">r</span><span class="s2">&quot;)\}&quot;</span><span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
 
 
-<span class="k">def</span><span class="w"> </span><span class="nf">_config_path</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">Path</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Resolve config.yaml via the SciTeX local-state cascade.</span>
+<div class="viewcode-block" id="ProxySpec">
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProxySpec">[docs]</a>
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">ProxySpec</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Configuration for kind: AgentProxy agents.&quot;&quot;&quot;</span>
 
-<span class="sd">    Project-scope (`&lt;repo&gt;/.scitex/agent-container/config.yaml`) wins</span>
-<span class="sd">    when it exists, else falls back to user-scope under</span>
-<span class="sd">    ``$SCITEX_DIR/agent-container/`` (default ``~/.scitex/...``). See</span>
-<span class="sd">    `01_ecosystem_06_local-state-directories.md`.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-    <span class="k">return</span> <span class="n">_local_state</span><span class="o">.</span><span class="n">path</span><span class="p">(</span><span class="s2">&quot;agent-container&quot;</span><span class="p">,</span> <span class="s2">&quot;config.yaml&quot;</span><span class="p">)</span>
+    <span class="n">upstream</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;REQUIRED. Full URL to the upstream A2A AgentCard endpoint.</span>
+<span class="sd">    Either an explicit .well-known path or a base URL (we&#39;ll fetch</span>
+<span class="sd">    ``&lt;base&gt;/.well-known/agent-card.json`` if a base is given).&quot;&quot;&quot;</span>
 
+    <span class="n">trust</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;untrusted&quot;</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;One of ``untrusted`` (default — operator must opt in to anything</span>
+<span class="sd">    more permissive), ``local-mesh`` (peers on the same private network</span>
+<span class="sd">    you control), ``trusted`` (cryptographically verified — reserved</span>
+<span class="sd">    for future mTLS work). Surfaced on the AgentCard&#39;s</span>
+<span class="sd">    ``x-scitex-agent-container.trust`` field.&quot;&quot;&quot;</span>
 
-<span class="k">def</span><span class="w"> </span><span class="nf">_load_hostname_aliases</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Read ``spec.hostname_aliases`` from ``config.yaml``.</span>
+    <span class="n">redact</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Substring tokens; any inbound `text` field containing one is</span>
+<span class="sd">    refused with HTTP 400. Cheap defense-in-depth against accidentally</span>
+<span class="sd">    forwarding secrets to an untrusted upstream — NOT a substitute for</span>
+<span class="sd">    proper output filtering at the source.&quot;&quot;&quot;</span>
 
-<span class="sd">    Returns an empty dict if the file is missing, unparseable, lacks the</span>
-<span class="sd">    section, or the map isn&#39;t a dict. Never raises — hostname resolution</span>
-<span class="sd">    must still succeed via the identity fallback on a bare host.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-    <span class="n">cfg_path</span> <span class="o">=</span> <span class="n">_config_path</span><span class="p">()</span>
-    <span class="k">if</span> <span class="ow">not</span> <span class="n">cfg_path</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
-        <span class="k">return</span> <span class="p">{}</span>
-    <span class="k">try</span><span class="p">:</span>
-        <span class="kn">import</span><span class="w"> </span><span class="nn">yaml</span>  <span class="c1"># PyYAML ships with the container; same import sac uses.</span>
-    <span class="k">except</span> <span class="p">(</span>
-        <span class="ne">ImportError</span>
-    <span class="p">):</span>  <span class="c1"># stx-allow: fallback (reason: optional dependency not installed)</span>
-        <span class="k">return</span> <span class="p">{}</span>
-    <span class="c1"># stx-allow: fallback (reason: malformed YAML config must not break hostname resolution; empty aliases dict is the safe default)</span>
-    <span class="k">try</span><span class="p">:</span>
-        <span class="n">data</span> <span class="o">=</span> <span class="n">yaml</span><span class="o">.</span><span class="n">safe_load</span><span class="p">(</span><span class="n">cfg_path</span><span class="o">.</span><span class="n">read_text</span><span class="p">())</span> <span class="ow">or</span> <span class="p">{}</span>
-    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: catch-all safety net — see inline comment for context)</span>
-        <span class="k">return</span> <span class="p">{}</span>
-    <span class="n">aliases</span> <span class="o">=</span> <span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;spec&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;hostname_aliases&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="p">{}</span>
-    <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">aliases</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
-        <span class="k">return</span> <span class="p">{}</span>
-    <span class="k">return</span> <span class="p">{</span><span class="nb">str</span><span class="p">(</span><span class="n">k</span><span class="p">):</span> <span class="nb">str</span><span class="p">(</span><span class="n">v</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">aliases</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span>
-
-
-<div class="viewcode-block" id="resolve_hostname">
-<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.resolve_hostname">[docs]</a>
-<span class="k">def</span><span class="w"> </span><span class="nf">resolve_hostname</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the canonical host label for this machine.</span>
-
-<span class="sd">    Resolution order (first non-empty wins):</span>
-<span class="sd">      1. ``SCITEX_AGENT_CONTAINER_HOSTNAME`` env var (manual override).</span>
-<span class="sd">      2. ``SCITEX_AGENT_CONTAINER_HOSTNAME`` env var.</span>
-<span class="sd">      3. ``hostname_aliases[short hostname]`` from</span>
-<span class="sd">         ``shared/config.yaml`` or ``~/.scitex/agent-container/config.yaml``.</span>
-<span class="sd">      4. ``socket.gethostname()`` short form (identity fallback).</span>
-
-<span class="sd">    Raises:</span>
-<span class="sd">        RuntimeError: If none of the sources produces a non-empty value. This</span>
-<span class="sd">            should be practically impossible (``gethostname()`` returns</span>
-<span class="sd">            something on any configured box) but is handled loudly rather</span>
-<span class="sd">            than returning the empty string.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-    <span class="n">env</span> <span class="o">=</span> <span class="n">_sac_env</span><span class="p">(</span><span class="s2">&quot;HOSTNAME&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
-    <span class="k">if</span> <span class="n">env</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">env</span>
-    <span class="n">env</span> <span class="o">=</span> <span class="n">_sac_env</span><span class="p">(</span><span class="s2">&quot;HOSTNAME&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
-    <span class="k">if</span> <span class="n">env</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">env</span>
-    <span class="n">hn</span> <span class="o">=</span> <span class="n">socket</span><span class="o">.</span><span class="n">gethostname</span><span class="p">()</span>
-    <span class="n">short</span> <span class="o">=</span> <span class="n">hn</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;.&quot;</span><span class="p">,</span> <span class="mi">1</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span> <span class="k">if</span> <span class="n">hn</span> <span class="k">else</span> <span class="s2">&quot;&quot;</span>
-    <span class="n">aliases</span> <span class="o">=</span> <span class="n">_load_hostname_aliases</span><span class="p">()</span>
-    <span class="k">if</span> <span class="n">short</span> <span class="ow">and</span> <span class="n">short</span> <span class="ow">in</span> <span class="n">aliases</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">aliases</span><span class="p">[</span><span class="n">short</span><span class="p">]</span>
-    <span class="k">if</span> <span class="n">short</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">short</span>
-    <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
-        <span class="s2">&quot;Cannot resolve hostname: SCITEX_AGENT_CONTAINER_HOSTNAME and &quot;</span>
-        <span class="s2">&quot;SCITEX_AGENT_CONTAINER_HOSTNAME unset, socket.gethostname() empty, &quot;</span>
-        <span class="s2">&quot;no config.yaml alias applicable.&quot;</span>
-    <span class="p">)</span></div>
+    <span class="n">timeout_s</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">30.0</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Per-turn upstream HTTP timeout. Forwarded turns that take longer</span>
+<span class="sd">    than this surface as 504 to the caller.&quot;&quot;&quot;</span></div>
 
 
 
-<span class="k">def</span><span class="w"> </span><span class="nf">_substitute_string</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">hostname</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Replace ${HOSTNAME} / ${SCITEX_AGENT_CONTAINER_HOSTNAME} occurrences in a string.</span>
-
-<span class="sd">    Other ``${...}`` placeholders are preserved as-is so downstream code</span>
-<span class="sd">    (e.g. mcp interpolation) keeps working.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">_repl</span><span class="p">(</span><span class="n">match</span><span class="p">:</span> <span class="s2">&quot;re.Match[str]&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-        <span class="c1"># hostname always resolves — resolve_hostname() has already succeeded</span>
-        <span class="c1"># or raised. The placeholder set is closed, so we don&#39;t need to</span>
-        <span class="c1"># handle &quot;missing var&quot; inside the callback.</span>
-        <span class="k">return</span> <span class="n">hostname</span>
-
-    <span class="k">return</span> <span class="n">_PLACEHOLDER_RE</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="n">_repl</span><span class="p">,</span> <span class="n">value</span><span class="p">)</span>
+<span class="n">_VALID_TRUST_LEVELS</span> <span class="o">=</span> <span class="nb">frozenset</span><span class="p">({</span><span class="s2">&quot;untrusted&quot;</span><span class="p">,</span> <span class="s2">&quot;local-mesh&quot;</span><span class="p">,</span> <span class="s2">&quot;trusted&quot;</span><span class="p">})</span>
 
 
-<div class="viewcode-block" id="substitute_hostnames">
-<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.substitute_hostnames">[docs]</a>
-<span class="k">def</span><span class="w"> </span><span class="nf">substitute_hostnames</span><span class="p">(</span><span class="n">obj</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">hostname</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Recursively walk a dict/list/str and substitute hostname placeholders.</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">is_valid_trust</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;True if ``value`` is one of the accepted ``spec.proxy.trust`` strings.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">_VALID_TRUST_LEVELS</span>
 
-<span class="sd">    Non-string leaves (int, bool, None) are returned unchanged. The walk is</span>
-<span class="sd">    pure-functional — the input is not mutated; a new structure is returned.</span>
 
-<span class="sd">    Args:</span>
-<span class="sd">        obj: YAML-parsed structure (dict/list/scalar).</span>
-<span class="sd">        hostname: Override hostname (for tests). If None, calls</span>
-<span class="sd">            ``resolve_hostname()``.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-    <span class="k">if</span> <span class="n">hostname</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="n">hostname</span> <span class="o">=</span> <span class="n">resolve_hostname</span><span class="p">()</span>
-
-    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
-        <span class="k">return</span> <span class="n">_substitute_string</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="n">hostname</span><span class="p">)</span>
-    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
-        <span class="k">return</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">substitute_hostnames</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="n">hostname</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">obj</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span>
-    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="nb">list</span><span class="p">):</span>
-        <span class="k">return</span> <span class="p">[</span><span class="n">substitute_hostnames</span><span class="p">(</span><span class="n">item</span><span class="p">,</span> <span class="n">hostname</span><span class="p">)</span> <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">obj</span><span class="p">]</span>
-    <span class="k">return</span> <span class="n">obj</span></div>
-
+<span class="n">__all__</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;ProxySpec&quot;</span><span class="p">,</span> <span class="s2">&quot;is_valid_trust&quot;</span><span class="p">]</span>
 </pre></div>
 
            </div>
