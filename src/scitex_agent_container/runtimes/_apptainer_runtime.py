@@ -181,85 +181,32 @@ class ApptainerContainerRuntime(RuntimeBase):
 
         argv.append(str(sif_path))
 
-        # Inner command: tini-supervised SDK runner. tini comes from
-        # the SIF's apt install (sac.def's %post block). Use `python3`
-        # (always present after `apt install python3`) rather than bare
-        # `python`, which on Ubuntu 24.04 is not provided by default —
-        # the base SIF currently lacks the `/usr/local/bin/python ->
-        # python3` symlink so `tini -- python …` fails with "exec
-        # python failed: No such file or directory".
-        #
-        # `-s` registers tini as a child subreaper via
-        # prctl(PR_SET_CHILD_SUBREAPER). Inside apptainer the container
-        # process is NOT PID 1 (apptainer's setuid wrapper owns PID 1),
-        # so tini emits a noisy warning at every start unless one of
-        # (-s, TINI_SUBREAPER=1, PID 1) holds. `-s` is the right knob
-        # here — zombie reaping still works for any descendant the SDK
-        # runner spawns.
-        inner: list[str] = [
-            "/usr/bin/tini",
-            "-s",
-            "--",
-            "python3",
-            "-m",
-            RUNNER_MODULE,
-        ]
+        # Inner command (tini-supervised runner). Dispatched on
+        # ``config.kind`` via ``_apptainer_inner_argv.build_inner_argv``:
+        #   * Agent       → claude_session (--mission / --a2a-* / ...)
+        #   * AgentProxy  → a2a_proxy (--upstream / --trust / --redact)
+        # ``-s`` registers tini as a child subreaper so it doesn't
+        # emit the noisy PID-1 warning under apptainer's setuid wrapper.
+        # Local import keeps the helper resolvable even if a formatter
+        # auto-removes module-level unused imports during refactors.
+        from ._apptainer_inner_argv import (
+            RUNNER_MODULE_PROXY,
+            build_inner_argv,
+        )
+
         if runner_argv is None:
-            runner_argv = [
-                "--name",
-                config.name,
-                "--state-root",
-                "/state",
-            ]
-            # v3 spec: `startup_prompts` are text fed to Claude as the
-            # first user message(s); `startup_commands` are SHELL
-            # commands run before claude starts. The runner's
-            # `--mission` flag drives ONE SDK turn with the given
-            # prompt — wire the first prompt there. Prefer the new
-            # field; fall back to legacy startup_commands for any
-            # spec.yaml that hasn't migrated yet.
-            mission = ""
-            prompts = list(getattr(config, "startup_prompts", []) or [])
-            if prompts:
-                mission = str(prompts[0]).strip()
-            else:
-                cmds = list(getattr(config, "startup_commands", []) or [])
-                if cmds and getattr(cmds[0], "command", ""):
-                    mission = cmds[0].command
-            if mission:
-                runner_argv += ["--mission", mission]
-                # --print-stream causes the runner to exit after the
-                # first SDK turn (one-shot semantics). Required when
-                # the operator asked for one-shot via `--one-shot`;
-                # the long-lived path (default) leaves the runner
-                # attached so subsequent `sac agents send` reach the
-                # same session.
-                if getattr(self, "_one_shot", False):
-                    runner_argv.append("--print-stream")
-            # v3 spec.a2a.port → runner's --a2a-port. Without this the
-            # sidecar never binds and `POST /v1/turn` is unreachable.
-            a2a_spec = getattr(config, "a2a", None)
-            a2a_port = getattr(a2a_spec, "port", None) if a2a_spec else None
-            if a2a_port:
-                runner_argv += ["--a2a-port", str(a2a_port)]
-                # Spec path is host-side; apptainer auto-binds /home so
-                # the in-container path is the same string. The runner
-                # uses it to publish /.well-known/agent-card.json.
-                cfg_path = getattr(config, "config_path", "")
-                if cfg_path:
-                    runner_argv += ["--a2a-card-yaml", str(cfg_path)]
-            auto = getattr(config, "autonomous", None)
-            if auto is not None and getattr(auto, "enabled", False):
-                runner_argv += [
-                    "--autonomous-enabled",
-                    "--autonomous-drive-until",
-                    auto.drive_until,
-                    "--autonomous-max-turns",
-                    str(auto.max_turns),
-                    "--autonomous-kick-text",
-                    auto.kick_text,
-                ]
-        argv += inner + list(runner_argv)
+            argv += build_inner_argv(config, one_shot=getattr(self, "_one_shot", False))
+        else:
+            kind = getattr(config, "kind", "Agent")
+            module = RUNNER_MODULE_PROXY if kind == "AgentProxy" else RUNNER_MODULE
+            argv += [
+                "/usr/bin/tini",
+                "-s",
+                "--",
+                "python3",
+                "-m",
+                module,
+            ] + list(runner_argv)
         return argv
 
     # ------------------------------------------------------------------
