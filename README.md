@@ -1,5 +1,5 @@
 <!-- ---
-!-- Timestamp: 2026-05-13 13:35:30
+!-- Timestamp: 2026-05-13 14:04:00
 !-- Author: ywatanabe
 !-- File: /home/ywatanabe/proj/scitex-agent-container/README.md
 !-- --- -->
@@ -53,7 +53,7 @@ uv pip install "scitex-agent-container[all]"
 **Step 1 — Build the base image (one-time, ~5 min)**
 
 ```bash
-sac image build base
+sac image build        # default: base
 ```
 
 **Step 2 — Create agent directories**
@@ -311,7 +311,7 @@ Configuration directories are separated into user-scope (`~/.scitex/agent-contai
 ```
 
 <details>
-<summary><strong>Configuration Cascade</strong></summary>
+<summary><strong>Configuration Cascade — CLI flag, env var, project- and user -level configs</strong></summary>
 
 Configurations can be overriden by CLI flags and environmental variables with the following precedence:
 
