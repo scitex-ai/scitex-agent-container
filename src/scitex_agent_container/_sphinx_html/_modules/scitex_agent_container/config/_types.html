@@ -769,7 +769,11 @@
     <span class="c1"># (`spec.dockerfile` was dropped 2026-05-13 with the docker ripout.)</span>
     <span class="n">image</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
     <span class="n">model</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;sonnet&quot;</span>
-    <span class="n">workdir</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;~/proj&quot;</span>
+    <span class="c1"># Empty default means &quot;use the per-agent workspace under sac&#39;s</span>
+    <span class="c1"># user-state root&quot; — resolved by `expanded_workdir` below to</span>
+    <span class="c1"># `~/.scitex/agent-container/runtime/agents/&lt;name&gt;/`. Setting</span>
+    <span class="c1"># `spec.workdir` explicitly overrides that.</span>
+    <span class="n">workdir</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
     <span class="n">python_venv</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>  <span class="c1"># resolved venv path (post _resolve_python_venv)</span>
     <span class="n">env</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">)</span>
     <span class="n">env_files</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span>
@@ -825,7 +829,21 @@
 
     <span class="nd">@property</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">expanded_workdir</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-        <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">workdir</span><span class="p">)</span><span class="o">.</span><span class="n">expanduser</span><span class="p">())</span></div>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">workdir</span><span class="p">:</span>
+            <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">workdir</span><span class="p">)</span><span class="o">.</span><span class="n">expanduser</span><span class="p">())</span>
+        <span class="c1"># Per-agent default workspace — lives under sac&#39;s user-state</span>
+        <span class="c1"># tree so multiple agents stay isolated, mounts at /work</span>
+        <span class="c1"># inside the container, persists across restarts. Created</span>
+        <span class="c1"># lazily by the runtime adapter (apptainer bind target dir</span>
+        <span class="c1"># auto-created by apptainer if missing).</span>
+        <span class="k">return</span> <span class="nb">str</span><span class="p">(</span>
+            <span class="n">Path</span><span class="o">.</span><span class="n">home</span><span class="p">()</span>
+            <span class="o">/</span> <span class="s2">&quot;.scitex&quot;</span>
+            <span class="o">/</span> <span class="s2">&quot;agent-container&quot;</span>
+            <span class="o">/</span> <span class="s2">&quot;runtime&quot;</span>
+            <span class="o">/</span> <span class="s2">&quot;agents&quot;</span>
+            <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">name</span>
+        <span class="p">)</span></div>
 
 </pre></div>
 
