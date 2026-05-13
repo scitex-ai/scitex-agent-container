@@ -24,7 +24,6 @@ from scitex_agent_container._state.recall import (
     parse_duration,
 )
 
-
 # ---------------------------------------------------------------------------
 # parse_duration
 # ---------------------------------------------------------------------------
@@ -73,7 +72,9 @@ def _user(ts: str, text: str) -> dict:
     }
 
 
-def _assistant(ts: str, text: str = "", tools: list[tuple[str, dict]] | None = None) -> dict:
+def _assistant(
+    ts: str, text: str = "", tools: list[tuple[str, dict]] | None = None
+) -> dict:
     content: list[dict] = []
     if text:
         content.append({"type": "text", "text": text})
@@ -135,11 +136,16 @@ class TestIterEntries:
 
     def test_skips_unparseable_lines(self, tmp_path):
         path = tmp_path / "s.jsonl"
-        path.write_text("\n".join([
-            "{not json",
-            json.dumps(_user("2026-04-28T01:00:00Z", "hi")),
-            "",
-        ]) + "\n")
+        path.write_text(
+            "\n".join(
+                [
+                    "{not json",
+                    json.dumps(_user("2026-04-28T01:00:00Z", "hi")),
+                    "",
+                ]
+            )
+            + "\n"
+        )
         entries = list(iter_entries(path))
         # The bad line is dropped; the good one and the empty separator (skipped) → 1 entry.
         assert len(entries) == 1
@@ -159,7 +165,9 @@ class TestCollectStats:
             [
                 _user("2026-04-28T01:00:00Z", "u1"),
                 _assistant("2026-04-28T01:01:00Z", "a1", tools=[("Bash", {})]),
-                _assistant("2026-04-28T01:02:00Z", "", tools=[("Bash", {}), ("Read", {})]),
+                _assistant(
+                    "2026-04-28T01:02:00Z", "", tools=[("Bash", {}), ("Read", {})]
+                ),
                 {"type": "attachment", "timestamp": "2026-04-28T01:03:00Z"},
             ],
         )
@@ -253,9 +261,200 @@ class TestFilterEntries:
         # tool_result callbacks. With --no-tool-results those should be
         # filtered out so --role user means 'human prompts only'.
         human = _entry("2026-04-28T01:00:00Z", "user", "real prompt")
-        synthetic = _entry(
-            "2026-04-28T01:01:00Z", "user", "[tool_result] sent"
-        )
+        synthetic = _entry("2026-04-28T01:01:00Z", "user", "[tool_result] sent")
         synthetic.is_tool_result = True
         kept = list(filter_entries([human, synthetic], include_tool_results=False))
         assert [e.text for e in kept] == ["real prompt"]
+
+    def test_include_thinking_off_drops_thinking(self):
+        e = _entry("2026-04-28T01:00:00Z", "assistant", "[thinking] internal")
+        kept = list(filter_entries([e], include_thinking=False))
+        assert kept == []
+
+    def test_include_thinking_on_keeps(self):
+        e = _entry("2026-04-28T01:00:00Z", "assistant", "[thinking] internal")
+        kept = list(filter_entries([e], include_thinking=True))
+        assert len(kept) == 1
+
+    def test_last_auto_reference_now_uses_max_ts(self):
+        # No reference_now passed → derived from items.
+        entries = [
+            _entry("2020-01-01T10:00:00Z", "user", "old"),
+            _entry("2020-01-01T10:30:00Z", "user", "end"),
+        ]
+        kept = list(filter_entries(entries, last=parse_duration("15m")))
+        assert [e.text for e in kept] == ["end"]
+
+
+# ---------------------------------------------------------------------------
+# _extract_text edge cases via iter_entries
+# ---------------------------------------------------------------------------
+
+
+class TestExtractText:
+    def test_string_content(self, tmp_path):
+        path = tmp_path / "s.jsonl"
+        path.write_text(
+            json.dumps(
+                {"type": "user", "message": {"role": "user", "content": "plain string"}}
+            )
+            + "\n"
+        )
+        entries = list(iter_entries(path))
+        assert entries[0].text == "plain string"
+
+    def test_thinking_part(self, tmp_path):
+        path = tmp_path / "s.jsonl"
+        path.write_text(
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "thinking", "thinking": "pondering"}],
+                    },
+                }
+            )
+            + "\n"
+        )
+        entries = list(iter_entries(path))
+        assert entries[0].text == "[thinking] pondering"
+
+    def test_tool_result_string(self, tmp_path):
+        path = tmp_path / "s.jsonl"
+        path.write_text(
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {
+                        "role": "user",
+                        "content": [{"type": "tool_result", "content": "output here"}],
+                    },
+                }
+            )
+            + "\n"
+        )
+        entries = list(iter_entries(path))
+        e = entries[0]
+        assert e.is_tool_result is True
+        assert "[tool_result] output here" in e.text
+
+    def test_tool_result_list_content(self, tmp_path):
+        path = tmp_path / "s.jsonl"
+        path.write_text(
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "content": [
+                                    {"type": "text", "text": "alpha"},
+                                    {"type": "text", "text": "beta"},
+                                ],
+                            }
+                        ],
+                    },
+                }
+            )
+            + "\n"
+        )
+        entries = list(iter_entries(path))
+        assert "alpha" in entries[0].text and "beta" in entries[0].text
+
+    def test_unknown_part_type(self, tmp_path):
+        path = tmp_path / "s.jsonl"
+        path.write_text(
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "weird"}, "raw-non-dict"],
+                    },
+                }
+            )
+            + "\n"
+        )
+        entries = list(iter_entries(path))
+        # No text, no tools → empty text.
+        assert entries[0].text == ""
+
+    def test_non_list_non_string_content(self, tmp_path):
+        path = tmp_path / "s.jsonl"
+        path.write_text(
+            json.dumps({"type": "user", "message": {"role": "user", "content": 42}})
+            + "\n"
+        )
+        entries = list(iter_entries(path))
+        assert entries[0].text == ""
+
+    def test_collect_stats_parse_error(self, tmp_path):
+        path = tmp_path / "s.jsonl"
+        path.write_text(
+            "not-json\n"
+            + json.dumps({"type": "user", "timestamp": "2026-04-28T01:00:00Z"})
+            + "\n"
+        )
+        from scitex_agent_container._state.recall import collect_stats as cs
+
+        s = cs(path)
+        assert s.parse_errors == 1
+        assert s.total_lines == 2
+
+
+# ---------------------------------------------------------------------------
+# format_stats / format_entry coverage
+# ---------------------------------------------------------------------------
+
+
+class TestFormatters:
+    def test_format_stats_includes_tools_and_duration(self):
+        from scitex_agent_container._state.recall import Stats, format_stats
+
+        s = Stats()
+        s.session_id = "sid-1"
+        s.cwd = "/wd"
+        s.version = "1.0"
+        s.total_lines = 5
+        s.first_ts = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        s.last_ts = s.first_ts + timedelta(minutes=42)
+        s.by_type["user"] = 2
+        s.tool_uses["Bash"] = 3
+        out = format_stats(s)
+        assert "sid-1" in out
+        assert "Bash: 3" in out
+        assert "duration" in out
+
+    def test_format_stats_empty(self):
+        from scitex_agent_container._state.recall import Stats, format_stats
+
+        s = Stats()
+        out = format_stats(s)
+        assert "session_id" in out
+        # no by_type / no tool_uses / no time range
+        assert "by_type" not in out
+        assert "tool_uses" not in out
+
+    def test_format_entry_with_truncation_and_tools(self):
+        from scitex_agent_container._state.recall import Entry, format_entry
+
+        e = Entry(
+            ts=datetime(2026, 4, 28, 1, 0, tzinfo=timezone.utc),
+            type="assistant",
+            role="assistant",
+            text="x" * 200,
+            tool_uses=[("Bash", {"command": "ls"})],
+        )
+        out = format_entry(e, body_limit=50)
+        assert "(+150 chars)" in out
+        assert "Bash(command)" in out
+
+    def test_format_entry_no_ts_no_body(self):
+        from scitex_agent_container._state.recall import Entry, format_entry
+
+        e = Entry(ts=None, type="user", role="user", text="")
+        out = format_entry(e)
+        assert "[-]" in out
