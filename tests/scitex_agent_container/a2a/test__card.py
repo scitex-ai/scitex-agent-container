@@ -124,3 +124,86 @@ def test_capabilities_and_skills_unioned_in_tags() -> None:
     card = project_card("alpha", v3, "http://127.0.0.1:7901")
     tags = card["skills"][0]["tags"]
     assert tags == sorted(set(["audit", "git", "scitex-dev"]))
+
+
+# ---------------------------------------------------------------------------
+# D3 — structured isolation block
+# (docs/design/2026-05-13-isolation-hardening.md)
+# ---------------------------------------------------------------------------
+
+
+def _iso(v3: dict) -> dict:
+    return project_card("alpha", v3, "http://127.0.0.1:7901")[
+        "x-scitex-agent-container"
+    ]["isolation"]
+
+
+def test_isolation_default_yaml_is_hardened() -> None:
+    """Empty spec → level=hardened, all defensive booleans true."""
+    iso = _iso({"spec": {}})
+    assert iso["level"] == "hardened"
+    assert iso["containall"] is True
+    assert iso["cleanenv"] is True
+    assert iso["writable_tmpfs"] is True
+    assert iso["preflight_passed"] == ["uid-nonzero", "no-host-home"]
+    assert iso["preflight_allowed"] == []
+    assert iso["binds_count"] == 0
+    assert iso["binds_writable_count"] == 0
+
+
+def test_isolation_relaxed_true_flips_all_booleans() -> None:
+    iso = _iso({"spec": {"apptainer": {"relaxed": True}}})
+    assert iso["level"] == "relaxed"
+    assert iso["containall"] is False
+    assert iso["cleanenv"] is False
+    assert iso["writable_tmpfs"] is False
+    assert iso["preflight_passed"] == []
+
+
+def test_isolation_operator_declared_cleanenv_still_hardened() -> None:
+    """Operator put --cleanenv in raw_args — level stays hardened, cleanenv=true."""
+    iso = _iso({"spec": {"apptainer": {"raw_args": ["--cleanenv"]}}})
+    assert iso["level"] == "hardened"
+    assert iso["cleanenv"] is True
+
+
+def test_isolation_overlay_disables_writable_tmpfs_but_stays_hardened() -> None:
+    iso = _iso({"spec": {"apptainer": {"overlay": "/tmp/ov.img"}}})
+    assert iso["level"] == "hardened"
+    assert iso["writable_tmpfs"] is False
+    # containall + cleanenv unaffected by overlay
+    assert iso["containall"] is True
+    assert iso["cleanenv"] is True
+
+
+def test_isolation_binds_count_populates_from_apptainer_binds() -> None:
+    iso = _iso(
+        {
+            "spec": {
+                "apptainer": {
+                    "binds": [
+                        "/srv/a:/srv/a:ro",
+                        "/srv/b:/srv/b:ro",
+                        "/srv/c:/srv/c",  # rw (no :ro)
+                    ]
+                }
+            }
+        }
+    )
+    assert iso["binds_count"] == 3
+    assert iso["binds_writable_count"] == 1
+
+
+def test_isolation_preflight_allow_makes_level_custom() -> None:
+    """``preflight_allow: [...]`` is the escape hatch and downgrades level→custom."""
+    iso = _iso(
+        {
+            "spec": {
+                "apptainer": {
+                    "preflight_allow": ["$HOME/.gitconfig"],
+                }
+            }
+        }
+    )
+    assert iso["level"] == "custom"
+    assert iso["preflight_allowed"] == ["$HOME/.gitconfig"]

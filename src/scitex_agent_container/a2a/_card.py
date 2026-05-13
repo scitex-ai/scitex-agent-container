@@ -107,7 +107,100 @@ def project_card(name: str, v3: dict[str, Any], base_url: str) -> dict[str, Any]
             "model": (spec.get("claude") or {}).get("model") or spec.get("model"),
             "multiplexer": spec.get("multiplexer"),
             "required_skills": list(required_skills),
+            # D3 — structured isolation block (see
+            # docs/design/2026-05-13-isolation-hardening.md). External
+            # verifiers (Clew, orochi attestation) read these booleans to
+            # attest specific properties; ``level`` is the human shorthand.
+            "isolation": _isolation_block(spec),
         },
+    }
+
+
+# ---------------------------------------------------------------------------
+# D3 isolation block helpers — pure functions of the YAML dict.
+# ---------------------------------------------------------------------------
+
+
+def _ap(spec: dict[str, Any]) -> dict[str, Any]:
+    return spec.get("apptainer") or {}
+
+
+def _relaxed(spec: dict[str, Any]) -> bool:
+    return bool(_ap(spec).get("relaxed", False))
+
+
+def _raw_args(spec: dict[str, Any]) -> list[str]:
+    return list(_ap(spec).get("raw_args") or [])
+
+
+def _has_flag(spec: dict[str, Any], flag: str) -> bool:
+    return any(a == flag for a in _raw_args(spec))
+
+
+def _has_overlay(spec: dict[str, Any]) -> bool:
+    return bool((_ap(spec).get("overlay") or "").strip())
+
+
+def _hardened(spec: dict[str, Any]) -> bool:
+    """A spec is hardened when sac would auto-prepend the flag."""
+    return not _relaxed(spec)
+
+
+def _has_writable_tmpfs(spec: dict[str, Any]) -> bool:
+    # sac auto-prepends --writable-tmpfs when (not relaxed) AND (no overlay)
+    # AND operator didn't already declare it.
+    if _has_flag(spec, "--writable-tmpfs"):
+        return True
+    if _relaxed(spec):
+        return False
+    return not _has_overlay(spec)
+
+
+def _binds(spec: dict[str, Any]) -> list[str]:
+    return list(_ap(spec).get("binds") or [])
+
+
+def _binds_count(spec: dict[str, Any]) -> int:
+    return len(_binds(spec))
+
+
+def _binds_writable_count(spec: dict[str, Any]) -> int:
+    """Count binds NOT carrying ``:ro`` (default mode is rw)."""
+    n = 0
+    for b in _binds(spec):
+        # Bind shape: "src:dst[:mode]" — split on ":" from the right.
+        parts = str(b).rsplit(":", 1)
+        mode = parts[1].strip() if len(parts) == 2 else ""
+        if mode != "ro":
+            n += 1
+    return n
+
+
+def _preflight_allowed(spec: dict[str, Any]) -> list[str]:
+    """``spec.apptainer.preflight_allow`` — empty until the field lands."""
+    return list(_ap(spec).get("preflight_allow") or [])
+
+
+def _isolation_level(spec: dict[str, Any]) -> str:
+    """``relaxed`` | ``custom`` | ``hardened``."""
+    if _relaxed(spec):
+        return "relaxed"
+    # custom if any hardened booleans are disabled OR preflight_allowed non-empty.
+    if _preflight_allowed(spec):
+        return "custom"
+    return "hardened"
+
+
+def _isolation_block(spec: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "level": _isolation_level(spec),
+        "containall": _has_flag(spec, "--containall") or _hardened(spec),
+        "cleanenv": _has_flag(spec, "--cleanenv") or _hardened(spec),
+        "writable_tmpfs": _has_writable_tmpfs(spec),
+        "preflight_passed": ([] if _relaxed(spec) else ["uid-nonzero", "no-host-home"]),
+        "preflight_allowed": _preflight_allowed(spec),
+        "binds_count": _binds_count(spec),
+        "binds_writable_count": _binds_writable_count(spec),
     }
 
 
