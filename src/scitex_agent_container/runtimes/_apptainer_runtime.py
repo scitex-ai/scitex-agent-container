@@ -240,11 +240,13 @@ class ApptainerContainerRuntime(RuntimeBase):
         )
 
         if runner_argv is None:
-            argv += build_inner_argv(config, one_shot=getattr(self, "_one_shot", False))
+            inner_argv = build_inner_argv(
+                config, one_shot=getattr(self, "_one_shot", False)
+            )
         else:
             kind = getattr(config, "kind", "Agent")
             module = RUNNER_MODULE_PROXY if kind == "AgentProxy" else RUNNER_MODULE
-            argv += [
+            inner_argv = [
                 "/usr/bin/tini",
                 "-s",
                 "--",
@@ -252,6 +254,22 @@ class ApptainerContainerRuntime(RuntimeBase):
                 "-m",
                 module,
             ] + list(runner_argv)
+
+        # D2 — wrap inner cmd with the static $HOME-visibility preflight
+        # (see docs/design/2026-05-13-isolation-hardening.md §D2 + §D4).
+        # The preflight is `bash -c "<static-script>\nexec <inner-quoted>"`
+        # so PID 1 inside the container is still tini (exec replaces the
+        # bash process). Skipped under `relaxed: true` — operator opted
+        # out of hardened mode.
+        if relaxed:
+            argv += inner_argv
+        else:
+            import shlex
+
+            from ._apptainer_preflight import PREFLIGHT_SCRIPT
+
+            inner_str = " ".join(shlex.quote(a) for a in inner_argv)
+            argv += ["bash", "-c", f"{PREFLIGHT_SCRIPT}\nexec {inner_str}"]
         return argv
 
     # ------------------------------------------------------------------

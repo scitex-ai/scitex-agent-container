@@ -87,6 +87,28 @@ def test_argv_does_not_emit_user_flag(tmp_path: Path) -> None:
     assert "--user" not in argv
 
 
+def _extract_inner_argv(argv: list[str]) -> list[str]:
+    """Unwrap the D2 ``bash -c "<preflight>\\nexec <inner>"`` wrapper.
+
+    When ``apptainer.relaxed=true`` no wrapper is present and the inner
+    argv lives flat in ``argv``; this helper handles both shapes so
+    tests stay shape-agnostic.
+    """
+    import shlex
+
+    # Find the SIF path (first arg that ends with .sif under a tmp dir
+    # OR a directory + ".singularity.d/" — simplest: the argv element
+    # immediately preceding "bash" or "/usr/bin/tini").
+    for i, a in enumerate(argv):
+        if a == "bash" and i + 2 < len(argv) and argv[i + 1] == "-c":
+            script = argv[i + 2]
+            _, _, exec_line = script.rpartition("\nexec ")
+            return shlex.split(exec_line)
+        if a == "/usr/bin/tini":
+            return argv[i:]
+    return []
+
+
 def test_argv_runs_runner_module_via_tini(tmp_path: Path) -> None:
     rt = ApptainerContainerRuntime()
     cfg = _config(
@@ -94,8 +116,7 @@ def test_argv_runs_runner_module_via_tini(tmp_path: Path) -> None:
         startup_commands=[StartupCommand(command="say hi")],
     )
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
-    sif_idx = argv.index(str(tmp_path / "x.sif"))
-    inner = argv[sif_idx + 1 :]
+    inner = _extract_inner_argv(argv)
     assert inner[0] == "/usr/bin/tini"
     assert "scitex_agent_container._runners.claude_session" in inner
     # Mission flows through the same way as docker.
@@ -141,9 +162,10 @@ def test_argv_forwards_autonomous_block(tmp_path: Path) -> None:
         autonomous=AutonomousSpec(enabled=True, drive_until="OK", max_turns=7),
     )
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
-    assert "--autonomous-enabled" in argv
-    assert argv[argv.index("--autonomous-drive-until") + 1] == "OK"
-    assert argv[argv.index("--autonomous-max-turns") + 1] == "7"
+    inner = _extract_inner_argv(argv)
+    assert "--autonomous-enabled" in inner
+    assert inner[inner.index("--autonomous-drive-until") + 1] == "OK"
+    assert inner[inner.index("--autonomous-max-turns") + 1] == "7"
 
 
 # ---------------------------------------------------------------------------
@@ -542,7 +564,8 @@ def test_argv_uses_startup_prompts_over_legacy_commands(tmp_path: Path) -> None:
         startup_commands=[StartupCommand(command="ignored")],
     )
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
-    assert argv[argv.index("--mission") + 1] == "hello-world"
+    inner = _extract_inner_argv(argv)
+    assert inner[inner.index("--mission") + 1] == "hello-world"
 
 
 # ---------------------------------------------------------------------------
@@ -823,12 +846,13 @@ def test_a2a_port_appears_in_runner_argv(tmp_path: Path) -> None:
     argv = rt.build_run_argv(
         cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
     )
-    assert "--a2a-port" in argv, (
+    inner = _extract_inner_argv(argv)
+    assert "--a2a-port" in inner, (
         "build_run_argv must propagate spec.a2a.port to the runner; "
         "without this, the inbound sidecar never binds."
     )
-    idx = argv.index("--a2a-port")
-    assert argv[idx + 1] == "7901"
+    idx = inner.index("--a2a-port")
+    assert inner[idx + 1] == "7901"
 
 
 def test_a2a_port_omitted_when_spec_a2a_unset(tmp_path: Path) -> None:
@@ -837,7 +861,7 @@ def test_a2a_port_omitted_when_spec_a2a_unset(tmp_path: Path) -> None:
     argv = rt.build_run_argv(
         cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
     )
-    assert "--a2a-port" not in argv
+    assert "--a2a-port" not in _extract_inner_argv(argv)
 
 
 def test_a2a_port_zero_does_not_bind(tmp_path: Path) -> None:
@@ -847,7 +871,7 @@ def test_a2a_port_zero_does_not_bind(tmp_path: Path) -> None:
     argv = rt.build_run_argv(
         cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
     )
-    assert "--a2a-port" not in argv
+    assert "--a2a-port" not in _extract_inner_argv(argv)
 
 
 # ---------------------------------------------------------------------------
@@ -870,9 +894,10 @@ def test_a2a_card_yaml_passed_when_port_set(tmp_path: Path) -> None:
     argv = rt.build_run_argv(
         cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
     )
-    assert "--a2a-card-yaml" in argv
-    idx = argv.index("--a2a-card-yaml")
-    assert argv[idx + 1] == str(yaml_path)
+    inner = _extract_inner_argv(argv)
+    assert "--a2a-card-yaml" in inner
+    idx = inner.index("--a2a-card-yaml")
+    assert inner[idx + 1] == str(yaml_path)
 
 
 def test_a2a_card_yaml_skipped_when_no_config_path(tmp_path: Path) -> None:
@@ -883,9 +908,10 @@ def test_a2a_card_yaml_skipped_when_no_config_path(tmp_path: Path) -> None:
     argv = rt.build_run_argv(
         cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
     )
+    inner = _extract_inner_argv(argv)
     # Port flag still present; just the card-yaml is skipped.
-    assert "--a2a-port" in argv
-    assert "--a2a-card-yaml" not in argv
+    assert "--a2a-port" in inner
+    assert "--a2a-card-yaml" not in inner
 
 
 def test_a2a_card_yaml_skipped_when_port_unset(tmp_path: Path) -> None:
@@ -899,9 +925,10 @@ def test_a2a_card_yaml_skipped_when_port_unset(tmp_path: Path) -> None:
     argv = rt.build_run_argv(
         cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
     )
+    inner = _extract_inner_argv(argv)
     # No port → no sidecar → no point publishing the card path either.
-    assert "--a2a-port" not in argv
-    assert "--a2a-card-yaml" not in argv
+    assert "--a2a-port" not in inner
+    assert "--a2a-card-yaml" not in inner
 
 
 # ---------------------------------------------------------------------------
@@ -959,9 +986,10 @@ def test_kind_agent_proxy_dispatches_to_a2a_proxy_runner(tmp_path: Path) -> None
     argv = rt.build_run_argv(
         cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
     )
-    assert RUNNER_MODULE_PROXY in argv, argv
+    inner = _extract_inner_argv(argv)
+    assert RUNNER_MODULE_PROXY in inner, inner
     # And NOT the SDK runner.
-    assert RUNNER_MODULE_AGENT not in argv, argv
+    assert RUNNER_MODULE_AGENT not in inner, inner
 
 
 def test_kind_agent_default_still_uses_claude_session(tmp_path: Path) -> None:
@@ -976,8 +1004,9 @@ def test_kind_agent_default_still_uses_claude_session(tmp_path: Path) -> None:
     argv = rt.build_run_argv(
         cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
     )
-    assert RUNNER_MODULE_AGENT in argv
-    assert RUNNER_MODULE_PROXY not in argv
+    inner = _extract_inner_argv(argv)
+    assert RUNNER_MODULE_AGENT in inner
+    assert RUNNER_MODULE_PROXY not in inner
 
 
 # ---------------------------------------------------------------------------
@@ -1002,12 +1031,13 @@ def test_proxy_upstream_trust_timeout_passed_through(tmp_path: Path) -> None:
     argv = rt.build_run_argv(
         cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
     )
-    assert _flag_value(argv, "--upstream") == "https://peer.example.com"
-    assert _flag_value(argv, "--trust") == "local-mesh"
-    assert _flag_value(argv, "--redact") == "SECRET,TOKEN"
-    assert _flag_value(argv, "--timeout-s") == "12.5"
-    assert _flag_value(argv, "--name") == "proxy-front"
-    assert _flag_value(argv, "--state-root") == "/state"
+    inner = _extract_inner_argv(argv)
+    assert _flag_value(inner, "--upstream") == "https://peer.example.com"
+    assert _flag_value(inner, "--trust") == "local-mesh"
+    assert _flag_value(inner, "--redact") == "SECRET,TOKEN"
+    assert _flag_value(inner, "--timeout-s") == "12.5"
+    assert _flag_value(inner, "--name") == "proxy-front"
+    assert _flag_value(inner, "--state-root") == "/state"
 
 
 def test_proxy_empty_redact_serialises_to_empty_string(tmp_path: Path) -> None:
@@ -1017,7 +1047,7 @@ def test_proxy_empty_redact_serialises_to_empty_string(tmp_path: Path) -> None:
     argv = rt.build_run_argv(
         cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
     )
-    assert _flag_value(argv, "--redact") == ""
+    assert _flag_value(_extract_inner_argv(argv), "--redact") == ""
 
 
 # ---------------------------------------------------------------------------
@@ -1031,7 +1061,7 @@ def test_proxy_a2a_port_appears_when_set(tmp_path: Path) -> None:
     argv = rt.build_run_argv(
         cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
     )
-    assert _flag_value(argv, "--a2a-port") == "7902"
+    assert _flag_value(_extract_inner_argv(argv), "--a2a-port") == "7902"
 
 
 def test_proxy_a2a_card_yaml_when_port_and_config_path_set(tmp_path: Path) -> None:
@@ -1041,7 +1071,7 @@ def test_proxy_a2a_card_yaml_when_port_and_config_path_set(tmp_path: Path) -> No
     argv = rt.build_run_argv(
         cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
     )
-    assert _flag_value(argv, "--a2a-card-yaml") == str(yaml_path)
+    assert _flag_value(_extract_inner_argv(argv), "--a2a-card-yaml") == str(yaml_path)
 
 
 def test_proxy_a2a_port_omitted_when_unset(tmp_path: Path) -> None:
@@ -1050,7 +1080,7 @@ def test_proxy_a2a_port_omitted_when_unset(tmp_path: Path) -> None:
     argv = rt.build_run_argv(
         cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
     )
-    assert "--a2a-port" not in argv
+    assert "--a2a-port" not in _extract_inner_argv(argv)
 
 
 # ---------------------------------------------------------------------------
