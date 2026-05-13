@@ -266,7 +266,9 @@ class TestHostnameSubstitution:
 
         monkeypatch.delenv("SCITEX_AGENT_CONTAINER_HOSTNAME", raising=False)
         monkeypatch.setattr("socket.gethostname", lambda: "bare-host")
-        monkeypatch.setattr(host_mod, "_config_path", lambda _p=tmp_path / "no-such.yaml": _p)
+        monkeypatch.setattr(
+            host_mod, "_config_path", lambda _p=tmp_path / "no-such.yaml": _p
+        )
         assert host_mod.resolve_hostname() == "bare-host"
 
 
@@ -344,7 +346,7 @@ class TestEffectiveId:
         assert cfg.labels["machine"] == "ywata-note-win"
         assert cfg.hosts_spec.hosts == "all"
         assert cfg.workdir == (
-            "~/.scitex/agent-container/runtime/workspaces/head-ywata-note-win"
+            "~/.scitex/agent-container/runtime/agents/head-ywata-note-win"
         )
 
     def test_load_singleton_keeps_bare_id(self, tmp_path, monkeypatch):
