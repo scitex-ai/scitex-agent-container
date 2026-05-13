@@ -6,7 +6,7 @@ Two directories ship under ``config/`` in the repo:
 * ``examples/agent-templates/`` — minimal pattern templates. Each one demonstrates
   one deployment pattern with the smallest YAML that exercises it.
   Copy-and-adapt is the intended workflow.
-* ``examples/agent-specs/`` — concrete real-world configs that document
+* ``examples/agents/`` — concrete real-world configs that document
   specific operator decisions (e.g. ``newbie-docker.yaml`` carries the
   Hawthorne-effect-free design notes from the 2026-04-12 contamination
   incident).

@@ -10,7 +10,7 @@ tags: [scitex-agent-container-templates]
 Two directories under `config/` ship YAML you can copy:
 
 - `examples/agent-templates/` — six minimal **pattern** templates (one per deployment pattern)
-- `examples/agent-specs/` — concrete real-world configs
+- `examples/agents/` — concrete real-world configs
 
 Both are validated by `tests/test_templates_v3_valid.py`. The SLURM template additionally renders an sbatch script in CI to catch YAML/dataclass drift.
 
@@ -38,7 +38,7 @@ For SSH-deployed agents, drop a sibling `dot_claude/` directory next to `spec.ya
 
 ## When to add a new template
 
-Add a new pattern template only when the new YAML shape isn't expressible by combining existing templates. If you find yourself documenting a specific operator decision, write to `examples/agent-specs/` instead — examples are real configs frozen in time, templates are minimal patterns.
+Add a new pattern template only when the new YAML shape isn't expressible by combining existing templates. If you find yourself documenting a specific operator decision, write to `examples/agents/` instead — examples are real configs frozen in time, templates are minimal patterns.
 
 When adding a template:
 
@@ -48,7 +48,7 @@ When adding a template:
 
 ## Examples
 
-`examples/agent-specs/` holds concrete configs that aren't patterns:
+`examples/agents/` holds concrete configs that aren't patterns:
 
 - `newbie-docker.yaml` — Hawthorne-effect-free naive-user simulation; documents the 2026-04-12 contamination incident lesson.
 - `researcher-opus.yaml` — Opus-powered researcher with on-failure restart + backoff tuned for long sessions.

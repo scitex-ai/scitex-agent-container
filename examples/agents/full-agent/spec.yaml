@@ -1,0 +1,90 @@
+# full — annotated example of a sac v3 agent with all common fields.
+#
+# dir-as-SSoT: agent name == parent directory name ("full" here).
+# To use: copy this directory, rename it, and edit spec.yaml.
+#
+#   cp -r examples/agents/full ~/.scitex/agent-container/agents/my-agent
+#   sac agents start my-agent
+
+apiVersion: scitex-agent-container/v3
+kind: Agent
+
+# metadata is optional; labels are used by `sac fleet` filters.
+metadata:
+  labels:
+    role: worker
+    team: default
+
+spec:
+  runtime: apptainer   # only supported runtime
+
+  # workdir is mounted rw at /work inside the container.
+  # Default: ~/.scitex/agent-container/runtime/agents/<name>/
+  workdir: ~/proj
+
+  # dot_claude: directory merged into the agent workspace at start.
+  # Contains CLAUDE.md, .mcp.json, commands/, skills/, hooks/, etc.
+  # Default: auto-discovered ./dot_claude/ next to spec.yaml (this dir).
+  dot_claude: ./dot_claude
+
+  apptainer:
+    # sac-scitex.sif: full Python/scitex stack.
+    # sac-base.sif: minimal runtime (faster build, no scitex).
+    image: ~/.scitex/agent-container/containers/sac-scitex.sif
+
+    # Extra bind mounts: host:container[:ro|rw]
+    # binds:
+    #   - ~/data:/data:ro
+    #   - /scratch:/scratch:rw
+
+    # Environment variables injected into the container.
+    # env:
+    #   MY_PROJECT: my-project
+    #   MY_ROLE: worker
+
+    # GPU passthrough (pick one).
+    # nv: true    # NVIDIA CUDA
+    # rocm: true  # AMD ROCm
+
+    # Arbitrary extra apptainer exec flags (escape hatch).
+    # raw_args:
+    #   - --no-home
+
+  claude:
+    model: sonnet   # haiku | sonnet | opus | full versioned id
+    flags:
+      - --dangerously-skip-permissions
+    session: new    # new | continue | continue-or-new | resume <session-id>
+
+    # MCP push channels.
+    # channels:
+    #   - server:orochi-push
+
+  # startup_prompts: first user message(s) sent to Claude after start.
+  # startup_prompts:
+  #   - "Read CLAUDE.md and confirm you understand your role."
+
+  # startup_commands: shell commands run before Claude starts.
+  # startup_commands:
+  #   - "uv sync"
+  #   - "source .venv/bin/activate"
+
+  health:
+    enabled: true
+    interval: 60     # seconds between probes
+    timeout: 10
+    method: sdk-alive
+
+  restart:
+    policy: on-failure   # never | on-failure | always
+    max_retries: 3
+    backoff:
+      initial: 10
+      max: 120
+      multiplier: 2
+
+  # A2A: per-agent HTTP endpoint for agent-to-agent messaging.
+  # a2a:
+  #   port: 8080
+
+# EOF

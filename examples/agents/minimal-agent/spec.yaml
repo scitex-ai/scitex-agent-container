@@ -1,6 +1,6 @@
 # minimal — bare-minimum sac v3 agent spec.
 #
-# Everything not listed here uses sensible defaults:
+# Omitted fields use defaults:
 #   workdir  → ~/.scitex/agent-container/runtime/agents/<name>/
 #   health   → sdk-alive, interval 60s
 #   restart  → never
