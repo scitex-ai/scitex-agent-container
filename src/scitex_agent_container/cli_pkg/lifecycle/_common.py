@@ -142,7 +142,13 @@ def _multiplex_foreground_tails(names):
     from pathlib import Path as _Path
 
     root = _Path.home() / ".scitex" / "agent-container" / "runtime"
-    offsets = {n: 0 for n in names}
+    # Start at end-of-file for each agent so we tail only NEW turns —
+    # otherwise every re-start replays the whole historical session.jsonl
+    # and the operator sees the same assistant reply N times.
+    offsets: dict = {}
+    for n in names:
+        p = root / n / "session.jsonl"
+        offsets[n] = p.stat().st_size if p.is_file() else 0
     done = {n: False for n in names}
 
     def _is_stopping(n: str) -> bool:

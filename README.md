@@ -1,5 +1,5 @@
 <!-- ---
-!-- Timestamp: 2026-05-13 10:41:30
+!-- Timestamp: 2026-05-13 10:52:36
 !-- Author: ywatanabe
 !-- File: /home/ywatanabe/proj/scitex-agent-container/README.md
 !-- --- -->
@@ -60,7 +60,7 @@ define_hello_agents() {
     for agent_id in 1 2 3; do
         agent_dir=~/.scitex/agent-container/agents/"hello-agent-$agent_id"
 
-        mkdir -p "$agent_dir"
+        mkdir -p "$agent_dir" >/dev/null
         # Unquoted heredoc tag — shell expands $agent_name before write.
         # Escape any literal `$` that should reach YAML verbatim (none here).
         cat > "$agent_dir/spec.yaml" <<YAML
@@ -88,10 +88,7 @@ YAML
 define_hello_agents
 
 # 3. Start an agent in foreground
-sac agents start hello-agent-1 --foreground  # streams stdout
-# Starting agent 'hello-agent-1' (runtime: apptainer, LOCAL)...
-# Hello! I am hello-agent-1
-# Agent 'hello-agent-1' started successfully [LOCAL]
+sac agents start hello-agent-1 hello-agent-2 hello-agent-3 --foreground
 
 # 4. Check agents
 sac agents list
@@ -106,57 +103,15 @@ sac agents list
 
 # 5. Start multiple agents in background (default)
 sac agents start hello-agent-1 hello-agent-2 hello-agent-3
-# Starting agent 'hello-agent-1' (runtime: apptainer, LOCAL)...
-# Agent 'hello-agent-1' started successfully [LOCAL]
-#
-# Starting agent 'hello-agent-2' (runtime: apptainer, LOCAL)...
-# Agent 'hello-agent-2' started successfully [LOCAL]
-#
-# Starting agent 'hello-agent-3' (runtime: apptainer, LOCAL)...
-# Agent 'hello-agent-3' started successfully [LOCAL]
 
 # 6. Read the outputs in JSON format
 sac agents tail hello-agent-1 hello-agent-2 hello-agent-3 --json
-# [ 
-#    {
-#      "ts": 1778628345.358866,
-#      "type": "user",
-#      "text": "Reply with the string 'Hello! I am hello-agent-1' and nothing else."
-#    },
-#    {
-#      "ts": 1778628348.578402,
-#      "type": "assistant",
-#      "text": "Hello! I am hello-agent-1"
-#    },
-#    {
-#      "ts": 1778628348.6855755,
-#      "type": "result",
-#      ...
-#      }
-#    }
-# ] 
-# [ 
-#   {
-#     "ts": 1778628472.064468,
-#     "type": "user",
-#     "text": "Reply with the string 'Hello! I am hello-agent-2' and nothing else."
-#   },
-#   ...
-# ] 
 
 # 7. Stop agents
 sac agents stop hello-agent-1 hello-agent-2 hello-agent-3
-sac agents list
-# ls ~/.scitex/agent-container/agents # only stopped
 
 # 8. Delete agents
 sac agents delete hello-agent-1 hello-agent-2 hello-agent-3 -y
-# deleted hello-agent-1
-# deleted hello-agent-2
-# deleted hello-agent-3
-
-sac agents list
-# No agents found (registry empty, no specs on disk).
 ```
 
 ## How it works
