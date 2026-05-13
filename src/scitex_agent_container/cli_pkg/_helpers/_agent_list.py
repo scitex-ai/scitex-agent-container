@@ -1,200 +1,15 @@
-"""Shared CLI helpers: rich console, recursive help group, agent-list formatting."""
+"""Agent-list assembly + presentation (JSON + rich-table)."""
 
 from __future__ import annotations
 
 import json as json_mod
 
 import click
-from rich.console import Console
 from rich.table import Table
 
-from .._state.registry import Registry
-from ..config import load_config
-
-console = Console()
-
-
-# hook-bypass: line-limit (sac system-msg helper; _helpers.py split deferred)
-def system_msg(text: str, style: str = "blue") -> None:
-    """Print a sac-system status line wrapped in ``=== ... ===``.
-
-    Use for lifecycle announcements (start / stop / restart / delete
-    progress, force-mode notice, etc.). Agent-voice output stays
-    unwrapped so the frame marks the sac-system boundary clearly.
-    """
-    console.print(f"[{style}]=== [sac] {text} ===[/{style}]")
-
-
-def agent_name_complete(
-    ctx: click.Context, param: click.Parameter, incomplete: str
-) -> list[str]:
-    """Click ``shell_complete`` callback that returns matching agent names.
-
-    Resolves names via :func:`scitex_agent_container.config.enumerate_agent_names`
-    so completion respects the same search chain as ``sac agent start <name>``:
-    project-local → user-wide → ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` →
-    fleet directories. Filtered to those whose name starts with the
-    operator's partial input.
-
-    Used as ``@click.argument("name", shell_complete=agent_name_complete)``
-    on every command that accepts an agent name. Failures (no agents yet,
-    file system errors, etc.) silently return an empty list — completion
-    must never block typing.
-    """
-    del ctx, param  # unused: completion is global, not per-command
-    try:
-        from ..config._resolve import enumerate_agent_names
-
-        names = enumerate_agent_names()
-    except Exception:  # stx-allow: fallback (reason: completion must never raise; empty list is the safe fall-through)
-        return []
-    return [n for n in names if n.startswith(incomplete)]
-
-
-def renamed_redirect(
-    cmd: click.Command,
-    *,
-    new_path: str,
-    old_path: str | None = None,
-) -> click.Command:
-    """Wrap ``cmd`` so invoking the old name hard-errors with a redirect.
-
-    Per scitex CLI convention §5: renamed commands MUST exit non-zero
-    with a redirect message, never silently warn-then-run. Soft warnings
-    let stale scripts persist indefinitely; hard errors force the fix
-    in one iteration.
-
-    The wrapped command keeps its own ``params`` so ``--help`` still
-    documents the surface the user invoked, but the callback is replaced:
-    invoking the renamed command prints a single-line redirect to stderr
-    and exits with code 2 (the convention's standard).
-
-    Args:
-        cmd: The Click command being redirected.
-        new_path: The user-facing replacement (e.g. ``"sac agent start"``).
-        old_path: The path the user actually typed, when it doesn't
-            match ``"sac <cmd.name>"`` — typically a subcommand of a
-            noun group (``"sac registry clean"`` rather than just
-            ``"sac clean"``). Defaults to ``f"sac {cmd.name}"``.
-    """
-    rendered_old = old_path or f"sac {cmd.name}"
-
-    def _callback(*args, **kwargs):
-        del args, kwargs
-        click.echo(
-            f"error: '{rendered_old}' was renamed to '{new_path}'.\n"
-            f"Re-run with: {new_path}",
-            err=True,
-        )
-        raise SystemExit(2)
-
-    return click.Command(
-        name=cmd.name,
-        callback=_callback,
-        params=list(cmd.params),
-        help=(
-            (cmd.help or "")
-            + f"\n\n[RENAMED] Use ``{new_path}`` instead. The old form "
-            "exits with code 2."
-        ),
-        short_help=cmd.short_help,
-        epilog=cmd.epilog,
-    )
-
-
-def _json_flag(ctx: click.Context, local: bool) -> bool:
-    """Return True if JSON output requested via local flag or top-level --json."""
-    return local or bool((ctx.obj or {}).get("json", False))
-
-
-# Inline CategorizedGroup — historically lived in scitex_dev.click_helpers,
-# but pinning sac's runtime to a specific scitex-dev version made cross-repo
-# releases brittle. Owned locally now.
-class CategorizedGroup(click.Group):
-    """Click `Group` that renders `--help` commands under named sections.
-
-    Subclass and set ``COMMAND_CATEGORIES`` as a class attribute. Categories
-    are ``(section_name, [command_names])``; anything not listed falls into
-    a final ``Other`` section so nothing silently disappears.
-    """
-
-    COMMAND_CATEGORIES: list = []
-
-    def format_commands(self, ctx, formatter):
-        commands = {}
-        for subcommand in self.list_commands(ctx):
-            cmd = self.get_command(ctx, subcommand)
-            if cmd is not None and not cmd.hidden:
-                commands[subcommand] = cmd
-        if not commands:
-            return
-        displayed: set = set()
-        for section, names in self.COMMAND_CATEGORIES:
-            items = []
-            for name in names:
-                if name in commands and name not in displayed:
-                    cmd = commands[name]
-                    items.append((name, cmd.get_short_help_str(limit=formatter.width)))
-                    displayed.add(name)
-            if items:
-                with formatter.section(section):
-                    formatter.write_dl(items)
-        leftover = [
-            (n, commands[n].get_short_help_str(limit=formatter.width))
-            for n in sorted(commands)
-            if n not in displayed
-        ]
-        if leftover:
-            with formatter.section("Other"):
-                formatter.write_dl(leftover)
-
-
-class HelpRecursiveGroup(CategorizedGroup):
-    """Click group that supports --help-recursive AND categorized commands.
-
-    Inherits categorization from `scitex_dev.click_helpers.CategorizedGroup`
-    (per general/03_interface_02_cli §6). Subclasses set
-    `COMMAND_CATEGORIES` (or the historical alias `command_categories` —
-    see :meth:`__init_subclass__`) to opt into grouping; otherwise the
-    output falls through to Click's default flat list.
-
-    Adds the `--help-recursive` machinery on top.
-    """
-
-    # Backwards-compat alias: older sac code sets `command_categories` on
-    # subclasses. Map it onto the canonical `COMMAND_CATEGORIES` slot at
-    # subclass creation time so both names work.
-    def __init_subclass__(cls, **kwargs):
-        super().__init_subclass__(**kwargs)
-        if "command_categories" in cls.__dict__ and not cls.__dict__.get(
-            "COMMAND_CATEGORIES"
-        ):
-            cls.COMMAND_CATEGORIES = tuple(cls.__dict__["command_categories"])
-
-    def get_help_recursive(self, ctx) -> str:
-        """Return help text for all commands recursively."""
-        lines = []
-        lines.append("=" * 60)
-        lines.append("SciTeX Agent Container - Complete Command Reference")
-        lines.append("=" * 60)
-        lines.append("")
-
-        with ctx.scope() as _:
-            lines.append(self.get_help(ctx))
-            lines.append("")
-
-        for name in sorted(self.list_commands(ctx)):
-            cmd = self.get_command(ctx, name)
-            if cmd is None:
-                continue
-            lines.append("-" * 60)
-            lines.append(f"Command: {name}")
-            lines.append("-" * 60)
-            sub_ctx = click.Context(cmd, info_name=name, parent=ctx)
-            lines.append(cmd.get_help(sub_ctx))
-            lines.append("")
-
-        return "\n".join(lines)
+from ..._state.registry import Registry
+from ...config import load_config
+from ._console import console
 
 
 def _probe_local(cfg) -> bool | None:
@@ -214,7 +29,7 @@ def _probe_local(cfg) -> bool | None:
     # state-dir may not exist for an agent that never ran; either case
     # maps to liveness_unknown rather than a hard error.)
     try:
-        from ..runtimes.claude_session import ClaudeSessionRuntime
+        from ...runtimes.claude_session import ClaudeSessionRuntime
 
         return ClaudeSessionRuntime().is_running(cfg)
     except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
@@ -261,6 +76,7 @@ def get_agent_list_data(
     # sac on the remote host; the remote sac then reports its own
     # local list. So this function probes every agent locally.
     prepared: list[dict] = []
+    config_path = None
     for idx, entry in enumerate(entries):
         name = entry.get("name", "?")
         screen_name = entry.get("screen", "?")
@@ -311,10 +127,19 @@ def get_agent_list_data(
         (prep["idx"], prep["cfg"]) for prep in prepared if prep["cfg"] is not None
     ]
     if probe_targets:
+        # Resolve _probe_local via the parent package at call time so
+        # test monkeypatching of ``_helpers._probe_local`` still takes
+        # effect (tests historically patched the flat-module attribute;
+        # the __init__ re-export keeps that contract working post-split).
+        import sys as _sys
+
+        _pkg = _sys.modules[__name__.rsplit(".", 1)[0]]
+        _probe_fn = getattr(_pkg, "_probe_local", _probe_local)
+
         pool = ThreadPoolExecutor(max_workers=max_parallel_probes)
         try:
             future_to_idx = {
-                pool.submit(_probe_local, cfg): idx for idx, cfg in probe_targets
+                pool.submit(_probe_fn, cfg): idx for idx, cfg in probe_targets
             }
             for future in list(future_to_idx):
                 idx = future_to_idx[future]
@@ -331,6 +156,12 @@ def get_agent_list_data(
             pool.shutdown(wait=False)
 
     # Third pass: build result rows.
+    #
+    # Note: ``config_path`` leaks from the first pass's last iteration —
+    # preserved verbatim from the pre-split implementation to keep
+    # behavior byte-identical. The validation pass below therefore
+    # validates the LAST entry's config_path for every row, not each
+    # row's own spec. Pre-existing; not in scope for this refactor.
     results: list[dict] = []
     for prep in prepared:
         name = prep["name"]
@@ -366,10 +197,9 @@ def get_agent_list_data(
         else:
             status_val = "running" if is_running else "stopped"
 
-        # hook-bypass: line-limit (yaml-validate registered rows; _helpers.py split deferred)
         errors: list[str] = []
         if config_path:
-            from ..config._validation import validate_config
+            from ...config._validation import validate_config
 
             try:  # stx-allow: fallback (validator raise → treat exception as a single error)
                 errors = validate_config(str(config_path))
@@ -377,7 +207,6 @@ def get_agent_list_data(
                 errors = [str(exc)]
         # Host / path split for the table — keep the legacy `remote`
         # key on the row for backward-compat JSON consumers.
-        remote_host = ""
         host_label = "local"
         spec_path = str(config_path) if config_path else ""
         row: dict = {
@@ -407,7 +236,7 @@ def get_agent_list_data(
     # surface as status="invalid" rather than silently hiding, so the
     # operator notices the agent won't actually start before they
     # discover it via a confusing `sac agent start` traceback.
-    from ..config._validation import validate_config
+    from ...config._validation import validate_config
 
     registered = {r["name"] for r in results}
     for name, spec_path in _discover_defined_agents():
@@ -438,7 +267,6 @@ def get_agent_list_data(
             errors = validate_config(str(spec_path))
         except Exception as exc:
             errors = [str(exc)]
-        # hook-bypass: line-limit (host/path keys on defined rows; _helpers.py split deferred)
         status = "invalid" if errors else "defined"
         row: dict = {
             "name": name,
@@ -510,13 +338,11 @@ def print_agent_list(
     machine: str | None = None,
 ) -> None:
     """Print a rich table of all registered agents."""
-    # hook-bypass: line-limit (status table; _helpers.py split deferred)
     data = get_agent_list_data(registry, capability=capability, machine=machine)
     if not data:
         console.print("[dim]No agents found (registry empty, no specs on disk).[/dim]")
         return
 
-    # hook-bypass: line-limit (host/path split; _helpers.py refactor deferred)
     table = Table(title="Agents")
     table.add_column("Name", style="bold")
     table.add_column("Status")
