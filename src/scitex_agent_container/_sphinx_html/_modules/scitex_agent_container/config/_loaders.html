@@ -346,7 +346,7 @@
     <span class="n">parse_telegram</span><span class="p">,</span>
     <span class="n">parse_watchdog</span><span class="p">,</span>
 <span class="p">)</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">._types</span><span class="w"> </span><span class="kn">import</span> <span class="n">AgentConfig</span><span class="p">,</span> <span class="n">HostsSpec</span><span class="p">,</span> <span class="n">SchedulingSpec</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._types</span><span class="w"> </span><span class="kn">import</span> <span class="n">AgentConfig</span><span class="p">,</span> <span class="n">HostsSpec</span>
 
 <span class="c1"># Default workdir layout: sac&#39;s own state root. Per-agent runtime state</span>
 <span class="c1"># (CLAUDE.md, .mcp.json, .claude/) lives at</span>
@@ -388,27 +388,6 @@
         <span class="k">if</span> <span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="n">candidate</span><span class="p">)</span><span class="o">.</span><span class="n">expanduser</span><span class="p">()</span> <span class="o">/</span> <span class="s2">&quot;bin&quot;</span> <span class="o">/</span> <span class="s2">&quot;activate&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
             <span class="k">return</span> <span class="n">candidate</span>
     <span class="k">return</span> <span class="s2">&quot;&quot;</span>
-
-
-<span class="k">def</span><span class="w"> </span><span class="nf">compose_effective_name</span><span class="p">(</span>
-    <span class="n">raw_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">scheduling</span><span class="p">:</span> <span class="n">SchedulingSpec</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">hostname</span><span class="p">:</span> <span class="nb">str</span>
-<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the effective agent id given metadata.name + scheduling + host.</span>
-
-<span class="sd">    Rules:</span>
-<span class="sd">      * ``singleton`` mode: the bare ``raw_name`` (host-pin is enforced at</span>
-<span class="sd">        launch time, not encoded in the id).</span>
-<span class="sd">      * ``per-host`` mode (default): append ``-&lt;hostname&gt;`` unless the name</span>
-<span class="sd">        already ends with ``-&lt;hostname&gt;`` (idempotent — protects legacy</span>
-<span class="sd">        flat-layout names like ``head-ywata-note-win`` which are already</span>
-<span class="sd">        host-suffixed).</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-    <span class="k">if</span> <span class="n">scheduling</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">scheduling</span><span class="o">.</span><span class="n">mode</span> <span class="o">==</span> <span class="s2">&quot;singleton&quot;</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">raw_name</span>
-    <span class="n">suffix</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;-</span><span class="si">{</span><span class="n">hostname</span><span class="si">}</span><span class="s2">&quot;</span>
-    <span class="k">if</span> <span class="n">raw_name</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="n">suffix</span><span class="p">)</span> <span class="ow">or</span> <span class="n">raw_name</span> <span class="o">==</span> <span class="n">hostname</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">raw_name</span>
-    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">raw_name</span><span class="si">}{</span><span class="n">suffix</span><span class="si">}</span><span class="s2">&quot;</span>
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">_name_from_path</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="n">Path</span> <span class="o">|</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
