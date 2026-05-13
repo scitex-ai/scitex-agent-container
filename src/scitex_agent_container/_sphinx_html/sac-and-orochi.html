@@ -6,7 +6,7 @@
   <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Quickstart &mdash; scitex-agent-container v0.14.0</title>
+  <title>sac and orochi &mdash; scitex-agent-container v0.14.0</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=9edc463e" />
       <link rel="stylesheet" type="text/css" href="_static/copybutton.css?v=76b2166b" />
@@ -22,8 +22,8 @@
     <script src="_static/js/theme.js"></script>
     <link rel="index" title="Index" href="genindex.html" />
     <link rel="search" title="Search" href="search.html" />
-    <link rel="next" title="Templates and Examples" href="templates.html" />
-    <link rel="prev" title="Installation" href="installation.html" /> 
+    <link rel="next" title="scitex_agent_container API Reference" href="api/scitex_agent_container.html" />
+    <link rel="prev" title="Apptainer Images" href="images.html" /> 
 </head>
 
 <body class="wy-body-for-nav"> 
@@ -46,14 +46,14 @@
 </div>
         </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
               <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
-<ul class="current">
+<ul>
 <li class="toctree-l1"><a class="reference internal" href="installation.html">Installation</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="installation.html#from-pypi">From PyPI</a></li>
 <li class="toctree-l2"><a class="reference internal" href="installation.html#from-source">From Source</a></li>
 <li class="toctree-l2"><a class="reference internal" href="installation.html#requirements">Requirements</a></li>
 </ul>
 </li>
-<li class="toctree-l1 current"><a class="current reference internal" href="#">Quickstart</a></li>
+<li class="toctree-l1"><a class="reference internal" href="quickstart.html">Quickstart</a></li>
 <li class="toctree-l1"><a class="reference internal" href="templates.html">Templates and Examples</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="templates.html#pattern-templates">Pattern Templates</a></li>
 <li class="toctree-l2"><a class="reference internal" href="templates.html#instantiating-a-template">Instantiating a Template</a></li>
@@ -170,13 +170,13 @@
 </li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Ecosystem</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="sac-and-orochi.html">sac and orochi</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#architecture">Architecture</a></li>
-<li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#responsibility-split">Responsibility split</a></li>
-<li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#how-orochi-consumes-sac">How orochi consumes sac</a></li>
-<li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#standalone-use">Standalone use</a></li>
-<li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#live-instance">Live instance</a></li>
+<ul class="current">
+<li class="toctree-l1 current"><a class="current reference internal" href="#">sac and orochi</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#architecture">Architecture</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#responsibility-split">Responsibility split</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#how-orochi-consumes-sac">How orochi consumes sac</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#standalone-use">Standalone use</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#live-instance">Live instance</a></li>
 </ul>
 </li>
 </ul>
@@ -430,9 +430,9 @@
           <div role="navigation" aria-label="Page navigation">
   <ul class="wy-breadcrumbs">
       <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
-      <li class="breadcrumb-item active">Quickstart</li>
+      <li class="breadcrumb-item active">sac and orochi</li>
       <li class="wy-breadcrumbs-aside">
-              <a href="https://github.com/ywatanabe1989/scitex-agent-container/blob/main/docs/sphinx/quickstart.rst" class="fa fa-github"> Edit on GitHub</a>
+              <a href="https://github.com/ywatanabe1989/scitex-agent-container/blob/main/docs/sphinx/sac-and-orochi.md" class="fa fa-github"> Edit on GitHub</a>
       </li>
   </ul>
   <hr/>
@@ -440,83 +440,111 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
            <div itemprop="articleBody">
              
-  <section id="quickstart">
-<h1>Quickstart<a class="headerlink" href="#quickstart" title="Link to this heading"></a></h1>
-<ol class="arabic simple">
-<li><p>Install the package:</p></li>
-</ol>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>scitex-agent-container
-
-The<span class="w"> </span>fastest<span class="w"> </span>path<span class="w"> </span>is<span class="w"> </span>to<span class="w"> </span>copy<span class="w"> </span>a<span class="w"> </span>pattern<span class="w"> </span>template<span class="w"> </span>from
-<span class="sb">``</span>examples/agent-templates/<span class="sb">``</span><span class="w"> </span><span class="o">(</span><span class="sb">``</span><span class="nb">local</span><span class="sb">``</span>,<span class="w"> </span><span class="sb">``</span>docker<span class="sb">``</span>,<span class="w"> </span><span class="sb">``</span>apptainer<span class="sb">``</span>,<span class="w"> </span><span class="sb">``</span>ssh<span class="sb">``</span>,
-<span class="sb">``</span>ssh-slurm<span class="sb">``</span>,<span class="w"> </span><span class="sb">``</span>mcp<span class="sb">``</span><span class="o">)</span>.<span class="w"> </span>See<span class="w"> </span>:doc:<span class="sb">`</span>templates<span class="sb">`</span><span class="w"> </span><span class="k">for</span><span class="w"> </span>the<span class="w"> </span>full<span class="w"> </span>matrix.
+  <section class="tex2jax_ignore mathjax_ignore" id="sac-and-orochi">
+<h1>sac and orochi<a class="headerlink" href="#sac-and-orochi" title="Link to this heading"></a></h1>
+<p><code class="docutils literal notranslate"><span class="pre">scitex-agent-container</span></code> (<code class="docutils literal notranslate"><span class="pre">sac</span></code>) and <a class="reference external" href="https://github.com/ywatanabe1989/scitex-orochi"><code class="docutils literal notranslate"><span class="pre">scitex-orochi</span></code></a>
+are two separate packages with a <strong>one-way dependency</strong>: orochi reads from sac; sac never imports orochi.</p>
+<section id="architecture">
+<h2>Architecture<a class="headerlink" href="#architecture" title="Link to this heading"></a></h2>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>            ┌────────────────────┐                       ┌──────────────────────┐
+            │   Human operator   │  chat · DM · channel  │ claude-code-         │
+            │   (web UI / CLI)   │ ◄───── alerts ─────── │ telegrammer          │
+            └─────────┬──────────┘                       │ Telegram MCP + TUI   │
+                      │                                  └──────────▲───────────┘
+                      ▼                                             │
+        ┌──────────────────────────────────┐                        │
+        │   scitex-orochi                  │                        │
+        │   WebSocket hub · dashboard      │                        │
+        │   MCP channels · presence · A2A  │                        │
+        │   peer registry · cross-host     │                        │
+        └─────────────────┬────────────────┘                        │
+                          │  reads status                           │
+                          │  (one-way dep: orochi → sac)            │
+                          ▼                                         │
+        ┌──────────────────────────────────┐                        │
+        │   scitex-agent-container (sac)   │                        │
+        │   lifecycle · health · restart   │                        │
+        │   apptainer runtime · per host   │                        │
+        │   (zero knowledge of orochi)     │                        │
+        └─────────────────┬────────────────┘                        │
+                          │  starts / supervises                    │
+                          ▼                                         │
+        ┌──────────────────────────────────┐                        │
+        │   Claude agents (one per host)   │ ── heartbeat-push ──▶ orochi
+        │   session.jsonl · SDK            │ ── alerts ─────────────┘
+        └──────────────────────────────────┘
 </pre></div>
 </div>
-<ol class="arabic simple" start="2">
-<li><p>Create an agent definition directory with a YAML manifest plus
-sibling <code class="docutils literal notranslate"><span class="pre">src_CLAUDE.md</span></code> and <code class="docutils literal notranslate"><span class="pre">src_mcp.json</span></code>:</p></li>
-</ol>
-<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="c1"># my-agent/my-agent.yaml</span>
-<span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">scitex-agent-container/v2</span>
-<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Agent</span>
-<span class="nt">metadata</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my-agent</span>
-<span class="w">  </span><span class="nt">labels</span><span class="p">:</span>
-<span class="w">    </span><span class="nt">role</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">worker</span>
-<span class="nt">spec</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">runtime</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude-code</span>
-<span class="w">  </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sonnet</span>
-<span class="w">  </span><span class="nt">multiplexer</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tmux</span>
+</section>
+<section id="responsibility-split">
+<h2>Responsibility split<a class="headerlink" href="#responsibility-split" title="Link to this heading"></a></h2>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Concern</p></th>
+<th class="head"><p>Owner</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Agent process (SDK + session.jsonl)</p></td>
+<td><p><strong>sac</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p>Per-host control plane (start/stop/send/tail/list)</p></td>
+<td><p><strong>sac</strong></p></td>
+</tr>
+<tr class="row-even"><td><p>Container runtime (apptainer)</p></td>
+<td><p><strong>sac</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p>Cross-host message routing</p></td>
+<td><p><strong>orochi</strong></p></td>
+</tr>
+<tr class="row-even"><td><p>Human chatops UI (Slack-like web interface)</p></td>
+<td><p><strong>orochi</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p>In-session push (MCP channel server)</p></td>
+<td><p><strong>orochi</strong> ships MCP; sac runs the agent</p></td>
+</tr>
+<tr class="row-even"><td><p>SSH mesh / tunnel layer (cloudflared + autossh)</p></td>
+<td><p><strong>orochi</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p>Peer registry</p></td>
+<td><p><strong>orochi</strong> (<code class="docutils literal notranslate"><span class="pre">~/.scitex/orochi/peers.yaml</span></code>)</p></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Rule: sac knows containers + sessions on one host; orochi knows messages + people across hosts.</strong></p>
+</section>
+<section id="how-orochi-consumes-sac">
+<h2>How orochi consumes sac<a class="headerlink" href="#how-orochi-consumes-sac" title="Link to this heading"></a></h2>
+<p>orochi reads <code class="docutils literal notranslate"><span class="pre">~/.scitex/agent-container/runtime/&lt;name&gt;/heartbeat.json</span></code> and
+<code class="docutils literal notranslate"><span class="pre">session.jsonl</span></code> from each host it manages. It never calls <code class="docutils literal notranslate"><span class="pre">sac</span></code> CLI commands
+directly — the contract is the on-disk state files.</p>
+<p>Agents push heartbeats and alerts to orochi via the <code class="docutils literal notranslate"><span class="pre">server:orochi-push</span></code> MCP
+channel, configured in <code class="docutils literal notranslate"><span class="pre">spec.claude.channels</span></code>:</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">spec</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">claude</span><span class="p">:</span>
-<span class="w">    </span><span class="nt">flags</span><span class="p">:</span>
-<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">--dangerously-skip-permissions</span>
-<span class="w">    </span><span class="nt">session</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">continue-or-new</span>
-<span class="w">  </span><span class="nt">health</span><span class="p">:</span>
-<span class="w">    </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-<span class="w">    </span><span class="nt">interval</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">60</span>
-<span class="w">    </span><span class="nt">method</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">multiplexer-alive</span>
-<span class="w">  </span><span class="nt">restart</span><span class="p">:</span>
-<span class="w">    </span><span class="nt">policy</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">on-failure</span>
-<span class="w">    </span><span class="nt">max_retries</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3</span>
+<span class="w">    </span><span class="nt">channels</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">server:orochi-push</span>
 </pre></div>
 </div>
-<ol class="arabic simple" start="3">
-<li><p>Start and inspect the agent:</p></li>
-</ol>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>scitex-agent-container<span class="w"> </span>start<span class="w"> </span>my-agent/my-agent.yaml
-scitex-agent-container<span class="w"> </span>inspect<span class="w"> </span>my-agent
-scitex-agent-container<span class="w"> </span>show-status<span class="w"> </span>my-agent<span class="w"> </span>--json
-scitex-agent-container<span class="w"> </span>show-logs<span class="w"> </span>my-agent<span class="w"> </span>-n<span class="w"> </span><span class="m">100</span>
-scitex-agent-container<span class="w"> </span>attach<span class="w"> </span>my-agent<span class="w">      </span><span class="c1"># Ctrl-B D to detach (tmux)</span>
-</pre></div>
-</div>
-<ol class="arabic simple" start="4">
-<li><p>(Optional) Wire Claude Code hooks so <code class="docutils literal notranslate"><span class="pre">status</span> <span class="pre">--json</span></code> can surface
-recent tool calls, prompts, and sub-agent launches. See
-<a class="reference internal" href="status_and_hooks.html"><span class="doc">Status and Hook Integration</span></a> for the full <code class="docutils literal notranslate"><span class="pre">.claude/settings.local.json</span></code>
-snippet.</p></li>
-<li><p>Run your first pane action. The nonce probe types
-<code class="docutils literal notranslate"><span class="pre">Repeat</span> <span class="pre">&lt;nonce&gt;</span></code> into the pane and confirms the model echoes it
-back – a true functional-liveness check, not just “process alive”:</p></li>
-</ol>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="w"> </span>scitex-agent-container<span class="w"> </span>actions<span class="w"> </span>run<span class="w"> </span>nonce-probe<span class="w"> </span>my-agent
-<span class="w"> </span>scitex-agent-container<span class="w"> </span>actions<span class="w"> </span>query<span class="w"> </span>--agent<span class="w"> </span>my-agent<span class="w"> </span>--limit<span class="w"> </span><span class="m">5</span>
-<span class="w"> </span>scitex-agent-container<span class="w"> </span>actions<span class="w"> </span>stats<span class="w"> </span>--agent<span class="w"> </span>my-agent<span class="w"> </span>--since<span class="w"> </span>1h
-
-Every<span class="w"> </span>attempt<span class="w"> </span>is<span class="w"> </span>recorded<span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="sb">``</span>~/.scitex/agent-container/actions.db<span class="sb">``</span>
-and<span class="w"> </span>the<span class="w"> </span>most<span class="w"> </span>recent<span class="w"> </span>one<span class="w"> </span>is<span class="w"> </span>reflected<span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="sb">``</span>status<span class="w"> </span>--json<span class="sb">``</span><span class="w"> </span>under
-<span class="sb">``</span>last_action_at<span class="sb">``</span><span class="w"> </span>/<span class="w"> </span><span class="sb">``</span>last_action_name<span class="sb">``</span><span class="w"> </span>/<span class="w"> </span><span class="sb">``</span>last_action_outcome<span class="sb">``</span>.
-See<span class="w"> </span>:doc:<span class="sb">`</span>actions<span class="sb">`</span><span class="w"> </span><span class="k">for</span><span class="w"> </span>the<span class="w"> </span>full<span class="w"> </span>subsystem.
-</pre></div>
-</div>
+</section>
+<section id="standalone-use">
+<h2>Standalone use<a class="headerlink" href="#standalone-use" title="Link to this heading"></a></h2>
+<p>sac works fully without orochi. If you don’t need cross-host chatops, just
+omit <code class="docutils literal notranslate"><span class="pre">server:orochi-push</span></code> from <code class="docutils literal notranslate"><span class="pre">spec.claude.channels</span></code> and skip the orochi
+install entirely.</p>
+</section>
+<section id="live-instance">
+<h2>Live instance<a class="headerlink" href="#live-instance" title="Link to this heading"></a></h2>
+<p><a class="reference external" href="https://scitex-orochi.com">https://scitex-orochi.com</a></p>
+</section>
 </section>
 
 
            </div>
           </div>
           <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
-        <a href="installation.html" class="btn btn-neutral float-left" title="Installation" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
-        <a href="templates.html" class="btn btn-neutral float-right" title="Templates and Examples" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+        <a href="images.html" class="btn btn-neutral float-left" title="Apptainer Images" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="api/scitex_agent_container.html" class="btn btn-neutral float-right" title="scitex_agent_container API Reference" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
     </div>
 
   <hr/>

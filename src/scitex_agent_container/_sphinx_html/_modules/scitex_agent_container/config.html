@@ -64,6 +64,119 @@
 </ul>
 </li>
 </ul>
+<p class="caption" role="heading"><span class="caption-text">Architecture &amp; Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../how-sac-works.html">How sac works</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../how-sac-works.html#launch-flow">Launch flow</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-sac-works.html#what-each-piece-does">What each piece does</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../how-sac-works.html#spec-yaml-ssot"><code class="docutils literal notranslate"><span class="pre">spec.yaml</span></code> (SSoT)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../how-sac-works.html#dot-claude-optional"><code class="docutils literal notranslate"><span class="pre">dot_claude/</span></code> (optional)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../how-sac-works.html#apptainer-instance">Apptainer instance</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../how-sac-works.html#claude-sdk-session">Claude SDK session</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../how-sac-works.html#a2a-inbound-spec-a2a-port">A2A inbound (<code class="docutils literal notranslate"><span class="pre">spec.a2a.port</span></code>)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../how-sac-works.html#sac-listen-control-plane"><code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code> (control plane)</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-sac-works.html#restart-health">Restart / health</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-sac-works.html#see-also">See also</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../spec-reference.html">YAML Spec Reference (v3)</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../spec-reference.html#quick-links">Quick links</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../spec-reference.html#top-level-shape">Top-level shape</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../spec-reference.html#field-reference">Field reference</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../spec-reference.html#metadata-labels-agentcard-fields"><code class="docutils literal notranslate"><span class="pre">metadata.labels</span></code> → AgentCard fields</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../spec-reference.html#spec-top-level"><code class="docutils literal notranslate"><span class="pre">spec</span></code> — top-level</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../spec-reference.html#spec-apptainer-engine-knobs"><code class="docutils literal notranslate"><span class="pre">spec.apptainer</span></code> — engine knobs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../spec-reference.html#spec-claude-sdk-knobs"><code class="docutils literal notranslate"><span class="pre">spec.claude</span></code> — SDK knobs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../spec-reference.html#spec-health-spec-restart-spec-watchdog-spec-autonomous"><code class="docutils literal notranslate"><span class="pre">spec.health</span></code> / <code class="docutils literal notranslate"><span class="pre">spec.restart</span></code> / <code class="docutils literal notranslate"><span class="pre">spec.watchdog</span></code> / <code class="docutils literal notranslate"><span class="pre">spec.autonomous</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../spec-reference.html#spec-a2a-spec-listen-network-endpoints"><code class="docutils literal notranslate"><span class="pre">spec.a2a</span></code> / <code class="docutils literal notranslate"><span class="pre">spec.listen</span></code> — network endpoints</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../spec-reference.html#scitex-agent-container-config-yaml"><code class="docutils literal notranslate"><span class="pre">~/.scitex/agent-container/config.yaml</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../spec-reference.html#skills">Skills</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../spec-reference.html#spec-mcp-servers"><code class="docutils literal notranslate"><span class="pre">spec.mcp_servers</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../spec-reference.html#spec-telegram-spec-hooks-spec-extensions"><code class="docutils literal notranslate"><span class="pre">spec.telegram</span></code> / <code class="docutils literal notranslate"><span class="pre">spec.hooks</span></code> / <code class="docutils literal notranslate"><span class="pre">spec.extensions</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../../spec-reference.html#lifetime-session-selection">Lifetime / session selection</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../spec-reference.html#kind-agentproxy-http-forwarder-agents"><code class="docutils literal notranslate"><span class="pre">kind:</span> <span class="pre">AgentProxy</span></code> — HTTP forwarder agents</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../spec-reference.html#spec-proxy-reference"><code class="docutils literal notranslate"><span class="pre">spec.proxy</span></code> reference</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../spec-reference.html#security-notes">Security notes</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../../spec-reference.html#examples">Examples</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../talking-to-agents.html">Talking to a Running Agent</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../talking-to-agents.html#a2a-sidecar-post-v1-sac-agents-name-turn">1. A2A sidecar — <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/v1/sac/agents/&lt;name&gt;/turn</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../talking-to-agents.html#send-a-turn">Send a turn</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../talking-to-agents.html#discover-the-agent">Discover the agent</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../talking-to-agents.html#one-shot-vs-follow-up">One-shot vs follow-up</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../../talking-to-agents.html#cli-sac-agents-send-sac-agents-tail">2. CLI — <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agents</span> <span class="pre">send</span></code> / <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agents</span> <span class="pre">tail</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../talking-to-agents.html#sac-listen-host-level-http-control-plane">3. <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code> — host-level HTTP control plane</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../talking-to-agents.html#cross-host-sac-on-peer">Cross-host: <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">--on</span> <span class="pre">&lt;peer&gt;</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../talking-to-agents.html#forwarding-to-external-a2a-kind-agentproxy">Forwarding to external A2A (<code class="docutils literal notranslate"><span class="pre">kind:</span> <span class="pre">AgentProxy</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../talking-to-agents.html#picking-a-transport">Picking a transport</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../talking-to-agents.html#see-also">See also</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../isolation.html">Container Isolation in sac</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../isolation.html#apptainers-default-leak-paths-10-categories">Apptainer’s default leak paths (10 categories)</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../isolation.html#auto-bound-filesystem-paths">1. Auto-bound filesystem paths</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../isolation.html#environment-variable-inheritance">2. Environment variable inheritance</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../isolation.html#user-permission-inheritance">3. User / permission inheritance</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../isolation.html#network-transparency">4. Network transparency</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../isolation.html#process-ipc-uts-namespaces">5. Process / IPC / UTS namespaces</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../isolation.html#sif-build-time-leaks-apptainer-specific">6. SIF build-time leaks (Apptainer-specific)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../isolation.html#overlay-state-persistence">7. Overlay state persistence</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../isolation.html#writable-vs-writable-tmpfs-confusion">8. <code class="docutils literal notranslate"><span class="pre">--writable</span></code> vs <code class="docutils literal notranslate"><span class="pre">--writable-tmpfs</span></code> confusion</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../isolation.html#indirect-leakage-via-bind-mounts">9. Indirect leakage via bind-mounts</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../isolation.html#apptainer-version-differences">10. Apptainer version differences</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../../isolation.html#sacs-hardened-defaults">sac’s hardened defaults</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../isolation.html#roadmap-for-sacs-isolation-surface">Roadmap for sac’s isolation surface</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../isolation.html#one-line-summary-for-papers-readmes">One-line summary for papers / READMEs</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../isolation.html#see-also">See also</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../directories.html">Configuration and Runtime Directories</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../directories.html#layout">Layout</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../directories.html#configuration-cascade">Configuration cascade</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../credentials.html">Claude Code credential &amp; settings files</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../credentials.html#files">Files</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../credentials.html#claude-json"><code class="docutils literal notranslate"><span class="pre">~/.claude.json</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../credentials.html#claude-credentials-json"><code class="docutils literal notranslate"><span class="pre">~/.claude/.credentials.json</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../credentials.html#claude-settings-json"><code class="docutils literal notranslate"><span class="pre">~/.claude/settings.json</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../../credentials.html#fleet-hosts">Fleet hosts</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../credentials.html#what-not-to-emit">What NOT to emit</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../credentials.html#safe-metadata-fields-whitelist">Safe metadata fields (whitelist)</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../images.html">Apptainer Images</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../images.html#builtin-layers">Builtin layers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../images.html#build">Build</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../images.html#sandbox-freeze-workflow">Sandbox / freeze workflow</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../images.html#pinning-a-custom-image">Pinning a custom image</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Ecosystem</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../sac-and-orochi.html">sac and orochi</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../sac-and-orochi.html#architecture">Architecture</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../sac-and-orochi.html#responsibility-split">Responsibility split</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../sac-and-orochi.html#how-orochi-consumes-sac">How orochi consumes sac</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../sac-and-orochi.html#standalone-use">Standalone use</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../sac-and-orochi.html#live-instance">Live instance</a></li>
+</ul>
+</li>
+</ul>
 <p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../api/scitex_agent_container.html">scitex_agent_container API Reference</a><ul>

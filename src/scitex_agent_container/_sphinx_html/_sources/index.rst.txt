@@ -16,6 +16,24 @@ scitex-agent-container - Declarative AI Agent Lifecycle Management
 
 .. toctree::
    :maxdepth: 2
+   :caption: Architecture & Reference
+
+   how-sac-works
+   spec-reference
+   talking-to-agents
+   isolation
+   directories
+   credentials
+   images
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Ecosystem
+
+   sac-and-orochi
+
+.. toctree::
+   :maxdepth: 2
    :caption: API Reference
 
    api/scitex_agent_container

@@ -6,7 +6,7 @@
   <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Quickstart &mdash; scitex-agent-container v0.14.0</title>
+  <title>Talking to a Running Agent &mdash; scitex-agent-container v0.14.0</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=9edc463e" />
       <link rel="stylesheet" type="text/css" href="_static/copybutton.css?v=76b2166b" />
@@ -22,8 +22,8 @@
     <script src="_static/js/theme.js"></script>
     <link rel="index" title="Index" href="genindex.html" />
     <link rel="search" title="Search" href="search.html" />
-    <link rel="next" title="Templates and Examples" href="templates.html" />
-    <link rel="prev" title="Installation" href="installation.html" /> 
+    <link rel="next" title="Container Isolation in sac" href="isolation.html" />
+    <link rel="prev" title="YAML Spec Reference (v3)" href="spec-reference.html" /> 
 </head>
 
 <body class="wy-body-for-nav"> 
@@ -46,14 +46,14 @@
 </div>
         </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
               <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
-<ul class="current">
+<ul>
 <li class="toctree-l1"><a class="reference internal" href="installation.html">Installation</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="installation.html#from-pypi">From PyPI</a></li>
 <li class="toctree-l2"><a class="reference internal" href="installation.html#from-source">From Source</a></li>
 <li class="toctree-l2"><a class="reference internal" href="installation.html#requirements">Requirements</a></li>
 </ul>
 </li>
-<li class="toctree-l1 current"><a class="current reference internal" href="#">Quickstart</a></li>
+<li class="toctree-l1"><a class="reference internal" href="quickstart.html">Quickstart</a></li>
 <li class="toctree-l1"><a class="reference internal" href="templates.html">Templates and Examples</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="templates.html#pattern-templates">Pattern Templates</a></li>
 <li class="toctree-l2"><a class="reference internal" href="templates.html#instantiating-a-template">Instantiating a Template</a></li>
@@ -68,7 +68,7 @@
 </li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Architecture &amp; Reference</span></p>
-<ul>
+<ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="how-sac-works.html">How sac works</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="how-sac-works.html#launch-flow">Launch flow</a></li>
 <li class="toctree-l2"><a class="reference internal" href="how-sac-works.html#what-each-piece-does">What each piece does</a><ul>
@@ -109,19 +109,19 @@
 <li class="toctree-l2"><a class="reference internal" href="spec-reference.html#examples">Examples</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="talking-to-agents.html">Talking to a Running Agent</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="talking-to-agents.html#a2a-sidecar-post-v1-sac-agents-name-turn">1. A2A sidecar — <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/v1/sac/agents/&lt;name&gt;/turn</span></code></a><ul>
-<li class="toctree-l3"><a class="reference internal" href="talking-to-agents.html#send-a-turn">Send a turn</a></li>
-<li class="toctree-l3"><a class="reference internal" href="talking-to-agents.html#discover-the-agent">Discover the agent</a></li>
-<li class="toctree-l3"><a class="reference internal" href="talking-to-agents.html#one-shot-vs-follow-up">One-shot vs follow-up</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Talking to a Running Agent</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#a2a-sidecar-post-v1-sac-agents-name-turn">1. A2A sidecar — <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/v1/sac/agents/&lt;name&gt;/turn</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#send-a-turn">Send a turn</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#discover-the-agent">Discover the agent</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#one-shot-vs-follow-up">One-shot vs follow-up</a></li>
 </ul>
 </li>
-<li class="toctree-l2"><a class="reference internal" href="talking-to-agents.html#cli-sac-agents-send-sac-agents-tail">2. CLI — <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agents</span> <span class="pre">send</span></code> / <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agents</span> <span class="pre">tail</span></code></a></li>
-<li class="toctree-l2"><a class="reference internal" href="talking-to-agents.html#sac-listen-host-level-http-control-plane">3. <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code> — host-level HTTP control plane</a></li>
-<li class="toctree-l2"><a class="reference internal" href="talking-to-agents.html#cross-host-sac-on-peer">Cross-host: <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">--on</span> <span class="pre">&lt;peer&gt;</span></code></a></li>
-<li class="toctree-l2"><a class="reference internal" href="talking-to-agents.html#forwarding-to-external-a2a-kind-agentproxy">Forwarding to external A2A (<code class="docutils literal notranslate"><span class="pre">kind:</span> <span class="pre">AgentProxy</span></code>)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="talking-to-agents.html#picking-a-transport">Picking a transport</a></li>
-<li class="toctree-l2"><a class="reference internal" href="talking-to-agents.html#see-also">See also</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#cli-sac-agents-send-sac-agents-tail">2. CLI — <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agents</span> <span class="pre">send</span></code> / <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agents</span> <span class="pre">tail</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="#sac-listen-host-level-http-control-plane">3. <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code> — host-level HTTP control plane</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#cross-host-sac-on-peer">Cross-host: <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">--on</span> <span class="pre">&lt;peer&gt;</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="#forwarding-to-external-a2a-kind-agentproxy">Forwarding to external A2A (<code class="docutils literal notranslate"><span class="pre">kind:</span> <span class="pre">AgentProxy</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#picking-a-transport">Picking a transport</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#see-also">See also</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="isolation.html">Container Isolation in sac</a><ul>
@@ -430,9 +430,9 @@
           <div role="navigation" aria-label="Page navigation">
   <ul class="wy-breadcrumbs">
       <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
-      <li class="breadcrumb-item active">Quickstart</li>
+      <li class="breadcrumb-item active">Talking to a Running Agent</li>
       <li class="wy-breadcrumbs-aside">
-              <a href="https://github.com/ywatanabe1989/scitex-agent-container/blob/main/docs/sphinx/quickstart.rst" class="fa fa-github"> Edit on GitHub</a>
+              <a href="https://github.com/ywatanabe1989/scitex-agent-container/blob/main/docs/sphinx/talking-to-agents.md" class="fa fa-github"> Edit on GitHub</a>
       </li>
   </ul>
   <hr/>
@@ -440,83 +440,321 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
            <div itemprop="articleBody">
              
-  <section id="quickstart">
-<h1>Quickstart<a class="headerlink" href="#quickstart" title="Link to this heading"></a></h1>
-<ol class="arabic simple">
-<li><p>Install the package:</p></li>
-</ol>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>scitex-agent-container
-
-The<span class="w"> </span>fastest<span class="w"> </span>path<span class="w"> </span>is<span class="w"> </span>to<span class="w"> </span>copy<span class="w"> </span>a<span class="w"> </span>pattern<span class="w"> </span>template<span class="w"> </span>from
-<span class="sb">``</span>examples/agent-templates/<span class="sb">``</span><span class="w"> </span><span class="o">(</span><span class="sb">``</span><span class="nb">local</span><span class="sb">``</span>,<span class="w"> </span><span class="sb">``</span>docker<span class="sb">``</span>,<span class="w"> </span><span class="sb">``</span>apptainer<span class="sb">``</span>,<span class="w"> </span><span class="sb">``</span>ssh<span class="sb">``</span>,
-<span class="sb">``</span>ssh-slurm<span class="sb">``</span>,<span class="w"> </span><span class="sb">``</span>mcp<span class="sb">``</span><span class="o">)</span>.<span class="w"> </span>See<span class="w"> </span>:doc:<span class="sb">`</span>templates<span class="sb">`</span><span class="w"> </span><span class="k">for</span><span class="w"> </span>the<span class="w"> </span>full<span class="w"> </span>matrix.
+  <!-- ---
+!-- Timestamp: 2026-05-13 19:55:42
+!-- Author: ywatanabe
+!-- File: /home/ywatanabe/proj/scitex-agent-container/docs/talking-to-agents.md
+!-- --- -->
+<section class="tex2jax_ignore mathjax_ignore" id="talking-to-a-running-agent">
+<h1>Talking to a Running Agent<a class="headerlink" href="#talking-to-a-running-agent" title="Link to this heading"></a></h1>
+<p>A <code class="docutils literal notranslate"><span class="pre">sac</span></code> agent is a long-lived process: once started, it stays alive
+and accepts new turns. Three transports reach into that process,
+ordered from external-friendliest to most internal:</p>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Transport</p></th>
+<th class="head"><p>When to use</p></th>
+<th class="head"><p>Auth</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><strong>A2A sidecar</strong> — <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/v1/sac/agents/&lt;name&gt;/turn</span></code> on the agent’s own port</p></td>
+<td><p>External tools, browsers, curl, peer agents, A2A-spec consumers</p></td>
+<td><p>none (loopback)</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>CLI</strong> — <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agents</span> <span class="pre">send</span></code> / <code class="docutils literal notranslate"><span class="pre">tail</span></code></p></td>
+<td><p>Scripted flows on the same host (the one running the agent)</p></td>
+<td><p>none</p></td>
+</tr>
+<tr class="row-even"><td><p><strong><code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code></strong> — <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/v1/sac/agents/&lt;name&gt;/send</span></code> on the host port (7878)</p></td>
+<td><p>Trusted orchestrators (e.g. orochi), cross-host via the existing SSH mesh</p></td>
+<td><p>bearer token</p></td>
+</tr>
+</tbody>
+</table>
+<p>All three end up dropping a <code class="docutils literal notranslate"><span class="pre">TurnEnvelope</span></code> on the runner’s shared
+inbox, so the SDK conversation is identical regardless of which door
+the prompt came through.</p>
+<hr class="docutils" />
+<section id="a2a-sidecar-post-v1-sac-agents-name-turn">
+<h2>1. A2A sidecar — <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/v1/sac/agents/&lt;name&gt;/turn</span></code><a class="headerlink" href="#a2a-sidecar-post-v1-sac-agents-name-turn" title="Link to this heading"></a></h2>
+<p>Enable it by leaving <code class="docutils literal notranslate"><span class="pre">spec.a2a.port</span></code> at its default (<code class="docutils literal notranslate"><span class="pre">auto</span></code>) — sac
+claims a free port from <code class="docutils literal notranslate"><span class="pre">~/.scitex/agent-container/config.yaml</span></code>’s
+<code class="docutils literal notranslate"><span class="pre">a2a.port_range</span></code> (default <code class="docutils literal notranslate"><span class="pre">[19000,</span> <span class="pre">19999]</span></code>) at start time and persists
+it in <code class="docutils literal notranslate"><span class="pre">state.db</span></code>. Operators see the assigned port via <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agents</span> <span class="pre">list</span></code>.
+Most agents need no <code class="docutils literal notranslate"><span class="pre">a2a</span></code> block at all:</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="c1"># a2a:</span>
+<span class="w">  </span><span class="c1">#   port: auto         # the default; sac picks + persists</span>
+<span class="w">  </span><span class="c1">#   port: 7901         # pin only when you need a stable external URL</span>
+<span class="w">  </span><span class="c1">#   port: null         # disable the sidecar entirely</span>
 </pre></div>
 </div>
-<ol class="arabic simple" start="2">
-<li><p>Create an agent definition directory with a YAML manifest plus
-sibling <code class="docutils literal notranslate"><span class="pre">src_CLAUDE.md</span></code> and <code class="docutils literal notranslate"><span class="pre">src_mcp.json</span></code>:</p></li>
-</ol>
-<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="c1"># my-agent/my-agent.yaml</span>
-<span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">scitex-agent-container/v2</span>
-<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Agent</span>
-<span class="nt">metadata</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my-agent</span>
-<span class="w">  </span><span class="nt">labels</span><span class="p">:</span>
-<span class="w">    </span><span class="nt">role</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">worker</span>
+<p><strong>Per-agent ports are an internal IPC detail.</strong> External clients reach
+every agent through the <strong>one stable host port</strong> at <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code>
+(default <code class="docutils literal notranslate"><span class="pre">127.0.0.1:7878</span></code>). The AgentCard’s <code class="docutils literal notranslate"><span class="pre">url</span></code> field advertises
+that stable URL — so the URL survives restarts even when the
+per-agent port churns.</p>
+<p>The per-agent sidecar then exposes the <strong>same URL shape</strong> as the
+host-level <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code>, so the same client URL works whether it
+routes through the host control plane or POSTs directly to the
+agent’s port. Per the sac/orochi contract, two symmetric namespaces
+serve identical handlers:</p>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Method</p></th>
+<th class="head"><p>Path</p></th>
+<th class="head"><p>Purpose</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>POST</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">/v1/sac/agents/&lt;name&gt;/turn</span></code></p></td>
+<td><p><strong>Canonical.</strong> Drop a prompt onto the SDK session</p></td>
+</tr>
+<tr class="row-odd"><td><p>POST</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">/v1/sac/agents/&lt;name&gt;/send</span></code></p></td>
+<td><p>Alias of <code class="docutils literal notranslate"><span class="pre">/turn</span></code> (matches <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code>’s verb)</p></td>
+</tr>
+<tr class="row-even"><td><p>GET</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">/v1/sac/agents/&lt;name&gt;/card</span></code></p></td>
+<td><p>This agent’s AgentCard</p></td>
+</tr>
+<tr class="row-odd"><td><p>POST</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">/v1/a2a/agents/&lt;name&gt;/turn</span></code></p></td>
+<td><p>A2A-protocol-compat mirror of <code class="docutils literal notranslate"><span class="pre">/turn</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p>POST</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">/v1/a2a/agents/&lt;name&gt;/send</span></code></p></td>
+<td><p>A2A-protocol-compat mirror of <code class="docutils literal notranslate"><span class="pre">/send</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p>GET</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">/v1/a2a/agents/&lt;name&gt;/card</span></code></p></td>
+<td><p>A2A-protocol-compat mirror of <code class="docutils literal notranslate"><span class="pre">/card</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p>POST</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">/v1/turn</span></code></p></td>
+<td><p>Bare shortcut (port already pins the agent)</p></td>
+</tr>
+<tr class="row-odd"><td><p>GET</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">/.well-known/agent-card.json</span></code></p></td>
+<td><p>A2A discovery card (built from this agent’s <code class="docutils literal notranslate"><span class="pre">spec.yaml</span></code>)</p></td>
+</tr>
+<tr class="row-even"><td><p>GET</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">/.well-known/agent.json</span></code></p></td>
+<td><p>Alias of <code class="docutils literal notranslate"><span class="pre">agent-card.json</span></code> (some clients try this)</p></td>
+</tr>
+<tr class="row-odd"><td><p>GET</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">/health</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{status:</span> <span class="pre">&quot;ok&quot;}</span></code> liveness probe</p></td>
+</tr>
+</tbody>
+</table>
+<p>The <code class="docutils literal notranslate"><span class="pre">{name}</span></code> segment is informational — port routing has already pinned
+the request to one agent, so a name mismatch returns <code class="docutils literal notranslate"><span class="pre">404</span> <span class="pre">{&quot;error&quot;:</span> <span class="pre">&quot;this</span> <span class="pre">port</span> <span class="pre">serves</span> <span class="pre">agent</span> <span class="pre">'X',</span> <span class="pre">not</span> <span class="pre">'Y'&quot;}</span></code> as a sanity check.</p>
+<section id="send-a-turn">
+<h3>Send a turn<a class="headerlink" href="#send-a-turn" title="Link to this heading"></a></h3>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>curl<span class="w"> </span>-s<span class="w"> </span>--max-time<span class="w"> </span><span class="m">120</span><span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>http://127.0.0.1:7901/v1/sac/agents/ecosystem-auditor/turn<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s1">&#39;Content-Type: application/json&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;text&quot;: &quot;Which scitex packages currently have audit-all violations?&quot;}&#39;</span>
+</pre></div>
+</div>
+<p>Or, since the port already identifies the agent, the bare shortcut:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>curl<span class="w"> </span>-s<span class="w"> </span>--max-time<span class="w"> </span><span class="m">120</span><span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://127.0.0.1:7901/v1/turn<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s1">&#39;Content-Type: application/json&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;text&quot;: &quot;Same question, via the shortcut.&quot;}&#39;</span>
+</pre></div>
+</div>
+<p>Response shape (either path):</p>
+<div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;reply&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;scitex-stats has 2 PS-204 violations; rest are green.&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;exit_after&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="w"> </span><span class="p">}</span>
+</pre></div>
+</div>
+<p>The runner stays attached after — subsequent POSTs reach the <strong>same</strong>
+SDK session (the conversation accumulates).</p>
+</section>
+<section id="discover-the-agent">
+<h3>Discover the agent<a class="headerlink" href="#discover-the-agent" title="Link to this heading"></a></h3>
+<p>The AgentCard at <code class="docutils literal notranslate"><span class="pre">/.well-known/agent-card.json</span></code> is auto-generated from
+the agent’s <code class="docutils literal notranslate"><span class="pre">spec.yaml</span></code> (see <span class="xref myst"><code class="docutils literal notranslate"><span class="pre">spec-reference.md</span></code></span>
+for the field-to-card mapping). Browsers and A2A-spec discovery clients
+read it directly:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>curl<span class="w"> </span>-s<span class="w"> </span>http://127.0.0.1:7901/.well-known/agent-card.json<span class="w"> </span><span class="p">|</span><span class="w"> </span>python3<span class="w"> </span>-m<span class="w"> </span>json.tool
+</pre></div>
+</div>
+<p>The card’s <code class="docutils literal notranslate"><span class="pre">url</span></code> field advertises <code class="docutils literal notranslate"><span class="pre">&lt;base&gt;/v1/sac/agents/&lt;name&gt;</span></code> —
+exactly the path the sidecar serves — so a client following the
+advertised URL hits a working endpoint.</p>
+</section>
+<section id="one-shot-vs-follow-up">
+<h3>One-shot vs follow-up<a class="headerlink" href="#one-shot-vs-follow-up" title="Link to this heading"></a></h3>
+<p>The HTTP body accepts an <code class="docutils literal notranslate"><span class="pre">&quot;exit_after&quot;</span></code> flag:</p>
+<div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;text&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Reply DONE and exit.&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;exit_after&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="w"> </span><span class="p">}</span>
+</pre></div>
+</div>
+<p>When <code class="docutils literal notranslate"><span class="pre">true</span></code>, the runner shuts down after this turn. Default is <code class="docutils literal notranslate"><span class="pre">false</span></code>
+(stay alive for more turns).</p>
+</section>
+</section>
+<hr class="docutils" />
+<section id="cli-sac-agents-send-sac-agents-tail">
+<h2>2. CLI — <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agents</span> <span class="pre">send</span></code> / <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agents</span> <span class="pre">tail</span></code><a class="headerlink" href="#cli-sac-agents-send-sac-agents-tail" title="Link to this heading"></a></h2>
+<p>The same-host, no-network path:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Send a turn — output is just the ack; the reply lands on session.jsonl</span>
+sac<span class="w"> </span>agents<span class="w"> </span>send<span class="w"> </span>ecosystem-auditor<span class="w"> </span><span class="s2">&quot;Which packages have uncommitted changes?&quot;</span>
+
+<span class="c1"># Read the latest assistant turns</span>
+sac<span class="w"> </span>agents<span class="w"> </span>tail<span class="w"> </span>ecosystem-auditor<span class="w"> </span>-n<span class="w"> </span><span class="m">5</span>
+
+<span class="c1"># Or stream as structured JSON (one envelope per line)</span>
+sac<span class="w"> </span>agents<span class="w"> </span>tail<span class="w"> </span>ecosystem-auditor<span class="w"> </span>-n<span class="w"> </span><span class="m">5</span><span class="w"> </span>--json
+</pre></div>
+</div>
+<p>This is the right transport for shell scripts driving an agent
+locally — no port, no JSON, no token.</p>
+</section>
+<hr class="docutils" />
+<section id="sac-listen-host-level-http-control-plane">
+<h2>3. <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code> — host-level HTTP control plane<a class="headerlink" href="#sac-listen-host-level-http-control-plane" title="Link to this heading"></a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code> boots a host-wide bearer-auth HTTP server (default port
+<code class="docutils literal notranslate"><span class="pre">7878</span></code>, loopback only). Cross-host orchestrators reach it through the
+existing SSH mesh; same-host orchestrators speak to it directly.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Start the listen server (one per host; sac respects existing instance)</span>
+sac<span class="w"> </span>listen<span class="w"> </span><span class="p">&amp;</span>
+
+<span class="nv">TOKEN</span><span class="o">=</span><span class="k">$(</span>cat<span class="w"> </span>~/.scitex/agent-container/tokens/listen-<span class="k">$(</span>hostname<span class="k">)</span>.token<span class="k">)</span>
+
+<span class="c1"># Send a turn through the control plane</span>
+curl<span class="w"> </span>-s<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://127.0.0.1:7878/v1/sac/agents/ecosystem-auditor/send<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s1">&#39;Content-Type: application/json&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;type&quot;:&quot;prompt&quot;,&quot;prompt&quot;:&quot;Same question, via sac listen.&quot;}&#39;</span>
+</pre></div>
+</div>
+<p>The full host-level surface (mirrored at <code class="docutils literal notranslate"><span class="pre">/v1/a2a/...</span></code> for A2A-spec
+consumers):</p>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Method</p></th>
+<th class="head"><p>Path</p></th>
+<th class="head"><p>Purpose</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>GET</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">/v1/sac/health</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{ok,</span> <span class="pre">version,</span> <span class="pre">host}</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p>GET</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">/v1/sac/agents</span></code></p></td>
+<td><p>List all agents on this host</p></td>
+</tr>
+<tr class="row-even"><td><p>GET</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">/v1/sac/agents/&lt;name&gt;/status</span></code></p></td>
+<td><p>Full agent state</p></td>
+</tr>
+<tr class="row-odd"><td><p>GET</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">/v1/sac/agents/&lt;name&gt;/tail?since=...&amp;follow=...</span></code></p></td>
+<td><p>SSE stream of <code class="docutils literal notranslate"><span class="pre">session.jsonl</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p>POST</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">/v1/sac/agents/&lt;name&gt;/send</span></code></p></td>
+<td><p>Send prompt or interrupt key</p></td>
+</tr>
+<tr class="row-odd"><td><p>GET</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">/v1/sac/agents/&lt;name&gt;/card</span></code></p></td>
+<td><p>AgentCard for this agent</p></td>
+</tr>
+<tr class="row-even"><td><p>POST</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">/v1/sac/agents</span></code></p></td>
+<td><p>Create + start from an inline spec</p></td>
+</tr>
+<tr class="row-odd"><td><p>DELETE</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">/v1/sac/agents/&lt;name&gt;</span></code></p></td>
+<td><p>Stop the agent</p></td>
+</tr>
+</tbody>
+</table>
+<p><code class="docutils literal notranslate"><span class="pre">send</span></code> accepts both turn types:</p>
+<div class="highlight-jsonc notranslate"><div class="highlight"><pre><span></span>// prompt turn
+{ &quot;type&quot;: &quot;prompt&quot;, &quot;prompt&quot;: &quot;Your question here&quot;, &quot;options&quot;: { ... } }
+
+// key / interrupt
+{ &quot;type&quot;: &quot;key&quot;, &quot;key&quot;: &quot;ESC&quot; }
+</pre></div>
+</div>
+</section>
+<hr class="docutils" />
+<section id="cross-host-sac-on-peer">
+<h2>Cross-host: <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">--on</span> <span class="pre">&lt;peer&gt;</span></code><a class="headerlink" href="#cross-host-sac-on-peer" title="Link to this heading"></a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">--on</span> <span class="pre">&lt;peer&gt;</span> <span class="pre">agents</span> <span class="pre">send</span> <span class="pre">...</span></code> dispatches the call across hosts via
+the peer registry’s SSH mesh. The remote <code class="docutils literal notranslate"><span class="pre">sac</span></code> does the local send;
+output streams back. Same prompt-text contract.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>sac<span class="w"> </span>--on<span class="w"> </span>gpu-box<span class="w"> </span>agents<span class="w"> </span>send<span class="w"> </span>researcher<span class="w"> </span><span class="s2">&quot;Resume training and tail the logs.&quot;</span>
+</pre></div>
+</div>
+</section>
+<hr class="docutils" />
+<section id="forwarding-to-external-a2a-kind-agentproxy">
+<h2>Forwarding to external A2A (<code class="docutils literal notranslate"><span class="pre">kind:</span> <span class="pre">AgentProxy</span></code>)<a class="headerlink" href="#forwarding-to-external-a2a-kind-agentproxy" title="Link to this heading"></a></h2>
+<p>Sometimes the agent on the other end isn’t a sac agent — it’s a
+peer A2A endpoint hosted somewhere else (a hosted service, a peer
+fleet, a contracted vendor). Wrapping it in a <code class="docutils literal notranslate"><span class="pre">kind:</span> <span class="pre">AgentProxy</span></code>
+agent lets the rest of sac (<code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agents</span> <span class="pre">send</span></code>, <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code>, the
+AgentCard discovery surface) treat it the same as a local SDK agent.</p>
+<p>The proxy agent has no Claude SDK; it just forwards <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/v1/turn</span></code>
+to its configured <code class="docutils literal notranslate"><span class="pre">spec.proxy.upstream</span></code> and re-projects the
+upstream AgentCard at its own <code class="docutils literal notranslate"><span class="pre">/.well-known/agent-card.json</span></code> so
+peers see one consistent skill list.</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">scitex-agent-container/v3</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">AgentProxy</span>
+
 <span class="nt">spec</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">runtime</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude-code</span>
-<span class="w">  </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sonnet</span>
-<span class="w">  </span><span class="nt">multiplexer</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tmux</span>
-<span class="w">  </span><span class="nt">claude</span><span class="p">:</span>
-<span class="w">    </span><span class="nt">flags</span><span class="p">:</span>
-<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">--dangerously-skip-permissions</span>
-<span class="w">    </span><span class="nt">session</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">continue-or-new</span>
-<span class="w">  </span><span class="nt">health</span><span class="p">:</span>
-<span class="w">    </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-<span class="w">    </span><span class="nt">interval</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">60</span>
-<span class="w">    </span><span class="nt">method</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">multiplexer-alive</span>
-<span class="w">  </span><span class="nt">restart</span><span class="p">:</span>
-<span class="w">    </span><span class="nt">policy</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">on-failure</span>
-<span class="w">    </span><span class="nt">max_retries</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3</span>
+<span class="w">  </span><span class="nt">runtime</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">apptainer</span>
+<span class="w">  </span><span class="nt">apptainer</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt"> image</span><span class="p">:</span><span class="w"> </span><span class="nv">~/.scitex/agent-container/containers/sac-proxy.sif</span><span class="w"> </span><span class="p p-Indicator">}</span>
+<span class="w">  </span><span class="nt">proxy</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">upstream</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://peer.example.com</span>
+<span class="w">    </span><span class="nt">trust</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">local-mesh</span>
+<span class="w">    </span><span class="nt">redact</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">ANTHROPIC_API_KEY</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">sk-</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">timeout_s</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30.0</span>
+<span class="w">  </span><span class="nt">a2a</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt"> port</span><span class="p">:</span><span class="w"> </span><span class="nv">7905</span><span class="w"> </span><span class="p p-Indicator">}</span>
 </pre></div>
 </div>
-<ol class="arabic simple" start="3">
-<li><p>Start and inspect the agent:</p></li>
-</ol>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>scitex-agent-container<span class="w"> </span>start<span class="w"> </span>my-agent/my-agent.yaml
-scitex-agent-container<span class="w"> </span>inspect<span class="w"> </span>my-agent
-scitex-agent-container<span class="w"> </span>show-status<span class="w"> </span>my-agent<span class="w"> </span>--json
-scitex-agent-container<span class="w"> </span>show-logs<span class="w"> </span>my-agent<span class="w"> </span>-n<span class="w"> </span><span class="m">100</span>
-scitex-agent-container<span class="w"> </span>attach<span class="w"> </span>my-agent<span class="w">      </span><span class="c1"># Ctrl-B D to detach (tmux)</span>
-</pre></div>
-</div>
-<ol class="arabic simple" start="4">
-<li><p>(Optional) Wire Claude Code hooks so <code class="docutils literal notranslate"><span class="pre">status</span> <span class="pre">--json</span></code> can surface
-recent tool calls, prompts, and sub-agent launches. See
-<a class="reference internal" href="status_and_hooks.html"><span class="doc">Status and Hook Integration</span></a> for the full <code class="docutils literal notranslate"><span class="pre">.claude/settings.local.json</span></code>
-snippet.</p></li>
-<li><p>Run your first pane action. The nonce probe types
-<code class="docutils literal notranslate"><span class="pre">Repeat</span> <span class="pre">&lt;nonce&gt;</span></code> into the pane and confirms the model echoes it
-back – a true functional-liveness check, not just “process alive”:</p></li>
-</ol>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="w"> </span>scitex-agent-container<span class="w"> </span>actions<span class="w"> </span>run<span class="w"> </span>nonce-probe<span class="w"> </span>my-agent
-<span class="w"> </span>scitex-agent-container<span class="w"> </span>actions<span class="w"> </span>query<span class="w"> </span>--agent<span class="w"> </span>my-agent<span class="w"> </span>--limit<span class="w"> </span><span class="m">5</span>
-<span class="w"> </span>scitex-agent-container<span class="w"> </span>actions<span class="w"> </span>stats<span class="w"> </span>--agent<span class="w"> </span>my-agent<span class="w"> </span>--since<span class="w"> </span>1h
-
-Every<span class="w"> </span>attempt<span class="w"> </span>is<span class="w"> </span>recorded<span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="sb">``</span>~/.scitex/agent-container/actions.db<span class="sb">``</span>
-and<span class="w"> </span>the<span class="w"> </span>most<span class="w"> </span>recent<span class="w"> </span>one<span class="w"> </span>is<span class="w"> </span>reflected<span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="sb">``</span>status<span class="w"> </span>--json<span class="sb">``</span><span class="w"> </span>under
-<span class="sb">``</span>last_action_at<span class="sb">``</span><span class="w"> </span>/<span class="w"> </span><span class="sb">``</span>last_action_name<span class="sb">``</span><span class="w"> </span>/<span class="w"> </span><span class="sb">``</span>last_action_outcome<span class="sb">``</span>.
-See<span class="w"> </span>:doc:<span class="sb">`</span>actions<span class="sb">`</span><span class="w"> </span><span class="k">for</span><span class="w"> </span>the<span class="w"> </span>full<span class="w"> </span>subsystem.
-</pre></div>
-</div>
+<p>See <span class="xref myst"><code class="docutils literal notranslate"><span class="pre">spec-reference.md</span></code> § <code class="docutils literal notranslate"><span class="pre">kind:</span> <span class="pre">AgentProxy</span></code></span>
+and <a class="reference internal" href="#../examples/agents/proxy-agent/"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">examples/agents/proxy-agent/</span></code></span></a>
+for the full reference.</p>
+</section>
+<section id="picking-a-transport">
+<h2>Picking a transport<a class="headerlink" href="#picking-a-transport" title="Link to this heading"></a></h2>
+<ul class="simple">
+<li><p><strong>A2A-spec client / browser / curl</strong> → POST to the URL the AgentCard advertises (<code class="docutils literal notranslate"><span class="pre">&lt;base&gt;/v1/sac/agents/&lt;name&gt;/turn</span></code>). Loopback only; no auth.</p></li>
+<li><p><strong>Shell script on the same host</strong> → <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agents</span> <span class="pre">send</span></code> + <code class="docutils literal notranslate"><span class="pre">tail</span></code>. No port, no JSON, no token.</p></li>
+<li><p><strong>Another agent, on the same host</strong> → A2A sidecar; agents have <code class="docutils literal notranslate"><span class="pre">httpx</span></code> in the SIF. Use the canonical URL or the <code class="docutils literal notranslate"><span class="pre">/v1/turn</span></code> shortcut — both work.</p></li>
+<li><p><strong>Orchestrator (orochi, custom)</strong> → <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code> (port 7878) with the bearer token; same <code class="docutils literal notranslate"><span class="pre">/v1/sac/agents/&lt;name&gt;/...</span></code> path shape, cross-host via the existing SSH mesh.</p></li>
+<li><p><strong>External A2A peer (hosted service, vendor)</strong> → wrap as a <span class="xref myst"><code class="docutils literal notranslate"><span class="pre">kind:</span> <span class="pre">AgentProxy</span></code></span> agent so the rest of sac treats it the same.</p></li>
+</ul>
+<p>Pick the most external transport that meets your needs — every layer
+above the inbox is a thin wrapper, so there’s no functional difference
+once the turn lands. The URL shape is identical on both the per-agent
+sidecar and <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code>, so the same client code works against either.</p>
+</section>
+<section id="see-also">
+<h2>See also<a class="headerlink" href="#see-also" title="Link to this heading"></a></h2>
+<ul class="simple">
+<li><p><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">spec-reference.md</span></code></span> — the YAML knobs (<code class="docutils literal notranslate"><span class="pre">spec.a2a.port</span></code>, <code class="docutils literal notranslate"><span class="pre">spec.listen.port</span></code>)</p></li>
+<li><p><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">how-sac-works.md</span></code></span> — the architecture diagram showing where each transport hooks in</p></li>
+<li><p><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">sac-and-orochi.md</span></code></span> — how orochi consumes <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code> across hosts</p></li>
+</ul>
+<!-- EOF --></section>
 </section>
 
 
            </div>
           </div>
           <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
-        <a href="installation.html" class="btn btn-neutral float-left" title="Installation" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
-        <a href="templates.html" class="btn btn-neutral float-right" title="Templates and Examples" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+        <a href="spec-reference.html" class="btn btn-neutral float-left" title="YAML Spec Reference (v3)" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="isolation.html" class="btn btn-neutral float-right" title="Container Isolation in sac" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
     </div>
 
   <hr/>
