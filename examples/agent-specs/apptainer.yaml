@@ -1,0 +1,74 @@
+# apptainer — full annotated example of a sac v3 agent.
+#
+# This file documents every commonly-used field.  Copy it, rename the
+# directory, and trim what you don't need.
+#
+# dir-as-SSoT: agent name == parent directory of spec.yaml.
+# To instantiate: cp -r examples/agent-specs/apptainer ~/.scitex/agent-container/agents/my-agent
+# Then edit ~/.scitex/agent-container/agents/my-agent/spec.yaml.
+
+apiVersion: scitex-agent-container/v3
+kind: Agent
+
+# metadata is optional; labels are used by `sac fleet` filters.
+metadata:
+  labels:
+    role: worker
+    team: default
+
+spec:
+  runtime: apptainer   # only supported runtime
+
+  # workdir is mounted rw at /work inside the container.
+  # Default: ~/.scitex/agent-container/runtime/agents/<name>/
+  workdir: ~/proj
+
+  apptainer:
+    # Use sac-scitex.sif for full Python/scitex stack, sac-base.sif for minimal.
+    image: ~/.scitex/agent-container/containers/sac-scitex.sif
+
+    # Bind extra host paths into the container.
+    # binds:
+    #   - ~/data:/data:ro
+
+    # Extra env vars injected into the container.
+    # env:
+    #   MY_VAR: value
+
+    # GPU passthrough.
+    # nv: true    # NVIDIA
+    # rocm: true  # AMD
+
+  claude:
+    model: sonnet   # haiku | sonnet | opus | full versioned id
+    flags:
+      - --dangerously-skip-permissions
+    session: new    # new | continue | continue-or-new | resume <session-id>
+
+  # startup_prompts are sent as the first user message(s) to Claude.
+  # startup_prompts:
+  #   - "Read CLAUDE.md and confirm you understand your role."
+
+  # startup_commands run as shell commands before Claude starts.
+  # startup_commands:
+  #   - "uv sync"
+
+  health:
+    enabled: true
+    interval: 60     # seconds between probes
+    timeout: 10
+    method: sdk-alive
+
+  restart:
+    policy: on-failure   # never | on-failure | always
+    max_retries: 3
+    backoff:
+      initial: 10
+      max: 120
+      multiplier: 2
+
+  # A2A: expose a per-agent HTTP endpoint for agent-to-agent messaging.
+  # a2a:
+  #   port: 8080
+
+# EOF
