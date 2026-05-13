@@ -172,6 +172,7 @@ async def run(
     print_stream: bool = False,
     a2a_host: str = "127.0.0.1",
     a2a_port: int | None = None,
+    a2a_card_yaml: str = "",
     autonomous_enabled: bool = False,
     autonomous_drive_until: str = "DONE",
     autonomous_max_turns: int = 50,
@@ -227,7 +228,14 @@ async def run(
         from ._session_http import serve_inbound
 
         http_task = asyncio.create_task(
-            serve_inbound(inbox, host=a2a_host, port=a2a_port, stop=stop),
+            serve_inbound(
+                inbox,
+                host=a2a_host,
+                port=a2a_port,
+                stop=stop,
+                agent_name=name,
+                spec_yaml_path=a2a_card_yaml,
+            ),
         )
 
     # Spawn the SDK conversation task whenever the inbox has a producer:
@@ -398,6 +406,17 @@ def _parse_argv(argv: list[str] | None = None) -> argparse.Namespace:
         help="Bind address for --a2a-port (default: 127.0.0.1, loopback only).",
     )
     p.add_argument(
+        "--a2a-card-yaml",
+        type=str,
+        default="",
+        help=(
+            "Path (in-container) to the agent's spec.yaml. When set, the "
+            "sidecar publishes the A2A AgentCard at "
+            "/.well-known/agent-card.json (and /.well-known/agent.json) "
+            "so peers can discover the agent's capabilities."
+        ),
+    )
+    p.add_argument(
         "--print-stream",
         action="store_true",
         help=(
@@ -466,6 +485,7 @@ def main(argv: list[str] | None = None) -> int:
             print_stream=args.print_stream,
             a2a_host=args.a2a_host,
             a2a_port=args.a2a_port,
+            a2a_card_yaml=args.a2a_card_yaml,
             autonomous_enabled=args.autonomous_enabled,
             autonomous_drive_until=args.autonomous_drive_until,
             autonomous_max_turns=args.autonomous_max_turns,

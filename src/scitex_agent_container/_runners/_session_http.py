@@ -40,6 +40,8 @@ async def serve_inbound(
     port: int,
     stop: asyncio.Event,
     turn_timeout_s: float = 600.0,
+    agent_name: str = "",
+    spec_yaml_path: str = "",
 ) -> None:
     """Run an HTTP server that feeds turn envelopes into ``inbox``.
 
@@ -88,12 +90,36 @@ async def serve_inbound(
     async def get_health(request: Request) -> JSONResponse:
         return JSONResponse({"status": "ok"})
 
-    app = Starlette(
-        routes=[
-            Route("/v1/turn", post_turn, methods=["POST"]),
-            Route("/health", get_health, methods=["GET"]),
-        ]
-    )
+    async def get_agent_card(request: Request) -> JSONResponse:
+        if not agent_name or not spec_yaml_path:
+            return JSONResponse(
+                {"error": "agent card unavailable (no --a2a-card-yaml)"},
+                status_code=404,
+            )
+        try:
+            import yaml as _yaml
+
+            from ..a2a._card import project_card
+        except ImportError as exc:
+            return JSONResponse({"error": f"card deps missing: {exc}"}, status_code=500)
+        try:
+            v3 = _yaml.safe_load(open(spec_yaml_path).read()) or {}
+        except OSError as exc:
+            return JSONResponse(
+                {"error": f"cannot read {spec_yaml_path}: {exc}"}, status_code=500
+            )
+        base_url = str(request.base_url).rstrip("/")
+        return JSONResponse(project_card(agent_name, v3, base_url))
+
+    routes = [
+        Route("/v1/turn", post_turn, methods=["POST"]),
+        Route("/health", get_health, methods=["GET"]),
+        # A2A protocol convention — both filenames are widely tried by
+        # discoverers. Serve identical content from both.
+        Route("/.well-known/agent-card.json", get_agent_card, methods=["GET"]),
+        Route("/.well-known/agent.json", get_agent_card, methods=["GET"]),
+    ]
+    app = Starlette(routes=routes)
 
     config = uvicorn.Config(
         app,

@@ -236,6 +236,18 @@ class ApptainerContainerRuntime(RuntimeBase):
                 # same session.
                 if getattr(self, "_one_shot", False):
                     runner_argv.append("--print-stream")
+            # v3 spec.a2a.port → runner's --a2a-port. Without this the
+            # sidecar never binds and `POST /v1/turn` is unreachable.
+            a2a_spec = getattr(config, "a2a", None)
+            a2a_port = getattr(a2a_spec, "port", None) if a2a_spec else None
+            if a2a_port:
+                runner_argv += ["--a2a-port", str(a2a_port)]
+                # Spec path is host-side; apptainer auto-binds /home so
+                # the in-container path is the same string. The runner
+                # uses it to publish /.well-known/agent-card.json.
+                cfg_path = getattr(config, "config_path", "")
+                if cfg_path:
+                    runner_argv += ["--a2a-card-yaml", str(cfg_path)]
             auto = getattr(config, "autonomous", None)
             if auto is not None and getattr(auto, "enabled", False):
                 runner_argv += [

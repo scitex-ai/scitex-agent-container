@@ -167,3 +167,129 @@ class TestServeInbound:
             return body
 
         assert asyncio.run(_scenario()) == {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# /.well-known/agent-card.json — A2A AgentCard discovery
+# ---------------------------------------------------------------------------
+
+
+def _wait_bound(port: int) -> None:
+    async def _wait():
+        for _ in range(50):
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                    return
+            except OSError:
+                await asyncio.sleep(0.05)
+        pytest.fail("server never bound")
+
+    asyncio.get_event_loop().run_until_complete(_wait())
+
+
+class TestAgentCard:
+    def _run_card_scenario(
+        self, agent_name: str, yaml_path: str, url_suffix: str
+    ) -> tuple[int, dict | None]:
+        port = _free_port()
+
+        async def _scenario() -> tuple[int, dict | None]:
+            import json as _json
+            import urllib.error
+            import urllib.request
+
+            inbox = make_inbox()
+            stop = asyncio.Event()
+            consumer = asyncio.create_task(_fake_consumer(inbox, reply_map={}))
+            server = asyncio.create_task(
+                serve_inbound(
+                    inbox,
+                    host="127.0.0.1",
+                    port=port,
+                    stop=stop,
+                    agent_name=agent_name,
+                    spec_yaml_path=yaml_path,
+                )
+            )
+            for _ in range(50):
+                try:
+                    with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                        break
+                except OSError:
+                    await asyncio.sleep(0.05)
+
+            def _get():
+                try:
+                    with urllib.request.urlopen(
+                        f"http://127.0.0.1:{port}{url_suffix}", timeout=5.0
+                    ) as resp:
+                        return resp.status, _json.loads(resp.read().decode())
+                except urllib.error.HTTPError as exc:
+                    return exc.code, None
+
+            status, body = await asyncio.to_thread(_get)
+            stop.set()
+            await inbox.put(ShutdownEnvelope())
+            await asyncio.wait_for(consumer, timeout=5.0)
+            await asyncio.wait_for(server, timeout=5.0)
+            return status, body
+
+        return asyncio.run(_scenario())
+
+    def test_well_known_agent_card_returns_card(self, tmp_path) -> None:
+        """GET /.well-known/agent-card.json → AgentCard from spec.yaml."""
+        yaml_path = tmp_path / "ecosystem-auditor" / "spec.yaml"
+        yaml_path.parent.mkdir()
+        yaml_path.write_text(
+            "apiVersion: scitex-agent-container/v3\n"
+            "kind: Agent\n"
+            "metadata:\n"
+            "  labels:\n"
+            "    role: ecosystem-auditor\n"
+            "    team: lab-a\n"
+            "spec:\n"
+            "  runtime: apptainer\n"
+        )
+        status, body = self._run_card_scenario(
+            "ecosystem-auditor", str(yaml_path), "/.well-known/agent-card.json"
+        )
+        assert status == 200
+        assert body is not None
+        # Spec-required AgentCard fields per A2A.
+        assert body["name"] == "ecosystem-auditor"
+        assert "capabilities" in body
+        assert "skills" in body
+        # x-scitex-agent-container telemetry from the YAML labels.
+        ext = body.get("x-scitex-agent-container", {})
+        assert ext.get("role_class") == "ecosystem-auditor"
+
+    def test_well_known_agent_json_serves_same(self, tmp_path) -> None:
+        """A2A discovery clients also try /.well-known/agent.json — must
+        return the same payload as /.well-known/agent-card.json."""
+        yaml_path = tmp_path / "agent.yaml"
+        yaml_path.write_text(
+            "apiVersion: scitex-agent-container/v3\nkind: Agent\nspec:\n  runtime: apptainer\n"
+        )
+        status, body = self._run_card_scenario(
+            "auditor", str(yaml_path), "/.well-known/agent.json"
+        )
+        assert status == 200
+        assert body is not None
+        assert body["name"] == "auditor"
+
+    def test_well_known_agent_card_404_without_yaml(self, tmp_path) -> None:
+        """If the runner was launched without --a2a-card-yaml the
+        endpoint returns 404 with a clear error body."""
+        status, _ = self._run_card_scenario(
+            "anything", "", "/.well-known/agent-card.json"
+        )
+        assert status == 404
+
+    def test_well_known_agent_card_500_on_unreadable_yaml(self, tmp_path) -> None:
+        """If the YAML path was passed but the file is missing, the
+        endpoint surfaces a 500 rather than crashing the server."""
+        missing = tmp_path / "nope" / "spec.yaml"
+        status, _ = self._run_card_scenario(
+            "anything", str(missing), "/.well-known/agent-card.json"
+        )
+        assert status == 500
