@@ -57,7 +57,14 @@ def project_card(name: str, v3: dict[str, Any], base_url: str) -> dict[str, Any]
     spec = v3.get("spec") or {}
     caps_csv = labels.get("capabilities", "") or ""
     capabilities_tags = [c.strip() for c in caps_csv.split(",") if c.strip()]
-    required_skills = (spec.get("skills") or {}).get("required") or []
+    # v3 rejected `spec.skills` (skills moved to dot_claude/skills/).
+    # Operator-declared skill IDs now come via metadata.labels.skills as a
+    # CSV; we still tolerate the legacy spec.skills.required for any v2
+    # YAML that reaches the projector before validation strips it.
+    skills_csv = labels.get("skills", "") or ""
+    label_skills = [s.strip() for s in skills_csv.split(",") if s.strip()]
+    legacy_skills = (spec.get("skills") or {}).get("required") or []
+    required_skills = list(label_skills) + list(legacy_skills)
     role = labels.get("role", "agent")
     function = labels.get("function", "")
 
@@ -95,7 +102,9 @@ def project_card(name: str, v3: dict[str, Any], base_url: str) -> dict[str, Any]
             "cardinality": labels.get("cardinality"),
             "scheduling": _scheduling(spec),
             "runtime": spec.get("runtime"),
-            "model": spec.get("model"),
+            # v3 moves model under spec.claude.model; legacy v2 had it at
+            # spec.model. Prefer v3, fall back to v2 for back-compat.
+            "model": (spec.get("claude") or {}).get("model") or spec.get("model"),
             "multiplexer": spec.get("multiplexer"),
             "required_skills": list(required_skills),
         },

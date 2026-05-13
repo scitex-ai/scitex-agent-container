@@ -22,23 +22,26 @@ kind: Agent                             # REQUIRED
 metadata:
   labels:
     # Card field: skills[0].id/name and x-scitex-agent-container.role_class
-    role: ecosystem-auditor
+    role: worker
 
     # Card field: provider.organization (default: scitex-agent-container)
-    team: lab-a
+    team: example
 
     # Card field: description (overrides the auto "sac agent: NAME (ROLE)")
     description: |
-      Watches the local scitex-* repos for audit-all violations,
-      uncommitted drift, and non-develop branches; answers ad-hoc
-      health questions via POST /v1/turn.
+      Generic full-agent example exercising every supported v3 field.
+      Copy this directory, edit the labels + prompt for your use case.
 
     # Card field: skills[0].description (free-form, comma-friendly)
-    function: audit, git status, dashboard, ad-hoc QA
+    function: example, reference, template
 
     # Card field: skills[0].tags (CSV → list).
-    # Union'd with spec.skills.required for the final tag set.
-    capabilities: audit,health-check,git-status,dashboard
+    capabilities: example,reference,template
+
+    # Card field: skills[0].tags ∪ x-scitex-agent-container.required_skills
+    # (CSV — v3 home for declared skill IDs; real skill files live in
+    # dot_claude/skills/ next to this spec.yaml).
+    skills: scitex-dev, git
 
     # Card field: x-scitex-agent-container.cardinality
     # Free-form hint for orchestrators ("singleton" / "fleet" / "swarm").
@@ -249,15 +252,11 @@ spec:
   #   port: 7878
 
   # ----------------------------------------------------------------------
-  # skills — `required` list ends up in the AgentCard skills[0].tags.
+  # Skills:
+  #   * Real skill files: dot_claude/skills/ (materialized into the workspace).
+  #   * AgentCard publication: metadata.labels.skills (CSV, top of this file).
+  # `spec.skills` was REMOVED in v3 (validation rejects it).
   # ----------------------------------------------------------------------
-  skills:
-    required:
-      - scitex-dev
-      - gh-cli
-      - git
-    # optional:
-    #   - python-scitex
 
   # ----------------------------------------------------------------------
   # extensions — opaque dict of additional metadata (per-deployment).

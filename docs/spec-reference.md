@@ -75,12 +75,13 @@ when `spec.a2a.port` is set) and `GET /v1/sac/agents/<name>/card`
 | `provider.organization`               | `metadata.labels.team`                           |
 | `skills[0].id` / `name`               | `metadata.labels.role`                           |
 | `skills[0].description`               | `metadata.labels.function`                       |
-| `skills[0].tags`                      | `metadata.labels.capabilities` ∪ `spec.skills.required` |
+| `skills[0].tags`                      | `metadata.labels.capabilities` ∪ `metadata.labels.skills` (both CSV) |
 | `x-scitex-agent-container.role_class` | `metadata.labels.role`                           |
 | `x-scitex-agent-container.cardinality`| `metadata.labels.cardinality`                    |
 | `x-scitex-agent-container.scheduling` | derived from `spec.host` / `spec.hosts`          |
 | `x-scitex-agent-container.runtime`    | `spec.runtime`                                   |
-| `x-scitex-agent-container.model`      | `spec.claude.model`                              |
+| `x-scitex-agent-container.model`      | `spec.claude.model` (v3) / `spec.model` (v2 back-compat) |
+| `x-scitex-agent-container.required_skills` | `metadata.labels.skills` (CSV) ∪ legacy `spec.skills.required` |
 | `x-scitex-agent-container.multiplexer`| `spec.multiplexer`                               |
 
 ### `spec` — top-level
@@ -148,12 +149,16 @@ when `spec.a2a.port` is set) and `GET /v1/sac/agents/<name>/card`
 | `a2a.port`   | When set, the per-agent sidecar binds: `POST /v1/turn`, `GET /health`, `GET /.well-known/agent-card.json`, `GET /.well-known/agent.json` |
 | `listen.port`| Override for the host-level `sac listen` server port (default 7878)                  |
 
-### `spec.skills`
+### Skills
 
-| Field      | Description                                                                  |
-|------------|------------------------------------------------------------------------------|
-| `required` | List of skill IDs; union'd with `metadata.labels.capabilities` for AgentCard tags |
-| `optional` | List of skill IDs (informational)                                            |
+`spec.skills` was **removed in v3** — skills now live under
+`dot_claude/skills/` (a sibling directory next to `spec.yaml`,
+materialized into the workspace at start).
+
+For AgentCard publication, declare the skill IDs via
+`metadata.labels.skills` as a CSV (e.g. `skills: "scitex-dev, gh-cli, git"`).
+The list ends up in the card's `skills[0].tags` (unioned with
+`metadata.labels.capabilities`) and `x-scitex-agent-container.required_skills`.
 
 ### `spec.mcp_servers`
 

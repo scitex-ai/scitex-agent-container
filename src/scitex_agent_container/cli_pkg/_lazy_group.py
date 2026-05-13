@@ -31,7 +31,11 @@ import importlib
 
 import click
 
-from ._helpers import HelpRecursiveGroup, renamed_redirect
+# Import directly from the submodule — going through ``_helpers/__init__``
+# would trigger the re-export shim and eager-load ``_agent_list`` (which
+# pulls config + rich.table + scitex_logging, +60 ms cold). The lazy
+# group is on the cold-start path of every `sac` invocation — keep it lean.
+from ._helpers._groups import HelpRecursiveGroup, renamed_redirect
 
 
 class _LazyCommandsDict(dict):
