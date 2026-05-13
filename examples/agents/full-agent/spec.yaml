@@ -1,90 +1,296 @@
-# full — annotated example of a sac v3 agent with all common fields.
+# full-agent — annotated example exercising every v3 spec field.
 #
-# dir-as-SSoT: agent name == parent directory name ("full" here).
-# To use: copy this directory, rename it, and edit spec.yaml.
+# dir-as-SSoT: agent name == parent directory name ("full-agent" here).
+# Copy this directory, rename it, and edit:
 #
-#   cp -r examples/agents/full ~/.scitex/agent-container/agents/my-agent
+#   cp -r examples/agents/full-agent ~/.scitex/agent-container/agents/my-agent
 #   sac agents start my-agent
+#
+# Every field below is OPTIONAL unless marked REQUIRED. Inline comments
+# point at the field's effect on:
+#   * the runtime (apptainer args, runner flags)
+#   * the AgentCard published at /.well-known/agent-card.json
+#   * cross-cutting features (health, restart, autonomous, A2A)
 
-apiVersion: scitex-agent-container/v3
-kind: Agent
+apiVersion: scitex-agent-container/v3   # REQUIRED — v1/v2 are rejected
+kind: Agent                             # REQUIRED
 
-# metadata is optional; labels are used by `sac fleet` filters.
+# --------------------------------------------------------------------------
+# metadata.labels — drives `sac fleet` filters AND the AgentCard surface.
+# Set these even on single agents — they're how peers learn what you do.
+# --------------------------------------------------------------------------
 metadata:
   labels:
-    role: worker
-    team: default
+    # Card field: skills[0].id/name and x-scitex-agent-container.role_class
+    role: ecosystem-auditor
 
+    # Card field: provider.organization (default: scitex-agent-container)
+    team: lab-a
+
+    # Card field: description (overrides the auto "sac agent: NAME (ROLE)")
+    description: |
+      Watches the local scitex-* repos for audit-all violations,
+      uncommitted drift, and non-develop branches; answers ad-hoc
+      health questions via POST /v1/turn.
+
+    # Card field: skills[0].description (free-form, comma-friendly)
+    function: audit, git status, dashboard, ad-hoc QA
+
+    # Card field: skills[0].tags (CSV → list).
+    # Union'd with spec.skills.required for the final tag set.
+    capabilities: audit,health-check,git-status,dashboard
+
+    # Card field: x-scitex-agent-container.cardinality
+    # Free-form hint for orchestrators ("singleton" / "fleet" / "swarm").
+    cardinality: singleton
+
+# --------------------------------------------------------------------------
+# spec — agent definition.
+# --------------------------------------------------------------------------
 spec:
-  runtime: apptainer   # only supported runtime
+  # REQUIRED. Only "apptainer" is accepted since 2026-05-13.
+  runtime: apptainer
 
-  # workdir is mounted rw at /work inside the container.
+  # Workspace mounted rw at /work inside the container.
   # Default: ~/.scitex/agent-container/runtime/agents/<name>/
   workdir: ~/proj
 
-  # dot_claude: directory merged into the agent workspace at start.
-  # Contains CLAUDE.md, .mcp.json, commands/, skills/, hooks/, etc.
-  # Default: auto-discovered ./dot_claude/ next to spec.yaml (this dir).
+  # dot_claude/ sibling — materialized into <workdir>/.claude/ at start.
+  # Can contain: CLAUDE.md, .mcp.json, .env, state.md,
+  #              commands/, skills/, hooks/, settings.local.json
+  # Default: auto-discovered ./dot_claude/ next to this spec.yaml.
   dot_claude: ./dot_claude
 
+  # python-venv: pre-activated for startup_commands + hooks.
+  # `auto` probes ~/.venv-3.11 then ~/.venv (host conventions).
+  # A list is a fallback chain — first existing wins.
+  python-venv: auto
+  # python-venv:
+  #   - ~/.venv-3.12
+  #   - ~/.venv
+
+  # env-file: dotenv files sourced into the runner (paths or list).
+  # env-file: .env
+  # env-file:
+  #   - .env
+  #   - .env.local
+
+  # user: container user override (rarely needed; default = host user).
+  # user: ywatanabe
+
+  # multiplexer: tmux | screen — the long-lived session host.
+  multiplexer: tmux
+
+  # ----------------------------------------------------------------------
+  # apptainer block — engine-scoped knobs (raw_args is the escape hatch).
+  # ----------------------------------------------------------------------
   apptainer:
-    # sac-scitex.sif: full Python/scitex stack.
-    # sac-base.sif: minimal runtime (faster build, no scitex).
+    # REQUIRED. sac-scitex.sif has the full Python/scitex stack;
+    # sac-base.sif is the minimal layer (faster, no scitex).
     image: ~/.scitex/agent-container/containers/sac-scitex.sif
 
-    # Extra bind mounts: host:container[:ro|rw]
-    # binds:
-    #   - ~/data:/data:ro
-    #   - /scratch:/scratch:rw
+    # Writable overlay layered on top of the SIF.
+    # overlay: ./overlay.img
 
-    # Environment variables injected into the container.
-    # env:
-    #   MY_PROJECT: my-project
-    #   MY_ROLE: worker
+    # Extra bind mounts. Default: apptainer auto-binds /home/$USER.
+    binds:
+      # Read-only source tree so the agent can inspect repos.
+      - /home/ywatanabe/proj:/home/ywatanabe/proj:ro
+      # Git identity for `git status` / `gh` operations.
+      - /home/ywatanabe/.gitconfig:/home/ywatanabe/.gitconfig:ro
+      # SSH config + agent socket for remote-aware tooling.
+      - /home/ywatanabe/.ssh:/home/ywatanabe/.ssh:ro
 
-    # GPU passthrough (pick one).
-    # nv: true    # NVIDIA CUDA
-    # rocm: true  # AMD ROCm
+    # Container env vars (in addition to sac-auto vars).
+    env:
+      ECOSYSTEM_AUDITOR_VERSION: "v1"
 
-    # Arbitrary extra apptainer exec flags (escape hatch).
+    # GPU passthrough (mutually exclusive).
+    # nv: true     # NVIDIA CUDA
+    # rocm: true   # AMD ROCm
+
+    # Escape hatch — appended verbatim to `apptainer exec` argv.
     # raw_args:
-    #   - --no-home
+    #   - --cleanenv
+    #   - --userns
 
+  # ----------------------------------------------------------------------
+  # claude block — SDK-scoped knobs (raw_options is the escape hatch).
+  # ----------------------------------------------------------------------
   claude:
-    model: sonnet   # haiku | sonnet | opus | full versioned id
+    # haiku | sonnet | opus | a full versioned id like claude-opus-4-5
+    model: sonnet
+
+    # CLI flags forwarded to `claude` (the SDK runs the bundled binary).
     flags:
       - --dangerously-skip-permissions
-    session: new    # new | continue | continue-or-new | resume <session-id>
 
-    # MCP push channels.
+    # Session strategy (2026-05-13 rename):
+    #   continue     — try --continue, fall back to fresh if no prior session
+    #   new-session  — always start fresh
+    #   resume       — pass --resume <resume_id> (use with resume_id below)
+    # Legacy aliases `continue-or-new` and `new` are still accepted.
+    session: continue
+
+    # Only resume if the prior session.jsonl is newer than this (minutes).
+    # continue_max_age_minutes: 60
+
+    # Explicit session UUID for `session: resume`.
+    # resume_id: 8f1c...d4e9
+
+    # MCP push channels (passed as `claude --channels`).
     # channels:
     #   - server:orochi-push
+    #   - server:a2a
 
-  # startup_prompts: first user message(s) sent to Claude after start.
-  # startup_prompts:
-  #   - "Read CLAUDE.md and confirm you understand your role."
+    # auto_accept: auto-confirm permission prompts in the TUI.
+    auto_accept: true
 
-  # startup_commands: shell commands run before Claude starts.
+    # Escape hatch — splat into ClaudeAgentOptions(**raw_options).
+    # raw_options:
+    #   permission_mode: bypassPermissions
+
+  # ----------------------------------------------------------------------
+  # mcp_servers — per-agent MCP wiring (also: drop a .mcp.json in dot_claude/).
+  # The block below is merged into <workdir>/.mcp.json at start.
+  # ----------------------------------------------------------------------
+  # mcp_servers:
+  #   filesystem:
+  #     command: npx
+  #     args: ["-y", "@modelcontextprotocol/server-filesystem", "/work"]
+
+  # ----------------------------------------------------------------------
+  # startup_commands — SHELL commands run before claude starts.
+  # ----------------------------------------------------------------------
   # startup_commands:
   #   - "uv sync"
   #   - "source .venv/bin/activate"
 
+  # ----------------------------------------------------------------------
+  # startup_prompts — TEXT fed to claude as the first user message(s).
+  # With `sac agents start --one-shot` the runner exits after the first.
+  # Without --one-shot it stays attached for follow-up turns.
+  # ----------------------------------------------------------------------
+  startup_prompts:
+    - |
+      You are the scitex ecosystem auditor. Run `scitex-dev ecosystem
+      dashboard` and `scitex-dev ecosystem audit-all` and summarize:
+      which packages are green, which have audit failures, which have
+      uncommitted changes, which are on a non-develop branch. Keep
+      under ~60 lines. Stay alive for follow-up POSTs on /v1/turn.
+
+  # ----------------------------------------------------------------------
+  # startup — broader pre-launch policy block.
+  # ----------------------------------------------------------------------
+  # startup:
+  #   ready_patterns:
+  #     - "READY"
+  #   timeout: 60
+
+  # ----------------------------------------------------------------------
+  # health — periodic liveness probe (drives restart policy).
+  # ----------------------------------------------------------------------
   health:
     enabled: true
-    interval: 60     # seconds between probes
-    timeout: 10
-    method: sdk-alive
+    interval: 60                # seconds between probes
+    timeout: 10                 # per-probe timeout
+    method: sdk-alive           # currently the only supported method
 
+  # ----------------------------------------------------------------------
+  # restart — what to do when health fails or the process exits.
+  # ----------------------------------------------------------------------
   restart:
-    policy: on-failure   # never | on-failure | always
+    policy: on-failure          # never | on-failure | always
     max_retries: 3
     backoff:
-      initial: 10
+      initial: 10               # seconds
       max: 120
       multiplier: 2
 
-  # A2A: per-agent HTTP endpoint for agent-to-agent messaging.
-  # a2a:
-  #   port: 8080
+  # ----------------------------------------------------------------------
+  # watchdog — external watchdog hooks (lifecycle managed via hooks).
+  # ----------------------------------------------------------------------
+  # watchdog:
+  #   enabled: false
+  #   max_silence_seconds: 300
+
+  # ----------------------------------------------------------------------
+  # autonomous — drive-until-DONE loop after the first mission.
+  # ----------------------------------------------------------------------
+  # autonomous:
+  #   enabled: true
+  #   drive_until: "DONE"
+  #   max_turns: 50
+  #   kick_text: "Continue. Print DONE when finished."
+
+  # ----------------------------------------------------------------------
+  # context_management — auto-compact / summary cadence.
+  # ----------------------------------------------------------------------
+  # context_management:
+  #   strategy: auto-compact
+  #   trigger_messages: 50
+  #   target_messages: 20
+
+  # ----------------------------------------------------------------------
+  # a2a — per-agent inbound HTTP turn endpoint.
+  # When `port` is set, the runner exposes:
+  #   POST /v1/turn   — {"text": "..."} drops onto the live SDK session
+  #   GET  /health    — liveness probe
+  #   GET  /.well-known/agent-card.json   — A2A discovery card (from this spec)
+  #   GET  /.well-known/agent.json        — alternate discovery path
+  # ----------------------------------------------------------------------
+  a2a:
+    port: 7901
+
+  # ----------------------------------------------------------------------
+  # listen — also exposes the agent via the host-level `sac listen` server.
+  # ----------------------------------------------------------------------
+  # listen:
+  #   port: 7878
+
+  # ----------------------------------------------------------------------
+  # skills — `required` list ends up in the AgentCard skills[0].tags.
+  # ----------------------------------------------------------------------
+  skills:
+    required:
+      - scitex-dev
+      - gh-cli
+      - git
+    # optional:
+    #   - python-scitex
+
+  # ----------------------------------------------------------------------
+  # extensions — opaque dict of additional metadata (per-deployment).
+  # ----------------------------------------------------------------------
+  # extensions:
+  #   priority: high
+  #   owner: ywatanabe
+
+  # ----------------------------------------------------------------------
+  # telegram — alerting bridge (consumed by claude-code-telegrammer).
+  # ----------------------------------------------------------------------
+  # telegram:
+  #   enabled: false
+  #   chat_id: ""
+
+  # ----------------------------------------------------------------------
+  # hooks — shell commands at lifecycle transitions.
+  # The pre_start mkdir is auto-injected for <workdir>/.claude.
+  # ----------------------------------------------------------------------
+  # hooks:
+  #   pre_start:
+  #     - "echo starting ${SCITEX_AGENT_CONTAINER_NAME}"
+  #   post_start:
+  #     - "echo started ${SCITEX_AGENT_CONTAINER_NAME}"
+  #   pre_stop:
+  #     - "echo stopping ${SCITEX_AGENT_CONTAINER_NAME}"
+
+  # ----------------------------------------------------------------------
+  # host vs hosts (mutually exclusive — pick at most one).
+  # Unset = local singleton (this host, no name suffix).
+  # ----------------------------------------------------------------------
+  # host: gpu-box                 # pin to a single named peer
+  # hosts: [laptop, gpu-box, nas] # multi-instance, one per peer
+  #                               # — agent name becomes <name>@<host>
 
 # EOF

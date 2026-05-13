@@ -2,114 +2,195 @@
 
 Container + session knobs nest under the engine that interprets them
 (`spec.apptainer.*`, `spec.claude.*`). Cross-cutting knobs (workdir,
-a2a, health, restart) stay at the top level. Every curated block has
-a `raw_*` escape hatch — full underlying surface is always reachable.
+a2a, health, restart, autonomous, listen, skills, telegram, hooks)
+stay at the top level. Every curated block has a `raw_*` escape hatch
+— the full underlying surface is always reachable.
 
-The agent name is the parent directory of `spec.yaml`.
+The agent name is the parent directory of `spec.yaml` (dir-as-SSoT —
+no `metadata.name` field).
 
-## Full annotated example
+## Quick links
+
+- Annotated full example: [`examples/agents/full-agent/spec.yaml`](../examples/agents/full-agent/spec.yaml) — every supported field with inline comments
+- Minimal example: [`examples/agents/minimal-agent/spec.yaml`](../examples/agents/minimal-agent/spec.yaml)
+- Quickstart with `startup_prompts`: [`examples/agents/hello-agent/spec.yaml`](../examples/agents/hello-agent/spec.yaml)
+
+## Top-level shape
 
 ```yaml
-apiVersion: scitex-agent-container/v3
-kind: Agent
+apiVersion: scitex-agent-container/v3    # REQUIRED — v1/v2 raise loud validation errors
+kind: Agent                              # REQUIRED
 
 metadata:
-  labels:                              # arbitrary string→string, used by sac fleet ...
-    role: researcher
+  labels:                                # drives `sac fleet` filters AND the AgentCard
+    role: ecosystem-auditor
     team: lab-a
+    description: ...                     # → AgentCard.description
+    function: audit, git status, ...     # → AgentCard.skills[0].description
+    capabilities: audit,health-check     # CSV → AgentCard.skills[0].tags
+    cardinality: singleton               # → AgentCard.x-scitex-agent-container.cardinality
 
 spec:
-  runtime: apptainer                   # the only accepted value (post 2026-05-13 ripout)
-  workdir: ~/proj/example              # mounted rw at /work inside the container
+  runtime: apptainer                     # REQUIRED — only value accepted since 2026-05-13
+  workdir: ~/proj                        # mounted rw at /work
+  dot_claude: ./dot_claude               # merged into <workdir>/.claude/ at start
+  python-venv: auto                      # string or list — fallback chain
+  env-file: .env                         # string or list of dotenv paths
+  multiplexer: tmux                      # tmux | screen
 
-  apptainer:
-    image: ./sac-base.sif              # full path or relative path to this spec.yaml
-    overlay: ./overlay.img             # writable overlay (rw layer above the SIF)
-    nv: false                          # forward host NVIDIA libs (--nv)
-    rocm: false                        # forward host AMD ROCm libs (--rocm)
-    binds:                             # bind mounts (host:container[:mode])
-      - /data/gpfs:/data/gpfs:ro
-    env:                               # env vars exported into the container
-      FOO: bar
-    raw_args: []                       # escape hatch → appended to apptainer exec argv
+  apptainer:    { ... }
+  claude:       { ... }
+  mcp_servers:  { ... }
+  health:       { ... }
+  restart:      { ... }
+  autonomous:   { ... }
+  a2a:          { port: 7901 }
+  listen:       { port: 7878 }
+  skills:       { required: [...] }
+  telegram:     { ... }
+  hooks:        { pre_start: [...], post_start: [...], pre_stop: [...] }
+  extensions:   { ... }                  # opaque per-deployment dict
 
-  dot_claude: ./dot_claude             # relative to spec.yaml (preferred) or absolute
-    # merged into workspace/.claude/ at agent-start.
-    # may contain: CLAUDE.md, .mcp.json, .env, state.md,
-    #              commands/, skills/, hooks/, settings.local.json
+  startup_commands: [...]                # SHELL before claude starts
+  startup_prompts:  [...]                # TEXT fed to claude as first user msg
 
-  startup_commands:                    # shell commands, run BEFORE claude starts
-    - "uv venv /opt/venv-agent --python python3"
-
-  startup_prompts:                     # fed to claude as first user message(s)
-    - "Apply the SciTeX quality playbook."
-
-  claude:
-    model: claude-opus-4-5
-    session: new-session               # or 'continue', or 'resume <sid>' (mirrors claude CLI)
-    channels:                          # push-based; passed as claude --channels
-      - server:orochi-push
-      - server:a2a
-    flags:
-      - --dangerously-skip-permissions
-    raw_options: {}                    # escape hatch → ClaudeAgentOptions(**raw_options)
-
-  a2a:
-    port: 7901                         # bind POST /v1/turn on this localhost port (per-agent)
-
-  health:
-    enabled: true
-    interval: 60                       # seconds between probes
-    method: sdk-alive                  # only currently supported method
-
-  restart:
-    policy: on-failure                 # never | on-failure | always
-    max_retries: 3
-    backoff_initial: 30
-    backoff_max: 300
-    backoff_multiplier: 2
+  host:  gpu-box                         # mutually exclusive: singleton on one peer
+  hosts: [laptop, gpu-box, nas]          # OR multi-instance, one per peer
 ```
 
 ## Field reference
 
-| Section                       | Key Fields                                                               | Description                                                                                                                                                                  |
-|-------------------------------|--------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `apiVersion`                  | `scitex-agent-container/v3`                                              | Config format version                                                                                                                                                        |
-| `metadata.labels`             | string→string map                                                        | Used by `sac fleet ...` filters                                                                                                                                              |
-| `spec.runtime`                | `apptainer` (the only supported runtime)                                 | Container backend                                                                                                                                                            |
-| `spec.workdir`                | path                                                                     | Workspace mounted at `/work` inside the container                                                                                                                            |
-| `spec.apptainer.image`        | path to `.sif`                                                           | Default: `~/.scitex/agent-container/containers/sac-base.sif`                                                                                                                 |
-| `spec.apptainer.overlay`      | path                                                                     | Writable overlay (rw layer above the SIF)                                                                                                                                    |
-| `spec.apptainer.nv` / `.rocm` | bool                                                                     | Forward host NVIDIA / AMD ROCm libs                                                                                                                                          |
-| `spec.apptainer.binds[]`      | `host:container[:mode]`                                                  | Bind mounts (`${VAR}` expanded at start)                                                                                                                                     |
-| `spec.apptainer.env`          | key-value pairs                                                          | Env vars exported into the container (`${VAR}` expanded)                                                                                                                     |
-| `spec.apptainer.raw_args[]`   | list of strings                                                          | **Escape hatch** — appended verbatim to the `apptainer exec` argv                                                                                                            |
-| `spec.dot_claude`             | path                                                                     | Default: auto-discover `./dot_claude` next to `spec.yaml`. Materialized into the workspace at start (CLAUDE.md / .mcp.json / .env / state.md / commands/ / skills/ / hooks/) |
-| `spec.startup_commands[]`     | shell commands                                                           | Run **before** Claude starts (e.g. `uv venv ...`)                                                                                                                            |
-| `spec.startup_prompts[]`      | strings                                                                  | Fed to Claude as the first user message(s)                                                                                                                                   |
-| `spec.claude.model`           | `sonnet`, `opus[1m]`, `haiku-4-5`, ...                                   | Claude model                                                                                                                                                                 |
-| `spec.claude.session`         | `new-session` / `continue` / `resume <sid>`                              | Mirrors `claude --resume`/`--continue`                                                                                                                                       |
-| `spec.claude.channels[]`      | `server:orochi-push`, `plugin:foo@bar`                                   | Push channels; passed as `claude --channels`                                                                                                                                 |
-| `spec.claude.flags[]`         | strings                                                                  | Extra flags appended to the `claude` invocation                                                                                                                              |
-| `spec.claude.raw_options`     | dict                                                                     | **Escape hatch** — splatted into `ClaudeAgentOptions(**raw_options)`                                                                                                         |
-| `spec.a2a.port`               | int                                                                      | Bind `POST /v1/turn` on this localhost port (per-agent)                                                                                                                      |
-| `spec.health`                 | `enabled`, `interval`, `method: sdk-alive`                               | Health probe config                                                                                                                                                          |
-| `spec.restart`                | `policy` (`never` / `on-failure` / `always`), `max_retries`, `backoff_*` | Supervisor restart policy                                                                                                                                                    |
+### `metadata.labels` → AgentCard fields
+
+The AgentCard at `GET /.well-known/agent-card.json` (per-agent sidecar
+when `spec.a2a.port` is set) and `GET /v1/sac/agents/<name>/card`
+(host-level `sac listen`) is built **entirely** from spec.yaml:
+
+| AgentCard field                       | spec.yaml source                                 |
+|---------------------------------------|--------------------------------------------------|
+| `name`                                | parent directory of `spec.yaml`                  |
+| `description`                         | `metadata.labels.description` (else auto)        |
+| `version`                             | `apiVersion`                                     |
+| `url`                                 | `<base>/v1/agents/<name>`                        |
+| `provider.organization`               | `metadata.labels.team`                           |
+| `skills[0].id` / `name`               | `metadata.labels.role`                           |
+| `skills[0].description`               | `metadata.labels.function`                       |
+| `skills[0].tags`                      | `metadata.labels.capabilities` ∪ `spec.skills.required` |
+| `x-scitex-agent-container.role_class` | `metadata.labels.role`                           |
+| `x-scitex-agent-container.cardinality`| `metadata.labels.cardinality`                    |
+| `x-scitex-agent-container.scheduling` | derived from `spec.host` / `spec.hosts`          |
+| `x-scitex-agent-container.runtime`    | `spec.runtime`                                   |
+| `x-scitex-agent-container.model`      | `spec.claude.model`                              |
+| `x-scitex-agent-container.multiplexer`| `spec.multiplexer`                               |
+
+### `spec` — top-level
+
+| Field                | Type                       | Description                                                              |
+|----------------------|----------------------------|--------------------------------------------------------------------------|
+| `runtime`            | `apptainer` (REQUIRED)     | Only value accepted; docker/podman were dropped 2026-05-13               |
+| `workdir`            | path                       | Mounted rw at `/work` (default: `~/.scitex/agent-container/runtime/agents/<name>/`) |
+| `dot_claude`         | path                       | Materialized into `<workdir>/.claude/` (default: auto-discover sibling)  |
+| `python-venv`        | string \| list             | Pre-activated for startup_commands; `auto` probes `~/.venv-3.11`, `~/.venv` |
+| `env-file`           | string \| list             | dotenv paths sourced at start                                            |
+| `user`               | string                     | Container user override                                                  |
+| `multiplexer`        | `tmux` \| `screen`         | Long-lived session host                                                  |
+| `host` / `hosts`     | string / list of strings   | Singleton on one peer / multi-instance one-per-peer (mutually exclusive) |
+| `startup_commands[]` | list of shell commands     | Run **before** Claude starts                                             |
+| `startup_prompts[]`  | list of strings            | Fed to Claude as first user message(s)                                   |
+
+### `spec.apptainer` — engine knobs
+
+| Field         | Type                          | Description                                                |
+|---------------|-------------------------------|------------------------------------------------------------|
+| `image`       | path to `.sif` (REQUIRED)     | `sac-scitex.sif` (full stack) or `sac-base.sif` (minimal)  |
+| `overlay`     | path                          | Writable rw layer above the SIF                            |
+| `binds[]`     | `host:container[:ro\|rw]`     | Bind mounts (default: apptainer auto-binds `/home/$USER`)  |
+| `env`         | key-value dict                | Env vars exported into the container                       |
+| `nv` / `rocm` | bool                          | Forward host NVIDIA / AMD ROCm libs (mutually exclusive)   |
+| `raw_args[]`  | list of strings               | **Escape hatch** — appended verbatim to `apptainer exec`   |
+
+### `spec.claude` — SDK knobs
+
+| Field                       | Type                                  | Description                                                       |
+|-----------------------------|---------------------------------------|-------------------------------------------------------------------|
+| `model`                     | `haiku` \| `sonnet` \| `opus` \| ...  | Claude model                                                      |
+| `session`                   | `continue` \| `new-session` \| `resume`| Session strategy (default `continue` — safe fallback). Legacy aliases `continue-or-new`, `new` accepted |
+| `resume_id`                 | string                                | Explicit session UUID for `session: resume`                       |
+| `continue_max_age_minutes`  | int                                   | Only resume if session.jsonl is newer than N minutes              |
+| `flags[]`                   | list of strings                       | Extra flags appended to `claude` invocation                       |
+| `channels[]`                | `server:<name>` / `plugin:<id>@<v>`   | MCP push channels (passed as `claude --channels`)                 |
+| `auto_accept`               | bool                                  | Auto-confirm permission prompts in the TUI                        |
+| `raw_options`               | dict                                  | **Escape hatch** — splatted into `ClaudeAgentOptions(**raw_options)` |
+
+### `spec.health` / `spec.restart` / `spec.watchdog` / `spec.autonomous`
+
+| Field                       | Description                                                                              |
+|-----------------------------|------------------------------------------------------------------------------------------|
+| `health.enabled`            | bool — enable periodic liveness probe                                                    |
+| `health.interval`           | seconds between probes                                                                   |
+| `health.timeout`            | per-probe timeout                                                                        |
+| `health.method`             | `sdk-alive` (only currently supported)                                                   |
+| `restart.policy`            | `never` \| `on-failure` \| `always`                                                      |
+| `restart.max_retries`       | int                                                                                      |
+| `restart.backoff.initial`   | seconds before first retry                                                               |
+| `restart.backoff.max`       | cap on backoff                                                                           |
+| `restart.backoff.multiplier`| exponential factor                                                                       |
+| `watchdog.enabled`          | parsed for back-compat; lifecycle managed via hooks                                      |
+| `autonomous.enabled`        | drive turns until `drive_until` token or `max_turns`                                     |
+| `autonomous.drive_until`    | string token Claude prints when done (default `DONE`)                                    |
+| `autonomous.max_turns`      | int                                                                                      |
+| `autonomous.kick_text`      | nudge sent when Claude pauses                                                            |
+
+### `spec.a2a` / `spec.listen` — network endpoints
+
+| Field        | Description                                                                          |
+|--------------|--------------------------------------------------------------------------------------|
+| `a2a.port`   | When set, the per-agent sidecar binds: `POST /v1/turn`, `GET /health`, `GET /.well-known/agent-card.json`, `GET /.well-known/agent.json` |
+| `listen.port`| Override for the host-level `sac listen` server port (default 7878)                  |
+
+### `spec.skills`
+
+| Field      | Description                                                                  |
+|------------|------------------------------------------------------------------------------|
+| `required` | List of skill IDs; union'd with `metadata.labels.capabilities` for AgentCard tags |
+| `optional` | List of skill IDs (informational)                                            |
+
+### `spec.mcp_servers`
+
+A dict-of-dicts merged into `<workdir>/.mcp.json` at start. Mirrors
+the `.mcp.json` shape directly. Use this OR drop a `.mcp.json` into
+`dot_claude/` — both are merged.
+
+### `spec.telegram` / `spec.hooks` / `spec.extensions`
+
+| Field                | Description                                                                  |
+|----------------------|------------------------------------------------------------------------------|
+| `telegram.enabled`   | bool — enable alerting bridge (consumed by claude-code-telegrammer)          |
+| `telegram.chat_id`   | Telegram chat ID                                                             |
+| `hooks.pre_start[]`  | Shell commands before `apptainer exec` (a `mkdir -p <workdir>/.claude` is auto-prepended) |
+| `hooks.post_start[]` | Shell commands after the runner reports ready                                |
+| `hooks.pre_stop[]`   | Shell commands before SIGTERM                                                |
+| `extensions`         | Opaque dict — read by downstream tooling (priority, owner, etc.)             |
 
 ## Lifetime / session selection
 
-No `mode` field. Default is long-lived + new session. CLI flips it:
+Default = long-lived + safe-fallback session continue. The `sac
+agents start` CLI overrides at start time:
 
 ```bash
-sac agents start <name> --one-shot        # exits after startup_prompts
-sac agents start <name> --resume <sid>    # resume a prior session
-sac agents start <name> --continue        # continue the last session
+sac agents start <name> --one-shot                 # exits after first startup_prompt
+sac agents start <name> --session continue         # default (try continue, fall back to fresh)
+sac agents start <name> --session new-session      # force fresh
+sac agents start <name> --resume <sid>             # implies --session resume
 ```
+
+CLI flags ALWAYS override the YAML — one-direction precedence so a
+per-invocation tweak doesn't mutate the persistent default.
 
 ## Examples
 
 Copy from [`examples/agents/`](../examples/agents/):
 
-- `full-agent/` — annotated spec with all fields + full `dot_claude/` layout
-- `minimal-agent/` — bare-minimum spec, no `dot_claude`
-- `hello-agent/` — quickstart example with `startup_prompts`
+- [`full-agent/`](../examples/agents/full-agent/) — annotated spec exercising every supported field (plus `dot_claude/` layout)
+- [`minimal-agent/`](../examples/agents/minimal-agent/) — bare minimum, no `dot_claude`
+- [`hello-agent/`](../examples/agents/hello-agent/) — quickstart with `startup_prompts`
