@@ -212,9 +212,9 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_commands"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_commands</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_prompts"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_prompts</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.mcp_servers"><code class="docutils literal notranslate"><span class="pre">AgentConfig.mcp_servers</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.multiplexer"><code class="docutils literal notranslate"><span class="pre">AgentConfig.multiplexer</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hosts_spec"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hosts_spec</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.scheduling"><code class="docutils literal notranslate"><span class="pre">AgentConfig.scheduling</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.config_path"><code class="docutils literal notranslate"><span class="pre">AgentConfig.config_path</span></code></a></li>
@@ -607,24 +607,19 @@
 <span class="sd">    exclusive with ``nv`` in practice (no host has both).&quot;&quot;&quot;</span>
 
     <span class="n">overlay</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Path to a writable apptainer overlay image (`--overlay &lt;file&gt;`).</span>
-<span class="sd">    Lets the agent install packages, write caches, and persist state</span>
-<span class="sd">    while keeping the base SIF immutable. The same SIF can back many</span>
-<span class="sd">    agents, each with its own overlay file. Empty = no overlay; the</span>
-<span class="sd">    container is read-only with a tmpfs writable layer.</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Writable apptainer overlay image (``--overlay &lt;file&gt;``). Empty =</span>
+<span class="sd">    no overlay (tmpfs writable layer). Non-absolute paths resolve</span>
+<span class="sd">    against ``spec.workdir``. See ``docs/isolation.md`` §7.&quot;&quot;&quot;</span>
 
-<span class="sd">    Resolution: a non-absolute path is interpreted relative to the</span>
-<span class="sd">    agent&#39;s workdir. The canonical layout puts overlays under</span>
-<span class="sd">    ``~/.scitex/agent-container/containers/overlays/proj-&lt;pkg&gt;.overlay.img``</span>
-<span class="sd">    next to the base SIF directory (``containers/sac-base/sac-base.sif``),</span>
-<span class="sd">    mirroring scitex-template&#39;s singularity convention.&quot;&quot;&quot;</span>
-
-    <span class="c1"># Opt OUT of sac&#39;s hardened-by-default isolation. When False</span>
-    <span class="c1"># (default), sac auto-prepends --containall to the apptainer argv</span>
-    <span class="c1"># unless the operator already declared it in raw_args (closes the</span>
-    <span class="c1"># filesystem-auto-bind leak: /home, /tmp, /sys, /proc, /dev).</span>
-    <span class="c1"># See ``docs/isolation.md``.</span>
     <span class="n">relaxed</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Opt out of sac&#39;s hardened defaults (auto-prepended</span>
+<span class="sd">    ``--containall``/``--cleanenv``/``--writable-tmpfs``/``--home``).</span>
+<span class="sd">    See ``docs/isolation.md``.&quot;&quot;&quot;</span>
+
+    <span class="n">fakeroot</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Apptainer ``--fakeroot`` — uid 0 inside via user-namespace</span>
+<span class="sd">    remapping; operator uid on host. Pairs with the D5 preflight&#39;s</span>
+<span class="sd">    ``/proc/self/uid_map`` detection (see ``docs/isolation.md``).&quot;&quot;&quot;</span>
 
 
 <span class="nd">@dataclass</span>
