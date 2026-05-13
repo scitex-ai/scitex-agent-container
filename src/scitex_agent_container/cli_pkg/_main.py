@@ -64,6 +64,8 @@ class _MainGroup(LazyGroup):
         "template": f"{_PKG}.template_group:template_group",
         "skills": f"{_PKG}.skills_group:skills_group",
         "account": f"{_PKG}.account_cmds:account",
+        # Plural alias — matches `sac agents` / `sac peers` shape.
+        "accounts": f"{_PKG}.account_cmds:account",
         "a2a": f"{_PKG}.a2a_cmds:a2a",
         "mcp": f"{_PKG}.mcp_cmds:mcp",
         "peer": f"{_PKG}.peer_cmds:peer_group",
@@ -227,6 +229,7 @@ class _MainGroup(LazyGroup):
         "skills": "Agent-facing skills bundled with scitex-agent-container.",
         "auto-accept": "Auto-accept TUI handler for Claude Code permission prompts.",
         "account": "Manage stored Claude Code accounts for credential rotation.",
+        "accounts": "Manage stored Claude Code accounts (plural alias of `account`).",
         "a2a": "A2A protocol — generic agent-to-agent surface (no fleet deps).",
         "mcp": "MCP (Model Context Protocol) server commands.",
         "peer": "Outbound A2A calls into other agents' POST /v1/turn endpoint.",
