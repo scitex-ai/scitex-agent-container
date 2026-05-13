@@ -34,11 +34,13 @@ class ClaudeSpec:
     # sac doesn't model. Merged on top of curated keys; raw_options wins.
     raw_options: dict = field(default_factory=dict)
     # Session restart strategy. One of:
-    #   continue-or-new  try --continue, fall back to a fresh launch if no prior session (default)
-    #   continue         always pass --continue (fails if no prior session exists)
-    #   new              never pass --continue
-    #   resume           pass --resume <resume_id> (explicit session ID)
-    session: str = "continue-or-new"
+    #   continue     try --continue; fall back to a fresh launch if no
+    #                prior session jsonl exists (default; safe).
+    #   new-session  never pass --continue — always start fresh.
+    #   resume       pass --resume <resume_id> (explicit session ID).
+    # Legacy aliases accepted at load time: `continue-or-new` -> `continue`,
+    # `new` -> `new-session`.
+    session: str = "continue"
     # Only resume if the most recent session jsonl is newer than this many minutes.
     # None = no age check (always resume if session exists).
     continue_max_age_minutes: int | None = None

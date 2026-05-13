@@ -61,7 +61,11 @@ from ._common import (
     "--session",
     "session_mode",
     type=click.Choice(
-        ["continue-or-new", "continue", "new", "resume"], case_sensitive=False
+        # New names (REQUIREMENT_SUMMARY §3 #6); legacy aliases
+        # `continue-or-new` and `new` are still accepted at YAML load
+        # time via parse_claude but hidden from the CLI surface.
+        ["continue", "new-session", "resume"],
+        case_sensitive=False,
     ),
     default=None,
     help="Override the YAML's claude.session for this start invocation.",
@@ -105,6 +109,19 @@ from ._common import (
     ),
 )
 @click.option(
+    "--one-shot",
+    "one_shot",
+    is_flag=True,
+    default=False,
+    help=(
+        "Run the agent for ONE SDK turn (its startup_prompts), stream the "
+        "reply, then exit. Requires spec.startup_prompts to be non-empty. "
+        "Without this flag, the runner stays attached after the first "
+        "turn so subsequent ``sac agents send`` calls reach the same "
+        "session."
+    ),
+)
+@click.option(
     "--params-file",
     "params_file",
     type=click.Path(dir_okay=False, exists=True, path_type=Path),
@@ -142,6 +159,7 @@ def start(
     as_json: bool,
     yes: bool,
     foreground: bool,
+    one_shot: bool,
     params_file: Path | None,
     params_out: Path | None,
     params_overwrite: bool,
@@ -387,6 +405,7 @@ def start(
                 session_override=session_mode,
                 resume_id_override=resume_id,
                 foreground=foreground,
+                one_shot=one_shot,
             )
             if as_json:
                 _emit(

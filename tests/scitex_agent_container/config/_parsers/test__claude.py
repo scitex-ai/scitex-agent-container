@@ -10,7 +10,7 @@ def test_missing_returns_defaults():
     assert c.model == ""
     assert c.channels == []
     assert c.flags == []
-    assert c.session == "continue-or-new"
+    assert c.session == "continue"
     assert c.continue_max_age_minutes is None
     assert c.resume_id == ""
     assert c.auto_accept is True
@@ -19,12 +19,19 @@ def test_missing_returns_defaults():
 
 def test_explicit_none_block_treated_as_empty():
     c = parse_claude({"claude": None})
-    assert c.session == "continue-or-new"
+    assert c.session == "continue"
 
 
 def test_top_level_session_takes_precedence():
+    # `new` is a legacy alias for `new-session` (REQUIREMENT_SUMMARY §3 #6).
     c = parse_claude({"session": "new", "claude": {"session": "continue"}})
-    assert c.session == "new"
+    assert c.session == "new-session"
+
+
+def test_legacy_session_alias_continue_or_new():
+    """`continue-or-new` is aliased to `continue` (safe-fallback semantics)."""
+    c = parse_claude({"claude": {"session": "continue-or-new"}})
+    assert c.session == "continue"
 
 
 def test_nested_session_used_when_top_absent():

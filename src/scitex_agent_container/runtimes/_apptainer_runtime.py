@@ -227,7 +227,15 @@ class ApptainerContainerRuntime(RuntimeBase):
                 if cmds and getattr(cmds[0], "command", ""):
                     mission = cmds[0].command
             if mission:
-                runner_argv += ["--mission", mission, "--print-stream"]
+                runner_argv += ["--mission", mission]
+                # --print-stream causes the runner to exit after the
+                # first SDK turn (one-shot semantics). Required when
+                # the operator asked for one-shot via `--one-shot`;
+                # the long-lived path (default) leaves the runner
+                # attached so subsequent `sac agents send` reach the
+                # same session.
+                if getattr(self, "_one_shot", False):
+                    runner_argv.append("--print-stream")
             auto = getattr(config, "autonomous", None)
             if auto is not None and getattr(auto, "enabled", False):
                 runner_argv += [
@@ -320,8 +328,10 @@ class ApptainerContainerRuntime(RuntimeBase):
         force: bool = False,
         dry_run: bool = False,
         foreground: bool = False,
+        one_shot: bool = False,
     ) -> bool:
         del no_preflight
+        self._one_shot = one_shot
         if shutil.which("apptainer") is None:
             return False
 

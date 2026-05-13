@@ -12,7 +12,12 @@ def parse_claude(spec: dict) -> ClaudeSpec:
     # the nested field for backward compat, then the default.
     session = spec.get("session")
     if session is None:
-        session = raw.get("session", "continue-or-new")
+        session = raw.get("session", "continue")
+    # Legacy alias normalization (REQUIREMENT_SUMMARY §3 #6):
+    #   continue-or-new -> continue   (same semantics: safe-fallback)
+    #   new             -> new-session (renamed for clarity)
+    _SESSION_ALIASES = {"continue-or-new": "continue", "new": "new-session"}
+    session = _SESSION_ALIASES.get(str(session), session)
     continue_max_age = raw.get("continue_max_age_minutes")
     if continue_max_age is not None:
         try:

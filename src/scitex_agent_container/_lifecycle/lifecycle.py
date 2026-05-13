@@ -108,6 +108,7 @@ def agent_start(
     resume_id_override: str | None = None,
     dry_run: bool = False,
     foreground: bool = False,
+    one_shot: bool = False,
 ) -> bool:
     """Start an agent from a YAML config file.
 
@@ -119,13 +120,16 @@ def agent_start(
             and then start fresh. Also tolerates stale registry entries
             and ghost screens (via force-stop).
         session_override: If set, override config.claude.session for this
-            start invocation (one of continue-or-new | continue | new | resume).
+            start invocation (one of continue | new-session | resume).
         resume_id_override: If set, override config.claude.resume_id. Pass
             with session_override="resume" to launch ``claude --resume <id>``
             without editing the YAML.
         dry_run: If True, materialize the workspace files but skip the
             multiplexer / Claude Code launch and registry registration.
             Hooks (pre_start / post_start) are also skipped.
+        one_shot: If True, run startup_prompts as a single SDK turn and
+            exit (sets ``--print-stream`` on the runner). Requires
+            ``spec.startup_prompts`` to be non-empty.
 
     Returns True on success, False on failure.
     """
@@ -136,6 +140,11 @@ def agent_start(
         config.claude.session = session_override
     if resume_id_override is not None:
         config.claude.resume_id = resume_id_override
+    if one_shot and not (config.startup_prompts or config.startup_commands):
+        raise RuntimeError(
+            f"--one-shot requires spec.startup_prompts (or legacy "
+            f"startup_commands) on agent '{config.name}'; nothing to run."
+        )
     runtime = _get_runtime(config)
 
     # Already running?
@@ -214,12 +223,10 @@ def agent_start(
     # Config-level no_preflight overrides CLI flag
     if config.remote.no_preflight:
         no_preflight = True
-    success = runtime.start(
-        config,
-        no_preflight=no_preflight,
-        force=force,
-        foreground=foreground,
-    )
+    start_kw = {"no_preflight": no_preflight, "force": force, "foreground": foreground}
+    if one_shot:
+        start_kw["one_shot"] = True
+    success = runtime.start(config, **start_kw)
     if not success:
         raise RuntimeError(f"Failed to start agent '{config.name}'")
 

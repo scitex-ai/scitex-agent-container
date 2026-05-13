@@ -132,7 +132,9 @@ def test_resume_implies_session_resume(monkeypatch):
 def test_resume_conflict_with_session(monkeypatch):
     _patch_chain(monkeypatch)
     runner = CliRunner()
-    result = runner.invoke(start, ["alpha", "--resume", "abc", "--session", "new"])
+    result = runner.invoke(
+        start, ["alpha", "--resume", "abc", "--session", "new-session"]
+    )
     assert result.exit_code == 2
     assert "requires --session resume" in result.output
 
@@ -140,7 +142,7 @@ def test_resume_conflict_with_session(monkeypatch):
 def test_session_override_emitted(monkeypatch):
     _patch_chain(monkeypatch)
     runner = CliRunner()
-    result = runner.invoke(start, ["alpha", "--session", "new"])
+    result = runner.invoke(start, ["alpha", "--session", "new-session"])
     assert result.exit_code == 0
 
 
