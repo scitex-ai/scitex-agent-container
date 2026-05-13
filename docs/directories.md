@@ -6,7 +6,8 @@ Configuration is separated into user-scope and project-scope. Project-scope (`.s
 
 ```
 ~/.scitex/agent-container/ or <project>/.scitex/agent-container/
-├── config.yaml                ← host identity, host.aliases, peers (F-CS12)
+├── config.yaml                ← host identity, host.aliases, peers (F-CS12),
+│                                listen.{host,port}, a2a.port_range
 ├── agents/<name>/             ← per-agent declarations (you write these)
 │   ├── spec.yaml              ← v3 Agent definition (the SSoT)
 │   └── dot_claude/            ← optional: materialized into <workdir> at start

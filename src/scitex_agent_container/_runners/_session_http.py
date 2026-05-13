@@ -108,7 +108,20 @@ async def serve_inbound(
             return JSONResponse(
                 {"error": f"cannot read {spec_yaml_path}: {exc}"}, status_code=500
             )
-        base_url = str(request.base_url).rstrip("/")
+        # Per Layer-5 of auto-port-allocation: prefer the host-stable
+        # ``SAC_LISTEN_BASE_URL`` (injected by the apptainer runtime)
+        # over ``request.base_url``. Under auto-allocation the runner's
+        # own port changes every restart, so anything cached against
+        # ``request.base_url`` would dangle the moment the agent is
+        # restarted. Falling back to ``request.base_url`` keeps direct
+        # ``curl http://127.0.0.1:<runner-port>/.well-known/agent-card.json``
+        # working in non-apptainer test harnesses.
+        import os as _os
+
+        env_base = _os.environ.get("SAC_LISTEN_BASE_URL", "").strip()
+        base_url = (
+            env_base.rstrip("/") if env_base else str(request.base_url).rstrip("/")
+        )
         return JSONResponse(project_card(agent_name, v3, base_url))
 
     # Per-agent sidecar routes — mirror sac listen's path shape so the

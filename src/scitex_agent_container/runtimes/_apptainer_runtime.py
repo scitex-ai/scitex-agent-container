@@ -170,6 +170,17 @@ class ApptainerContainerRuntime(RuntimeBase):
         for key, val in (config.env or {}).items():
             argv += ["--env", f"{key}={val}"]
 
+        # Layer-5 of auto-port-allocation: forward the host-stable
+        # ``sac listen`` base URL so the per-agent sidecar's
+        # ``/.well-known/agent-card.json`` can advertise an ``url``
+        # field that survives restarts. Without this, the card's url
+        # would be built from the runner's own port (auto-allocated
+        # and therefore churning every restart), and any peer that
+        # cached the previous card would dangle on its next call.
+        from .._listen._config import listen_base_url as _listen_base_url
+
+        argv += ["--env", f"SAC_LISTEN_BASE_URL={_listen_base_url()}"]
+
         # v3-realign: spec.apptainer.raw_args (§1 escape-hatch invariant) —
         # appended verbatim after all curated args, before the SIF +
         # inner command. Lets operators bolt on flags sac doesn't model

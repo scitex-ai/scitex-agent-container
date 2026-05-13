@@ -294,6 +294,51 @@ class TestAgentCard:
         )
         assert status == 500
 
+    def test_card_url_uses_sac_listen_base_url_env(self, tmp_path, monkeypatch) -> None:
+        """Layer 5: when ``SAC_LISTEN_BASE_URL`` is set, the card's
+        ``url`` field uses that base — NOT the runner's volatile port.
+
+        This is the contract that keeps an AgentCard's ``url`` stable
+        across runner restarts under auto-port-allocation.
+        """
+        monkeypatch.setenv("SAC_LISTEN_BASE_URL", "http://127.0.0.1:7878")
+        yaml_path = tmp_path / "spec.yaml"
+        yaml_path.write_text(
+            "apiVersion: scitex-agent-container/v3\nkind: Agent\nspec:\n  runtime: apptainer\n"
+        )
+        status, body = self._run_card_scenario(
+            "ecosystem-auditor", str(yaml_path), "/.well-known/agent-card.json"
+        )
+        assert status == 200
+        assert body is not None
+        # AgentCard's `url` advertises the host-stable sac listen base
+        # plus the canonical per-agent path. The runner's own port
+        # (which is _free_port()'d at scenario start) must not leak
+        # into the advertised URL.
+        assert body["url"] == "http://127.0.0.1:7878/v1/sac/agents/ecosystem-auditor"
+
+    def test_card_url_falls_back_to_request_base_when_env_unset(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """Without ``SAC_LISTEN_BASE_URL`` the card's ``url`` falls
+        back to ``request.base_url`` — keeps direct ``curl`` against
+        the runner port working in non-apptainer test harnesses.
+        """
+        monkeypatch.delenv("SAC_LISTEN_BASE_URL", raising=False)
+        yaml_path = tmp_path / "spec.yaml"
+        yaml_path.write_text(
+            "apiVersion: scitex-agent-container/v3\nkind: Agent\nspec:\n  runtime: apptainer\n"
+        )
+        status, body = self._run_card_scenario(
+            "auditor", str(yaml_path), "/.well-known/agent-card.json"
+        )
+        assert status == 200
+        assert body is not None
+        # Without the env override the url is built from request.base_url
+        # (127.0.0.1:<runner-port>) — non-empty, and NOT 7878.
+        assert body["url"].startswith("http://127.0.0.1:")
+        assert body["url"].endswith("/v1/sac/agents/auditor")
+
 
 # ---------------------------------------------------------------------------
 # Name-in-path routes — sidecar mirrors sac listen's shape

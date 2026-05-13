@@ -12,6 +12,25 @@ from ...config import load_config
 from ._console import console
 
 
+def _safe_port_for(name: str) -> int | None:
+    """Return the agent's claimed a2a port, or None on any failure.
+
+    Used by Layer-6 of auto-port-allocation to surface the allocated
+    port in ``sac agents list`` output. Tolerant: a missing state.db,
+    schema-not-yet-initialized error, or unknown name all map to
+    ``None`` so the list command never fails because of port lookup.
+    """
+    # stx-allow: fallback (reason: list output must never crash on a
+    # port-allocator hiccup; ``None`` cell rendered as ``—`` is the
+    # right UX.)
+    try:
+        from ..._state import port_allocator
+
+        return port_allocator.get_port(name)
+    except Exception:  # stx-allow: fallback (reason: see inline comment)
+        return None
+
+
 def _probe_local(cfg) -> bool | None:
     """Probe an agent's liveness via ContainerRuntime.
 
@@ -207,6 +226,11 @@ def get_agent_list_data(
         # key on the row for backward-compat JSON consumers.
         host_label = "local"
         spec_path = str(config_path) if config_path else ""
+        # Layer-6: surface the auto-allocated a2a port so operators can
+        # see which IPC port the sidecar is bound to without grepping
+        # state.db by hand. ``None`` when no claim exists (agent never
+        # started under the allocator, or sidecar-disabled spec).
+        a2a_port = _safe_port_for(name)
         row: dict = {
             "name": name,
             "status": status_val,
@@ -215,6 +239,7 @@ def get_agent_list_data(
             "started_at": started,
             "host": host_label,
             "path": spec_path,
+            "a2a_port": a2a_port,
         }
         if errors:
             row["validation_errors"] = errors
@@ -274,6 +299,7 @@ def get_agent_list_data(
             "started_at": "-",
             "host": "local",
             "path": str(spec_path),
+            "a2a_port": _safe_port_for(name),
         }
         if errors:
             row["validation_errors"] = errors

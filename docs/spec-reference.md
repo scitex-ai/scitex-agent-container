@@ -149,8 +149,34 @@ when `spec.a2a.port` is set) and `GET /v1/sac/agents/<name>/card`
 
 | Field        | Description                                                                          |
 |--------------|--------------------------------------------------------------------------------------|
-| `a2a.port`   | When set, the per-agent sidecar binds: `POST /v1/turn`, `GET /health`, `GET /.well-known/agent-card.json`, `GET /.well-known/agent.json` |
+| `a2a.port`   | `auto` (default) — sac claims a free port from `~/.scitex/agent-container/config.yaml`'s `a2a.port_range` (default 19000-19999), persists in `state.db`, surfaces via `sac agents list`. Set an explicit int (e.g. `7901`) to pin for a stable external URL. Set `null` to disable the sidecar entirely. **Most operators never touch this** — auto is the right default. |
 | `listen.port`| Override for the host-level `sac listen` server port (default 7878)                  |
+
+The per-agent sidecar binds the **same URL shape** as `sac listen`
+(`/v1/sac/agents/<name>/{turn,send,card}`, `/v1/a2a/agents/<name>/...`,
+`/.well-known/agent-card.json`, `/health`), so the same client code
+works against either transport. Per-agent ports are an internal IPC
+mechanism between `sac listen` and the runner (different processes);
+clients reach every agent through the **one stable host port** at
+`sac listen` (default `:7878`).
+
+The AgentCard's `url` field advertises the **sac listen** URL
+(`http://127.0.0.1:7878/v1/sac/agents/<name>`) regardless of which
+endpoint served the card, so external A2A clients caching the card
+get a URL that survives per-agent port churn.
+
+### `~/.scitex/agent-container/config.yaml`
+
+Host-wide sac configuration. All keys optional; defaults shown.
+
+```yaml
+listen:
+  host: 127.0.0.1        # bind interface for sac listen (loopback only)
+  port: 7878             # host control-plane port
+
+a2a:
+  port_range: [19000, 19999]   # range the auto-allocator picks from
+```
 
 ### Skills
 

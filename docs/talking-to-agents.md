@@ -18,13 +18,25 @@ the prompt came through.
 
 ## 1. A2A sidecar — `POST /v1/sac/agents/<name>/turn`
 
-Enable it by setting `spec.a2a.port` in the agent's spec.yaml:
+Enable it by leaving `spec.a2a.port` at its default (`auto`) — sac
+claims a free port from `~/.scitex/agent-container/config.yaml`'s
+`a2a.port_range` (default `[19000, 19999]`) at start time and persists
+it in `state.db`. Operators see the assigned port via `sac agents list`.
+Most agents need no `a2a` block at all:
 
 ```yaml
 spec:
-  a2a:
-    port: 7901          # any free port; loopback only by default
+  # a2a:
+  #   port: auto         # the default; sac picks + persists
+  #   port: 7901         # pin only when you need a stable external URL
+  #   port: null         # disable the sidecar entirely
 ```
+
+**Per-agent ports are an internal IPC detail.** External clients reach
+every agent through the **one stable host port** at `sac listen`
+(default `127.0.0.1:7878`). The AgentCard's `url` field advertises
+that stable URL — so the URL survives restarts even when the
+per-agent port churns.
 
 The per-agent sidecar then exposes the **same URL shape** as the
 host-level `sac listen`, so the same client URL works whether it
