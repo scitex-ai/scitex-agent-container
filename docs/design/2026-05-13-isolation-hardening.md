@@ -148,12 +148,13 @@ preflight_allow sets become indistinguishable on the card.
 |---|---|---|
 | `apptainer.relaxed: false` default | `config/_types.py::ApptainerSpec` | ✅ shipped earlier today |
 | `--containall` auto-prepended | `runtimes/_apptainer_runtime.py` | ✅ shipped |
-| `--cleanenv` auto-prepended | same | ⏳ pending |
-| `--writable-tmpfs` when no overlay | same | ⏳ pending |
-| Universal preflight injection | runtime wraps inner cmd with `sh -c "preflight && exec <inner>"` | ⏳ pending |
-| `spec.apptainer.preflight_allow` field | `config/_types.py::ApptainerSpec` | ⏳ pending |
-| AgentCard structured `isolation` block | `a2a/_card.py::project_card` | ⏳ pending |
-| Regression tests | `tests/.../test__apptainer_runtime.py` + `tests/.../a2a/test__card.py` | ⏳ pending |
+| `--cleanenv` auto-prepended | same | ✅ shipped (D1) |
+| `--writable-tmpfs` when no overlay | same | ✅ shipped (D1) |
+| Universal preflight injection | runtime wraps inner cmd with `bash -c "<preflight>\nexec <inner>"` | ✅ shipped (D2) |
+| `spec.apptainer.preflight_allow` field | `config/_types.py::ApptainerSpec` | ⏳ deferred (out of D1–D4 scope) |
+| AgentCard structured `isolation` block | `a2a/_card.py::project_card` | ✅ shipped (D3) |
+| `sac agents check` D4 bind-target warning | `cli_pkg/build_cmds.py::check` | ✅ shipped (D4) |
+| Regression tests | `tests/.../test__apptainer_runtime.py` + `tests/.../a2a/test__card.py` + `tests/.../cli_pkg/test_build_cmds.py` + `tests/.../runtimes/test__apptainer_isolation.py` + `tests/.../runtimes/test__apptainer_preflight.py` | ✅ shipped |
 
 ## Consequences
 

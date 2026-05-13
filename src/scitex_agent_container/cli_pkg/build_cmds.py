@@ -81,6 +81,11 @@ def check(name_or_path: str) -> None:
         all_ok = False
         console.print(f"  {'python:':30s} [red]FAIL (python3 not found)[/red]")
 
+    # D4 — warn (don't fail) on bind targets that mirror host paths.
+    # Container-canonical roots are /srv/, /work/, /opt/, /data/. See
+    # docs/design/2026-05-13-isolation-hardening.md §D4.
+    _warn_host_mirroring_bind_targets(config)
+
     if all_ok:
         console.print("[green]Ready to deploy.[/green]")
     else:
@@ -88,6 +93,52 @@ def check(name_or_path: str) -> None:
             "[red]Preflight checks failed. Fix the issues above before deploying.[/red]"
         )
         sys.exit(1)
+
+
+# Bind targets that start with these prefixes mirror host home / user
+# directories. ADR D4: container-canonical targets must live under
+# /srv/, /work/, /opt/, /data/.
+_HOST_MIRRORING_TARGET_PREFIXES = ("/home/", "/Users/", "/root/")
+
+
+def _warn_host_mirroring_bind_targets(config) -> None:
+    """Emit a non-fatal warning for each bind whose target mirrors a host path.
+
+    See ``docs/design/2026-05-13-isolation-hardening.md`` §D4. The
+    operator may have HPC reasons to keep mirroring (e.g. cross-host
+    path stability for shared filesystems) so this never fails the
+    check — just makes the deviation visible.
+    """
+    ap = getattr(config, "apptainer", None)
+    if ap is None:
+        return
+    binds = list(getattr(ap, "binds", None) or [])
+    for bind in binds:
+        target = _bind_target(str(bind))
+        if not target:
+            continue
+        if any(target.startswith(p) for p in _HOST_MIRRORING_TARGET_PREFIXES):
+            console.print(
+                f"[yellow]WARN  {config.name}: bind target {target} mirrors a "
+                f"host path; container-canonical convention is /srv/, /work/, "
+                f"/opt/, /data/.\n       See "
+                f"docs/design/2026-05-13-isolation-hardening.md (D4).[/yellow]"
+            )
+
+
+def _bind_target(bind: str) -> str:
+    """Return the container-side target of a ``host:target[:mode]`` bind string.
+
+    Apptainer accepts both ``host:target`` and ``host:target:mode``; we
+    parse with the same heuristic the runtime applies (the trailing
+    token is a mode only if it's exactly ``ro`` or ``rw``).
+    """
+    parts = bind.split(":")
+    if len(parts) < 2:
+        return ""
+    if len(parts) >= 3 and parts[-1] in {"ro", "rw"}:
+        return parts[-2]
+    return parts[1]
 
 
 @click.command()

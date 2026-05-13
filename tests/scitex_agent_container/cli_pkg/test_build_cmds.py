@@ -174,6 +174,67 @@ def test_check_python_not_found_marks_fail(monkeypatch, tmp_path):
     assert "python3 not found" in result.output
 
 
+# ---------------------------------------------------------------------------
+# D4 — sac agents check warns on host-mirroring bind targets
+# (docs/design/2026-05-13-isolation-hardening.md §D4)
+# ---------------------------------------------------------------------------
+
+
+def _cfg_with_binds(binds: list[str], name: str = "auditor"):
+    """Build a config-like object with apptainer.binds set."""
+    return SimpleNamespace(
+        name=name,
+        runtime="apptainer",
+        apptainer=SimpleNamespace(binds=list(binds)),
+    )
+
+
+def _run_check_with_binds(monkeypatch, tmp_path, binds: list[str]):
+    p = tmp_path / "spec.yaml"
+    p.write_text("")
+    monkeypatch.setattr(build_cmds, "resolve_config", lambda _: p)
+    monkeypatch.setattr(build_cmds, "validate_config", lambda _: [])
+    monkeypatch.setattr(build_cmds, "load_config", lambda _: _cfg_with_binds(binds))
+    monkeypatch.setattr(build_cmds.shutil, "which", lambda b: f"/usr/bin/{b}")
+
+    class _Proc:
+        returncode = 0
+        stdout = "Python 3.11.0"
+
+    monkeypatch.setattr(build_cmds.subprocess, "run", lambda *a, **kw: _Proc())
+    return CliRunner().invoke(check, ["x"])
+
+
+def test_check_no_warn_for_canonical_bind_targets(monkeypatch, tmp_path):
+    result = _run_check_with_binds(monkeypatch, tmp_path, ["/srv/foo:/srv/foo:ro"])
+    assert result.exit_code == 0
+    assert "mirrors a host path" not in result.output
+
+
+def test_check_warns_for_home_bind_target(monkeypatch, tmp_path):
+    result = _run_check_with_binds(
+        monkeypatch, tmp_path, ["/home/me/proj:/home/me/proj:ro"]
+    )
+    assert result.exit_code == 0  # warning, NOT failure
+    assert "mirrors a host path" in result.output
+    assert "/home/me/proj" in result.output
+
+
+def test_check_warns_for_multiple_bad_targets_but_still_exits_0(monkeypatch, tmp_path):
+    result = _run_check_with_binds(
+        monkeypatch,
+        tmp_path,
+        [
+            "/home/a:/home/a:ro",
+            "/Users/b:/Users/b:ro",
+            "/root/c:/root/c",
+            "/srv/d:/srv/d:ro",  # canonical — no warning
+        ],
+    )
+    assert result.exit_code == 0
+    assert result.output.count("mirrors a host path") == 3
+
+
 def test_check_runtime_defaults_to_apptainer_when_empty(monkeypatch, tmp_path):
     """An empty `spec.runtime` is treated as apptainer."""
     p = tmp_path / "spec.yaml"
