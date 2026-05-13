@@ -1,30 +1,17 @@
 ── sac image list ──
-containers dir: /home/ywatanabe/.scitex/agent-container/containers
-  scitex-agent-container-base.sif                       996.6 MB
+Traceback (most recent call last):
+  File "/home/ywatanabe/.local/bin/sac", line 3, in <module>
+    from scitex_agent_container.cli import cli_entry_point
+ModuleNotFoundError: No module named 'scitex_agent_container.cli'
 
 ── sac image status ──
-(no containers in /home/ywatanabe/.scitex/agent-container/containers)
+Traceback (most recent call last):
+  File "/home/ywatanabe/.local/bin/sac", line 3, in <module>
+    from scitex_agent_container.cli import cli_entry_point
+ModuleNotFoundError: No module named 'scitex_agent_container.cli'
 
 ── sac image snapshot (preview, first 30 lines) ──
-{
-  "schema_version": "1.0",
-  "timestamp": "2026-05-10T08:50:42.223251+00:00",
-  "container": {
-    "version": null
-  },
-  "host": {
-    "texlive": {
-      "installed": true,
-      "version": "pdfTeX 3.141592653-2.6-1.40.22 (TeX Live 2022/dev/Debian)"
-    },
-    "imagemagick": {
-      "installed": true,
-      "version": "Version: ImageMagick 6.9.11-60 Q16 x86_64 2021-01-25 https://imagemagick.org"
-    }
-  },
-  "dev_repos": [],
-  "lock_files": {}
-}
+(snapshot unavailable in this env)
 
 ── examples (dry-run only) ──
 $ sac image switch 2.28.15

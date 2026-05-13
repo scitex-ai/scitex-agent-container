@@ -1,9 +1,15 @@
 ── existing SIFs (if any) ──
--rwxr-xr-x 1 ywatanabe ywatanabe 1045028864 May 10 16:49 /home/ywatanabe/.scitex/agent-container/containers/scitex-agent-container-base.sif
+lrwxrwxrwx 1 ywatanabe ywatanabe 21 May 13 08:41 /home/ywatanabe/.scitex/agent-container/containers/sac-base.sif -> sac-base/sac-base.sif
+lrwxrwxrwx 1 ywatanabe ywatanabe 25 May 12 22:04 /home/ywatanabe/.scitex/agent-container/containers/sac-scitex.sif -> sac-scitex/sac-scitex.sif
 
 ── sac image list ──
-containers dir: /home/ywatanabe/.scitex/agent-container/containers
-  scitex-agent-container-base.sif                       996.6 MB
+Traceback (most recent call last):
+  File "/home/ywatanabe/.local/bin/sac", line 3, in <module>
+    from scitex_agent_container.cli import cli_entry_point
+ModuleNotFoundError: No module named 'scitex_agent_container.cli'
 
 ── sac image status ──
-(no containers in /home/ywatanabe/.scitex/agent-container/containers)
+Traceback (most recent call last):
+  File "/home/ywatanabe/.local/bin/sac", line 3, in <module>
+    from scitex_agent_container.cli import cli_entry_point
+ModuleNotFoundError: No module named 'scitex_agent_container.cli'

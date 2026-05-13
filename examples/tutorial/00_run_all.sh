@@ -15,8 +15,9 @@ mkdir -p "$OUT_DIR"
 APPLY=""
 [[ "${1:-}" == "--apply" ]] && APPLY="--apply"
 
-for f in "$THIS_DIR"/0[1-9]_*.sh; do
+for f in "$THIS_DIR"/[01][0-9]_*.sh; do
     [ -f "$f" ] || continue
+    [[ "$(basename "$f")" == "00_run_all.sh" ]] && continue
     name="$(basename "$f")"
     echo
     echo "════════════════ $name ════════════════"
