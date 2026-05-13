@@ -113,7 +113,7 @@ sac agents delete hello-agent-1 hello-agent-2 -y
 
 ### Tutorial
 
-[`examples/tutorial/`](examples/tutorial/) walks through the runtime in 9 lessons (build, sandbox/update/freeze, versioning, run/stop, logs/exec, mounts, env+user). Run them read-only with `bash 00_run_all.sh`, or `--apply` to execute the mutating ones.
+[`examples/`](examples/) walks through the runtime in 15 lessons (image build, sandbox/update/freeze, versioning, run/send/tail, logs/exec, stop/remove, binds, env+user, writing your first spec.yaml, dot_claude/, A2A endpoint, health+restart, multi-host, debugging). Run them read-only with `bash examples/00_run_all.sh`, or `--apply` to execute the mutating ones.
 
 ## How it works
 

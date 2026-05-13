@@ -30,10 +30,10 @@
 #   sac agents list --priority          # ordered by priority label
 #   sac agents list <name> --snapshot   # one-shot state dump
 #   # → NAME           STATUS    LOCATION                     IMAGE
-#   # → hello-agent    running   ywata-note-win@/tmp:/work    sac-base.sif
+#   # → hello-agent    running   myhost@/tmp:/work    sac-base.sif
 #
 # Locations use host@host-workdir:container-workdir
-# (e.g. ywata-note-win@/tmp:/work), not the old "LOCAL" label.
+# (e.g. myhost@/tmp:/work), not the old "LOCAL" label.
 #
 # Key difference: `apptainer instance list` shows what's RUNNING NOW.
 # `sac agents list` shows what's REGISTERED — including stopped agents

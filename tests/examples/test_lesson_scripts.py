@@ -1,4 +1,4 @@
-"""Regression tests for ``examples/tutorial/*.sh``.
+"""Regression tests for ``examples/*.sh`` lesson scripts.
 
 Three guarantees per script:
 
@@ -23,13 +23,15 @@ from pathlib import Path
 
 import pytest
 
-TUTORIAL_DIR = Path(__file__).resolve().parents[3] / "examples" / "tutorial"
+LESSONS_DIR = Path(__file__).resolve().parents[2] / "examples"
 
-# Numbered demo scripts (01..09) — safe to invoke without --apply.
-NUMBERED_SCRIPTS = sorted(TUTORIAL_DIR.glob("0[1-9]_*.sh"))
+# Numbered lesson scripts (01..15) — safe to invoke without --apply.
+NUMBERED_SCRIPTS = [
+    p for p in sorted(LESSONS_DIR.glob("[01][0-9]_*.sh")) if p.name != "00_run_all.sh"
+]
 
-# Every .sh in the tutorial directory, including the 00 orchestrator.
-ALL_SCRIPTS = sorted(TUTORIAL_DIR.glob("*.sh"))
+# Every .sh in the examples directory, including the 00 orchestrator.
+ALL_SCRIPTS = sorted(LESSONS_DIR.glob("*.sh"))
 
 # Substrings that must never appear in any tutorial script: legacy CLI
 # names, dropped runtime flags, dockerfile-era recipe filenames, and

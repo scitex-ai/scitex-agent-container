@@ -60,7 +60,7 @@ echo "── (A) apptainer instance logs (raw stdout/stderr) ──"
 echo '$ apptainer instance logs '"$NAME"
 # shellcheck disable=SC2016
 echo '$ ls "$APPTAINER_LOG_DIR/$(hostname)/$USER/"'
-APPTAINER_LOG_HOST_DIR="$APPTAINER_LOG_DIR/$(hostname)/$USER"
+APPTAINER_LOG_HOST_DIR="$APPTAINER_LOG_DIR/$(hostname)/${USER:-$(id -un)}"
 if [[ -d "$APPTAINER_LOG_HOST_DIR" ]]; then
     # shellcheck disable=SC2012
     ls "$APPTAINER_LOG_HOST_DIR/" 2>/dev/null | head -5 || true

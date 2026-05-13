@@ -16,31 +16,31 @@
 #
 # Two host-related fields in spec.yaml:
 #
-#   spec.host: spartan
-#     # singleton: this agent runs on the peer named "spartan".
+#   spec.host: gpu-box
+#     # singleton: this agent runs on the peer named "gpu-box".
 #     # `sac agents start` from any host dispatches there.
 #
-#   spec.hosts: [mba, spartan, nas]
+#   spec.hosts: [laptop, gpu-box, nas]
 #     # multi-instance: one copy per host. `sac agents start` boots
-#     # three apptainer instances, named e.g. my-agent@mba.
+#     # three apptainer instances, named e.g. my-agent@laptop.
 #
 # Where are peers defined?
 #   ~/.scitex/agent-container/hosts.yaml (or per-project override).
 #   Each peer entry has an ssh target and per-host paths. Inspect:
 #     sac host list
-#     sac host show spartan
-#     sac host probe spartan       # round-trip ssh + sac --version
+#     sac host show gpu-box
+#     sac host probe gpu-box       # round-trip ssh + sac --version
 #
 # Cross-host dispatch — the `--on` global flag:
 #
-#   sac --on spartan agents list
-#     # → equivalent to: ssh spartan sac agents list
+#   sac --on gpu-box agents list
+#     # → equivalent to: ssh gpu-box sac agents list
 #     # but routes through the control-plane (sac listen) bearer-auth
 #     # rather than a fresh ssh per call (faster, auditable).
 #
-#   sac --on spartan agents start my-agent
-#   sac --on spartan agents tail  my-agent --json
-#   sac --on spartan agents stop  my-agent
+#   sac --on gpu-box agents start my-agent
+#   sac --on gpu-box agents tail  my-agent --json
+#   sac --on gpu-box agents stop  my-agent
 #
 # Local agent-to-agent across hosts:
 #   sac channel send <to-agent> "<msg>"
@@ -52,7 +52,7 @@
 set -euo pipefail
 APPLY="${1:-}"
 
-PEER="${SAC_DEMO_PEER:-spartan}"
+PEER="${SAC_DEMO_PEER:-gpu-box}"
 
 echo "── List configured peers ──"
 echo '$ sac host list'
@@ -72,7 +72,7 @@ echo
 echo "── spec.yaml: one copy per host ──"
 cat <<'YAML'
 spec:
-  hosts: [mba, spartan, nas]
+  hosts: [laptop, gpu-box, nas]
   runtime: apptainer
 YAML
 
