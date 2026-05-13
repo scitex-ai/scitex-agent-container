@@ -13,7 +13,12 @@
 #   * cross-cutting features (health, restart, autonomous, A2A)
 
 apiVersion: scitex-agent-container/v3   # REQUIRED — v1/v2 are rejected
-kind: Agent                             # REQUIRED
+
+# REQUIRED. One of:
+#   Agent       — claude-code SDK runner (this template, the common case)
+#   AgentProxy  — HTTP forwarder to an upstream A2A endpoint; no SDK.
+#                 See examples/agents/proxy-agent/ for the AgentProxy shape.
+kind: Agent
 
 # --------------------------------------------------------------------------
 # metadata.labels — drives `sac fleet` filters AND the AgentCard surface.
@@ -55,8 +60,10 @@ spec:
   runtime: apptainer
 
   # Workspace mounted rw at /work inside the container.
-  # Default: ~/.scitex/agent-container/runtime/agents/<name>/
-  workdir: ~/proj
+  # Default: ~/.scitex/agent-container/runtime/agents/<name>/  (auto-derived)
+  # Set explicitly when you want the agent's /work to map to a specific
+  # host path (e.g. an existing project tree). Example:
+  # workdir: ~/proj/your-project
 
   # dot_claude/ sibling — materialized into <workdir>/.claude/ at start.
   # Can contain: CLAUDE.md, .mcp.json, .env, state.md,
@@ -96,27 +103,37 @@ spec:
     # Writable overlay layered on top of the SIF.
     # overlay: ./overlay.img
 
-    # Extra bind mounts. Default: apptainer auto-binds /home/$USER.
+    # Extra bind mounts. With the default hardened isolation
+    # (apptainer.relaxed: false), NOTHING is auto-bound — declare every
+    # path the agent needs to see. Use $HOME (expanded by sac before
+    # invoking apptainer) so the example is portable across operators.
     binds:
-      # Read-only source tree so the agent can inspect repos.
-      - /home/ywatanabe/proj:/home/ywatanabe/proj:ro
-      # Git identity for `git status` / `gh` operations.
-      - /home/ywatanabe/.gitconfig:/home/ywatanabe/.gitconfig:ro
-      # SSH config + agent socket for remote-aware tooling.
-      - /home/ywatanabe/.ssh:/home/ywatanabe/.ssh:ro
+      # Example: read-only source tree so the agent can inspect repos.
+      # - $HOME/proj:$HOME/proj:ro
+      # Example: git identity for read-only `git status` / `gh` calls.
+      # - $HOME/.gitconfig:$HOME/.gitconfig:ro
+      # Example: ssh — only bind if the agent provably needs to ssh out.
+      # - $HOME/.ssh:$HOME/.ssh:ro
 
     # Container env vars (in addition to sac-auto vars).
-    env:
-      ECOSYSTEM_AUDITOR_VERSION: "v1"
+    # env:
+    #   MY_PROJECT_FLAG: "v1"
 
     # GPU passthrough (mutually exclusive).
     # nv: true     # NVIDIA CUDA
     # rocm: true   # AMD ROCm
 
+    # Isolation: hardened by default (sac auto-prepends --containall to
+    # the apptainer argv unless this is true OR you declared --containall
+    # in raw_args yourself). See docs/isolation.md for the 10 leak
+    # families that --containall closes.
+    relaxed: false
+
     # Escape hatch — appended verbatim to `apptainer exec` argv.
+    # See docs/isolation.md for the recommended hardening flags.
     # raw_args:
-    #   - --cleanenv
-    #   - --userns
+    #   - --cleanenv                 # strip host env vars
+    #   - --pid                      # PID namespace isolation
 
   # ----------------------------------------------------------------------
   # claude block — SDK-scoped knobs (raw_options is the escape hatch).
@@ -165,10 +182,16 @@ spec:
 
   # ----------------------------------------------------------------------
   # startup_commands — SHELL commands run before claude starts.
+  # Preflight checks here fail-fast on isolation breaches and missing
+  # deps before Claude touches anything. See docs/isolation.md for the
+  # recommended preflight pattern.
   # ----------------------------------------------------------------------
   # startup_commands:
-  #   - "uv sync"
-  #   - "source .venv/bin/activate"
+  #   # Preflight (recommended): assert isolation held.
+  #   - 'test "$(id -u)" != "0" || (echo "ERROR: running as root" && exit 1)'
+  #   - 'test ! -e /opt/python3.12 || (echo "ERROR: host /opt leaked" && exit 1)'
+  #   # Then real install (idempotent — pip noop's if already satisfied).
+  #   - "uv pip install -e $HOME/proj/your-package[all] --quiet"
 
   # ----------------------------------------------------------------------
   # startup_prompts — TEXT fed to claude as the first user message(s).
@@ -177,11 +200,8 @@ spec:
   # ----------------------------------------------------------------------
   startup_prompts:
     - |
-      You are the scitex ecosystem auditor. Run `scitex-dev ecosystem
-      dashboard` and `scitex-dev ecosystem audit-all` and summarize:
-      which packages are green, which have audit failures, which have
-      uncommitted changes, which are on a non-develop branch. Keep
-      under ~60 lines. Stay alive for follow-up POSTs on /v1/turn.
+      You are a generic worker template. Replace this prompt with your
+      agent's actual mission. Reply READY when initialized.
 
   # ----------------------------------------------------------------------
   # startup — broader pre-launch policy block.
@@ -237,14 +257,20 @@ spec:
 
   # ----------------------------------------------------------------------
   # a2a — per-agent inbound HTTP turn endpoint.
-  # When `port` is set, the runner exposes:
-  #   POST /v1/turn   — {"text": "..."} drops onto the live SDK session
-  #   GET  /health    — liveness probe
-  #   GET  /.well-known/agent-card.json   — A2A discovery card (from this spec)
-  #   GET  /.well-known/agent.json        — alternate discovery path
+  # When `port` is set, the runner exposes (also via `sac listen`):
+  #   POST /v1/sac/agents/<name>/{turn,send}   canonical (mirrored at /v1/a2a/...)
+  #   GET  /v1/sac/agents/<name>/card          AgentCard (also /.well-known/agent-card.json)
+  #   GET  /health
+  # Per-agent ports are INTERNAL IPC; external clients reach every agent
+  # through the host's `sac listen` (default :7878). Operators normally
+  # leave port: auto — sac claims from config.yaml's a2a.port_range
+  # (default 19000-19999) and persists in state.db. `sac agents list`
+  # shows the assigned port.
   # ----------------------------------------------------------------------
   a2a:
-    port: 7901
+    port: auto                  # default — sac picks from the range
+    # port: 7901                # pin only when a stable external URL is needed
+    # port: null                # disable the per-agent sidecar entirely
 
   # ----------------------------------------------------------------------
   # listen — also exposes the agent via the host-level `sac listen` server.
