@@ -19,6 +19,7 @@ from ._parsers import (
     parse_hooks,
     parse_hosts_spec,
     parse_listen,
+    parse_proxy,
     parse_restart,
     parse_skills,
     parse_startup,
@@ -260,6 +261,9 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     startup_prompts_raw = spec.get("startup_prompts", []) or []
     startup_prompts = [str(p) for p in startup_prompts_raw if p]
 
+    kind = str(raw.get("kind", "Agent"))
+    proxy_spec = parse_proxy(spec, kind=kind)
+
     return AgentConfig(
         name=name,
         runtime=str(spec.get("runtime") or "apptainer"),
@@ -293,5 +297,7 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         config_path=str(path),
         user=str(spec.get("user", "")),
         a2a=parse_a2a(spec),
+        kind=kind,
+        proxy=proxy_spec,
         dot_claude=str(spec.get("dot_claude", "")),
     )

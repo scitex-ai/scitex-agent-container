@@ -49,6 +49,11 @@ _VALID_API_VERSIONS = ("scitex-agent-container/v3",)
 
 _KNOWN_TOP_LEVEL_KEYS = frozenset({"apiVersion", "kind", "metadata", "spec"})
 
+# v3 ``kind`` discriminator. ``Agent`` = SDK runner (claude_session);
+# ``AgentProxy`` = HTTP forwarder (a2a_proxy) with NO SDK. Anything
+# else is rejected at parse time.
+_VALID_KINDS = frozenset({"Agent", "AgentProxy"})
+
 
 _SDK_IMAGE = "scitex-agent-container:scitex"
 
@@ -81,6 +86,7 @@ _KNOWN_SPEC_KEYS = frozenset(
         "session",  # shortcut alias for spec.claude.session
         "scheduling",  # rejected with a specific actionable message below
         "a2a",  # A2A sidecar config read by a2a/_server.py
+        "proxy",  # AgentProxy upstream forwarder block (kind: AgentProxy only)
         "autonomous",  # F-CS3 — drive-until-done block
         "apptainer",  # F-CS18 — apptainer-specific build extension
         "user",  # container user: "host" | "uid:gid" | "" (image default)
@@ -139,8 +145,8 @@ def validate_raw(raw: dict, path: str) -> list[str]:
 
     # kind
     kind = raw.get("kind")
-    if kind != "Agent":
-        errors.append(f"kind must be 'Agent', got '{kind}'")
+    if kind not in _VALID_KINDS:
+        errors.append(f"kind must be one of {sorted(_VALID_KINDS)}, got '{kind}'")
 
     # metadata (optional dict — agent name comes from parent dir, not from
     # metadata.name; the field is no longer accepted)
@@ -368,6 +374,38 @@ def validate_raw(raw: dict, path: str) -> list[str]:
                 enabled = autonomous.get("enabled")
                 if enabled is not None and not isinstance(enabled, bool):
                     errors.append("spec.autonomous.enabled must be a boolean")
+
+        # kind: AgentProxy coupling rules.
+        #
+        # AgentProxy has NO SDK — it's a thin HTTP forwarder. So:
+        #   * spec.proxy is REQUIRED (no upstream → nothing to forward to)
+        #   * spec.claude is IGNORED (no SDK to configure); operator
+        #     authoring it is a category error we surface loudly.
+        #   * spec.startup_prompts / spec.startup_commands are IGNORED
+        #     for the same reason — no SDK to prompt.
+        #
+        # The mirror also holds for kind: Agent — spec.proxy is rejected
+        # there because the SDK runner doesn't read it.
+        if kind == "AgentProxy":
+            proxy_block = spec.get("proxy")
+            if proxy_block is None:
+                errors.append(
+                    "spec.proxy is required when kind: AgentProxy "
+                    "(no upstream to forward to)."
+                )
+            for forbidden in ("claude", "startup_prompts", "startup_commands"):
+                val = spec.get(forbidden)
+                if val:
+                    errors.append(
+                        f"spec.{forbidden} is not allowed when kind: AgentProxy "
+                        "(proxy has no SDK to configure / prompt). Remove the field."
+                    )
+        elif kind == "Agent":
+            if "proxy" in spec:
+                errors.append(
+                    "spec.proxy is only meaningful when kind: AgentProxy; "
+                    "remove it for kind: Agent."
+                )
 
         # Reject the old `scheduling:` block — replaced by host/hosts.
         if "scheduling" in spec:

@@ -451,6 +451,14 @@ class AgentConfig:
     user: str = ""
     # Inbound A2A endpoint (HTTP /v1/turn + AgentCard).
     a2a: A2ASpec = field(default_factory=A2ASpec)
+    # v3 ``kind`` discriminator: "Agent" (SDK runner) or "AgentProxy"
+    # (HTTP forwarder — see :class:`ProxySpec`). Validator rejects any
+    # other value. Loader populates from raw["kind"].
+    kind: str = "Agent"
+    # ProxySpec is only meaningful when ``kind == AgentProxy``.
+    # Stored as ``Any`` here so this module stays import-cycle-free with
+    # ``_proxy_types``; the actual type is ``ProxySpec | None``.
+    proxy: Any = None
     # F-DC1: spec.dot_claude — single directory that holds CLAUDE.md, .mcp.json,
     # .env, state.md, commands/, skills/, hooks/, etc. and is materialized into
     # the agent's workdir at start (replaces the legacy ``src_*`` siblings).

@@ -14,6 +14,7 @@ import yaml
 
 from ._host import resolve_hostname, substitute_hostnames
 from ._loaders import compose_effective_name, load_v3
+from ._proxy_types import ProxySpec
 from ._resolve import resolve_config
 from ._types import (
     AgentConfig,
@@ -45,6 +46,7 @@ __all__ = [
     "HookSpec",
     "HostsSpec",
     "ListenPort",
+    "ProxySpec",
     "ReadyPattern",
     "RemoteSpec",
     "RestartSpec",
