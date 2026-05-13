@@ -1,5 +1,5 @@
 <!-- ---
-!-- Timestamp: 2026-05-13 09:19:14
+!-- Timestamp: 2026-05-13 09:57:25
 !-- Author: ywatanabe
 !-- File: /home/ywatanabe/proj/scitex-agent-container/README.md
 !-- --- -->
@@ -55,34 +55,37 @@ uv pip install "scitex-agent-container[all]"
 sac image build base # base image; ~5 min
 # built /home/ywatanabe/.scitex/agent-container/containers/sac-base/sac-base.sif
 
-# 2. Define YAML files for agents
-for agent_id in 1 2 3; do
-    agent_dir=~/.scitex/agent-container/agents/"hello-agent-$agent_id"
+# 2. Define agents by writing YAML files under ~/.scitex/agent-container/agents/<agent-name>
+define_hello_agents() {
+    for agent_id in 1 2 3; do
+        agent_dir=~/.scitex/agent-container/agents/"hello-agent-$agent_id"
 
-    mkdir -p "$agent_dir"
-    # Unquoted heredoc tag — shell expands $agent_name before write.
-    # Escape any literal `$` that should reach YAML verbatim (none here).
-    cat > "$agent_dir/spec.yaml" <<YAML
-apiVersion: scitex-agent-container/v3
-kind: Agent
+        mkdir -p "$agent_dir"
+        # Unquoted heredoc tag — shell expands $agent_name before write.
+        # Escape any literal `$` that should reach YAML verbatim (none here).
+        cat > "$agent_dir/spec.yaml" <<YAML
+    apiVersion: scitex-agent-container/v3
+    kind: Agent
 
-spec:
-  runtime: apptainer
-  workdir: /tmp/$agent_name
+    spec:
+      runtime: apptainer
+      workdir: /tmp/$agent_name
 
-  apptainer:
-    image: ~/.scitex/agent-container/containers/sac-base.sif
+      apptainer:
+        image: ~/.scitex/agent-container/containers/sac-base.sif
 
-  claude:
-    model: haiku
-    flags:
-      - --dangerously-skip-permissions
+      claude:
+        model: haiku
+        flags:
+          - --dangerously-skip-permissions
 
-  startup_prompts:
-    - "Reply with the string 'Hello! I am hello-agent-$agent_id' and nothing else."
+      startup_prompts:
+        - "Reply with the string 'Hello! I am hello-agent-$agent_id' and nothing else."
 YAML
 
-done
+    done
+}
+define_hello_agents
 
 # 3. Start an agent in foreground
 sac agents start hello-agent-1 --foreground  # streams stdout
@@ -91,13 +94,15 @@ sac agents start hello-agent-1 --foreground  # streams stdout
 # Agent 'hello-agent-1' started successfully [LOCAL]
 
 # 4. Check agents
-sac agents status
-#                               Registered Agents                              
-# ┏━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━┓
-# ┃ Name          ┃ Status  ┃ Location ┃ Screen        ┃ Started              ┃
-# ┡━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━┩
-# │ hello-agent-1 │ stopped │ LOCAL    │ hello-agent-1 │ 2026-05-12T23:44:48Z │
-# └───────────────┴─────────┴──────────┴───────────────┴──────────────────────┘
+sac agents list
+#                                                            Agents                                                            
+# ┏━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┓
+# ┃ Name          ┃ Status  ┃ YAML ┃ Host  ┃ Path                                                                   ┃ Started ┃
+# ┡━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━┩
+# │ hello-agent-1 │ defined │ ✓    │ local │ /home/ywatanabe/.scitex/agent-container/agents/hello-agent-1/spec.yaml │ —       │
+# │ hello-agent-2 │ defined │ ✓    │ local │ /home/ywatanabe/.scitex/agent-container/agents/hello-agent-2/spec.yaml │ —       │
+# │ hello-agent-3 │ defined │ ✓    │ local │ /home/ywatanabe/.scitex/agent-container/agents/hello-agent-3/spec.yaml │ —       │
+# └───────────────┴─────────┴──────┴───────┴────────────────────────────────────────────────────────────────────────┴─────────┘
 
 # 5. Start multiple agents in background (default)
 sac agents start hello-agent-1 hello-agent-2 hello-agent-3
@@ -152,26 +157,17 @@ sac agents tail hello-agent-1 hello-agent-2 hello-agent-3 --json
 
 # 7. Stop agents
 sac agents stop hello-agent-1 hello-agent-2 hello-agent-3
-sac agents status
+sac agents list
 # ls ~/.scitex/agent-container/agents # only stopped
 
 # 8. Delete agents
 sac agents delete hello-agent-1 hello-agent-2 hello-agent-3 -y
-sac agents delete hello-agent hello-agent2 hello-agent3
+# deleted hello-agent-1
+# deleted hello-agent-2
+# deleted hello-agent-3
 
-sac agents status
-
-# No agents registered.
-#
-# Claude Code account
-#   Email:          wyusuuke@gmail.com
-#   Organization:   wyusuuke@gmail.com's Organization
-#   Display name:   Yusuke
-#   Billing type:   stripe_subscription
-#   Subscription:   max  (tier: default_claude_max_20x)
-#   Available:      -
-#   Extra usage:    enabled
-#   Since:          2025-05-04T06:41:46.877655Z
+sac agents list
+# No agents found (registry empty, no specs on disk).
 ```
 
 ## How it works
@@ -431,7 +427,7 @@ sac agents stop   <name>                  # graceful SIGTERM, escalate to SIGKIL
 sac agents restart <name>
 sac agents send   <name> "<prompt>"       # send a follow-up turn to a running session
 sac agents send   <name> --key ESC        # interrupt current turn
-sac agents status [<name>] [--snapshot] [--priority]
+sac agents list [<name>] [--snapshot] [--priority]
 sac agents health <name>
 sac agents tail   <name>                  # render session.jsonl (structured transcript)
 sac agents recall <name>                  # human-readable session summary

@@ -438,25 +438,43 @@ def start(
                 else:
                     console.print(f"[yellow]Skipping '{config.name}': {skip}[/yellow]")
                 continue
-            location = (
-                f"REMOTE: {config.remote.host}" if config.remote.is_remote else "LOCAL"
+            # hook-bypass: line-limit (host@workdir + [sac] prefix + json/foreground split; lifecycle_cmds.py refactor deferred)
+            # Location reads as `host@workdir` (was bare "LOCAL"/"REMOTE: x")
+            # so the operator sees who they're talking to AND where the
+            # filesystem mount lands inside the container. The runtime
+            # column is gone — sac is apptainer-only post-2026-05-13.
+            host = (
+                config.remote.host
+                if config.remote.is_remote
+                else (resolve_hostname() or "local")
             )
+            workdir = config.expanded_workdir
+            location = f"{host}@{workdir}"
+            # `--foreground --json` was emitting the JSON summary on the
+            # same line as the runner's tail-of-stdout (Claude's reply
+            # has no trailing newline). Redirect the JSON to stderr in
+            # that combo so a `2>/dev/null` strips it cleanly and the
+            # stdout stream stays exclusively the agent's voice.
+            json_stream_err = as_json and foreground and not dry_run
+
+            def _emit(obj):
+                line = _json.dumps(obj, ensure_ascii=False)
+                click.echo(line, err=json_stream_err)
+
             if not as_json:
                 console.print(
-                    f"[blue]{'Dry-running' if dry_run else 'Starting'} agent "
-                    f"'{config.name}' (runtime: {config.runtime}, {location})...[/blue]"
+                    f"[blue][sac][/blue] [dim]{'dry-run' if dry_run else 'starting'}[/dim] "
+                    f"[bold]{config.name}[/bold] [dim]→ {location}[/dim]"
                 )
                 if no_preflight:
-                    console.print(
-                        "[dim]Preflight checks skipped (--no-preflight)[/dim]"
-                    )
+                    console.print("[dim][sac] preflight skipped (--no-preflight)[/dim]")
                 if force:
                     console.print(
-                        "[dim]Force mode: stopping any existing instance first[/dim]"
+                        "[dim][sac] force mode — stopping any existing instance first[/dim]"
                     )
                 if session_mode:
                     console.print(
-                        f"[dim]Session override: claude.session = {session_mode}"
+                        f"[dim][sac] session override: claude.session = {session_mode}"
                         + (f", resume_id = {resume_id}" if resume_id else "")
                         + "[/dim]"
                     )
@@ -470,35 +488,24 @@ def start(
                 foreground=foreground,
             )
             if as_json:
-                _emit_json(
+                _emit(
                     {
                         "name": config.name,
                         "status": "dry_run_ok" if dry_run else "started",
-                        "runtime": config.runtime,
-                        "location": location.lower(),
-                        "workdir": config.expanded_workdir,
+                        "host": host,
+                        "workdir": workdir,
                         "dry_run": dry_run,
                     }
                 )
             else:
-                # hook-bypass: line-limit (foreground newline polish; lifecycle_cmds.py split deferred)
-                verb = (
-                    "dry-run prepared the workspace for"
-                    if dry_run
-                    else "started successfully ["
-                )
-                tail = "" if dry_run else f"[{location}]"
-                # --foreground streams the runner's stdout to this
-                # tty; the last chunk often has no trailing newline
-                # (Claude's reply is bare text), so the success
-                # summary would jam onto the same line. Lead-newline
-                # breaks the join.
                 if foreground and not dry_run:
+                    # Agent stdout often lacks a trailing newline; break
+                    # the join before our success summary lands.
                     click.echo("")
+                verb = "dry-run prepared the workspace for" if dry_run else "started"
                 console.print(
-                    f"[green]Agent '{config.name}' {verb}{tail}[/green]"
-                    if dry_run
-                    else f"[green]Agent '{config.name}' started successfully [{location}][/green]"
+                    f"[green][sac][/green] [bold]{config.name}[/bold] {verb}"
+                    + ("" if dry_run else f" [dim]({location})[/dim]")
                 )
                 if (
                     not dry_run
