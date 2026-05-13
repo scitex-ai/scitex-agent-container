@@ -525,15 +525,26 @@
 
 
 
-<span class="c1"># Parsed for backward compat but not interpreted by runtime.</span>
-<span class="c1"># Inbound A2A surface for an agent. When ``port`` is set, the SDK runner</span>
-<span class="c1"># launches a sidecar HTTP server exposing ``/v1/turn`` (worker → agent</span>
-<span class="c1"># message ingress) and ``/.well-known/agent.json`` (agent card) so other</span>
-<span class="c1"># agents can post-turn this one.</span>
+<span class="c1"># Inbound A2A surface for an agent. The SDK runner launches a sidecar</span>
+<span class="c1"># HTTP server exposing ``/v1/turn`` + ``/.well-known/agent.json``.</span>
+<span class="c1"># ``port`` semantics:</span>
+<span class="c1">#   * ``&quot;auto&quot;`` (default) — sac allocates via port_allocator at start.</span>
+<span class="c1">#     Clients should reach the agent through ``sac listen`` (one host</span>
+<span class="c1">#     port, name-in-path); per-agent ports are internal IPC.</span>
+<span class="c1">#   * ``int``   — operator-pinned; collisions raise at start time.</span>
+<span class="c1">#   * ``None``  — sidecar disabled (no inbound HTTP).</span>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">A2ASpec</span><span class="p">:</span>
     <span class="n">host</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;127.0.0.1&quot;</span>
-    <span class="n">port</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">port</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="s2">&quot;auto&quot;</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">is_auto</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">port</span> <span class="o">==</span> <span class="s2">&quot;auto&quot;</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">is_disabled</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">port</span> <span class="ow">is</span> <span class="kc">None</span>
 
 
 <span class="c1"># Telegram setup is managed externally via hooks.</span>
