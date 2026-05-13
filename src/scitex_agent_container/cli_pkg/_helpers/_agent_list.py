@@ -76,7 +76,6 @@ def get_agent_list_data(
     # sac on the remote host; the remote sac then reports its own
     # local list. So this function probes every agent locally.
     prepared: list[dict] = []
-    config_path = None
     for idx, entry in enumerate(entries):
         name = entry.get("name", "?")
         screen_name = entry.get("screen", "?")
@@ -111,6 +110,7 @@ def get_agent_list_data(
             "started": started,
             "labels": labels,
             "cfg": cfg,
+            "config_path": config_path,
         }
         prepared.append(prep)
 
@@ -155,13 +155,10 @@ def get_agent_list_data(
         finally:
             pool.shutdown(wait=False)
 
-    # Third pass: build result rows.
-    #
-    # Note: ``config_path`` leaks from the first pass's last iteration —
-    # preserved verbatim from the pre-split implementation to keep
-    # behavior byte-identical. The validation pass below therefore
-    # validates the LAST entry's config_path for every row, not each
-    # row's own spec. Pre-existing; not in scope for this refactor.
+    # Third pass: build result rows. Per-row config_path is pulled
+    # from each ``prep`` dict so validation runs against the agent's
+    # own spec.yaml (was previously leaking the last loop iteration's
+    # path — fixed 2026-05-13).
     results: list[dict] = []
     for prep in prepared:
         name = prep["name"]
@@ -169,6 +166,7 @@ def get_agent_list_data(
         started = prep["started"]
         labels = prep["labels"]
         cfg = prep["cfg"]
+        config_path = prep["config_path"]
 
         # ``multiplexer`` is the F-CS17 successor of the screen / tmux
         # column: it now reports the container engine the agent runs

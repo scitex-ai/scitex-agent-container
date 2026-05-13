@@ -14,14 +14,13 @@ object** as the flat top-level one — no aliasing layer that could
 drift.
 """
 
-from . import account, agent, db, host, image, mcp, skills, template
+from . import account, agent, db, host, image, mcp, skills
 
 __all__ = [
     "agent",
     "db",
     "host",
     "image",
-    "template",
     "account",
     "skills",
     "mcp",

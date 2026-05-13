@@ -38,7 +38,7 @@ COMMAND_CATEGORIES = [
         ["host", "network", "peer", "a2a", "fleet", "listen", "channel"],
     ),
     ("Registry & Events", ["db", "registry", "event", "actions"]),
-    ("Build & Install", ["image", "installation", "template"]),
+    ("Build & Install", ["image", "installation"]),
     ("Introspection", ["mcp", "list-python-apis", "skills"]),
     ("Developer", ["dev"]),
 ]
@@ -61,7 +61,6 @@ class _MainGroup(LazyGroup):
         "event": f"{_PKG}.event_group:event_group",
         "network": f"{_PKG}.network_group:network_group",
         "image": f"{_PKG}.image_group:image_group",
-        "template": f"{_PKG}.template_group:template_group",
         "skills": f"{_PKG}.skills_group:skills_group",
         # `accounts` moved under `sac agents accounts` (nested noun group).
         "a2a": f"{_PKG}.a2a_cmds:a2a",
@@ -223,7 +222,6 @@ class _MainGroup(LazyGroup):
         "event": "Event log operations: ingest hook events into the per-agent ring buffer.",
         "network": "Network operations: liveness probes, fleet connectivity.",
         "image": "Container image operations: build the runtime base image.",
-        "template": "Render text templates (contributor spec).",
         "skills": "Agent-facing skills bundled with scitex-agent-container.",
         "auto-accept": "Auto-accept TUI handler for Claude Code permission prompts.",
         "a2a": "A2A protocol — generic agent-to-agent surface (no fleet deps).",
@@ -260,13 +258,12 @@ class _MainGroup(LazyGroup):
             f"{_PKG}.priority_cmds:priority_check",
             "sac agent check-priority",
         ),
-        # Render / template
-        "render-contributor-spec": (
-            f"{_PKG}.contributor_spec_cmds:contributor_spec",
-            "sac template render-contributor-spec",
+        # Quota (folded under `sac agents accounts watch-quota` after the
+        # contributor / template surface was deleted as orochi-specific).
+        "watch-quota": (
+            f"{_PKG}.account_cmds:quota_watch",
+            "sac agents accounts watch-quota",
         ),
-        # Quota
-        "watch-quota": (f"{_PKG}.account_cmds:quota_watch", "sac quota watch"),
         # Hook events
         "ingest-hook-event": (f"{_PKG}.hook_cmds:hook_event", "sac event ingest"),
         # Registry — ``registry clean`` is now ``db clean`` (F-CS11 phase 5);

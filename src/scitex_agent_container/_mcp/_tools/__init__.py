@@ -19,7 +19,6 @@ from ._host import register_host_tools
 from ._image import register_image_tools
 from ._info import register_info_tools
 from ._skills import register_skills_tools
-from ._template import register_template_tools
 
 
 def register_all_tools(mcp) -> None:
@@ -28,7 +27,6 @@ def register_all_tools(mcp) -> None:
     register_db_tools(mcp)
     register_host_tools(mcp)
     register_image_tools(mcp)
-    register_template_tools(mcp)
     register_account_tools(mcp)
     register_skills_tools(mcp)
     register_info_tools(mcp)
