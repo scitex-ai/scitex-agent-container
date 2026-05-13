@@ -253,10 +253,6 @@ class _MainGroup(LazyGroup):
         "check-health": (f"{_PKG}.status_cmds:health", "sac agent health"),
         "find": (f"{_PKG}.info_cmds:find", "sac agent find"),
         "recall": (f"{_PKG}.recall_cmds:recall", "sac agent recall"),
-        "check-priority": (
-            f"{_PKG}.priority_cmds:priority_check",
-            "sac agent check-priority",
-        ),
         # Quota (folded under `sac agents accounts watch-quota` after the
         # contributor / template surface was deleted as orochi-specific).
         "watch-quota": (
