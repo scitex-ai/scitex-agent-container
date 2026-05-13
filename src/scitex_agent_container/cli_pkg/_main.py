@@ -62,7 +62,10 @@ class _MainGroup(LazyGroup):
         "network": f"{_PKG}.network_group:network_group",
         "image": f"{_PKG}.image_group:image_group",
         "skills": f"{_PKG}.skills_group:skills_group",
-        # `accounts` moved under `sac agents accounts` (nested noun group).
+        # `accounts` is a top-level noun — the credential store is fleet-wide,
+        # not agent-scoped. Reuses the underlying `account` click group;
+        # `accounts` is just the plural surface name.
+        "accounts": f"{_PKG}.account_group:account",
         "a2a": f"{_PKG}.a2a_group:a2a",
         "mcp": f"{_PKG}.mcp_group:mcp",
         "peer": f"{_PKG}.peer_group:peer_group",
@@ -214,7 +217,8 @@ class _MainGroup(LazyGroup):
     # ``21_cli-startup-budget.md`` to refresh after editing any
     # subcommand's docstring/short_help.
     LAZY_SHORT_HELPS = {
-        "agents": "Agent lifecycle, status, introspection, accounts, and snapshots.",
+        "agents": "Agent lifecycle, status, introspection, and snapshots.",
+        "accounts": "Manage stored Claude Code accounts for credential rotation.",
         "db": "Inspect and maintain the sac state database (state.db).",
         "dev": "Developer / maintainer plumbing (CI secrets, etc.).",
         "host": "Local host identity and peer routing for sac.",
@@ -253,11 +257,11 @@ class _MainGroup(LazyGroup):
         "check-health": (f"{_PKG}.status_cmds:health", "sac agent health"),
         "find": (f"{_PKG}.info_cmds:find", "sac agent find"),
         "recall": (f"{_PKG}.recall_cmds:recall", "sac agent recall"),
-        # Quota (folded under `sac agents accounts watch-quota` after the
-        # contributor / template surface was deleted as orochi-specific).
+        # Quota — accounts is a top-level noun (the credential store is
+        # fleet-wide, not agent-scoped).
         "watch-quota": (
             f"{_PKG}.account_group:quota_watch",
-            "sac agents accounts watch-quota",
+            "sac accounts watch-quota",
         ),
         # Hook events
         "ingest-hook-event": (f"{_PKG}.hook_cmds:hook_event", "sac event ingest"),

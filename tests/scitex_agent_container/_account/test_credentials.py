@@ -200,7 +200,7 @@ def test_partial_claude_json_no_oauth_account(tmp_path: Path) -> None:
 #
 # Account info moved out of `sac agents status` (mixed-noun output was
 # noisy); the active Claude credentials are now surfaced by the
-# dedicated `sac agents accounts list` command.
+# dedicated `sac accounts list` command.
 # ---------------------------------------------------------------------------
 
 
@@ -243,7 +243,6 @@ def test_accounts_list_json_contains_claude_account(
             sys.executable,
             "-m",
             "scitex_agent_container",
-            "agents",
             "accounts",
             "list",
             "--json",

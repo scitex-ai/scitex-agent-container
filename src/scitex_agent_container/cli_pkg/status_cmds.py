@@ -209,7 +209,7 @@ def status(
         console.print(table)
     else:
         # `agents status` only shows agents now. Claude-account info
-        # moved to `sac agents accounts list` — different noun, different
+        # moved to `sac accounts list` — different noun, different
         # concern. Keeping both here turned every status print into a
         # crowded mix of "what's running" + "who I'm logged in as".
         if use_json:

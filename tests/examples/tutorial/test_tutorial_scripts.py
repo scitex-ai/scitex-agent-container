@@ -36,7 +36,7 @@ ALL_SCRIPTS = sorted(TUTORIAL_DIR.glob("*.sh"))
 # the old flat SIF naming.
 STALE_PATTERNS = (
     "sac agent ",  # singular -> plural ('agents')
-    "sac account ",  # account -> agents accounts
+    "sac account ",  # account (singular) -> accounts (top-level plural)
     "runtime: docker",  # docker dropped 2026-05-13
     "runtime: podman",  # podman dropped 2026-05-13
     "--runtime docker",  # --runtime flag dropped
