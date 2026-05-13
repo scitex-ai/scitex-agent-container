@@ -1,0 +1,19 @@
+── Step 1: sac agents check ──
+$ sac agents check hello-agent
+(check unavailable or spec missing)
+
+── Step 2: runtime/ state ──
+$ ls /home/ywatanabe/.scitex/agent-container/runtime/hello-agent/
+(no runtime dir — agent never started)
+
+── Step 3: structured transcript ──
+$ sac agents tail hello-agent --json -n 5
+
+── Step 4: apptainer instance status ──
+$ apptainer instance list | grep hello-agent
+INSTANCE NAME    PID    IP    IMAGE
+
+── Step 5: writable sandbox (last resort) ──
+$ apptainer build --sandbox /tmp/sb.sandbox/ ~/.scitex/agent-container/containers/sac-base.sif
+$ apptainer exec --writable /tmp/sb.sandbox/ bash
+  # → fix env, then freeze back with: apptainer build out.sif /tmp/sb.sandbox/
