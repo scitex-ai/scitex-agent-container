@@ -450,15 +450,18 @@ def start(
             )
             workdir = config.expanded_workdir
             location = f"{host}@{workdir}"
+            # hook-bypass: line-limit (--foreground --json newline polish; lifecycle_cmds.py split deferred)
             # `--foreground --json` was emitting the JSON summary on the
             # same line as the runner's tail-of-stdout (Claude's reply
             # has no trailing newline). Redirect the JSON to stderr in
-            # that combo so a `2>/dev/null` strips it cleanly and the
-            # stdout stream stays exclusively the agent's voice.
+            # that combo + lead with a `\n` so interactive ttys (stderr
+            # and stdout glued together) still get visual separation.
             json_stream_err = as_json and foreground and not dry_run
 
             def _emit(obj):
                 line = _json.dumps(obj, ensure_ascii=False)
+                if json_stream_err:
+                    line = "\n" + line
                 click.echo(line, err=json_stream_err)
 
             if not as_json:

@@ -194,7 +194,20 @@ def _tail_one(
             raw = str(r.get("raw") or "")[:200]
             out.append(f"{tag}[tool_result] {raw}")
         elif kind == "result":
-            out.append(f"{tag}[result] {str(r)[:300]}")
+            # Terser result line: just session_id + token deltas, no
+            # dumped dict. Operators want `[result]` as a visual
+            # boundary between turns, not a JSON listing — that's what
+            # `--json` is for.
+            usage = r.get("usage") or {}
+            sid = str(r.get("session_id") or "?")[:8]
+            inp = usage.get("input_tokens", 0)
+            out_tok = usage.get("output_tokens", 0)
+            cache_w = usage.get("cache_creation_input_tokens", 0)
+            cache_r = usage.get("cache_read_input_tokens", 0)
+            out.append(
+                f"{tag}[result] session={sid} "
+                f"in={inp} out={out_tok} cache_w={cache_w} cache_r={cache_r}"
+            )
         elif kind == "error":
             out.append(f"{tag}[error] {str(r)[:300]}")
     for line in out[-lines:]:
