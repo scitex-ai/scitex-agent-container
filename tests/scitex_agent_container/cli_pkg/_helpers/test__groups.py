@@ -79,7 +79,7 @@ def test_top_level_probe_network_redirects():
     runner = CliRunner()
     result = runner.invoke(sac_main, ["probe-network"], standalone_mode=True)
     assert result.exit_code == 2
-    assert "sac network probe" in result.stderr
+    assert "sac host probe-hub" in result.stderr
 
 
 def test_top_level_start_alias_redirects():

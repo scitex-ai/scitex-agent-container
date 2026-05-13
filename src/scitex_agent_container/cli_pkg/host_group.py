@@ -35,76 +35,108 @@ def host_group() -> None:
     """
 
 
-@host_group.command("show")
-@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
-@click.pass_context
-def host_show(ctx: click.Context, as_json: bool) -> None:
-    """Canonical hostname + alias map + network interfaces.
+# Virtual interfaces hidden from ``host list`` by default — docker
+# bridges, k8s CNI bridges, VirtualBox, vEthernet pairs, tap devices.
+# These rarely belong to "where can sac reach this host from?" and
+# noise up the output for laptops that have docker installed even
+# when it isn't in active use. Pass ``--all-interfaces`` to include.
+_VIRTUAL_IFACE_PREFIXES = ("docker", "br-", "veth", "flannel", "cni", "vboxnet", "tap")
 
-    \b
-    Example:
-      $ sac host show
-      $ sac host show --json
-    """
-    cfg = load()
-    src = cfg.source_path
-    config_path = str(src) if (src and src.is_file()) else None
-    payload = {
-        "canonical": cfg.canonical_host(),
-        "config_path": config_path,
-        "aliases": cfg.host.aliases,
-        "fallback": cfg.host.fallback,
-        "interfaces": host_interfaces(),
-    }
-    if _json_flag(ctx, as_json):
-        click.echo(json.dumps(payload, indent=2))
-        return
-    console.print(f"[bold]canonical[/bold]   {payload['canonical']}")
-    if payload["config_path"]:
-        console.print(f"[dim]config_path  {payload['config_path']}[/dim]")
-    if cfg.host.aliases:
-        console.print("[bold]aliases[/bold]")
-        for raw, alias in sorted(cfg.host.aliases.items()):
-            console.print(f"  {raw}  ->  {alias}")
-    if payload["interfaces"]:
-        console.print("[bold]interfaces[/bold]")
-        for iface in payload["interfaces"]:
-            console.print(
-                f"  {iface['iface']:<10} {iface['family']:<6} {iface['addr']}"
-            )
+
+def _filter_interfaces(ifaces: list, include_virtual: bool) -> list:
+    if include_virtual:
+        return ifaces
+    return [
+        i
+        for i in ifaces
+        if not any(i["iface"].startswith(p) for p in _VIRTUAL_IFACE_PREFIXES)
+    ]
 
 
 @host_group.command("list")
+@click.option(
+    "--all-interfaces",
+    is_flag=True,
+    default=False,
+    help="Include virtual interfaces (docker, br-*, veth, etc.); default hides them.",
+)
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
 @click.pass_context
-def host_list(ctx: click.Context, as_json: bool) -> None:
-    """Peers configured under config.yaml's ``peers:`` block.
+def host_list(ctx: click.Context, all_interfaces: bool, as_json: bool) -> None:
+    """Local host + peers configured under config.yaml's ``peers:`` block.
+
+    The first row is always the local host (the machine running
+    ``sac``); peers under ``config.yaml``'s ``peers:`` block follow.
+    Virtual / container-managed interfaces (docker, br-*, veth, ...)
+    are hidden by default — pass ``--all-interfaces`` to include them.
 
     \b
     Example:
       $ sac host list
       $ sac host list --json
+      $ sac host list --all-interfaces   # include docker0, br-*, etc.
     """
     cfg = load()
-    rows = []
+    src = cfg.source_path
+    config_path = str(src) if (src and src.is_file()) else None
+    local = {
+        "name": cfg.canonical_host(),
+        "scope": "local",
+        "aliases": cfg.host.aliases,
+        "interfaces": _filter_interfaces(host_interfaces(), all_interfaces),
+    }
+    peers = []
     for name, peer in sorted(cfg.peers.items()):
-        rows.append(
+        peers.append(
             {
                 "name": name,
+                "scope": "peer",
                 "ssh": peer.ssh,
                 "via": list(peer.via),
             }
         )
     if _json_flag(ctx, as_json):
-        click.echo(json.dumps({"peers": rows}, indent=2))
+        click.echo(
+            json.dumps(
+                {"config_path": config_path, "local": local, "peers": peers},
+                indent=2,
+            )
+        )
         return
-    if not rows:
-        console.print("[dim](no peers configured in config.yaml)[/dim]")
-        return
-    console.print("[bold]peers[/bold]")
-    for r in rows:
-        via = f"  via={','.join(r['via'])}" if r["via"] else ""
-        console.print(f"  {r['name']:<12} ssh={r['ssh']}{via}")
+    # Header: where did our config come from?
+    if config_path:
+        console.print(f"[dim]config_path  {config_path}[/dim]")
+    else:
+        console.print(
+            "[dim]config_path  (no config.yaml found — using built-in defaults)[/dim]"
+        )
+    # Local host always present.
+    console.print(f"[bold]local[/bold]       {local['name']}")
+    if local["aliases"]:
+        for raw, alias in sorted(local["aliases"].items()):
+            console.print(f"  alias       {raw}  ->  {alias}")
+    for iface in local["interfaces"]:
+        console.print(f"  {iface['iface']:<11} {iface['family']:<6} {iface['addr']}")
+    # Peers.
+    if peers:
+        console.print("[bold]peers[/bold]")
+        for r in peers:
+            via = f"  via={','.join(r['via'])}" if r["via"] else ""
+            console.print(f"  {r['name']:<11} ssh={r['ssh']}{via}")
+    else:
+        console.print("[dim](no peers configured)[/dim]")
+
+
+# ``sac host show`` was a separate command that overlapped ``list``
+# (both printed canonical hostname + interfaces). Folded into ``list``
+# as the local row; keep ``show`` as a thin alias for muscle memory.
+@host_group.command("show", hidden=True)
+@click.option("--all-interfaces", is_flag=True, default=False)
+@click.option("--json", "as_json", is_flag=True)
+@click.pass_context
+def host_show(ctx: click.Context, all_interfaces: bool, as_json: bool) -> None:
+    """[DEPRECATED] Alias of ``sac host list`` — folded together."""
+    ctx.invoke(host_list, all_interfaces=all_interfaces, as_json=as_json)
 
 
 @host_group.command("validate")

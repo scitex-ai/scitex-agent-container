@@ -102,13 +102,30 @@ def listen(
         click.echo(token)
         return
 
+    # Pre-flight import check — surfaces missing/incompatible deps with
+    # a clear message BEFORE we print "listening" and detach. Catches
+    # the silent-fail trap where ``sac listen`` looked like it bound
+    # but actually crashed on a transitive websockets ImportError
+    # (we hit this with websockets>=14 dropping legacy.handshake).
+    try:
+        import uvicorn  # noqa: F401
+        from starlette.applications import Starlette  # noqa: F401
+    except ImportError as exc:
+        raise click.ClickException(
+            f"sac listen requires uvicorn + starlette. Missing: {exc.name}.\n"
+            f"Install with: pip install 'scitex-agent-container[listen]'"
+        ) from exc
+
     click.echo(f"# sac listen v1 → {host}:{port}", err=True)
     click.echo(f"# token file: {tok_path}", err=True)
-    click.echo(f"# health: curl http://{host}:{port}/v1/health", err=True)
+    click.echo(f"# health: curl http://{host}:{port}/v1/sac/health", err=True)
 
     app = create_app(token=token)
-    # Lazy-import uvicorn so the CLI module loads even if uvicorn is missing
-    # in a minimal install (the import error then surfaces here, not at import).
     import uvicorn
 
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    # ``ws="none"`` skips uvicorn's websockets backend autodetection —
+    # we don't serve WS endpoints, and the WS protocol module imports
+    # websockets.legacy which has churned across the websockets package
+    # major versions (broken in >=14). Disabling it avoids a startup
+    # crash that silently kills a detached ``sac listen``.
+    uvicorn.run(app, host=host, port=port, log_level="info", ws="none")

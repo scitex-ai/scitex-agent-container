@@ -21,6 +21,8 @@ import sys
 
 import click
 
+from ._helpers._completion import agent_name_complete
+
 
 @click.group(name="peer")
 def peer_group() -> None:
@@ -28,7 +30,7 @@ def peer_group() -> None:
 
 
 @peer_group.command(name="post-turn")
-@click.argument("agent_name", metavar="AGENT")
+@click.argument("agent_name", metavar="AGENT", shell_complete=agent_name_complete)
 @click.argument("text")
 @click.option(
     "--exit-after",
@@ -81,7 +83,7 @@ def peer_post_turn(
 
 
 @peer_group.command(name="resolve-url")
-@click.argument("agent_name", metavar="AGENT")
+@click.argument("agent_name", metavar="AGENT", shell_complete=agent_name_complete)
 def peer_resolve_url(agent_name: str) -> None:
     """Print the /v1/turn URL ``peer post-turn`` would POST to for AGENT.
 

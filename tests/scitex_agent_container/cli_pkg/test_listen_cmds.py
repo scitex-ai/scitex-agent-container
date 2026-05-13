@@ -126,7 +126,7 @@ def test_listen_starts_uvicorn_when_allowed(monkeypatch, tmp_path):
 
     seen = {}
 
-    def fake_run(app, host, port, log_level):
+    def fake_run(app, host, port, log_level, **_kw):
         seen["host"] = host
         seen["port"] = port
 
@@ -151,7 +151,7 @@ def test_listen_non_loopback_with_flag_starts(monkeypatch, tmp_path):
 
     seen = {}
 
-    def fake_run(app, host, port, log_level):
+    def fake_run(app, host, port, log_level, **_kw):
         seen["host"] = host
 
     import sys
