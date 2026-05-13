@@ -1,0 +1,25 @@
+── List configured peers ──
+$ sac host list
+(sac not installed or no peers configured)
+
+── spec.yaml: pin an agent to one host ──
+spec:
+  host: spartan
+  runtime: apptainer
+  apptainer:
+    image: ~/.scitex/agent-container/containers/sac-scitex.sif
+
+── spec.yaml: one copy per host ──
+spec:
+  hosts: [mba, spartan, nas]
+  runtime: apptainer
+
+── Dispatch a command on a remote peer ──
+$ sac --on spartan agents list
+  # → runs on spartan, output streamed back
+$ sac --on spartan agents start my-agent
+$ sac --on spartan agents tail  my-agent --json -n 5
+
+── Probe a peer (handy when --on hangs) ──
+$ sac host probe spartan
+  # → ssh round-trip ms, sac --version on peer, agent count
