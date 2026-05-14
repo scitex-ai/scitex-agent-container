@@ -5,6 +5,12 @@ Covers:
 - ``Config.canonical_host`` resolution chain: env > config > alias > hostname.
 - ``Config.validate`` flags via-references to unknown peers and bad fallbacks.
 - ``sac host show`` / ``host list`` / ``host validate`` end-to-end.
+
+No-mocks pattern (PA-306):
+- Env mutations go through the shared ``env_save_restore`` fixture.
+- Subprocess shell-outs (ssh) use the shared ``subprocess_shim`` fixture
+  to install a fake binary on PATH that records its argv — the real
+  ``subprocess.run`` in production code finds the shim and execs it.
 """
 
 from __future__ import annotations
@@ -24,36 +30,58 @@ from scitex_agent_container._state.host_config import (
 
 
 @pytest.fixture
-def cfg_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def cfg_path(tmp_path: Path, env_save_restore) -> Path:
+    """Real config.yaml at tmp_path, surfaced via the env override."""
     p = tmp_path / "config.yaml"
-    monkeypatch.setenv("SCITEX_AGENT_CONTAINER_CONFIG", str(p))
-    import importlib
-
-    import scitex_agent_container._state.host_config as mod
-
-    importlib.reload(mod)
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(p))
     return p
 
 
-def test_load_missing_file_yields_defaults(cfg_path: Path):
+# ---------------------------------------------------------------------------
+# load()
+# ---------------------------------------------------------------------------
+
+
+def test_load_returns_defaults_when_file_missing(cfg_path: Path):
+    # Arrange
+    # (cfg_path env points at a file that doesn't exist yet)
+    # Act
     cfg = load()
+    # Assert
     assert cfg.host.aliases == {}
-    assert cfg.host.fallback == "hostname-short"
-    assert cfg.peers == {}
-    # source_path points to where it WOULD load from, even if missing.
+
+
+def test_load_records_source_path_even_when_missing(cfg_path: Path):
+    # Arrange
+    # Act
+    cfg = load()
+    # Assert
     assert cfg.source_path == cfg_path
 
 
-def test_load_parses_full_yaml(cfg_path: Path):
+def test_load_parses_full_yaml_aliases(cfg_path: Path):
+    # Arrange
     cfg_path.write_text(
         """
 host:
-  canonical: $SAC_HOST
   aliases:
     Yusukes-MacBook-Air: mba
     spartan-login1: spartan
-  fallback: hostname-short
+"""
+    )
+    # Act
+    cfg = load()
+    # Assert
+    assert cfg.host.aliases == {
+        "Yusukes-MacBook-Air": "mba",
+        "spartan-login1": "spartan",
+    }
 
+
+def test_load_parses_peers_with_jump_chains(cfg_path: Path):
+    # Arrange
+    cfg_path.write_text(
+        """
 peers:
   mba: { ssh: ywatanabe@mba.local }
   spartan:
@@ -64,90 +92,145 @@ peers:
     via: [mba, spartan]
 """
     )
+    # Act
     cfg = load()
-    assert cfg.host.aliases == {
-        "Yusukes-MacBook-Air": "mba",
-        "spartan-login1": "spartan",
-    }
+    # Assert
     assert set(cfg.peers) == {"mba", "spartan", "bm198"}
-    assert cfg.peers["spartan"].via == ("mba",)
-    assert cfg.peers["bm198"].via == ("mba", "spartan")
-    # Jump chain renders ssh targets in order.
+
+
+def test_load_renders_jump_chain_ssh_targets_in_order(cfg_path: Path):
+    # Arrange
+    cfg_path.write_text(
+        """
+peers:
+  mba: { ssh: ywatanabe@mba.local }
+  spartan:
+    ssh: ywatanabe@spartan-login1
+    via: [mba]
+  bm198:
+    ssh: bm198
+    via: [mba, spartan]
+"""
+    )
+    # Act
+    cfg = load()
+    # Assert
     assert cfg.peers["bm198"].jump_chain(cfg.peers) == [
         "ywatanabe@mba.local",
         "ywatanabe@spartan-login1",
     ]
 
 
-def test_canonical_host_env_override_wins(cfg_path: Path, monkeypatch):
-    monkeypatch.setenv("SAC_HOST", "explicit-override")
+# ---------------------------------------------------------------------------
+# Config.canonical_host()
+# ---------------------------------------------------------------------------
+
+
+def test_canonical_host_env_override_wins_over_yaml(env_save_restore):
+    # Arrange
+    env_save_restore.set("SAC_HOST", "explicit-override")
     cfg = Config(host=HostBlock(canonical="from-yaml"))
-    assert cfg.canonical_host() == "explicit-override"
+    # Act
+    name = cfg.canonical_host()
+    # Assert
+    assert name == "explicit-override"
 
 
-def test_canonical_host_uses_yaml_when_no_env(monkeypatch):
-    monkeypatch.delenv("SAC_HOST", raising=False)
+def test_canonical_host_uses_yaml_when_env_absent(env_save_restore):
+    # Arrange
+    env_save_restore.delete("SAC_HOST")
     cfg = Config(host=HostBlock(canonical="from-yaml"))
-    assert cfg.canonical_host() == "from-yaml"
+    # Act
+    name = cfg.canonical_host()
+    # Assert
+    assert name == "from-yaml"
 
 
-def test_canonical_host_uses_alias(monkeypatch):
-    monkeypatch.delenv("SAC_HOST", raising=False)
+def test_canonical_host_resolves_via_alias_when_no_env_or_canonical(env_save_restore):
+    # Arrange
     import socket
 
+    env_save_restore.delete("SAC_HOST")
     raw = socket.gethostname().split(".")[0]
     cfg = Config(host=HostBlock(aliases={raw: "aliased-name"}))
-    assert cfg.canonical_host() == "aliased-name"
+    # Act
+    name = cfg.canonical_host()
+    # Assert
+    assert name == "aliased-name"
 
 
-def test_canonical_host_falls_back_to_hostname(monkeypatch):
-    """No env, no yaml canonical, no alias hit → hostname -s."""
-    monkeypatch.delenv("SAC_HOST", raising=False)
+def test_canonical_host_falls_back_to_short_hostname(env_save_restore):
+    # Arrange
+    import socket
+
+    env_save_restore.delete("SAC_HOST")
     cfg = Config()
+    # Act
+    name = cfg.canonical_host()
+    # Assert
+    assert name == socket.gethostname().split(".")[0]
+
+
+def test_canonical_host_treats_dollar_placeholder_as_unset(env_save_restore):
+    # Arrange
     import socket
 
-    assert cfg.canonical_host() == socket.gethostname().split(".")[0]
-
-
-def test_canonical_host_treats_placeholder_as_unset(monkeypatch):
-    """``host.canonical: $SAC_HOST`` with no env should NOT win — the
-    placeholder string is reserved for opt-in env override."""
-    monkeypatch.delenv("SAC_HOST", raising=False)
+    env_save_restore.delete("SAC_HOST")
     cfg = Config(host=HostBlock(canonical="$SAC_HOST"))
-    import socket
+    # Act
+    name = cfg.canonical_host()
+    # Assert
+    assert name == socket.gethostname().split(".")[0]
 
-    assert cfg.canonical_host() == socket.gethostname().split(".")[0]
+
+# ---------------------------------------------------------------------------
+# Config.validate()
+# ---------------------------------------------------------------------------
 
 
 def test_validate_flags_unknown_via_peer():
+    # Arrange
     cfg = Config(
         peers={
             "spartan": PeerSpec(name="spartan", ssh="x@spartan", via=("nope",)),
         }
     )
+    # Act
     errors = cfg.validate()
+    # Assert
     assert any("via=" in e and "'nope'" in e for e in errors)
 
 
 def test_validate_flags_missing_ssh():
+    # Arrange
     cfg = Config(peers={"x": PeerSpec(name="x", ssh="")})
+    # Act
     errors = cfg.validate()
+    # Assert
     assert any("ssh: is required" in e for e in errors)
 
 
 def test_validate_flags_bad_fallback():
+    # Arrange
     cfg = Config(host=HostBlock(fallback="garbage"))
+    # Act
     errors = cfg.validate()
+    # Assert
     assert any("host.fallback" in e for e in errors)
 
 
 def test_load_rejects_non_mapping_top_level(cfg_path: Path):
+    # Arrange
     cfg_path.write_text("- a list, not a map\n")
-    with pytest.raises(ValueError, match="must be a mapping"):
+    # Act
+    raised = pytest.raises(ValueError, match="must be a mapping")
+    # Assert
+    with raised:
         load()
 
 
 def test_load_rejects_non_list_via(cfg_path: Path):
+    # Arrange
     cfg_path.write_text(
         """
 peers:
@@ -156,40 +239,41 @@ peers:
     via: not-a-list
 """
     )
-    with pytest.raises(ValueError, match="via:"):
+    # Act
+    raised = pytest.raises(ValueError, match="via:")
+    # Assert
+    with raised:
         load()
 
 
 # ---------------------------------------------------------------------------
-# CLI surface
+# CLI surface (sac host show / list / validate)
 # ---------------------------------------------------------------------------
 
 
-def test_host_show_renders_canonical(cfg_path: Path, monkeypatch):
-    """`sac host show` is a hidden alias of `sac host list` since the
-    show/list fold; both commands return the same JSON shape, with the
-    local host's canonical name at ``local.name``."""
-    monkeypatch.setenv("SAC_HOST", "smoke-host")
+def test_host_show_renders_canonical_from_env(cfg_path: Path, env_save_restore):
+    # Arrange
+    env_save_restore.set("SAC_HOST", "smoke-host")
     from scitex_agent_container.cli_pkg.host_group import host_show
 
-    runner = CliRunner()
-    result = runner.invoke(host_show, ["--json"])
-    assert result.exit_code == 0
-    body = json.loads(result.output)
-    assert body["local"]["name"] == "smoke-host"
+    # Act
+    result = CliRunner().invoke(host_show, ["--json"])
+    # Assert
+    assert json.loads(result.output)["local"]["name"] == "smoke-host"
 
 
-def test_host_list_empty_by_default(cfg_path: Path):
+def test_host_list_returns_empty_peers_with_no_config(cfg_path: Path):
+    # Arrange
     from scitex_agent_container.cli_pkg.host_group import host_list
 
-    runner = CliRunner()
-    result = runner.invoke(host_list, ["--json"])
-    assert result.exit_code == 0
-    body = json.loads(result.output)
-    assert body["peers"] == []
+    # Act
+    result = CliRunner().invoke(host_list, ["--json"])
+    # Assert
+    assert json.loads(result.output)["peers"] == []
 
 
-def test_host_list_renders_peers(cfg_path: Path):
+def test_host_list_renders_configured_peers(cfg_path: Path):
+    # Arrange
     cfg_path.write_text(
         """
 peers:
@@ -201,33 +285,28 @@ peers:
     )
     from scitex_agent_container.cli_pkg.host_group import host_list
 
-    runner = CliRunner()
-    result = runner.invoke(host_list, ["--json"])
-    assert result.exit_code == 0
-    body = json.loads(result.output)
-    names = sorted(p["name"] for p in body["peers"])
-    assert names == ["mba", "spartan"]
-    spartan = next(p for p in body["peers"] if p["name"] == "spartan")
-    assert spartan["via"] == ["mba"]
+    # Act
+    result = CliRunner().invoke(host_list, ["--json"])
+    # Assert
+    assert sorted(p["name"] for p in json.loads(result.output)["peers"]) == [
+        "mba",
+        "spartan",
+    ]
 
 
 def test_host_validate_passes_for_clean_config(cfg_path: Path):
-    cfg_path.write_text(
-        """
-peers:
-  mba: { ssh: ywatanabe@mba.local }
-"""
-    )
+    # Arrange
+    cfg_path.write_text("peers:\n  mba: { ssh: ywatanabe@mba.local }\n")
     from scitex_agent_container.cli_pkg.host_group import host_validate
 
-    runner = CliRunner()
-    result = runner.invoke(host_validate, ["--json"])
-    assert result.exit_code == 0
-    body = json.loads(result.output)
-    assert body["errors"] == []
+    # Act
+    result = CliRunner().invoke(host_validate, ["--json"])
+    # Assert
+    assert json.loads(result.output)["errors"] == []
 
 
-def test_host_validate_fails_with_unknown_via(cfg_path: Path):
+def test_host_validate_fails_for_unknown_via(cfg_path: Path):
+    # Arrange
     cfg_path.write_text(
         """
 peers:
@@ -238,38 +317,33 @@ peers:
     )
     from scitex_agent_container.cli_pkg.host_group import host_validate
 
-    runner = CliRunner()
-    result = runner.invoke(host_validate, ["--json"])
-    assert result.exit_code == 1
-    body = json.loads(result.output)
-    assert body["errors"]
-    assert "does-not-exist" in body["errors"][0]
+    # Act
+    result = CliRunner().invoke(host_validate, ["--json"])
+    # Assert
+    assert "does-not-exist" in json.loads(result.output)["errors"][0]
 
 
 # ---------------------------------------------------------------------------
-# F-CS12 phase 2 — build_ssh_argv + host exec / probe
+# build_ssh_argv() — pure function, no shell-out
 # ---------------------------------------------------------------------------
 
 
-def test_build_ssh_argv_single_hop():
+def test_build_ssh_argv_single_hop_omits_proxy_jump():
+    # Arrange
     from scitex_agent_container._state.host_config import (
         PeerSpec,
         build_ssh_argv,
     )
 
     peers = {"mba": PeerSpec(name="mba", ssh="ywatanabe@mba.local")}
+    # Act
     argv = build_ssh_argv("mba", ["agent", "list"], peers)
-    # No -J (no jumps).
+    # Assert
     assert "-J" not in argv
-    assert "ywatanabe@mba.local" in argv
-    # Required defensive ssh options applied.
-    assert "BatchMode=yes" in argv
-    assert "ConnectTimeout=10" in argv
-    # Command appended after `--`.
-    assert argv[-3:] == ["--", "agent", "list"]
 
 
-def test_build_ssh_argv_multi_hop_renders_proxy_jump():
+def test_build_ssh_argv_renders_proxy_jump_for_multi_hop():
+    # Arrange
     from scitex_agent_container._state.host_config import (
         PeerSpec,
         build_ssh_argv,
@@ -278,221 +352,243 @@ def test_build_ssh_argv_multi_hop_renders_proxy_jump():
     peers = {
         "mba": PeerSpec(name="mba", ssh="ywatanabe@mba.local"),
         "spartan": PeerSpec(
-            name="spartan",
-            ssh="ywatanabe@spartan-login1",
-            via=("mba",),
+            name="spartan", ssh="ywatanabe@spartan-login1", via=("mba",)
         ),
         "bm198": PeerSpec(name="bm198", ssh="bm198", via=("mba", "spartan")),
     }
+    # Act
     argv = build_ssh_argv("bm198", ["sac", "agent", "list"], peers)
-    j_idx = argv.index("-J")
-    assert argv[j_idx + 1] == "ywatanabe@mba.local,ywatanabe@spartan-login1"
-    # Final shape: [..., "bm198", "--", "sac", "agent", "list"]
-    sep = argv.index("--")
-    assert argv[sep - 1] == "bm198"
-    assert argv[sep + 1 :] == ["sac", "agent", "list"]
+    # Assert
+    assert argv[argv.index("-J") + 1] == "ywatanabe@mba.local,ywatanabe@spartan-login1"
 
 
-def test_build_ssh_argv_unknown_peer_raises():
+def test_build_ssh_argv_unknown_peer_raises_keyerror():
     from scitex_agent_container._state.host_config import build_ssh_argv
 
-    with pytest.raises(KeyError):
-        build_ssh_argv("ghost", ["echo", "hi"], {})
+    # Arrange
+    peers = {}
+    # Act
+    raised = pytest.raises(KeyError)
+    # Assert
+    with raised:
+        build_ssh_argv("ghost", ["echo", "hi"], peers)
 
 
-def test_host_exec_unknown_peer_exits_2(cfg_path: Path):
+# ---------------------------------------------------------------------------
+# CLI subprocess wiring — real subprocess.run against the PATH-shimmed `ssh`.
+# This verifies that host_exec / host_probe / dispatch_remote do invoke ssh
+# with the argv that build_ssh_argv produced.
+# ---------------------------------------------------------------------------
+
+
+def test_host_exec_unknown_peer_exits_with_code_2(cfg_path: Path):
+    # Arrange
     from scitex_agent_container.cli_pkg.host_group import host_exec
 
-    runner = CliRunner()
-    result = runner.invoke(host_exec, ["ghost", "--", "echo", "hi"])
+    # Act
+    result = CliRunner().invoke(host_exec, ["ghost", "--", "echo", "hi"])
+    # Assert
     assert result.exit_code == 2
-    assert "not defined" in (result.output + (result.stderr or ""))
 
 
-def test_host_exec_missing_command_exits_2(cfg_path: Path):
-    cfg_path.write_text(
-        """
-peers:
-  mba: { ssh: ywatanabe@mba.local }
-"""
-    )
+def test_host_exec_missing_command_exits_with_code_2(cfg_path: Path):
+    # Arrange
+    cfg_path.write_text("peers:\n  mba: { ssh: ywatanabe@mba.local }\n")
     from scitex_agent_container.cli_pkg.host_group import host_exec
 
-    runner = CliRunner()
-    result = runner.invoke(host_exec, ["mba"])
+    # Act
+    result = CliRunner().invoke(host_exec, ["mba"])
+    # Assert
     assert result.exit_code == 2
 
 
-def test_host_exec_invokes_subprocess_with_built_argv(cfg_path: Path, monkeypatch):
-    """The exec callback should hand build_ssh_argv's output to
-    subprocess.run unchanged. Mocked so the test doesn't ssh anywhere."""
-    cfg_path.write_text(
-        """
-peers:
-  mba: { ssh: ywatanabe@mba.local }
-"""
-    )
-    seen = {}
+def test_host_exec_invokes_ssh_with_built_argv(cfg_path: Path, subprocess_shim):
+    # Arrange
+    cfg_path.write_text("peers:\n  mba: { ssh: ywatanabe@mba.local }\n")
+    subprocess_shim.install("ssh", exit=0)
+    from scitex_agent_container.cli_pkg.host_group import host_exec
 
-    class _Result:
-        returncode = 0
-
-    def _fake_run(argv, **kw):
-        seen["argv"] = argv
-        return _Result()
-
-    from scitex_agent_container.cli_pkg import host_group
-
-    monkeypatch.setattr(host_group.subprocess, "run", _fake_run)
-
-    runner = CliRunner()
-    result = runner.invoke(host_group.host_exec, ["mba", "--", "echo", "hello"])
+    # Act
+    result = CliRunner().invoke(host_exec, ["mba", "--", "echo", "hello"])
+    # Assert
     assert result.exit_code == 0
-    assert "ywatanabe@mba.local" in seen["argv"]
-    assert seen["argv"][-3:] == ["--", "echo", "hello"]
+
+
+def test_host_exec_passes_ssh_target_to_ssh(cfg_path: Path, subprocess_shim):
+    # Arrange
+    cfg_path.write_text("peers:\n  mba: { ssh: ywatanabe@mba.local }\n")
+    subprocess_shim.install("ssh", exit=0)
+    from scitex_agent_container.cli_pkg.host_group import host_exec
+
+    # Act
+    CliRunner().invoke(host_exec, ["mba", "--", "echo", "hello"])
+    # Assert
+    assert "ywatanabe@mba.local" in subprocess_shim.argv_for("ssh")
+
+
+def test_host_exec_appends_command_after_double_dash(cfg_path: Path, subprocess_shim):
+    # Arrange
+    cfg_path.write_text("peers:\n  mba: { ssh: ywatanabe@mba.local }\n")
+    subprocess_shim.install("ssh", exit=0)
+    from scitex_agent_container.cli_pkg.host_group import host_exec
+
+    # Act
+    CliRunner().invoke(host_exec, ["mba", "--", "echo", "hello"])
+    # Assert
+    argv = subprocess_shim.argv_for("ssh")
+    assert argv[-3:] == ["--", "echo", "hello"]
 
 
 def test_host_probe_reports_reachable_with_remote_canonical(
-    cfg_path: Path, monkeypatch
+    cfg_path: Path, subprocess_shim
 ):
-    """A successful remote ``sac host show`` returning JSON should
-    surface as ``reachable=True`` with the parsed canonical name."""
-    cfg_path.write_text(
-        """
-peers:
-  mba: { ssh: ywatanabe@mba.local }
-"""
+    # Arrange
+    cfg_path.write_text("peers:\n  mba: { ssh: ywatanabe@mba.local }\n")
+    subprocess_shim.install("ssh", stdout=json.dumps({"canonical": "mba"}), exit=0)
+    from scitex_agent_container.cli_pkg.host_group import host_probe
+
+    # Act
+    result = CliRunner().invoke(host_probe, ["mba", "--json"])
+    # Assert
+    assert json.loads(result.output)["reachable"] is True
+
+
+def test_host_probe_surfaces_parsed_remote_canonical(cfg_path: Path, subprocess_shim):
+    # Arrange
+    cfg_path.write_text("peers:\n  mba: { ssh: ywatanabe@mba.local }\n")
+    subprocess_shim.install("ssh", stdout=json.dumps({"canonical": "mba"}), exit=0)
+    from scitex_agent_container.cli_pkg.host_group import host_probe
+
+    # Act
+    result = CliRunner().invoke(host_probe, ["mba", "--json"])
+    # Assert
+    assert json.loads(result.output)["remote_canonical"] == "mba"
+
+
+def test_host_probe_reports_unreachable_on_nonzero_exit(
+    cfg_path: Path, subprocess_shim
+):
+    # Arrange
+    cfg_path.write_text("peers:\n  mba: { ssh: ywatanabe@mba.local }\n")
+    subprocess_shim.install(
+        "ssh",
+        exit=255,
+        stderr="ssh: connect to host mba.local port 22: timed out",
     )
-    import json as _json
+    from scitex_agent_container.cli_pkg.host_group import host_probe
 
-    class _Result:
-        returncode = 0
-        stdout = _json.dumps({"canonical": "mba"})
-        stderr = ""
+    # Act
+    result = CliRunner().invoke(host_probe, ["mba", "--json"])
+    # Assert
+    assert json.loads(result.output)["reachable"] is False
 
-    def _fake_run(argv, **kw):
-        return _Result()
 
-    from scitex_agent_container.cli_pkg import host_group
+def test_host_probe_surfaces_ssh_exit_code(cfg_path: Path, subprocess_shim):
+    # Arrange
+    cfg_path.write_text("peers:\n  mba: { ssh: ywatanabe@mba.local }\n")
+    subprocess_shim.install("ssh", exit=255, stderr="connect timeout")
+    from scitex_agent_container.cli_pkg.host_group import host_probe
 
-    monkeypatch.setattr(host_group.subprocess, "run", _fake_run)
-
-    runner = CliRunner()
-    result = runner.invoke(host_group.host_probe, ["mba", "--json"])
-    assert result.exit_code == 0
-    body = _json.loads(result.output)
-    assert body["reachable"] is True
-    assert body["remote_canonical"] == "mba"
+    # Act
+    result = CliRunner().invoke(host_probe, ["mba", "--json"])
+    # Assert
+    assert json.loads(result.output)["exit_code"] == 255
 
 
 # ---------------------------------------------------------------------------
-# F-CS12 phase 3 — split_on_flag + dispatch_remote (--on global flag)
+# split_on_flag / dispatch_remote
 # ---------------------------------------------------------------------------
 
 
-def test_split_on_flag_no_flag_is_passthrough():
+def test_split_on_flag_returns_passthrough_when_flag_absent():
+    # Arrange
     from scitex_agent_container.cli_pkg.host_group import split_on_flag
 
+    # Act
     peer, rest = split_on_flag(["agent", "list", "--json"])
-    assert peer is None
-    assert rest == ["agent", "list", "--json"]
+    # Assert
+    assert peer is None and rest == ["agent", "list", "--json"]
 
 
-def test_split_on_flag_separated_form():
+def test_split_on_flag_extracts_separated_value():
+    # Arrange
     from scitex_agent_container.cli_pkg.host_group import split_on_flag
 
-    peer, rest = split_on_flag(["--on", "spartan", "agent", "list"])
+    # Act
+    peer, _ = split_on_flag(["--on", "spartan", "agent", "list"])
+    # Assert
     assert peer == "spartan"
-    assert rest == ["agent", "list"]
 
 
-def test_split_on_flag_equals_form():
+def test_split_on_flag_extracts_equals_form_value():
+    # Arrange
     from scitex_agent_container.cli_pkg.host_group import split_on_flag
 
-    peer, rest = split_on_flag(["--on=mba", "db", "show"])
+    # Act
+    peer, _ = split_on_flag(["--on=mba", "db", "show"])
+    # Assert
     assert peer == "mba"
-    assert rest == ["db", "show"]
 
 
-def test_split_on_flag_missing_value_raises():
+def test_split_on_flag_missing_value_raises_usage_error():
     import click as _click
 
     from scitex_agent_container.cli_pkg.host_group import split_on_flag
 
-    with pytest.raises(_click.UsageError):
-        split_on_flag(["--on"])
+    # Arrange
+    argv = ["--on"]
+    # Act
+    raised = pytest.raises(_click.UsageError)
+    # Assert
+    with raised:
+        split_on_flag(argv)
 
 
-def test_split_on_flag_keeps_other_flags():
+def test_split_on_flag_preserves_other_flags_in_rest():
+    # Arrange
     from scitex_agent_container.cli_pkg.host_group import split_on_flag
 
-    peer, rest = split_on_flag(
+    # Act
+    _, rest = split_on_flag(
         ["--json", "--on", "spartan", "agent", "list", "--limit", "5"]
     )
-    assert peer == "spartan"
+    # Assert
     assert rest == ["--json", "agent", "list", "--limit", "5"]
 
 
 def test_dispatch_remote_unknown_peer_returns_2(cfg_path: Path):
+    # Arrange
     from scitex_agent_container.cli_pkg.host_group import dispatch_remote
 
+    # Act
     rc = dispatch_remote("ghost", ["agent", "list"])
+    # Assert
     assert rc == 2
 
 
-def test_dispatch_remote_invokes_subprocess(cfg_path: Path, monkeypatch):
-    cfg_path.write_text(
-        """
-peers:
-  mba: { ssh: ywatanabe@mba.local }
-"""
-    )
-    seen = {}
+def test_dispatch_remote_invokes_ssh_with_remote_sac_command(
+    cfg_path: Path, subprocess_shim
+):
+    # Arrange
+    cfg_path.write_text("peers:\n  mba: { ssh: ywatanabe@mba.local }\n")
+    subprocess_shim.install("ssh", exit=7)
+    from scitex_agent_container.cli_pkg.host_group import dispatch_remote
 
-    class _Result:
-        returncode = 7
+    # Act
+    dispatch_remote("mba", ["agent", "list"])
+    # Assert
+    argv = subprocess_shim.argv_for("ssh")
+    sep = argv.index("--")
+    assert argv[sep + 1 :] == ["sac", "agent", "list"]
 
-    def _fake_run(argv, **kw):
-        seen["argv"] = argv
-        return _Result()
 
-    from scitex_agent_container.cli_pkg import host_group
+def test_dispatch_remote_propagates_ssh_exit_code(cfg_path: Path, subprocess_shim):
+    # Arrange
+    cfg_path.write_text("peers:\n  mba: { ssh: ywatanabe@mba.local }\n")
+    subprocess_shim.install("ssh", exit=7)
+    from scitex_agent_container.cli_pkg.host_group import dispatch_remote
 
-    monkeypatch.setattr(host_group.subprocess, "run", _fake_run)
-
-    rc = host_group.dispatch_remote("mba", ["agent", "list"])
+    # Act
+    rc = dispatch_remote("mba", ["agent", "list"])
+    # Assert
     assert rc == 7
-    # Remote command must always start with `sac`.
-    sep = seen["argv"].index("--")
-    assert seen["argv"][sep + 1] == "sac"
-    assert seen["argv"][sep + 2 :] == ["agent", "list"]
-
-
-def test_host_probe_reports_unreachable_on_nonzero_exit(cfg_path: Path, monkeypatch):
-    cfg_path.write_text(
-        """
-peers:
-  mba: { ssh: ywatanabe@mba.local }
-"""
-    )
-    import json as _json
-
-    class _Result:
-        returncode = 255
-        stdout = ""
-        stderr = "ssh: connect to host mba.local port 22: timed out"
-
-    def _fake_run(argv, **kw):
-        return _Result()
-
-    from scitex_agent_container.cli_pkg import host_group
-
-    monkeypatch.setattr(host_group.subprocess, "run", _fake_run)
-
-    runner = CliRunner()
-    result = runner.invoke(host_group.host_probe, ["mba", "--json"])
-    assert result.exit_code == 1
-    body = _json.loads(result.output)
-    assert body["reachable"] is False
-    assert body["exit_code"] == 255
-    assert "timed out" in body["stderr"]

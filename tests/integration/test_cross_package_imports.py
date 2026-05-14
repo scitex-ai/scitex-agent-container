@@ -25,12 +25,20 @@ CROSS_PACKAGE_IMPORTS = [
     "scitex_container.apptainer",
     "scitex_dev",
     "scitex_dev._cli._completion",
+    "scitex_dev.linter._rules._base",
+    "scitex_dev.linter._rules._lookup",
+    "scitex_dev.linter.checker",
     "scitex_logging",
 ]
 # ===== END AUTO-GENERATED =====
 
 
 @pytest.mark.parametrize("module_name", CROSS_PACKAGE_IMPORTS)
-def test_cross_package_import(module_name):
+def test_cross_package_import_resolves_to_real_module(module_name):
     """Importing scitex-agent-container's declared cross-package dependency must succeed."""
-    pytest.importorskip(module_name)
+    # Arrange
+    name = module_name
+    # Act
+    mod = pytest.importorskip(name)
+    # Assert
+    assert mod is not None

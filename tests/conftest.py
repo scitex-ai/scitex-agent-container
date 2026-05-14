@@ -51,7 +51,7 @@ _ensure_subprocess_coverage_shim()
 
 # Expose shared no-mocks helpers (subprocess_shim, env_save_restore) as
 # session-wide fixtures so any test under tests/ can use them by name.
-from tests._helpers.subprocess_shim import (  # noqa: E402,F401
+from tests.scitex_agent_container._helpers.subprocess_shim import (  # noqa: E402,F401
     env_save_restore,
     subprocess_shim,
 )
