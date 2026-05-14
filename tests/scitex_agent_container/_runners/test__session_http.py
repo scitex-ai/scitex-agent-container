@@ -263,20 +263,6 @@ class TestAgentCard:
         ext = body.get("x-scitex-agent-container", {})
         assert ext.get("role_class") == "ecosystem-auditor"
 
-    def test_well_known_agent_json_serves_same(self, tmp_path) -> None:
-        """A2A discovery clients also try /.well-known/agent.json — must
-        return the same payload as /.well-known/agent-card.json."""
-        yaml_path = tmp_path / "agent.yaml"
-        yaml_path.write_text(
-            "apiVersion: scitex-agent-container/v3\nkind: Agent\nspec:\n  runtime: apptainer\n"
-        )
-        status, body = self._run_card_scenario(
-            "auditor", str(yaml_path), "/.well-known/agent.json"
-        )
-        assert status == 200
-        assert body is not None
-        assert body["name"] == "auditor"
-
     def test_well_known_agent_card_404_without_yaml(self, tmp_path) -> None:
         """If the runner was launched without --a2a-card-yaml the
         endpoint returns 404 with a clear error body."""
@@ -311,11 +297,12 @@ class TestAgentCard:
         )
         assert status == 200
         assert body is not None
-        # AgentCard's `url` advertises the host-stable sac listen base
-        # plus the canonical per-agent path. The runner's own port
-        # (which is _free_port()'d at scenario start) must not leak
-        # into the advertised URL.
-        assert body["url"] == "http://127.0.0.1:7878/v1/sac/agents/ecosystem-auditor"
+        # ADR-0004 — A2A v1 AgentCard: per-agent URL lives under
+        # supportedInterfaces[0].url, not at the top level.
+        assert (
+            body["supportedInterfaces"][0]["url"]
+            == "http://127.0.0.1:7878/agents/ecosystem-auditor"
+        )
 
     def test_card_url_falls_back_to_request_base_when_env_unset(
         self, tmp_path, monkeypatch
@@ -334,16 +321,17 @@ class TestAgentCard:
         )
         assert status == 200
         assert body is not None
-        # Without the env override the url is built from request.base_url
-        # (127.0.0.1:<runner-port>) — non-empty, and NOT 7878.
-        assert body["url"].startswith("http://127.0.0.1:")
-        assert body["url"].endswith("/v1/sac/agents/auditor")
+        # Without the env override the url is built from request.base_url.
+        # ADR-0004 — A2A v1 AgentCard: URL is under supportedInterfaces[].
+        per_agent_url = body["supportedInterfaces"][0]["url"]
+        assert per_agent_url.startswith("http://127.0.0.1:")
+        assert per_agent_url.endswith("/agents/auditor")
 
 
 # ---------------------------------------------------------------------------
 # Name-in-path routes — sidecar mirrors sac listen's shape
 #
-# The AgentCard advertises ``url: <base>/v1/sac/agents/<name>`` so a client
+# The AgentCard advertises ``url: <base>/agents/<name>`` so a client
 # POSTing to the discovered URL must succeed. Regression for that wart.
 # ---------------------------------------------------------------------------
 
@@ -402,25 +390,18 @@ class TestNameInPathRoutes:
         return asyncio.run(_scenario())
 
     def test_canonical_sac_namespace_turn(self) -> None:
-        """``POST /v1/sac/agents/<name>/turn`` — canonical sac path."""
-        assert self._post_turn("alpha", "/v1/sac/agents/alpha/turn") == 200
+        """``POST /agents/<name>/turn`` — canonical sac path."""
+        assert self._post_turn("alpha", "/agents/alpha/turn") == 200
 
     def test_canonical_sac_namespace_send(self) -> None:
-        """``POST /v1/sac/agents/<name>/send`` — matches sac listen's verb."""
-        assert self._post_turn("alpha", "/v1/sac/agents/alpha/send") == 200
-
-    def test_a2a_namespace_mirror_turn(self) -> None:
-        """``POST /v1/a2a/agents/<name>/turn`` — A2A-protocol-compat."""
-        assert self._post_turn("alpha", "/v1/a2a/agents/alpha/turn") == 200
-
-    def test_a2a_namespace_mirror_send(self) -> None:
-        assert self._post_turn("alpha", "/v1/a2a/agents/alpha/send") == 200
+        """``POST /agents/<name>/send`` — matches sac listen's verb."""
+        assert self._post_turn("alpha", "/agents/alpha/send") == 200
 
     def test_name_mismatch_returns_404(self) -> None:
         """If the URL path's name doesn't match the agent on this port,
         return 404 with an explanatory body (sanity check — port
         routing already pinned us; the path name is informational)."""
-        assert self._post_turn("alpha", "/v1/sac/agents/beta/turn") == 404
+        assert self._post_turn("alpha", "/agents/beta/turn") == 404
 
     def test_legacy_bare_turn_still_works(self) -> None:
         """``POST /v1/turn`` (the original shortcut) keeps working."""

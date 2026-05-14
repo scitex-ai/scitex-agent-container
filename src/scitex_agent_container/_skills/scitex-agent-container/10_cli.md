@@ -74,12 +74,12 @@ When running, exposes (bearer-token authenticated):
 | Route | Purpose |
 |---|---|
 | `GET  /v1/sac/health` | Liveness; public |
-| `GET  /v1/sac/agents` | List local registry |
-| `GET  /v1/sac/agents/<name>/status` | Spec path, workdir, session_id |
-| `GET  /v1/sac/agents/<name>/card` | A2A-compatible AgentCard |
-| `POST /v1/sac/agents` | Start (body: `{name}` or `{name, spec}` for inline-spec register-and-start) |
-| `POST /v1/sac/agents/<name>/send` | One turn — buffered JSON by default; `Accept: text/event-stream` → SSE frames |
-| `DELETE /v1/sac/agents/<name>` | SIGTERM the runner pid |
+| `GET  /agents` | List local registry |
+| `GET  /agents/<name>/status` | Spec path, workdir, session_id |
+| `GET  /agents/<name>/card` | A2A-compatible AgentCard |
+| `POST /agents` | Start (body: `{name}` or `{name, spec}` for inline-spec register-and-start) |
+| `POST /agents/<name>/send` | One turn — buffered JSON by default; `Accept: text/event-stream` → SSE frames |
+| `DELETE /agents/<name>` | SIGTERM the runner pid |
 
 ## sac channel (local agent ↔ agent)
 

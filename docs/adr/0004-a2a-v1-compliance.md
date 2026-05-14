@@ -8,8 +8,8 @@
 
 A2A reached v1.0 stable (Linux Foundation, April 2026) and the REST
 binding now **prohibits** any path that starts with `/v1/`. sac's
-existing routes — `/v1/sac/agents/<name>`, `/v1/sac/agents/<name>/`,
-`/v1/sac/agents/<name>/inbox/stream`, `/v1/sac/agents/<name>/_active`,
+existing routes — `/agents/<name>`, `/agents/<name>/`,
+`/agents/<name>/inbox/stream`, `/agents/<name>/_active`,
 plus the fleet root `/.well-known/agent.json` (v1 renamed the
 well-known file to `agent-card.json`) — fail A2A v1.0 compliance.
 
@@ -25,18 +25,18 @@ custom dialect plus v1.0 in parallel").
 
 ## Decision
 
-### D10. Route prefix `/v1/sac/agents/` → `/agents/`.
+### D10. Route prefix `/agents/` → `/agents/`.
 
 All sac REST routes drop the `/v1/` prefix:
 
 | Old | New |
 |---|---|
 | `GET /.well-known/agent.json` | `GET /.well-known/agent-card.json` |
-| `GET /v1/sac/agents/` | `GET /agents/` |
-| `GET /v1/sac/agents/<name>/.well-known/agent.json` | `GET /agents/<name>/.well-known/agent-card.json` |
-| `POST /v1/sac/agents/<name>` | `POST /agents/<name>/message:send` (A2A v1 REST binding) |
-| `GET /v1/sac/agents/<name>/inbox/stream` | `GET /agents/<name>/inbox/stream` (sac extension) |
-| `GET /v1/sac/agents/<name>/_active` | `GET /agents/<name>/_active` (sac extension) |
+| `GET /agents/` | `GET /agents/` |
+| `GET /agents/<name>/.well-known/agent.json` | `GET /agents/<name>/.well-known/agent-card.json` |
+| `POST /agents/<name>` | `POST /agents/<name>/message:send` (A2A v1 REST binding) |
+| `GET /agents/<name>/inbox/stream` | `GET /agents/<name>/inbox/stream` (sac extension) |
+| `GET /agents/<name>/_active` | `GET /agents/<name>/_active` (sac extension) |
 
 The `/agents/<name>/` prefix is sac's multi-agent extension above the
 A2A REST binding (the spec defines single-agent paths; sac fans

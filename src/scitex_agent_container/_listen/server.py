@@ -1,20 +1,17 @@
 """Starlette app factory for ``sac listen``.
 
-Hosts symmetric ``/v1/sac/agents/...`` and ``/v1/a2a/...`` namespaces as
-designed in REQUIREMENT_SUMMARY.md §4. v1 endpoints:
+Hosts the canonical ``/agents/...`` control-plane namespace (ADR-0004).
+The legacy ``/v1/sac/`` paths and ``/v1/a2a/`` protocol-compat mirror
+were dropped wholesale per D13 (no backward compat). v1 endpoints:
 
     GET    /v1/health
-    GET    /v1/sac/agents
-    POST   /v1/sac/agents                       (create/start from spec)
-    GET    /v1/sac/agents/<name>/status
-    GET    /v1/sac/agents/<name>/tail           (SSE stream of session.jsonl)
-    POST   /v1/sac/agents/<name>/send           (prompt or key)
-    GET    /v1/sac/agents/<name>/card           (A2A-compatible card)
-    DELETE /v1/sac/agents/<name>
-
-The ``/v1/a2a/...`` mirror registers the same handlers under the A2A
-protocol-compat prefix. No backward-compat for the legacy ``/v1/sac/``
-paths — those are dropped wholesale (operator-stated stance).
+    GET    /agents                       (list)
+    POST   /agents                       (create/start from spec)
+    GET    /agents/<name>/status
+    GET    /agents/<name>/tail           (SSE stream of session.jsonl)
+    POST   /agents/<name>/send           (prompt or key)
+    GET    /agents/<name>/card           (A2A-compatible card)
+    DELETE /agents/<name>
 """
 
 from __future__ import annotations
@@ -26,8 +23,6 @@ import shutil
 import subprocess
 import urllib.error as _urlerror
 import urllib.request as _urlrequest
-from datetime import datetime
-from pathlib import Path
 
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -101,7 +96,7 @@ from ._forward import forward_to_live_runner  # noqa: E402
 
 
 async def agent_send(request: Request) -> Response:
-    """POST /v1/sac/agents/<name>/send.
+    """POST /agents/<name>/send.
 
     Body discriminator (per REQUIREMENT_SUMMARY §4.2):
         {"type":"prompt","prompt":"...","options":{...}}
@@ -283,135 +278,13 @@ async def _stream_claude(argv: list[str], workdir: str, name: str, sid: str):
         raise
 
 
-# --- tail (SSE over session.jsonl) ----------------------------------------
+# --- tail (SSE over session.jsonl) — extracted to ``_tail.py`` -------------
 
-
-def _parse_iso_ts(value: str) -> datetime | None:
-    """Best-effort ISO-8601 parser. Returns None on failure."""
-    if not isinstance(value, str) or not value:
-        return None
-    s = value.rstrip("Z")
-    try:
-        return datetime.fromisoformat(s)
-    except ValueError:
-        return None
-
-
-def _record_ts(record: dict) -> datetime | None:
-    """Pluck a timestamp from a session.jsonl record; ``ts`` or ``timestamp``."""
-    for key in ("ts", "timestamp"):
-        raw = record.get(key)
-        if raw is None:
-            continue
-        parsed = _parse_iso_ts(raw) if isinstance(raw, str) else None
-        if parsed is not None:
-            return parsed
-    return None
-
-
-def _runtime_session_jsonl(name: str) -> Path:
-    """Per-agent session.jsonl path. Patchable in tests."""
-    return (
-        Path(os.path.expanduser("~"))
-        / ".scitex"
-        / "agent-container"
-        / "runtime"
-        / name
-        / "session.jsonl"
-    )
-
-
-async def _stream_tail(path: Path, since: datetime | None, follow: bool):
-    """Yield SSE frames for each line of ``path``; tail when follow=True.
-
-    Each frame: ``data: {"line_no": N, "record": <obj>}``. Heartbeats
-    ``: keep-alive`` every 15s during follow when idle.
-    """
-    line_no = 0
-    seen_since = since is None  # if no since filter, include from line 0
-    # If the file doesn't exist yet, in follow=true we still want to
-    # wait for it to appear; in non-follow mode we close immediately.
-    if not path.is_file():
-        if not follow:
-            return
-
-    # Open once, read to EOF, then (if follow) keep polling.
-    while not path.is_file():
-        await asyncio.sleep(0.5)
-
-    last_heartbeat = asyncio.get_event_loop().time()
-    with path.open("r", encoding="utf-8") as fh:
-        while True:
-            line = fh.readline()
-            if line:
-                line_no += 1
-                line = line.rstrip("\n")
-                if not line:
-                    continue
-                try:
-                    record = _json.loads(line)
-                except _json.JSONDecodeError:
-                    # Malformed line — surface as a string payload.
-                    record = {"raw": line}
-
-                if since is not None:
-                    rec_ts = _record_ts(record) if isinstance(record, dict) else None
-                    if rec_ts is None:
-                        # No timestamp on record: include only after we've
-                        # already crossed the since boundary.
-                        if not seen_since:
-                            continue
-                    elif rec_ts < since:
-                        continue
-                    else:
-                        seen_since = True
-
-                payload = _json.dumps({"line_no": line_no, "record": record})
-                yield _sse_frame(None, payload)
-                last_heartbeat = asyncio.get_event_loop().time()
-                continue
-
-            # EOF
-            if not follow:
-                return
-            # Heartbeat every 15s of idle.
-            now = asyncio.get_event_loop().time()
-            if now - last_heartbeat >= 15.0:
-                yield b": keep-alive\n\n"
-                last_heartbeat = now
-            try:
-                await asyncio.sleep(0.5)
-            except (asyncio.CancelledError, GeneratorExit):
-                raise
-
-
-async def agent_tail(request: Request) -> Response:
-    """GET /v1/sac/agents/<name>/tail?since=<iso>&follow=<bool>.
-
-    Server-Sent Events stream of the per-agent ``session.jsonl`` lines
-    at ``~/.scitex/agent-container/runtime/<name>/session.jsonl``.
-    """
-    name = request.path_params["name"]
-    since_raw = request.query_params.get("since")
-    follow_raw = request.query_params.get("follow", "false")
-    follow = str(follow_raw).lower() in ("1", "true", "yes")
-    since = _parse_iso_ts(since_raw) if since_raw else None
-
-    path = _runtime_session_jsonl(name)
-    if not follow and not path.is_file():
-        return JSONResponse(
-            {"error": f"no session.jsonl for {name!r}"}, status_code=404
-        )
-
-    return StreamingResponse(
-        _stream_tail(path, since, follow),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+from ._tail import agent_tail  # noqa: F401, E402  (re-exported for routes)
 
 
 async def agents_start(request: Request) -> JSONResponse:
-    """POST /v1/sac/agents — start one or more agents.
+    """POST /agents — start one or more agents.
 
     Body shapes:
 
@@ -467,7 +340,7 @@ async def agents_start(request: Request) -> JSONResponse:
 
 
 async def agent_card(request: Request) -> JSONResponse:
-    """GET /v1/sac/agents/<name>/card (mirrored at /v1/a2a/agents/<name>/card).
+    """GET /agents/<name>/card (mirrored at /v1/a2a/agents/<name>/card).
 
     Returns an A2A-compatible AgentCard built from the agent's v3 spec.
     """
@@ -486,13 +359,13 @@ async def agent_card(request: Request) -> JSONResponse:
     except OSError as exc:
         return JSONResponse({"error": str(exc)}, status_code=500)
 
-    base_url = str(request.base_url).rstrip("/") + "/v1/a2a"
+    base_url = str(request.base_url).rstrip("/")
     card = project_card(name, v3, base_url)
     return JSONResponse(card)
 
 
 async def agent_delete(request: Request) -> JSONResponse:
-    """DELETE /v1/sac/agents/<name> — stop the agent."""
+    """DELETE /agents/<name> — stop the agent."""
     name = request.path_params["name"]
     sd = state_dir_for(name)
     pid_file = sd / "pid"
@@ -510,11 +383,7 @@ async def agent_delete(request: Request) -> JSONResponse:
 
 
 def _v1_agent_routes(prefix: str) -> list[Route]:
-    """Build the agent route set under a given prefix.
-
-    Used to register identical handlers at both ``/v1/sac/agents`` and
-    ``/v1/a2a/agents`` per the symmetric-namespace requirement.
-    """
+    """Build the agent route set under ``prefix`` (ADR-0004: only ``/agents``)."""
     return [
         Route(f"{prefix}", list_agents, methods=["GET"]),
         Route(f"{prefix}", agents_start, methods=["POST"]),
@@ -527,15 +396,9 @@ def _v1_agent_routes(prefix: str) -> list[Route]:
 
 
 def create_app(*, token: str) -> Starlette:
-    """Build the Starlette app with bearer auth and v1 routes.
-
-    Two symmetric prefixes share identical handlers:
-        - /v1/sac/agents/...   sac-native verbs
-        - /v1/a2a/agents/... A2A-protocol-compat mirror
-    """
+    """Build the Starlette app with bearer auth (ADR-0004 — ``/agents`` only)."""
     routes: list[Route] = [Route("/v1/health", health, methods=["GET"])]
-    routes += _v1_agent_routes("/v1/sac/agents")
-    routes += _v1_agent_routes("/v1/a2a/agents")
+    routes += _v1_agent_routes("/agents")
     app = Starlette(routes=routes)
     app.add_middleware(BearerAuthMiddleware, token=token)
     return app

@@ -229,7 +229,7 @@ def build_app(
 
     async def get_agent_card(request: Request) -> JSONResponse:
         base_url = str(request.base_url).rstrip("/")
-        our_url = f"{base_url}/v1/sac/agents/{name}"
+        our_url = f"{base_url}/agents/{name}"
         card = splice_card(
             upstream_card,
             name=name,

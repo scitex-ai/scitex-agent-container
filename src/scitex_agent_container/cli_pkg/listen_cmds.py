@@ -1,7 +1,7 @@
 """``sac listen`` — host-level HTTP/JSON control plane for sac agents.
 
 Boots a Starlette app under uvicorn at ``--bind``; routes the
-``/v1/sac/agents/...`` and ``/v1/a2a/...`` namespaces from
+``/agents/...`` and ``/v1/a2a/...`` namespaces from
 :mod:`scitex_agent_container._listen.server`.
 Token auto-generates at first run; printed once for the operator to
 copy. Subsequent runs reuse the token file.

@@ -66,7 +66,7 @@ This works for ssh aliases that aren't DNS-resolvable from the caller (e.g., `mb
 
 ## Host-wide control plane — `sac listen`
 
-`/v1/turn` is the **per-agent** wire (one HTTP server per long-lived runner, bound to `spec.a2a.port`). The **host-wide control plane** is a separate process: `sac listen` exposes `/v1/sac/{health,agents,agents/<name>/{status,send,card}}` for orchestrators (e.g. orochi) to reach every agent on the host through one bearer-authenticated endpoint. `POST /v1/sac/agents/<name>/send` forwards turns into the live runner's `/v1/turn` when `spec.a2a.port` is set; otherwise it falls back to `claude --resume <sid> -p`. With `Accept: text/event-stream` it streams claude's stream-json output as SSE frames. See `10_cli.md` for the full route table.
+`/v1/turn` is the **per-agent** wire (one HTTP server per long-lived runner, bound to `spec.a2a.port`). The **host-wide control plane** is a separate process: `sac listen` exposes `/v1/sac/{health,agents,agents/<name>/{status,send,card}}` for orchestrators (e.g. orochi) to reach every agent on the host through one bearer-authenticated endpoint. `POST /agents/<name>/send` forwards turns into the live runner's `/v1/turn` when `spec.a2a.port` is set; otherwise it falls back to `claude --resume <sid> -p`. With `Accept: text/event-stream` it streams claude's stream-json output as SSE frames. See `10_cli.md` for the full route table.
 
 ## See also
 

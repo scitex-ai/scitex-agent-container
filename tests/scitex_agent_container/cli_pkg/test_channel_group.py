@@ -72,7 +72,7 @@ def test_happy_path_wraps_in_channel_tag(token_file):
 
     assert result.exit_code == 0, result.output
     # URL is the per-agent send endpoint
-    assert captured["url"] == "http://127.0.0.1:7878/v1/sac/agents/alpha/send"
+    assert captured["url"] == "http://127.0.0.1:7878/agents/alpha/send"
     # Body has type=prompt and channel-wrapped payload
     assert captured["body"]["type"] == "prompt"
     p = captured["body"]["prompt"]
