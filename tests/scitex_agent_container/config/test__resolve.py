@@ -19,10 +19,53 @@ def _write(p: Path, name: str = "x") -> Path:
     return p
 
 
+class _EnvBag:
+    """Mutable env wrapper that snapshots the prior value of every key
+    it touches and reverts on ``restore()``. PA-306-friendly replacement
+    for ``monkeypatch.setenv`` / ``monkeypatch.delenv``."""
+
+    def __init__(self) -> None:
+        self._prev: dict[str, "str | None"] = {}
+
+    def setenv(self, key: str, value: str) -> None:
+        import os
+
+        if key not in self._prev:
+            self._prev[key] = os.environ.get(key)
+        os.environ[key] = value
+
+    def delenv(self, key: str) -> None:
+        import os
+
+        if key not in self._prev:
+            self._prev[key] = os.environ.get(key)
+        os.environ.pop(key, None)
+
+    def restore(self) -> None:
+        import os
+
+        for k, v in self._prev.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
 @pytest.fixture
-def fake_home(monkeypatch, tmp_path):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("SCITEX_AGENT_CONTAINER_YAML_DIRS", raising=False)
+def env_bag():
+    """Yields an ``_EnvBag`` that auto-reverts on teardown."""
+    bag = _EnvBag()
+    try:
+        yield bag
+    finally:
+        bag.restore()
+
+
+@pytest.fixture
+def fake_home(tmp_path, env_bag):
+    """Redirect ``$HOME`` at tmp_path. Reverts via the env_bag."""
+    env_bag.setenv("HOME", str(tmp_path))
+    env_bag.delenv("SCITEX_AGENT_CONTAINER_YAML_DIRS")
     return tmp_path
 
 
@@ -41,34 +84,32 @@ def test_resolve_config_supports_nested_name_dir(fake_home):
     assert resolve_config("foo") == str(hit)
 
 
-def test_resolve_config_primary_preferred_over_env_var(fake_home, monkeypatch):
+def test_resolve_config_primary_preferred_over_env_var(fake_home, env_bag):
     primary_hit = _write(_primary(fake_home) / "foo" / "spec.yaml", "primary")
     envdir = fake_home / "envdir"
     _write(envdir / "foo" / "spec.yaml", "env")
-    monkeypatch.setenv("SCITEX_AGENT_CONTAINER_YAML_DIRS", str(envdir))
+    env_bag.setenv("SCITEX_AGENT_CONTAINER_YAML_DIRS", str(envdir))
     assert resolve_config("foo") == str(primary_hit)
 
 
-def test_resolve_config_env_var_plugin_port(fake_home, monkeypatch):
+def test_resolve_config_env_var_plugin_port(fake_home, env_bag):
     envdir = fake_home / "envdir"
     envhit = _write(envdir / "foo" / "spec.yaml", "env")
-    monkeypatch.setenv("SCITEX_AGENT_CONTAINER_YAML_DIRS", str(envdir))
+    env_bag.setenv("SCITEX_AGENT_CONTAINER_YAML_DIRS", str(envdir))
     assert resolve_config("foo") == str(envhit)
 
 
-def test_resolve_config_env_var_colon_separated(fake_home, monkeypatch):
+def test_resolve_config_env_var_colon_separated(fake_home, env_bag):
     d1 = fake_home / "d1"
     d2 = fake_home / "d2"
     d1.mkdir()
     expected = _write(d2 / "foo" / "spec.yaml", "d2")
-    monkeypatch.setenv("SCITEX_AGENT_CONTAINER_YAML_DIRS", f"{d1}:{d2}")
+    env_bag.setenv("SCITEX_AGENT_CONTAINER_YAML_DIRS", f"{d1}:{d2}")
     assert resolve_config("foo") == str(expected)
 
 
-def test_resolve_config_not_found_lists_searched_paths(fake_home, monkeypatch):
-    monkeypatch.setenv(
-        "SCITEX_AGENT_CONTAINER_YAML_DIRS", f"{fake_home}/a:{fake_home}/b"
-    )
+def test_resolve_config_not_found_lists_searched_paths(fake_home, env_bag):
+    env_bag.setenv("SCITEX_AGENT_CONTAINER_YAML_DIRS", f"{fake_home}/a:{fake_home}/b")
     with pytest.raises(FileNotFoundError) as excinfo:
         resolve_config("missing")
     msg = str(excinfo.value)
@@ -110,19 +151,21 @@ from scitex_agent_container.config._resolve import (
 
 
 @pytest.fixture
-def agent_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def agent_root(tmp_path: Path, env_bag):
     """Sandbox a fresh agent search root for each test.
 
     ``_resolve._search_dirs()`` resolves the home root via
     ``os.path.expanduser('~')`` which honours ``$HOME`` on Unix —
     pointing $HOME at a tmp dir redirects every default location
     into our sandbox without touching any pathlib internals.
+
+    PA-306: env mutation goes through ``env_bag`` (auto-revert).
     """
     home = tmp_path / "home"
     (home / ".scitex" / "agent-container" / "agents").mkdir(parents=True)
-    monkeypatch.setenv("HOME", str(home))
+    env_bag.setenv("HOME", str(home))
     # Don't let an outer test session leak its YAML dirs in.
-    monkeypatch.delenv("SCITEX_AGENT_CONTAINER_YAML_DIRS", raising=False)
+    env_bag.delenv("SCITEX_AGENT_CONTAINER_YAML_DIRS")
     return home / ".scitex" / "agent-container" / "agents"
 
 
