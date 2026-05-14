@@ -28,17 +28,31 @@ from scitex_agent_container._state.state_db import (
 
 
 @pytest.fixture
-def db_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Isolated state.db location, exported via env so the CLI picks it up."""
+def db_path(tmp_path: Path):
+    """Isolated state.db location, exported via env so the CLI picks it up.
+
+    PA-306: explicit env save/restore (no monkeypatch fixture).
+    """
+    import os
+
     p = tmp_path / "state.db"
-    monkeypatch.setenv("SCITEX_AGENT_CONTAINER_STATE_DB", str(p))
+    key = "SCITEX_AGENT_CONTAINER_STATE_DB"
+    saved = os.environ.get(key)
+    os.environ[key] = str(p)
     # Reload the module-level constant without bouncing the import.
     import importlib
 
     import scitex_agent_container._state.state_db as mod
 
     importlib.reload(mod)
-    return p
+    try:
+        yield p
+    finally:
+        if saved is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = saved
+        importlib.reload(mod)
 
 
 def test_init_schema_creates_all_tables(db_path: Path):
@@ -298,10 +312,10 @@ def test_update_heartbeat_partial_update_preserves_prev_via_coalesce(db_path: Pa
     assert inst["output_tokens"] == 200
 
 
-def test_gc_dead_instances_marks_dead_local_pid_as_crashed(
-    db_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_gc_dead_instances_marks_dead_local_pid_as_crashed(db_path: Path):
     """A local instance whose pid is dead should be marked 'crashed'."""
+    import os
+
     from scitex_agent_container._state import state_db
     from scitex_agent_container._state.state_db import (
         gc_dead_instances,
@@ -309,14 +323,32 @@ def test_gc_dead_instances_marks_dead_local_pid_as_crashed(
         record_instance_start,
     )
 
-    # Force a single canonical host for this test so the row's host
-    # matches the gc's host filter.
-    monkeypatch.setenv("SAC_HOST", "test-host")
-    # Avoid the boot-epoch sweep for this test (needs a stable started_at
-    # below boot — easier to suppress the proc check entirely).
-    monkeypatch.setattr(state_db, "_proc_btime", lambda: None)
+    # PA-306: explicit env + module attr save/restore.
+    saved_host = os.environ.get("SAC_HOST")
+    saved_btime = state_db._proc_btime
+    os.environ["SAC_HOST"] = "test-host"
+    state_db._proc_btime = lambda: None  # type: ignore[assignment]
+    try:
+        iid = record_instance_start("dead-agent", pid=999_999_999, host="test-host")
+        assert list_active_instances(host="test-host")
+        counters = gc_dead_instances()
+        assert counters["crashed"] >= 1
+        assert list_active_instances(host="test-host") == []
+        from scitex_agent_container._state.state_db import open_db
 
-    iid = record_instance_start("dead-agent", pid=999_999_999, host="test-host")
+        with open_db() as conn:
+            row = conn.execute(
+                "SELECT exit_reason FROM instances WHERE id=?", (iid,)
+            ).fetchone()
+        assert row["exit_reason"] == "crashed"
+        return
+    finally:
+        state_db._proc_btime = saved_btime  # type: ignore[assignment]
+        if saved_host is None:
+            os.environ.pop("SAC_HOST", None)
+        else:
+            os.environ["SAC_HOST"] = saved_host
+    # Unreachable
     assert list_active_instances(host="test-host")
     counters = gc_dead_instances()
     assert counters["crashed"] >= 1
@@ -331,20 +363,30 @@ def test_gc_dead_instances_marks_dead_local_pid_as_crashed(
     assert row["exit_reason"] == "crashed"
 
 
-def test_db_clean_via_cli_emits_counts(db_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_db_clean_via_cli_emits_counts(db_path: Path):
+    import os
+
     from scitex_agent_container._state import state_db
     from scitex_agent_container._state.state_db import record_instance_start
     from scitex_agent_container.cli_pkg.db_group import db_clean
 
-    monkeypatch.setenv("SAC_HOST", "test-host")
-    monkeypatch.setattr(state_db, "_proc_btime", lambda: None)
-    record_instance_start("dead", pid=999_999_999, host="test-host")
-
-    runner = CliRunner()
-    result = runner.invoke(db_clean, ["--json"])
-    assert result.exit_code == 0, result.output
-    body = json.loads(result.output)
-    assert body["crashed"] >= 1
+    saved_host = os.environ.get("SAC_HOST")
+    saved_btime = state_db._proc_btime
+    os.environ["SAC_HOST"] = "test-host"
+    state_db._proc_btime = lambda: None  # type: ignore[assignment]
+    try:
+        record_instance_start("dead", pid=999_999_999, host="test-host")
+        runner = CliRunner()
+        result = runner.invoke(db_clean, ["--json"])
+        assert result.exit_code == 0, result.output
+        body = json.loads(result.output)
+        assert body["crashed"] >= 1
+    finally:
+        state_db._proc_btime = saved_btime  # type: ignore[assignment]
+        if saved_host is None:
+            os.environ.pop("SAC_HOST", None)
+        else:
+            os.environ["SAC_HOST"] = saved_host
 
 
 def test_db_tick_silent_zero_exit(db_path: Path):
@@ -408,10 +450,10 @@ def test_export_state_filters_by_since(db_path: Path):
     )
 
 
-def test_import_state_round_trip_idempotent(
-    db_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_import_state_round_trip_idempotent(db_path: Path, tmp_path: Path):
     """Export from one db, import into a fresh db, re-import is a no-op."""
+    import os
+
     from scitex_agent_container._state.state_db import (
         export_state,
         record_instance_start,
@@ -424,26 +466,34 @@ def test_import_state_round_trip_idempotent(
 
     # Sink: brand-new db (different env path).
     sink = tmp_path / "sink.db"
-    monkeypatch.setenv("SCITEX_AGENT_CONTAINER_STATE_DB", str(sink))
+    key = "SCITEX_AGENT_CONTAINER_STATE_DB"
+    saved = os.environ.get(key)
+    os.environ[key] = str(sink)
     import importlib
 
     import scitex_agent_container._state.state_db as mod
 
     importlib.reload(mod)
+    try:
+        inserted = mod.import_state(payload)
+        assert inserted["instances"] == 2
 
-    inserted = mod.import_state(payload)
-    assert inserted["instances"] == 2
+        # Re-import the same payload — every row already present → 0 inserts.
+        inserted_again = mod.import_state(payload)
+        assert inserted_again["instances"] == 0
 
-    # Re-import the same payload — every row already present → 0 inserts.
-    inserted_again = mod.import_state(payload)
-    assert inserted_again["instances"] == 0
-
-    # Sink contains exactly the source uuids.
-    with mod.open_db() as conn:
-        rows = sorted(
-            r["id"] for r in conn.execute("SELECT id FROM instances").fetchall()
-        )
-    assert rows == sorted([iid1, iid2])
+        # Sink contains exactly the source uuids.
+        with mod.open_db() as conn:
+            rows = sorted(
+                r["id"] for r in conn.execute("SELECT id FROM instances").fetchall()
+            )
+        assert rows == sorted([iid1, iid2])
+    finally:
+        if saved is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = saved
+        importlib.reload(mod)
 
 
 def test_import_state_rejects_wrong_schema(db_path: Path):
@@ -466,10 +516,10 @@ def test_db_export_via_cli_emits_json(db_path: Path):
     assert len(payload["tables"]["instances"]) == 1
 
 
-def test_db_import_via_cli_reads_stdin(
-    db_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_db_import_via_cli_reads_stdin(db_path: Path, tmp_path: Path):
     """``sac db import -`` reads the dump from stdin."""
+    import os
+
     from scitex_agent_container._state.state_db import (
         export_state,
         record_instance_start,
@@ -479,17 +529,26 @@ def test_db_import_via_cli_reads_stdin(
     payload = export_state(host="h")
 
     # Switch DB to a fresh one; import via CLI from stdin.
-    monkeypatch.setenv("SCITEX_AGENT_CONTAINER_STATE_DB", str(tmp_path / "fresh.db"))
+    key = "SCITEX_AGENT_CONTAINER_STATE_DB"
+    saved = os.environ.get(key)
+    os.environ[key] = str(tmp_path / "fresh.db")
     import importlib
 
     import scitex_agent_container._state.state_db as mod
 
     importlib.reload(mod)
-    from scitex_agent_container.cli_pkg.db_group import db_import
+    try:
+        from scitex_agent_container.cli_pkg.db_group import db_import
 
-    runner = CliRunner()
-    result = runner.invoke(db_import, ["-", "--json"], input=json.dumps(payload))
-    assert result.exit_code == 0, result.output
-    body = json.loads(result.output)
-    assert body["inserted"]["instances"] == 1
-    assert body["host"] == "h"
+        runner = CliRunner()
+        result = runner.invoke(db_import, ["-", "--json"], input=json.dumps(payload))
+        assert result.exit_code == 0, result.output
+        body = json.loads(result.output)
+        assert body["inserted"]["instances"] == 1
+        assert body["host"] == "h"
+    finally:
+        if saved is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = saved
+        importlib.reload(mod)
