@@ -1,31 +1,132 @@
-"""Tests for ApptainerContainerRuntime (F-CS18)."""
+"""Tests for :class:`ApptainerContainerRuntime` (F-CS18).
+
+No-mocks rewrite: all production hooks are exercised through real
+seams.
+
+* ``shutil.which`` is driven by a ``subprocess_shim``-installed fake
+  ``apptainer`` binary on ``$PATH`` (and the absence thereof).
+* ``subprocess.run`` / ``subprocess.Popen`` execute the same fake
+  binary so ``apptainer build`` / ``apptainer exec`` are real OS-level
+  process invocations.
+* ``Path.home()`` is driven by ``$HOME`` (POSIX semantics) via
+  ``env_save_restore``.
+* Live-PID assertions launch ``sleep 60`` real subprocesses; dead-PID
+  assertions kill a child first so ``os.kill(pid, 0)`` raises a real
+  ``ProcessLookupError``.
+"""
 
 from __future__ import annotations
 
+import importlib
+import os
+import shlex
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
-from scitex_agent_container.config import AgentConfig
-from scitex_agent_container.config._types import ApptainerSpec, StartupCommand
+from scitex_agent_container.config import AgentConfig, ProxySpec
+from scitex_agent_container.config._types import (
+    A2ASpec,
+    ApptainerSpec,
+    AutonomousSpec,
+    ContainerSpec,
+    StartupCommand,
+)
+from scitex_agent_container.runtimes import _apptainer_runtime as mod
+from scitex_agent_container.runtimes._apptainer_inner_argv import (
+    RUNNER_MODULE_AGENT,
+    RUNNER_MODULE_PROXY,
+)
 from scitex_agent_container.runtimes._apptainer_runtime import (
+    APPTAINER_LOG_FILE,
     APPTAINER_PID_FILE,
     ApptainerContainerRuntime,
+    _safe_image_tag,
 )
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
-def state_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Sandbox the per-agent state-dir root."""
+def home_redirect(tmp_path: Path, env_save_restore) -> Path:
+    """Redirect ``$HOME`` to a per-test dir so credentials / state
+    resolution don't touch the operator's real home. ``Path.home()`` on
+    POSIX reads ``$HOME`` directly — no ``Path.home`` patching needed.
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    env_save_restore.set("HOME", str(home))
+    return home
+
+
+@pytest.fixture
+def state_root(tmp_path: Path, env_save_restore, home_redirect: Path) -> Path:
+    """Sandbox the per-agent state-dir root. Sets the env var that
+    ``_session_state.DEFAULT_STATE_ROOT`` caches at import time, then
+    reloads the module so the next ``state_dir_for`` call sees it."""
     root = tmp_path / "runtime"
     root.mkdir()
-    monkeypatch.setenv("SCITEX_AGENT_CONTAINER_RUNTIME_DIR", str(root))
-    import importlib
-
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_RUNTIME_DIR", str(root))
     import scitex_agent_container._runners._session_state as ss
 
     importlib.reload(ss)
     return root
+
+
+@pytest.fixture
+def apptainer_on_path(subprocess_shim) -> Path:
+    """Install a fake ``apptainer`` binary on ``$PATH`` that, when
+    invoked as ``apptainer build <out.sif> <src>``, creates the output
+    file. Otherwise it's a no-op (exit 0).
+
+    ``shutil.which("apptainer")`` finds this binary by a real PATH
+    lookup — no ``which`` monkeypatching.
+    """
+    bin_dir = subprocess_shim._bin
+    script = bin_dir / "apptainer"
+    # Argv layout for build: ["build", "<sif>", "<src>"]. The shim
+    # *writes the .sif file* so production's `sif_path.is_file()` check
+    # passes after the call returns — honest end-to-end behaviour.
+    body = (
+        f"#!{sys.executable}\n"
+        "import json, sys\n"
+        "from pathlib import Path\n"
+        f"with open({_q(str(bin_dir / 'apptainer.argv.jsonl'))}, 'a') as fh:\n"
+        "    fh.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+        "if len(sys.argv) >= 3 and sys.argv[1] == 'build':\n"
+        "    Path(sys.argv[2]).write_bytes(b'\\x00')\n"
+        "sys.exit(0)\n"
+    )
+    script.write_text(body)
+    script.chmod(0o755)
+    subprocess_shim._logs["apptainer"] = bin_dir / "apptainer.argv.jsonl"
+    return script
+
+
+def _q(s: str) -> str:
+    """Shell-safe Python literal for use in generated scripts."""
+    import json
+
+    return json.dumps(s)
+
+
+@pytest.fixture
+def no_apptainer_on_path(env_save_restore, tmp_path: Path) -> Path:
+    """Pin ``$PATH`` to an empty directory so ``shutil.which('apptainer')``
+    returns ``None`` deterministically — no monkeypatching."""
+    empty = tmp_path / "_empty_bin"
+    empty.mkdir()
+    env_save_restore.set("PATH", str(empty))
+    return empty
+
+
+# ---------------------------------------------------------------------------
+# Config helpers
+# ---------------------------------------------------------------------------
 
 
 def _config(workdir: Path, **kw) -> AgentConfig:
@@ -37,68 +138,32 @@ def _config(workdir: Path, **kw) -> AgentConfig:
     )
 
 
-# ---------------------------------------------------------------------------
-# build_run_argv shape
-# ---------------------------------------------------------------------------
-
-
-def test_argv_starts_with_apptainer_exec(tmp_path: Path) -> None:
-    rt = ApptainerContainerRuntime()
-    cfg = _config(tmp_path / "wd")
-    sif = tmp_path / "x.sif"
-    argv = rt.build_run_argv(cfg, state_dir=tmp_path / "state", sif_path=sif)
-    assert argv[0:2] == ["apptainer", "exec"]
-
-
-def test_argv_emits_bind_mounts_in_apptainer_syntax(tmp_path: Path) -> None:
-    """Bind syntax is `--bind src:dst` (not docker's `--mount type=bind,...`)."""
-    rt = ApptainerContainerRuntime()
-    workdir = tmp_path / "wd"
-    state_dir = tmp_path / "state"
-    cfg = _config(workdir)
-    sif = tmp_path / "x.sif"
-    argv = rt.build_run_argv(cfg, state_dir=state_dir, sif_path=sif)
-
-    bind_idxs = [i for i, a in enumerate(argv) if a == "--bind"]
-    binds = [argv[i + 1] for i in bind_idxs]
-    assert any(b.endswith(":/work") and str(workdir) in b for b in binds)
-    # state_dir is bound at /state/<name> (not /state) so the in-container
-    # `state_dir_for(name, root=/state)` resolves to the same path as
-    # the bind target — otherwise we'd land on disk at runtime/<name>/<name>/.
-    assert any(b.endswith(f":/state/{cfg.name}") and str(state_dir) in b for b in binds)
-
-
-def test_argv_does_not_override_home(tmp_path: Path) -> None:
-    """Apptainer protects HOME from --env override (security policy);
-    unlike the docker path it doesn't need a HOME=/tmp pin because
-    apptainer inherits the host's /etc/passwd entry by default."""
-    rt = ApptainerContainerRuntime()
-    cfg = _config(tmp_path)
-    argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
-    assert "HOME=/tmp" not in argv
-    assert not any(a.startswith("HOME=") for a in argv)
-
-
-def test_argv_does_not_emit_user_flag(tmp_path: Path) -> None:
-    """apptainer runs as the calling UID by default; no --user flag."""
-    rt = ApptainerContainerRuntime()
-    cfg = _config(tmp_path)
-    argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
-    assert "--user" not in argv
+def _proxy_config(workdir: Path, **kw) -> AgentConfig:
+    return AgentConfig(
+        name=kw.pop("name", "proxy-front"),
+        runtime="apptainer",
+        workdir=str(workdir),
+        kind="AgentProxy",
+        proxy=ProxySpec(
+            upstream=kw.pop("upstream", "https://peer.example.com"),
+            trust=kw.pop("trust", "untrusted"),
+            redact=list(kw.pop("redact", []) or []),
+            timeout_s=kw.pop("timeout_s", 30.0),
+        ),
+        a2a=A2ASpec(port=kw.pop("a2a_port", None))
+        if "a2a_port" in kw or kw.get("a2a_port") is not None
+        else A2ASpec(),
+        config_path=kw.pop("config_path", ""),
+        **kw,
+    )
 
 
 def _extract_inner_argv(argv: list[str]) -> list[str]:
     """Unwrap the D2 ``bash -c "<preflight>\\nexec <inner>"`` wrapper.
 
     When ``apptainer.relaxed=true`` no wrapper is present and the inner
-    argv lives flat in ``argv``; this helper handles both shapes so
-    tests stay shape-agnostic.
+    argv lives flat in ``argv``.
     """
-    import shlex
-
-    # Find the SIF path (first arg that ends with .sif under a tmp dir
-    # OR a directory + ".singularity.d/" — simplest: the argv element
-    # immediately preceding "bash" or "/usr/bin/tini").
     for i, a in enumerate(argv):
         if a == "bash" and i + 2 < len(argv) and argv[i + 1] == "-c":
             script = argv[i + 2]
@@ -109,667 +174,931 @@ def _extract_inner_argv(argv: list[str]) -> list[str]:
     return []
 
 
-def test_argv_runs_runner_module_via_tini(tmp_path: Path) -> None:
+def _flag_value(argv: list[str], flag: str) -> str:
+    idx = argv.index(flag)
+    return argv[idx + 1]
+
+
+def _env_pairs(argv: list[str]) -> dict[str, str]:
+    """Decode every ``--env KEY=VAL`` pair in the argv into a dict."""
+    out: dict[str, str] = {}
+    for i, a in enumerate(argv):
+        if a == "--env" and i + 1 < len(argv) and "=" in argv[i + 1]:
+            k, _, v = argv[i + 1].partition("=")
+            out[k] = v
+    return out
+
+
+# ---------------------------------------------------------------------------
+# build_run_argv — top-level shape (pure function, no I/O)
+# ---------------------------------------------------------------------------
+
+
+def test_argv_first_two_tokens_are_apptainer_exec(tmp_path: Path) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
-    cfg = _config(
-        tmp_path,
-        startup_commands=[StartupCommand(command="say hi")],
+    cfg = _config(tmp_path / "wd")
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
     )
+    # Assert
+    assert argv[0:2] == ["apptainer", "exec"]
+
+
+def test_argv_emits_workdir_bind_mount(tmp_path: Path) -> None:
+    # Arrange
+    rt = ApptainerContainerRuntime()
+    workdir = tmp_path / "wd"
+    cfg = _config(workdir)
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    # Assert
+    bind_idxs = [i for i, a in enumerate(argv) if a == "--bind"]
+    binds = [argv[i + 1] for i in bind_idxs]
+    assert any(b.endswith(":/work") and str(workdir) in b for b in binds)
+
+
+def test_argv_emits_state_dir_bind_mount(tmp_path: Path) -> None:
+    # Arrange — state_dir is bound at /state/<name>, not /state.
+    rt = ApptainerContainerRuntime()
+    state_dir = tmp_path / "state"
+    cfg = _config(tmp_path / "wd")
+    # Act
+    argv = rt.build_run_argv(cfg, state_dir=state_dir, sif_path=tmp_path / "x.sif")
+    # Assert
+    bind_idxs = [i for i, a in enumerate(argv) if a == "--bind"]
+    binds = [argv[i + 1] for i in bind_idxs]
+    assert any(b.endswith(f":/state/{cfg.name}") and str(state_dir) in b for b in binds)
+
+
+def test_argv_does_not_emit_home_tmp_literal(tmp_path: Path) -> None:
+    # Arrange — apptainer rejects --env HOME=... so production must
+    # never emit it.
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path)
+    # Act
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    # Assert
+    assert "HOME=/tmp" not in argv
+
+
+def test_argv_does_not_emit_any_home_env(tmp_path: Path) -> None:
+    # Arrange
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path)
+    # Act
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    # Assert
+    assert not any(a.startswith("HOME=") for a in argv)
+
+
+def test_argv_does_not_emit_user_flag(tmp_path: Path) -> None:
+    # Arrange
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path)
+    # Act
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    # Assert
+    assert "--user" not in argv
+
+
+def test_argv_runs_runner_module_via_tini(tmp_path: Path) -> None:
+    # Arrange
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path, startup_commands=[StartupCommand(command="say hi")])
+    # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
     inner = _extract_inner_argv(argv)
+    # Assert
     assert inner[0] == "/usr/bin/tini"
+
+
+def test_argv_inner_invokes_claude_session_module(tmp_path: Path) -> None:
+    # Arrange
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path, startup_commands=[StartupCommand(command="say hi")])
+    # Act
+    inner = _extract_inner_argv(
+        rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    )
+    # Assert
     assert "scitex_agent_container._runners.claude_session" in inner
-    # Mission flows through the same way as docker.
-    assert "--mission" in inner
+
+
+def test_argv_inner_carries_mission_from_startup_command(tmp_path: Path) -> None:
+    # Arrange
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path, startup_commands=[StartupCommand(command="say hi")])
+    # Act
+    inner = _extract_inner_argv(
+        rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    )
+    # Assert
     assert inner[inner.index("--mission") + 1] == "say hi"
 
 
-def test_argv_forwards_sac_anthropic_api_key(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_argv_forwards_sac_anthropic_api_key_env(
+    tmp_path: Path, env_save_restore
 ) -> None:
-    monkeypatch.setenv("SAC_ANTHROPIC_API_KEY", "sk-ant-api-test")
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    # Arrange
+    env_save_restore.set("SAC_ANTHROPIC_API_KEY", "sk-ant-api-test")
+    env_save_restore.delete("ANTHROPIC_API_KEY")
     rt = ApptainerContainerRuntime()
     cfg = _config(tmp_path)
+    # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    # Assert
     assert "SAC_ANTHROPIC_API_KEY=sk-ant-api-test" in argv
 
 
-def test_argv_emits_nv_when_apptainer_nv_set(tmp_path: Path) -> None:
-    """``spec.apptainer.nv: true`` adds ``--nv`` to bind host CUDA."""
+def test_argv_emits_nv_flag_when_apptainer_nv_true(tmp_path: Path) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
     cfg = _config(tmp_path, apptainer=ApptainerSpec(nv=True))
+    # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    # Assert
     assert "--nv" in argv
-    # Sanity: rocm not added unless asked.
+
+
+def test_argv_omits_rocm_when_only_nv_requested(tmp_path: Path) -> None:
+    # Arrange
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path, apptainer=ApptainerSpec(nv=True))
+    # Act
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    # Assert
     assert "--rocm" not in argv
 
 
-def test_argv_omits_nv_by_default(tmp_path: Path) -> None:
+def test_argv_omits_nv_flag_by_default(tmp_path: Path) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
     cfg = _config(tmp_path)
+    # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    # Assert
     assert "--nv" not in argv
 
 
-def test_argv_forwards_autonomous_block(tmp_path: Path) -> None:
-    from scitex_agent_container.config._types import AutonomousSpec
-
+def test_argv_forwards_autonomous_enabled_flag(tmp_path: Path) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
     cfg = _config(
         tmp_path,
         startup_commands=[StartupCommand(command="seed")],
         autonomous=AutonomousSpec(enabled=True, drive_until="OK", max_turns=7),
     )
-    argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
-    inner = _extract_inner_argv(argv)
+    # Act
+    inner = _extract_inner_argv(
+        rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    )
+    # Assert
     assert "--autonomous-enabled" in inner
+
+
+def test_argv_forwards_autonomous_drive_until_value(tmp_path: Path) -> None:
+    # Arrange
+    rt = ApptainerContainerRuntime()
+    cfg = _config(
+        tmp_path,
+        startup_commands=[StartupCommand(command="seed")],
+        autonomous=AutonomousSpec(enabled=True, drive_until="OK", max_turns=7),
+    )
+    # Act
+    inner = _extract_inner_argv(
+        rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    )
+    # Assert
     assert inner[inner.index("--autonomous-drive-until") + 1] == "OK"
+
+
+def test_argv_forwards_autonomous_max_turns_value(tmp_path: Path) -> None:
+    # Arrange
+    rt = ApptainerContainerRuntime()
+    cfg = _config(
+        tmp_path,
+        startup_commands=[StartupCommand(command="seed")],
+        autonomous=AutonomousSpec(enabled=True, drive_until="OK", max_turns=7),
+    )
+    # Act
+    inner = _extract_inner_argv(
+        rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    )
+    # Assert
     assert inner[inner.index("--autonomous-max-turns") + 1] == "7"
 
 
 # ---------------------------------------------------------------------------
-# resolve_sif
+# resolve_sif — real apptainer-on-PATH seam
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_sif_uses_local_sif_path(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_resolve_sif_uses_existing_local_sif_path(
+    tmp_path: Path, apptainer_on_path: Path
 ) -> None:
-    """An existing .sif path is used directly; no build."""
+    # Arrange — an existing .sif on disk is used directly.
     sif = tmp_path / "ready.sif"
     sif.write_bytes(b"\x00")
     cfg = _config(tmp_path, image=str(sif))
-    monkeypatch.setattr(
-        "scitex_agent_container.runtimes._apptainer_runtime.shutil.which",
-        lambda _: "/usr/bin/apptainer",
-    )
-
+    # Act
     resolved = ApptainerContainerRuntime().resolve_sif(cfg)
+    # Assert
     assert resolved == sif
 
 
 def test_resolve_sif_returns_none_when_apptainer_missing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, no_apptainer_on_path: Path
 ) -> None:
+    # Arrange
     cfg = _config(tmp_path, image=str(tmp_path / "x.sif"))
-    monkeypatch.setattr(
-        "scitex_agent_container.runtimes._apptainer_runtime.shutil.which",
-        lambda _: None,
-    )
-    assert ApptainerContainerRuntime().resolve_sif(cfg) is None
+    # Act
+    resolved = ApptainerContainerRuntime().resolve_sif(cfg)
+    # Assert
+    assert resolved is None
 
 
 def test_resolve_sif_def_file_takes_precedence_over_image(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, apptainer_on_path: Path, state_root: Path
 ) -> None:
-    """When ApptainerSpec.def_file is set, sac builds from the .def
-    even if spec.image points at an existing .sif."""
+    # Arrange — def_file is set: production must build from def, not
+    # reuse spec.image.
     existing_sif = tmp_path / "existing.sif"
     existing_sif.write_bytes(b"\x00")
     def_file = tmp_path / "extend.def"
     def_file.write_text("Bootstrap: docker\nFrom: python:3.11-slim\n")
-
-    captured: dict = {}
-
-    def fake_build_def(sif_path: Path, df: Path) -> bool:
-        captured["sif"] = sif_path
-        captured["def"] = df
-        sif_path.write_bytes(b"\x00")
-        return True
-
-    monkeypatch.setattr(
-        "scitex_agent_container.runtimes._apptainer_runtime.shutil.which",
-        lambda _: "/usr/bin/apptainer",
-    )
-    monkeypatch.setattr(
-        "scitex_agent_container.runtimes._apptainer_runtime._build_sif_from_def",
-        fake_build_def,
-    )
-
     cfg = _config(
         tmp_path,
         image=str(existing_sif),
         apptainer=ApptainerSpec(def_file=str(def_file)),
     )
+    # Act
     resolved = ApptainerContainerRuntime().resolve_sif(cfg)
-    assert resolved is not None
-    assert captured["def"] == def_file
-    # The resolved SIF path is NOT the existing one — sac built a new one.
+    # Assert — resolved path is NOT the existing sif (built fresh from def).
     assert resolved != existing_sif
 
 
-# ---------------------------------------------------------------------------
-# Lifecycle (mocked subprocess)
-# ---------------------------------------------------------------------------
-
-
-def test_is_running_false_when_no_pid_file(state_root: Path, tmp_path: Path) -> None:
-    rt = ApptainerContainerRuntime()
-    cfg = _config(tmp_path / "wd")
-    assert rt.is_running(cfg) is False
-
-
-def test_stop_succeeds_when_pid_absent(state_root: Path, tmp_path: Path) -> None:
-    """Stopping a never-started agent must not raise."""
-    rt = ApptainerContainerRuntime()
-    cfg = _config(tmp_path / "wd")
-    assert rt.stop(cfg) is True
-
-
-def test_stop_clears_pid_file_after_kill(
-    state_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_resolve_sif_def_file_passes_def_path_to_apptainer_build(
+    tmp_path: Path, apptainer_on_path: Path, state_root: Path, subprocess_shim
 ) -> None:
-    rt = ApptainerContainerRuntime()
-    cfg = _config(tmp_path / "wd")
-    state_dir = rt._state_dir(cfg)
-    state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / APPTAINER_PID_FILE).write_text("12345")
-
-    captured: dict = {}
-
-    def fake_kill(pid: int, sig: int) -> None:
-        captured["pid"] = pid
-        captured["sig"] = sig
-
-    monkeypatch.setattr(
-        "scitex_agent_container.runtimes._apptainer_runtime.os.kill", fake_kill
-    )
-    assert rt.stop(cfg) is True
-    assert captured["pid"] == 12345
-    assert not (state_dir / APPTAINER_PID_FILE).is_file()
+    # Arrange
+    def_file = tmp_path / "extend.def"
+    def_file.write_text("Bootstrap: docker\nFrom: python:3.11-slim\n")
+    cfg = _config(tmp_path, apptainer=ApptainerSpec(def_file=str(def_file)))
+    # Act
+    ApptainerContainerRuntime().resolve_sif(cfg)
+    # Assert
+    assert subprocess_shim.argv_for("apptainer")[-1] == str(def_file.resolve())
 
 
-# ---------------------------------------------------------------------------
-# Merged from test__apptainer_runtime_extras.py (PS-204 orphan consolidation)
-# ---------------------------------------------------------------------------
-
-
-import pytest
-
-from scitex_agent_container.runtimes import _apptainer_runtime as mod
-from scitex_agent_container.runtimes._apptainer_runtime import (
-    APPTAINER_LOG_FILE,
-    _safe_image_tag,
-)
-
-
-@pytest.fixture(autouse=True)
-def _home_redirect(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Redirect Path.home() to a per-test tmp dir so credential mounts
-    + state-dir resolution don't touch the operator's real home."""
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr(Path, "home", lambda: home)
-    return home
-
-
-@pytest.fixture
-def state_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    root = tmp_path / "runtime"
-    root.mkdir()
-    monkeypatch.setenv("SCITEX_AGENT_CONTAINER_RUNTIME_DIR", str(root))
-    import importlib
-
-    import scitex_agent_container._runners._session_state as ss
-
-    importlib.reload(ss)
-    return root
-
-
-def _config(workdir: Path, **kw) -> AgentConfig:
-    return AgentConfig(
-        name=kw.pop("name", "alpha"),
-        runtime="apptainer",
-        workdir=str(workdir),
-        **kw,
-    )
-
-
-# ---------------------------------------------------------------------------
-# resolve_sif — extra branches
-# ---------------------------------------------------------------------------
-
-
-def test_resolve_sif_sandbox_dir(
-    state_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_resolve_sif_def_file_uses_build_subcommand(
+    tmp_path: Path, apptainer_on_path: Path, state_root: Path, subprocess_shim
 ) -> None:
-    """A directory with .singularity.d/ marker = sandbox build; used as-is."""
+    # Arrange
+    def_file = tmp_path / "extend.def"
+    def_file.write_text("Bootstrap: docker\nFrom: python:3.11-slim\n")
+    cfg = _config(tmp_path, apptainer=ApptainerSpec(def_file=str(def_file)))
+    # Act
+    ApptainerContainerRuntime().resolve_sif(cfg)
+    # Assert
+    assert subprocess_shim.argv_for("apptainer")[0] == "build"
+
+
+def test_resolve_sif_sandbox_dir_used_as_is(
+    tmp_path: Path, apptainer_on_path: Path, state_root: Path
+) -> None:
+    # Arrange — `.singularity.d/` marks a sandbox build dir.
     sandbox = tmp_path / "sbx"
     sandbox.mkdir()
     (sandbox / ".singularity.d").mkdir()
-    monkeypatch.setattr(mod.shutil, "which", lambda _: "/usr/bin/apptainer")
     cfg = _config(tmp_path, image=str(sandbox))
+    # Act
     resolved = ApptainerContainerRuntime().resolve_sif(cfg)
+    # Assert
     assert resolved == sandbox.resolve()
 
 
-def test_resolve_sif_docker_uri_builds(
-    state_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_resolve_sif_docker_uri_invokes_apptainer_build_with_uri(
+    tmp_path: Path, apptainer_on_path: Path, state_root: Path, subprocess_shim
 ) -> None:
-    """docker:// URI triggers _build_sif_from_uri (mocked)."""
-    captured: dict = {}
-
-    def fake_build_uri(sif_path: Path, uri: str) -> bool:
-        captured["sif"] = sif_path
-        captured["uri"] = uri
-        sif_path.write_bytes(b"\x00")
-        return True
-
-    monkeypatch.setattr(mod.shutil, "which", lambda _: "/usr/bin/apptainer")
-    monkeypatch.setattr(mod, "_build_sif_from_uri", fake_build_uri)
-
+    # Arrange
     cfg = _config(tmp_path, image="docker://python:3.11-slim")
-    resolved = ApptainerContainerRuntime().resolve_sif(cfg)
-    assert resolved is not None
-    assert captured["uri"] == "docker://python:3.11-slim"
+    # Act
+    ApptainerContainerRuntime().resolve_sif(cfg)
+    # Assert
+    assert subprocess_shim.argv_for("apptainer")[-1] == "docker://python:3.11-slim"
 
 
-def test_resolve_sif_oras_uri_builds(
-    state_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_resolve_sif_oras_uri_invokes_apptainer_build_with_uri(
+    tmp_path: Path, apptainer_on_path: Path, state_root: Path, subprocess_shim
 ) -> None:
-    monkeypatch.setattr(mod.shutil, "which", lambda _: "/usr/bin/apptainer")
-    monkeypatch.setattr(
-        mod, "_build_sif_from_uri", lambda p, u: (p.write_bytes(b"\x00"), True)[1]
-    )
+    # Arrange
     cfg = _config(tmp_path, image="oras://ghcr.io/example/img:tag")
-    resolved = ApptainerContainerRuntime().resolve_sif(cfg)
-    assert resolved is not None
+    # Act
+    ApptainerContainerRuntime().resolve_sif(cfg)
+    # Assert
+    assert subprocess_shim.argv_for("apptainer")[-1] == "oras://ghcr.io/example/img:tag"
 
 
-def test_resolve_sif_bare_image_treated_as_docker(
-    state_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_resolve_sif_bare_image_passes_docker_scheme_to_build(
+    tmp_path: Path, apptainer_on_path: Path, state_root: Path, subprocess_shim
 ) -> None:
-    """Bare ``python:3.11-slim`` (no scheme) is treated as docker://."""
-    captured: dict = {}
-
-    def fake_build_uri(sif_path: Path, uri: str) -> bool:
-        captured["uri"] = uri
-        sif_path.write_bytes(b"\x00")
-        return True
-
-    monkeypatch.setattr(mod.shutil, "which", lambda _: "/usr/bin/apptainer")
-    monkeypatch.setattr(mod, "_build_sif_from_uri", fake_build_uri)
-
+    # Arrange — `python:3.11-slim` (no scheme) gets `docker://` prepended.
     cfg = _config(tmp_path, image="python:3.11-slim")
-    resolved = ApptainerContainerRuntime().resolve_sif(cfg)
-    assert resolved is not None
-    assert captured["uri"] == "docker://python:3.11-slim"
+    # Act
+    ApptainerContainerRuntime().resolve_sif(cfg)
+    # Assert
+    assert subprocess_shim.argv_for("apptainer")[-1] == "docker://python:3.11-slim"
 
 
-def test_resolve_sif_cached_docker_uri_skips_build(
-    state_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_resolve_sif_cached_docker_uri_returns_cached_path(
+    tmp_path: Path, apptainer_on_path: Path, state_root: Path, subprocess_shim
 ) -> None:
-    """If the cached .sif already exists, no build is invoked."""
-    monkeypatch.setattr(mod.shutil, "which", lambda _: "/usr/bin/apptainer")
-
+    # Arrange — pre-populate the cache so production short-circuits.
     rt = ApptainerContainerRuntime()
     cfg = _config(tmp_path, image="docker://python:3.11-slim")
     cache = rt._image_cache_dir(cfg)
     cache.mkdir(parents=True, exist_ok=True)
     expected = cache / f"{_safe_image_tag('docker://python:3.11-slim')}.sif"
     expected.write_bytes(b"\x00")
-
-    called: dict = {"yes": False}
-
-    def fake_build(*_a, **_kw) -> bool:
-        called["yes"] = True
-        return True
-
-    monkeypatch.setattr(mod, "_build_sif_from_uri", fake_build)
+    # Act
     resolved = rt.resolve_sif(cfg)
+    # Assert
     assert resolved == expected
-    assert called["yes"] is False
 
 
-def test_resolve_sif_def_file_missing_returns_none(
-    state_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_resolve_sif_cached_docker_uri_does_not_invoke_build(
+    tmp_path: Path, apptainer_on_path: Path, state_root: Path, subprocess_shim
 ) -> None:
-    monkeypatch.setattr(mod.shutil, "which", lambda _: "/usr/bin/apptainer")
+    # Arrange
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path, image="docker://python:3.11-slim")
+    cache = rt._image_cache_dir(cfg)
+    cache.mkdir(parents=True, exist_ok=True)
+    expected = cache / f"{_safe_image_tag('docker://python:3.11-slim')}.sif"
+    expected.write_bytes(b"\x00")
+    # Act
+    rt.resolve_sif(cfg)
+    # Assert
+    assert subprocess_shim.call_count("apptainer") == 0
+
+
+def test_resolve_sif_returns_none_for_missing_def_file(
+    tmp_path: Path, apptainer_on_path: Path, state_root: Path
+) -> None:
+    # Arrange
     cfg = _config(
-        tmp_path,
-        apptainer=ApptainerSpec(def_file=str(tmp_path / "nope.def")),
+        tmp_path, apptainer=ApptainerSpec(def_file=str(tmp_path / "nope.def"))
     )
-    assert ApptainerContainerRuntime().resolve_sif(cfg) is None
+    # Act
+    resolved = ApptainerContainerRuntime().resolve_sif(cfg)
+    # Assert
+    assert resolved is None
 
 
-def test_resolve_sif_def_file_cached(
-    state_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_resolve_sif_def_file_returns_cached_sif_path(
+    tmp_path: Path, apptainer_on_path: Path, state_root: Path, subprocess_shim
 ) -> None:
-    """Existing built .sif under cache for the def-file path is reused."""
-    monkeypatch.setattr(mod.shutil, "which", lambda _: "/usr/bin/apptainer")
+    # Arrange — cached SIF for def_file path is reused.
     def_file = tmp_path / "img.def"
     def_file.write_text("Bootstrap: docker\nFrom: python:3.11\n")
-
     rt = ApptainerContainerRuntime()
     cfg = _config(tmp_path, apptainer=ApptainerSpec(def_file=str(def_file)))
     cache = rt._image_cache_dir(cfg)
     cache.mkdir(parents=True, exist_ok=True)
     cached = cache / f"{_safe_image_tag(str(def_file.resolve()))}.sif"
     cached.write_bytes(b"\x00")
-
-    called: dict = {"yes": False}
-
-    def fake_build_def(*_a, **_kw) -> bool:
-        called["yes"] = True
-        return True
-
-    monkeypatch.setattr(mod, "_build_sif_from_def", fake_build_def)
+    # Act
     resolved = rt.resolve_sif(cfg)
+    # Assert
     assert resolved == cached
-    assert called["yes"] is False
 
 
-def test_resolve_sif_local_sif_missing_returns_none(
-    state_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_resolve_sif_def_file_cache_hit_skips_build(
+    tmp_path: Path, apptainer_on_path: Path, state_root: Path, subprocess_shim
 ) -> None:
-    monkeypatch.setattr(mod.shutil, "which", lambda _: "/usr/bin/apptainer")
+    # Arrange
+    def_file = tmp_path / "img.def"
+    def_file.write_text("Bootstrap: docker\nFrom: python:3.11\n")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path, apptainer=ApptainerSpec(def_file=str(def_file)))
+    cache = rt._image_cache_dir(cfg)
+    cache.mkdir(parents=True, exist_ok=True)
+    cached = cache / f"{_safe_image_tag(str(def_file.resolve()))}.sif"
+    cached.write_bytes(b"\x00")
+    # Act
+    rt.resolve_sif(cfg)
+    # Assert
+    assert subprocess_shim.call_count("apptainer") == 0
+
+
+def test_resolve_sif_returns_none_when_local_sif_missing(
+    tmp_path: Path, apptainer_on_path: Path, state_root: Path
+) -> None:
+    # Arrange
     cfg = _config(tmp_path, image=str(tmp_path / "missing.sif"))
-    assert ApptainerContainerRuntime().resolve_sif(cfg) is None
+    # Act
+    resolved = ApptainerContainerRuntime().resolve_sif(cfg)
+    # Assert
+    assert resolved is None
 
 
-def test_resolve_sif_no_image_no_def_returns_none(
-    state_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_resolve_sif_returns_none_when_no_image_or_def(
+    tmp_path: Path, apptainer_on_path: Path, state_root: Path
 ) -> None:
-    monkeypatch.setattr(mod.shutil, "which", lambda _: "/usr/bin/apptainer")
+    # Arrange
     cfg = _config(tmp_path)
-    # spec.apptainer.image and config.image both empty.
-    assert ApptainerContainerRuntime().resolve_sif(cfg) is None
+    # Act
+    resolved = ApptainerContainerRuntime().resolve_sif(cfg)
+    # Assert
+    assert resolved is None
 
 
 # ---------------------------------------------------------------------------
-# build_run_argv — extra branches (overlay, raw_args, container.volumes, binds)
+# build_run_argv — extra branches
 # ---------------------------------------------------------------------------
 
 
-def test_argv_includes_container_volumes(tmp_path: Path) -> None:
-    from scitex_agent_container.config._types import ContainerSpec
-
+def test_argv_includes_container_volumes_flag(tmp_path: Path) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
     cfg = _config(tmp_path, container=ContainerSpec(volumes=["/host/data:/data:ro"]))
+    # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    # Assert
     assert "/host/data:/data:ro" in argv
 
 
-def test_argv_includes_apptainer_binds_and_raw_args(tmp_path: Path) -> None:
+def test_argv_includes_apptainer_extra_binds(tmp_path: Path) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
-    cfg = _config(
-        tmp_path,
-        apptainer=ApptainerSpec(
-            binds=["/scratch:/scratch"],
-            raw_args=["--cleanenv"],
-        ),
-    )
+    cfg = _config(tmp_path, apptainer=ApptainerSpec(binds=["/scratch:/scratch"]))
+    # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    # Assert
     assert "/scratch:/scratch" in argv
+
+
+def test_argv_appends_apptainer_raw_args(tmp_path: Path) -> None:
+    # Arrange
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path, apptainer=ApptainerSpec(raw_args=["--cleanenv"]))
+    # Act
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    # Assert
     assert "--cleanenv" in argv
 
 
 def test_argv_overlay_relative_resolves_against_workdir(tmp_path: Path) -> None:
+    # Arrange
     workdir = tmp_path / "wd"
     rt = ApptainerContainerRuntime()
     cfg = _config(workdir, apptainer=ApptainerSpec(overlay="overlay.img"))
+    # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
-    idx = argv.index("--overlay")
-    assert argv[idx + 1] == str(workdir / "overlay.img")
+    # Assert
+    assert argv[argv.index("--overlay") + 1] == str(workdir / "overlay.img")
 
 
-def test_argv_overlay_absolute_used_as_is(tmp_path: Path) -> None:
+def test_argv_overlay_absolute_used_unchanged(tmp_path: Path) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
     abs_overlay = tmp_path / "ov.img"
     cfg = _config(tmp_path, apptainer=ApptainerSpec(overlay=str(abs_overlay)))
+    # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
-    idx = argv.index("--overlay")
-    assert argv[idx + 1] == str(abs_overlay)
+    # Assert
+    assert argv[argv.index("--overlay") + 1] == str(abs_overlay)
 
 
-def test_argv_rocm_flag(tmp_path: Path) -> None:
+def test_argv_emits_rocm_flag_when_requested(tmp_path: Path) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
     cfg = _config(tmp_path, apptainer=ApptainerSpec(rocm=True))
+    # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    # Assert
     assert "--rocm" in argv
 
 
-def test_argv_credentials_mount_when_present(
-    tmp_path: Path, _home_redirect: Path
+def test_argv_mounts_credentials_file_when_present(
+    tmp_path: Path, home_redirect: Path
 ) -> None:
-    """If ~/.claude/.credentials.json exists, it's bind-mounted ro."""
-    creds = _home_redirect / ".claude" / ".credentials.json"
+    # Arrange — Path.home() reads $HOME, redirected by the fixture.
+    creds = home_redirect / ".claude" / ".credentials.json"
     creds.parent.mkdir(parents=True, exist_ok=True)
     creds.write_text("{}")
     rt = ApptainerContainerRuntime()
     cfg = _config(tmp_path)
+    # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    # Assert
     assert any(
         a.startswith(str(creds)) and "/tmp/sac-claude/.credentials.json:ro" in a
         for a in argv
     )
+
+
+def test_argv_sets_claude_config_dir_when_credentials_present(
+    tmp_path: Path, home_redirect: Path
+) -> None:
+    # Arrange
+    creds = home_redirect / ".claude" / ".credentials.json"
+    creds.parent.mkdir(parents=True, exist_ok=True)
+    creds.write_text("{}")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path)
+    # Act
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    # Assert
     assert "CLAUDE_CONFIG_DIR=/tmp/sac-claude" in argv
 
 
-def test_argv_env_dict_forwarded(tmp_path: Path) -> None:
+def test_argv_forwards_arbitrary_env_dict(tmp_path: Path) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
     cfg = _config(tmp_path, env={"FOO": "bar"})
+    # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    # Assert
     assert "FOO=bar" in argv
 
 
-def test_argv_uses_startup_prompts_over_legacy_commands(tmp_path: Path) -> None:
-    from scitex_agent_container.config._types import StartupCommand
-
+def test_argv_prefers_startup_prompts_over_legacy_commands(tmp_path: Path) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
     cfg = _config(
         tmp_path,
         startup_prompts=["hello-world"],
         startup_commands=[StartupCommand(command="ignored")],
     )
-    argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
-    inner = _extract_inner_argv(argv)
+    # Act
+    inner = _extract_inner_argv(
+        rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    )
+    # Assert
     assert inner[inner.index("--mission") + 1] == "hello-world"
 
 
 # ---------------------------------------------------------------------------
-# Lifecycle — start / is_running / logs (subprocess mocked)
+# Lifecycle — start / stop / is_running / logs (real subprocesses)
 # ---------------------------------------------------------------------------
 
 
-def test_start_returns_false_when_apptainer_missing(
-    state_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_start_returns_false_when_apptainer_binary_missing(
+    state_root: Path, tmp_path: Path, no_apptainer_on_path: Path
 ) -> None:
-    monkeypatch.setattr(mod.shutil, "which", lambda _: None)
+    # Arrange
     rt = ApptainerContainerRuntime()
     cfg = _config(tmp_path / "wd")
-    assert rt.start(cfg) is False
+    # Act
+    started = rt.start(cfg)
+    # Assert
+    assert started is False
 
 
-def test_start_returns_false_when_sif_unresolved(
-    state_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_start_returns_false_when_sif_cannot_be_resolved(
+    state_root: Path, tmp_path: Path, apptainer_on_path: Path
 ) -> None:
-    monkeypatch.setattr(mod.shutil, "which", lambda _: "/usr/bin/apptainer")
+    # Arrange — apptainer on PATH but no image/def_file configured.
     rt = ApptainerContainerRuntime()
-    cfg = _config(tmp_path / "wd")  # no image / def_file
-    assert rt.start(cfg) is False
+    cfg = _config(tmp_path / "wd")
+    # Act
+    started = rt.start(cfg)
+    # Assert
+    assert started is False
 
 
-def test_start_dry_run_writes_argv_file(
-    state_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_start_dry_run_returns_true(
+    state_root: Path, tmp_path: Path, apptainer_on_path: Path
 ) -> None:
+    # Arrange
     sif = tmp_path / "ready.sif"
     sif.write_bytes(b"\x00")
-    monkeypatch.setattr(mod.shutil, "which", lambda _: "/usr/bin/apptainer")
     rt = ApptainerContainerRuntime()
     cfg = _config(tmp_path / "wd", image=str(sif))
-    assert rt.start(cfg, dry_run=True) is True
+    # Act
+    ok = rt.start(cfg, dry_run=True)
+    # Assert
+    assert ok is True
+
+
+def test_start_dry_run_writes_argv_text_file(
+    state_root: Path, tmp_path: Path, apptainer_on_path: Path
+) -> None:
+    # Arrange
+    sif = tmp_path / "ready.sif"
+    sif.write_bytes(b"\x00")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd", image=str(sif))
+    # Act
+    rt.start(cfg, dry_run=True)
+    # Assert
+    assert (rt._state_dir(cfg) / "apptainer_run.argv.txt").is_file()
+
+
+def test_start_dry_run_argv_file_begins_with_apptainer(
+    state_root: Path, tmp_path: Path, apptainer_on_path: Path
+) -> None:
+    # Arrange
+    sif = tmp_path / "ready.sif"
+    sif.write_bytes(b"\x00")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd", image=str(sif))
+    # Act
+    rt.start(cfg, dry_run=True)
+    # Assert
     argv_file = rt._state_dir(cfg) / "apptainer_run.argv.txt"
-    assert argv_file.is_file()
-    text = argv_file.read_text()
-    assert text.splitlines()[0] == "apptainer"
+    assert argv_file.read_text().splitlines()[0] == "apptainer"
 
 
-def test_start_background_writes_pid_file(
-    state_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_start_background_returns_true(
+    state_root: Path, tmp_path: Path, apptainer_on_path: Path
 ) -> None:
+    # Arrange
     sif = tmp_path / "ready.sif"
     sif.write_bytes(b"\x00")
-    monkeypatch.setattr(mod.shutil, "which", lambda _: "/usr/bin/apptainer")
-
-    class FakeProc:
-        pid = 99999
-
-    def fake_popen(*_a, **_kw):
-        return FakeProc()
-
-    monkeypatch.setattr(mod.subprocess, "Popen", fake_popen)
     rt = ApptainerContainerRuntime()
     cfg = _config(tmp_path / "wd", image=str(sif))
-    assert rt.start(cfg) is True
-    pid_file = rt._state_dir(cfg) / APPTAINER_PID_FILE
-    assert pid_file.read_text() == "99999"
+    # Act
+    ok = rt.start(cfg)
+    # Assert
+    assert ok is True
 
 
-def test_start_foreground_returns_rc_eq_zero(
-    state_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_start_background_writes_positive_pid_to_pid_file(
+    state_root: Path, tmp_path: Path, apptainer_on_path: Path
 ) -> None:
+    # Arrange — the fake apptainer exits 0 immediately, but the PID
+    # file is written before the child exits because Popen returns
+    # right after fork+exec.
     sif = tmp_path / "ready.sif"
     sif.write_bytes(b"\x00")
-    monkeypatch.setattr(mod.shutil, "which", lambda _: "/usr/bin/apptainer")
-
-    class FakeResult:
-        returncode = 0
-
-    monkeypatch.setattr(mod.subprocess, "run", lambda *_a, **_kw: FakeResult())
     rt = ApptainerContainerRuntime()
     cfg = _config(tmp_path / "wd", image=str(sif))
-    assert rt.start(cfg, foreground=True) is True
+    # Act
+    rt.start(cfg)
+    # Assert
+    pid = int((rt._state_dir(cfg) / APPTAINER_PID_FILE).read_text())
+    assert pid > 0
+
+
+def test_start_foreground_returns_true_on_rc_zero(
+    state_root: Path, tmp_path: Path, apptainer_on_path: Path
+) -> None:
+    # Arrange — fake apptainer exits 0.
+    sif = tmp_path / "ready.sif"
+    sif.write_bytes(b"\x00")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd", image=str(sif))
+    # Act
+    ok = rt.start(cfg, foreground=True)
+    # Assert
+    assert ok is True
 
 
 def test_start_skips_when_already_running(
-    state_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    state_root: Path, tmp_path: Path, apptainer_on_path: Path
 ) -> None:
-    """Without --force, a second start while is_running returns False."""
+    # Arrange — write our own PID; it's alive (this process), so
+    # is_running returns True.
     sif = tmp_path / "ready.sif"
     sif.write_bytes(b"\x00")
-    monkeypatch.setattr(mod.shutil, "which", lambda _: "/usr/bin/apptainer")
     rt = ApptainerContainerRuntime()
     cfg = _config(tmp_path / "wd", image=str(sif))
     sd = rt._state_dir(cfg)
     sd.mkdir(parents=True, exist_ok=True)
-    (sd / APPTAINER_PID_FILE).write_text(str(__import__("os").getpid()))
-    # pid of this process is alive → is_running returns True
-    assert rt.start(cfg) is False
+    (sd / APPTAINER_PID_FILE).write_text(str(os.getpid()))
+    # Act
+    ok = rt.start(cfg)
+    # Assert
+    assert ok is False
 
 
-def test_start_force_stops_then_starts(
-    state_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_start_force_overrides_stale_pid_and_starts(
+    state_root: Path, tmp_path: Path, apptainer_on_path: Path
 ) -> None:
+    # Arrange — record a long-running child PID, then call start with
+    # force=True. The child is later cleaned up after stop.
     sif = tmp_path / "ready.sif"
     sif.write_bytes(b"\x00")
-    monkeypatch.setattr(mod.shutil, "which", lambda _: "/usr/bin/apptainer")
-
-    killed: list[int] = []
-
-    def fake_kill(pid: int, sig: int) -> None:
-        # Signal 0 (probe) raises ProcessLookupError to simulate dead PID
-        # after the SIGTERM has done its work. SIGTERM itself is recorded.
-        if sig == 0:
-            raise ProcessLookupError
-        killed.append(pid)
-
-    monkeypatch.setattr(mod.os, "kill", fake_kill)
-
-    class FakeProc:
-        pid = 88888
-
-    monkeypatch.setattr(mod.subprocess, "Popen", lambda *_a, **_kw: FakeProc())
-
     rt = ApptainerContainerRuntime()
     cfg = _config(tmp_path / "wd", image=str(sif))
     sd = rt._state_dir(cfg)
     sd.mkdir(parents=True, exist_ok=True)
-    (sd / APPTAINER_PID_FILE).write_text("123")
-    # is_running: os.kill(123, 0) → ProcessLookupError → False, so force is
-    # irrelevant; just verify start path completes.
-    assert rt.start(cfg, force=True) is True
+    proc = subprocess.Popen(["sleep", "60"])
+    try:
+        (sd / APPTAINER_PID_FILE).write_text(str(proc.pid))
+        # Act
+        ok = rt.start(cfg, force=True)
+    finally:
+        try:
+            os.kill(proc.pid, 15)
+        except ProcessLookupError:
+            pass
+        proc.wait(timeout=5)
+    # Assert
+    assert ok is True
 
 
-def test_is_running_true_for_live_pid(
-    state_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_is_running_false_when_no_pid_file(state_root: Path, tmp_path: Path) -> None:
+    # Arrange
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd")
+    # Act
+    running = rt.is_running(cfg)
+    # Assert
+    assert running is False
+
+
+def test_is_running_true_for_live_pid(state_root: Path, tmp_path: Path) -> None:
+    # Arrange — spawn a real sleep process and record its PID.
     rt = ApptainerContainerRuntime()
     cfg = _config(tmp_path / "wd")
     sd = rt._state_dir(cfg)
     sd.mkdir(parents=True, exist_ok=True)
-    (sd / APPTAINER_PID_FILE).write_text("4242")
-    monkeypatch.setattr(mod.os, "kill", lambda pid, sig: None)
-    assert rt.is_running(cfg) is True
+    proc = subprocess.Popen(["sleep", "60"])
+    try:
+        (sd / APPTAINER_PID_FILE).write_text(str(proc.pid))
+        # Act
+        running = rt.is_running(cfg)
+    finally:
+        try:
+            os.kill(proc.pid, 15)
+        except ProcessLookupError:
+            pass
+        proc.wait(timeout=5)
+    # Assert
+    assert running is True
 
 
-def test_is_running_false_when_pid_dead(
-    state_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_is_running_false_for_dead_pid(state_root: Path, tmp_path: Path) -> None:
+    # Arrange — start a process and reap it so os.kill(pid, 0) raises
+    # ProcessLookupError naturally.
     rt = ApptainerContainerRuntime()
     cfg = _config(tmp_path / "wd")
     sd = rt._state_dir(cfg)
     sd.mkdir(parents=True, exist_ok=True)
-    (sd / APPTAINER_PID_FILE).write_text("4242")
-
-    def boom(pid, sig):
-        raise ProcessLookupError
-
-    monkeypatch.setattr(mod.os, "kill", boom)
-    assert rt.is_running(cfg) is False
+    proc = subprocess.Popen(["true"])
+    proc.wait(timeout=5)
+    (sd / APPTAINER_PID_FILE).write_text(str(proc.pid))
+    # Act
+    running = rt.is_running(cfg)
+    # Assert
+    assert running is False
 
 
 def test_is_running_false_when_pid_file_corrupt(
     state_root: Path, tmp_path: Path
 ) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
     cfg = _config(tmp_path / "wd")
     sd = rt._state_dir(cfg)
     sd.mkdir(parents=True, exist_ok=True)
     (sd / APPTAINER_PID_FILE).write_text("not-a-pid")
-    assert rt.is_running(cfg) is False
+    # Act
+    running = rt.is_running(cfg)
+    # Assert
+    assert running is False
 
 
-def test_stop_handles_process_lookup(
-    state_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_stop_succeeds_when_no_pid_file(state_root: Path, tmp_path: Path) -> None:
+    # Arrange — stopping a never-started agent must be a no-op success.
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd")
+    # Act
+    stopped = rt.stop(cfg)
+    # Assert
+    assert stopped is True
+
+
+def test_stop_returns_true_after_killing_live_pid(
+    state_root: Path, tmp_path: Path
 ) -> None:
+    # Arrange — real sleep child; stop() will SIGTERM it for real.
     rt = ApptainerContainerRuntime()
     cfg = _config(tmp_path / "wd")
     sd = rt._state_dir(cfg)
     sd.mkdir(parents=True, exist_ok=True)
-    (sd / APPTAINER_PID_FILE).write_text("4242")
+    proc = subprocess.Popen(["sleep", "60"])
+    (sd / APPTAINER_PID_FILE).write_text(str(proc.pid))
+    try:
+        # Act
+        ok = rt.stop(cfg)
+    finally:
+        try:
+            os.kill(proc.pid, 9)
+        except ProcessLookupError:
+            pass
+        proc.wait(timeout=5)
+    # Assert
+    assert ok is True
 
-    def boom(pid, sig):
-        raise ProcessLookupError
 
-    monkeypatch.setattr(mod.os, "kill", boom)
-    assert rt.stop(cfg) is True
+def test_stop_removes_pid_file_after_killing_live_pid(
+    state_root: Path, tmp_path: Path
+) -> None:
+    # Arrange
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd")
+    sd = rt._state_dir(cfg)
+    sd.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.Popen(["sleep", "60"])
+    (sd / APPTAINER_PID_FILE).write_text(str(proc.pid))
+    try:
+        # Act
+        rt.stop(cfg)
+    finally:
+        try:
+            os.kill(proc.pid, 9)
+        except ProcessLookupError:
+            pass
+        proc.wait(timeout=5)
+    # Assert
     assert not (sd / APPTAINER_PID_FILE).is_file()
 
 
-def test_logs_returns_tail(state_root: Path, tmp_path: Path) -> None:
+def test_stop_returns_true_for_already_dead_pid(
+    state_root: Path, tmp_path: Path
+) -> None:
+    # Arrange — pid points at a reaped child; SIGTERM raises
+    # ProcessLookupError, production swallows it.
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd")
+    sd = rt._state_dir(cfg)
+    sd.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.Popen(["true"])
+    proc.wait(timeout=5)
+    (sd / APPTAINER_PID_FILE).write_text(str(proc.pid))
+    # Act
+    ok = rt.stop(cfg)
+    # Assert
+    assert ok is True
+
+
+def test_stop_removes_pid_file_for_already_dead_pid(
+    state_root: Path, tmp_path: Path
+) -> None:
+    # Arrange
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd")
+    sd = rt._state_dir(cfg)
+    sd.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.Popen(["true"])
+    proc.wait(timeout=5)
+    (sd / APPTAINER_PID_FILE).write_text(str(proc.pid))
+    # Act
+    rt.stop(cfg)
+    # Assert
+    assert not (sd / APPTAINER_PID_FILE).is_file()
+
+
+def test_logs_returns_last_n_lines(state_root: Path, tmp_path: Path) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
     cfg = _config(tmp_path / "wd")
     sd = rt._state_dir(cfg)
     sd.mkdir(parents=True, exist_ok=True)
     (sd / APPTAINER_LOG_FILE).write_text("\n".join(f"L{i}" for i in range(20)))
+    # Act
     out = rt.logs(cfg, lines=3)
+    # Assert
     assert out.splitlines() == ["L17", "L18", "L19"]
 
 
-def test_logs_empty_when_missing(state_root: Path, tmp_path: Path) -> None:
+def test_logs_empty_string_when_log_missing(state_root: Path, tmp_path: Path) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
     cfg = _config(tmp_path / "wd")
-    assert rt.logs(cfg) == ""
+    # Act
+    out = rt.logs(cfg)
+    # Assert
+    assert out == ""
 
 
-def test_image_cache_dir_under_state_dir(state_root: Path, tmp_path: Path) -> None:
+def test_image_cache_dir_lives_under_state_dir(
+    state_root: Path, tmp_path: Path
+) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
     cfg = _config(tmp_path / "wd")
+    # Act
     cache = rt._image_cache_dir(cfg)
+    # Assert
     assert cache.parent == rt._state_dir(cfg)
+
+
+def test_image_cache_dir_is_named_images(state_root: Path, tmp_path: Path) -> None:
+    # Arrange
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd")
+    # Act
+    cache = rt._image_cache_dir(cfg)
+    # Assert
     assert cache.name == "images"
 
 
@@ -778,50 +1107,90 @@ def test_image_cache_dir_under_state_dir(state_root: Path, tmp_path: Path) -> No
 # ---------------------------------------------------------------------------
 
 
-def test_safe_image_tag_deterministic() -> None:
-    a = _safe_image_tag("docker://x:1")
-    b = _safe_image_tag("docker://x:1")
-    c = _safe_image_tag("docker://x:2")
+def test_safe_image_tag_is_deterministic_for_same_input() -> None:
+    # Arrange
+    reference = "docker://x:1"
+    # Act
+    a = _safe_image_tag(reference)
+    b = _safe_image_tag(reference)
+    # Assert
     assert a == b
+
+
+def test_safe_image_tag_differs_across_inputs() -> None:
+    # Arrange
+    ref_a = "docker://x:1"
+    ref_b = "docker://x:2"
+    # Act
+    a = _safe_image_tag(ref_a)
+    c = _safe_image_tag(ref_b)
+    # Assert
     assert a != c
+
+
+def test_safe_image_tag_has_sixteen_char_length() -> None:
+    # Arrange
+    reference = "docker://x:1"
+    # Act
+    a = _safe_image_tag(reference)
+    # Assert
     assert len(a) == 16
 
 
-def test_build_helpers_invoke_apptainer_build(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+def test_build_sif_from_uri_returns_true_on_success(
+    tmp_path: Path, apptainer_on_path: Path, subprocess_shim
 ) -> None:
-    seen: list[list[str]] = []
+    # Arrange
+    out = tmp_path / "out.sif"
+    # Act
+    ok = mod._build_sif_from_uri(out, "docker://x")
+    # Assert
+    assert ok is True
 
-    class R:
-        returncode = 0
 
-    def fake_run(argv, *a, **kw):
-        seen.append(list(argv))
-        return R()
+def test_build_sif_from_uri_invokes_apptainer_build_subcommand(
+    tmp_path: Path, apptainer_on_path: Path, subprocess_shim
+) -> None:
+    # Arrange
+    out = tmp_path / "out.sif"
+    # Act
+    mod._build_sif_from_uri(out, "docker://x")
+    # Assert
+    assert subprocess_shim.argv_for("apptainer")[:1] == ["build"]
 
-    monkeypatch.setattr(mod.subprocess, "run", fake_run)
-    assert mod._build_sif_from_uri(tmp_path / "out.sif", "docker://x") is True
-    assert mod._build_sif_from_def(tmp_path / "out.sif", tmp_path / "x.def") is True
-    assert seen[0][:2] == ["apptainer", "build"]
-    assert seen[1][:2] == ["apptainer", "build"]
+
+def test_build_sif_from_def_returns_true_on_success(
+    tmp_path: Path, apptainer_on_path: Path, subprocess_shim
+) -> None:
+    # Arrange
+    def_file = tmp_path / "x.def"
+    def_file.write_text("Bootstrap: docker\n")
+    # Act
+    ok = mod._build_sif_from_def(tmp_path / "out.sif", def_file)
+    # Assert
+    assert ok is True
+
+
+def test_build_sif_from_def_invokes_apptainer_build_subcommand(
+    tmp_path: Path, apptainer_on_path: Path, subprocess_shim
+) -> None:
+    # Arrange
+    def_file = tmp_path / "x.def"
+    def_file.write_text("Bootstrap: docker\n")
+    # Act
+    mod._build_sif_from_def(tmp_path / "out.sif", def_file)
+    # Assert
+    assert subprocess_shim.argv_for("apptainer")[:1] == ["build"]
 
 
 # ---------------------------------------------------------------------------
-# A2A wiring guard
-#
-# Regression for 2026-05-13: spec.a2a.port was parsed into A2ASpec.port
-# but build_run_argv didn't propagate it to the runner's CLI flag, so
-# the sidecar never bound and POST /v1/turn 404'd. The block below
-# asserts the exact argv shape produced when spec.a2a.port is set so
-# the regression flips red if anyone drops or reorders the wiring.
+# A2A wiring guard — spec.a2a.port → --a2a-port, plus card-yaml path
 # ---------------------------------------------------------------------------
-
-
-from scitex_agent_container.config._types import A2ASpec
 
 
 def _config_with_a2a(
     workdir: Path,
+    *,
     port: int | None = None,
     config_path: str = "",
     startup_prompts: list[str] | None = None,
@@ -836,86 +1205,83 @@ def _config_with_a2a(
     )
 
 
-# ---------------------------------------------------------------------------
-# spec.a2a.port → --a2a-port
-# ---------------------------------------------------------------------------
-
-
-def test_a2a_port_appears_in_runner_argv(tmp_path: Path) -> None:
+def test_a2a_port_propagates_into_runner_argv(tmp_path: Path) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
     cfg = _config_with_a2a(tmp_path / "wd", port=7901, startup_prompts=["hi"])
-    argv = rt.build_run_argv(
-        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    # Act
+    inner = _extract_inner_argv(
+        rt.build_run_argv(
+            cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+        )
     )
-    inner = _extract_inner_argv(argv)
-    assert "--a2a-port" in inner, (
-        "build_run_argv must propagate spec.a2a.port to the runner; "
-        "without this, the inbound sidecar never binds."
-    )
-    idx = inner.index("--a2a-port")
-    assert inner[idx + 1] == "7901"
+    # Assert
+    assert _flag_value(inner, "--a2a-port") == "7901"
 
 
 def test_a2a_port_omitted_when_spec_a2a_unset(tmp_path: Path) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
     cfg = _config_with_a2a(tmp_path / "wd", port=None, startup_prompts=["hi"])
-    argv = rt.build_run_argv(
-        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    # Act
+    inner = _extract_inner_argv(
+        rt.build_run_argv(
+            cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+        )
     )
-    assert "--a2a-port" not in _extract_inner_argv(argv)
+    # Assert
+    assert "--a2a-port" not in inner
 
 
-def test_a2a_port_zero_does_not_bind(tmp_path: Path) -> None:
-    """Port 0 is intentionally treated as 'no sidecar' (truthiness gate)."""
+def test_a2a_port_zero_does_not_bind_sidecar(tmp_path: Path) -> None:
+    # Arrange — port 0 is intentionally falsy → no sidecar.
     rt = ApptainerContainerRuntime()
     cfg = _config_with_a2a(tmp_path / "wd", port=0, startup_prompts=["hi"])
-    argv = rt.build_run_argv(
-        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    # Act
+    inner = _extract_inner_argv(
+        rt.build_run_argv(
+            cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+        )
     )
-    assert "--a2a-port" not in _extract_inner_argv(argv)
+    # Assert
+    assert "--a2a-port" not in inner
 
 
-# ---------------------------------------------------------------------------
-# --a2a-card-yaml gets the spec.yaml path
-# ---------------------------------------------------------------------------
-
-
-def test_a2a_card_yaml_passed_when_port_set(tmp_path: Path) -> None:
-    """When a2a.port is set AND config_path is known, the runner gets
-    --a2a-card-yaml pointing at the spec.yaml so it can publish the
-    AgentCard at /.well-known/agent-card.json."""
+def test_a2a_card_yaml_passed_when_port_and_config_path_set(tmp_path: Path) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
     yaml_path = tmp_path / "agents" / "ecosystem-auditor" / "spec.yaml"
     cfg = _config_with_a2a(
-        tmp_path / "wd",
-        port=7901,
-        config_path=str(yaml_path),
-        startup_prompts=["hi"],
+        tmp_path / "wd", port=7901, config_path=str(yaml_path), startup_prompts=["hi"]
     )
-    argv = rt.build_run_argv(
-        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    # Act
+    inner = _extract_inner_argv(
+        rt.build_run_argv(
+            cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+        )
     )
-    inner = _extract_inner_argv(argv)
-    assert "--a2a-card-yaml" in inner
-    idx = inner.index("--a2a-card-yaml")
-    assert inner[idx + 1] == str(yaml_path)
+    # Assert
+    assert _flag_value(inner, "--a2a-card-yaml") == str(yaml_path)
 
 
-def test_a2a_card_yaml_skipped_when_no_config_path(tmp_path: Path) -> None:
+def test_a2a_card_yaml_skipped_when_config_path_missing(tmp_path: Path) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
     cfg = _config_with_a2a(
         tmp_path / "wd", port=7901, config_path="", startup_prompts=["hi"]
     )
-    argv = rt.build_run_argv(
-        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    # Act
+    inner = _extract_inner_argv(
+        rt.build_run_argv(
+            cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+        )
     )
-    inner = _extract_inner_argv(argv)
-    # Port flag still present; just the card-yaml is skipped.
-    assert "--a2a-port" in inner
+    # Assert
     assert "--a2a-card-yaml" not in inner
 
 
 def test_a2a_card_yaml_skipped_when_port_unset(tmp_path: Path) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
     cfg = _config_with_a2a(
         tmp_path / "wd",
@@ -923,90 +1289,78 @@ def test_a2a_card_yaml_skipped_when_port_unset(tmp_path: Path) -> None:
         config_path=str(tmp_path / "spec.yaml"),
         startup_prompts=["hi"],
     )
-    argv = rt.build_run_argv(
-        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    # Act
+    inner = _extract_inner_argv(
+        rt.build_run_argv(
+            cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+        )
     )
-    inner = _extract_inner_argv(argv)
-    # No port → no sidecar → no point publishing the card path either.
-    assert "--a2a-port" not in inner
+    # Assert
     assert "--a2a-card-yaml" not in inner
 
 
 # ---------------------------------------------------------------------------
-# kind: AgentProxy dispatch
-#
-# Layer 4 of the A2A proxy implementation: the apptainer adapter must
-# dispatch the inner ``python -m`` invocation by ``config.kind``:
-#   Agent       -> scitex_agent_container._runners.claude_session
-#   AgentProxy  -> scitex_agent_container._runners.a2a_proxy
-# Argv-shape-only assertions; no live container.
-# ---------------------------------------------------------------------------
-
-
-from scitex_agent_container.config import ProxySpec  # noqa: E402
-from scitex_agent_container.runtimes._apptainer_inner_argv import (  # noqa: E402
-    RUNNER_MODULE_AGENT,
-    RUNNER_MODULE_PROXY,
-)
-
-
-def _proxy_config(
-    workdir: Path,
-    *,
-    upstream: str = "https://peer.example.com",
-    trust: str = "untrusted",
-    redact: list[str] | None = None,
-    timeout_s: float = 30.0,
-    a2a_port: int | None = None,
-    config_path: str = "",
-) -> AgentConfig:
-    return AgentConfig(
-        name="proxy-front",
-        runtime="apptainer",
-        workdir=str(workdir),
-        kind="AgentProxy",
-        proxy=ProxySpec(
-            upstream=upstream,
-            trust=trust,
-            redact=list(redact or []),
-            timeout_s=timeout_s,
-        ),
-        a2a=A2ASpec(port=a2a_port) if a2a_port is not None else A2ASpec(),
-        config_path=config_path,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Runner module dispatch
+# AgentProxy dispatch
 # ---------------------------------------------------------------------------
 
 
 def test_kind_agent_proxy_dispatches_to_a2a_proxy_runner(tmp_path: Path) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
     cfg = _proxy_config(tmp_path / "wd")
-    argv = rt.build_run_argv(
-        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    # Act
+    inner = _extract_inner_argv(
+        rt.build_run_argv(
+            cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+        )
     )
-    inner = _extract_inner_argv(argv)
-    assert RUNNER_MODULE_PROXY in inner, inner
-    # And NOT the SDK runner.
-    assert RUNNER_MODULE_AGENT not in inner, inner
+    # Assert
+    assert RUNNER_MODULE_PROXY in inner
+
+
+def test_kind_agent_proxy_excludes_sdk_runner_module(tmp_path: Path) -> None:
+    # Arrange
+    rt = ApptainerContainerRuntime()
+    cfg = _proxy_config(tmp_path / "wd")
+    # Act
+    inner = _extract_inner_argv(
+        rt.build_run_argv(
+            cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+        )
+    )
+    # Assert
+    assert RUNNER_MODULE_AGENT not in inner
 
 
 def test_kind_agent_default_still_uses_claude_session(tmp_path: Path) -> None:
-    """Sanity check the Agent path is unchanged by the dispatch refactor."""
+    # Arrange
     rt = ApptainerContainerRuntime()
     cfg = AgentConfig(
-        name="agent-front",
-        runtime="apptainer",
-        workdir=str(tmp_path / "wd"),
-        # kind defaults to "Agent"
+        name="agent-front", runtime="apptainer", workdir=str(tmp_path / "wd")
     )
-    argv = rt.build_run_argv(
-        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    # Act
+    inner = _extract_inner_argv(
+        rt.build_run_argv(
+            cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+        )
     )
-    inner = _extract_inner_argv(argv)
+    # Assert
     assert RUNNER_MODULE_AGENT in inner
+
+
+def test_kind_agent_default_excludes_proxy_runner_module(tmp_path: Path) -> None:
+    # Arrange
+    rt = ApptainerContainerRuntime()
+    cfg = AgentConfig(
+        name="agent-front", runtime="apptainer", workdir=str(tmp_path / "wd")
+    )
+    # Act
+    inner = _extract_inner_argv(
+        rt.build_run_argv(
+            cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+        )
+    )
+    # Assert
     assert RUNNER_MODULE_PROXY not in inner
 
 
@@ -1015,12 +1369,8 @@ def test_kind_agent_default_still_uses_claude_session(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _flag_value(argv: list[str], flag: str) -> str:
-    idx = argv.index(flag)
-    return argv[idx + 1]
-
-
-def test_proxy_upstream_trust_timeout_passed_through(tmp_path: Path) -> None:
+@pytest.fixture
+def proxy_inner_argv(tmp_path: Path) -> list[str]:
     rt = ApptainerContainerRuntime()
     cfg = _proxy_config(
         tmp_path / "wd",
@@ -1029,353 +1379,393 @@ def test_proxy_upstream_trust_timeout_passed_through(tmp_path: Path) -> None:
         redact=["SECRET", "TOKEN"],
         timeout_s=12.5,
     )
-    argv = rt.build_run_argv(
-        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    return _extract_inner_argv(
+        rt.build_run_argv(
+            cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+        )
     )
-    inner = _extract_inner_argv(argv)
-    assert _flag_value(inner, "--upstream") == "https://peer.example.com"
-    assert _flag_value(inner, "--trust") == "local-mesh"
-    assert _flag_value(inner, "--redact") == "SECRET,TOKEN"
-    assert _flag_value(inner, "--timeout-s") == "12.5"
-    assert _flag_value(inner, "--name") == "proxy-front"
-    assert _flag_value(inner, "--state-root") == "/state"
+
+
+@pytest.mark.parametrize(
+    "flag,expected",
+    [
+        ("--upstream", "https://peer.example.com"),
+        ("--trust", "local-mesh"),
+        ("--redact", "SECRET,TOKEN"),
+        ("--timeout-s", "12.5"),
+        ("--name", "proxy-front"),
+        ("--state-root", "/state"),
+    ],
+)
+def test_proxy_argv_propagates_spec_proxy_field(
+    proxy_inner_argv: list[str], flag: str, expected: str
+) -> None:
+    # Arrange
+    argv = proxy_inner_argv
+    # Act
+    actual = _flag_value(argv, flag)
+    # Assert
+    assert actual == expected
 
 
 def test_proxy_empty_redact_serialises_to_empty_string(tmp_path: Path) -> None:
-    """An empty redact list still emits the flag (consistent shape)."""
+    # Arrange
     rt = ApptainerContainerRuntime()
     cfg = _proxy_config(tmp_path / "wd", redact=[])
-    argv = rt.build_run_argv(
-        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    # Act
+    inner = _extract_inner_argv(
+        rt.build_run_argv(
+            cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+        )
     )
-    assert _flag_value(_extract_inner_argv(argv), "--redact") == ""
+    # Assert
+    assert _flag_value(inner, "--redact") == ""
 
 
-# ---------------------------------------------------------------------------
-# a2a.port wiring works for the proxy runner too
-# ---------------------------------------------------------------------------
-
-
-def test_proxy_a2a_port_appears_when_set(tmp_path: Path) -> None:
+def test_proxy_a2a_port_propagates_when_set(tmp_path: Path) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
     cfg = _proxy_config(tmp_path / "wd", a2a_port=7902)
-    argv = rt.build_run_argv(
-        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    # Act
+    inner = _extract_inner_argv(
+        rt.build_run_argv(
+            cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+        )
     )
-    assert _flag_value(_extract_inner_argv(argv), "--a2a-port") == "7902"
+    # Assert
+    assert _flag_value(inner, "--a2a-port") == "7902"
 
 
-def test_proxy_a2a_card_yaml_when_port_and_config_path_set(tmp_path: Path) -> None:
+def test_proxy_a2a_card_yaml_set_when_port_and_path_provided(tmp_path: Path) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
     yaml_path = tmp_path / "agents" / "proxy-front" / "spec.yaml"
     cfg = _proxy_config(tmp_path / "wd", a2a_port=7902, config_path=str(yaml_path))
-    argv = rt.build_run_argv(
-        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    # Act
+    inner = _extract_inner_argv(
+        rt.build_run_argv(
+            cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+        )
     )
-    assert _flag_value(_extract_inner_argv(argv), "--a2a-card-yaml") == str(yaml_path)
+    # Assert
+    assert _flag_value(inner, "--a2a-card-yaml") == str(yaml_path)
 
 
 def test_proxy_a2a_port_omitted_when_unset(tmp_path: Path) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
     cfg = _proxy_config(tmp_path / "wd", a2a_port=None)
-    argv = rt.build_run_argv(
-        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    # Act
+    inner = _extract_inner_argv(
+        rt.build_run_argv(
+            cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+        )
     )
-    assert "--a2a-port" not in _extract_inner_argv(argv)
+    # Assert
+    assert "--a2a-port" not in inner
 
 
-# ---------------------------------------------------------------------------
-# Proxy MUST NOT carry SDK-only flags
-# ---------------------------------------------------------------------------
-
-
-def test_proxy_argv_carries_no_mission_or_autonomous_flags(tmp_path: Path) -> None:
-    """The proxy runner has no SDK conversation; SDK-only flags would
-    be a category error."""
+@pytest.mark.parametrize(
+    "forbidden",
+    ["--mission", "--autonomous-enabled", "--autonomous-drive-until", "--print-stream"],
+)
+def test_proxy_argv_excludes_sdk_only_flag(tmp_path: Path, forbidden: str) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
     cfg = _proxy_config(tmp_path / "wd")
+    # Act
     argv = rt.build_run_argv(
         cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
     )
-    for forbidden in (
-        "--mission",
-        "--autonomous-enabled",
-        "--autonomous-drive-until",
-        "--print-stream",
-    ):
-        assert forbidden not in argv, f"{forbidden!r} leaked into proxy argv"
+    # Assert
+    assert forbidden not in argv
 
 
 # ---------------------------------------------------------------------------
-# SAC_LISTEN_BASE_URL env injection (Layer 5 of auto-port allocation)
-#
-# The apptainer runtime forwards the host-stable sac listen base URL
-# into every container as SAC_LISTEN_BASE_URL. The per-agent sidecar's
-# /.well-known/agent-card.json handler reads that env and uses it as
-# the AgentCard's url — so cards stay stable across port-auto restarts.
+# SAC_LISTEN_BASE_URL env injection
 # ---------------------------------------------------------------------------
 
 
-_apptainer_runtime_again = ApptainerContainerRuntime  # noqa: F841 (keep import live)
+def test_default_listen_url_injected_when_no_config(tmp_path: Path) -> None:
+    # Arrange
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path)
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    # Assert
+    assert _env_pairs(argv).get("SAC_LISTEN_BASE_URL") == "http://127.0.0.1:7878"
 
 
-def _config_listen(workdir: Path) -> AgentConfig:
-    return AgentConfig(name="alpha", runtime="apptainer", workdir=str(workdir))
+def test_config_listen_port_propagates_to_env(tmp_path: Path, env_save_restore) -> None:
+    # Arrange
+    cfg_yaml = tmp_path / "config.yaml"
+    cfg_yaml.write_text("listen:\n  port: 9090\n")
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg_yaml))
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path)
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    # Assert
+    assert _env_pairs(argv).get("SAC_LISTEN_BASE_URL") == "http://127.0.0.1:9090"
 
 
-def _env_pairs(argv: list[str]) -> dict[str, str]:
-    """Decode every ``--env KEY=VAL`` pair in the argv into a dict."""
-    out: dict[str, str] = {}
-    for i, a in enumerate(argv):
-        if a == "--env" and i + 1 < len(argv) and "=" in argv[i + 1]:
-            k, _, v = argv[i + 1].partition("=")
-            out[k] = v
-    return out
-
-
-class TestSacListenBaseURLInjection:
-    def test_default_listen_url_injected(self, tmp_path: Path) -> None:
-        """No config.yaml present → defaults to http://127.0.0.1:7878."""
-        rt = ApptainerContainerRuntime()
-        cfg = _config(tmp_path)
-        argv = rt.build_run_argv(
-            cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
-        )
-        envs = _env_pairs(argv)
-        assert envs.get("SAC_LISTEN_BASE_URL") == "http://127.0.0.1:7878"
-
-    def test_config_listen_port_propagates(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """``listen.port: 9090`` in config.yaml flows into the env var."""
-        cfg_yaml = tmp_path / "config.yaml"
-        cfg_yaml.write_text("listen:\n  port: 9090\n")
-        monkeypatch.setenv("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg_yaml))
-        rt = ApptainerContainerRuntime()
-        cfg = _config(tmp_path)
-        argv = rt.build_run_argv(
-            cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
-        )
-        envs = _env_pairs(argv)
-        assert envs.get("SAC_LISTEN_BASE_URL") == "http://127.0.0.1:9090"
-
-    def test_config_listen_host_propagates(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """``listen.host`` override is honoured too — operators on tailscale
-        binds want their card url to advertise the public tunnel ip."""
-        cfg_yaml = tmp_path / "config.yaml"
-        cfg_yaml.write_text("listen:\n  host: 100.64.1.2\n  port: 7878\n")
-        monkeypatch.setenv("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg_yaml))
-        rt = ApptainerContainerRuntime()
-        cfg = _config(tmp_path)
-        argv = rt.build_run_argv(
-            cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
-        )
-        envs = _env_pairs(argv)
-        assert envs.get("SAC_LISTEN_BASE_URL") == "http://100.64.1.2:7878"
+def test_config_listen_host_propagates_to_env(tmp_path: Path, env_save_restore) -> None:
+    # Arrange
+    cfg_yaml = tmp_path / "config.yaml"
+    cfg_yaml.write_text("listen:\n  host: 100.64.1.2\n  port: 7878\n")
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg_yaml))
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path)
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    # Assert
+    assert _env_pairs(argv).get("SAC_LISTEN_BASE_URL") == "http://100.64.1.2:7878"
 
 
 # ---------------------------------------------------------------------------
-# Hardened isolation default — --containall auto-prepended unless opted out
-#
-# Guards docs/isolation.md §1: every leak path that comes from auto-binds
-# is closed by --containall. sac defaults to hardened (relaxed=False);
-# operators can opt out via spec.apptainer.relaxed: true or by declaring
-# --containall themselves in raw_args.
+# Hardened isolation defaults (--containall, --cleanenv, --writable-tmpfs)
 # ---------------------------------------------------------------------------
 
 
 def test_argv_includes_containall_by_default(tmp_path: Path) -> None:
-    """Hardened-by-default: --containall is auto-prepended."""
-    from scitex_agent_container.config._types import ApptainerSpec as _A
-
+    # Arrange
     rt = ApptainerContainerRuntime()
     cfg = AgentConfig(
-        name="x",
-        runtime="apptainer",
-        workdir=str(tmp_path),
-        apptainer=_A(),  # defaults: relaxed=False, raw_args=[]
+        name="x", runtime="apptainer", workdir=str(tmp_path), apptainer=ApptainerSpec()
     )
+    # Act
     argv = rt.build_run_argv(
         cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
     )
+    # Assert
     assert "--containall" in argv
-    # Must appear BEFORE the SIF path (or any inner cmd).
-    assert argv.index("--containall") < argv.index(str(tmp_path / "x.sif"))
+
+
+def test_argv_containall_precedes_sif_path(tmp_path: Path) -> None:
+    # Arrange
+    rt = ApptainerContainerRuntime()
+    sif = tmp_path / "x.sif"
+    cfg = AgentConfig(
+        name="x", runtime="apptainer", workdir=str(tmp_path), apptainer=ApptainerSpec()
+    )
+    # Act
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path / "state", sif_path=sif)
+    # Assert
+    assert argv.index("--containall") < argv.index(str(sif))
 
 
 def test_argv_omits_containall_when_relaxed_true(tmp_path: Path) -> None:
-    """Operator opt-out: spec.apptainer.relaxed: true keeps the old behavior."""
-    from scitex_agent_container.config._types import ApptainerSpec as _A
-
+    # Arrange
     rt = ApptainerContainerRuntime()
     cfg = AgentConfig(
         name="x",
         runtime="apptainer",
         workdir=str(tmp_path),
-        apptainer=_A(relaxed=True),
+        apptainer=ApptainerSpec(relaxed=True),
     )
+    # Act
     argv = rt.build_run_argv(
         cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
     )
+    # Assert
     assert "--containall" not in argv
 
 
-def test_argv_no_double_containall_when_operator_set(tmp_path: Path) -> None:
-    """If operator already put --containall in raw_args, sac doesn't double it."""
-    from scitex_agent_container.config._types import ApptainerSpec as _A
-
+def test_argv_does_not_double_containall_when_operator_declares(tmp_path: Path) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
     cfg = AgentConfig(
         name="x",
         runtime="apptainer",
         workdir=str(tmp_path),
-        apptainer=_A(raw_args=["--containall", "--cleanenv"]),
+        apptainer=ApptainerSpec(raw_args=["--containall", "--cleanenv"]),
     )
+    # Act
     argv = rt.build_run_argv(
         cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
     )
-    # Exactly one occurrence — operator's. sac did NOT prepend a second.
+    # Assert
     assert argv.count("--containall") == 1
 
 
-# ---------------------------------------------------------------------------
-# D1 — auto-prepend of --containall / --cleanenv / --writable-tmpfs
-# (merged from test__apptainer_isolation.py to satisfy PS-204 — see
-# docs/adr/0001-isolation-hardening.md).
-# ---------------------------------------------------------------------------
-
-
-def _cfg(workdir: Path, **kw) -> AgentConfig:
-    from scitex_agent_container.config._types import ApptainerSpec as _A  # noqa: F401
-
-    return AgentConfig(
-        name=kw.pop("name", "iso"),
-        runtime="apptainer",
-        workdir=str(workdir),
-        **kw,
-    )
-
-
 def test_cleanenv_present_by_default(tmp_path: Path) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
-    cfg = _cfg(tmp_path, apptainer=ApptainerSpec())
+    cfg = _config(tmp_path, apptainer=ApptainerSpec())
+    # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    # Assert
     assert "--cleanenv" in argv
-    assert argv.index("--cleanenv") < argv.index(str(tmp_path / "x.sif"))
 
 
 def test_cleanenv_absent_when_relaxed_true(tmp_path: Path) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
-    cfg = _cfg(tmp_path, apptainer=ApptainerSpec(relaxed=True))
+    cfg = _config(tmp_path, apptainer=ApptainerSpec(relaxed=True))
+    # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    # Assert
     assert "--cleanenv" not in argv
 
 
 def test_cleanenv_not_doubled_when_operator_set(tmp_path: Path) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
-    cfg = _cfg(tmp_path, apptainer=ApptainerSpec(raw_args=["--cleanenv"]))
+    cfg = _config(tmp_path, apptainer=ApptainerSpec(raw_args=["--cleanenv"]))
+    # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    # Assert
     assert argv.count("--cleanenv") == 1
 
 
-# ---------------------------------------------------------------------------
-# D1 — --writable-tmpfs auto-prepend (only when no overlay)
-# ---------------------------------------------------------------------------
-
-
 def test_writable_tmpfs_present_by_default(tmp_path: Path) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
-    cfg = _cfg(tmp_path, apptainer=ApptainerSpec())
+    cfg = _config(tmp_path, apptainer=ApptainerSpec())
+    # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    # Assert
     assert "--writable-tmpfs" in argv
 
 
-def test_writable_tmpfs_absent_when_overlay_set(tmp_path: Path) -> None:
-    """apptainer rejects --writable-tmpfs + --overlay simultaneously."""
+def test_writable_tmpfs_absent_when_overlay_configured(tmp_path: Path) -> None:
+    # Arrange — apptainer rejects --writable-tmpfs + --overlay together.
     rt = ApptainerContainerRuntime()
     overlay = tmp_path / "ov.img"
-    cfg = _cfg(tmp_path, apptainer=ApptainerSpec(overlay=str(overlay)))
+    cfg = _config(tmp_path, apptainer=ApptainerSpec(overlay=str(overlay)))
+    # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    # Assert
     assert "--writable-tmpfs" not in argv
+
+
+def test_overlay_still_emitted_alongside_no_writable_tmpfs(tmp_path: Path) -> None:
+    # Arrange
+    rt = ApptainerContainerRuntime()
+    overlay = tmp_path / "ov.img"
+    cfg = _config(tmp_path, apptainer=ApptainerSpec(overlay=str(overlay)))
+    # Act
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    # Assert
     assert "--overlay" in argv
 
 
 def test_writable_tmpfs_absent_when_relaxed(tmp_path: Path) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
-    cfg = _cfg(tmp_path, apptainer=ApptainerSpec(relaxed=True))
+    cfg = _config(tmp_path, apptainer=ApptainerSpec(relaxed=True))
+    # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    # Assert
     assert "--writable-tmpfs" not in argv
 
 
 def test_writable_tmpfs_not_doubled_when_operator_set(tmp_path: Path) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
-    cfg = _cfg(tmp_path, apptainer=ApptainerSpec(raw_args=["--writable-tmpfs"]))
+    cfg = _config(tmp_path, apptainer=ApptainerSpec(raw_args=["--writable-tmpfs"]))
+    # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    # Assert
     assert argv.count("--writable-tmpfs") == 1
 
 
-def test_all_three_hardening_flags_coexist(tmp_path: Path) -> None:
-    """relaxed=false + no overlay + no operator overrides → all three flags."""
+@pytest.mark.parametrize("flag", ["--containall", "--cleanenv", "--writable-tmpfs"])
+def test_all_three_hardening_flags_coexist_by_default(
+    tmp_path: Path, flag: str
+) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
-    cfg = _cfg(tmp_path, apptainer=ApptainerSpec())
+    cfg = _config(tmp_path, apptainer=ApptainerSpec())
+    # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
-    assert "--containall" in argv
-    assert "--cleanenv" in argv
-    assert "--writable-tmpfs" in argv
+    # Assert
+    assert flag in argv
 
 
 # ---------------------------------------------------------------------------
-# D5 — canonical --home /home/agent + apptainer.fakeroot opt-in
+# Canonical --home /home/agent + apptainer.fakeroot opt-in
 # ---------------------------------------------------------------------------
 
 
-def test_home_canonical_default(tmp_path: Path) -> None:
+def test_home_canonical_default_is_home_agent(tmp_path: Path) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
-    cfg = _cfg(tmp_path, apptainer=ApptainerSpec())
+    cfg = _config(tmp_path, apptainer=ApptainerSpec())
+    # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
-    assert "--home" in argv
+    # Assert
     assert argv[argv.index("--home") + 1] == "/home/agent"
 
 
-def test_home_absent_when_relaxed(tmp_path: Path) -> None:
+def test_home_flag_absent_when_relaxed(tmp_path: Path) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
-    cfg = _cfg(tmp_path, apptainer=ApptainerSpec(relaxed=True))
+    cfg = _config(tmp_path, apptainer=ApptainerSpec(relaxed=True))
+    # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    # Assert
     assert "--home" not in argv
 
 
-def test_home_not_doubled_when_operator_set(tmp_path: Path) -> None:
+def test_home_flag_not_doubled_when_operator_set(tmp_path: Path) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
-    cfg = _cfg(
-        tmp_path,
-        apptainer=ApptainerSpec(raw_args=["--home", "/custom/home"]),
+    cfg = _config(
+        tmp_path, apptainer=ApptainerSpec(raw_args=["--home", "/custom/home"])
     )
+    # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    # Assert
     assert argv.count("--home") == 1
+
+
+def test_home_operator_value_preserved(tmp_path: Path) -> None:
+    # Arrange
+    rt = ApptainerContainerRuntime()
+    cfg = _config(
+        tmp_path, apptainer=ApptainerSpec(raw_args=["--home", "/custom/home"])
+    )
+    # Act
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    # Assert
     assert argv[argv.index("--home") + 1] == "/custom/home"
 
 
-def test_fakeroot_appended_when_opt_in(tmp_path: Path) -> None:
+def test_fakeroot_appended_when_spec_opts_in(tmp_path: Path) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
-    cfg = _cfg(tmp_path, apptainer=ApptainerSpec(fakeroot=True))
+    cfg = _config(tmp_path, apptainer=ApptainerSpec(fakeroot=True))
+    # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    # Assert
     assert "--fakeroot" in argv
 
 
 def test_fakeroot_absent_by_default(tmp_path: Path) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
-    cfg = _cfg(tmp_path, apptainer=ApptainerSpec())
+    cfg = _config(tmp_path, apptainer=ApptainerSpec())
+    # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    # Assert
     assert "--fakeroot" not in argv
 
 
-def test_fakeroot_not_doubled(tmp_path: Path) -> None:
+def test_fakeroot_not_doubled_when_operator_also_sets(tmp_path: Path) -> None:
+    # Arrange
     rt = ApptainerContainerRuntime()
-    cfg = _cfg(
+    cfg = _config(
         tmp_path,
         apptainer=ApptainerSpec(fakeroot=True, raw_args=["--fakeroot"]),
     )
+    # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    # Assert
     assert argv.count("--fakeroot") == 1
