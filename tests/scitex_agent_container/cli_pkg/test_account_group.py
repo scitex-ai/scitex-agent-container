@@ -1,119 +1,233 @@
-"""Tests for ``sac account`` group + top-level ``quota-watch``."""
+"""Tests for ``sac account`` group + top-level ``quota-watch``.
+
+PA-306 no-mocks: every test here exercises real production collaborators.
+
+Sandboxing strategy
+-------------------
+* ``HOME`` env var is redirected to ``tmp_path`` — ``Path.home()`` reads
+  ``$HOME`` on POSIX, so the entire account-store cascade (which keys
+  off ``home``) lands inside the test's tmpdir. See the parallel
+  isolation pattern in ``tests/scitex_agent_container/_state/test_account_store.py``.
+
+* ``account save`` / ``list`` / ``delete`` / ``switch`` use the real
+  ``_state.account_store`` functions on a real filesystem.
+
+* ``watch-quota`` / ``quota-watch`` are exercised only through the
+  ``--once`` and ``--dry-run`` code paths. In those paths the real
+  ``check_and_rotate`` calls ``fetch_usage`` which, with no Anthropic
+  credentials on disk, returns ``{"error": ...}`` — and the command
+  reports that honestly. The daemon / infinite-loop / survival paths
+  were previously mock-only (they asserted on
+  ``run_loop.assert_called_once()`` against a ``MagicMock``); they are
+  deleted here because there is no honest way to drive ``run_loop``
+  (it loops forever calling ``time.sleep``) or to force
+  ``survival_mode_check`` into ``True`` without a real-or-faked
+  Anthropic API — and adding a test-only injection seam to production
+  is also forbidden.
+"""
 
 from __future__ import annotations
 
 import json
-import sys
-import types
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 from click.testing import CliRunner
 
+from scitex_agent_container._state.account_store import (
+    _METADATA_FILENAME,
+    save_account,
+)
 from scitex_agent_container.cli_pkg.account_group import account, quota_watch
+
+# ---------------------------------------------------------------------------
+# Fixtures + helpers
+# ---------------------------------------------------------------------------
 
 
 @pytest.fixture(autouse=True)
-def sandbox_home(tmp_path, monkeypatch):
+def sandbox_home(tmp_path, env_save_restore):
+    """Redirect ``$HOME`` so ``Path.home()`` resolves inside ``tmp_path``.
+
+    Honest no-mocks alternative to ``monkeypatch.setattr(Path, "home", ...)``:
+    ``Path.home()`` on POSIX reads ``os.environ['HOME']`` (see CPython
+    ``pathlib`` / ``os.path.expanduser``), so a real env mutation is the
+    real equivalent.
+    """
     home = tmp_path / "home"
     home.mkdir()
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    env_save_restore.set("HOME", str(home))
     return home
 
 
-def _install_fake_state(monkeypatch, **overrides):
-    """Stub scitex_agent_container._state.account_store."""
-    mod = types.ModuleType("scitex_agent_container._state.account_store")
-    mod._store_path = overrides.get(
-        "_store_path", lambda root, home: home / ".scitex" / "accounts"
+def _accounts_dir(home: Path) -> Path:
+    return home / ".scitex" / "agent-container" / "accounts"
+
+
+def _meta_file(home: Path, name: str) -> Path:
+    return _accounts_dir(home) / name / _METADATA_FILENAME
+
+
+def _seed_active_credentials(home: Path, *, email: str | None = None) -> None:
+    """Write a minimal ``~/.claude.json`` so the auto-detect path picks up.
+
+    Real format read by ``read_credentials_metadata``.
+    """
+    (home / ".claude").mkdir(exist_ok=True)
+    (home / ".claude" / ".credentials.json").write_text(
+        json.dumps({"claudeAiOauth": {"subscriptionType": "max"}})
     )
-    mod.save_account = overrides.get("save_account", MagicMock())
-    mod.list_accounts = overrides.get("list_accounts", lambda: [])
-    mod.delete_account = overrides.get("delete_account", lambda n: True)
-    mod.switch_account = overrides.get(
-        "switch_account",
-        lambda n: {"success": True, "message": f"switched to {n}"},
-    )
-    monkeypatch.setitem(sys.modules, "scitex_agent_container._state.account_store", mod)
-    return mod
-
-
-def _install_fake_credentials(monkeypatch, meta=None, raise_err=False):
-    mod = types.ModuleType("scitex_agent_container._account.credentials")
-
-    def reader(home=None):
-        if raise_err:
-            raise OSError("no credentials")
-        return meta or {}
-
-    mod.read_credentials_metadata = reader
-    monkeypatch.setitem(sys.modules, "scitex_agent_container._account.credentials", mod)
-    return mod
-
-
-def _install_fake_quota(monkeypatch, **overrides):
-    mod = types.ModuleType("scitex_agent_container._account.quota_watch")
-    mod.check_and_rotate = overrides.get(
-        "check_and_rotate",
-        lambda threshold, dry_run: {"action": "ok", "message": "no rotation"},
-    )
-    mod.run_loop = overrides.get("run_loop", MagicMock())
-    mod.survival_mode_check = overrides.get(
-        "survival_mode_check", lambda: {"survival_mode": False, "message": ""}
-    )
-    monkeypatch.setitem(sys.modules, "scitex_agent_container._account.quota_watch", mod)
-    return mod
+    if email is not None:
+        (home / ".claude.json").write_text(
+            json.dumps({"oauthAccount": {"emailAddress": email}})
+        )
 
 
 # ---------------------------------------------------------------------------
-# account save
+# account save — dry-run
 # ---------------------------------------------------------------------------
 
 
-def test_account_save_dry_run(monkeypatch, sandbox_home):
+def test_account_save_dry_run_exits_zero(sandbox_home):
+    # Arrange
     runner = CliRunner()
+    # Act
     result = runner.invoke(account, ["save", "work", "--dry-run"])
+    # Assert
     assert result.exit_code == 0
-    assert "dry-run" in result.output
-    assert "work" in result.output
 
 
-def test_account_save_writes_meta_with_email(monkeypatch, sandbox_home):
-    state = _install_fake_state(monkeypatch)
-    _install_fake_credentials(monkeypatch, meta={"email_address": "x@y.z"})
-    # create credentials file so the copy branch runs
-    (sandbox_home / ".claude").mkdir()
-    (sandbox_home / ".claude" / ".credentials.json").write_text("{}")
-
+def test_account_save_dry_run_announces_action(sandbox_home):
+    # Arrange
     runner = CliRunner()
+    # Act
+    result = runner.invoke(account, ["save", "work", "--dry-run"])
+    # Assert
+    assert "dry-run" in result.output and "work" in result.output
+
+
+def test_account_save_dry_run_does_not_persist(sandbox_home):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    runner.invoke(account, ["save", "work", "--dry-run"])
+    # Assert
+    assert not (_accounts_dir(sandbox_home) / "work").exists()
+
+
+# ---------------------------------------------------------------------------
+# account save — explicit email
+# ---------------------------------------------------------------------------
+
+
+def test_account_save_explicit_email_exits_zero(sandbox_home):
+    # Arrange
+    _seed_active_credentials(sandbox_home)
+    runner = CliRunner()
+    # Act
     result = runner.invoke(account, ["save", "work", "--email", "explicit@example.com"])
+    # Assert
     assert result.exit_code == 0, result.output
-    state.save_account.assert_called_once()
-    args, kwargs = state.save_account.call_args
-    assert args[0] == "work"
-    assert args[1] == {"email_address": "explicit@example.com"}
+
+
+def test_account_save_explicit_email_announces_save(sandbox_home):
+    # Arrange
+    _seed_active_credentials(sandbox_home)
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(account, ["save", "work", "--email", "explicit@example.com"])
+    # Assert
     assert "Saved account 'work'" in result.output
 
 
-def test_account_save_autodetect_email(monkeypatch, sandbox_home):
-    state = _install_fake_state(monkeypatch)
-    _install_fake_credentials(monkeypatch, meta={"email_address": "auto@x.com"})
+def test_account_save_explicit_email_writes_metadata_file(sandbox_home):
+    # Arrange
+    _seed_active_credentials(sandbox_home)
     runner = CliRunner()
-    result = runner.invoke(account, ["save", "work"])
-    assert result.exit_code == 0, result.output
-    args, _ = state.save_account.call_args
-    assert args[1] == {"email_address": "auto@x.com"}
+    # Act
+    runner.invoke(account, ["save", "work", "--email", "explicit@example.com"])
+    # Assert
+    assert _meta_file(sandbox_home, "work").is_file()
 
 
-def test_account_save_swallows_credentials_error(monkeypatch, sandbox_home):
-    state = _install_fake_state(monkeypatch)
-    _install_fake_credentials(monkeypatch, raise_err=True)
+def test_account_save_explicit_email_records_email_in_metadata(sandbox_home):
+    # Arrange
+    _seed_active_credentials(sandbox_home)
     runner = CliRunner()
+    # Act
+    runner.invoke(account, ["save", "work", "--email", "explicit@example.com"])
+    payload = json.loads(_meta_file(sandbox_home, "work").read_text())
+    # Assert
+    assert payload["email_address"] == "explicit@example.com"
+
+
+def test_account_save_explicit_email_copies_credentials_snapshot(sandbox_home):
+    # Arrange
+    _seed_active_credentials(sandbox_home)
+    runner = CliRunner()
+    # Act
+    runner.invoke(account, ["save", "work", "--email", "explicit@example.com"])
+    snapshot = _accounts_dir(sandbox_home) / "work" / ".credentials.json"
+    # Assert
+    assert snapshot.is_file()
+
+
+# ---------------------------------------------------------------------------
+# account save — autodetect email from ~/.claude.json
+# ---------------------------------------------------------------------------
+
+
+def test_account_save_autodetect_exits_zero(sandbox_home):
+    # Arrange
+    (sandbox_home / ".claude.json").write_text(
+        json.dumps({"oauthAccount": {"emailAddress": "auto@example.com"}})
+    )
+    runner = CliRunner()
+    # Act
     result = runner.invoke(account, ["save", "work"])
+    # Assert
     assert result.exit_code == 0, result.output
-    args, _ = state.save_account.call_args
-    assert args[1] == {}
+
+
+def test_account_save_autodetect_records_email_in_metadata(sandbox_home):
+    # Arrange
+    (sandbox_home / ".claude.json").write_text(
+        json.dumps({"oauthAccount": {"emailAddress": "auto@example.com"}})
+    )
+    runner = CliRunner()
+    # Act
+    runner.invoke(account, ["save", "work"])
+    payload = json.loads(_meta_file(sandbox_home, "work").read_text())
+    # Assert
+    assert payload["email_address"] == "auto@example.com"
+
+
+# ---------------------------------------------------------------------------
+# account save — credentials unreadable
+# ---------------------------------------------------------------------------
+
+
+def test_account_save_corrupt_credentials_still_exits_zero(sandbox_home):
+    # Arrange
+    (sandbox_home / ".claude.json").write_text("{ not valid json")
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(account, ["save", "work"])
+    # Assert
+    assert result.exit_code == 0, result.output
+
+
+def test_account_save_corrupt_credentials_writes_metadata_without_email(
+    sandbox_home,
+):
+    # Arrange
+    (sandbox_home / ".claude.json").write_text("{ not valid json")
+    runner = CliRunner()
+    # Act
+    runner.invoke(account, ["save", "work"])
+    payload = json.loads(_meta_file(sandbox_home, "work").read_text())
+    # Assert
+    assert "email_address" not in payload
 
 
 # ---------------------------------------------------------------------------
@@ -121,78 +235,138 @@ def test_account_save_swallows_credentials_error(monkeypatch, sandbox_home):
 # ---------------------------------------------------------------------------
 
 
-def test_account_list_empty(monkeypatch):
-    _install_fake_state(monkeypatch, list_accounts=lambda: [])
-    _install_fake_credentials(monkeypatch, meta={})
-    # status_cmds._format_claude_account_block — stub
-    sc_mod = types.ModuleType("scitex_agent_container.cli_pkg.status_cmds")
-    sc_mod._format_claude_account_block = lambda meta: []
-    monkeypatch.setitem(
-        sys.modules, "scitex_agent_container.cli_pkg.status_cmds", sc_mod
-    )
-
+def test_account_list_empty_reports_no_accounts(sandbox_home):
+    # Arrange
     runner = CliRunner()
+    # Act
     result = runner.invoke(account, ["list"])
-    assert result.exit_code == 0
+    # Assert
     assert "No accounts stored" in result.output
 
 
-def test_account_list_with_accounts(monkeypatch):
-    accts = [
-        {"name": "work", "email_address": "w@x.com"},
-        {"name": "personal"},
-    ]
-    _install_fake_state(monkeypatch, list_accounts=lambda: accts)
-    _install_fake_credentials(monkeypatch, meta={"email_address": "active@x.com"})
-    sc_mod = types.ModuleType("scitex_agent_container.cli_pkg.status_cmds")
-    sc_mod._format_claude_account_block = lambda meta: [
-        f"Active: {meta.get('email_address')}"
-    ]
-    monkeypatch.setitem(
-        sys.modules, "scitex_agent_container.cli_pkg.status_cmds", sc_mod
-    )
-
+def test_account_list_shows_header(sandbox_home):
+    # Arrange
+    save_account("work", {"email_address": "w@example.com"}, home=sandbox_home)
+    save_account("personal", {}, home=sandbox_home)
     runner = CliRunner()
+    # Act
     result = runner.invoke(account, ["list"])
-    assert result.exit_code == 0, result.output
+    # Assert
     assert "Stored accounts" in result.output
+
+
+def test_account_list_shows_first_account_name(sandbox_home):
+    # Arrange
+    save_account("work", {"email_address": "w@example.com"}, home=sandbox_home)
+    save_account("personal", {}, home=sandbox_home)
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(account, ["list"])
+    # Assert
     assert "work" in result.output
+
+
+def test_account_list_shows_first_account_email(sandbox_home):
+    # Arrange
+    save_account("work", {"email_address": "w@example.com"}, home=sandbox_home)
+    save_account("personal", {}, home=sandbox_home)
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(account, ["list"])
+    # Assert
+    assert "w@example.com" in result.output
+
+
+def test_account_list_shows_second_account_name(sandbox_home):
+    # Arrange
+    save_account("work", {"email_address": "w@example.com"}, home=sandbox_home)
+    save_account("personal", {}, home=sandbox_home)
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(account, ["list"])
+    # Assert
     assert "personal" in result.output
+
+
+def test_account_list_uses_no_email_placeholder(sandbox_home):
+    # Arrange
+    save_account("work", {"email_address": "w@example.com"}, home=sandbox_home)
+    save_account("personal", {}, home=sandbox_home)
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(account, ["list"])
+    # Assert
     assert "(no email)" in result.output
 
 
-def test_account_list_json(monkeypatch):
-    _install_fake_state(monkeypatch, list_accounts=lambda: [{"name": "x"}])
-    _install_fake_credentials(monkeypatch, meta={"email_address": "a@b"})
-    runner = CliRunner()
-    result = runner.invoke(account, ["list", "--json"])
-    assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
-    assert payload["active"] == {"email_address": "a@b"}
-    assert payload["stored"] == [{"name": "x"}]
-
-
-def test_account_list_json_swallows_credentials_error(monkeypatch):
-    _install_fake_state(monkeypatch, list_accounts=lambda: [])
-    _install_fake_credentials(monkeypatch, raise_err=True)
-    runner = CliRunner()
-    result = runner.invoke(account, ["list", "--json"])
-    assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
-    assert payload["active"] == {}
-
-
-def test_account_list_human_swallows_credentials_error(monkeypatch):
-    _install_fake_state(monkeypatch, list_accounts=lambda: [])
-    _install_fake_credentials(monkeypatch, raise_err=True)
-    sc_mod = types.ModuleType("scitex_agent_container.cli_pkg.status_cmds")
-    sc_mod._format_claude_account_block = lambda meta: []
-    monkeypatch.setitem(
-        sys.modules, "scitex_agent_container.cli_pkg.status_cmds", sc_mod
+def test_account_list_json_exits_zero(sandbox_home):
+    # Arrange
+    save_account("x", {"email_address": "x@example.com"}, home=sandbox_home)
+    (sandbox_home / ".claude.json").write_text(
+        json.dumps({"oauthAccount": {"emailAddress": "active@example.com"}})
     )
     runner = CliRunner()
-    result = runner.invoke(account, ["list"])
+    # Act
+    result = runner.invoke(account, ["list", "--json"])
+    # Assert
     assert result.exit_code == 0, result.output
+
+
+def test_account_list_json_surfaces_active_email(sandbox_home):
+    # Arrange
+    save_account("x", {"email_address": "x@example.com"}, home=sandbox_home)
+    (sandbox_home / ".claude.json").write_text(
+        json.dumps({"oauthAccount": {"emailAddress": "active@example.com"}})
+    )
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(account, ["list", "--json"])
+    payload = json.loads(result.output)
+    # Assert
+    assert payload["active"]["email_address"] == "active@example.com"
+
+
+def test_account_list_json_lists_stored_accounts(sandbox_home):
+    # Arrange
+    save_account("x", {"email_address": "x@example.com"}, home=sandbox_home)
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(account, ["list", "--json"])
+    payload = json.loads(result.output)
+    # Assert
+    assert [a["name"] for a in payload["stored"]] == ["x"]
+
+
+def test_account_list_json_tolerates_corrupt_credentials_active_email(sandbox_home):
+    # Arrange
+    (sandbox_home / ".claude.json").write_text("{ not valid json")
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(account, ["list", "--json"])
+    payload = json.loads(result.output)
+    # Assert
+    assert payload["active"]["email_address"] is None
+
+
+def test_account_list_json_tolerates_corrupt_credentials_empty_stored(sandbox_home):
+    # Arrange
+    (sandbox_home / ".claude.json").write_text("{ not valid json")
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(account, ["list", "--json"])
+    payload = json.loads(result.output)
+    # Assert
+    assert payload["stored"] == []
+
+
+def test_account_list_human_tolerates_corrupt_credentials(sandbox_home):
+    # Arrange
+    (sandbox_home / ".claude.json").write_text("{ not valid json")
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(account, ["list"])
+    # Assert
+    assert result.exit_code == 0 and "No accounts stored" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -200,35 +374,111 @@ def test_account_list_human_swallows_credentials_error(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_account_delete_dry_run(monkeypatch):
-    _install_fake_state(monkeypatch)
+def test_account_delete_dry_run_exits_zero(sandbox_home):
+    # Arrange
+    save_account("work", {}, home=sandbox_home)
     runner = CliRunner()
+    # Act
     result = runner.invoke(account, ["delete", "work", "--dry-run"])
+    # Assert
     assert result.exit_code == 0
+
+
+def test_account_delete_dry_run_announces_action(sandbox_home):
+    # Arrange
+    save_account("work", {}, home=sandbox_home)
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(account, ["delete", "work", "--dry-run"])
+    # Assert
     assert "dry-run" in result.output
 
 
-def test_account_delete_requires_yes(monkeypatch):
-    _install_fake_state(monkeypatch)
+def test_account_delete_dry_run_preserves_account_dir(sandbox_home):
+    # Arrange
+    save_account("work", {}, home=sandbox_home)
     runner = CliRunner()
+    # Act
+    runner.invoke(account, ["delete", "work", "--dry-run"])
+    # Assert
+    assert (_accounts_dir(sandbox_home) / "work").is_dir()
+
+
+def test_account_delete_without_yes_exits_two(sandbox_home):
+    # Arrange
+    save_account("work", {}, home=sandbox_home)
+    runner = CliRunner()
+    # Act
     result = runner.invoke(account, ["delete", "work"])
+    # Assert
     assert result.exit_code == 2
+
+
+def test_account_delete_without_yes_emits_refusal(sandbox_home):
+    # Arrange
+    save_account("work", {}, home=sandbox_home)
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(account, ["delete", "work"])
+    # Assert
     assert "Refusing" in result.output
 
 
-def test_account_delete_success(monkeypatch):
-    _install_fake_state(monkeypatch, delete_account=lambda n: True)
+def test_account_delete_without_yes_preserves_account_dir(sandbox_home):
+    # Arrange
+    save_account("work", {}, home=sandbox_home)
     runner = CliRunner()
+    # Act
+    runner.invoke(account, ["delete", "work"])
+    # Assert
+    assert (_accounts_dir(sandbox_home) / "work").is_dir()
+
+
+def test_account_delete_success_exits_zero(sandbox_home):
+    # Arrange
+    save_account("work", {}, home=sandbox_home)
+    runner = CliRunner()
+    # Act
     result = runner.invoke(account, ["delete", "work", "--yes"])
+    # Assert
     assert result.exit_code == 0
+
+
+def test_account_delete_success_announces_deletion(sandbox_home):
+    # Arrange
+    save_account("work", {}, home=sandbox_home)
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(account, ["delete", "work", "--yes"])
+    # Assert
     assert "Deleted" in result.output
 
 
-def test_account_delete_not_found(monkeypatch):
-    _install_fake_state(monkeypatch, delete_account=lambda n: False)
+def test_account_delete_success_removes_account_dir(sandbox_home):
+    # Arrange
+    save_account("work", {}, home=sandbox_home)
     runner = CliRunner()
+    # Act
+    runner.invoke(account, ["delete", "work", "--yes"])
+    # Assert
+    assert not (_accounts_dir(sandbox_home) / "work").exists()
+
+
+def test_account_delete_not_found_exits_one(sandbox_home):
+    # Arrange
+    runner = CliRunner()
+    # Act
     result = runner.invoke(account, ["delete", "ghost", "--yes"])
+    # Assert
     assert result.exit_code == 1
+
+
+def test_account_delete_not_found_announces(sandbox_home):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(account, ["delete", "ghost", "--yes"])
+    # Assert
     assert "not found" in result.output
 
 
@@ -237,110 +487,160 @@ def test_account_delete_not_found(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_account_switch_success(monkeypatch):
-    _install_fake_state(
-        monkeypatch,
-        switch_account=lambda n: {"success": True, "message": f"now {n}"},
+def _stage_switchable_account(home: Path) -> None:
+    """Pre-create a saved account *with* a real credential snapshot file."""
+    save_account("work", {"email_address": "w@example.com"}, home=home)
+    acct_dir = _accounts_dir(home) / "work"
+    (acct_dir / ".credentials.json").write_text(
+        json.dumps({"claudeAiOauth": {"subscriptionType": "max"}})
     )
+
+
+def test_account_switch_success_exits_zero(sandbox_home):
+    # Arrange
+    _stage_switchable_account(sandbox_home)
     runner = CliRunner()
+    # Act
     result = runner.invoke(account, ["switch", "work"])
-    assert result.exit_code == 0
-    assert "now work" in result.output
-
-
-def test_account_switch_failure(monkeypatch):
-    _install_fake_state(
-        monkeypatch,
-        switch_account=lambda n: {"success": False, "message": "nope"},
-    )
-    runner = CliRunner()
-    result = runner.invoke(account, ["switch", "missing"])
-    assert result.exit_code == 1
-    assert "nope" in result.output
-
-
-# ---------------------------------------------------------------------------
-# account watch-quota + top-level quota-watch
-# ---------------------------------------------------------------------------
-
-
-def test_watch_quota_once(monkeypatch):
-    q = _install_fake_quota(
-        monkeypatch,
-        check_and_rotate=lambda threshold, dry_run: {
-            "action": "rotated",
-            "message": "did it",
-        },
-    )
-    runner = CliRunner()
-    result = runner.invoke(account, ["watch-quota", "--once"])
-    assert result.exit_code == 0
-    assert "rotated" in result.output
-    q.run_loop.assert_not_called()
-
-
-def test_watch_quota_dry_run_with_survival(monkeypatch):
-    _install_fake_quota(
-        monkeypatch,
-        survival_mode_check=lambda: {"survival_mode": True, "message": "low!"},
-    )
-    runner = CliRunner()
-    result = runner.invoke(account, ["watch-quota", "--dry-run"])
-    assert result.exit_code == 0
-    assert "SURVIVAL" in result.output
-
-
-def test_watch_quota_daemon_runs_loop(monkeypatch):
-    q = _install_fake_quota(monkeypatch)
-    runner = CliRunner()
-    result = runner.invoke(account, ["watch-quota", "--daemon"])
+    # Assert
     assert result.exit_code == 0, result.output
-    assert "Forking" in result.output
-    q.run_loop.assert_called_once()
 
 
-def test_watch_quota_foreground_loop(monkeypatch):
-    q = _install_fake_quota(monkeypatch)
+def test_account_switch_success_announces(sandbox_home):
+    # Arrange
+    _stage_switchable_account(sandbox_home)
     runner = CliRunner()
-    result = runner.invoke(account, ["watch-quota", "--log-file", "/tmp/x.log"])
-    assert result.exit_code == 0
-    q.run_loop.assert_called_once()
+    # Act
+    result = runner.invoke(account, ["switch", "work"])
+    # Assert
+    assert "Switched to account 'work'" in result.output
 
 
-def test_top_level_quota_watch_once(monkeypatch):
-    _install_fake_quota(
-        monkeypatch,
-        check_and_rotate=lambda threshold, dry_run: {"action": "noop", "message": "ok"},
-    )
+def test_account_switch_success_copies_credentials(sandbox_home):
+    # Arrange
+    _stage_switchable_account(sandbox_home)
     runner = CliRunner()
-    result = runner.invoke(quota_watch, ["--once"])
-    assert result.exit_code == 0
-    assert "noop" in result.output
+    # Act
+    runner.invoke(account, ["switch", "work"])
+    # Assert
+    assert (sandbox_home / ".claude" / ".credentials.json").is_file()
 
 
-def test_top_level_quota_watch_dry_run_survival(monkeypatch):
-    _install_fake_quota(
-        monkeypatch,
-        survival_mode_check=lambda: {"survival_mode": True, "message": "low"},
-    )
+def test_account_switch_success_does_not_leak_metadata(sandbox_home):
+    # Arrange
+    _stage_switchable_account(sandbox_home)
     runner = CliRunner()
-    result = runner.invoke(quota_watch, ["--dry-run"])
-    assert result.exit_code == 0
-    assert "SURVIVAL" in result.output
+    # Act
+    runner.invoke(account, ["switch", "work"])
+    # Assert
+    assert not (sandbox_home / ".claude" / _METADATA_FILENAME).exists()
 
 
-def test_top_level_quota_watch_daemon(monkeypatch):
-    q = _install_fake_quota(monkeypatch)
+def test_account_switch_missing_exits_one(sandbox_home):
+    # Arrange
     runner = CliRunner()
-    result = runner.invoke(quota_watch, ["--daemon", "--log-file", "/tmp/q.log"])
-    assert result.exit_code == 0
-    assert "Forking" in result.output
-    q.run_loop.assert_called_once()
+    # Act
+    result = runner.invoke(account, ["switch", "missing"])
+    # Assert
+    assert result.exit_code == 1
 
 
-def test_top_level_quota_watch_loop(monkeypatch):
-    q = _install_fake_quota(monkeypatch)
+def test_account_switch_missing_announces(sandbox_home):
+    # Arrange
     runner = CliRunner()
-    result = runner.invoke(quota_watch, [])
-    assert result.exit_code == 0
-    q.run_loop.assert_called_once()
+    # Act
+    result = runner.invoke(account, ["switch", "missing"])
+    # Assert
+    assert "No account directory" in result.output
+
+
+# ---------------------------------------------------------------------------
+# watch-quota — single-shot (--once / --dry-run) paths only.
+#
+# Honest scope: with no Anthropic credentials on disk, ``fetch_usage``
+# (called by ``check_and_rotate``) returns ``{"error": ...}`` and the
+# command surfaces a single ``[error] ...`` (or equivalent) line on
+# stdout. That is the real behaviour of the production code in this
+# configuration — and the command's wiring (option parsing, branch
+# selection, echo formatting, exit code) is what these CLI tests are
+# responsible for.
+#
+# The previously-existing tests for ``--daemon`` and the bare
+# infinite-loop invocation were mock-only: they replaced ``run_loop``
+# with a ``MagicMock`` and asserted ``run_loop.assert_called_once()``.
+# There is no honest way to exercise ``run_loop`` in-process (it loops
+# forever calling ``time.sleep``); driving it would require either a
+# test-only production seam (forbidden by PA-306) or a subprocess with
+# a kill signal (out of scope for these CLI tests). Those tests are
+# deleted rather than re-greened with SimpleNamespace.
+# ---------------------------------------------------------------------------
+
+
+def _ensure_no_credentials(home: Path) -> None:
+    """Ensure no Anthropic credentials are reachable from ``home``.
+
+    With no ``~/.claude/.credentials.json``, ``fetch_usage`` returns an
+    ``{"error": ...}`` dict without issuing any network request — a
+    real, deterministic code path.
+    """
+    claude = home / ".claude"
+    claude.mkdir(exist_ok=True)
+    cred = claude / ".credentials.json"
+    if cred.exists():
+        cred.unlink()
+
+
+# Parametrize on the (command, argv) pair so each test body is straight-line
+# (STX-TQ006 forbids ``if/else`` inside a parametrized test body).
+_ONCE_CASES = [
+    pytest.param(account, ["watch-quota", "--once"], id="account-subcommand"),
+    pytest.param(quota_watch, ["--once"], id="top-level"),
+]
+_DRY_CASES = [
+    pytest.param(account, ["watch-quota", "--dry-run"], id="account-subcommand"),
+    pytest.param(quota_watch, ["--dry-run"], id="top-level"),
+]
+
+
+@pytest.mark.parametrize("cmd,argv", _ONCE_CASES)
+def test_watch_quota_once_exits_zero_without_credentials(sandbox_home, cmd, argv):
+    # Arrange
+    _ensure_no_credentials(sandbox_home)
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(cmd, argv)
+    # Assert
+    assert result.exit_code == 0, result.output
+
+
+@pytest.mark.parametrize("cmd,argv", _ONCE_CASES)
+def test_watch_quota_once_emits_bracketed_action(sandbox_home, cmd, argv):
+    # Arrange
+    _ensure_no_credentials(sandbox_home)
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(cmd, argv)
+    # Assert: ``check_and_rotate`` formats results as ``[<action>] <message>``.
+    assert result.output.startswith("[")
+
+
+@pytest.mark.parametrize("cmd,argv", _DRY_CASES)
+def test_watch_quota_dry_run_exits_zero_without_credentials(sandbox_home, cmd, argv):
+    # Arrange
+    _ensure_no_credentials(sandbox_home)
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(cmd, argv)
+    # Assert
+    assert result.exit_code == 0, result.output
+
+
+@pytest.mark.parametrize("cmd,argv", _DRY_CASES)
+def test_watch_quota_dry_run_emits_bracketed_action(sandbox_home, cmd, argv):
+    # Arrange
+    _ensure_no_credentials(sandbox_home)
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(cmd, argv)
+    # Assert
+    assert result.output.startswith("[")
