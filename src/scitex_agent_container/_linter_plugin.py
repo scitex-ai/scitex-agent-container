@@ -5,23 +5,31 @@ Registers sac-specific lint rules with scitex-dev's linter via the
 canonical one (rules / call_rules / axes_hints / checkers) — see
 ``scitex_dev.linter._plugin_loader.load_plugins``.
 
+Checker contract (per ``scitex_dev.linter.checker.lint_source``):
+
+- Subclass ``ast.NodeVisitor``.
+- Constructor signature: ``__init__(self, source_lines, config)``.
+- ``self.issues`` is a list of ``scitex_dev.linter.checker.Issue``
+  instances populated by ``visit(tree)``.
+- Optional ``category`` class attribute for opt-in gating (e.g.
+  ``"figure"`` gates behind ``config.enable=["FM"]``).
+
 Rule numbering is ``STX-SAC<NNN>``. Each rule corresponds to a real
 bug class we have shipped fixes for; the linter is how we prevent the
 next one of the same shape.
 
 Adding a rule
 =============
-1. Append a ``Rule(...)`` and (if call-detectable) a ``call_rules`` entry
-   below.
-2. For structural rules (dict-literal / string-literal patterns), write
-   an AST ``checker`` class and add it to ``checkers``.
-3. Bump the relevant skill leaf if user-visible.
+1. Append a ``Rule(...)`` below.
+2. For call-detectable rules, add an entry to ``call_rules``.
+3. For structural rules (dict-literal / string-literal patterns),
+   write an AST checker class and add it to ``checkers``.
+4. Bump the relevant skill leaf if user-visible.
 """
 
 from __future__ import annotations
 
 import ast
-from dataclasses import dataclass
 
 
 def get_plugin():
@@ -67,152 +75,101 @@ def get_plugin():
         ),
     )
 
-    SAC003 = Rule(
-        id="STX-SAC003",
-        severity="warning",
-        category="env",
-        message=(
-            "Direct ``os.environ[...]`` read of a ``SAC_`` / "
-            "``SCITEX_AGENT_CONTAINER_`` env key. This bypasses the dual-"
-            "form support in ``_env.getenv()`` — if a user sets only the "
-            "long form, your code misses it (and vice-versa). Reads also "
-            "skip the conflict-detection that ``getenv`` performs when "
-            "both forms are set to different values."
-        ),
-        suggestion=(
-            "Use ``from scitex_agent_container._env import getenv`` "
-            "and call ``getenv('HUB_URL')`` instead of "
-            "``os.environ['SAC_HUB_URL']``. For writes, use ``setenv`` "
-            "which writes both aliases. The ``_env`` module itself is "
-            "exempted from this rule."
-        ),
-    )
+    # NOTE: SAC003 (direct os.environ read of SAC_* keys) is drafted but
+    # deferred. It needs filepath context to exempt ``_env.py`` itself and
+    # tests/ (where direct env manipulation is a legitimate setup pattern).
+    # scitex-dev's ``lint_source`` doesn't currently pass filepath to plugin
+    # checkers — the planned upstream fix is to stash ``filepath`` on the
+    # config object before invoking plugin checkers. Once that lands, SAC003
+    # can be re-enabled by re-adding it to the returned dict.
 
     return {
-        "rules": [SAC001, SAC002, SAC003],
-        # Method-string detection (SAC002) is a string-literal pattern, not
-        # a function call, so it lives in a checker rather than call_rules.
+        "rules": [SAC001, SAC002],
         "call_rules": {},
         "axes_hints": {},
-        "checkers": [_SacCardChecker, _SacMethodChecker, _SacEnvChecker],
+        "checkers": [_SacCardChecker, _SacMethodChecker],
     }
 
 
 # ---------------------------------------------------------------------------
-# Checkers
+# Checkers — each is an ast.NodeVisitor matching scitex-dev's contract.
 # ---------------------------------------------------------------------------
-#
-# The scitex-dev checker contract (see ``scitex_dev.linter.checker``) wants
-# objects that take an AST module + filepath and yield diagnostics. Each
-# class below implements that contract for one SAC rule. The diagnostic
-# shape mirrors what the core checker emits so the runner can render them
-# uniformly.
 
 
-@dataclass
-class _Diag:
-    rule_id: str
-    line: int
-    col: int
+def _get_rule(rule_id: str):
+    """Resolve a rule by ID via scitex-dev's lookup (works across versions)."""
+    from scitex_dev.linter._rules._lookup import lookup
+
+    return lookup(rule_id)
 
 
-class _SacCardChecker:
-    """SAC001 — flag v0 AgentCard fields in dict literals."""
+def _make_issue(rule, line: int, col: int, source_line: str):
+    """Construct an ``Issue`` matching scitex-dev's checker shape."""
+    from scitex_dev.linter.checker import Issue
+
+    return Issue(rule=rule, line=line, col=col, source_line=source_line)
+
+
+def _source_at(source_lines, lineno: int) -> str:
+    if 1 <= lineno <= len(source_lines):
+        return source_lines[lineno - 1].rstrip()
+    return ""
+
+
+class _SacCardChecker(ast.NodeVisitor):
+    """SAC001 — flag v0 AgentCard fields in dict literals.
+
+    Heuristic: only flag dicts that ALSO carry a ``name`` string key, so
+    non-card dicts that happen to use ``url`` (e.g. config dicts) don't
+    false-positive fire.
+    """
 
     _V0_KEYS = frozenset({"url", "authentication", "stateTransitionHistory"})
-    # An AgentCard always carries both ``name`` and ``description`` (per
-    # the v1 proto). Heuristic: only flag dicts that look like an
-    # AgentCard, i.e. contain ``name`` AND at least one v0 key.
     _CARD_MARKER = "name"
 
-    rule_id = "STX-SAC001"
+    def __init__(self, source_lines, config):
+        self.source_lines = source_lines
+        self.config = config
+        self.issues: list = []
 
-    def __init__(self, filepath: str):
-        self.filepath = filepath
-
-    def visit(self, tree: ast.AST):
-        diags: list[_Diag] = []
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Dict):
-                continue
-            keys = {
-                k.value
-                for k in node.keys
-                if isinstance(k, ast.Constant) and isinstance(k.value, str)
-            }
-            if self._CARD_MARKER in keys and keys & self._V0_KEYS:
-                diags.append(_Diag(self.rule_id, node.lineno, node.col_offset))
-        return diags
+    def visit_Dict(self, node: ast.Dict):
+        keys = {
+            k.value
+            for k in node.keys
+            if isinstance(k, ast.Constant) and isinstance(k.value, str)
+        }
+        if self._CARD_MARKER in keys and keys & self._V0_KEYS:
+            rule = _get_rule("STX-SAC001")
+            if rule is not None:
+                src = _source_at(self.source_lines, node.lineno)
+                self.issues.append(_make_issue(rule, node.lineno, node.col_offset, src))
+        self.generic_visit(node)
 
 
-class _SacMethodChecker:
-    """SAC002 — flag legacy JSON-RPC method strings."""
+class _SacMethodChecker(ast.NodeVisitor):
+    """SAC002 — flag legacy A2A JSON-RPC method strings."""
 
     _V0_METHODS = frozenset({"tasks/send", "tasks/sendSubscribe"})
-    rule_id = "STX-SAC002"
 
-    def __init__(self, filepath: str):
-        self.filepath = filepath
+    def __init__(self, source_lines, config):
+        self.source_lines = source_lines
+        self.config = config
+        self.issues: list = []
 
-    def visit(self, tree: ast.AST):
-        diags: list[_Diag] = []
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
-                continue
-            if node.value in self._V0_METHODS:
-                diags.append(_Diag(self.rule_id, node.lineno, node.col_offset))
-        return diags
+    def visit_Constant(self, node: ast.Constant):
+        if isinstance(node.value, str) and node.value in self._V0_METHODS:
+            rule = _get_rule("STX-SAC002")
+            if rule is not None:
+                src = _source_at(self.source_lines, node.lineno)
+                self.issues.append(_make_issue(rule, node.lineno, node.col_offset, src))
+        self.generic_visit(node)
 
 
-class _SacEnvChecker:
-    """SAC003 — flag direct os.environ reads of SAC_ / SCITEX_AGENT_CONTAINER_."""
-
-    _SAC_PREFIXES = ("SAC_", "SCITEX_AGENT_CONTAINER_")
-    rule_id = "STX-SAC003"
-
-    def __init__(self, filepath: str):
-        self.filepath = filepath
-
-    def visit(self, tree: ast.AST):
-        # The ``_env`` module itself implements the dual-form lookup and is
-        # exempt from this rule. Likewise tests in ``tests/`` may manipulate
-        # env directly for setup; we exempt them by filepath suffix.
-        if self.filepath.endswith("/_env.py") or "/tests/" in self.filepath:
-            return []
-        diags: list[_Diag] = []
-        for node in ast.walk(tree):
-            # Match os.environ[<str literal>] subscripts and
-            # os.environ.get(<str literal>) calls.
-            if isinstance(node, ast.Subscript) and self._is_os_environ(node.value):
-                key = self._literal_str(node.slice)
-                if key and any(key.startswith(p) for p in self._SAC_PREFIXES):
-                    diags.append(_Diag(self.rule_id, node.lineno, node.col_offset))
-            elif isinstance(node, ast.Call) and self._is_os_environ_get(node.func):
-                if node.args:
-                    key = self._literal_str(node.args[0])
-                    if key and any(key.startswith(p) for p in self._SAC_PREFIXES):
-                        diags.append(_Diag(self.rule_id, node.lineno, node.col_offset))
-        return diags
-
-    @staticmethod
-    def _is_os_environ(node: ast.AST) -> bool:
-        return (
-            isinstance(node, ast.Attribute)
-            and node.attr == "environ"
-            and isinstance(node.value, ast.Name)
-            and node.value.id == "os"
-        )
-
-    @classmethod
-    def _is_os_environ_get(cls, node: ast.AST) -> bool:
-        return (
-            isinstance(node, ast.Attribute)
-            and node.attr == "get"
-            and cls._is_os_environ(node.value)
-        )
-
-    @staticmethod
-    def _literal_str(node: ast.AST) -> str | None:
-        if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            return node.value
-        return None
+# NOTE: _SacEnvChecker (for STX-SAC003) is intentionally not shipped in
+# this initial cut. It needs the filepath of the source being linted to
+# exempt ``_env.py`` (which legitimately implements the dual-form lookup)
+# and ``tests/`` (which legitimately manipulates env vars for setup).
+# scitex-dev's ``lint_source`` passes ``(lines, config)`` to plugin
+# checkers — no filepath. Until upstream propagates filepath, this rule
+# would either fire incorrectly on legitimate cases (false positives) or
+# be inactive everywhere. Defer until the upstream plumbing lands.
