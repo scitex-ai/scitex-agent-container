@@ -8,11 +8,11 @@ There is no legacy compat layer — sac speaks current A2A only.
 
 Routes (mirroring the spec):
 
-* ``GET /.well-known/agent.json`` — fleet AgentCard (sac dict shape).
-* ``GET /v1/sac/agents/`` — JSON list of agents.
-* ``GET /v1/sac/agents/<name>/.well-known/agent.json`` — per-agent AgentCard
+* ``GET /.well-known/agent-card.json`` — fleet AgentCard (sac dict shape).
+* ``GET /agents/`` — JSON list of agents.
+* ``GET /agents/<name>/.well-known/agent-card.json`` — per-agent AgentCard
   (sac dict shape; preserves the ``x-scitex-agent-container`` extension).
-* ``POST /v1/sac/agents/<name>`` — SDK JSON-RPC dispatcher.
+* ``POST /agents/<name>`` — SDK JSON-RPC dispatcher.
 
 Card projection: see :mod:`._card`. The HTTP ``.well-known`` route serves
 the dict projection (which keeps sac-extension fields). The SDK's
@@ -85,7 +85,7 @@ class _AgentDispatcher:
         # SDK JSON-RPC routes — current A2A spec only, no v0.3 compat.
         self.routes: list[Route] = create_jsonrpc_routes(
             request_handler=self.request_handler,
-            rpc_url=f"/_sdk/v1/sac/agents/{name}",
+            rpc_url=f"/_sdk/agents/{name}",
         )
 
     async def snapshot_active_tasks(self) -> list[dict[str, Any]]:
@@ -137,7 +137,7 @@ class _ServerCtx:
         self.yamls = yamls
         self.dispatchers = dispatchers
         # One in-process broker per sac-listen — fans inbound POSTs out
-        # to every SSE subscriber on /v1/sac/agents/<name>/inbox/stream.
+        # to every SSE subscriber on /agents/<name>/inbox/stream.
         self.inbox = Broker()
 
 
@@ -153,7 +153,7 @@ def _build_app(ctx: _ServerCtx) -> Starlette:
         return JSONResponse(
             {
                 "agents": [
-                    {"name": n, "url": f"{base}/v1/sac/agents/{n}"} for n in agents
+                    {"name": n, "url": f"{base}/agents/{n}"} for n in agents
                 ]
             }
         )
@@ -196,7 +196,7 @@ def _build_app(ctx: _ServerCtx) -> Starlette:
         return await sdk_route.endpoint(request)  # type: ignore[no-any-return]
 
     async def get_inbox_stream(request: Request) -> Response:
-        """SSE: one frame per inbound POST to /v1/sac/agents/<name>.
+        """SSE: one frame per inbound POST to /agents/<name>.
 
         Consumed by `sac mcp channel` (commit 2) inside the agent's
         container — each frame turns into a notifications/claude/channel
@@ -255,23 +255,27 @@ def _build_app(ctx: _ServerCtx) -> Starlette:
             )
         return JSONResponse({"tasks": tasks})
 
+    # ADR-0004: A2A v1.0 REST binding. /v1/ prefix is prohibited by the
+    # v1 spec; sac uses /agents/<name>/... as its multi-agent extension
+    # over the single-agent v1 REST endpoints.
     routes = [
-        Route("/.well-known/agent.json", get_fleet_card, methods=["GET"]),
-        Route("/v1/sac/agents/", list_agents, methods=["GET"]),
+        Route("/.well-known/agent-card.json", get_fleet_card, methods=["GET"]),
+        Route("/agents/", list_agents, methods=["GET"]),
         Route(
-            "/v1/sac/agents/{name}/.well-known/agent.json",
+            "/agents/{name}/.well-known/agent-card.json",
             get_agent_card,
             methods=["GET"],
         ),
-        Route("/v1/sac/agents/{name}", post_agent, methods=["POST"]),
-        Route("/v1/sac/agents/{name}/", post_agent, methods=["POST"]),
+        # A2A v1 REST binding: POST /message:send. sac prefixes per agent.
+        Route("/agents/{name}/message:send", post_agent, methods=["POST"]),
+        # sac extensions (not in A2A spec):
         Route(
-            "/v1/sac/agents/{name}/inbox/stream",
+            "/agents/{name}/inbox/stream",
             get_inbox_stream,
             methods=["GET"],
         ),
         Route(
-            "/v1/sac/agents/{name}/_active",
+            "/agents/{name}/_active",
             get_active_tasks,
             methods=["GET"],
         ),

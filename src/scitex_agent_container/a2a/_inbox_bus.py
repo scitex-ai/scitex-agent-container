@@ -1,9 +1,9 @@
 """Per-agent inbox pub/sub for the A2A channel primitive.
 
-A turn POSTed at ``/v1/sac/agents/<name>`` lands in the SDK dispatcher
+A turn POSTed at ``/agents/<name>`` lands in the SDK dispatcher
 (which handles the JSON-RPC reply path), but it also fans out to every
 SSE subscriber currently connected to
-``/v1/sac/agents/<name>/inbox/stream``.
+``/agents/<name>/inbox/stream``.
 
 That stream is what ``sac mcp channel`` consumes inside the agent's
 container, turning each fan-out event into a

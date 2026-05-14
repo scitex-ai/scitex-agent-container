@@ -68,21 +68,31 @@ def project_card(name: str, v3: dict[str, Any], base_url: str) -> dict[str, Any]
     role = labels.get("role", "agent")
     function = labels.get("function", "")
 
+    agent_base = f"{base}/agents/{name}"
     return {
         "name": name,
         "description": _read_description(name, v3),
         "version": v3.get("apiVersion", "scitex-agent-container/v3"),
-        "url": f"{base}/v1/sac/agents/{name}",
+        # ADR-0004 — match A2A v1 AgentCard (lf/a2a/v1 proto):
+        # supportedInterfaces[] is REQUIRED; protocolBinding values
+        # are "JSONRPC" | "GRPC" | "HTTP+JSON" (proto-canonical).
+        "supportedInterfaces": [
+            {
+                "url": agent_base,
+                "protocolBinding": "HTTP+JSON",
+                "tenant": name,
+                "protocolVersion": "1.0",
+            }
+        ],
         "provider": {
             "organization": labels.get("team", "scitex-agent-container"),
             "url": "https://scitex.ai",
         },
         "capabilities": {
-            "streaming": False,
+            "streaming": True,
             "pushNotifications": False,
-            "stateTransitionHistory": False,
+            "extendedAgentCard": False,
         },
-        "authentication": {"schemes": ["none"]},
         "defaultInputModes": list(DEFAULT_INPUT_MODES),
         "defaultOutputModes": list(DEFAULT_OUTPUT_MODES),
         "skills": [
@@ -209,7 +219,7 @@ def project_card_proto(name: str, v3: dict[str, Any], base_url: str) -> AgentCar
 
     SDK 1.0.x's :class:`AgentCard` is a protobuf message (not pydantic),
     and only accepts a strict subset of the dict fields we serve at
-    ``/.well-known/agent.json``. This helper builds the proto card the
+    ``/.well-known/agent-card.json``. This helper builds the proto card the
     SDK's :class:`DefaultRequestHandler` requires.
 
     sac-only extension fields (``x-scitex-agent-container``) are dropped
@@ -271,11 +281,11 @@ def fleet_card(
             {
                 "id": "sac.fleet",
                 "name": "fleet",
-                "description": ("sac-served fleet — see /v1/sac/agents/ for members."),
+                "description": ("sac-served fleet — see /agents/ for members."),
                 "tags": ["multi-agent", "scitex-agent-container"],
             }
         ],
         "x-scitex-agent-container": {
-            "agents": [{"name": n, "url": f"{base}/v1/sac/agents/{n}"} for n in agents],
+            "agents": [{"name": n, "url": f"{base}/agents/{n}"} for n in agents],
         },
     }

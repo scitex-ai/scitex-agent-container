@@ -9,7 +9,7 @@ Behaviour:
 1. Speaks the standard MCP handshake over stdio (so `claude
    --dangerously-load-development-channels server:sac` is happy).
 2. After initialise, opens an HTTP SSE connection to the local
-   `sac listen` at ``/v1/sac/agents/<name>/inbox/stream``.
+   `sac listen` at ``/agents/<name>/inbox/stream`` (ADR-0004).
 3. For every event the bus pushes, emits a JSON-RPC notification:
 
        method: notifications/claude/channel
@@ -134,7 +134,7 @@ async def _run(name: str, listen_url: str, bearer: str | None) -> None:
     from mcp.types import JSONRPCMessage, JSONRPCNotification
 
     server = Server(name=f"sac-channel-{name}")
-    sse_url = f"{listen_url.rstrip('/')}/v1/sac/agents/{name}/inbox/stream"
+    sse_url = f"{listen_url.rstrip('/')}/agents/{name}/inbox/stream"
 
     _register_tools(server, agent_name=name, listen_url=listen_url, bearer=bearer)
 
@@ -327,7 +327,7 @@ def _register_tools(
                 priority=arguments.get("priority"),
                 requires_reply=arguments.get("requires_reply"),
             )
-            res = await _post(f"/v1/sac/agents/{target}", payload)
+            res = await _post(f"/agents/{target}/message:send", payload)
             return [TextContent(type="text", text=json.dumps(res))]
 
         if name == "a2a_reply":
@@ -355,7 +355,7 @@ def _register_tools(
                 conversation_id=orig.get("conversation_id"),
                 in_reply_to=mid,
             )
-            res = await _post(f"/v1/sac/agents/{target}", payload)
+            res = await _post(f"/agents/{target}/message:send", payload)
             return [TextContent(type="text", text=json.dumps(res))]
 
         if name == "a2a_ack":
@@ -384,11 +384,11 @@ def _register_tools(
                 in_reply_to=mid,
                 ack=True,
             )
-            res = await _post(f"/v1/sac/agents/{target}", payload)
+            res = await _post(f"/agents/{target}/message:send", payload)
             return [TextContent(type="text", text=json.dumps(res))]
 
         if name == "a2a_peers":
-            res = await _get("/v1/sac/agents/")
+            res = await _get("/agents/")
             return [TextContent(type="text", text=json.dumps(res))]
 
         if name == "a2a_inbox":
