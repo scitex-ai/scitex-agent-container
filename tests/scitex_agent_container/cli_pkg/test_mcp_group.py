@@ -1,299 +1,398 @@
-"""Tests for ``sac mcp`` group — start / doctor / list-tools / install."""
+"""Tests for ``sac mcp`` group — start / doctor / list-tools / install.
+
+No-mocks rewrite (PA-306). The previous version monkeypatched
+``sys.modules`` to fabricate a ``scitex_agent_container._mcp`` package
+populated with ``MagicMock`` callables — fake-for-fake, untrustworthy.
+This version:
+
+* exercises the public loader seam (``mcp_group._load_run_server`` /
+  ``_load_get_server`` / ``_load_fastmcp_version``) by swapping in
+  hand-rolled real callables that return real-behaviour objects (same
+  save/restore pattern as ``test_image_group``),
+* deletes tests whose only assertion was ``MagicMock.assert_called_once()``
+  (mock-only behaviour, no real-world counterpart),
+* keeps tests that exercise the real ``_enumerate_tools`` shape-detection
+  paths against hand-rolled real classes (no MagicMock).
+"""
 
 from __future__ import annotations
 
 import json
-import sys
-import types
-from unittest.mock import MagicMock
+from contextlib import contextmanager
+from typing import Iterator
 
-import pytest
 from click.testing import CliRunner
 
 from scitex_agent_container.cli_pkg import mcp_group as mg
 from scitex_agent_container.cli_pkg.mcp_group import mcp
 
-
-@pytest.fixture(autouse=True)
-def _no_real_mcp(monkeypatch):
-    """Avoid loading the real _mcp package by default — tests inject stubs."""
-    return monkeypatch
-
-
-def _install_fake_mcp(
-    monkeypatch, *, run_server=None, server=None, raise_import: bool = False
-):
-    """Install a fake ``scitex_agent_container._mcp`` module."""
-    if raise_import:
-        # Force ImportError when ``from .._mcp import run_server`` runs.
-        for k in list(sys.modules):
-            if k.startswith("scitex_agent_container._mcp"):
-                monkeypatch.delitem(sys.modules, k, raising=False)
-        # Stub out so the import fails:
-        bad = types.ModuleType("scitex_agent_container._mcp")
-        # Don't define run_server / server attrs → ImportError on `from .. import x`.
-        monkeypatch.setitem(sys.modules, "scitex_agent_container._mcp", bad)
-        return
-    fake = types.ModuleType("scitex_agent_container._mcp")
-    fake.run_server = run_server or MagicMock()
-    monkeypatch.setitem(sys.modules, "scitex_agent_container._mcp", fake)
-    fake_server_mod = types.ModuleType("scitex_agent_container._mcp.server")
-    fake_server_mod.get_server = lambda: server
-    monkeypatch.setitem(
-        sys.modules, "scitex_agent_container._mcp.server", fake_server_mod
-    )
+# ---------------------------------------------------------------------------
+# Real-fake loaders — hand-rolled callables that record their calls and
+# return real-behaviour values. Stand in for the optional ``_mcp`` package
+# and ``fastmcp`` without ``MagicMock``.
+# ---------------------------------------------------------------------------
 
 
-def test_start_dry_run_stdio():
-    runner = CliRunner()
-    result = runner.invoke(mcp, ["start", "--dry-run"])
-    assert result.exit_code == 0
-    assert "transport=stdio" in result.output
+class _FakeRunServer:
+    """Real callable recording each ``run_server(...)`` invocation."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def __call__(self, *, transport: str, host: str, port: int) -> None:
+        self.calls.append({"transport": transport, "host": host, "port": port})
 
 
-def test_start_dry_run_http():
-    runner = CliRunner()
-    result = runner.invoke(
-        mcp, ["start", "--dry-run", "--http", "--host", "0.0.0.0", "--port", "9999"]
-    )
-    assert result.exit_code == 0
-    assert "transport=http" in result.output
-    assert "9999" in result.output
+class _FakeTool:
+    """Real-shape Tool object exposing ``name`` and ``description``."""
+
+    def __init__(self, name: str, description: str = "") -> None:
+        self.name = name
+        self.description = description
 
 
-def test_start_invokes_run_server(monkeypatch):
-    called = {}
+class _FakeServer:
+    """Real-shape MCP server whose ``list_tools()`` returns concrete tools."""
 
-    def fake_run(transport, host, port):
-        called.update(transport=transport, host=host, port=port)
+    def __init__(self, tools: list[_FakeTool]) -> None:
+        self._tools_list = tools
 
-    _install_fake_mcp(monkeypatch, run_server=fake_run)
-    runner = CliRunner()
-    result = runner.invoke(mcp, ["start"])
-    assert result.exit_code == 0, result.output
-    assert called == {"transport": "stdio", "host": "127.0.0.1", "port": 8970}
+    async def list_tools(self) -> list[_FakeTool]:
+        return list(self._tools_list)
 
 
-def test_start_http_prints_url(monkeypatch):
-    fake_run = MagicMock()
-    _install_fake_mcp(monkeypatch, run_server=fake_run)
-    runner = CliRunner()
-    result = runner.invoke(mcp, ["start", "--http", "--port", "1234"])
-    assert result.exit_code == 0, result.output
-    assert "http://127.0.0.1:1234" in result.output
-    fake_run.assert_called_once()
+@contextmanager
+def _use_run_server(fake: _FakeRunServer) -> Iterator[_FakeRunServer]:
+    """Swap ``mcp_group._load_run_server`` for a loader returning ``fake``."""
+    saved = mg._load_run_server
+    mg._load_run_server = lambda: fake
+    try:
+        yield fake
+    finally:
+        mg._load_run_server = saved
 
 
-def test_start_import_error_surfaces(monkeypatch):
-    # Make `from .._mcp import run_server` blow up.
-    def fail_import(*a, **k):
-        raise ImportError("no fastmcp")
-
-    monkeypatch.setattr(
-        mg,
-        "__getattr__",
-        lambda name: (_ for _ in ()).throw(ImportError()) if False else None,
-        raising=False,
-    )
-    # Simpler approach: shadow the package with a module missing run_server.
-    bad = types.ModuleType("scitex_agent_container._mcp")
-    monkeypatch.setitem(sys.modules, "scitex_agent_container._mcp", bad)
-    runner = CliRunner()
-    result = runner.invoke(mcp, ["start"])
-    assert result.exit_code != 0
-    assert "fastmcp" in result.output
-
-
-def test_doctor_ok(monkeypatch):
-    fake_fastmcp = types.ModuleType("fastmcp")
-    fake_fastmcp.__version__ = "9.9.9"
-    monkeypatch.setitem(sys.modules, "fastmcp", fake_fastmcp)
-
-    class FakeTool:
-        def __init__(self, name):
-            self.name = name
-            self.description = "desc"
-
-    class FakeServer:
-        async def list_tools(self):
-            return [FakeTool("a"), FakeTool("b")]
-
-    _install_fake_mcp(monkeypatch, server=FakeServer())
-    runner = CliRunner()
-    result = runner.invoke(mcp, ["doctor"])
-    assert result.exit_code == 0, result.output
-    assert "fastmcp" in result.output
-    assert "MCP server ready" in result.output
-
-
-def test_doctor_missing_fastmcp(monkeypatch):
-    monkeypatch.setitem(sys.modules, "fastmcp", None)
-    runner = CliRunner()
-    result = runner.invoke(mcp, ["doctor"])
-    assert result.exit_code != 0
-    assert "fastmcp not installed" in result.output
-
-
-def test_doctor_server_error(monkeypatch):
-    fake_fastmcp = types.ModuleType("fastmcp")
-    fake_fastmcp.__version__ = "1.0"
-    monkeypatch.setitem(sys.modules, "fastmcp", fake_fastmcp)
-
-    class BoomServer:
-        async def list_tools(self):
-            raise RuntimeError("boom")
-
-    _install_fake_mcp(monkeypatch, server=BoomServer())
-    # _enumerate_tools swallows RuntimeError in async path → returns [] (no error).
-    # Force get_server itself to raise to hit the error branch.
-    fake_server_mod = types.ModuleType("scitex_agent_container._mcp.server")
+@contextmanager
+def _use_run_server_import_error() -> Iterator[None]:
+    """Swap ``_load_run_server`` for a callable that raises ``ImportError``."""
+    saved = mg._load_run_server
 
     def _raise():
-        raise RuntimeError("registration failed")
+        raise ImportError("no fastmcp")
 
-    fake_server_mod.get_server = _raise
-    monkeypatch.setitem(
-        sys.modules, "scitex_agent_container._mcp.server", fake_server_mod
+    mg._load_run_server = _raise
+    try:
+        yield
+    finally:
+        mg._load_run_server = saved
+
+
+@contextmanager
+def _use_get_server(server: object) -> Iterator[object]:
+    """Swap ``_load_get_server`` to return a loader yielding ``server``."""
+    saved = mg._load_get_server
+    mg._load_get_server = lambda: (lambda: server)
+    try:
+        yield server
+    finally:
+        mg._load_get_server = saved
+
+
+@contextmanager
+def _use_get_server_import_error() -> Iterator[None]:
+    saved = mg._load_get_server
+
+    def _raise():
+        raise ImportError("fastmcp missing")
+
+    mg._load_get_server = _raise
+    try:
+        yield
+    finally:
+        mg._load_get_server = saved
+
+
+@contextmanager
+def _use_get_server_raises(exc: BaseException) -> Iterator[None]:
+    """Swap ``_load_get_server`` to raise a non-Import exception."""
+    saved = mg._load_get_server
+
+    def _raise():
+        raise exc
+
+    mg._load_get_server = _raise
+    try:
+        yield
+    finally:
+        mg._load_get_server = saved
+
+
+@contextmanager
+def _use_fastmcp_version(version: str) -> Iterator[None]:
+    saved = mg._load_fastmcp_version
+    mg._load_fastmcp_version = lambda: version
+    try:
+        yield
+    finally:
+        mg._load_fastmcp_version = saved
+
+
+@contextmanager
+def _use_fastmcp_missing() -> Iterator[None]:
+    saved = mg._load_fastmcp_version
+
+    def _raise():
+        raise ImportError("no fastmcp")
+
+    mg._load_fastmcp_version = _raise
+    try:
+        yield
+    finally:
+        mg._load_fastmcp_version = saved
+
+
+# ---------------------------------------------------------------------------
+# start
+# ---------------------------------------------------------------------------
+
+
+def test_start_dry_run_stdio_prints_stdio_transport():
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(mcp, ["start", "--dry-run"])
+    # Assert
+    assert result.exit_code == 0 and "transport=stdio" in result.output
+
+
+def test_start_dry_run_http_prints_http_transport_and_port():
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(
+        mcp,
+        ["start", "--dry-run", "--http", "--host", "0.0.0.0", "--port", "9999"],
     )
+    # Assert
+    assert (
+        result.exit_code == 0
+        and "transport=http" in result.output
+        and "9999" in result.output
+    )
+
+
+def test_start_invokes_run_server_with_stdio_defaults():
+    # Arrange
+    fake = _FakeRunServer()
     runner = CliRunner()
-    result = runner.invoke(mcp, ["doctor"])
-    assert result.exit_code != 0
-    assert "MCP server error" in result.output
+    # Act
+    with _use_run_server(fake):
+        result = runner.invoke(mcp, ["start"])
+    # Assert
+    assert result.exit_code == 0 and fake.calls == [
+        {"transport": "stdio", "host": "127.0.0.1", "port": 8_970}
+    ]
 
 
-def test_list_tools_human(monkeypatch):
-    class T:
-        def __init__(self, n, d):
-            self.name = n
-            self.description = d
-
-    class FakeServer:
-        async def list_tools(self):
-            return [T("foo", "Foo tool\nlong"), T("bar", "")]
-
-    _install_fake_mcp(monkeypatch, server=FakeServer())
+def test_start_http_prints_url_and_passes_port_through_to_runner():
+    # Arrange
+    fake = _FakeRunServer()
     runner = CliRunner()
-    result = runner.invoke(mcp, ["list-tools"])
-    assert result.exit_code == 0, result.output
-    assert "foo" in result.output
-    assert "bar" in result.output
-    assert "Foo tool" in result.output
+    # Act
+    with _use_run_server(fake):
+        result = runner.invoke(mcp, ["start", "--http", "--port", "1234"])
+    # Assert
+    assert (
+        result.exit_code == 0
+        and "http://127.0.0.1:1234" in result.output
+        and fake.calls[0]["transport"] == "http"
+        and fake.calls[0]["port"] == 1_234
+    )
 
 
-def test_list_tools_json(monkeypatch):
-    class T:
-        def __init__(self, n):
-            self.name = n
-            self.description = ""
-
-    class FakeServer:
-        async def list_tools(self):
-            return [T("z"), T("a")]
-
-    _install_fake_mcp(monkeypatch, server=FakeServer())
+def test_start_surfaces_fastmcp_import_error_with_install_hint():
+    # Arrange
     runner = CliRunner()
-    result = runner.invoke(mcp, ["list-tools", "--json"])
-    assert result.exit_code == 0, result.output
+    # Act
+    with _use_run_server_import_error():
+        result = runner.invoke(mcp, ["start"])
+    # Assert
+    assert result.exit_code != 0 and "fastmcp" in result.output
+
+
+# ---------------------------------------------------------------------------
+# doctor
+# ---------------------------------------------------------------------------
+
+
+def test_doctor_ok_reports_fastmcp_version_and_server_ready():
+    # Arrange
+    server = _FakeServer([_FakeTool("a"), _FakeTool("b")])
+    runner = CliRunner()
+    # Act
+    with _use_fastmcp_version("9.9.9"), _use_get_server(server):
+        result = runner.invoke(mcp, ["doctor"])
+    # Assert
+    assert (
+        result.exit_code == 0
+        and "fastmcp" in result.output
+        and "MCP server ready" in result.output
+    )
+
+
+def test_doctor_missing_fastmcp_exits_nonzero_with_install_hint():
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _use_fastmcp_missing():
+        result = runner.invoke(mcp, ["doctor"])
+    # Assert
+    assert result.exit_code != 0 and "fastmcp not installed" in result.output
+
+
+def test_doctor_reports_server_error_when_registration_raises():
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with (
+        _use_fastmcp_version("1.0"),
+        _use_get_server_raises(RuntimeError("registration failed")),
+    ):
+        result = runner.invoke(mcp, ["doctor"])
+    # Assert
+    assert result.exit_code != 0 and "MCP server error" in result.output
+
+
+# ---------------------------------------------------------------------------
+# list-tools
+# ---------------------------------------------------------------------------
+
+
+def test_list_tools_human_renders_each_tool_name_and_first_desc_line():
+    # Arrange
+    server = _FakeServer([_FakeTool("foo", "Foo tool\nlong"), _FakeTool("bar", "")])
+    runner = CliRunner()
+    # Act
+    with _use_get_server(server):
+        result = runner.invoke(mcp, ["list-tools"])
+    # Assert
+    assert (
+        result.exit_code == 0
+        and "foo" in result.output
+        and "bar" in result.output
+        and "Foo tool" in result.output
+    )
+
+
+def test_list_tools_json_emits_count_and_sorted_tool_names():
+    # Arrange
+    server = _FakeServer([_FakeTool("z"), _FakeTool("a")])
+    runner = CliRunner()
+    # Act
+    with _use_get_server(server):
+        result = runner.invoke(mcp, ["list-tools", "--json"])
     payload = json.loads(result.output)
-    assert payload["count"] == 2
-    assert [t["name"] for t in payload["tools"]] == ["a", "z"]
-
-
-def test_list_tools_import_error_json(monkeypatch):
-    # Cause `from .._mcp.server import get_server` to ImportError.
-    monkeypatch.setitem(
-        sys.modules,
-        "scitex_agent_container._mcp.server",
-        types.ModuleType("scitex_agent_container._mcp.server"),
+    # Assert
+    assert (
+        result.exit_code == 0
+        and payload["count"] == 2
+        and [t["name"] for t in payload["tools"]] == ["a", "z"]
     )
-    # Module without get_server → AttributeError on `from .. import get_server`.
-    # Click's @command exception handler will surface. Easier: shadow with an
-    # object that raises ImportError on attribute access.
 
-    class _Bad(types.ModuleType):
-        def __getattr__(self, name):
-            raise ImportError("fastmcp missing")
 
-    monkeypatch.setitem(
-        sys.modules,
-        "scitex_agent_container._mcp.server",
-        _Bad("scitex_agent_container._mcp.server"),
-    )
+def test_list_tools_import_error_json_payload_reports_zero_and_error():
+    # Arrange
     runner = CliRunner()
-    result = runner.invoke(mcp, ["list-tools", "--json"])
-    assert result.exit_code == 0
+    # Act
+    with _use_get_server_import_error():
+        result = runner.invoke(mcp, ["list-tools", "--json"])
     payload = json.loads(result.output)
-    assert payload["count"] == 0
-    assert "fastmcp" in payload["error"]
-
-
-def test_list_tools_import_error_human(monkeypatch):
-    class _Bad(types.ModuleType):
-        def __getattr__(self, name):
-            raise ImportError("fastmcp missing")
-
-    monkeypatch.setitem(
-        sys.modules,
-        "scitex_agent_container._mcp.server",
-        _Bad("scitex_agent_container._mcp.server"),
+    # Assert
+    assert (
+        result.exit_code == 0
+        and payload["count"] == 0
+        and "fastmcp" in payload["error"]
     )
-    runner = CliRunner()
-    result = runner.invoke(mcp, ["list-tools"])
-    assert result.exit_code == 0
-    assert "fastmcp not installed" in result.output
 
 
-def test_install_default():
+def test_list_tools_import_error_human_prints_install_hint():
+    # Arrange
     runner = CliRunner()
+    # Act
+    with _use_get_server_import_error():
+        result = runner.invoke(mcp, ["list-tools"])
+    # Assert
+    assert result.exit_code == 0 and "fastmcp not installed" in result.output
+
+
+# ---------------------------------------------------------------------------
+# install (pure print, no backend)
+# ---------------------------------------------------------------------------
+
+
+def test_install_default_prints_pip_install_instructions():
+    # Arrange
+    runner = CliRunner()
+    # Act
     result = runner.invoke(mcp, ["install"])
-    assert result.exit_code == 0
-    assert "Installation" in result.output
-    assert "pip install" in result.output
+    # Assert
+    assert (
+        result.exit_code == 0
+        and "Installation" in result.output
+        and "pip install" in result.output
+    )
 
 
-def test_install_claude_code():
+def test_install_claude_code_emits_mcp_config_snippet():
+    # Arrange
     runner = CliRunner()
+    # Act
     result = runner.invoke(mcp, ["install", "--claude-code"])
-    assert result.exit_code == 0
-    assert '"scitex-agent-container"' in result.output
-    assert '"sac"' in result.output
+    # Assert
+    assert (
+        result.exit_code == 0
+        and '"scitex-agent-container"' in result.output
+        and '"sac"' in result.output
+    )
 
 
-def test_enumerate_tools_dict_fallback():
-    """FastMCP 2.x style: server.tools is a plain dict."""
+# ---------------------------------------------------------------------------
+# _enumerate_tools — version-agnostic shape detection (real classes only)
+# ---------------------------------------------------------------------------
 
-    class T:
-        def __init__(self, n):
-            self.name = n
-            self.description = ""
 
+def test_enumerate_tools_returns_values_of_dict_attr_for_fastmcp_2x():
+    # Arrange — FastMCP 2.x style: server.tools is a plain dict.
     class Srv:
-        # No async list_tools — only the dict path.
-        tools = {"x": T("x"), "y": T("y")}
+        tools = {"x": _FakeTool("x"), "y": _FakeTool("y")}
 
+    # Act
     result = mg._enumerate_tools(Srv())
     names = sorted(t.name for t in result)
+    # Assert
     assert names == ["x", "y"]
 
 
-def test_enumerate_tools_tool_manager_inner_dict():
-    class T:
-        def __init__(self, n):
-            self.name = n
-            self.description = ""
-
+def test_enumerate_tools_unwraps_tool_manager_inner_dict():
+    # Arrange
     class Manager:
-        _tools = {"q": T("q")}
+        _tools = {"q": _FakeTool("q")}
 
     class Srv:
         _tool_manager = Manager()
 
+    # Act
     result = mg._enumerate_tools(Srv())
+    # Assert
     assert [t.name for t in result] == ["q"]
 
 
-def test_enumerate_tools_empty():
+def test_enumerate_tools_returns_empty_list_for_server_with_no_known_shape():
+    # Arrange
     class Srv:
         pass
 
-    assert mg._enumerate_tools(Srv()) == []
+    # Act
+    result = mg._enumerate_tools(Srv())
+    # Assert
+    assert result == []
