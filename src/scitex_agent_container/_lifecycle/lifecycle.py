@@ -1,4 +1,24 @@
-"""Agent lifecycle management -- start, stop, restart, status."""
+"""Agent lifecycle management -- start, stop, restart, status.
+
+Public injection seams (real-callable defaults):
+    * ``runtime_factory`` — callable taking ``AgentConfig`` and returning a
+      runtime object. Default: :func:`_get_runtime`. Used by every
+      lifecycle entry point so callers (and tests) can substitute a real
+      hand-rolled runtime collaborator without monkeypatching internals.
+    * ``sleep_fn`` — callable matching ``time.sleep``. Default ``time.sleep``.
+    * ``thread_factory`` — callable matching ``threading.Thread``. Default
+      ``threading.Thread``. Used by :func:`agent_start` to spin up the
+      health monitor thread.
+    * ``handover_mod`` — module-like object exposing ``ensure_instance_uuid``,
+      ``hydrate_from_hub``, ``push_pre_stop_snapshot``,
+      ``start_failback_poller``. Default ``None`` — the real
+      ``_lifecycle.handover`` module is imported lazily.
+    * ``runner`` (``_run_hooks``) — callable matching ``subprocess.run``.
+
+All defaults are real production callables, so the public API is unchanged
+for existing callers; the seams are documented and tested rather than
+hidden behind monkeypatch.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +27,7 @@ import threading
 import time
 import traceback
 from pathlib import Path
+from typing import Any, Callable, Optional
 
 from .._state.registry import Registry
 from ..config import AgentConfig, load_config, resolve_config
@@ -69,13 +90,22 @@ def _fire_forget_hook(
         )
 
 
-def _run_hooks(hooks: list[str], extra_env: dict[str, str] | None = None) -> None:
+def _run_hooks(
+    hooks: list[str],
+    extra_env: dict[str, str] | None = None,
+    *,
+    runner: Callable[..., Any] = subprocess.run,
+) -> None:
     """Execute a list of shell hook commands.
 
     Args:
         hooks: Shell commands to execute.
         extra_env: Additional env vars passed to hook subprocesses
             (e.g., SCITEX_AGENT_CONTAINER_CONFIG_PATH, SCITEX_AGENT_CONTAINER_SCREEN_NAME, SCITEX_AGENT_CONTAINER_NAME).
+        runner: Injectable subprocess runner (real callable; default
+            :func:`subprocess.run`). The runner is invoked with the
+            exact ``subprocess.run`` keyword surface and must return an
+            object with ``returncode`` and ``stderr`` attributes.
     """
     import os
 
@@ -88,9 +118,7 @@ def _run_hooks(hooks: list[str], extra_env: dict[str, str] | None = None) -> Non
         # avoid trying to ``sh -c "https://..."``.
         if isinstance(hook, str) and hook.startswith(("http://", "https://")):
             continue
-        result = subprocess.run(
-            hook, shell=True, capture_output=True, text=True, env=env
-        )
+        result = runner(hook, shell=True, capture_output=True, text=True, env=env)
         if result.returncode != 0:
             # Log but don't fail
             import sys
@@ -98,6 +126,20 @@ def _run_hooks(hooks: list[str], extra_env: dict[str, str] | None = None) -> Non
             print(f"[WARN] Hook failed: {hook}", file=sys.stderr)
             if result.stderr:
                 print(f"       {result.stderr.strip()}", file=sys.stderr)
+
+
+def _load_handover_module() -> Any:
+    """Return the real :mod:`._lifecycle.handover` module.
+
+    Separate function so callers can substitute a real hand-rolled
+    handover collaborator with the same call surface
+    (``ensure_instance_uuid``, ``hydrate_from_hub``,
+    ``push_pre_stop_snapshot``, ``start_failback_poller``) via the
+    ``handover_mod`` kwarg on the lifecycle entry points.
+    """
+    from . import handover as _h
+
+    return _h
 
 
 def agent_start(
@@ -110,6 +152,11 @@ def agent_start(
     dry_run: bool = False,
     foreground: bool = False,
     one_shot: bool = False,
+    *,
+    runtime_factory: Optional[Callable[[AgentConfig], Any]] = None,
+    sleep_fn: Callable[[float], None] = time.sleep,
+    thread_factory: Callable[..., Any] = threading.Thread,
+    handover_mod: Any = None,
 ) -> bool:
     """Start an agent from a YAML config file.
 
@@ -131,6 +178,15 @@ def agent_start(
         one_shot: If True, run startup_prompts as a single SDK turn and
             exit (sets ``--print-stream`` on the runner). Requires
             ``spec.startup_prompts`` to be non-empty.
+        runtime_factory: Injectable real callable that builds an SDK
+            runtime from an :class:`AgentConfig`. Default is the real
+            :func:`_get_runtime`.
+        sleep_fn: Injectable real sleep (default ``time.sleep``).
+        thread_factory: Injectable real Thread constructor (default
+            ``threading.Thread``).
+        handover_mod: Injectable real handover collaborator exposing the
+            module-level API of :mod:`._lifecycle.handover`. Default
+            ``None`` resolves to the real module.
 
     Returns True on success, False on failure.
     """
@@ -151,15 +207,22 @@ def agent_start(
     # ``sac listen`` can find the port via state.db without re-parsing
     # the spec.yaml.
     resolve_a2a_port(config)
-    runtime = _get_runtime(config)
+    runtime_factory = runtime_factory or _get_runtime
+    runtime = runtime_factory(config)
 
     # Already running?
     if registry.exists(config.name) and runtime.is_running(config):
         if force:
-            agent_stop(config.name, registry=registry, force=True)
+            agent_stop(
+                config.name,
+                registry=registry,
+                force=True,
+                runtime_factory=runtime_factory,
+                handover_mod=handover_mod,
+            )
             # Small grace period so the previous container is fully torn
             # down before we try to create a new one with the same name.
-            time.sleep(1)
+            sleep_fn(1)
         elif dry_run:
             # Dry-run inspects the planned workspace even while the live
             # agent is running — the prep does not touch the container.
@@ -177,7 +240,13 @@ def agent_start(
             return True
     elif force and registry.exists(config.name):
         # Registry says it exists but runtime says not running — stale entry.
-        agent_stop(config.name, registry=registry, force=True)
+        agent_stop(
+            config.name,
+            registry=registry,
+            force=True,
+            runtime_factory=runtime_factory,
+            handover_mod=handover_mod,
+        )
 
     # Hook env vars — let hooks know about the agent context
     hook_env = {
@@ -208,7 +277,7 @@ def agent_start(
     # is supposed to read it back when wiring up the orochi WS connect
     # (FR-E). ``hydrate_from_hub`` is pre-start so the agent's boot-time
     # skill can pick up the snapshot before claude actually launches.
-    from . import handover as _h
+    _h = handover_mod if handover_mod is not None else _load_handover_module()
 
     _h.ensure_instance_uuid(config)
     try:
@@ -249,9 +318,14 @@ def agent_start(
 
     # Start health monitor in background if enabled
     if config.health.enabled:
-        thread = threading.Thread(
+        thread = thread_factory(
             target=health_monitor,
-            args=(config.name, config, registry, lambda c: _get_runtime(c).start(c)),
+            args=(
+                config.name,
+                config,
+                registry,
+                lambda c: runtime_factory(c).start(c),
+            ),
             daemon=True,
         )
         thread.start()
@@ -272,6 +346,9 @@ def agent_stop(
     name: str,
     registry: Registry | None = None,
     force: bool = False,
+    *,
+    runtime_factory: Optional[Callable[[AgentConfig], Any]] = None,
+    handover_mod: Any = None,
 ) -> bool:
     """Stop a running agent by name.
 
@@ -281,6 +358,11 @@ def agent_stop(
         force: If True, do not fail when the agent is missing from the
             registry or when hooks/runtime.stop() raise; wipe stale
             state and return True. Useful for bulk cleanup.
+        runtime_factory: Injectable real runtime factory (default
+            :func:`_get_runtime`).
+        handover_mod: Injectable real handover collaborator (default
+            ``None`` resolves to the real
+            :mod:`._lifecycle.handover` module).
     """
     registry = registry or Registry()
     entry = registry.get(name)
@@ -299,7 +381,8 @@ def agent_stop(
         registry.remove(name)
         return True
 
-    runtime = _get_runtime(config)
+    runtime_factory = runtime_factory or _get_runtime
+    runtime = runtime_factory(config)
 
     hook_env = {
         "SCITEX_AGENT_CONTAINER_CONFIG_PATH": str(Path(entry["config"]).resolve()),
@@ -313,8 +396,7 @@ def agent_stop(
     # hub outage. The sentinel is a marker; the agent's own pre_stop
     # hook is the right place for richer state (transcript, memory).
     try:
-        from . import handover as _h
-
+        _h = handover_mod if handover_mod is not None else _load_handover_module()
         _h.push_pre_stop_snapshot(config)
     except Exception:
         traceback.print_exc()
@@ -353,20 +435,30 @@ def agent_stop(
 def agent_stop_all(
     registry: Registry | None = None,
     force: bool = False,
+    *,
+    stop_fn: Optional[Callable[..., bool]] = None,
 ) -> list[tuple[str, bool, str]]:
     """Stop every agent in the registry.
 
     Returns a list of ``(name, success, message)`` tuples, one per agent.
     With ``force=True``, continues through errors so a partial failure
     doesn't block cleanup of the rest.
+
+    Args:
+        registry: Optional registry instance.
+        force: Continue through individual-agent failures.
+        stop_fn: Injectable real per-agent stop callable (default
+            ``None`` uses module-level :func:`agent_stop`). Tests pass a
+            real callable that records calls and optionally raises.
     """
     registry = registry or Registry()
+    stopper = stop_fn or agent_stop
     results: list[tuple[str, bool, str]] = []
     for entry in registry.list_all():
         name = entry.get("name", "?")
         # stx-allow: fallback (reason: stopping one agent may fail due to a missing config or dead session; other agents in the registry should still be stopped)
         try:
-            agent_stop(name, registry=registry, force=force)
+            stopper(name, registry=registry, force=force)
             results.append((name, True, "stopped"))
         except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             results.append((name, False, str(exc)))
@@ -375,30 +467,69 @@ def agent_stop_all(
     return results
 
 
-def agent_restart(name: str, registry: Registry | None = None) -> bool:
-    """Restart an agent by name."""
+def agent_restart(
+    name: str,
+    registry: Registry | None = None,
+    *,
+    runtime_factory: Optional[Callable[[AgentConfig], Any]] = None,
+    sleep_fn: Callable[[float], None] = time.sleep,
+    handover_mod: Any = None,
+) -> bool:
+    """Restart an agent by name.
+
+    Args:
+        name: Agent name.
+        registry: Optional registry instance.
+        runtime_factory: Real runtime factory (default :func:`_get_runtime`).
+        sleep_fn: Real sleep (default ``time.sleep``).
+        handover_mod: Real handover collaborator (default ``None``
+            resolves to the real module).
+    """
     registry = registry or Registry()
     entry = registry.get(name)
     if entry is None:
         raise RuntimeError(f"Agent '{name}' not found in registry")
 
     config_path = entry["config"]
-    agent_stop(name, registry)
-    time.sleep(2)
-    return agent_start(config_path, registry)
+    agent_stop(
+        name,
+        registry,
+        runtime_factory=runtime_factory,
+        handover_mod=handover_mod,
+    )
+    sleep_fn(2)
+    return agent_start(
+        config_path,
+        registry,
+        runtime_factory=runtime_factory,
+        sleep_fn=sleep_fn,
+        handover_mod=handover_mod,
+    )
 
 
-def agent_status(name: str, registry: Registry | None = None) -> dict:
-    """Get detailed status for an agent."""
+def agent_status(
+    name: str,
+    registry: Registry | None = None,
+    *,
+    runtime_factory: Optional[Callable[[AgentConfig], Any]] = None,
+) -> dict:
+    """Get detailed status for an agent.
+
+    Args:
+        name: Agent name.
+        registry: Optional registry instance.
+        runtime_factory: Real runtime factory (default :func:`_get_runtime`).
+    """
     registry = registry or Registry()
     entry = registry.get(name)
     if entry is None:
         raise RuntimeError(f"Agent '{name}' not found in registry")
 
+    runtime_factory = runtime_factory or _get_runtime
     # stx-allow: fallback (reason: YAML or runtime may be unavailable; status should degrade to stopped=False rather than raise)
     try:
         config = load_config(entry["config"])
-        runtime = _get_runtime(config)
+        runtime = runtime_factory(config)
         running = runtime.is_running(config)
     except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         traceback.print_exc()
@@ -497,13 +628,27 @@ def agent_status(name: str, registry: Registry | None = None) -> dict:
     return result
 
 
-def agent_logs(name: str, lines: int = 50, registry: Registry | None = None) -> str:
-    """Get recent logs from an agent."""
+def agent_logs(
+    name: str,
+    lines: int = 50,
+    registry: Registry | None = None,
+    *,
+    runtime_factory: Optional[Callable[[AgentConfig], Any]] = None,
+) -> str:
+    """Get recent logs from an agent.
+
+    Args:
+        name: Agent name.
+        lines: Number of trailing log lines to return.
+        registry: Optional registry instance.
+        runtime_factory: Real runtime factory (default :func:`_get_runtime`).
+    """
     registry = registry or Registry()
     entry = registry.get(name)
     if entry is None:
         raise RuntimeError(f"Agent '{name}' not found in registry")
 
+    runtime_factory = runtime_factory or _get_runtime
     config = load_config(entry["config"])
-    runtime = _get_runtime(config)
+    runtime = runtime_factory(config)
     return runtime.logs(config, lines)
