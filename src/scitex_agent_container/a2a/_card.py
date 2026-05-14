@@ -128,11 +128,14 @@ def project_card(name: str, v3: dict[str, Any], base_url: str) -> dict[str, Any]
         },
         "capabilities": {
             "streaming": True,
-            # A2A-spec pushNotifications = `tasks/pushNotificationConfig/*`
-            # support (task-level wire push). sac doesn't implement that
-            # surface — its push is in-session MCP, surfaced via
-            # `extensions[]` above.
-            "pushNotifications": False,
+            # ``pushNotifications`` reflects whether the agent provides a
+            # push mechanism AT ALL — true when sac MCP is wired (the
+            # SSE + MCP channel surfaced under ``extensions[]``). The
+            # specific flavor (sac SSE + MCP vs. A2A task-level webhook)
+            # is described by the extension entry; clients that need a
+            # particular mechanism should branch on that, not on this
+            # boolean alone.
+            "pushNotifications": has_sac_channel,
             "extendedAgentCard": False,
             "extensions": extensions,
         },
