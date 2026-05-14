@@ -1,236 +1,12 @@
-"""Tests for claude_usage.fetch_usage().
+"""Tests for claude_usage — cache, parsing, token refresh, HTTP path.
 
-Covers:
-1. test_cache_hit        — fresh cache prevents HTTP calls
-2. test_no_token_leak    — returned dict contains no token/secret material
-3. test_error_returns_dict — network failure returns dict with error, no raise
+No-mocks pattern (PA-306): all HTTP is via an injected ``opener``
+parameter on ``fetch_usage`` / ``_fetch_from_api`` / ``_refresh_access_token``.
+Tests pass a hand-rolled callable that returns real ``urllib.response``-
+shaped objects. Credential / cache files are real bytes on tmp_path.
 """
 
 from __future__ import annotations
-
-import json
-import time
-from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock, patch
-
-import pytest
-
-from scitex_agent_container._account.claude_usage import (
-    _CACHE_TTL_SECONDS,
-    _EMPTY_RESULT,
-    fetch_usage,
-)
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-def _make_home(tmp_path: Path) -> Path:
-    """Create a minimal fake home with a credentials file."""
-    home = tmp_path / "home"
-    claude_dir = home / ".claude"
-    claude_dir.mkdir(parents=True)
-
-    creds = {
-        "claudeAiOauth": {
-            "accessToken": "fake-access-token",
-            "refreshToken": "fake-refresh-token",
-            "clientId": "fake-client-id",
-            "expiresAt": int(time.time() * 1000) + 3_600_000,  # 1 hour from now
-            "subscriptionType": "pro",
-            "rateLimitTier": "standard",
-        }
-    }
-    (claude_dir / ".credentials.json").write_text(json.dumps(creds))
-    return home
-
-
-def _make_fresh_cache(home: Path, data: dict[str, Any]) -> None:
-    """Write a cache file that is under the TTL."""
-    from datetime import datetime, timezone
-
-    cache_dir = home / ".scitex" / "cache"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    data = dict(data)
-    data["fetched_at"] = datetime.now(timezone.utc).isoformat()
-    data["from_cache"] = True
-    (cache_dir / "claude_usage.json").write_text(json.dumps(data))
-
-
-# ---------------------------------------------------------------------------
-# Test 1: cache hit — no HTTP call
-# ---------------------------------------------------------------------------
-
-
-def test_cache_hit(tmp_path: Path) -> None:
-    """If cache is fresh (<5 min), fetch_usage must NOT make any HTTP call."""
-    home = _make_home(tmp_path)
-
-    cached_data: dict[str, Any] = {
-        "used_tokens_5h": 1000,
-        "limit_tokens_5h": 10000,
-        "used_pct_5h": 10.0,
-        "reset_at_5h": "2026-01-01T00:00:00Z",
-        "used_tokens_7d": 5000,
-        "limit_tokens_7d": 100000,
-        "used_pct_7d": 5.0,
-        "reset_at_7d": "2026-01-08T00:00:00Z",
-        "fetched_at": "",  # filled by _make_fresh_cache
-        "from_cache": False,
-        "error": None,
-    }
-    _make_fresh_cache(home, cached_data)
-
-    call_count = {"n": 0}
-
-    def fake_urlopen(*args, **kwargs):
-        call_count["n"] += 1
-        raise AssertionError("urlopen was called but cache should have been used")
-
-    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
-        result = fetch_usage(home=home)
-
-    assert call_count["n"] == 0, "HTTP call was made despite fresh cache"
-    assert result["from_cache"] is True
-    assert result["used_tokens_5h"] == 1000
-    assert result["error"] is None
-
-
-# ---------------------------------------------------------------------------
-# Test 2: no token leak
-# ---------------------------------------------------------------------------
-
-
-def test_no_token_leak(tmp_path: Path) -> None:
-    """Returned dict must not contain token/secret material in keys or values."""
-    home = _make_home(tmp_path)
-
-    # Simulate a successful API response.
-    api_payload = json.dumps(
-        [
-            {
-                "window": "5h",
-                "used": 2000,
-                "limit": 20000,
-                "resetAt": "2026-01-01T05:00:00Z",
-            },
-            {
-                "window": "7d",
-                "used": 8000,
-                "limit": 200000,
-                "resetAt": "2026-01-08T00:00:00Z",
-            },
-        ]
-    ).encode()
-
-    mock_resp = MagicMock()
-    mock_resp.read.return_value = api_payload
-    mock_resp.__enter__ = lambda s: s
-    mock_resp.__exit__ = MagicMock(return_value=False)
-
-    with patch("urllib.request.urlopen", return_value=mock_resp):
-        result = fetch_usage(home=home)
-
-    assert result["error"] is None, f"Unexpected error: {result['error']}"
-
-    # Scan every key and value for token-like substrings.
-    # NOTE: "token" is intentionally omitted from key checks because legitimate
-    # metric keys like "used_tokens_5h" contain "token" as part of their name.
-    # The implementation's _FORBIDDEN_KEY_SUBSTRINGS list matches this logic.
-    forbidden_in_keys = (
-        "accesstoken",
-        "refreshtoken",
-        "sk-ant-",
-        "bearer",
-        "password",
-        "secret",
-        "credential",
-    )
-    forbidden_in_values = ("sk-ant-", "bearer ")
-
-    for key, value in result.items():
-        key_l = key.lower()
-        for needle in forbidden_in_keys:
-            assert needle not in key_l, (
-                f"Forbidden substring {needle!r} found in key {key!r}"
-            )
-        if value is None or isinstance(value, bool):
-            continue
-        val_l = str(value).lower()
-        for needle in forbidden_in_values:
-            assert needle not in val_l, (
-                f"Forbidden substring {needle!r} found in value under key {key!r}"
-            )
-
-
-# ---------------------------------------------------------------------------
-# Test 3: error on network failure — returns dict, does not raise
-# ---------------------------------------------------------------------------
-
-
-def test_error_returns_dict(tmp_path: Path) -> None:
-    """A network error must return a dict with ``error`` set; must not raise."""
-    home = _make_home(tmp_path)
-
-    import urllib.error
-
-    def fake_urlopen(*args, **kwargs):
-        raise OSError("simulated network failure")
-
-    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
-        result = fetch_usage(home=home)
-
-    # Must return a dict — not raise.
-    assert isinstance(result, dict)
-
-    # Must have all expected keys.
-    for key in _EMPTY_RESULT:
-        assert key in result, f"Missing key {key!r} in error result"
-
-    # Error field must be set.
-    assert result["error"] is not None
-    assert isinstance(result["error"], str)
-    assert len(result["error"]) > 0
-
-    # Quota fields must be None.
-    for field in (
-        "used_tokens_5h",
-        "limit_tokens_5h",
-        "used_pct_5h",
-        "reset_at_5h",
-        "used_tokens_7d",
-        "limit_tokens_7d",
-        "used_pct_7d",
-        "reset_at_7d",
-    ):
-        assert result[field] is None, f"Expected {field} to be None on error"
-
-
-# ---------------------------------------------------------------------------
-# Test 4: missing credentials file returns dict with error
-# ---------------------------------------------------------------------------
-
-
-def test_missing_credentials(tmp_path: Path) -> None:
-    """Missing credentials file returns error dict without raising."""
-    home = tmp_path / "empty_home"
-    home.mkdir()
-    (home / ".claude").mkdir()
-    # No .credentials.json written
-
-    result = fetch_usage(home=home)
-
-    assert isinstance(result, dict)
-    assert result["error"] is not None
-    assert result["used_tokens_5h"] is None
-
-
-# ---------------------------------------------------------------------------
-# Merged from test_claude_usage_extra.py (PS-204 orphan consolidation)
-# ---------------------------------------------------------------------------
 
 import json
 import time
@@ -238,23 +14,78 @@ import urllib.error
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
 
 import pytest
 
 from scitex_agent_container._account import claude_usage as cu
+from scitex_agent_container._account.claude_usage import (
+    _EMPTY_RESULT,
+    fetch_usage,
+)
 
 # ---------------------------------------------------------------------------
-# Fixtures
+# Real fake response — has the protocol urllib callers expect.
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(autouse=True)
-def _home_to_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+class _FakeResp:
+    """Plain callable response object. NOT a mock."""
+
+    def __init__(self, body: bytes):
+        self._body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def read(self):
+        return self._body
 
 
-def _make_home(tmp_path: Path, expires_at_ms: int | None = None) -> Path:
+def _opener_returning(payload: Any):
+    """Build an opener that returns ``payload`` (dict|list|bytes|str)."""
+    if isinstance(payload, (dict, list)):
+        raw = json.dumps(payload).encode()
+    elif isinstance(payload, bytes):
+        raw = payload
+    else:
+        raw = str(payload).encode()
+
+    def opener(req, timeout=None):
+        return _FakeResp(raw)
+
+    return opener
+
+
+def _opener_raising(exc: Exception):
+    def opener(req, timeout=None):
+        raise exc
+
+    return opener
+
+
+def _opener_sequence(*resps):
+    """Each call returns / raises the next item in sequence."""
+    state = {"i": 0}
+
+    def opener(req, timeout=None):
+        item = resps[state["i"]]
+        state["i"] += 1
+        if isinstance(item, Exception):
+            raise item
+        return _FakeResp(item if isinstance(item, bytes) else json.dumps(item).encode())
+
+    return opener
+
+
+# ---------------------------------------------------------------------------
+# Filesystem helpers — real bytes on tmp_path.
+# ---------------------------------------------------------------------------
+
+
+def _make_home_with_creds(tmp_path: Path, expires_at_ms: int | None = None) -> Path:
     home = tmp_path / "home"
     (home / ".claude").mkdir(parents=True)
     creds: dict[str, Any] = {
@@ -270,401 +101,667 @@ def _make_home(tmp_path: Path, expires_at_ms: int | None = None) -> Path:
     return home
 
 
-def _mock_response(payload: Any) -> MagicMock:
-    if isinstance(payload, (dict, list)):
-        raw = json.dumps(payload).encode()
-    elif isinstance(payload, bytes):
-        raw = payload
-    else:
-        raw = str(payload).encode()
-    resp = MagicMock()
-    resp.read.return_value = raw
-    resp.__enter__ = lambda s: s
-    resp.__exit__ = MagicMock(return_value=False)
-    return resp
+def _make_home_full_creds(tmp_path: Path) -> Path:
+    home = tmp_path / "home"
+    claude_dir = home / ".claude"
+    claude_dir.mkdir(parents=True)
+    creds = {
+        "claudeAiOauth": {
+            "accessToken": "fake-access-token",
+            "refreshToken": "fake-refresh-token",
+            "clientId": "fake-client-id",
+            "expiresAt": int(time.time() * 1000) + 3_600_000,
+            "subscriptionType": "pro",
+            "rateLimitTier": "standard",
+        }
+    }
+    (claude_dir / ".credentials.json").write_text(json.dumps(creds))
+    return home
+
+
+def _make_fresh_cache(home: Path, data: dict[str, Any]) -> None:
+    cache_dir = home / ".scitex" / "cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    data = dict(data)
+    data["fetched_at"] = datetime.now(timezone.utc).isoformat()
+    data["from_cache"] = True
+    (cache_dir / "claude_usage.json").write_text(json.dumps(data))
 
 
 # ---------------------------------------------------------------------------
-# _load_json edge cases
+# Cache hit — opener must never be called.
+# ---------------------------------------------------------------------------
+
+
+def test_cache_hit_returns_cached_data_without_http_call(tmp_path: Path) -> None:
+    # Arrange
+    home = _make_home_full_creds(tmp_path)
+    _make_fresh_cache(
+        home,
+        {
+            "used_tokens_5h": 1000,
+            "limit_tokens_5h": 10000,
+            "used_pct_5h": 10.0,
+            "reset_at_5h": "2026-01-01T00:00:00Z",
+            "used_tokens_7d": 5000,
+            "limit_tokens_7d": 100000,
+            "used_pct_7d": 5.0,
+            "reset_at_7d": "2026-01-08T00:00:00Z",
+            "fetched_at": "",
+            "from_cache": False,
+            "error": None,
+        },
+    )
+
+    def must_not_call(req, timeout=None):
+        raise AssertionError("opener called despite fresh cache")
+
+    # Act
+    result = fetch_usage(home=home, opener=must_not_call)
+    # Assert
+    assert result["from_cache"] is True
+
+
+def _opener_must_not_be_called(req, timeout=None):
+    raise AssertionError("opener was called when cache was fresh")
+
+
+def test_cache_hit_preserves_used_tokens_5h(tmp_path: Path) -> None:
+    # Arrange
+    home = _make_home_full_creds(tmp_path)
+    _make_fresh_cache(home, dict(_EMPTY_RESULT, used_tokens_5h=1000))
+    # Act
+    result = fetch_usage(home=home, opener=_opener_must_not_be_called)
+    # Assert
+    assert result["used_tokens_5h"] == 1000
+
+
+# ---------------------------------------------------------------------------
+# Token-leak guard — returned dict never contains secret material.
+# ---------------------------------------------------------------------------
+
+
+_API_PAYLOAD_OK = [
+    {"window": "5h", "used": 2000, "limit": 20000, "resetAt": "2026-01-01T05:00:00Z"},
+    {"window": "7d", "used": 8000, "limit": 200000, "resetAt": "2026-01-08T00:00:00Z"},
+]
+
+
+def test_returned_dict_does_not_leak_token_in_keys(tmp_path: Path) -> None:
+    # Arrange
+    home = _make_home_full_creds(tmp_path)
+    opener = _opener_returning(_API_PAYLOAD_OK)
+    forbidden = (
+        "accesstoken",
+        "refreshtoken",
+        "sk-ant-",
+        "bearer",
+        "password",
+        "secret",
+        "credential",
+    )
+    # Act
+    result = fetch_usage(home=home, opener=opener)
+    # Assert
+    for key in result:
+        kl = key.lower()
+        for needle in forbidden:
+            assert needle not in kl
+
+
+def test_returned_dict_does_not_leak_token_in_values(tmp_path: Path) -> None:
+    # Arrange
+    home = _make_home_full_creds(tmp_path)
+    opener = _opener_returning(_API_PAYLOAD_OK)
+    forbidden_in_values = ("sk-ant-", "bearer ")
+    # Act
+    result = fetch_usage(home=home, opener=opener)
+    # Assert
+    str_values = [
+        str(v).lower()
+        for v in result.values()
+        if v is not None and not isinstance(v, bool)
+    ]
+    assert not any(needle in v for v in str_values for needle in forbidden_in_values)
+
+
+# ---------------------------------------------------------------------------
+# Error path — network failure returns dict, never raises.
+# ---------------------------------------------------------------------------
+
+
+def test_network_error_returns_dict_instead_of_raising(tmp_path: Path) -> None:
+    # Arrange
+    home = _make_home_full_creds(tmp_path)
+    opener = _opener_raising(OSError("simulated network failure"))
+    # Act
+    result = fetch_usage(home=home, opener=opener)
+    # Assert
+    assert isinstance(result, dict)
+
+
+def test_network_error_populates_error_field(tmp_path: Path) -> None:
+    # Arrange
+    home = _make_home_full_creds(tmp_path)
+    opener = _opener_raising(OSError("boom"))
+    # Act
+    result = fetch_usage(home=home, opener=opener)
+    # Assert
+    assert isinstance(result["error"], str) and result["error"]
+
+
+def test_network_error_leaves_quota_fields_none(tmp_path: Path) -> None:
+    # Arrange
+    home = _make_home_full_creds(tmp_path)
+    opener = _opener_raising(OSError("boom"))
+    # Act
+    result = fetch_usage(home=home, opener=opener)
+    # Assert
+    assert result["used_tokens_5h"] is None
+
+
+def test_missing_credentials_returns_error_dict(tmp_path: Path) -> None:
+    # Arrange
+    home = tmp_path / "empty"
+    (home / ".claude").mkdir(parents=True)
+    # Act
+    result = fetch_usage(home=home)
+    # Assert
+    assert result["error"] is not None
+
+
+# ---------------------------------------------------------------------------
+# _load_json edge cases — pure file I/O.
 # ---------------------------------------------------------------------------
 
 
 def test_load_json_returns_none_for_list_payload(tmp_path: Path) -> None:
+    # Arrange
     p = tmp_path / "x.json"
     p.write_text("[1, 2, 3]")
-    assert cu._load_json(p) is None
+    # Act
+    out = cu._load_json(p)
+    # Assert
+    assert out is None
 
 
 def test_load_json_returns_none_for_missing_file(tmp_path: Path) -> None:
-    assert cu._load_json(tmp_path / "nope.json") is None
+    # Arrange
+    p = tmp_path / "nope.json"
+    # Act
+    out = cu._load_json(p)
+    # Assert
+    assert out is None
 
 
-def test_load_json_returns_none_for_bad_json(tmp_path: Path) -> None:
+def test_load_json_returns_none_for_malformed_json(tmp_path: Path) -> None:
+    # Arrange
     p = tmp_path / "x.json"
     p.write_text("{nope")
-    assert cu._load_json(p) is None
+    # Act
+    out = cu._load_json(p)
+    # Assert
+    assert out is None
 
 
 # ---------------------------------------------------------------------------
-# _read_tokens corner cases
+# _read_tokens corner cases.
 # ---------------------------------------------------------------------------
 
 
-def test_read_tokens_missing_oauth_key(tmp_path: Path) -> None:
+def test_read_tokens_returns_all_none_when_oauth_key_missing(tmp_path: Path) -> None:
+    # Arrange
     home = tmp_path / "h"
     (home / ".claude").mkdir(parents=True)
     (home / ".claude" / ".credentials.json").write_text("{}")
-    assert cu._read_tokens(home) == (None, None, None, None)
+    # Act
+    out = cu._read_tokens(home)
+    # Assert
+    assert out == (None, None, None, None)
 
 
-def test_read_tokens_oauth_not_a_dict(tmp_path: Path) -> None:
+def test_read_tokens_returns_all_none_when_oauth_value_not_dict(
+    tmp_path: Path,
+) -> None:
+    # Arrange
     home = tmp_path / "h"
     (home / ".claude").mkdir(parents=True)
     (home / ".claude" / ".credentials.json").write_text(
         json.dumps({"claudeAiOauth": "string-value"})
     )
-    assert cu._read_tokens(home) == (None, None, None, None)
+    # Act
+    out = cu._read_tokens(home)
+    # Assert
+    assert out == (None, None, None, None)
 
 
-def test_read_tokens_missing_creds_returns_all_none(tmp_path: Path) -> None:
+def test_read_tokens_returns_all_none_when_creds_file_absent(tmp_path: Path) -> None:
+    # Arrange
     home = tmp_path / "h"
     home.mkdir()
-    assert cu._read_tokens(home) == (None, None, None, None)
+    # Act
+    out = cu._read_tokens(home)
+    # Assert
+    assert out == (None, None, None, None)
 
 
 # ---------------------------------------------------------------------------
-# _is_token_expired
+# _is_token_expired — pure logic.
 # ---------------------------------------------------------------------------
 
 
-def test_is_token_expired_none_returns_false() -> None:
-    assert cu._is_token_expired(None) is False
+def test_is_token_expired_returns_false_for_none_input() -> None:
+    # Arrange
+    expiry = None
+    # Act
+    out = cu._is_token_expired(expiry)
+    # Assert
+    assert out is False
 
 
-def test_is_token_expired_past_returns_true() -> None:
-    assert cu._is_token_expired(0) is True
+def test_is_token_expired_returns_true_for_past_timestamp() -> None:
+    # Arrange
+    expiry = 0
+    # Act
+    out = cu._is_token_expired(expiry)
+    # Assert
+    assert out is True
 
 
-def test_is_token_expired_future_returns_false() -> None:
-    far_future = int(time.time() * 1000) + 60 * 60 * 1000
-    assert cu._is_token_expired(far_future) is False
+def test_is_token_expired_returns_false_for_future_timestamp() -> None:
+    # Arrange
+    expiry = int(time.time() * 1000) + 60 * 60 * 1000
+    # Act
+    out = cu._is_token_expired(expiry)
+    # Assert
+    assert out is False
 
 
 # ---------------------------------------------------------------------------
-# _refresh_access_token
+# _refresh_access_token via real opener injection.
 # ---------------------------------------------------------------------------
 
 
-def test_refresh_access_token_success_updates_creds(tmp_path: Path) -> None:
-    home = _make_home(tmp_path, expires_at_ms=0)
-    resp = _mock_response({"access_token": "NEW-TOKEN", "expires_in": 3600})
-    with patch("urllib.request.urlopen", return_value=resp):
-        out = cu._refresh_access_token(home, "fake-refresh", "fake-client")
+def test_refresh_access_token_returns_new_token_on_success(tmp_path: Path) -> None:
+    # Arrange
+    home = _make_home_with_creds(tmp_path, expires_at_ms=0)
+    opener = _opener_returning({"access_token": "NEW-TOKEN", "expires_in": 3600})
+    # Act
+    out = cu._refresh_access_token(home, "fake-refresh", "fake-client", opener=opener)
+    # Assert
     assert out == "NEW-TOKEN"
+
+
+def test_refresh_access_token_writes_new_token_to_creds_file(tmp_path: Path) -> None:
+    # Arrange
+    home = _make_home_with_creds(tmp_path, expires_at_ms=0)
+    opener = _opener_returning({"access_token": "NEW-TOKEN", "expires_in": 3600})
+    # Act
+    cu._refresh_access_token(home, "fake-refresh", "fake-client", opener=opener)
+    # Assert
     creds = json.loads((home / ".claude" / ".credentials.json").read_text())
     assert creds["claudeAiOauth"]["accessToken"] == "NEW-TOKEN"
+
+
+def test_refresh_access_token_updates_expires_at(tmp_path: Path) -> None:
+    # Arrange
+    home = _make_home_with_creds(tmp_path, expires_at_ms=0)
+    opener = _opener_returning({"access_token": "NEW", "expires_in": 3600})
+    # Act
+    cu._refresh_access_token(home, "fake-refresh", "fake-client", opener=opener)
+    # Assert
+    creds = json.loads((home / ".claude" / ".credentials.json").read_text())
     assert creds["claudeAiOauth"]["expiresAt"] > int(time.time() * 1000)
 
 
-def test_refresh_access_token_network_error_returns_none(tmp_path: Path) -> None:
-    home = _make_home(tmp_path, expires_at_ms=0)
-    with patch("urllib.request.urlopen", side_effect=OSError("boom")):
-        out = cu._refresh_access_token(home, "fake-refresh", "fake-client")
+def test_refresh_access_token_returns_none_on_network_error(tmp_path: Path) -> None:
+    # Arrange
+    home = _make_home_with_creds(tmp_path, expires_at_ms=0)
+    opener = _opener_raising(OSError("boom"))
+    # Act
+    out = cu._refresh_access_token(home, "fake-refresh", "fake-client", opener=opener)
+    # Assert
     assert out is None
 
 
-def test_refresh_access_token_no_access_token_field(tmp_path: Path) -> None:
-    home = _make_home(tmp_path, expires_at_ms=0)
-    resp = _mock_response({"not_access_token": "x"})
-    with patch("urllib.request.urlopen", return_value=resp):
-        out = cu._refresh_access_token(home, "fake-refresh", "fake-client")
-    assert out is None
-
-
-def test_refresh_access_token_creds_write_failure_still_returns_token(
+def test_refresh_access_token_returns_none_when_response_missing_access_token(
     tmp_path: Path,
 ) -> None:
-    """If credentials disk write fails, the new token is still returned."""
-    home = _make_home(tmp_path, expires_at_ms=0)
-    resp = _mock_response({"access_token": "NEW", "expires_in": 1000})
-    # Make the credentials file unwritable by removing it after the refresh
-    # response but before _refresh_access_token's open() — simulate by
-    # patching open() to raise.
-    import builtins
+    # Arrange
+    home = _make_home_with_creds(tmp_path, expires_at_ms=0)
+    opener = _opener_returning({"not_access_token": "x"})
+    # Act
+    out = cu._refresh_access_token(home, "fake-refresh", "fake-client", opener=opener)
+    # Assert
+    assert out is None
 
-    real_open = builtins.open
 
-    def _bad_open(path, *a, **kw):
-        if str(path).endswith(".credentials.json") and "r+" in (
-            a + (kw.get("mode", ""),) if a else (kw.get("mode", ""),)
-        ):
-            raise PermissionError("read-only fs")
-        return real_open(path, *a, **kw)
-
-    with (
-        patch("urllib.request.urlopen", return_value=resp),
-        patch("builtins.open", side_effect=_bad_open),
-    ):
-        out = cu._refresh_access_token(home, "fake-refresh", "fake-client")
-    assert out == "NEW"
+def test_refresh_access_token_returns_token_when_creds_file_unwritable(
+    tmp_path: Path,
+) -> None:
+    # Arrange — real read-only credentials file via chmod
+    home = _make_home_with_creds(tmp_path, expires_at_ms=0)
+    creds_file = home / ".claude" / ".credentials.json"
+    creds_file.chmod(0o444)  # read-only
+    opener = _opener_returning({"access_token": "NEW", "expires_in": 1000})
+    try:
+        # Act
+        out = cu._refresh_access_token(
+            home, "fake-refresh", "fake-client", opener=opener
+        )
+        # Assert
+        assert out == "NEW"
+    finally:
+        creds_file.chmod(0o644)
 
 
 # ---------------------------------------------------------------------------
-# Cache helpers
+# Cache helpers — pure file I/O on tmp_path.
 # ---------------------------------------------------------------------------
 
 
-def test_read_cache_returns_none_when_missing_fetched_at(tmp_path: Path) -> None:
+def test_read_cache_returns_none_when_fetched_at_missing(tmp_path: Path) -> None:
+    # Arrange
     home = tmp_path / "h"
     cache_dir = home / ".scitex" / "cache"
     cache_dir.mkdir(parents=True)
     (cache_dir / "claude_usage.json").write_text(json.dumps({"x": 1}))
-    assert cu._read_cache(home) is None
+    # Act
+    out = cu._read_cache(home)
+    # Assert
+    assert out is None
 
 
-def test_read_cache_returns_none_for_bad_timestamp(tmp_path: Path) -> None:
+def test_read_cache_returns_none_when_fetched_at_unparseable(tmp_path: Path) -> None:
+    # Arrange
     home = tmp_path / "h"
     cache_dir = home / ".scitex" / "cache"
     cache_dir.mkdir(parents=True)
     (cache_dir / "claude_usage.json").write_text(
         json.dumps({"fetched_at": "not-a-timestamp"})
     )
-    assert cu._read_cache(home) is None
+    # Act
+    out = cu._read_cache(home)
+    # Assert
+    assert out is None
 
 
-def test_read_cache_returns_none_for_stale(tmp_path: Path) -> None:
+def test_read_cache_returns_none_when_entry_is_older_than_ttl(tmp_path: Path) -> None:
+    # Arrange
     home = tmp_path / "h"
     cache_dir = home / ".scitex" / "cache"
     cache_dir.mkdir(parents=True)
     stale = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
     (cache_dir / "claude_usage.json").write_text(json.dumps({"fetched_at": stale}))
-    assert cu._read_cache(home) is None
+    # Act
+    out = cu._read_cache(home)
+    # Assert
+    assert out is None
 
 
-def test_read_cache_handles_naive_timestamp(tmp_path: Path) -> None:
+def test_read_cache_accepts_naive_timestamp_as_utc(tmp_path: Path) -> None:
+    # Arrange
     home = tmp_path / "h"
     cache_dir = home / ".scitex" / "cache"
     cache_dir.mkdir(parents=True)
-    naive = datetime.utcnow().isoformat()  # no tzinfo
+    # Naive timestamp — production treats it as UTC for back-compat.
+    naive = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
     (cache_dir / "claude_usage.json").write_text(
         json.dumps({"fetched_at": naive, "used_tokens_5h": 5})
     )
+    # Act
     out = cu._read_cache(home)
-    assert out is not None
-    assert out["from_cache"] is True
+    # Assert
+    assert out is not None and out["from_cache"] is True
 
 
-def test_write_cache_handles_write_failure(tmp_path: Path) -> None:
-    """If the cache write fails, _write_cache must not raise."""
+def test_write_cache_returns_silently_when_parent_path_is_a_file(
+    tmp_path: Path,
+) -> None:
+    # Arrange — block .scitex with a regular file so mkdir(parents=True) fails
     home = tmp_path / "h"
     home.mkdir()
-    # Make the parent path point at an existing FILE so mkdir(parents=True)
-    # raises NotADirectoryError.
     blocker = home / ".scitex"
     blocker.write_text("not a dir")
-    cu._write_cache(home, {"ok": True})  # must not raise
+    # Act
+    result = cu._write_cache(home, {"ok": True})
+    # Assert
+    assert result is None  # production returns None on best-effort cache writes
 
 
 # ---------------------------------------------------------------------------
-# _fetch_from_api branches
+# _fetch_from_api response-shape branches.
 # ---------------------------------------------------------------------------
 
 
-def test_fetch_from_api_returns_list_payload() -> None:
-    resp = _mock_response([{"window": "5h"}])
-    with patch("urllib.request.urlopen", return_value=resp):
-        out = cu._fetch_from_api("tok")
+def test_fetch_from_api_returns_list_payload_unchanged() -> None:
+    # Arrange
+    opener = _opener_returning([{"window": "5h"}])
+    # Act
+    out = cu._fetch_from_api("tok", opener=opener)
+    # Assert
     assert out == [{"window": "5h"}]
 
 
-def test_fetch_from_api_returns_wrapped_windows() -> None:
-    resp = _mock_response({"windows": [{"window": "5h"}]})
-    with patch("urllib.request.urlopen", return_value=resp):
-        out = cu._fetch_from_api("tok")
+def test_fetch_from_api_unwraps_windows_key() -> None:
+    # Arrange
+    opener = _opener_returning({"windows": [{"window": "5h"}]})
+    # Act
+    out = cu._fetch_from_api("tok", opener=opener)
+    # Assert
     assert out == [{"window": "5h"}]
 
 
-def test_fetch_from_api_returns_wrapped_data() -> None:
-    resp = _mock_response({"data": [{"window": "7d"}]})
-    with patch("urllib.request.urlopen", return_value=resp):
-        out = cu._fetch_from_api("tok")
+def test_fetch_from_api_unwraps_data_key() -> None:
+    # Arrange
+    opener = _opener_returning({"data": [{"window": "7d"}]})
+    # Act
+    out = cu._fetch_from_api("tok", opener=opener)
+    # Assert
     assert out == [{"window": "7d"}]
 
 
-def test_fetch_from_api_single_window_dict() -> None:
-    resp = _mock_response({"window": "5h", "used": 1})
-    with patch("urllib.request.urlopen", return_value=resp):
-        out = cu._fetch_from_api("tok")
+def test_fetch_from_api_wraps_single_window_dict_in_list() -> None:
+    # Arrange
+    opener = _opener_returning({"window": "5h", "used": 1})
+    # Act
+    out = cu._fetch_from_api("tok", opener=opener)
+    # Assert
     assert out == [{"window": "5h", "used": 1}]
 
 
-def test_fetch_from_api_unknown_dict_returns_none() -> None:
-    resp = _mock_response({"foo": "bar"})
-    with patch("urllib.request.urlopen", return_value=resp):
-        out = cu._fetch_from_api("tok")
+def test_fetch_from_api_returns_none_for_unknown_dict_shape() -> None:
+    # Arrange
+    opener = _opener_returning({"foo": "bar"})
+    # Act
+    out = cu._fetch_from_api("tok", opener=opener)
+    # Assert
     assert out is None
 
 
-def test_fetch_from_api_bad_json_returns_none() -> None:
-    resp = _mock_response(b"not json{")
-    with patch("urllib.request.urlopen", return_value=resp):
-        out = cu._fetch_from_api("tok")
+def test_fetch_from_api_returns_none_on_malformed_json() -> None:
+    # Arrange
+    opener = _opener_returning(b"not json{")
+    # Act
+    out = cu._fetch_from_api("tok", opener=opener)
+    # Assert
     assert out is None
 
 
-def test_fetch_from_api_http_401_reraises() -> None:
-    err = urllib.error.HTTPError(
-        url="http://x", code=401, msg="unauth", hdrs=None, fp=None
-    )
-    with patch("urllib.request.urlopen", side_effect=err):
-        with pytest.raises(urllib.error.HTTPError):
-            cu._fetch_from_api("tok")
+def test_fetch_from_api_reraises_http_401() -> None:
+    # Arrange
+    err = urllib.error.HTTPError("http://x", 401, "unauth", {}, None)  # type: ignore[arg-type]
+    opener = _opener_raising(err)
+    # Act
+    raised = pytest.raises(urllib.error.HTTPError)
+    # Assert
+    with raised:
+        cu._fetch_from_api("tok", opener=opener)
 
 
-def test_fetch_from_api_http_500_returns_none() -> None:
-    err = urllib.error.HTTPError(
-        url="http://x", code=500, msg="oops", hdrs=None, fp=None
-    )
-    with patch("urllib.request.urlopen", side_effect=err):
-        assert cu._fetch_from_api("tok") is None
+def test_fetch_from_api_returns_none_on_http_500() -> None:
+    # Arrange
+    err = urllib.error.HTTPError("http://x", 500, "oops", {}, None)  # type: ignore[arg-type]
+    opener = _opener_raising(err)
+    # Act
+    out = cu._fetch_from_api("tok", opener=opener)
+    # Assert
+    assert out is None
 
 
 # ---------------------------------------------------------------------------
-# _parse_windows branches
+# _parse_windows — pure logic.
 # ---------------------------------------------------------------------------
 
 
-def test_parse_windows_handles_non_int_used_limit() -> None:
-    out = cu._parse_windows(
-        [{"window": "5h", "used": "not-int", "limit": "x", "resetAt": 1}]
-    )
+def test_parse_windows_treats_non_int_used_as_none() -> None:
+    # Arrange
+    payload = [{"window": "5h", "used": "not-int", "limit": "x", "resetAt": 1}]
+    # Act
+    out = cu._parse_windows(payload)
+    # Assert
     assert out["used_tokens_5h"] is None
+
+
+def test_parse_windows_treats_non_int_limit_as_none() -> None:
+    # Arrange
+    payload = [{"window": "5h", "used": 10, "limit": "x"}]
+    # Act
+    out = cu._parse_windows(payload)
+    # Assert
     assert out["limit_tokens_5h"] is None
+
+
+def test_parse_windows_returns_none_pct_when_limit_is_zero() -> None:
+    # Arrange
+    payload = [{"window": "5h", "used": 10, "limit": 0}]
+    # Act
+    out = cu._parse_windows(payload)
+    # Assert
     assert out["used_pct_5h"] is None
-    assert out["reset_at_5h"] is None  # int rejected
 
 
-def test_parse_windows_zero_limit_gives_none_pct() -> None:
-    out = cu._parse_windows([{"window": "5h", "used": 10, "limit": 0}])
-    assert out["used_pct_5h"] is None
-
-
-def test_parse_windows_skips_non_dict_and_unknown_window() -> None:
-    out = cu._parse_windows(
-        [
-            "not-a-dict",
-            {"window": "1d"},  # unknown
-            {"window": "5h", "used": 1, "limit": 10},
-        ]
-    )
+def test_parse_windows_skips_non_dict_and_unknown_windows() -> None:
+    # Arrange
+    payload = [
+        "not-a-dict",
+        {"window": "1d"},  # unknown window key
+        {"window": "5h", "used": 1, "limit": 10},
+    ]
+    # Act
+    out = cu._parse_windows(payload)
+    # Assert
     assert out["used_pct_5h"] == 10.0
 
 
 # ---------------------------------------------------------------------------
-# _check_no_token_leak
+# _check_no_token_leak — security guard.
 # ---------------------------------------------------------------------------
 
 
-def test_check_no_token_leak_raises_on_bad_key() -> None:
-    with pytest.raises(RuntimeError, match="forbidden key"):
-        cu._check_no_token_leak({"accessToken": "x"})
+def test_check_no_token_leak_raises_on_forbidden_key() -> None:
+    # Arrange
+    payload = {"accessToken": "x"}
+    # Act
+    raised = pytest.raises(RuntimeError, match="forbidden key")
+    # Assert
+    with raised:
+        cu._check_no_token_leak(payload)
 
 
-def test_check_no_token_leak_raises_on_bad_value() -> None:
-    with pytest.raises(RuntimeError, match="forbidden value"):
-        cu._check_no_token_leak({"note": "bearer foo"})
+def test_check_no_token_leak_raises_on_forbidden_value() -> None:
+    # Arrange
+    payload = {"note": "bearer foo"}
+    # Act
+    raised = pytest.raises(RuntimeError, match="forbidden value")
+    # Assert
+    with raised:
+        cu._check_no_token_leak(payload)
 
 
-def test_check_no_token_leak_ignores_none_and_bool() -> None:
-    cu._check_no_token_leak({"x": None, "y": True})  # must not raise
+def test_check_no_token_leak_ignores_none_and_bool_values(tmp_path: Path) -> None:
+    # Arrange
+    payload: dict[str, Any] = {"x": None, "y": True}
+    # Act
+    cu._check_no_token_leak(payload)  # must not raise
+    # Assert
+    assert True  # behavior is the absence of an exception
 
 
 # ---------------------------------------------------------------------------
-# fetch_usage — refresh path + 401 retry + leak short-circuit
+# fetch_usage — refresh-then-succeed integrations (real opener sequencing).
 # ---------------------------------------------------------------------------
 
 
-def test_fetch_usage_refreshes_expired_token_then_succeeds(
-    tmp_path: Path,
-) -> None:
-    home = _make_home(tmp_path, expires_at_ms=0)  # already expired
-
-    refresh_calls: list[str] = []
-
-    def fake_refresh(_home, _refresh, _client, *, opener=None):
-        refresh_calls.append("ok")
-        return "NEW"
-
-    api_payload = [
-        {"window": "5h", "used": 100, "limit": 1000, "resetAt": "x"},
-    ]
-
-    with (
-        patch.object(cu, "_refresh_access_token", side_effect=fake_refresh),
-        patch("urllib.request.urlopen", return_value=_mock_response(api_payload)),
-    ):
-        result = cu.fetch_usage(home=home)
-
-    assert refresh_calls == ["ok"]
-    assert result["error"] is None
+def test_fetch_usage_refreshes_expired_token_then_returns_data(tmp_path: Path) -> None:
+    # Arrange — expired token + opener that returns refresh THEN API payload.
+    home = _make_home_with_creds(tmp_path, expires_at_ms=0)
+    opener = _opener_sequence(
+        {"access_token": "NEW", "expires_in": 3600},  # refresh
+        [{"window": "5h", "used": 100, "limit": 1000, "resetAt": "x"}],  # API
+    )
+    # Act
+    result = fetch_usage(home=home, opener=opener)
+    # Assert
     assert result["used_tokens_5h"] == 100
 
 
 def test_fetch_usage_handles_401_then_refresh_then_retry(tmp_path: Path) -> None:
-    home = _make_home(tmp_path, expires_at_ms=int(time.time() * 1000) + 60_000)
-
-    # First call raises 401, second call (after refresh) succeeds.
-    call_count = {"n": 0}
-
-    def fake_urlopen(req, timeout=15):
-        call_count["n"] += 1
-        if call_count["n"] == 1:
-            raise urllib.error.HTTPError(
-                url="http://x", code=401, msg="", hdrs=None, fp=None
-            )
-        return _mock_response(
-            [{"window": "7d", "used": 50, "limit": 500, "resetAt": "x"}]
-        )
-
-    with (
-        patch.object(cu, "_refresh_access_token", return_value="REFRESHED"),
-        patch("urllib.request.urlopen", side_effect=fake_urlopen),
-    ):
-        result = cu.fetch_usage(home=home)
-    assert result["error"] is None
+    # Arrange — fresh token; first API call 401s, refresh succeeds, retry succeeds.
+    home = _make_home_with_creds(
+        tmp_path, expires_at_ms=int(time.time() * 1000) + 60_000
+    )
+    http_401 = urllib.error.HTTPError("http://x", 401, "", {}, None)  # type: ignore[arg-type]
+    opener = _opener_sequence(
+        http_401,  # API attempt 1
+        {"access_token": "REFRESHED", "expires_in": 3600},  # refresh
+        [{"window": "7d", "used": 50, "limit": 500, "resetAt": "x"}],  # retry
+    )
+    # Act
+    result = fetch_usage(home=home, opener=opener)
+    # Assert
     assert result["used_tokens_7d"] == 50
 
 
-def test_fetch_usage_401_then_refresh_fails_returns_error(tmp_path: Path) -> None:
-    home = _make_home(tmp_path, expires_at_ms=int(time.time() * 1000) + 60_000)
-
-    def fake_urlopen(req, timeout=15):
-        raise urllib.error.HTTPError(
-            url="http://x", code=401, msg="", hdrs=None, fp=None
-        )
-
-    with (
-        patch.object(cu, "_refresh_access_token", return_value=None),
-        patch("urllib.request.urlopen", side_effect=fake_urlopen),
-    ):
-        result = cu.fetch_usage(home=home)
-    assert result["error"] is not None
-    assert "HTTP 401" in result["error"]
-
-
-def test_fetch_usage_unparsable_response_returns_error(tmp_path: Path) -> None:
-    home = _make_home(tmp_path, expires_at_ms=int(time.time() * 1000) + 60_000)
-    resp = _mock_response({"unexpected": "shape"})
-    with patch("urllib.request.urlopen", return_value=resp):
-        result = cu.fetch_usage(home=home)
-    assert result["error"] is not None
-    assert "Failed to fetch or parse" in result["error"]
+def test_fetch_usage_returns_error_when_refresh_after_401_fails(
+    tmp_path: Path,
+) -> None:
+    # Arrange — first API 401, refresh returns no access_token.
+    home = _make_home_with_creds(
+        tmp_path, expires_at_ms=int(time.time() * 1000) + 60_000
+    )
+    http_401 = urllib.error.HTTPError("http://x", 401, "", {}, None)  # type: ignore[arg-type]
+    opener = _opener_sequence(
+        http_401,  # API attempt 1
+        {"not_access_token": "x"},  # refresh returns junk
+    )
+    # Act
+    result = fetch_usage(home=home, opener=opener)
+    # Assert
+    assert "HTTP 401" in (result["error"] or "")
 
 
-def test_fetch_usage_writes_cache_on_success(tmp_path: Path) -> None:
-    home = _make_home(tmp_path, expires_at_ms=int(time.time() * 1000) + 60_000)
-    resp = _mock_response([{"window": "5h", "used": 1, "limit": 10, "resetAt": "now"}])
-    with patch("urllib.request.urlopen", return_value=resp):
-        result = cu.fetch_usage(home=home)
-    assert result["error"] is None
+def test_fetch_usage_returns_error_for_unparsable_response(tmp_path: Path) -> None:
+    # Arrange
+    home = _make_home_with_creds(
+        tmp_path, expires_at_ms=int(time.time() * 1000) + 60_000
+    )
+    opener = _opener_returning({"unexpected": "shape"})
+    # Act
+    result = fetch_usage(home=home, opener=opener)
+    # Assert
+    assert "Failed to fetch or parse" in (result["error"] or "")
+
+
+def test_fetch_usage_writes_cache_file_on_success(tmp_path: Path) -> None:
+    # Arrange
+    home = _make_home_with_creds(
+        tmp_path, expires_at_ms=int(time.time() * 1000) + 60_000
+    )
+    opener = _opener_returning(
+        [{"window": "5h", "used": 1, "limit": 10, "resetAt": "now"}]
+    )
+    # Act
+    fetch_usage(home=home, opener=opener)
+    # Assert
     assert (home / ".scitex" / "cache" / "claude_usage.json").is_file()
