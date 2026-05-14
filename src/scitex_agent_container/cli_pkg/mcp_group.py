@@ -14,6 +14,59 @@ import click
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
 
+# ---------------------------------------------------------------------------
+# Backend loaders (public seam for the Python API + tests)
+#
+# The real MCP server lives in ``scitex_agent_container._mcp``, which is an
+# optional dep (requires ``fastmcp``) and isn't always installed in dev /
+# CI environments. We surface the backend lookup as callable module
+# attributes so:
+#
+#   * external Python users can install a different MCP server / runner
+#     by reassigning these, the same way ``logging.getLogger`` is
+#     redirectable,
+#   * tests can install hand-rolled real callables (no MagicMock) via
+#     the normal save/restore pattern, without fabricating ``sys.modules``
+#     entries for ``scitex_agent_container._mcp``.
+#
+# Each loader returns the resolved callable / object; each raises the real
+# ``ImportError`` if the optional ``fastmcp`` extra isn't installed.
+# ---------------------------------------------------------------------------
+def _default_load_run_server():
+    """Default ``run_server`` loader — imports from the optional ``_mcp`` pkg."""
+    from .._mcp import run_server
+
+    return run_server
+
+
+def _default_load_get_server():
+    """Default ``get_server`` loader — imports from the optional ``_mcp`` pkg."""
+    from .._mcp.server import get_server
+
+    return get_server
+
+
+def _default_load_fastmcp_version():
+    """Default ``fastmcp.__version__`` loader — for ``doctor``."""
+    import fastmcp
+
+    return fastmcp.__version__
+
+
+def _default_load_channel_main():
+    """Default ``channel.main`` loader — for ``mcp channel`` subprocess."""
+    from .._mcp.channel import main as channel_main
+
+    return channel_main
+
+
+# Module-level overridable references. Reassign (and restore!) to swap.
+_load_run_server = _default_load_run_server
+_load_get_server = _default_load_get_server
+_load_fastmcp_version = _default_load_fastmcp_version
+_load_channel_main = _default_load_channel_main
+
+
 @click.group(name="mcp", context_settings=CONTEXT_SETTINGS)
 def mcp() -> None:
     """MCP (Model Context Protocol) server commands."""
@@ -71,7 +124,7 @@ def mcp_start(use_http: bool, host: str, port: int, dry_run: bool, yes: bool) ->
         )
         return
     try:
-        from .._mcp import run_server
+        run_server = _load_run_server()
     except ImportError as exc:
         raise click.ClickException(
             "fastmcp not installed — install with "
@@ -106,8 +159,7 @@ def mcp_channel(name: str, listen_url: str | None) -> None:
     Example (manual):
       $ sac mcp channel --name lead
     """
-    from .._mcp.channel import main as _channel_main
-
+    _channel_main = _load_channel_main()
     _channel_main(name=name, listen_url=listen_url)
 
 
@@ -121,18 +173,16 @@ def mcp_doctor() -> None:
     """
     click.secho("Checking MCP dependencies...", fg="cyan")
     try:
-        import fastmcp
-
+        version = _load_fastmcp_version()
         click.secho("  OK ", fg="green", nl=False)
-        click.echo(f"fastmcp {fastmcp.__version__}")
+        click.echo(f"fastmcp {version}")
     except ImportError:
         click.secho("  NG ", fg="red", nl=False)
         click.echo("fastmcp not installed")
         click.echo("     Install: pip install scitex-agent-container[mcp]")
         raise SystemExit(1)
     try:
-        from .._mcp.server import get_server
-
+        get_server = _load_get_server()
         server = get_server()
         tools = _list_tool_names(server)
         click.secho("  OK ", fg="green", nl=False)
@@ -162,8 +212,7 @@ def mcp_list_tools(as_json: bool) -> None:
       $ sac mcp list-tools --json
     """
     try:
-        from .._mcp.server import get_server
-
+        get_server = _load_get_server()
         server = get_server()
         tools = _list_tools(server)
     except ImportError:
