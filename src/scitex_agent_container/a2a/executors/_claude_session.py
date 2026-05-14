@@ -18,7 +18,12 @@ class ClaudeSessionExecutor(BaseSyncExecutor):
     handler_key = "claude_session"
 
     def _run_sync(self, agent_name: str, user_text: str) -> str:
-        return handle_claude_session(agent_name, user_text)
+        return handle_claude_session(
+            agent_name,
+            user_text,
+            channels=self.kwargs.get("channels") or [],
+            a2a_port=self.kwargs.get("a2a_port"),
+        )
 
 
 __all__ = ["ClaudeSessionExecutor"]

@@ -151,11 +151,7 @@ def _build_app(ctx: _ServerCtx) -> Starlette:
         base = _base_url(request)
         agents = sorted(ctx.yamls.keys())
         return JSONResponse(
-            {
-                "agents": [
-                    {"name": n, "url": f"{base}/agents/{n}"} for n in agents
-                ]
-            }
+            {"agents": [{"name": n, "url": f"{base}/agents/{n}"} for n in agents]}
         )
 
     async def get_agent_card(request: Request) -> Response:
@@ -303,7 +299,14 @@ async def _publish_channel_event(
     """
     if not isinstance(body, dict):
         return
-    if body.get("method") != "message/send":
+    # Accept both A2A method spellings:
+    #   * legacy slash form ``message/send`` (pre-v1)
+    #   * v1 gRPC-style ``SendMessage`` / ``SendStreamingMessage``
+    if body.get("method") not in (
+        "message/send",
+        "SendMessage",
+        "SendStreamingMessage",
+    ):
         return
     params = body.get("params") or {}
     if not isinstance(params, dict):
@@ -349,6 +352,18 @@ def _agent_name_from_yaml(path: Path, v3: dict[str, Any]) -> str:
     name = meta.get("name")
     if isinstance(name, str) and name.strip():
         return name.strip()
+    # Dir-as-SSoT (v3): when file is `spec.yaml`, the agent name MUST
+    # come from its parent dir (the file stem is ambiguous — every
+    # agent's file is `spec.yaml`). Reject the degenerate case
+    # explicitly rather than silently colliding on stem == "spec".
+    if path.stem == "spec":
+        if not path.parent.name:
+            raise ValueError(
+                f"cannot derive agent name from {path}: file is 'spec.yaml' "
+                "but parent dir is empty. Use dir-as-SSoT layout "
+                "(agents/<name>/spec.yaml) or set metadata.name in the yaml."
+            )
+        return path.parent.name
     return path.stem
 
 
@@ -361,13 +376,28 @@ def _select_handler_key(v3: dict[str, Any], default: str) -> str:
     return default
 
 
-def _build_executor(name: str, handler_key: str) -> BaseSyncExecutor:
+def _build_executor(
+    name: str,
+    handler_key: str,
+    v3: dict[str, Any],
+    a2a_port: int | None,
+) -> BaseSyncExecutor:
+    """Construct an executor with per-agent context (yaml + a2a port).
+
+    ``v3`` and ``a2a_port`` are surfaced via ``BaseSyncExecutor.kwargs``
+    so executors like :class:`ClaudeSessionExecutor` can thread them
+    through to :func:`build_sdk_options` (for ``spec.claude.channels``
+    auto-wiring) and to the ``sac mcp channel`` sidecar (which subscribes
+    to the per-agent inbox SSE at ``http://127.0.0.1:<a2a_port>``).
+    """
     cls = EXECUTORS.get(handler_key)
     if cls is None:
         raise ValueError(
             f"unknown a2a handler {handler_key!r}; pick one of {sorted(EXECUTORS)}"
         )
-    return cls(agent_name=name)
+    claude_block = (v3.get("spec") or {}).get("claude") or {}
+    channels = list(claude_block.get("channels") or [])
+    return cls(agent_name=name, channels=channels, a2a_port=a2a_port)
 
 
 # ---------------------------------------------------------------------
@@ -403,7 +433,10 @@ def build_app(
                 f"agent {name!r}: unknown a2a handler {handler_key!r}; "
                 f"pick one of {sorted(HANDLERS)}"
             )
-        executor = _build_executor(name, handler_key)
+        a2a_port = ((v3.get("spec") or {}).get("a2a") or {}).get("port")
+        if isinstance(a2a_port, str) or not isinstance(a2a_port, int):
+            a2a_port = None
+        executor = _build_executor(name, handler_key, v3, a2a_port)
         dispatchers[name] = _AgentDispatcher(name, v3, executor, base_url)
 
     if not yamls:

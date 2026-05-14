@@ -374,15 +374,23 @@ def build_sdk_options(
     # this way either, which is the right default for container-as-
     # boundary anyway.)
     kwargs.setdefault("setting_sources", [])
+    # Pop sac-private keys from ``extra`` BEFORE merging into kwargs —
+    # ClaudeAgentOptions is strict and rejects unknown fields. The
+    # ``_*`` prefix marks these as sac-internal (not SDK fields).
+    channels: list[str] | None = None
+    a2a_port: int | None = None
     if extra:
-        kwargs.update(extra)
+        extra = dict(extra)  # shallow copy so we can mutate
+        channels = extra.pop("_channels", None)
+        a2a_port = extra.pop("_a2a_port", None)
+        if extra:
+            kwargs.update(extra)
 
     # spec.claude.channels → claude CLI --channels passthrough.
     # The SDK runs the bundled claude binary as a subprocess; channels
     # are CLI-only (research preview, MCP `notifications/claude/channel`
     # delivery). We forward each entry as a separate ``--channels`` arg
     # via the SDK's ``extra_args`` escape hatch when available.
-    channels = (extra or {}).get("_channels") if extra else None
     if channels:
         extra_args = kwargs.setdefault("extra_args", {})
         # extra_args is a dict[str, str|None] per SDK convention
@@ -403,10 +411,19 @@ def build_sdk_options(
                 # Inject the stdio MCP entry pointing at `sac mcp channel`.
                 mcps = kwargs.setdefault("mcp_servers", {})
                 if isinstance(mcps, dict) and "sac" not in mcps:
+                    sidecar_args = ["mcp", "channel", "--name", agent_name]
+                    # Point the sidecar at the agent's OWN A2A server
+                    # (not the host-wide sac listen on :7878 which
+                    # doesn't host /agents/<name>/inbox/stream).
+                    if a2a_port is not None:
+                        sidecar_args += [
+                            "--listen-url",
+                            f"http://127.0.0.1:{int(a2a_port)}",
+                        ]
                     mcps["sac"] = {
                         "type": "stdio",
                         "command": "sac",
-                        "args": ["mcp", "channel", "--name", agent_name],
+                        "args": sidecar_args,
                     }
         # else: caller passed a raw extra_args list — leave it alone.
 

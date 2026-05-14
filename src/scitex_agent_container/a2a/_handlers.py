@@ -90,7 +90,13 @@ def _agent_mcp_servers_and_cwd(agent_name: str) -> tuple[dict, str | None]:
     return resolve_agent_workspace(agent_name)
 
 
-def handle_claude_session(agent_name: str, user_text: str) -> str:
+def handle_claude_session(
+    agent_name: str,
+    user_text: str,
+    *,
+    channels: list[str] | None = None,
+    a2a_port: int | None = None,
+) -> str:
     """Drive Claude via ``claude-agent-sdk`` — no ``claude --print``.
 
     Same wire contract as :func:`handle_claude_cli` (sync ``(name, text)
@@ -140,11 +146,23 @@ def handle_claude_session(agent_name: str, user_text: str) -> str:
 
     system = _sac_env("A2A_CLAUDE_SYSTEM", CLAUDE_DEFAULT_SYSTEM)
     model = _sac_env("A2A_CLAUDE_MODEL")
+    # Forward `spec.claude.channels` + the agent's own A2A port so the
+    # sac MCP sidecar (auto-injected when `server:sac` is in channels)
+    # subscribes to THIS agent's inbox SSE at
+    # ``http://127.0.0.1:<a2a_port>/agents/<name>/inbox/stream``.
+    sdk_extra: dict | None = None
+    if channels or a2a_port is not None:
+        sdk_extra = {}
+        if channels:
+            sdk_extra["_channels"] = list(channels)
+        if a2a_port is not None:
+            sdk_extra["_a2a_port"] = int(a2a_port)
     try:
         options = build_sdk_options(
             agent_name,
             system_prompt=system,
             model=model,
+            extra=sdk_extra,
         )
     except SDKCommonError as exc:
         raise HandlerError(str(exc)) from exc

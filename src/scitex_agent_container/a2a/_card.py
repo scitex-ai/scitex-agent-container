@@ -69,6 +69,44 @@ def project_card(name: str, v3: dict[str, Any], base_url: str) -> dict[str, Any]
     function = labels.get("function", "")
 
     agent_base = f"{base}/agents/{name}"
+
+    # ADR-0004 — surface sac MCP push channel on the v1 AgentCard.
+    # `spec.claude.channels: [server:sac]` means an in-session MCP push
+    # subscriber is attached (the `sac mcp channel` sidecar consuming
+    # `/agents/<name>/inbox/stream`). This is orthogonal to A2A's
+    # task-level pushNotifications (`tasks/pushNotificationConfig/*`)
+    # so we advertise it under `capabilities.extensions[]` per the
+    # v1 spec, not by overloading `pushNotifications`.
+    claude_block = spec.get("claude") or {}
+    declared_channels = list(claude_block.get("channels") or [])
+    has_sac_channel = any(
+        isinstance(c, str) and c.strip() == "server:sac" for c in declared_channels
+    )
+    extensions: list[dict[str, Any]] = []
+    if has_sac_channel:
+        extensions.append(
+            {
+                "uri": "https://scitex.ai/a2a/extensions/sac-push-channel/v1",
+                "description": (
+                    "In-session MCP push: `sac mcp channel` subscribes to "
+                    "`/agents/<name>/inbox/stream` and delivers events as "
+                    "`notifications/claude/channel` to the agent's Claude "
+                    "session."
+                ),
+                "required": False,
+                "params": {
+                    "sse_path": f"/agents/{name}/inbox/stream",
+                    "mcp_tools": [
+                        "a2a_send",
+                        "a2a_reply",
+                        "a2a_ack",
+                        "a2a_peers",
+                        "a2a_inbox",
+                    ],
+                },
+            }
+        )
+
     return {
         "name": name,
         "description": _read_description(name, v3),
@@ -90,8 +128,13 @@ def project_card(name: str, v3: dict[str, Any], base_url: str) -> dict[str, Any]
         },
         "capabilities": {
             "streaming": True,
+            # A2A-spec pushNotifications = `tasks/pushNotificationConfig/*`
+            # support (task-level wire push). sac doesn't implement that
+            # surface — its push is in-session MCP, surfaced via
+            # `extensions[]` above.
             "pushNotifications": False,
             "extendedAgentCard": False,
+            "extensions": extensions,
         },
         "defaultInputModes": list(DEFAULT_INPUT_MODES),
         "defaultOutputModes": list(DEFAULT_OUTPUT_MODES),
