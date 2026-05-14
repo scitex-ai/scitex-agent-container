@@ -31,9 +31,16 @@ import asyncio
 import json
 import logging
 import os
+from collections import deque
 from typing import Any
 
 log = logging.getLogger(__name__)
+
+# Bounded ring buffer of recently received events so the a2a_reply +
+# a2a_ack tools can look up the original sender by msg_id without the
+# agent having to thread that data through itself (tools-as-contract).
+_INBOX_CAP = 200
+_recent: "deque[dict[str, Any]]" = deque(maxlen=_INBOX_CAP)
 
 
 async def _consume_sse(
@@ -129,6 +136,8 @@ async def _run(name: str, listen_url: str, bearer: str | None) -> None:
     server = Server(name=f"sac-channel-{name}")
     sse_url = f"{listen_url.rstrip('/')}/v1/sac/agents/{name}/inbox/stream"
 
+    _register_tools(server, agent_name=name, listen_url=listen_url, bearer=bearer)
+
     async with stdio_server() as (read_stream, write_stream):
         # Run the MCP loop and the SSE consumer concurrently. The
         # consumer pushes channel notifications via the session that
@@ -142,7 +151,8 @@ async def _run(name: str, listen_url: str, bearer: str | None) -> None:
         )
 
         async def on_event(event: dict[str, Any]) -> None:
-            session = getattr(server, "request_context", None)
+            # Buffer for a2a_reply / a2a_ack lookups by msg_id.
+            _recent.append(event)
             # Until the session exists (pre-initialize) — drop the
             # event. sac listen will redeliver any *new* events; nothing
             # we can do about ones that arrived before claude was ready.
@@ -174,6 +184,227 @@ async def _run(name: str, listen_url: str, bearer: str | None) -> None:
             await run_task
         finally:
             sse_task.cancel()
+
+
+def _register_tools(
+    server, *, agent_name: str, listen_url: str, bearer: str | None
+) -> None:
+    """Wire the a2a_* tools onto the channel server.
+
+    All tools speak HTTP to local `sac listen`; receivers' inbox state
+    (for reply/ack lookups) lives in the module-level ``_recent`` ring.
+    Tools-as-contract: each tool sets `from_agent`, `ts`, `msg_id`,
+    `conversation_id` correctly so the calling agent can't get it wrong.
+    """
+    import uuid as _uuid
+
+    from mcp.types import TextContent, Tool
+
+    base = listen_url.rstrip("/")
+    headers = {"Content-Type": "application/json"}
+    if bearer:
+        headers["Authorization"] = f"Bearer {bearer}"
+
+    async def _post(path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(f"{base}{path}", json=payload, headers=headers)
+            try:
+                return {"status": resp.status_code, "body": resp.json()}
+            except Exception:  # stx-allow: fallback (reason: non-JSON body tolerated)
+                return {"status": resp.status_code, "body": resp.text}
+
+    async def _get(path: str) -> dict[str, Any]:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(f"{base}{path}", headers=headers)
+            try:
+                return {"status": resp.status_code, "body": resp.json()}
+            except Exception:  # stx-allow: fallback (reason: non-JSON body tolerated)
+                return {"status": resp.status_code, "body": resp.text}
+
+    def _find(msg_id: str) -> dict[str, Any] | None:
+        for ev in reversed(_recent):
+            if ev.get("msg_id") == msg_id:
+                return ev
+        return None
+
+    def _wrap_message_send(content: str, **extra: Any) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "message": {"parts": [{"text": content}]},
+            "from_agent": agent_name,
+        }
+        params.update({k: v for k, v in extra.items() if v is not None})
+        return {
+            "jsonrpc": "2.0",
+            "id": _uuid.uuid4().hex,
+            "method": "message/send",
+            "params": params,
+        }
+
+    @server.list_tools()
+    async def _list_tools() -> list[Tool]:
+        return [
+            Tool(
+                name="a2a_send",
+                description=(
+                    "Send a message to another agent on this sac listen. "
+                    "Sets from_agent automatically; mints conversation_id "
+                    "when omitted."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "required": ["target", "content"],
+                    "properties": {
+                        "target": {"type": "string"},
+                        "content": {"type": "string"},
+                        "conversation_id": {"type": "string"},
+                        "priority": {
+                            "type": "string",
+                            "enum": ["low", "normal", "high"],
+                        },
+                        "requires_reply": {"type": "boolean"},
+                    },
+                },
+            ),
+            Tool(
+                name="a2a_reply",
+                description=(
+                    "Reply to a received message. Looks up the original "
+                    "sender by msg_id; carries the same conversation_id."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "required": ["in_reply_to", "content"],
+                    "properties": {
+                        "in_reply_to": {"type": "string"},
+                        "content": {"type": "string"},
+                    },
+                },
+            ),
+            Tool(
+                name="a2a_ack",
+                description=(
+                    "Acknowledge a received message without content. "
+                    "Cheap 'got it' to a sender that set requires_reply=true."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "required": ["msg_id"],
+                    "properties": {"msg_id": {"type": "string"}},
+                },
+            ),
+            Tool(
+                name="a2a_peers",
+                description="List reachable agents on this sac listen.",
+                inputSchema={"type": "object", "properties": {}},
+            ),
+            Tool(
+                name="a2a_inbox",
+                description=(
+                    "Return up to `limit` most recent received messages "
+                    "from this agent's inbox buffer (default 20)."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 200},
+                    },
+                },
+            ),
+        ]
+
+    @server.call_tool()
+    async def _call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
+        if name == "a2a_send":
+            target = arguments["target"]
+            content = arguments["content"]
+            payload = _wrap_message_send(
+                content,
+                conversation_id=arguments.get("conversation_id") or _uuid.uuid4().hex,
+                priority=arguments.get("priority"),
+                requires_reply=arguments.get("requires_reply"),
+            )
+            res = await _post(f"/v1/sac/agents/{target}", payload)
+            return [TextContent(type="text", text=json.dumps(res))]
+
+        if name == "a2a_reply":
+            mid = arguments["in_reply_to"]
+            orig = _find(mid)
+            if orig is None:
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(
+                            {"error": f"unknown msg_id {mid} (inbox window)"}
+                        ),
+                    )
+                ]
+            target = orig.get("from_agent", "")
+            if not target:
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps({"error": "original sender unknown"}),
+                    )
+                ]
+            payload = _wrap_message_send(
+                arguments["content"],
+                conversation_id=orig.get("conversation_id"),
+                in_reply_to=mid,
+            )
+            res = await _post(f"/v1/sac/agents/{target}", payload)
+            return [TextContent(type="text", text=json.dumps(res))]
+
+        if name == "a2a_ack":
+            mid = arguments["msg_id"]
+            orig = _find(mid)
+            if orig is None:
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(
+                            {"error": f"unknown msg_id {mid} (inbox window)"}
+                        ),
+                    )
+                ]
+            target = orig.get("from_agent", "")
+            if not target:
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps({"error": "original sender unknown"}),
+                    )
+                ]
+            payload = _wrap_message_send(
+                "",
+                conversation_id=orig.get("conversation_id"),
+                in_reply_to=mid,
+                ack=True,
+            )
+            res = await _post(f"/v1/sac/agents/{target}", payload)
+            return [TextContent(type="text", text=json.dumps(res))]
+
+        if name == "a2a_peers":
+            res = await _get("/v1/sac/agents/")
+            return [TextContent(type="text", text=json.dumps(res))]
+
+        if name == "a2a_inbox":
+            limit = int(arguments.get("limit") or 20)
+            items = list(_recent)[-limit:]
+            return [
+                TextContent(
+                    type="text", text=json.dumps({"count": len(items), "items": items})
+                )
+            ]
+
+        return [
+            TextContent(
+                type="text", text=json.dumps({"error": f"unknown tool: {name}"})
+            )
+        ]
 
 
 def main(name: str, listen_url: str | None = None) -> None:
