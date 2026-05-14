@@ -24,9 +24,11 @@ import sys
 
 import click
 
-from ..config import load_config, resolve_config
-from ..config._resolve import resolve_with_prefix
+from .._lifecycle.lifecycle import agent_stop
+from .._state.registry import Registry
+from ..config import load_config
 from ..config._host import resolve_hostname
+from ..config._resolve import resolve_with_prefix
 from ._helpers import console
 
 # Lightweight SSH reachability options — no TTY, short timeout, no host-key prompt.
@@ -352,10 +354,6 @@ def _singleton_reconcile_body(execute: bool, current_host: str, as_json: bool) -
       $ sac registry reconcile --execute
       $ sac registry reconcile --json
     """
-    from .._lifecycle.lifecycle import agent_stop
-    from ..config._host import resolve_hostname
-    from .._state.registry import Registry
-
     if not current_host:
         # stx-allow: fallback (reason: resolve_hostname may fail in non-standard environments; gethostname is always available)
         try:
