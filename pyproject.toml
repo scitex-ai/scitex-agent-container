@@ -113,6 +113,9 @@ scitex-agent-container = "scitex_agent_container"
 
 scitex-agent-container = "scitex_agent_container"
 
+[project.entry-points."scitex_dev.linter.plugins"]
+scitex-agent-container = "scitex_agent_container._linter_plugin:get_plugin"
+
 [project.urls]
 Homepage = "https://github.com/ywatanabe1989/scitex-agent-container"
 Repository = "https://github.com/ywatanabe1989/scitex-agent-container.git"
