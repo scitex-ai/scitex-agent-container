@@ -15,15 +15,25 @@ so a misbehaving hook cannot kill the agent.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 
-def build_event_log_hooks(agent_name: str, hook_matcher_cls: Any) -> dict:
+def build_event_log_hooks(
+    agent_name: str,
+    hook_matcher_cls: Any,
+    *,
+    event_log_root: Path | None = None,
+) -> dict:
     """Return the ``hooks=`` dict passed to ``ClaudeAgentOptions``.
 
     Each event class registers exactly one matcher with one callback;
     the callback forwards the SDK payload's relevant fields to
     ``event_log.append_event`` under the matching legacy ``kind``.
+
+    ``event_log_root`` (optional) is forwarded to ``append_event(..., root=)``
+    so tests can redirect the ring-buffer to a tmp dir without monkey-
+    patching the production helper.
     """
     from .._state.event_log import append_event
 
@@ -35,6 +45,7 @@ def build_event_log_hooks(agent_name: str, hook_matcher_cls: Any) -> dict:
                 "tool_name": payload.get("tool_name", ""),
                 "tool_input": payload.get("tool_input") or {},
             },
+            root=event_log_root,
         )
         return {}
 
@@ -47,6 +58,7 @@ def build_event_log_hooks(agent_name: str, hook_matcher_cls: Any) -> dict:
                 "tool_input": payload.get("tool_input") or {},
                 "tool_response": payload.get("tool_response"),
             },
+            root=event_log_root,
         )
         return {}
 
@@ -55,6 +67,7 @@ def build_event_log_hooks(agent_name: str, hook_matcher_cls: Any) -> dict:
             agent_name,
             "prompt",
             {"prompt": payload.get("prompt", "")},
+            root=event_log_root,
         )
         return {}
 
@@ -63,6 +76,7 @@ def build_event_log_hooks(agent_name: str, hook_matcher_cls: Any) -> dict:
             agent_name,
             "stop",
             {"stop_hook_active": bool(payload.get("stop_hook_active"))},
+            root=event_log_root,
         )
         return {}
 
