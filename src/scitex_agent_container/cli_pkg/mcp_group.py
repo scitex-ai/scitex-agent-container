@@ -82,6 +82,35 @@ def mcp_start(use_http: bool, host: str, port: int, dry_run: bool, yes: bool) ->
     run_server(transport=transport, host=host, port=port)
 
 
+@mcp.command("channel")
+@click.option(
+    "--name",
+    required=True,
+    help="Agent name whose inbox to subscribe to.",
+)
+@click.option(
+    "--listen-url",
+    default=None,
+    help="sac listen base URL (default: $SAC_LISTEN_BASE_URL or http://127.0.0.1:7878).",
+)
+def mcp_channel(name: str, listen_url: str | None) -> None:
+    """Run the sac push channel adapter as a stdio MCP subprocess.
+
+    Intended to be spawned by Claude Code via
+    ``--dangerously-load-development-channels server:sac`` — see
+    ``docs/sac-and-orochi.md``. Streams inbox events from sac listen
+    as ``notifications/claude/channel`` so the running session sees
+    ``<channel source="..." msg_id="...">`` tags in real time.
+
+    \b
+    Example (manual):
+      $ sac mcp channel --name lead
+    """
+    from .._mcp.channel import main as _channel_main
+
+    _channel_main(name=name, listen_url=listen_url)
+
+
 @mcp.command("doctor")
 def mcp_doctor() -> None:
     """Check MCP server dependencies + tool registration health.
