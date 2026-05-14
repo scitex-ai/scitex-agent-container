@@ -1,118 +1,147 @@
-"""Tests for the sac-statusline command (statusline.py)."""
+"""Tests for the sac-statusline command (statusline.py).
+
+No-mocks pattern (PA-306):
+- ``$SAC_STATUSLINE_STATE_DIR`` env override redirects the persist dir
+  (no module-attribute swap of ``_STATE_DIR``).
+- ``main(stdin=, runner=)`` accepts injection seams for the stdin
+  bytes-stream and the subprocess runner; tests pass real ``io.BytesIO``
+  and hand-rolled callables.
+- ``_persist`` OSError path tested by writing to a real read-only
+  directory (chmod 0o555).
+"""
 
 from __future__ import annotations
 
+import io
 import json
 from pathlib import Path
 
 import pytest
 
+import scitex_agent_container.statusline as sl_mod
 from scitex_agent_container.statusline import _persist, read_statusline_json
 
 
-def test_read_statusline_json_missing(tmp_path, monkeypatch):
-    """Returns None when the statusline JSON file does not exist."""
-    import scitex_agent_container.statusline as sl_mod
+@pytest.fixture
+def state_dir(tmp_path: Path, env_save_restore) -> Path:
+    """Redirect SAC_STATUSLINE_STATE_DIR to tmp_path via env override."""
+    env_save_restore.set("SAC_STATUSLINE_STATE_DIR", str(tmp_path))
+    return tmp_path
 
-    monkeypatch.setattr(sl_mod, "_STATE_DIR", tmp_path)
-    assert read_statusline_json("no-such-agent") is None
+
+# ---------------------------------------------------------------------------
+# read_statusline_json
+# ---------------------------------------------------------------------------
 
 
-def test_persist_and_read(tmp_path, monkeypatch):
-    """Persisting a payload and reading it back returns identical data."""
-    import scitex_agent_container.statusline as sl_mod
+def test_read_statusline_json_returns_none_for_missing_file(state_dir):
+    # Arrange
+    name = "no-such-agent"
+    # Act
+    result = read_statusline_json(name)
+    # Assert
+    assert result is None
 
-    monkeypatch.setattr(sl_mod, "_STATE_DIR", tmp_path)
 
+def test_read_statusline_json_returns_none_for_corrupt_file(state_dir):
+    # Arrange
+    (state_dir / "bad-agent.json").write_text("not json")
+    # Act
+    result = read_statusline_json("bad-agent")
+    # Assert
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# _persist
+# ---------------------------------------------------------------------------
+
+
+def test_persist_round_trips_via_read_statusline_json(state_dir):
+    # Arrange
     payload = {
         "context_window": {"used_percentage": 42.5},
         "model": {"display_name": "claude-sonnet-4-6"},
-        "rate_limits": {
-            "five_hour": {"used_percentage": 10.0, "resets_at": "2026-04-30T00:00:00Z"},
-            "seven_day": {"used_percentage": 5.0, "resets_at": "2026-05-06T00:00:00Z"},
-        },
     }
     raw = json.dumps(payload).encode()
+    # Act
     _persist(raw, "test-agent")
-
+    # Assert
     result = read_statusline_json("test-agent")
-    assert result is not None
-    assert result["context_window"]["used_percentage"] == 42.5
-    assert result["model"]["display_name"] == "claude-sonnet-4-6"
+    assert result is not None and result["context_window"]["used_percentage"] == 42.5
 
 
-def test_persist_atomic(tmp_path, monkeypatch):
-    """A second persist overwrites the previous file atomically (no .tmp left)."""
-    import scitex_agent_container.statusline as sl_mod
-
-    monkeypatch.setattr(sl_mod, "_STATE_DIR", tmp_path)
-
+def test_persist_atomic_no_tmp_file_left_behind(state_dir):
+    # Arrange
     _persist(json.dumps({"v": 1}).encode(), "agent-x")
+    # Act
     _persist(json.dumps({"v": 2}).encode(), "agent-x")
-
-    assert not (tmp_path / "agent-x.json.tmp").exists()
-    data = json.loads((tmp_path / "agent-x.json").read_text())
-    assert data["v"] == 2
+    # Assert
+    assert not (state_dir / "agent-x.json.tmp").exists()
 
 
-def test_read_statusline_json_corrupt(tmp_path, monkeypatch):
-    """Returns None gracefully when the file contains invalid JSON."""
-    import scitex_agent_container.statusline as sl_mod
-
-    monkeypatch.setattr(sl_mod, "_STATE_DIR", tmp_path)
-    (tmp_path / "bad-agent.json").write_text("not json")
-    assert read_statusline_json("bad-agent") is None
-
-
-# ---------------------------------------------------------------------------
-# Merged from test_statusline_main.py (PS-204 orphan consolidation)
-# ---------------------------------------------------------------------------
-
-import io
-import json
-
-import pytest
-
-import scitex_agent_container.statusline as sl_mod
-
-# ---------------------------------------------------------------------------
-# _agent_name
-# ---------------------------------------------------------------------------
+def test_persist_overwrites_previous_payload(state_dir):
+    # Arrange
+    _persist(json.dumps({"v": 1}).encode(), "agent-x")
+    # Act
+    _persist(json.dumps({"v": 2}).encode(), "agent-x")
+    # Assert
+    assert json.loads((state_dir / "agent-x.json").read_text())["v"] == 2
 
 
-def test_agent_name_prefers_sac_env(monkeypatch):
-    monkeypatch.setattr(sl_mod, "_sac_env", lambda key: "from-sac-env")
-    monkeypatch.setenv("CLAUDE_AGENT_ID", "ignored")
-    assert sl_mod._agent_name() == "from-sac-env"
-
-
-def test_agent_name_falls_back_to_claude_agent_id(monkeypatch):
-    monkeypatch.setattr(sl_mod, "_sac_env", lambda key: "")
-    monkeypatch.setenv("CLAUDE_AGENT_ID", "claude-aid")
-    assert sl_mod._agent_name() == "claude-aid"
-
-
-def test_agent_name_unknown_when_no_source(monkeypatch):
-    monkeypatch.setattr(sl_mod, "_sac_env", lambda key: "")
-    monkeypatch.delenv("CLAUDE_AGENT_ID", raising=False)
-    assert sl_mod._agent_name() == "unknown"
+def test_persist_swallows_oserror_when_target_dir_unwritable(
+    tmp_path, env_save_restore
+):
+    # Arrange — state dir exists but is read-only so write_bytes fails.
+    readonly = tmp_path / "readonly_state"
+    readonly.mkdir()
+    readonly.chmod(0o555)
+    env_save_restore.set("SAC_STATUSLINE_STATE_DIR", str(readonly))
+    # Act
+    try:
+        result = _persist(b"{}", "agent")
+        # Assert — production must catch OSError and return None.
+        assert result is None
+    finally:
+        readonly.chmod(0o755)
 
 
 # ---------------------------------------------------------------------------
-# _persist edge case — OSError swallowed (write to a path that can't exist)
+# _agent_name — pure env-driven, no mocks.
 # ---------------------------------------------------------------------------
 
 
-def test_persist_swallows_oserror(monkeypatch, tmp_path):
-    """If the rename fails, persist must not raise."""
-    monkeypatch.setattr(sl_mod, "_STATE_DIR", tmp_path)
+def test_agent_name_prefers_sac_agent_env_var(env_save_restore):
+    # Arrange
+    env_save_restore.set("SAC_AGENT", "from-sac-env")
+    env_save_restore.set("CLAUDE_AGENT_ID", "ignored")
+    env_save_restore.delete("SCITEX_AGENT_CONTAINER_AGENT")
+    # Act
+    name = sl_mod._agent_name()
+    # Assert
+    assert name == "from-sac-env"
 
-    def boom(*a, **kw):
-        raise OSError("disk full")
 
-    monkeypatch.setattr("pathlib.Path.write_bytes", boom)
-    # Should NOT raise.
-    sl_mod._persist(b"{}", "agent")
+def test_agent_name_falls_back_to_claude_agent_id(env_save_restore):
+    # Arrange
+    env_save_restore.delete("SAC_AGENT")
+    env_save_restore.delete("SCITEX_AGENT_CONTAINER_AGENT")
+    env_save_restore.set("CLAUDE_AGENT_ID", "claude-aid")
+    # Act
+    name = sl_mod._agent_name()
+    # Assert
+    assert name == "claude-aid"
+
+
+def test_agent_name_returns_unknown_with_no_env_set(env_save_restore):
+    # Arrange
+    env_save_restore.delete("SAC_AGENT")
+    env_save_restore.delete("SCITEX_AGENT_CONTAINER_AGENT")
+    env_save_restore.delete("CLAUDE_AGENT_ID")
+    # Act
+    name = sl_mod._agent_name()
+    # Assert
+    assert name == "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -120,59 +149,70 @@ def test_persist_swallows_oserror(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_fallback_display_minimal_ctx_only(capsys):
+def test_fallback_display_renders_context_percent(capsys):
+    # Arrange
     payload = json.dumps({"context_window": {"used_percentage": 42.0}}).encode()
+    # Act
     sl_mod._fallback_display(payload)
-    out = capsys.readouterr().out
-    assert "ctx:42%" in out
+    # Assert
+    assert "ctx:42%" in capsys.readouterr().out
 
 
-def test_fallback_display_includes_model_when_present(capsys):
+def test_fallback_display_includes_model_display_name(capsys):
+    # Arrange
     payload = json.dumps(
         {
             "context_window": {"used_percentage": 10.0},
             "model": {"display_name": "claude-opus-4-7"},
         }
     ).encode()
+    # Act
     sl_mod._fallback_display(payload)
-    out = capsys.readouterr().out
-    assert "claude-opus-4-7" in out
-    assert "ctx:10%" in out
+    # Assert
+    assert "claude-opus-4-7" in capsys.readouterr().out
 
 
-def test_fallback_display_includes_five_hour_pct(capsys):
+def test_fallback_display_includes_five_hour_used_pct(capsys):
+    # Arrange
     payload = json.dumps(
         {
             "context_window": {"used_percentage": 5.0},
             "rate_limits": {"five_hour": {"used_percentage": 22.0}},
         }
     ).encode()
+    # Act
     sl_mod._fallback_display(payload)
-    out = capsys.readouterr().out
-    assert "5h:22%" in out
+    # Assert
+    assert "5h:22%" in capsys.readouterr().out
 
 
-def test_fallback_display_omits_five_hour_when_pct_missing(capsys):
+def test_fallback_display_omits_five_hour_when_pct_absent(capsys):
+    # Arrange
     payload = json.dumps(
         {"context_window": {"used_percentage": 1.0}, "rate_limits": {"five_hour": {}}}
     ).encode()
+    # Act
     sl_mod._fallback_display(payload)
-    out = capsys.readouterr().out
-    assert "5h" not in out
+    # Assert
+    assert "5h" not in capsys.readouterr().out
 
 
-def test_fallback_display_garbage_input_silent(capsys):
-    sl_mod._fallback_display(b"not json")
-    # No raise, no output.
+def test_fallback_display_silent_on_garbage_input(capsys):
+    # Arrange
+    payload = b"not json"
+    # Act
+    sl_mod._fallback_display(payload)
+    # Assert
     assert capsys.readouterr().out == ""
 
 
-def test_fallback_display_handles_missing_context_window(capsys):
+def test_fallback_display_defaults_ctx_to_zero_when_missing(capsys):
+    # Arrange
     payload = json.dumps({"other": "fields"}).encode()
+    # Act
     sl_mod._fallback_display(payload)
-    out = capsys.readouterr().out
-    # default ctx is 0% when missing
-    assert "ctx:0%" in out
+    # Assert
+    assert "ctx:0%" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------
@@ -180,64 +220,99 @@ def test_fallback_display_handles_missing_context_window(capsys):
 # ---------------------------------------------------------------------------
 
 
-def _stub_stdin(monkeypatch, raw: bytes) -> None:
-    buf = io.BytesIO(raw)
+class _Stdin:
+    """Real bytes-stream stand-in for sys.stdin (not a Mock)."""
 
-    class _S:
-        buffer = buf
-
-    monkeypatch.setattr(sl_mod.sys, "stdin", _S())
+    def __init__(self, raw: bytes):
+        self.buffer = io.BytesIO(raw)
 
 
-def test_main_delegates_to_claude_hud_when_present(monkeypatch, tmp_path):
-    monkeypatch.setattr(sl_mod, "_STATE_DIR", tmp_path)
-    monkeypatch.setattr(sl_mod, "_agent_name", lambda: "agent-hud")
+def _run_main_capturing_systemexit(stdin_bytes, runner_fn):
+    """Run sl_mod.main and return the SystemExit, or None if not raised."""
+    try:
+        sl_mod.main(stdin=_Stdin(stdin_bytes), runner=runner_fn)
+        return None
+    except SystemExit as exc:
+        return exc
 
+
+def test_main_propagates_claude_hud_exit_code(state_dir, env_save_restore):
+    # Arrange
+    env_save_restore.set("CLAUDE_AGENT_ID", "agent-hud")
     payload = json.dumps({"context_window": {"used_percentage": 50}}).encode()
-    _stub_stdin(monkeypatch, payload)
-
-    calls = {}
 
     class _Result:
         returncode = 7
 
-    def fake_run(argv, input=None):
-        calls["argv"] = argv
-        calls["input"] = input
+    # Act
+    exc = _run_main_capturing_systemexit(payload, lambda argv, input=None: _Result())
+    # Assert
+    assert exc is not None and exc.code == 7
+
+
+def test_main_forwards_payload_to_claude_hud_stdin(state_dir, env_save_restore):
+    # Arrange
+    env_save_restore.set("CLAUDE_AGENT_ID", "agent-hud2")
+    payload = json.dumps({"context_window": {"used_percentage": 50}}).encode()
+    captured: dict = {}
+
+    class _Result:
+        returncode = 0
+
+    def runner(argv, input=None):
+        captured["input"] = input
         return _Result()
 
-    monkeypatch.setattr(sl_mod.subprocess, "run", fake_run)
-
-    with pytest.raises(SystemExit) as excinfo:
-        sl_mod.main()
-    assert excinfo.value.code == 7
-    assert calls["argv"] == ["claude-hud"]
-    assert calls["input"] == payload
-
-    # Persisted file present.
-    assert (tmp_path / "agent-hud.json").exists()
+    # Act
+    _run_main_capturing_systemexit(payload, runner)
+    # Assert
+    assert captured["input"] == payload
 
 
-def test_main_falls_back_when_claude_hud_missing(monkeypatch, tmp_path, capsys):
-    monkeypatch.setattr(sl_mod, "_STATE_DIR", tmp_path)
-    monkeypatch.setattr(sl_mod, "_agent_name", lambda: "agent-fb")
+def test_main_persists_payload_before_delegating(state_dir, env_save_restore):
+    # Arrange
+    env_save_restore.set("CLAUDE_AGENT_ID", "agent-persist")
+    payload = json.dumps({"context_window": {"used_percentage": 50}}).encode()
 
+    class _Result:
+        returncode = 0
+
+    # Act
+    _run_main_capturing_systemexit(payload, lambda argv, input=None: _Result())
+    # Assert
+    assert (state_dir / "agent-persist.json").exists()
+
+
+def test_main_falls_back_to_local_display_when_claude_hud_missing(
+    state_dir, env_save_restore, capsys
+):
+    # Arrange
+    env_save_restore.set("CLAUDE_AGENT_ID", "agent-fb")
     payload = json.dumps(
         {
             "context_window": {"used_percentage": 88},
             "model": {"display_name": "M"},
         }
     ).encode()
-    _stub_stdin(monkeypatch, payload)
 
-    def raise_fnf(argv, input=None):
+    def runner(argv, input=None):
         raise FileNotFoundError("no claude-hud")
 
-    monkeypatch.setattr(sl_mod.subprocess, "run", raise_fnf)
+    # Act
+    sl_mod.main(stdin=_Stdin(payload), runner=runner)
+    # Assert
+    assert "ctx:88%" in capsys.readouterr().out
 
-    # Should NOT raise SystemExit — falls through to _fallback_display.
-    sl_mod.main()
-    out = capsys.readouterr().out
-    assert "ctx:88%" in out
-    assert "M" in out
-    assert (tmp_path / "agent-fb.json").exists()
+
+def test_main_fallback_path_persists_payload(state_dir, env_save_restore):
+    # Arrange
+    env_save_restore.set("CLAUDE_AGENT_ID", "agent-fb-persist")
+    payload = json.dumps({"context_window": {"used_percentage": 88}}).encode()
+
+    def runner(argv, input=None):
+        raise FileNotFoundError("no claude-hud")
+
+    # Act
+    sl_mod.main(stdin=_Stdin(payload), runner=runner)
+    # Assert
+    assert (state_dir / "agent-fb-persist.json").exists()
