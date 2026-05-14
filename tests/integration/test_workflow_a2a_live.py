@@ -198,6 +198,58 @@ def test_alpha_can_invoke_advertised_mcp_peers_tool(live_a2a_server: str) -> Non
     )
 
 
+def test_alpha_can_message_beta_via_a2a_send(live_a2a_server: str) -> None:
+    """The full agent-to-agent workflow: alpha invokes its
+    ``mcp__sac__a2a_send`` tool to deliver a message to beta. Beta's
+    inbox SSE must fire with ``from_agent: "alpha"`` and the right
+    content. This is the canonical workflow the AgentCard advertises;
+    if it fails, the system is broken end-to-end.
+    """
+    import threading
+
+    captured: list[dict] = []
+    sse_done = threading.Event()
+
+    def _watch_beta_inbox() -> None:
+        req = urllib.request.Request(f"{live_a2a_server}/agents/beta/inbox/stream")
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            for raw in resp:
+                line = raw.decode().strip()
+                if line.startswith("data:"):
+                    captured.append(json.loads(line[len("data:") :].strip()))
+                    sse_done.set()
+                    return
+
+    threading.Thread(target=_watch_beta_inbox, daemon=True).start()
+    time.sleep(0.5)
+
+    _send_text(
+        live_a2a_server,
+        "alpha",
+        "Use your mcp__sac__a2a_send tool to send the agent named "
+        "'beta' the single line: hello from alpha. Pass target=beta "
+        "and content='hello from alpha'. After the tool returns, "
+        "reply with just the word DONE.",
+        timeout=120,
+    )
+
+    assert sse_done.wait(timeout=15), (
+        "alpha was asked to call mcp__sac__a2a_send to beta, but "
+        "beta's inbox SSE never received an event. The tool was "
+        "either not invoked or pointed at the wrong server."
+    )
+    ev = captured[0]
+    assert ev.get("from_agent") == "alpha", (
+        "beta got an event but from_agent isn't 'alpha'. The sidecar "
+        "is supposed to auto-fill `from_agent` from its --name arg. "
+        f"Got: {ev}"
+    )
+    assert "alpha" in (ev.get("content") or "").lower(), (
+        f"beta's event content doesn't match what alpha was asked to "
+        f"send. Got content={ev.get('content')!r}"
+    )
+
+
 def test_alpha_sees_advertised_mcp_send_tool(live_a2a_server: str) -> None:
     """`mcp__sac__a2a_send` is also advertised on the card; assert it
     appears in alpha's tool list when asked. We don't drive an actual
