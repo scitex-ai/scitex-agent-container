@@ -303,24 +303,61 @@ def project_card_proto(name: str, v3: dict[str, Any], base_url: str) -> AgentCar
 def fleet_card(
     base_url: str, agents: list[str], description: str | None = None
 ) -> dict[str, Any]:
-    """Project a fleet-level AgentCard listing ``agents``."""
+    """Project a fleet-level v1.0-shaped AgentCard listing ``agents``.
+
+    A2A v1.0 doesn't define a multi-agent directory primitive — the
+    well-known is single-agent. We serve a v1-shaped card here anyway
+    so spec-strict clients don't reject it; the per-agent listing
+    lives under the sac extension namespace
+    (``x-scitex-agent-container.agents[]``). Spec-aware sac clients
+    walk that array to reach each member's
+    ``/agents/<name>/.well-known/agent-card.json``.
+    """
     base = base_url.rstrip("/")
     return {
         "name": "scitex-agent-container",
         "description": description
         or "scitex-agent-container fleet — A2A protocol surface.",
         "version": "scitex-agent-container/1",
-        "url": base,
+        # v1: no top-level url; binding URLs live under supportedInterfaces[].
+        "supportedInterfaces": [
+            {
+                "url": base,
+                "protocolBinding": "HTTP+JSON",
+                "tenant": "scitex-agent-container",
+                "protocolVersion": "1.0",
+            }
+        ],
         "provider": {
             "organization": "scitex-agent-container",
             "url": "https://scitex.ai",
         },
+        # v1 capabilities — no stateTransitionHistory (v0.x removed).
         "capabilities": {
             "streaming": False,
             "pushNotifications": False,
-            "stateTransitionHistory": False,
+            "extendedAgentCard": False,
+            "extensions": [
+                {
+                    "uri": "https://scitex.ai/a2a/extensions/sac-fleet/v1",
+                    "description": (
+                        "sac multi-agent fleet listing. Members are "
+                        "advertised under `x-scitex-agent-container.agents[]`; "
+                        "each member has its own v1 AgentCard at "
+                        "/agents/<name>/.well-known/agent-card.json."
+                    ),
+                    "required": False,
+                    "params": {
+                        "members_path": "/agents/",
+                        "member_card_path": (
+                            "/agents/<name>/.well-known/agent-card.json"
+                        ),
+                    },
+                }
+            ],
         },
-        "authentication": {"schemes": ["none"]},
+        # v1 drops top-level `authentication`. We advertise no auth by
+        # simply omitting both `securitySchemes` and `securityRequirements`.
         "defaultInputModes": list(DEFAULT_INPUT_MODES),
         "defaultOutputModes": list(DEFAULT_OUTPUT_MODES),
         "skills": [
@@ -335,3 +372,39 @@ def fleet_card(
             "agents": [{"name": n, "url": f"{base}/agents/{n}"} for n in agents],
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# v1 schema validator — every served card MUST pass.
+# ---------------------------------------------------------------------------
+
+
+class CardSchemaError(ValueError):
+    """A served AgentCard dict didn't match the A2A v1 proto schema.
+
+    Raised by :func:`validate_card_v1` and propagated by the route
+    handlers as a 500 with a clear server-log entry — we never serve a
+    silently-broken card.
+    """
+
+
+def validate_card_v1(card: dict[str, Any]) -> None:
+    """Validate ``card`` against the A2A v1 ``AgentCard`` proto.
+
+    sac extension keys (``x-*`` and ``x-scitex-agent-container``) are
+    stripped before the proto check — the proto rejects unknown fields
+    and our extension namespace is intentionally outside the proto. The
+    stripped subset must still parse cleanly; if not, that's a real
+    schema bug in our projection code.
+    """
+    sanitized = {
+        k: v
+        for k, v in card.items()
+        if not (k == "x-scitex-agent-container" or k.startswith("x-"))
+    }
+    try:
+        ParseDict(sanitized, AgentCard())
+    except Exception as exc:  # stx-allow: fallback (reason: surface every schema mismatch as a clear error rather than a silent malformed card)
+        raise CardSchemaError(
+            f"served AgentCard failed A2A v1 schema validation: {exc}"
+        ) from exc

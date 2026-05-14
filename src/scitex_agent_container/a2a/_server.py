@@ -44,9 +44,11 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from scitex_agent_container.a2a._card import (
+    CardSchemaError,
     fleet_card,
     project_card,
     project_card_proto,
+    validate_card_v1,
 )
 from scitex_agent_container.a2a._handlers import HANDLERS
 from scitex_agent_container.a2a._inbox_bus import Broker, mint_event
@@ -142,10 +144,21 @@ class _ServerCtx:
 
 
 def _build_app(ctx: _ServerCtx) -> Starlette:
+    def _validated(card: dict[str, Any], label: str) -> Response:
+        try:
+            validate_card_v1(card)
+        except CardSchemaError as exc:
+            log.error("%s failed A2A v1 validation: %s", label, exc)
+            return JSONResponse(
+                {"error": f"{label} failed v1 validation", "detail": str(exc)},
+                status_code=500,
+            )
+        return JSONResponse(card)
+
     async def get_fleet_card(request: Request) -> Response:
         base = _base_url(request)
         agents = sorted(ctx.yamls.keys())
-        return JSONResponse(fleet_card(base, agents))
+        return _validated(fleet_card(base, agents), "fleet card")
 
     async def list_agents(request: Request) -> Response:
         base = _base_url(request)
@@ -160,7 +173,7 @@ def _build_app(ctx: _ServerCtx) -> Starlette:
         if v3 is None:
             return JSONResponse({"error": f"unknown agent: {name}"}, status_code=404)
         base = _base_url(request)
-        return JSONResponse(project_card(name, v3, base))
+        return _validated(project_card(name, v3, base), f"agent card {name!r}")
 
     async def post_agent(request: Request) -> Response:
         name = request.path_params["name"]
