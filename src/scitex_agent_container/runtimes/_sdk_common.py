@@ -408,12 +408,29 @@ def build_sdk_options(
             extra_args.setdefault("dangerously-load-development-channels", "server:sac")
         mcps = kwargs.setdefault("mcp_servers", {})
         if isinstance(mcps, dict) and "sac" not in mcps:
-            sidecar_args = ["mcp", "channel", "--name", agent_name]
-            if a2a_port is not None:
-                sidecar_args += [
-                    "--listen-url",
-                    f"http://127.0.0.1:{int(a2a_port)}",
-                ]
+            # No silent fallback. The sidecar's --listen-url MUST point
+            # at the actual server hosting /agents/<name>/inbox/stream.
+            # If a2a_port wasn't threaded through, the caller forgot to
+            # pass listen_port to build_app — surface that explicitly
+            # rather than letting the sidecar quietly fall back to env
+            # / 127.0.0.1:7878 and produce "Command failed with no
+            # output" tool errors at runtime.
+            if a2a_port is None:
+                raise SDKCommonError(
+                    "spec.claude.channels=[server:sac] is set but no "
+                    "a2a_port was threaded through to build_sdk_options. "
+                    "The MCP sidecar needs the server's actual listen "
+                    "port for its --listen-url. Pass listen_port to "
+                    "build_app(), or set spec.a2a.port in the yaml."
+                )
+            sidecar_args = [
+                "mcp",
+                "channel",
+                "--name",
+                agent_name,
+                "--listen-url",
+                f"http://127.0.0.1:{int(a2a_port)}",
+            ]
             mcps["sac"] = {
                 "type": "stdio",
                 "command": "sac",
