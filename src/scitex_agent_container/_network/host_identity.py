@@ -50,10 +50,6 @@ def _default_identity_path() -> Path:
     return Path.home() / ".scitex" / "host-identity.yaml"
 
 
-# Back-compat re-export. Module consumers that read this attribute get
-# the path at import time; the function above is the authoritative source.
-HOST_IDENTITY_PATH = _default_identity_path()
-
 _UNIVERSAL_LOOPBACK: set[str] = {"localhost", "127.0.0.1", "::1"}
 
 _CACHE: set[str] | None = None

@@ -77,11 +77,6 @@ def _default_log_root() -> Path:
     return base / "agent-container" / "logs" / "network"
 
 
-# Back-compat re-export. Reads of this attribute get the path at import
-# time; ``_default_log_root()`` is the authoritative source.
-DEFAULT_LOG_ROOT = _default_log_root()
-
-
 @dataclass
 class ProbeResult:
     """Outcome of one probe layer.

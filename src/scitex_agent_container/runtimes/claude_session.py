@@ -54,11 +54,6 @@ def _workdir_claude_warn_threshold() -> int:
     return 10 * 1024 * 1024  # 10 MB
 
 
-# Back-compat re-export: read at import time. Production callers should
-# prefer ``_workdir_claude_warn_threshold()`` to see env overrides.
-_WORKDIR_CLAUDE_SIZE_WARN_BYTES = _workdir_claude_warn_threshold()
-
-
 def _workdir_claude_size_bytes(workdir: str | None) -> int:
     """Return total size of ``<workdir>/.claude/`` in bytes, or 0.
 
