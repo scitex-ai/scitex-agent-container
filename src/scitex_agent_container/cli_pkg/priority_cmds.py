@@ -3,17 +3,17 @@
 Building blocks for the healer-driven singleton reconciler (scitex-orochi#250).
 
 When an agent declares ``spec.host: [spartan, nas, mba]``, it should run on the
-*highest-priority reachable* host, not just wherever ``sac start`` was called.
+*highest-priority reachable* host, not just wherever ``sac agent start`` was called.
 ``priority-check`` probes each higher-priority host (via a brief SSH connectivity
 check) and returns a JSON report so healer agents can decide whether to initiate
 handover. ``singleton-reconcile`` sweeps all locally registered agents and
 initiates handover for any that should yield.
 
 Usage:
-    sac priority-check <config-or-agent-name>
-    sac priority-check proj-neurovista --current-host nas --json
-    sac singleton-reconcile
-    sac singleton-reconcile --execute  # actually trigger SSH start + local stop
+    sac agent check-priority <config-or-agent-name>
+    sac agent check-priority proj-neurovista --current-host nas --json
+    sac registry reconcile
+    sac registry reconcile --execute  # actually trigger SSH start + local stop
 """
 
 from __future__ import annotations
@@ -21,11 +21,11 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-from typing import Optional
 
 import click
 
 from ..config import load_config, resolve_config
+from ..config._resolve import resolve_with_prefix
 from ..config._host import resolve_hostname
 from ._helpers import console
 
@@ -157,7 +157,7 @@ def _priority_report(
     }
 
 
-@click.command("priority-check")
+@click.command("check-priority")
 @click.argument("config_path")
 @click.option(
     "--current-host",
@@ -185,16 +185,14 @@ def priority_check(
       1  — SHOULD yield (a higher-priority host is reachable)
       2  — error (config not found, YAML invalid, etc.)
 
-    Example — run from a healer's periodic tick:
-      if sac priority-check proj-neurovista; then
-        echo "OK"
-      else
-        echo "Need to hand off to higher-priority host"
-      fi
+    \b
+    Example:
+      $ sac agent check-priority proj-neurovista
+      $ sac agent check-priority proj-neurovista --json
     """
     # stx-allow: fallback (reason: config path may not exist or resolve to a valid YAML; CLI exits with code 2 to signal a usage/config error to healer callers)
     try:
-        resolved = resolve_config(config_path)
+        resolved = resolve_with_prefix(config_path)
     except Exception as exc:
         if as_json:
             click.echo(json.dumps({"error": str(exc)}, indent=2))
@@ -242,22 +240,26 @@ def priority_check(
 # that have a higher-priority reachable host.  (scitex-orochi#250)
 # ---------------------------------------------------------------------------
 
-_SSH_START_TIMEOUT = 30  # seconds to wait for remote sac start
+_SSH_START_TIMEOUT = 30  # seconds to wait for remote sac agent start
 
 
 def _ssh_start_agent(host: str, agent_name: str) -> bool:
-    """SSH to *host* and run ``sac start <agent_name>`` in the background.
+    """SSH to *host* and run ``sac agent start <agent_name>`` in the background.
 
     Returns True if the remote command exited 0.
     """
     cmd = [
         "ssh",
-        "-o", "ConnectTimeout=10",
-        "-o", "BatchMode=yes",
-        "-o", "StrictHostKeyChecking=no",
-        "-o", "LogLevel=ERROR",
+        "-o",
+        "ConnectTimeout=10",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "LogLevel=ERROR",
         host,
-        f"sac start {agent_name}",
+        f"sac agent start {agent_name}",
     ]
     try:
         result = subprocess.run(
@@ -270,7 +272,7 @@ def _ssh_start_agent(host: str, agent_name: str) -> bool:
         return False
 
 
-@click.command("singleton-reconcile")
+@click.command("reconcile-singletons")
 @click.option(
     "--execute",
     is_flag=True,
@@ -292,7 +294,43 @@ def _ssh_start_agent(host: str, agent_name: str) -> bool:
     default=False,
     help="Output machine-readable JSON.",
 )
-def singleton_reconcile(execute: bool, current_host: str, as_json: bool) -> None:
+@click.option(
+    "--dry-run",
+    "dry_run",
+    is_flag=True,
+    default=False,
+    help="Force dry-run (already the default unless --execute is passed).",
+)
+@click.option(
+    "-y",
+    "--yes",
+    "yes",
+    is_flag=True,
+    default=False,
+    help="Skip confirmation prompts (currently a no-op; reserved).",
+)
+def singleton_reconcile(
+    execute: bool, current_host: str, as_json: bool, dry_run: bool, yes: bool
+) -> None:
+    """Reconcile singleton agent placement across the fleet.
+
+    \b
+    Note:
+      --dry-run is implied by default; --execute is the only flag that opts
+      into mutating behaviour. --yes is accepted for API consistency.
+
+    \b
+    Example:
+      $ sac registry reconcile
+      $ sac registry reconcile --execute
+      $ sac registry reconcile --json
+    """
+    _ = dry_run
+    _ = yes
+    return _singleton_reconcile_body(execute, current_host, as_json)
+
+
+def _singleton_reconcile_body(execute: bool, current_host: str, as_json: bool) -> None:
     """Reconcile singleton agent placement across the fleet.
 
     Sweeps all locally registered agents. For each singleton whose YAML
@@ -307,10 +345,16 @@ def singleton_reconcile(execute: bool, current_host: str, as_json: bool) -> None
       0 — all singletons on correct hosts (or --execute succeeded)
       1 — at least one YIELD found (dry-run) or handover failed
       2 — config/runtime error
+
+    \b
+    Example:
+      $ sac registry reconcile
+      $ sac registry reconcile --execute
+      $ sac registry reconcile --json
     """
+    from .._lifecycle.lifecycle import agent_stop
     from ..config._host import resolve_hostname
-    from ..lifecycle import agent_stop
-    from ..registry import Registry
+    from .._state.registry import Registry
 
     if not current_host:
         # stx-allow: fallback (reason: resolve_hostname may fail in non-standard environments; gethostname is always available)
@@ -318,6 +362,7 @@ def singleton_reconcile(execute: bool, current_host: str, as_json: bool) -> None
             current_host = resolve_hostname()
         except Exception:
             import socket
+
             current_host = socket.gethostname().split(".")[0]
 
     registry = Registry()
@@ -337,11 +382,13 @@ def singleton_reconcile(execute: bool, current_host: str, as_json: bool) -> None
         try:
             report = _priority_report(config_path, current_host)
         except Exception as exc:
-            results.append({
-                "agent": name,
-                "error": str(exc),
-                "action": "skip",
-            })
+            results.append(
+                {
+                    "agent": name,
+                    "error": str(exc),
+                    "action": "skip",
+                }
+            )
             any_error = True
             continue
 
@@ -370,14 +417,16 @@ def singleton_reconcile(execute: bool, current_host: str, as_json: bool) -> None
         else:
             action = "stay"
 
-        results.append({
-            "agent": name,
-            "should_yield": should,
-            "preferred_host": preferred_host,
-            "current_host": current_host,
-            "reason": report.get("reason", ""),
-            "action": action,
-        })
+        results.append(
+            {
+                "agent": name,
+                "should_yield": should,
+                "preferred_host": preferred_host,
+                "current_host": current_host,
+                "reason": report.get("reason", ""),
+                "action": action,
+            }
+        )
 
     if as_json:
         click.echo(json.dumps(results, indent=2))

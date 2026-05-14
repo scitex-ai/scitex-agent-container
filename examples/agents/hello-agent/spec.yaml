@@ -1,0 +1,32 @@
+# hello-agent — minimal hello-world agent matching the README quickstart.
+#
+# Copy this directory to get started:
+#   cp -r examples/agents/hello-agent ~/.scitex/agent-container/agents/hello-agent
+#   sac agents start hello-agent --foreground
+
+apiVersion: scitex-agent-container/v3
+kind: Agent
+
+spec:
+  runtime: apptainer
+
+  apptainer:
+    image: ~/.scitex/agent-container/containers/sac-base.sif
+
+  claude:
+    model: haiku
+    flags:
+      - --dangerously-skip-permissions
+
+  startup_prompts:
+    - "Reply with the string 'Hello! I am hello-agent' and nothing else."
+
+  health:
+    enabled: true
+    interval: 60
+    method: sdk-alive
+
+  restart:
+    policy: never
+
+# EOF

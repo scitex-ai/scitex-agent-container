@@ -8,7 +8,7 @@ Quickstart
     pip install scitex-agent-container
 
    The fastest path is to copy a pattern template from
-   ``config/templates/`` (``local``, ``docker``, ``apptainer``, ``ssh``,
+   ``examples/agent-templates/`` (``local``, ``docker``, ``apptainer``, ``ssh``,
    ``ssh-slurm``, ``mcp``). See :doc:`templates` for the full matrix.
 
 2. Create an agent definition directory with a YAML manifest plus
@@ -45,8 +45,8 @@ Quickstart
 
     scitex-agent-container start my-agent/my-agent.yaml
     scitex-agent-container inspect my-agent
-    scitex-agent-container status my-agent --json
-    scitex-agent-container logs my-agent -n 100
+    scitex-agent-container show-status my-agent --json
+    scitex-agent-container show-logs my-agent -n 100
     scitex-agent-container attach my-agent      # Ctrl-B D to detach (tmux)
 
 4. (Optional) Wire Claude Code hooks so ``status --json`` can surface

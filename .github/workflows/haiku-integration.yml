@@ -31,21 +31,24 @@ jobs:
     timeout-minutes: 10
 
     env:
-      # Project-scoped CI key. The Haiku integration test's
-      # _auth_available() reads this first and re-exports it as
-      # ANTHROPIC_API_KEY so the `claude` CLI picks it up.
-      SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY: ${{ secrets.SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY }}
+      # Sac-namespaced CI key (single name across local + CI + container).
+      # The Haiku integration test's _auth_available() reads this first
+      # and re-exports it as ANTHROPIC_API_KEY so the `claude` CLI picks
+      # it up.
+      SAC_ANTHROPIC_API_KEY: ${{ secrets.SAC_ANTHROPIC_API_KEY }}
 
     steps:
       - name: Fail early if the secret is missing
         run: |
-          if [ -z "${SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY}" ]; then
-            echo "::error::secret SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY is not set."
+          if [ -z "${SAC_ANTHROPIC_API_KEY}" ]; then
+            echo "::error::secret SAC_ANTHROPIC_API_KEY is not set."
             echo "Set it via:"
-            echo "  gh secret set SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY --repo <owner>/<repo>"
+            echo "  gh secret set SAC_ANTHROPIC_API_KEY --repo <owner>/<repo>"
+            echo "Or rotate from your local OAuth (~/.claude/.credentials.json):"
+            echo "  sac dev rotate-github-secrets --yes"
             exit 1
           fi
-          echo "secret present (len=${#SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY})"
+          echo "secret present (len=${#SAC_ANTHROPIC_API_KEY})"
 
       - uses: actions/checkout@v4
 

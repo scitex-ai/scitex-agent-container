@@ -5,24 +5,43 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sys
-from pathlib import Path
 
 import click
 
-from ..config import load_config, validate_config
-from ._helpers import console
+from ..config import load_config, resolve_config, validate_config
+from ._helpers import agent_name_complete, console
 
 
 @click.command()
-@click.argument("config_path", type=str)
-def check(config_path: str) -> None:
+@click.argument("name_or_path", type=str, shell_complete=agent_name_complete)
+def check(name_or_path: str) -> None:
     """Run preflight checks for an agent deployment.
 
-    Verifies that all dependencies (SSH, screen, python, etc.) are
-    available before starting the agent. Useful for debugging deployment
-    failures.
+    Validates the YAML spec, then probes runtime dependencies
+    (container backend, python). Accepts either a bare agent name
+    (resolved against the search chain) or an explicit path to
+    ``spec.yaml``.
+
+    \b
+    Example:
+      $ sac agent check orchestrator
+      $ sac agent check ~/.scitex/agent-container/agents/foo/spec.yaml
     """
     # stx-allow: fallback (reason: config file may not exist or contain invalid YAML; CLI exits with code 1 to signal preflight failure)
+    try:
+        config_path = resolve_config(name_or_path)
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+        console.print(f"[red]Error: {exc}[/red]")
+        sys.exit(1)
+
+    errors = validate_config(config_path)
+    if errors:
+        console.print(f"[red]Config validation failed: {config_path}[/red]")
+        for error in errors:
+            console.print(f"  [red]- {error}[/red]")
+        sys.exit(1)
+
+    # stx-allow: fallback (reason: load_config may fail post-validation in rare schema-evolution scenarios; CLI exits cleanly)
     try:
         config = load_config(config_path)
     except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
@@ -30,94 +49,42 @@ def check(config_path: str) -> None:
         sys.exit(1)
 
     console.print(
-        f"[blue]Checking {config.name}"
-        + (
-            f" (remote: {config.remote.host})"
-            if config.remote.is_remote
-            else " (local)"
-        )
-        + "...[/blue]"
+        f"[blue]Checking {config.name} ({config.runtime or 'apptainer'})...[/blue]"
     )
 
     all_ok = True
 
-    if config.remote.is_remote:
-        from ..runtimes.claude_code import _SSHRemote
-
-        results = _SSHRemote.preflight(config)
-        for name, passed, detail in results:
-            if passed:
-                console.print(f"  {name + ':':30s} [green]{detail}[/green]")
-            else:
-                all_ok = False
-                console.print(f"  {name + ':':30s} [red]FAIL[/red]")
-                for line in detail.split("\n"):
-                    console.print(f"    [red]{line}[/red]")
+    # Container backend binary — apptainer-only since the 2026-05-13 ripout.
+    backend = config.runtime or "apptainer"
+    backend_bin = shutil.which(backend)
+    if backend_bin:
+        console.print(f"  {backend + ':':30s} [green]OK ({backend_bin})[/green]")
     else:
-        # Local checks
-        screen_bin = shutil.which("screen")
-        if screen_bin:
-            console.print(f"  {'screen:':30s} [green]OK ({screen_bin})[/green]")
-        else:
-            all_ok = False
-            console.print(f"  {'screen:':30s} [red]FAIL[/red]")
-            console.print("    [red]GNU screen not found[/red]")
-            console.print("    [red]  Fix: sudo apt install screen[/red]")
+        all_ok = False
+        console.print(f"  {backend + ':':30s} [red]FAIL ({backend} not found)[/red]")
 
-        try:
-            proc = subprocess.run(
-                ["python3", "--version"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if proc.returncode == 0:
-                console.print(
-                    f"  {'python:':30s} [green]OK ({proc.stdout.strip()})[/green]"
-                )
-            else:
-                all_ok = False
-                console.print(f"  {'python:':30s} [red]FAIL[/red]")
-        except FileNotFoundError:  # stx-allow: fallback (reason: file may not exist on first use)
-            all_ok = False
-            console.print(f"  {'python:':30s} [red]FAIL (python3 not found)[/red]")
-
-        sac_bin = shutil.which("scitex-agent-container")
-        if sac_bin:
-            # stx-allow: fallback (reason: subprocess to get version may fail due to permission or env issues; "unknown" version is safe for the preflight display)
-            try:
-                proc = subprocess.run(
-                    ["scitex-agent-container", "--version"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                )
-                ver = proc.stdout.strip() if proc.returncode == 0 else "unknown"
-            except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-                ver = "unknown"
+    # Python (used by hooks / pre-start scripts)
+    try:
+        proc = subprocess.run(
+            ["python3", "--version"], capture_output=True, text=True, timeout=5
+        )
+        if proc.returncode == 0:
             console.print(
-                f"  {'scitex-agent-container:':30s} [green]OK ({ver})[/green]"
+                f"  {'python:':30s} [green]OK ({proc.stdout.strip()})[/green]"
             )
         else:
             all_ok = False
-            console.print(f"  {'scitex-agent-container:':30s} [red]FAIL[/red]")
-            console.print("    [red]  Fix: pip install scitex-agent-container[/red]")
+            console.print(f"  {'python:':30s} [red]FAIL[/red]")
+    except (
+        FileNotFoundError
+    ):  # stx-allow: fallback (reason: file may not exist on first use)
+        all_ok = False
+        console.print(f"  {'python:':30s} [red]FAIL (python3 not found)[/red]")
 
-        # stx-allow: fallback (reason: df may be unavailable or timeout in restricted environments; showing "unknown" disk status is acceptable for a preflight report)
-        try:
-            proc = subprocess.run(
-                ["df", "-h", "/"], capture_output=True, text=True, timeout=5
-            )
-            if proc.returncode == 0:
-                lines = proc.stdout.strip().split("\n")
-                if len(lines) >= 2:
-                    parts = lines[1].split()
-                    usage = parts[4] if len(parts) >= 5 else "unknown"
-                    console.print(
-                        f"  {'disk space:':30s} [green]OK ({usage} used)[/green]"
-                    )
-        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-            console.print(f"  {'disk space:':30s} [dim]unknown[/dim]")
+    # D4 — warn (don't fail) on bind targets that mirror host paths.
+    # Container-canonical roots are /srv/, /work/, /opt/, /data/. See
+    # docs/adr/0001-isolation-hardening.md §D4.
+    _warn_host_mirroring_bind_targets(config)
 
     if all_ok:
         console.print("[green]Ready to deploy.[/green]")
@@ -128,10 +95,70 @@ def check(config_path: str) -> None:
         sys.exit(1)
 
 
+# Bind targets that start with these prefixes mirror host home / user
+# directories. ADR D4: container-canonical targets must live under
+# /srv/, /work/, /opt/, /data/.
+_HOST_MIRRORING_TARGET_PREFIXES = ("/home/", "/Users/", "/root/")
+
+
+def _warn_host_mirroring_bind_targets(config) -> None:
+    """Emit a non-fatal warning for each bind whose target mirrors a host path.
+
+    See ``docs/adr/0001-isolation-hardening.md`` §D4. The
+    operator may have HPC reasons to keep mirroring (e.g. cross-host
+    path stability for shared filesystems) so this never fails the
+    check — just makes the deviation visible.
+    """
+    ap = getattr(config, "apptainer", None)
+    if ap is None:
+        return
+    binds = list(getattr(ap, "binds", None) or [])
+    for bind in binds:
+        target = _bind_target(str(bind))
+        if not target:
+            continue
+        if any(target.startswith(p) for p in _HOST_MIRRORING_TARGET_PREFIXES):
+            console.print(
+                f"[yellow]WARN  {config.name}: bind target {target} mirrors a "
+                f"host path; container-canonical convention is /srv/, /work/, "
+                f"/opt/, /data/.\n       See "
+                f"docs/adr/0001-isolation-hardening.md (D4).[/yellow]"
+            )
+
+
+def _bind_target(bind: str) -> str:
+    """Return the container-side target of a ``host:target[:mode]`` bind string.
+
+    Apptainer accepts both ``host:target`` and ``host:target:mode``; we
+    parse with the same heuristic the runtime applies (the trailing
+    token is a mode only if it's exactly ``ro`` or ``rw``).
+    """
+    parts = bind.split(":")
+    if len(parts) < 2:
+        return ""
+    if len(parts) >= 3 and parts[-1] in {"ro", "rw"}:
+        return parts[-2]
+    return parts[1]
+
+
 @click.command()
-@click.argument("config_path", type=str)
-def validate(config_path: str) -> None:
-    """Validate a YAML config file."""
+@click.argument("name_or_path", type=str)
+def validate(name_or_path: str) -> None:
+    """Validate a YAML config file.
+
+    Accepts either a bare agent name (resolved against the search chain)
+    or an explicit path to ``spec.yaml``.
+
+    \b
+    Example:
+      $ sac agent validate orchestrator
+      $ sac agent validate ~/.scitex/agent-container/agents/foo/spec.yaml
+    """
+    try:
+        config_path = resolve_config(name_or_path)
+    except Exception as exc:  # stx-allow: fallback (reason: not-found / unresolvable name surfaced to user)
+        console.print(f"[red]Error: {exc}[/red]")
+        sys.exit(1)
     errors = validate_config(config_path)
     if not errors:
         console.print(f"[green]Config is valid: {config_path}[/green]")
@@ -142,41 +169,8 @@ def validate(config_path: str) -> None:
         sys.exit(1)
 
 
-@click.command()
-@click.option(
-    "--runtime",
-    type=click.Choice(["docker", "apptainer"]),
-    default="docker",
-    help="Container runtime to build for.",
-)
-@click.option(
-    "--image",
-    default="scitex-agent-container:latest",
-    help="Image name/tag.",
-)
-def build(runtime: str, image: str) -> None:
-    """Build container base image."""
-    containers_dir = Path(__file__).resolve().parent.parent.parent.parent / "containers"
-
-    if runtime == "docker":
-        from ..runtimes.docker import DockerRuntime
-
-        console.print(f"[blue]Building Docker image: {image}[/blue]")
-        success = DockerRuntime.build_image(image=image, context=str(containers_dir))
-        if success:
-            console.print(f"[green]Docker image built: {image}[/green]")
-        else:
-            console.print("[red]Docker build failed[/red]")
-            sys.exit(1)
-    elif runtime == "apptainer":
-        from ..runtimes.apptainer import ApptainerRuntime
-
-        def_file = str(containers_dir / "apptainer.def")
-        sif_path = str(containers_dir / "claude-code-container.sif")
-        console.print(f"[blue]Building Apptainer image: {sif_path}[/blue]")
-        success = ApptainerRuntime.build_image(def_file=def_file, sif_path=sif_path)
-        if success:
-            console.print(f"[green]Apptainer image built: {sif_path}[/green]")
-        else:
-            console.print("[red]Apptainer build failed[/red]")
-            sys.exit(1)
+# NOTE: the legacy `sac build-image` command lived here and supported
+# Docker + Apptainer side-by-side. Both build paths have been removed
+# in the 2026-05-13 docker/podman ripout — the canonical builder is
+# now `sac image build` (in `image_group.py`), which delegates to
+# `scitex-container` and emits Apptainer SIFs only.

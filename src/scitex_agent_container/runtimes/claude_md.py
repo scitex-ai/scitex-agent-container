@@ -217,12 +217,17 @@ def build_skills_lines(config: AgentConfig) -> list[str]:
 
     Mode controlled by ``config.skills.injection_mode``:
 
-    * ``"block"`` (default) — emit ```skills <name> ``` fenced blocks.
-    * ``"at-import"`` — emit ``@<absolute-path>`` lines so Claude Code
-      inlines the skill files at session start. Path resolution prefers
-      ``<root>/<name>/SKILL.md`` and falls back to a frontmatter
-      ``tags:`` scan; unresolved names emit a visible
-      ``<!-- skill 'X': not resolved -->`` placeholder + a WARNING log.
+    * ``"block"`` (default) — emit ```skills <name> ``` fenced blocks
+      for both required and available.
+    * ``"at-import"`` — Required Skills emit ``@<absolute-path>`` lines
+      so Claude Code inlines the skill files at session start (HARD
+      mode: eager, content-injected). Available Skills emit a soft
+      ``- <name>: <path>`` reference listing — paths are resolved so
+      the agent knows where to look, but no ``@-import`` is materialised
+      (SOFT mode: lazy, the agent reads them only on demand).
+      Path resolution prefers ``<root>/<name>/SKILL.md`` and falls back
+      to a frontmatter ``tags:`` scan; unresolved names emit a visible
+      placeholder + a WARNING log.
 
     Returned list is appendable into either the v1 ``.claude/CLAUDE.md``
     auto-section or the v2 main ``CLAUDE.md`` (between Start/End markers).
@@ -233,41 +238,79 @@ def build_skills_lines(config: AgentConfig) -> list[str]:
     style = getattr(config.skills, "match_style", "exact")
     lines: list[str] = []
 
-    def _emit(heading: str, intro: str, names: list[str]) -> None:
+    def _resolve_warn(name: str) -> list[Path]:
+        paths = _resolve_skill(name, roots, strategies, style)
+        if not paths:
+            logger.warning(
+                "skill %r not found under --add-dir roots %s "
+                "(checked name-as-dir <root>/<name>/SKILL.md and "
+                "frontmatter tag match); injection skipped",
+                name,
+                [str(r) for r in roots],
+            )
+        return paths
+
+    def _emit_block(heading: str, intro: str, names: list[str]) -> None:
+        """Legacy ```skills <name>``` fenced-block form (lazy)."""
         if not names:
             return
         lines.append(heading)
         lines.append(intro)
-        if mode == "at-import":
-            for name in names:
-                paths = _resolve_skill(name, roots, strategies, style)
-                if not paths:
-                    logger.warning(
-                        "skill %r not found under --add-dir roots %s "
-                        "(checked name-as-dir <root>/<name>/SKILL.md and "
-                        "frontmatter tag match); injection skipped",
-                        name,
-                        [str(r) for r in roots],
-                    )
-                    lines.append(f"<!-- skill {name!r}: not resolved -->")
-                    continue
-                for p in paths:
-                    lines.append(f"@{p}")
-        else:
-            lines.append("```skills")
-            for name in names:
-                lines.append(name)
-            lines.append("```")
+        lines.append("```skills")
+        for name in names:
+            lines.append(name)
+        lines.append("```")
         lines.append("")
 
-    _emit(
-        "### Required Skills", "Load these skills at startup:", config.skills.required
-    )
-    _emit(
-        "### Available Skills",
-        "These skills can be used when needed:",
-        config.skills.available,
-    )
+    def _emit_required(names: list[str]) -> None:
+        """HARD mode: emit ``@<path>`` lines so the SDK / CLI inlines
+        the skill content at session start."""
+        if not names:
+            return
+        if mode != "at-import":
+            _emit_block(
+                "### Required Skills",
+                "Load these skills at startup:",
+                names,
+            )
+            return
+        lines.append("### Required Skills")
+        lines.append("Load these skills at startup:")
+        for name in names:
+            paths = _resolve_warn(name)
+            if not paths:
+                lines.append(f"<!-- skill {name!r}: not resolved -->")
+                continue
+            for p in paths:
+                lines.append(f"@{p}")
+        lines.append("")
+
+    def _emit_available(names: list[str]) -> None:
+        """SOFT mode: emit a reference listing (name + path) but NO
+        ``@-import``. The agent decides when (and whether) to read them.
+        """
+        if not names:
+            return
+        if mode != "at-import":
+            _emit_block(
+                "### Available Skills",
+                "These skills can be used when needed:",
+                names,
+            )
+            return
+        lines.append("### Available Skills")
+        lines.append("These skills can be used when needed (read on demand):")
+        for name in names:
+            paths = _resolve_warn(name)
+            if not paths:
+                lines.append(f"- {name} (not resolved)")
+                continue
+            for p in paths:
+                lines.append(f"- {name}: {p}")
+        lines.append("")
+
+    _emit_required(config.skills.required)
+    _emit_available(config.skills.available)
     return lines
 
 

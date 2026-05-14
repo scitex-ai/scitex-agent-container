@@ -1,0 +1,431 @@
+"""Agent-list assembly + presentation (JSON + rich-table)."""
+
+from __future__ import annotations
+
+import json as json_mod
+
+import click
+from rich.table import Table
+
+from ..._state.registry import Registry
+from ...config import load_config
+from ._console import console
+
+
+def _safe_port_for(name: str) -> int | None:
+    """Return the agent's claimed a2a port, or None on any failure.
+
+    Used by Layer-6 of auto-port-allocation to surface the allocated
+    port in ``sac agents list`` output. Tolerant: a missing state.db,
+    schema-not-yet-initialized error, or unknown name all map to
+    ``None`` so the list command never fails because of port lookup.
+    """
+    # stx-allow: fallback (reason: list output must never crash on a
+    # port-allocator hiccup; ``None`` cell rendered as ``—`` is the
+    # right UX.)
+    try:
+        from ..._state import port_allocator
+
+        return port_allocator.get_port(name)
+    except Exception:  # stx-allow: fallback (reason: see inline comment)
+        return None
+
+
+def _probe_local(cfg) -> bool | None:
+    """Probe an agent's liveness via ContainerRuntime.
+
+    F-CS17 stage 3b: replaces the legacy ``_probe_remote`` /
+    ``_detect_multiplexer`` machinery. Sac is a container wrapper —
+    liveness is whatever ``docker inspect`` reports for the
+    container_id sidecar in the agent's state dir. Cross-host
+    liveness moved to F-CS12's ``sac --on <peer> agent status``
+    pattern; the local helper here NEVER does its own ssh.
+
+    Returns None on exception (e.g. malformed config) so the caller
+    surfaces ``status='unknown'`` rather than crashing the list.
+    """
+    # stx-allow: fallback (reason: container engine may be missing or
+    # state-dir may not exist for an agent that never ran; either case
+    # maps to liveness_unknown rather than a hard error.)
+    try:
+        from ...runtimes.claude_session import ClaudeSessionRuntime
+
+        return ClaudeSessionRuntime().is_running(cfg)
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+        return None
+
+
+def get_agent_list_data(
+    registry: Registry,
+    capability: str | None = None,
+    machine: str | None = None,
+    remote_probe_timeout_s: float = 2.0,
+    max_parallel_probes: int = 8,
+) -> list[dict]:
+    """Get agent list as plain dicts for JSON or table output.
+
+    Args:
+        registry: The agent registry to query.
+        capability: If set, only include agents whose ``capabilities`` label
+            contains this value (comma-separated matching).
+        machine: If set, only include agents whose ``machine`` label matches.
+        remote_probe_timeout_s: Per-agent SSH probe timeout for the
+            ``is_running`` check. Short by default (2s) so the list
+            command doesn't block indefinitely when the remote host is
+            unreachable or the local ulimit wall throttles SSH fan-out
+            (todo#254 regression). Exceeding this returns
+            ``is_running=None`` (liveness unknown) instead of blocking.
+        max_parallel_probes: How many remote probes to run concurrently.
+            Kept small to stay under the macOS ``kern.maxproc`` wall
+            that today's SSH fan-out regression exposed.
+
+    Rows with a remote probe that timed out have ``status="unknown"``
+    and ``liveness_unknown=True`` so JSON consumers can surface a
+    soft-warning rather than treating unreachable remotes as offline.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as _FuturesTimeout
+
+    entries = registry.list_all()
+
+    # First pass: resolve configs + filter.
+    # F-CS17 stage 3b: there are no longer "remote" agents from sac's
+    # POV. Every agent is a container on this host. Cross-host work
+    # routes through F-CS12's ``sac --on <peer>`` which spawns a fresh
+    # sac on the remote host; the remote sac then reports its own
+    # local list. So this function probes every agent locally.
+    prepared: list[dict] = []
+    for idx, entry in enumerate(entries):
+        name = entry.get("name", "?")
+        screen_name = entry.get("screen", "?")
+        started = entry.get("started_at", "?")
+        labels: dict[str, str] = {}
+        config_path = entry.get("config")
+        cfg = None
+        if config_path:
+            # stx-allow: fallback (reason: config YAML may be corrupt or
+            # missing — agent still appears in list with empty labels)
+            try:
+                cfg = load_config(config_path)
+                labels = cfg.labels
+            except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+                pass
+
+        if machine and labels.get("machine") != machine:
+            continue
+        if capability:
+            caps = [
+                c.strip()
+                for c in labels.get("capabilities", "").split(",")
+                if c.strip()
+            ]
+            if capability not in caps:
+                continue
+
+        prep = {
+            "idx": idx,
+            "name": name,
+            "screen_name": screen_name,
+            "started": started,
+            "labels": labels,
+            "cfg": cfg,
+            "config_path": config_path,
+        }
+        prepared.append(prep)
+
+    # Second pass: parallel local liveness probes with per-probe
+    # timeout. The thread pool keeps the wall-clock cost low when many
+    # agents are registered (each probe is ``docker inspect`` and
+    # takes ~50ms-ish on a healthy host).
+    #
+    # Explicit shutdown(wait=False) instead of ``with ... as pool:``
+    # so the context manager's __exit__ doesn't join all workers
+    # (todo#254 regression: that would defeat the per-probe timeout).
+    probe_results: dict[int, bool | None] = {}
+    probe_targets = [
+        (prep["idx"], prep["cfg"]) for prep in prepared if prep["cfg"] is not None
+    ]
+    if probe_targets:
+        # Resolve _probe_local via the parent package at call time so
+        # test monkeypatching of ``_helpers._probe_local`` still takes
+        # effect (tests historically patched the flat-module attribute;
+        # the __init__ re-export keeps that contract working post-split).
+        import sys as _sys
+
+        _pkg = _sys.modules[__name__.rsplit(".", 1)[0]]
+        _probe_fn = getattr(_pkg, "_probe_local", _probe_local)
+
+        pool = ThreadPoolExecutor(max_workers=max_parallel_probes)
+        try:
+            future_to_idx = {
+                pool.submit(_probe_fn, cfg): idx for idx, cfg in probe_targets
+            }
+            for future in list(future_to_idx):
+                idx = future_to_idx[future]
+                # stx-allow: fallback (reason: per-probe runtime exception
+                # maps to None = "liveness unknown", not "stopped")
+                try:
+                    probe_results[idx] = future.result(timeout=remote_probe_timeout_s)
+                except _FuturesTimeout:  # stx-allow: fallback (reason: expected failure — see inline comment)
+                    probe_results[idx] = None
+                    future.cancel()
+                except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+                    probe_results[idx] = None
+        finally:
+            pool.shutdown(wait=False)
+
+    # Third pass: build result rows. Per-row config_path is pulled
+    # from each ``prep`` dict so validation runs against the agent's
+    # own spec.yaml (was previously leaking the last loop iteration's
+    # path — fixed 2026-05-13).
+    results: list[dict] = []
+    for prep in prepared:
+        name = prep["name"]
+        screen_name = prep["screen_name"]
+        started = prep["started"]
+        labels = prep["labels"]
+        cfg = prep["cfg"]
+        config_path = prep["config_path"]
+
+        # ``multiplexer`` is the F-CS17 successor of the screen / tmux
+        # column: it now reports the container engine the agent runs
+        # on (docker / podman / apptainer), or None when the yaml is
+        # missing / unparseable. Backwards compat: existing JSON
+        # consumers still see a "multiplexer" key in each row.
+        multiplexer: str | None = (
+            getattr(cfg, "runtime", None) if cfg is not None else None
+        )
+
+        liveness_unknown = False
+        probe = probe_results.get(prep["idx"])
+        if cfg is None:
+            # Couldn't load the yaml — can't probe.
+            is_running = False
+            liveness_unknown = True
+        elif probe is None:
+            is_running = False
+            liveness_unknown = True
+        else:
+            is_running = bool(probe)
+
+        status_val: str
+        if liveness_unknown:
+            status_val = "unknown"
+        else:
+            status_val = "running" if is_running else "stopped"
+
+        errors: list[str] = []
+        if config_path:
+            from ...config._validation import validate_config
+
+            try:  # stx-allow: fallback (validator raise → treat exception as a single error)
+                errors = validate_config(str(config_path))
+            except Exception as exc:
+                errors = [str(exc)]
+        # Host / path split for the table — keep the legacy `remote`
+        # key on the row for backward-compat JSON consumers.
+        host_label = "local"
+        spec_path = str(config_path) if config_path else ""
+        # Layer-6: surface the auto-allocated a2a port so operators can
+        # see which IPC port the sidecar is bound to without grepping
+        # state.db by hand. ``None`` when no claim exists (agent never
+        # started under the allocator, or sidecar-disabled spec).
+        a2a_port = _safe_port_for(name)
+        row: dict = {
+            "name": name,
+            "status": status_val,
+            "screen": screen_name,
+            "multiplexer": multiplexer,
+            "started_at": started,
+            "host": host_label,
+            "path": spec_path,
+            "a2a_port": a2a_port,
+        }
+        if errors:
+            row["validation_errors"] = errors
+        if liveness_unknown:
+            row["liveness_unknown"] = True
+        if labels:
+            row["labels"] = labels
+        results.append(row)
+
+    # Merge in agents that are *defined* on disk but absent from the
+    # registry. Filesystem is the canonical "defined" surface; the
+    # registry is a runtime cache of started/stopped state. An agent
+    # that was deleted from the registry (or never started) should
+    # still show up so the operator can spot it.
+    #
+    # While walking, also yaml-validate each spec — broken yamls
+    # surface as status="invalid" rather than silently hiding, so the
+    # operator notices the agent won't actually start before they
+    # discover it via a confusing `sac agent start` traceback.
+    from ...config._validation import validate_config
+
+    registered = {r["name"] for r in results}
+    for name, spec_path in _discover_defined_agents():
+        if name in registered:
+            continue
+        labels: dict[str, str] = {}
+        cfg = None
+        # stx-allow: fallback (defined-row labels are best-effort; a
+        # broken yaml still surfaces with status=invalid + empty labels)
+        try:
+            cfg = load_config(str(spec_path))
+            labels = cfg.labels
+        except Exception:
+            pass
+        if machine and labels.get("machine") != machine:
+            continue
+        if capability:
+            caps = [
+                c.strip()
+                for c in labels.get("capabilities", "").split(",")
+                if c.strip()
+            ]
+            if capability not in caps:
+                continue
+        # stx-allow: fallback (validator may raise on unparseable yaml;
+        # treat as "invalid" with the exception text as the only error)
+        try:
+            errors = validate_config(str(spec_path))
+        except Exception as exc:
+            errors = [str(exc)]
+        status = "invalid" if errors else "defined"
+        row: dict = {
+            "name": name,
+            "status": status,
+            "screen": "-",
+            "multiplexer": getattr(cfg, "runtime", None) if cfg else None,
+            "started_at": "-",
+            "host": "local",
+            "path": str(spec_path),
+            "a2a_port": _safe_port_for(name),
+        }
+        if errors:
+            row["validation_errors"] = errors
+        if labels:
+            row["labels"] = labels
+        results.append(row)
+    return results
+
+
+def _discover_defined_agents() -> "list[tuple[str, Path]]":  # noqa: F821
+    """Walk the user-scope (and project-scope, when in a git repo)
+    ``agents/`` tree and return ``(name, spec.yaml path)`` pairs for
+    every agent declared on disk. Tolerant of partial state — a
+    directory without a ``spec.yaml`` is skipped silently.
+    """
+    from pathlib import Path as _Path
+
+    pairs: list[tuple[str, _Path]] = []
+    seen: set[str] = set()
+
+    roots: list[_Path] = []
+    # stx-allow: fallback (project-scope is optional; absent → skip)
+    try:
+        from scitex_config._ecosystem import local_state as _ls
+
+        project = _ls.find_project_scope("agent-container")
+        if project is not None:
+            roots.append(project / "agents")
+    except Exception:
+        pass
+    roots.append(_Path.home() / ".scitex" / "agent-container" / "agents")
+
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for child in sorted(root.iterdir()):
+            if not child.is_dir() or child.name in seen:
+                continue
+            spec = child / "spec.yaml"
+            if not spec.is_file():
+                continue
+            pairs.append((child.name, spec))
+            seen.add(child.name)
+    return pairs
+
+
+def print_agent_list_json(
+    registry: Registry,
+    capability: str | None = None,
+    machine: str | None = None,
+) -> None:
+    """Print agent list as JSON."""
+    data = get_agent_list_data(registry, capability=capability, machine=machine)
+    click.echo(json_mod.dumps(data, indent=2))
+
+
+def print_agent_list(
+    registry: Registry,
+    capability: str | None = None,
+    machine: str | None = None,
+) -> None:
+    """Print a rich table of all registered agents."""
+    data = get_agent_list_data(registry, capability=capability, machine=machine)
+    if not data:
+        console.print("[dim]No agents found (registry empty, no specs on disk).[/dim]")
+        return
+
+    table = Table(title="Agents")
+    table.add_column("Name", style="bold")
+    table.add_column("Status")
+    table.add_column("YAML")
+    table.add_column("Host")
+    table.add_column("Path", overflow="fold")
+    table.add_column("Started")
+    cmap = {
+        "running": "green",
+        "stopped": "red",
+        "defined": "yellow",
+        "invalid": "bold red",
+        "unknown": "dim",
+    }
+    for row in data:
+        col = cmap.get(row["status"], "white")
+        host = row.get("host") or "local"
+        host_cell = host if host in ("local", "") else f"[cyan]{host}[/cyan]"
+        errors = row.get("validation_errors") or []
+        yaml_cell = (
+            f"[bold red]✗ {', '.join(_extract_damaged_fields(errors)) or 'errors'}[/bold red]"
+            if errors
+            else "[green]✓[/green]"
+        )
+        started = row["started_at"] if row["started_at"] not in ("-", "?") else "—"
+        table.add_row(
+            row["name"],
+            f"[{col}]{row['status']}[/{col}]",
+            yaml_cell,
+            host_cell,
+            row.get("path") or "—",
+            started,
+        )
+
+    console.print(table)
+    # Full error text follows the table so the operator can copy-paste.
+    for row in data:
+        if row.get("validation_errors"):
+            console.print(f"[bold red]✗ {row['name']}[/bold red] validation errors:")
+            for err in row["validation_errors"]:
+                console.print(f"    [red]- {err}[/red]")
+
+
+def _extract_damaged_fields(errors: list[str]) -> list[str]:
+    """Pull `spec.<field>` / top-level field names out of validator
+    error strings so the YAML column can show *which* keys are broken
+    without dumping the full error message into a narrow cell.
+    """
+    import re as _re
+
+    fields: list[str] = []
+    seen: set[str] = set()
+    pat = _re.compile(r"(spec\.[a-zA-Z_][a-zA-Z_0-9.]*|metadata\.[a-zA-Z_]+)")
+    for err in errors:
+        for m in pat.findall(err):
+            if m not in seen:
+                seen.add(m)
+                fields.append(m)
+    # Cap the column width.
+    if len(fields) > 4:
+        fields = fields[:3] + [f"+{len(fields) - 3} more"]
+    return fields

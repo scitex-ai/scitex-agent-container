@@ -2,7 +2,7 @@
 
 Claude Code calls this command on each status-line update, piping a JSON payload
 via stdin that contains context usage, rate-limits, model info, and session
-details. We tee the payload to a per-agent JSON file so ``sac status`` can
+details. We tee the payload to a per-agent JSON file so ``sac agent status`` can
 report authoritative context data instead of the 1M-token JSONL approximation.
 
 If claude-hud is installed, display is delegated to it. Otherwise a minimal
@@ -19,13 +19,14 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from ._env import getenv as _sac_env
 
 _STATE_DIR = Path.home() / ".scitex" / "agent-container" / "statusline"
 
 
 def _agent_name() -> str:
     return (
-        os.environ.get("SCITEX_AGENT_CONTAINER_AGENT")
+        _sac_env("AGENT")
         or os.environ.get("CLAUDE_AGENT_ID")
         or "unknown"
     )

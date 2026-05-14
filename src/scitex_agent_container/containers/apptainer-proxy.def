@@ -1,0 +1,87 @@
+# scitex-agent-container:proxy — Apptainer recipe for kind: AgentProxy.
+#
+# Minimal container for the A2A *proxy* runner — forwards POST /v1/turn
+# to an external AgentCard endpoint. NO claude-agent-sdk, NO node, NO
+# rust, NO scitex umbrella. Just enough Python to run a Starlette app
+# that re-projects an upstream AgentCard and proxies turns over HTTP.
+#
+# Cold-start budget: < 100 ms (the runner itself imports
+# httpx + starlette + uvicorn + pyyaml — nothing else).
+#
+# Build (preferred — go through scitex-container for versioning/sandbox):
+#   scitex-container build scitex-agent-container-proxy
+#
+# Build (raw apptainer):
+#   apptainer build sac-proxy.sif containers/apptainer-proxy.def
+#   apptainer build --sandbox proxy/ containers/apptainer-proxy.def
+#
+# Smoke test:
+#   apptainer exec sac-proxy.sif python3 -c "import httpx, starlette, uvicorn, yaml; print('ok')"
+#
+# Why a separate SIF (vs sac-base + httpx pip-install)? Two reasons:
+#   1. Trust boundary — a proxy agent is, by definition, talking to
+#      something the operator doesn't fully control. Stripping the
+#      runtime to the bare HTTP forwarder shrinks the attack surface
+#      (no claude CLI, no SSH, no git, no shells out to arbitrary
+#      tools).
+#   2. Startup cost — sac-base.sif is ~3 GB (rust toolchain + claude
+#      SDK + node + cargo binstall'd tools). The proxy needs none of
+#      that; a ~150 MB SIF starts noticeably faster on cold-cache
+#      worker hosts.
+
+Bootstrap: docker
+From: ubuntu:24.04
+
+%post
+    set -e
+    export DEBIAN_FRONTEND=noninteractive
+
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        python3 python3-pip python3-venv \
+        tini \
+        locales tzdata
+    locale-gen en_US.UTF-8
+    rm -rf /var/lib/apt/lists/*
+
+    # Bare-bones runner deps. httpx is the HTTP client (already a
+    # transitive of starlette's TestClient, but we pin it explicitly so
+    # the runner's `import httpx` doesn't depend on starlette internals).
+    # `--break-system-packages` is needed on Ubuntu 24.04's PEP 668
+    # marker — we're in a container, the "system python" IS our venv.
+    python3 -m pip install --no-cache-dir --break-system-packages \
+        "httpx>=0.27,<1" \
+        "starlette>=0.37,<1" \
+        "uvicorn>=0.30,<1" \
+        "pyyaml>=6,<7"
+
+    # Install the sac runner module itself. The proxy runner module
+    # (scitex_agent_container._runners.a2a_proxy) lives in this package;
+    # without it the apptainer dispatch's `python3 -m ...` invocation
+    # fails with ModuleNotFoundError. Pin to develop until proxy lands
+    # in a release.
+    python3 -m pip install --no-cache-dir --break-system-packages \
+        "git+https://github.com/ywatanabe1989/scitex-agent-container.git@develop"
+
+    # Convenience symlink — same rationale as apptainer-base.def: many
+    # tools hard-code `python` rather than `python3`.
+    ln -sf /usr/bin/python3 /usr/local/bin/python
+
+%environment
+    export LANG=en_US.UTF-8
+    export LC_ALL=en_US.UTF-8
+
+%labels
+    org.scitex.layer proxy
+    org.scitex.runtime apptainer
+    org.scitex.kind AgentProxy
+    org.scitex.contains "python3 httpx starlette uvicorn pyyaml tini"
+
+%help
+    scitex-agent-container :proxy layer.
+    Minimal HTTP forwarder for kind: AgentProxy agents. Forwards
+    POST /v1/turn to an external A2A endpoint and re-projects the
+    upstream AgentCard at /.well-known/agent-card.json with our own
+    name + URL. No claude-agent-sdk, no shell tooling — defense in
+    depth for the untrusted-upstream case.

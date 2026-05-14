@@ -5,13 +5,13 @@
 # Scope: ~/proj/<repo> only.  ~/forks/ and workspace clones are skipped.
 #
 # Usage:
-#   crontab: * * * * * ~/.scitex/orochi/shared/cron/post-merge-pull.sh \
-#              >> ~/.scitex/orochi/shared/logs/post-merge-pull.$(hostname -s).cron.log 2>&1
+#   crontab: * * * * * ~/.scitex/agent-container/runtime/cron/post-merge-pull.sh \
+#              >> ~/.scitex/agent-container/runtime/logs/post-merge-pull.$(hostname -s).cron.log 2>&1
 
 set -euo pipefail
 
 HOST="$(hostname -s)"
-LOG_DIR="${HOME}/.scitex/orochi/shared/logs"
+LOG_DIR="${HOME}/.scitex/agent-container/runtime/logs"
 LOG_FILE="${LOG_DIR}/post-merge-pull.${HOST}.log"
 LOCK_FILE="/tmp/post-merge-pull.${HOST}.lock"
 
@@ -44,7 +44,10 @@ _pull_repo() {
     local name="$1"
     local repo_path="${HOME}/proj/${name}"
 
-    [[ -d "${repo_path}" ]] || { _info "SKIP ${name}: not found at ${repo_path}"; return 0; }
+    [[ -d "${repo_path}" ]] || {
+        _info "SKIP ${name}: not found at ${repo_path}"
+        return 0
+    }
 
     # Skip repos with uncommitted local changes (contributor workspace guard).
     local dirty

@@ -1,4 +1,4 @@
-"""Config loaders for v1 and v2 YAML formats."""
+"""Config loader for scitex-agent-container/v3 YAML."""
 
 from __future__ import annotations
 
@@ -8,6 +8,9 @@ from ._host import resolve_hostname, substitute_hostnames
 from ._parsers import (
     MODEL_DISPLAY_NAMES,
     interpolate_mcp_servers,
+    parse_a2a,
+    parse_apptainer,
+    parse_autonomous,
     parse_claude,
     parse_container,
     parse_context_management,
@@ -16,24 +19,21 @@ from ._parsers import (
     parse_hooks,
     parse_hosts_spec,
     parse_listen,
-    parse_orochi,
-    parse_remote,
+    parse_proxy,
     parse_restart,
-    parse_scheduling,
     parse_skills,
-    parse_slurm,
     parse_startup,
     parse_startup_commands,
     parse_telegram,
     parse_watchdog,
 )
-from ._types import AgentConfig, HostsSpec, SchedulingSpec
+from ._types import AgentConfig, HostsSpec
 
 # Default workdir layout: sac's own state root. Per-agent runtime state
 # (CLAUDE.md, .mcp.json, .claude/) lives at
-# ``~/.scitex/agent-container/workspaces/<effective-id>/``. External
+# ``~/.scitex/agent-container/runtime/workspaces/<effective-id>/``. External
 # orchestrators that want a different layout can override via ``spec.workdir``.
-_DEFAULT_WORKDIR_RUNTIME = "~/.scitex/agent-container/workspaces/{name}"
+_DEFAULT_WORKDIR_RUNTIME = "~/.scitex/agent-container/runtime/agents/{name}"
 
 # Host-aware fallback chain for `venv: auto` resolution.
 # Tried in order; first existing path wins. Empty string means no venv
@@ -47,11 +47,11 @@ _DEFAULT_WORKDIR_RUNTIME = "~/.scitex/agent-container/workspaces/{name}"
 # (head-nas msg#12877; head-mba msg#12879 root cause).
 _VENV_AUTO_FALLBACK_CHAIN = ("~/.venv-3.11", "~/.venv")
 
-# Default workdir layout (2026-04-17 runtime/ restructure). Definitions ship
-# under ``shared/agents/<name>/`` or ``<host>/agents/<name>/``; per-agent
-# runtime state (CLAUDE.md, .mcp.json, .claude/) lives at
-# ``runtime/workspaces/<effective-id>/``.
-_DEFAULT_WORKDIR_RUNTIME = "~/.scitex/orochi/runtime/workspaces/{name}"
+# Default workdir for an agent when ``spec.workdir`` is unset. Lives
+# under sac's own user-state tree (per the local-state-directories spec):
+# ``~/.scitex/agent-container/runtime/workspaces/<name>/`` holds the
+# materialized CLAUDE.md, .mcp.json, .claude/ for that agent.
+_DEFAULT_WORKDIR_RUNTIME = "~/.scitex/agent-container/runtime/agents/{name}"
 
 
 def _resolve_venv(venv: str) -> str:
@@ -71,33 +71,13 @@ def _resolve_venv(venv: str) -> str:
     return ""
 
 
-def compose_effective_name(
-    raw_name: str, scheduling: SchedulingSpec | None, hostname: str
-) -> str:
-    """Return the effective agent id given metadata.name + scheduling + host.
-
-    Rules:
-      * ``singleton`` mode: the bare ``raw_name`` (host-pin is enforced at
-        launch time, not encoded in the id).
-      * ``per-host`` mode (default): append ``-<hostname>`` unless the name
-        already ends with ``-<hostname>`` (idempotent — protects legacy
-        flat-layout names like ``head-ywata-note-win`` which are already
-        host-suffixed).
-    """
-    if scheduling is not None and scheduling.mode == "singleton":
-        return raw_name
-    suffix = f"-{hostname}"
-    if raw_name.endswith(suffix) or raw_name == hostname:
-        return raw_name
-    return f"{raw_name}{suffix}"
-
-
 def _name_from_path(path: Path | str) -> str:
     """Derive the agent name from the YAML path.
 
-    Convention: each agent lives in its own directory ``<name>/<name>.yaml``.
-    The directory name IS the agent identifier — single source of truth.
-    YAMLs do not carry a redundant ``metadata.name`` field.
+    Convention: each agent lives in its own directory
+    ``<name>/spec.yaml``. The directory name IS the agent identifier —
+    single source of truth. YAMLs do not carry a redundant
+    ``metadata.name`` field, and the file is always named ``spec.yaml``.
     """
     return Path(path).parent.name
 
@@ -254,12 +234,18 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     }
     if labels.get("role"):
         auto_env["CLAUDE_AGENT_ROLE"] = labels["role"]
-    model = str(spec.get("model", "sonnet") or "sonnet")
+    # v3-realign: model + env + image + mounts live under engine blocks
+    # (spec.claude.model, spec.apptainer.{image,binds,env}). The validator
+    # rejects the top-level forms; the parsers read the new homes. The
+    # top-level AgentConfig.image/model/env/mounts fields are kept for
+    # back-compat consumers and populated from the new homes.
+    claude_spec = parse_claude(spec)
+    apptainer_spec = parse_apptainer(spec)
+    model = claude_spec.model or "sonnet"
     display_model = MODEL_DISPLAY_NAMES.get(model, model)
     auto_env["SCITEX_AGENT_CONTAINER_MODEL"] = display_model
 
-    user_env = spec.get("env", {}) or {}
-    merged_env = {**auto_env, **user_env}
+    merged_env = {**auto_env, **(apptainer_spec.env or {})}
 
     # Auto-derive hooks: prepend mkdir for workdir
     hooks = parse_hooks(spec)
@@ -272,9 +258,16 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     mcp_metadata = {**metadata, "name": name}
     mcp_servers = interpolate_mcp_servers(spec.get("mcp_servers", {}), mcp_metadata)
 
+    startup_prompts_raw = spec.get("startup_prompts", []) or []
+    startup_prompts = [str(p) for p in startup_prompts_raw if p]
+
+    kind = str(raw.get("kind", "Agent"))
+    proxy_spec = parse_proxy(spec, kind=kind)
+
     return AgentConfig(
         name=name,
-        runtime=spec.get("runtime", "claude-code"),
+        runtime=str(spec.get("runtime") or "apptainer"),
+        image=apptainer_spec.image,
         model=model,
         workdir=workdir,
         python_venv=_resolve_python_venv(spec.get("python-venv", "")),
@@ -283,16 +276,17 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         screen_name=screen_name,
         labels=labels,
         container=parse_container(spec),
-        claude=parse_claude(spec),
+        claude=claude_spec,
         health=parse_health(spec),
         watchdog=parse_watchdog(spec),
         restart=parse_restart(spec),
+        autonomous=parse_autonomous(spec),
+        apptainer=apptainer_spec,
         hooks=hooks,
         telegram=parse_telegram(spec),
-        remote=parse_remote(spec),
-        slurm=parse_slurm(spec),
         skills=parse_skills(spec),
         startup_commands=parse_startup_commands(spec),
+        startup_prompts=startup_prompts,
         startup=parse_startup(spec),
         context_management=parse_context_management(spec),
         listen=parse_listen(spec),
@@ -301,104 +295,9 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         multiplexer=spec.get("multiplexer", "tmux"),
         hosts_spec=hosts_spec,
         config_path=str(path),
-    )
-
-
-def load_v2(raw: dict, path: Path) -> AgentConfig:
-    """Load a scitex-agent-container/v2 config with auto-derived defaults.
-
-    Substitutes ``${HOSTNAME}`` / ``${SCITEX_OROCHI_HOSTNAME}`` in every
-    string field before dataclass construction, and composes the effective
-    agent id from ``metadata.name`` + ``spec.scheduling`` so the v2 shared
-    layout can keep one canonical YAML per role across the fleet.
-    """
-    # Only walk-and-substitute hostname placeholders when the YAML opts in
-    # via an explicit ``spec.scheduling`` block. Legacy v2 YAMLs without
-    # scheduling keep the pre-change code path (no substitution, no
-    # effective-id composition, no host resolution required).
-    scheduling, explicit_scheduling = parse_scheduling(raw.get("spec", {}) or {})
-
-    if explicit_scheduling:
-        hostname = resolve_hostname()
-        raw = substitute_hostnames(raw, hostname)
-    else:
-        hostname = ""
-
-    metadata = raw.get("metadata", {})
-    spec = raw.get("spec", {})
-    raw_name = metadata["name"]
-    labels = metadata.get("labels", {}) or {}
-
-    # Compose the effective id used everywhere downstream (systemd, screen/
-    # tmux, workdir, registry keys). Only when scheduling is explicit —
-    # otherwise keep the raw metadata.name as-is for backward compatibility.
-    if explicit_scheduling:
-        name = compose_effective_name(raw_name, scheduling, hostname)
-    else:
-        name = raw_name
-
-    # Auto-derive workdir (user can override).
-    # Default lives under runtime/workspaces/ (2026-04-17 layout).
-    workdir = spec.get("workdir")
-    if workdir is None:
-        workdir = _DEFAULT_WORKDIR_RUNTIME.format(name=name)
-
-    # Auto-derive screen_name: {name} (not cld-{name})
-    screen_raw = spec.get("screen", {}) or {}
-    screen_name = screen_raw.get("name", name)
-
-    # Auto-derive env: user values override auto-derived.
-    auto_env: dict[str, str] = {
-        "CLAUDE_AGENT_ID": name,
-        "SCITEX_AGENT_CONTAINER_AGENT": name,
-    }
-    if labels.get("role"):
-        auto_env["CLAUDE_AGENT_ROLE"] = labels["role"]
-    model = str(spec.get("model", "sonnet") or "sonnet")
-    display_model = MODEL_DISPLAY_NAMES.get(model, model)
-    auto_env["SCITEX_AGENT_CONTAINER_MODEL"] = display_model
-
-    user_env = spec.get("env", {}) or {}
-    merged_env = {**auto_env, **user_env}
-
-    # Auto-derive hooks: prepend mkdir for workdir
-    hooks = parse_hooks(spec)
-    expanded = str(Path(workdir).expanduser())
-    mkdir_cmd = f"mkdir -p {expanded}/.claude"
-    if mkdir_cmd not in hooks.get("pre_start", []):
-        hooks.setdefault("pre_start", []).insert(0, mkdir_cmd)
-
-    # Parse mcp_servers with metadata interpolation (uses effective name)
-    mcp_metadata = {**metadata, "name": name}
-    mcp_servers = interpolate_mcp_servers(spec.get("mcp_servers", {}), mcp_metadata)
-
-    return AgentConfig(
-        name=name,
-        runtime=spec.get("runtime", "claude-code"),
-        model=model,
-        workdir=workdir,
-        python_venv=_resolve_python_venv(spec.get("python-venv", "")),
-        env=merged_env,
-        env_files=_parse_env_files(spec),
-        screen_name=screen_name,
-        labels=labels,
-        container=parse_container(spec),
-        claude=parse_claude(spec),
-        health=parse_health(spec),
-        watchdog=parse_watchdog(spec),
-        restart=parse_restart(spec),
-        hooks=hooks,
-        telegram=parse_telegram(spec),
-        remote=parse_remote(spec),
-        slurm=parse_slurm(spec),
-        skills=parse_skills(spec),
-        startup_commands=parse_startup_commands(spec),
-        startup=parse_startup(spec),
-        context_management=parse_context_management(spec),
-        listen=parse_listen(spec),
-        extensions=parse_extensions(spec),
-        mcp_servers=mcp_servers,
-        multiplexer=spec.get("multiplexer", "screen"),
-        scheduling=scheduling,
-        config_path=str(path),
+        user=str(spec.get("user", "")),
+        a2a=parse_a2a(spec),
+        kind=kind,
+        proxy=proxy_spec,
+        dot_claude=str(spec.get("dot_claude", "")),
     )

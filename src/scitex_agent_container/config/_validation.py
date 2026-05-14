@@ -1,30 +1,124 @@
-"""YAML config validation."""
+"""YAML config validation.
+
+Sac is SDK-only and container-only since the CLI/TUI runtime cleanup.
+Accepted ``spec.runtime`` values are ``docker``, ``podman``, ``apptainer``
+— each backend wraps the same long-running Claude Agent SDK runner.
+Communication with the agent uses the HTTP A2A surface, never panes.
+"""
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import yaml
+
+# Accepted shapes for ``spec.model`` (F-CS7).
+#
+# claude-agent-sdk silently rejects unknown aliases — the runner stays
+# alive, the heartbeat is fresh, but every turn returns 0 input tokens
+# and 0 output tokens because the SDK never makes the API call. Pin
+# the validation here so the failure surfaces at yaml-validate time
+# instead of as a hung-looking agent.
+#
+# Two acceptable shapes:
+#   1. Bare alias: ``opus`` / ``sonnet`` / ``haiku`` / ``inherit`` /
+#      ``default``, optionally with a context-suffix (``[1m]``).
+#   2. Full versioned form: ``claude-<family>-N-M`` with optional date
+#      tail (``-20251001``) and optional context-suffix.
+#
+# Reproduction (2026-05-05): ``claude-opus[1m]`` (abbreviated, missing
+# the version digits) was accepted by the YAML loader but silently
+# rejected by the SDK — every turn returned ``input_tokens=0``,
+# ``output_tokens=0``, ``iterations=[]``. Other peers using
+# ``claude-opus-4-7[1m]`` worked fine.
+_VALID_MODEL_RE = re.compile(
+    r"""
+    ^(?:
+        (?:opus|sonnet|haiku|inherit|default)
+        |
+        claude-(?:opus|sonnet|haiku)-\d+-\d+(?:-[a-z0-9]+)*
+    )
+    (?:\[[a-zA-Z0-9_]+\])?
+    $
+    """,
+    re.VERBOSE,
+)
 
 _VALID_API_VERSIONS = ("scitex-agent-container/v3",)
 
 _KNOWN_TOP_LEVEL_KEYS = frozenset({"apiVersion", "kind", "metadata", "spec"})
 
+# v3 ``kind`` discriminator. ``Agent`` = SDK runner (claude_session);
+# ``AgentProxy`` = HTTP forwarder (a2a_proxy) with NO SDK. Anything
+# else is rejected at parse time.
+_VALID_KINDS = frozenset({"Agent", "AgentProxy"})
+
+
+_SDK_IMAGE = "scitex-agent-container:scitex"
+
+
 # All spec keys read by load_v3, parsers, or a2a/_server.py.
 # Unknown keys are rejected at parse time so typos surface at boot.
 # Intentional extension data belongs under spec.extensions.
-_KNOWN_SPEC_KEYS = frozenset({
-    "runtime", "model", "workdir", "python-venv", "env",
-    "screen", "container", "claude", "health", "watchdog",
-    "restart", "hooks", "telegram", "remote", "slurm",
-    "skills", "startup_commands", "startup", "context_management",
-    "listen", "extensions", "mcp_servers", "multiplexer",
-    "host", "hosts",
-    "session",         # shortcut alias for spec.claude.session
-    "scheduling",      # rejected with a specific actionable message below
-    "a2a",             # A2A sidecar config read by a2a/_server.py
-    "orochi",          # Orochi-specific extension namespace
-})
+_KNOWN_SPEC_KEYS = frozenset(
+    {
+        "runtime",
+        "workdir",
+        "python-venv",
+        "container",
+        "screen",  # legacy: agent metadata (screen_name) — no longer drives a multiplexer
+        "claude",
+        "health",
+        "watchdog",
+        "restart",
+        "hooks",
+        "telegram",
+        "startup_commands",
+        "startup_prompts",  # v3-realign: separate from startup_commands (§3)
+        "startup",
+        "context_management",
+        "listen",
+        "extensions",
+        "mcp_servers",
+        "host",
+        "hosts",
+        "session",  # shortcut alias for spec.claude.session
+        "scheduling",  # rejected with a specific actionable message below
+        "a2a",  # A2A sidecar config read by a2a/_server.py
+        "proxy",  # AgentProxy upstream forwarder block (kind: AgentProxy only)
+        "autonomous",  # F-CS3 — drive-until-done block
+        "apptainer",  # F-CS18 — apptainer-specific build extension
+        "user",  # container user: "host" | "uid:gid" | "" (image default)
+        "dot_claude",  # F-DC1 — directory merged into workspace/.claude/
+        # v3 removed (rejected explicitly below with relocation hints):
+        # image (→ spec.apptainer.image), mounts (→ spec.apptainer.binds),
+        # env (→ spec.apptainer.env), model (→ spec.claude.model),
+        # skills, remote.
+    }
+)
+
+
+# v3-realign: top-level fields that moved into engine blocks. Reject
+# loudly with a hint pointing to the new home (§3 Removed from v3).
+_V3_RELOCATED_FIELDS: dict[str, str] = {
+    "image": "spec.apptainer.image",
+    "mounts": "spec.apptainer.binds",
+    "env": "spec.apptainer.env",
+    "model": "spec.claude.model",
+}
+
+# v3-realign: fields removed outright (no relocation — different owners).
+_V3_REMOVED_FIELDS: dict[str, str] = {
+    "skills": (
+        "spec.skills is no longer accepted; skills now live under "
+        "dot_claude/skills/ (§3 Removed)."
+    ),
+    "remote": (
+        "spec.remote is no longer accepted; cross-host routing is orochi's "
+        "job (§2). Use orochi's peer registry instead."
+    ),
+}
 
 
 def validate_raw(raw: dict, path: str) -> list[str]:
@@ -51,8 +145,8 @@ def validate_raw(raw: dict, path: str) -> list[str]:
 
     # kind
     kind = raw.get("kind")
-    if kind != "Agent":
-        errors.append(f"kind must be 'Agent', got '{kind}'")
+    if kind not in _VALID_KINDS:
+        errors.append(f"kind must be one of {sorted(_VALID_KINDS)}, got '{kind}'")
 
     # metadata (optional dict — agent name comes from parent dir, not from
     # metadata.name; the field is no longer accepted)
@@ -72,8 +166,28 @@ def validate_raw(raw: dict, path: str) -> list[str]:
     if not isinstance(spec, dict):
         errors.append("spec is required and must be a mapping")
     else:
-        # Unknown spec keys
-        unknown_spec = set(spec.keys()) - _KNOWN_SPEC_KEYS
+        # v3-realign — fields that moved into engine blocks: reject with
+        # a relocation hint so the operator knows the new home.
+        for k, new_home in _V3_RELOCATED_FIELDS.items():
+            if k in spec:
+                errors.append(
+                    f"spec.{k} is no longer accepted at the top level; "
+                    f"move it to {new_home} (v3 spec realignment §3)."
+                )
+        # v3-realign — fields removed outright (different owner / shape).
+        for k, msg in _V3_REMOVED_FIELDS.items():
+            if k in spec:
+                errors.append(msg)
+
+        # Unknown spec keys (excluding the v3-relocated/removed set, which
+        # already have a more specific message above — listing them as
+        # "unknown" would be misleading).
+        unknown_spec = (
+            set(spec.keys())
+            - _KNOWN_SPEC_KEYS
+            - set(_V3_RELOCATED_FIELDS)
+            - set(_V3_REMOVED_FIELDS)
+        )
         for k in sorted(unknown_spec):
             errors.append(
                 f"Unknown spec field '{k}'. "
@@ -81,20 +195,67 @@ def validate_raw(raw: dict, path: str) -> list[str]:
                 f"known keys: {sorted(_KNOWN_SPEC_KEYS)}."
             )
 
-        # spec.runtime
+        # spec.runtime — sac is apptainer-only since the docker/podman
+        # ripout (2026-05-13). Empty/unset is accepted and defaults to
+        # apptainer at dispatch.
         runtime = spec.get("runtime")
-        valid_runtimes = ("claude-code", "cursor", "aider", "slurm", "slurm-tenant")
-        if runtime and runtime not in valid_runtimes:
+        if runtime and runtime != "apptainer":
             errors.append(
-                f"spec.runtime must be one of {valid_runtimes}, got '{runtime}'"
+                f"spec.runtime must be 'apptainer' (got '{runtime}'). "
+                "Sac is apptainer-only since 2026-05-13; docker / podman "
+                "support was removed for simplicity."
             )
+
+        # spec.image — moved to spec.apptainer.image in v3 (handled by the
+        # relocation rejection above). Type-check the new home instead.
+        ap_block = spec.get("apptainer", {}) or {}
+        ap_image = ap_block.get("image") if isinstance(ap_block, dict) else None
+        if ap_image is not None and not isinstance(ap_image, str):
+            errors.append(
+                f"spec.apptainer.image must be a string, got {type(ap_image).__name__}"
+            )
+
+        # spec.dockerfile dropped 2026-05-13 with the docker ripout.
+        # Keep type check around for one minor version so explicit
+        # use surfaces a clear error rather than silently disappearing.
+        dockerfile = spec.get("dockerfile")
+        if dockerfile is not None and not isinstance(dockerfile, str):
+            errors.append(
+                f"spec.dockerfile must be a string, got {type(dockerfile).__name__}"
+            )
+
+        # spec.claude.model — F-CS7 (v3: moved from top-level spec.model).
+        # Validate against accepted SDK aliases / versioned forms. The
+        # SDK silently rejects unknown values (heartbeat fresh, every
+        # turn returns 0 tokens), so we surface bad strings at yaml-
+        # validate time. Empty / missing is allowed — runtime falls back
+        # to its default.
+        claude_block = spec.get("claude", {}) or {}
+        model = claude_block.get("model") if isinstance(claude_block, dict) else None
+        if model is not None:
+            if not isinstance(model, str):
+                errors.append(
+                    f"spec.claude.model must be a string, got {type(model).__name__}"
+                )
+            elif model and not _VALID_MODEL_RE.match(model):
+                errors.append(
+                    f"spec.claude.model '{model}' is not an accepted alias. "
+                    "Use a bare alias ('opus', 'sonnet', 'haiku', 'inherit', "
+                    "'default'), optionally with a context suffix like "
+                    "'opus[1m]'; OR the full versioned form "
+                    "'claude-<family>-N-M[-<tail>]' (e.g. 'claude-opus-4-7', "
+                    "'claude-opus-4-7[1m]', 'claude-haiku-4-5-20251001'). "
+                    "Abbreviated forms like 'claude-opus[1m]' are rejected "
+                    "by the SDK without raising — every turn returns 0 "
+                    "tokens."
+                )
 
         # container.runtime
         container = spec.get("container", {}) or {}
         cr = container.get("runtime")
-        if cr and cr not in ("none", "docker", "apptainer"):
+        if cr and cr not in ("none", "docker", "podman", "apptainer"):
             errors.append(
-                f"spec.container.runtime must be none|docker|apptainer, got '{cr}'"
+                f"spec.container.runtime must be none|docker|podman|apptainer, got '{cr}'"
             )
 
         # container.mount_host_claude (opt-in; default False)
@@ -120,18 +281,33 @@ def validate_raw(raw: dict, path: str) -> list[str]:
                 f"spec.restart.policy must be never|on-failure|always, got '{policy}'"
             )
 
-        # multiplexer
-        mux = spec.get("multiplexer")
-        if mux and mux not in ("screen", "tmux"):
-            errors.append(f"spec.multiplexer must be 'screen' or 'tmux', got '{mux}'")
-
-        # health.method
+        # health.method — sole supported probe is the SDK runner's
+        # /healthz / heartbeat-file check (see runtimes/_sdk_common.py).
         health = spec.get("health", {}) or {}
         method = health.get("method")
-        if method and method not in ("multiplexer-alive",):
-            errors.append(
-                f"spec.health.method must be 'multiplexer-alive', got '{method}'"
-            )
+        if method and method not in ("sdk-alive",):
+            errors.append(f"spec.health.method must be 'sdk-alive', got '{method}'")
+
+        # spec.mounts moved to spec.apptainer.binds in v3 — rejected
+        # by the relocation block above. No further validation needed.
+
+        # spec.user — container user. Three accepted shapes:
+        #   * ""              (default) → image's USER (typically `agent`)
+        #   * "host"          → run as host operator's UID:GID
+        #   * "<uid>:<gid>"   → explicit numeric, e.g. "1000:1000"
+        # Pair with spec.mounts and (optionally) spec.env.HOME to give an
+        # agent host-shaped paths + ownership without any special flags.
+        user_val = spec.get("user")
+        if user_val is not None:
+            if not isinstance(user_val, str):
+                errors.append(
+                    f"spec.user must be a string, got {type(user_val).__name__}"
+                )
+            elif user_val and user_val != "host" and ":" not in user_val:
+                errors.append(
+                    f'spec.user must be "", "host", or "<uid>:<gid>"; '
+                    f"got '{user_val}'"
+                )
 
         # host / hosts (mutually exclusive)
         has_host = "host" in spec
@@ -171,6 +347,66 @@ def validate_raw(raw: dict, path: str) -> list[str]:
                     f"got {type(hosts_val).__name__}"
                 )
 
+        # spec.autonomous (F-CS3 phase 1) — drive-until-done.
+        autonomous = spec.get("autonomous")
+        if autonomous is not None:
+            if not isinstance(autonomous, dict):
+                errors.append(
+                    "spec.autonomous must be a mapping; got "
+                    f"{type(autonomous).__name__}"
+                )
+            else:
+                drive_until = autonomous.get("drive_until")
+                if drive_until is not None and not isinstance(drive_until, str):
+                    errors.append("spec.autonomous.drive_until must be a string")
+                elif drive_until == "":
+                    errors.append("spec.autonomous.drive_until must be non-empty")
+                for fld in ("max_turns", "idle_kick_after_s"):
+                    val = autonomous.get(fld)
+                    if val is not None:
+                        if not isinstance(val, int) or isinstance(val, bool):
+                            errors.append(f"spec.autonomous.{fld} must be an integer")
+                        elif val <= 0:
+                            errors.append(f"spec.autonomous.{fld} must be > 0")
+                kick = autonomous.get("kick_text")
+                if kick is not None and not isinstance(kick, str):
+                    errors.append("spec.autonomous.kick_text must be a string")
+                enabled = autonomous.get("enabled")
+                if enabled is not None and not isinstance(enabled, bool):
+                    errors.append("spec.autonomous.enabled must be a boolean")
+
+        # kind: AgentProxy coupling rules.
+        #
+        # AgentProxy has NO SDK — it's a thin HTTP forwarder. So:
+        #   * spec.proxy is REQUIRED (no upstream → nothing to forward to)
+        #   * spec.claude is IGNORED (no SDK to configure); operator
+        #     authoring it is a category error we surface loudly.
+        #   * spec.startup_prompts / spec.startup_commands are IGNORED
+        #     for the same reason — no SDK to prompt.
+        #
+        # The mirror also holds for kind: Agent — spec.proxy is rejected
+        # there because the SDK runner doesn't read it.
+        if kind == "AgentProxy":
+            proxy_block = spec.get("proxy")
+            if proxy_block is None:
+                errors.append(
+                    "spec.proxy is required when kind: AgentProxy "
+                    "(no upstream to forward to)."
+                )
+            for forbidden in ("claude", "startup_prompts", "startup_commands"):
+                val = spec.get(forbidden)
+                if val:
+                    errors.append(
+                        f"spec.{forbidden} is not allowed when kind: AgentProxy "
+                        "(proxy has no SDK to configure / prompt). Remove the field."
+                    )
+        elif kind == "Agent":
+            if "proxy" in spec:
+                errors.append(
+                    "spec.proxy is only meaningful when kind: AgentProxy; "
+                    "remove it for kind: Agent."
+                )
+
         # Reject the old `scheduling:` block — replaced by host/hosts.
         if "scheduling" in spec:
             errors.append(
@@ -188,9 +424,13 @@ def validate_config(path: str | Path) -> list[str]:
     try:
         with open(path) as f:
             raw = yaml.safe_load(f)
-    except FileNotFoundError:  # stx-allow: fallback (reason: file may not exist on first use)
+    except (
+        FileNotFoundError
+    ):  # stx-allow: fallback (reason: file may not exist on first use)
         return [f"File not found: {path}"]
-    except yaml.YAMLError as exc:  # stx-allow: fallback (reason: expected failure — see inline comment)
+    except (
+        yaml.YAMLError
+    ) as exc:  # stx-allow: fallback (reason: expected failure — see inline comment)
         return [f"YAML parse error: {exc}"]
 
     return validate_raw(raw, str(path))

@@ -1,0 +1,28 @@
+"""Mirror smoke test for ``a2a/executors/_base.py``.
+
+Behaviour-level tests live alongside ``test__server.py``; this file
+exists so the audit (PS202) sees a mirror directory for
+``src/scitex_agent_container/a2a/executors/`` and so each src module
+has at least one matching test entry (PS204).
+"""
+
+from __future__ import annotations
+
+
+def test_base_executor_class_loads() -> None:
+    from scitex_agent_container.a2a.executors._base import BaseSyncExecutor
+
+    assert isinstance(BaseSyncExecutor, type)
+
+
+def test_executors_subpackage_exposes_built_ins() -> None:
+    import importlib
+
+    for mod in (
+        "scitex_agent_container.a2a.executors._base",
+        "scitex_agent_container.a2a.executors._claude_cli",
+        "scitex_agent_container.a2a.executors._claude_session",
+        "scitex_agent_container.a2a.executors._echo",
+        "scitex_agent_container.a2a.executors._exec",
+    ):
+        assert importlib.import_module(mod) is not None

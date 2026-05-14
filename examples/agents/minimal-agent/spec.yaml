@@ -1,0 +1,22 @@
+# minimal — bare-minimum sac v3 agent spec.
+#
+# Omitted fields use defaults:
+#   workdir  → ~/.scitex/agent-container/runtime/agents/<name>/
+#   health   → sdk-alive, interval 60s
+#   restart  → never
+
+apiVersion: scitex-agent-container/v3
+kind: Agent
+
+spec:
+  runtime: apptainer
+
+  apptainer:
+    image: ~/.scitex/agent-container/containers/sac-base.sif
+
+  claude:
+    model: haiku
+    flags:
+      - --dangerously-skip-permissions
+
+# EOF

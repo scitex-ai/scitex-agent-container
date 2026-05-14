@@ -1,0 +1,57 @@
+# proxy-agent — minimal kind: AgentProxy example.
+#
+# kind: AgentProxy declares an HTTP forwarder rather than an SDK
+# agent. The container has no Claude SDK; it runs a Starlette
+# server that proxies POST /v1/turn to an external A2A endpoint
+# and re-projects the upstream AgentCard at our /.well-known.
+#
+# Key differences from kind: Agent:
+#   * no spec.claude       (no SDK to configure)
+#   * no spec.startup_*    (no SDK to prompt)
+#   * spec.proxy is REQUIRED — see ProxySpec for the field set.
+#
+# The proxy runs in the sac-proxy.sif image (lightweight; no SDK +
+# no Python ML stack), backed by the same heartbeat/state layout as
+# kind: Agent so ``sac agent status`` works against both uniformly.
+
+apiVersion: scitex-agent-container/v3
+kind: AgentProxy
+
+spec:
+  runtime: apptainer
+
+  apptainer:
+    image: ~/.scitex/agent-container/containers/sac-proxy.sif
+
+  # Proxy block — required when kind: AgentProxy.
+  proxy:
+    # REQUIRED. The A2A endpoint to forward to. Replace with a real
+    # A2A endpoint. The proxy fetches <upstream>/.well-known/agent-card.json
+    # once at boot and splices it into our own card.
+    upstream: https://example.com
+
+    # Advisory trust level surfaced on our AgentCard's
+    # x-scitex-agent-container.trust. One of:
+    #   untrusted   (default — operator must opt in to anything more)
+    #   local-mesh  (peers on the same private network you control)
+    #   trusted     (cryptographically verified — reserved for future mTLS)
+    trust: untrusted
+
+    # Substring tokens; any inbound prompt containing one is refused
+    # (HTTP 400) before forwarding. Cheap defense against accidental
+    # secret leakage to an untrusted upstream — NOT a substitute for
+    # source-side filtering.
+    redact:
+      - ANTHROPIC_API_KEY
+      - sk-
+
+    # Per-turn upstream HTTP timeout. Forwards taking longer surface
+    # as HTTP 504 to the caller.
+    timeout_s: 30.0
+
+  # Inbound A2A surface — operators POST /v1/turn here; the proxy
+  # forwards to spec.proxy.upstream.
+  a2a:
+    port: 7905
+
+# EOF

@@ -1,7 +1,8 @@
 ---
-name: agent-container-multiplexer
-description: tmux vs screen multiplexer support, capture-pane, send-keys.
-tags: [scitex-agent-container, scitex-package]
+description: |
+  [TOPIC] Multiplexer
+  [DETAILS] tmux vs screen multiplexer support, capture-pane, send-keys..
+tags: [scitex-agent-container-multiplexer]
 ---
 
 # Multiplexer

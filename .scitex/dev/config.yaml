@@ -1,0 +1,30 @@
+# scitex-dev project-type config
+# Drives which rule families the auditor applies.
+# See: scitex-dev ecosystem audit-project --help
+
+project-type:
+  - pip
+
+audit:
+  # PS-103: legitimate top-level dirs that are not part of the wheel
+  # but are operator-facing artefacts:
+  #   - config/      declarative YAML schema + templates the CLI
+  #                  reads at runtime (mounted from the host, not
+  #                  vendored into the package).
+  #   - containers/  apptainer/Dockerfile build sources used by
+  #                  `sac image build` and the SDK runtime smoke
+  #                  workflow. Not Python.
+  root-whitelist:
+    files:
+      # PS-103: codecov.yml is the canonical Codecov location. There's no
+      # baseline allowlist for it because Codecov also reads from .github/
+      # — but every other SciTeX package keeps it at the root, so we do
+      # too. See 02_package_11_ci-and-codecov.md.
+      - codecov.yml
+    dirs:
+      - config
+      - containers
+
+# audit:
+#   skip:
+#     - PS-108

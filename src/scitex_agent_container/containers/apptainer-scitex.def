@@ -1,0 +1,91 @@
+# scitex-agent-container:scitex — Apptainer recipe (canonical SSoT).
+#
+# Layered on apptainer-base. Default image used when an agent's
+# spec.yaml leaves spec.image unset.
+#
+# Adds:
+#   - ffmpeg + portaudio (scitex-audio / scitex-cv / scitex-plt video)
+#   - python venv at /opt/venv-sac/ (avoids Ubuntu's PEP-668 fight)
+#   - black, flake8, ipython, ipdb, pytest, pytest-cov
+#   - claude-agent-sdk (the runner's API; bundles its own claude binary)
+#   - scitex[all] (scientific stack)
+#   - scitex-agent-container (sac CLI + runner module)
+#
+# Build:
+#   # 1. base layer first
+#   apptainer build base.sif containers/apptainer-base.def
+#   # 2. then scitex on top, using base.sif as the bootstrap source
+#   apptainer build scitex.sif containers/apptainer-scitex.def
+#
+# Or via scitex-container (preferred, with versioning):
+#   scitex-container build scitex-agent-container-scitex
+
+Bootstrap: localimage
+From: ./sac-base.sif
+
+%post
+    set -e
+    export DEBIAN_FRONTEND=noninteractive
+
+    # ---- 1. Audio / video system deps ----------------------------------
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        ffmpeg \
+        portaudio19-dev
+    rm -rf /var/lib/apt/lists/*
+
+    # ---- 2. Python venv + scitex stack ---------------------------------
+    # Dedicated venv avoids Ubuntu 24.04 PEP-668 collisions with apt-installed
+    # python3-wheel etc. PATH below puts /opt/venv-sac/bin first so all
+    # python work hits this venv automatically.
+    #
+    # Resolver: uv (Rust, parallel) instead of pip. ``scitex[all]`` has a
+    # huge transitive set (openalex-local, sphinx-rtd-theme, etc.) that
+    # makes pip's backtracking thrash for 30+ min downloading metadata.
+    # uv solves the same dependency set in 1-3 min by resolving in
+    # parallel.  Falls back to pip if uv is missing on the base layer.
+    python3 -m venv /opt/venv-sac
+    # Ensure uv is reachable: the apptainer-base layer installs it to
+    # /root/.local/bin (uv installer ignores UV_INSTALL_DIR for the
+    # curl|sh path and uses XDG_BIN_HOME → ~/.local/bin under root).
+    # apptainer's %post starts with a minimal PATH so we extend it.
+    export PATH="/root/.local/bin:/usr/local/bin:$PATH"
+    if command -v uv >/dev/null; then
+        uv pip install --python /opt/venv-sac/bin/python \
+            black flake8 \
+            ipython ipdb \
+            pytest pytest-cov \
+            claude-agent-sdk \
+            "scitex[all]" \
+            "git+https://github.com/ywatanabe1989/scitex-agent-container.git@develop"
+    else
+        /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
+            pip setuptools wheel
+        /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
+            black flake8 \
+            ipython ipdb \
+            pytest pytest-cov \
+            claude-agent-sdk \
+            "scitex[all]" \
+            "git+https://github.com/ywatanabe1989/scitex-agent-container.git@develop"
+    fi
+    # Pin a specific sac release by editing the @develop above to @v0.14.0
+    # (or whatever tag), then ``sac image build scitex -y`` again.
+
+%environment
+    export PATH=/opt/venv-sac/bin:$PATH
+    export VIRTUAL_ENV=/opt/venv-sac
+
+%runscript
+    exec /opt/venv-sac/bin/python -m scitex_agent_container._runners.claude_session "$@"
+
+%labels
+    org.scitex.layer scitex
+    org.scitex.runtime apptainer
+    org.scitex.from scitex-agent-container:base
+    org.scitex.contains "scitex[all] claude-agent-sdk scitex-agent-container ffmpeg portaudio black flake8 ipython pytest"
+
+%help
+    scitex-agent-container :scitex layer (sac default image).
+    Layered on :base; adds scitex scientific stack, claude SDK, sac itself.
+    Default entry point: python -m scitex_agent_container._runners.claude_session

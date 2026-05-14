@@ -1,7 +1,8 @@
 ---
-name: agent-container-auto-accept
-description: Modular TUI prompt detection and auto-acceptance for Claude Code.
-tags: [scitex-agent-container, scitex-package]
+description: |
+  [TOPIC] Auto-Accept TUI Prompts
+  [DETAILS] Modular TUI prompt detection and auto-acceptance for Claude Code..
+tags: [scitex-agent-container-auto-accept]
 ---
 
 # Auto-Accept TUI Prompts
@@ -71,7 +72,7 @@ spec:
 
 ## Diagnostics
 
-Logged to `~/.scitex/agent-container/logs/{name}/auto-accept.log`:
+Logged to `~/.scitex/agent-container/runtime/logs/{name}/auto-accept.log`:
 - Every poll: pane content snapshot, elapsed time
 - Handler matches with timestamps
 - Timeout diagnostics with last captured content

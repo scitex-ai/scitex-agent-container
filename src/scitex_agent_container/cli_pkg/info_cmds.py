@@ -1,4 +1,4 @@
-"""Info commands: find, logs, attach, list-python-apis."""
+"""Info commands: find, tail, list-python-apis."""
 
 from __future__ import annotations
 
@@ -12,10 +12,8 @@ import click
 from rich.table import Table
 
 from ..config import load_config
-from ..lifecycle import agent_logs
-from ..registry import Registry
 from ._api_tree import get_api_tree
-from ._helpers import _json_flag, console
+from ._helpers import _json_flag, agent_name_complete, console
 
 
 @click.command()
@@ -42,23 +40,25 @@ def find(
 
     Searches agent definition files for those whose ``capabilities`` label
     includes the given value. Useful for routing tasks to the right agent.
+
+    \b
+    Example:
+      $ sac agent find HPC
+      $ sac agent find GPU --json
     """
     if search_dir is None:
         search_dir = "."
     search_path = Path(search_dir).expanduser().resolve()
 
     matches: list[dict] = []
-    # Dir-as-SSoT: agents live at <name>/<name>.yaml. Walk one level deep
-    # and match the convention. Bare top-level *.yaml files are also
-    # accepted for legacy / scratch use.
+    # Dir-as-SSoT: agents live at <name>/spec.yaml. Walk one level deep
+    # and match the convention.
     candidates: list[Path] = []
     for sub in sorted(search_path.iterdir()) if search_path.is_dir() else []:
         if sub.is_dir():
-            yaml_in = sub / f"{sub.name}.yaml"
-            if yaml_in.exists():
-                candidates.append(yaml_in)
-        elif sub.suffix == ".yaml":
-            candidates.append(sub)
+            spec = sub / "spec.yaml"
+            if spec.exists():
+                candidates.append(spec)
     for yaml_path in candidates:
         # stx-allow: fallback (reason: individual YAML files in the search directory may be invalid or unrelated; skipping bad files lets the search return partial results rather than aborting)
         try:
@@ -103,68 +103,116 @@ def find(
     console.print(table)
 
 
-@click.command()
-@click.argument("name")
+@click.command(name="tail")
+@click.argument("names", nargs=-1, required=True, shell_complete=agent_name_complete)
 @click.option(
-    "--lines",
-    "-n",
-    default=50,
-    help="Number of log lines to show.",
+    "--lines", "-n", default=20, help="Number of recent assistant turns to show."
 )
-def logs(name: str, lines: int) -> None:
-    """Show recent agent output."""
-    # stx-allow: fallback (reason: agent_logs reads from multiplexer or log files that may be absent if the agent was never started; error is reported and CLI exits with code 1)
-    try:
-        output = agent_logs(name, lines)
-        if output:
-            console.print(output)
-        else:
-            console.print("[dim]No log output captured.[/dim]")
-    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-        console.print(f"[red]Error: {exc}[/red]")
+@click.option("--tools", "show_tools", is_flag=True, help="Also show tool_use entries.")
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Emit raw session.jsonl records as JSON array.",
+)
+def tail_session(
+    names: tuple[str, ...], lines: int, show_tools: bool, as_json: bool
+) -> None:
+    """Pretty-print the SDK runner's session.jsonl transcript.
+
+    Reads ``<state>/<agent>/session.jsonl`` (the structured transcript
+    the SDK runner writes inside the container, mounted to the host
+    via /state) and renders each record as a single line so you can
+    monitor a running agent without grepping the raw JSON yourself.
+
+    Multiple agent names interleave their transcripts with a
+    ``[<name>]`` line-prefix so you can spot which agent emitted what.
+
+    \b
+    Example:
+      $ sac agent tail polish-scholar
+      $ sac agent tail polish-scholar -n 50 --tools
+      $ sac agent tail polish-scholar --json
+      $ sac agent tail hello-agent hello-agent2 hello-agent3
+    """
+    any_err = False
+    for n in names:
+        if not _tail_one(n, lines, show_tools, as_json, prefix=len(names) > 1):
+            any_err = True
+    if any_err:
         sys.exit(1)
 
 
-@click.command()
-@click.argument("name")
-def attach(name: str) -> None:
-    """Attach to an agent's multiplexer session."""
-    registry = Registry()
-    entry = registry.get(name)
+def _tail_one(
+    name: str, lines: int, show_tools: bool, as_json: bool, prefix: bool
+) -> bool:
+    """Render one agent's transcript. Returns True on success, False if
+    the agent is missing or has no transcript. Multi-name caller sets
+    prefix=True so each line carries ``[<name>]`` for disambiguation."""
+    import json as _json
+    from pathlib import Path
+
+    from .._state.registry import Registry
+
+    entry = Registry().get(name)
     if entry is None:
         console.print(f"[red]Agent '{name}' not found in registry[/red]")
-        sys.exit(1)
+        return False
 
-    from ..config import load_config
-
-    config = load_config(entry["config"])
-
-    # slurm-tenant agents live inside a remote SLURM allocation's tmux server;
-    # route through the runtime's own attach() (uses srun --pty + tmux -L).
-    if config.runtime == "slurm-tenant":
-        from ..runtimes.slurm_tenant import SlurmTenantRuntime
-
+    # state-dir layout: ~/.scitex/agent-container/runtime/<name>/session.jsonl
+    state_root = Path.home() / ".scitex" / "agent-container" / "runtime" / name
+    transcript = state_root / "session.jsonl"
+    if not transcript.is_file():
         console.print(
-            f"[blue]Attaching to slurm-tenant agent '{name}' "
-            f"(reservation={config.slurm.reservation}, Ctrl-B D to detach)[/blue]"
+            f"[red]No transcript at {transcript}. Agent may not have started a "
+            "session yet, or runs in a non-default state-root.[/red]"
         )
-        rc = SlurmTenantRuntime().attach(config)
-        sys.exit(rc)
+        return False
 
-    from ..runtimes.multiplexer import get_multiplexer
+    raw_lines = transcript.read_text(encoding="utf-8", errors="replace").splitlines()
+    records = []
+    for line in raw_lines:
+        try:
+            records.append(_json.loads(line))
+        except _json.JSONDecodeError:
+            continue
 
-    mux = get_multiplexer(config)
-    session_name = config.screen_name
+    if as_json:
+        click.echo(_json.dumps(records[-lines:], default=str, indent=2))
+        return True
 
-    if not mux.exists(session_name):
-        console.print(f"[red]Session '{session_name}' not found[/red]")
-        sys.exit(1)
-
-    detach_hint = "Ctrl-B D" if config.multiplexer == "tmux" else "Ctrl-A D"
-    console.print(
-        f"[blue]Attaching to '{session_name}' ({detach_hint} to detach)[/blue]"
-    )
-    mux.attach(session_name)
+    tag = f"[{name}] " if prefix else ""
+    out: list[str] = []
+    for r in records[-lines * 6 :]:
+        kind = r.get("type", "?")
+        if kind == "assistant":
+            txt = str(r.get("text") or r.get("raw") or "")
+            if txt.strip():
+                out.append(f"{tag}[assistant] {txt[:300]}")
+        elif kind == "user_echo" and show_tools:
+            raw = str(r.get("raw") or "")[:200]
+            out.append(f"{tag}[tool_result] {raw}")
+        elif kind == "result":
+            # Terser result line: just session_id + token deltas, no
+            # dumped dict. Operators want `[result]` as a visual
+            # boundary between turns, not a JSON listing — that's what
+            # `--json` is for.
+            usage = r.get("usage") or {}
+            sid = str(r.get("session_id") or "?")[:8]
+            inp = usage.get("input_tokens", 0)
+            out_tok = usage.get("output_tokens", 0)
+            cache_w = usage.get("cache_creation_input_tokens", 0)
+            cache_r = usage.get("cache_read_input_tokens", 0)
+            out.append(
+                f"{tag}[result] session={sid} "
+                f"in={inp} out={out_tok} cache_w={cache_w} cache_r={cache_r}"
+            )
+        elif kind == "error":
+            out.append(f"{tag}[error] {str(r)[:300]}")
+    for line in out[-lines:]:
+        console.print(line, markup=False, highlight=False)
+    return True
 
 
 @click.command(name="list-python-apis")
@@ -192,7 +240,13 @@ def attach(name: str) -> None:
 def list_python_apis(
     ctx: click.Context, verbose: int, max_depth: int, as_json: bool
 ) -> None:
-    """List all public Python APIs of scitex-agent-container."""
+    """List all public Python APIs of scitex-agent-container.
+
+    \b
+    Example:
+      $ sac list-python-apis
+      $ sac list-python-apis -v
+    """
     module = importlib.import_module("scitex_agent_container")
     tree = get_api_tree(module, max_depth=max_depth, docstring=(verbose >= 1))
 
@@ -218,7 +272,10 @@ def list_python_apis(
             if obj and callable(obj):
                 try:
                     sig = str(inspect.signature(obj))
-                except (ValueError, TypeError):  # stx-allow: fallback (reason: type coercion or format mismatch)
+                except (
+                    ValueError,
+                    TypeError,
+                ):  # stx-allow: fallback (reason: type coercion or format mismatch)
                     sig = "()"
                 click.echo(f"{indent}[{t}] {name}{sig}")
             else:

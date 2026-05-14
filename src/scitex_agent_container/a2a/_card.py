@@ -57,7 +57,14 @@ def project_card(name: str, v3: dict[str, Any], base_url: str) -> dict[str, Any]
     spec = v3.get("spec") or {}
     caps_csv = labels.get("capabilities", "") or ""
     capabilities_tags = [c.strip() for c in caps_csv.split(",") if c.strip()]
-    required_skills = (spec.get("skills") or {}).get("required") or []
+    # v3 rejected `spec.skills` (skills moved to dot_claude/skills/).
+    # Operator-declared skill IDs now come via metadata.labels.skills as a
+    # CSV; we still tolerate the legacy spec.skills.required for any v2
+    # YAML that reaches the projector before validation strips it.
+    skills_csv = labels.get("skills", "") or ""
+    label_skills = [s.strip() for s in skills_csv.split(",") if s.strip()]
+    legacy_skills = (spec.get("skills") or {}).get("required") or []
+    required_skills = list(label_skills) + list(legacy_skills)
     role = labels.get("role", "agent")
     function = labels.get("function", "")
 
@@ -65,7 +72,7 @@ def project_card(name: str, v3: dict[str, Any], base_url: str) -> dict[str, Any]
         "name": name,
         "description": _read_description(name, v3),
         "version": v3.get("apiVersion", "scitex-agent-container/v3"),
-        "url": f"{base}/v1/agents/{name}",
+        "url": f"{base}/v1/sac/agents/{name}",
         "provider": {
             "organization": labels.get("team", "scitex-agent-container"),
             "url": "https://scitex.ai",
@@ -95,10 +102,105 @@ def project_card(name: str, v3: dict[str, Any], base_url: str) -> dict[str, Any]
             "cardinality": labels.get("cardinality"),
             "scheduling": _scheduling(spec),
             "runtime": spec.get("runtime"),
-            "model": spec.get("model"),
+            # v3 moves model under spec.claude.model; legacy v2 had it at
+            # spec.model. Prefer v3, fall back to v2 for back-compat.
+            "model": (spec.get("claude") or {}).get("model") or spec.get("model"),
             "multiplexer": spec.get("multiplexer"),
             "required_skills": list(required_skills),
+            # D3 — structured isolation block (see
+            # docs/adr/0001-isolation-hardening.md). External
+            # verifiers (Clew, orochi attestation) read these booleans to
+            # attest specific properties; ``level`` is the human shorthand.
+            "isolation": _isolation_block(spec),
         },
+    }
+
+
+# ---------------------------------------------------------------------------
+# D3 isolation block helpers — pure functions of the YAML dict.
+# ---------------------------------------------------------------------------
+
+
+def _ap(spec: dict[str, Any]) -> dict[str, Any]:
+    return spec.get("apptainer") or {}
+
+
+def _relaxed(spec: dict[str, Any]) -> bool:
+    return bool(_ap(spec).get("relaxed", False))
+
+
+def _raw_args(spec: dict[str, Any]) -> list[str]:
+    return list(_ap(spec).get("raw_args") or [])
+
+
+def _has_flag(spec: dict[str, Any], flag: str) -> bool:
+    return any(a == flag for a in _raw_args(spec))
+
+
+def _has_overlay(spec: dict[str, Any]) -> bool:
+    return bool((_ap(spec).get("overlay") or "").strip())
+
+
+def _hardened(spec: dict[str, Any]) -> bool:
+    """A spec is hardened when sac would auto-prepend the flag."""
+    return not _relaxed(spec)
+
+
+def _has_writable_tmpfs(spec: dict[str, Any]) -> bool:
+    # sac auto-prepends --writable-tmpfs when (not relaxed) AND (no overlay)
+    # AND operator didn't already declare it.
+    if _has_flag(spec, "--writable-tmpfs"):
+        return True
+    if _relaxed(spec):
+        return False
+    return not _has_overlay(spec)
+
+
+def _binds(spec: dict[str, Any]) -> list[str]:
+    return list(_ap(spec).get("binds") or [])
+
+
+def _binds_count(spec: dict[str, Any]) -> int:
+    return len(_binds(spec))
+
+
+def _binds_writable_count(spec: dict[str, Any]) -> int:
+    """Count binds NOT carrying ``:ro`` (default mode is rw)."""
+    n = 0
+    for b in _binds(spec):
+        # Bind shape: "src:dst[:mode]" — split on ":" from the right.
+        parts = str(b).rsplit(":", 1)
+        mode = parts[1].strip() if len(parts) == 2 else ""
+        if mode != "ro":
+            n += 1
+    return n
+
+
+def _preflight_allowed(spec: dict[str, Any]) -> list[str]:
+    """``spec.apptainer.preflight_allow`` — empty until the field lands."""
+    return list(_ap(spec).get("preflight_allow") or [])
+
+
+def _isolation_level(spec: dict[str, Any]) -> str:
+    """``relaxed`` | ``custom`` | ``hardened``."""
+    if _relaxed(spec):
+        return "relaxed"
+    # custom if any hardened booleans are disabled OR preflight_allowed non-empty.
+    if _preflight_allowed(spec):
+        return "custom"
+    return "hardened"
+
+
+def _isolation_block(spec: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "level": _isolation_level(spec),
+        "containall": _has_flag(spec, "--containall") or _hardened(spec),
+        "cleanenv": _has_flag(spec, "--cleanenv") or _hardened(spec),
+        "writable_tmpfs": _has_writable_tmpfs(spec),
+        "preflight_passed": ([] if _relaxed(spec) else ["uid-nonzero", "no-host-home"]),
+        "preflight_allowed": _preflight_allowed(spec),
+        "binds_count": _binds_count(spec),
+        "binds_writable_count": _binds_writable_count(spec),
     }
 
 
@@ -169,11 +271,11 @@ def fleet_card(
             {
                 "id": "sac.fleet",
                 "name": "fleet",
-                "description": ("sac-served fleet — see /v1/agents/ for members."),
+                "description": ("sac-served fleet — see /v1/sac/agents/ for members."),
                 "tags": ["multi-agent", "scitex-agent-container"],
             }
         ],
         "x-scitex-agent-container": {
-            "agents": [{"name": n, "url": f"{base}/v1/agents/{n}"} for n in agents],
+            "agents": [{"name": n, "url": f"{base}/v1/sac/agents/{n}"} for n in agents],
         },
     }

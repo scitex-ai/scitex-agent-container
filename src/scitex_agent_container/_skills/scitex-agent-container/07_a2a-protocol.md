@@ -1,7 +1,8 @@
 ---
-name: a2a-protocol
-description: A2A protocol — native sac surface — see file body for details.
-tags: [scitex-agent-container, scitex-package]
+description: |
+  [TOPIC] A2A protocol — native sac surface
+  [DETAILS] A2A protocol — native sac surface — see file body for details..
+tags: [scitex-agent-container-a2a-protocol]
 ---
 
 # A2A protocol — native sac surface
@@ -15,7 +16,7 @@ A2A is a **protocol**; orochi is one **implementation** of a fleet hub on top of
 Concrete value:
 
 - **Standalone agent deploy** — `sac a2a serve agent.yaml` boots one A2A agent. Done.
-- **Protocol-aware health check** — sac health can hit an AgentCard endpoint (future).
+- **Protocol-aware health check** — sac agent health can hit an AgentCard endpoint (future).
 - **Swappable fleet implementations** — orochi is one consumer of sac-served A2A endpoints; another fleet hub can be too.
 
 ## CLI
@@ -29,7 +30,7 @@ sac a2a doctor <agent.yaml>    [--host H] [--port N] [--timeout 5.0] [--json]
 
 ## Auto-launch via `spec.a2a`
 
-When a v3 YAML declares `spec.a2a.port`, `sac start` spawns the A2A server as a sidecar subprocess after the multiplexer is up. PID lives at `{workdir}/a2a-sidecar.pid`, output at `{workdir}/a2a-sidecar.log`; `sac stop` SIGTERMs it via the PID file.
+When a v3 YAML declares `spec.a2a.port`, `sac agent start` spawns the A2A server as a sidecar subprocess after the multiplexer is up. PID lives at `{workdir}/a2a-sidecar.pid`, output at `{workdir}/a2a-sidecar.log`; `sac agent stop` SIGTERMs it via the PID file.
 
 ```yaml
 apiVersion: scitex-agent-container/v3
@@ -57,9 +58,9 @@ The server exposes the standard A2A routes:
 | Method | Path | Returns |
 | --- | --- | --- |
 | GET | `/.well-known/agent.json` | fleet AgentCard listing all agents in this server |
-| GET | `/v1/agents/` | JSON list of agents |
-| GET | `/v1/agents/<name>/.well-known/agent.json` | per-agent AgentCard (protobuf via `_card.project_card_proto`) |
-| POST | `/v1/agents/<name>` | JSON-RPC SDK 1.x methods (see below) |
+| GET | `/v1/sac/agents/` | JSON list of agents |
+| GET | `/v1/sac/agents/<name>/.well-known/agent.json` | per-agent AgentCard (protobuf via `_card.project_card_proto`) |
+| POST | `/v1/sac/agents/<name>` | JSON-RPC SDK 1.x methods (see below) |
 
 ### SDK 1.x methods (gRPC-style names)
 
@@ -85,7 +86,7 @@ sac a2a serve my-agent.yaml --port 8888 &
 curl http://127.0.0.1:8888/.well-known/agent.json | jq .name
 
 # JSON-RPC SendMessage (SDK 1.x)
-curl -s -X POST http://127.0.0.1:8888/v1/agents/<name>/ \
+curl -s -X POST http://127.0.0.1:8888/v1/sac/agents/<name>/ \
   -H 'Content-Type: application/json' \
   -H 'A2A-Version: 1.0' \
   -d '{"jsonrpc":"2.0","id":"t","method":"SendMessage",
@@ -94,7 +95,7 @@ curl -s -X POST http://127.0.0.1:8888/v1/agents/<name>/ \
   | jq '.result.task | {state: .status.state, reply: .status.message.parts[0].text}'
 
 # SSE streaming
-curl -N -X POST http://127.0.0.1:8888/v1/agents/<name>/ \
+curl -N -X POST http://127.0.0.1:8888/v1/sac/agents/<name>/ \
   -H 'Content-Type: application/json' \
   -H 'A2A-Version: 1.0' \
   -H 'Accept: text/event-stream' \
@@ -143,11 +144,11 @@ sac uses the official Python `a2a-sdk[http-server]>=1.0.2`. Handlers are `AgentE
 
 ## Boundary with orochi
 
-orochi (the fleet hub) is **one consumer** of sac-served A2A endpoints. Its dispatch bridge serves the same SDK 1.x surface at `https://scitex-orochi.com/v1/agents/<name>/` and proxies into the live agent's sidecar (Tier-3 HTTP-direct, or WS fallback). orochi adds workspace-token auth (`WorkspaceTokenContextBuilder`), agent registry resolution, and chat-room semantics on top. None of that is required for sac's A2A — those are orochi-side features layered on top.
+orochi (the fleet hub) is **one consumer** of sac-served A2A endpoints. Its dispatch bridge serves the same SDK 1.x surface at `https://scitex-orochi.com/v1/sac/agents/<name>/` and proxies into the live agent's sidecar (Tier-3 HTTP-direct, or WS fallback). orochi adds workspace-token auth (`WorkspaceTokenContextBuilder`), agent registry resolution, and chat-room semantics on top. None of that is required for sac's A2A — those are orochi-side features layered on top.
 
 If you want a fleet, use orochi. If you want one agent on a laptop, use `sac a2a serve`.
 
 ## Cross-references
 
-- [`06_env-injection-ports.md`](06_env-injection-ports.md) — the four env-injection ports (yaml.env / src_mcp.json env / src_env / hooks)
+- [`06_env-injection-ports.md`](06_env-injection-ports.md) — the four env-injection ports (yaml.env / dot_claude/.mcp.json env / dot_claude/.env / hooks)
 - [scitex-orochi `docs/a2a-protocol.md`](https://github.com/ywatanabe1989/scitex-orochi/blob/develop/docs/a2a-protocol.md) — fleet-side architecture (Tier 3 dispatch bridge)

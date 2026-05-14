@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "scitex-agent-container"
-version = "0.11.0"
+version = "0.15.0"
 description = "Declarative YAML-based framework for defining, managing, and orchestrating AI coding agent instances"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -38,11 +38,15 @@ dependencies = [
     "rich>=13.0",
     "scitex-config>=0.3.0",
     "scitex-container>=0.1.0",
+    "scitex-logging>=0.1.5",
     "scitex-ssh>=1.0.0",
     # A2A protocol surface — Phase 1 SDK adoption (see GITIGNORED/A2A_MIGRATION.md).
     # `[http-server]` extras pull in starlette + sse-starlette for the
     # JSON-RPC + SSE routes we mount in `a2a/_server.py`.
     "a2a-sdk[http-server]>=1.0.2",
+    # Anthropic's official SDK — backs the `claude_session` handler
+    # (replaces the legacy `claude_cli` / `claude --print` path).
+    "claude-agent-sdk>=0.1.0",
     "uvicorn>=0.27",
     # protobuf 6.x removed FieldDescriptor.label, which a2a-sdk 1.0.x's
     # validate_proto_required_fields still references — pin until upstream
@@ -55,6 +59,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+mcp = [
+    # F-CS15: sac MCP server. fastmcp 2.x and 3.x both supported via
+    # the safe_mount shim (matches scitex-* package convention).
+    "fastmcp>=2.0",
+]
 telegram = [
     "claude-code-telegrammer>=0.1.0",
 ]
@@ -65,8 +74,16 @@ slurm = [
     "scitex-hpc>=0.6.2",
 ]
 dev = [
-    "scitex-dev",
-    "pytest>=7.0.0",
+    "scitex-dev>=0.11.7",
+    # PS210: tests import scitex_hpc unguarded, so [dev] must include it
+    # (otherwise `pip install -e .[dev]` can't run the full suite).
+    "scitex-hpc>=0.6.2",
+    # `sac dev …` (rotate-secret + credential2apikey) imports
+    # scitex_git for its gh-secret/variable wrappers + sha256 sidecar.
+    # Keeping it in [dev] (not core deps) so a runtime install of sac
+    # doesn't pull the gh CLI plumbing — only maintainers / CI rotation.
+    "scitex-git>=0.3.0",
+    "pytest>=7.0.0,<9.0.0",
     "pytest-cov>=4.0.0",
     "pytest-xdist>=3.0.0",
     "pre-commit>=3.5.0",
@@ -80,8 +97,8 @@ docs = [
 ]
 
 [project.scripts]
-scitex-agent-container = "scitex_agent_container.cli:main"
-sac = "scitex_agent_container.cli:main"
+scitex-agent-container = "scitex_agent_container.cli:cli_entry_point"
+sac = "scitex_agent_container.cli:cli_entry_point"
 sac-statusline = "scitex_agent_container.statusline:main"
 
 [project.entry-points."scitex_dev.docs"]
@@ -106,9 +123,9 @@ packages = ["src/scitex_agent_container"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-v --tb=short -m 'not integration'"
+addopts = "-v --tb=short -m 'not integration and not docker_smoke'"
 markers = [
-    "integration: slow end-to-end tests that spawn a real Claude Code agent (require claude CLI + tmux + ANTHROPIC_API_KEY or SCITEX_AGENT_CONTAINER_CI_ANTHROPIC_API_KEY). Opt in with '-m integration'.",
+    "integration: slow end-to-end tests that spawn a real Claude Code agent (require claude CLI + tmux + ANTHROPIC_API_KEY or SAC_ANTHROPIC_API_KEY). Opt in with '-m integration'.",
     "docker_smoke: real-Docker smoke tests for DockerRuntime (build image, start/stop newbie-docker agent, exec claude -p). Skipped unless docker daemon reachable. Opt in with '-m docker_smoke'.",
     "slow: slow tests opted-in with '-m slow'.",
 ]
@@ -120,3 +137,12 @@ target-version = "py310"
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
 ignore = ["E501"]
+
+[tool.coverage.run]
+# Subprocess + multi-process coverage: child Python interpreters
+# (subprocess.run, jupyter nbconvert --execute, etc.) are wired in via
+# tests/conftest.py force-set of COVERAGE_PROCESS_START + a .pth shim.
+# See ~/proj/scitex-dev/src/scitex_dev/_skills/general/05_development_06_subprocess-coverage.md.
+parallel = true
+source = ["scitex_agent_container"]
+concurrency = ["multiprocessing", "thread"]

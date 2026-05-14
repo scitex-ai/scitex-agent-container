@@ -24,14 +24,23 @@ class ContainerSpec:
 
 @dataclass
 class ClaudeSpec:
+    # v3-realign: model lives under spec.claude.model (promoted from
+    # top-level spec.model — §3). Empty = runtime default.
+    model: str = ""
     channels: list[str] = field(default_factory=list)
     flags: list[str] = field(default_factory=list)
+    # v3 escape hatch (§1 invariant): splat ``**raw_options`` into
+    # ``ClaudeAgentOptions`` so power users can reach any SDK option
+    # sac doesn't model. Merged on top of curated keys; raw_options wins.
+    raw_options: dict = field(default_factory=dict)
     # Session restart strategy. One of:
-    #   continue-or-new  try --continue, fall back to a fresh launch if no prior session (default)
-    #   continue         always pass --continue (fails if no prior session exists)
-    #   new              never pass --continue
-    #   resume           pass --resume <resume_id> (explicit session ID)
-    session: str = "continue-or-new"
+    #   continue     try --continue; fall back to a fresh launch if no
+    #                prior session jsonl exists (default; safe).
+    #   new-session  never pass --continue — always start fresh.
+    #   resume       pass --resume <resume_id> (explicit session ID).
+    # Legacy aliases accepted at load time: `continue-or-new` -> `continue`,
+    # `new` -> `new-session`.
+    session: str = "continue"
     # Only resume if the most recent session jsonl is newer than this many minutes.
     # None = no age check (always resume if session exists).
     continue_max_age_minutes: int | None = None
@@ -59,6 +68,113 @@ class WatchdogSpec:
     resp_waiting: str = "/speak-and-call"
 
 
+# F-CS3 — autonomous drive-until-done.
+#
+# claude-session runners do ONE turn and idle by default; multi-turn
+# tasks have to wrap externally with a2a peer post-turn loops, and
+# every project ends up rewriting that scaffolding. The autonomous
+# block lets the runner natively:
+#
+#   1. Watch each assistant turn for a text match (``drive_until``);
+#      hitting it exits the runner with code 0.
+#   2. After ``idle_kick_after_s`` of no tool activity AND no match,
+#      post ``kick_text`` so the conversation keeps moving.
+#   3. Cap at ``max_turns`` to prevent runaway loops.
+#
+# Phase 1 (this dataclass + parser + validator) lands the schema so
+# yamls can author the contract today; the runner-side enforcement
+# (consume these fields in _runners.claude_session) lands in phase 2.
+# An ``enabled`` row authored under the schema before phase 2 ships
+# is harmless — the runner just ignores it for now.
+# F-CS18 — apptainer-specific extension hook.
+#
+# Apptainer reads OCI images natively (`apptainer build sif docker://...`),
+# so for the no-extras case spec.image alone is enough — sac just
+# `apptainer build`s the SIF and runs it. For HPC-specific layering
+# (extra pip packages, system libs, env vars), the operator can either:
+#
+#   * declare `spec.apptainer.post` — sac synthesises a `.def` with
+#     `Bootstrap: docker` + `%post` + `%environment` and builds from it.
+#   * declare `spec.apptainer.def_file` — sac runs `apptainer build`
+#     against the operator's hand-written `.def` (full control).
+#
+# All fields are optional; an `apptainer:` block with no fields set is
+# equivalent to none at all.
+@dataclass
+class ApptainerSpec:
+    """Apptainer-specific image-build extensions (F-CS18)."""
+
+    # v3-realign: apptainer-engine-scoped knobs promoted from top-level.
+    image: str = ""
+    """SIF path or docker:// URL — promoted from top-level spec.image (§3).
+    Empty = fall back to the default sac-scitex SIF."""
+
+    binds: list[str] = field(default_factory=list)
+    """Bind mounts as ``host:container[:mode]`` strings — promoted from
+    top-level spec.mounts (§3)."""
+
+    env: dict[str, str] = field(default_factory=dict)
+    """Env vars exported into the container — promoted from top-level
+    spec.env (§3)."""
+
+    raw_args: list[str] = field(default_factory=list)
+    """v3 escape hatch (§1 invariant): appended verbatim to the
+    ``apptainer exec`` argv after all curated args. Lets operators bolt
+    on flags sac doesn't model."""
+
+    container_workdir: str = "/work"
+    """Path inside the container where ``spec.workdir`` gets bind-mounted
+    (and where the runner's ``--pwd`` lands). Default ``/work``.
+    Override when the SIF expects a different mount point (e.g. a
+    pre-baked ``WORKDIR`` in the .def file)."""
+
+    post: str = ""
+    """Shell snippet run inside the SIF build (apptainer's `%post`).
+    Lines are concatenated verbatim. Empty = no extension."""
+
+    environment: dict = field(default_factory=dict)
+    """Env vars baked into the SIF (apptainer's `%environment`). Same
+    shape as ``spec.env`` — KEY: VALUE pairs."""
+
+    def_file: str = ""
+    """Path to a hand-authored ``.def`` file (apptainer's native
+    build language). Mutually exclusive with `post`/`environment`:
+    when set, sac uses this file verbatim and ignores `post`."""
+
+    nv: bool = False
+    """Forward host NVIDIA driver/libs into the container (apptainer's
+    ``--nv``). Required for CUDA workloads on GPU nodes; harmless on
+    CPU-only hosts but only set when needed."""
+
+    rocm: bool = False
+    """Forward host AMD ROCm libs (apptainer's ``--rocm``). Mutually
+    exclusive with ``nv`` in practice (no host has both)."""
+
+    overlay: str = ""
+    """Writable apptainer overlay image (``--overlay <file>``). Empty =
+    no overlay (tmpfs writable layer). Non-absolute paths resolve
+    against ``spec.workdir``. See ``docs/isolation.md`` §7."""
+
+    relaxed: bool = False
+    """Opt out of sac's hardened defaults (auto-prepended
+    ``--containall``/``--cleanenv``/``--writable-tmpfs``/``--home``).
+    See ``docs/isolation.md``."""
+
+    fakeroot: bool = False
+    """Apptainer ``--fakeroot`` — uid 0 inside via user-namespace
+    remapping; operator uid on host. Pairs with the D5 preflight's
+    ``/proc/self/uid_map`` detection (see ``docs/isolation.md``)."""
+
+
+@dataclass
+class AutonomousSpec:
+    enabled: bool = False
+    drive_until: str = "DONE"
+    max_turns: int = 50
+    idle_kick_after_s: int = 120
+    kick_text: str = "Continue. Print DONE when finished."
+
+
 @dataclass
 class RestartSpec:
     policy: str = "never"  # never | on-failure | always
@@ -68,7 +184,28 @@ class RestartSpec:
     backoff_multiplier: int = 2
 
 
-# Parsed for backward compat but not interpreted by runtime.
+# Inbound A2A surface for an agent. The SDK runner launches a sidecar
+# HTTP server exposing ``/v1/turn`` + ``/.well-known/agent.json``.
+# ``port`` semantics:
+#   * ``"auto"`` (default) — sac allocates via port_allocator at start.
+#     Clients should reach the agent through ``sac listen`` (one host
+#     port, name-in-path); per-agent ports are internal IPC.
+#   * ``int``   — operator-pinned; collisions raise at start time.
+#   * ``None``  — sidecar disabled (no inbound HTTP).
+@dataclass
+class A2ASpec:
+    host: str = "127.0.0.1"
+    port: int | str | None = "auto"
+
+    @property
+    def is_auto(self) -> bool:
+        return self.port == "auto"
+
+    @property
+    def is_disabled(self) -> bool:
+        return self.port is None
+
+
 # Telegram setup is managed externally via hooks.
 @dataclass
 class TelegramSpec:
@@ -76,98 +213,6 @@ class TelegramSpec:
     allowed_users: list[str] = field(default_factory=list)
     auto_connect: bool = True
     greeting: str = ""
-
-
-@dataclass
-class SlurmHooks:
-    """Plugin hook paths for the SLURM runtime.
-
-    Each field is a path to a shell fragment that is *sourced* (not exec'd)
-    by the sbatch wrapper. Hooks can export env vars that persist into the
-    agent process — this is exactly what e.g. Lmod module loads need.
-
-    Hook env vars (set by the wrapper before sourcing):
-        SAC_AGENT_ID, SAC_JOB_ID, SAC_WORKDIR, SAC_LOG_FILE, SAC_PHASE.
-
-    sac ships no default hooks; external orchestrators (orochi, etc.)
-    provide their own scripts and reference them from agent YAML.
-    """
-
-    pre_submit: str = ""
-    pre_agent: str = ""
-    walltime_signal: str = ""
-    post_agent: str = ""
-    attach: str = ""
-
-
-@dataclass
-class OrochiSpec:
-    enabled: bool = False
-    hosts: list[str] = field(default_factory=list)
-    port: int = 8559
-    token_env: str = "SCITEX_OROCHI_TOKEN"
-    channels: list[str] = field(default_factory=list)
-    heartbeat_interval: int = 60
-
-
-@dataclass
-class SlurmHeartbeatSpec:
-    """Compute-node heartbeat daemon for the SLURM runtime.
-
-    On HPC clusters the host-level heartbeat pusher (systemd user timer,
-    launchd plist) runs on the *login node* and cannot see tmux sessions
-    living on the compute node the sbatch job landed on. Without a
-    compute-node-local pusher, the hub marks the agent dead five minutes
-    after the job starts (symptom: ``head-spartan`` alive in squeue but
-    red on the dashboard — lead msg#15654).
-
-    Fix: the sbatch wrapper spawns a lightweight background loop that
-    invokes ``command`` every ``interval_s`` seconds on the compute node
-    itself. When ``command`` is empty the loop is skipped (opt-in).
-
-    The command is expected to be a self-contained shell invocation of a
-    heartbeat pusher (e.g. ``python3 .../agent_meta.py --push``). The
-    wrapper exports ``SCITEX_OROCHI_AGENT`` / ``SCITEX_OROCHI_HOSTNAME``
-    via the ``pre_agent`` hook so the pushed payload registers with the
-    correct fleet identity.
-
-    Fields:
-        command:   Shell command line to run each tick. Empty disables.
-        interval_s: Seconds between ticks. 30 matches the login-node
-                   systemd timer cadence.
-        log_file:  Absolute path (with ``~`` expansion) for stderr/stdout
-                   capture. Defaults to ``<logs_dir>/<jobid>.heartbeat.log``
-                   when empty.
-    """
-
-    command: str = ""
-    interval_s: int = 30
-    log_file: str = ""
-
-
-@dataclass
-class SlurmSpec:
-    """SLURM runtime configuration parsed from agent YAML's ``spec.slurm``."""
-
-    partition: str = ""
-    time_limit: str = "1-00:00:00"
-    cpus_per_task: int = 1
-    mem: str = "4G"
-    nodes: int = 1
-    ntasks: int = 1
-    gres: str = ""
-    job_name: str = ""
-    signal: str = "B:USR1@3600"
-    auto_resubmit: bool = True
-    hold: str = "tail -f /dev/null"
-    logs_dir: str = "~/slurm_logs"
-    hooks: SlurmHooks = field(default_factory=SlurmHooks)
-    heartbeat: SlurmHeartbeatSpec = field(default_factory=SlurmHeartbeatSpec)
-    extra_directives: list[str] = field(default_factory=list)
-    # ``slurm-tenant`` runtime: name of the scitex-hpc Reservation lease
-    # this agent should join. Empty for the regular ``slurm`` runtime.
-    # Operator must `scitex-hpc reservations book <name> ...` first.
-    reservation: str = ""
 
 
 @dataclass
@@ -267,7 +312,7 @@ class SchedulingSpec:
 
     ``mode`` controls effective-id composition and launch-skip behavior:
       * ``per-host`` (default): agent is started on every host that runs
-        ``sac start <name>``; the effective id is ``<metadata.name>-<HOST>``
+        ``sac agent start <name>``; the effective id is ``<metadata.name>-<HOST>``
         unless the name already ends with ``-<HOST>``.
       * ``singleton``: exactly one instance fleet-wide. The effective id
         stays as the bare ``<metadata.name>``. Only launched on
@@ -367,12 +412,21 @@ class AgentConfig:
     """Parsed agent configuration from a YAML definition file."""
 
     name: str
-    runtime: str = "claude-code"
+    runtime: str = "apptainer"
+    # Top-level container image. Empty = use the default sac-scitex SIF.
+    # (`spec.dockerfile` was dropped 2026-05-13 with the docker ripout.)
+    image: str = ""
     model: str = "sonnet"
-    workdir: str = "~/proj"
+    # Empty default means "use the per-agent workspace under sac's
+    # user-state root" — resolved by `expanded_workdir` below to
+    # `~/.scitex/agent-container/runtime/agents/<name>/`. Setting
+    # `spec.workdir` explicitly overrides that.
+    workdir: str = ""
     python_venv: str = ""  # resolved venv path (post _resolve_python_venv)
     env: dict[str, str] = field(default_factory=dict)
-    env_files: list[str] = field(default_factory=list)  # .env file paths (workspace-relative ok)
+    env_files: list[str] = field(
+        default_factory=list
+    )  # .env file paths (workspace-relative ok)
     screen_name: str = ""
     labels: dict[str, str] = field(default_factory=dict)
     container: ContainerSpec = field(default_factory=ContainerSpec)
@@ -380,6 +434,8 @@ class AgentConfig:
     health: HealthSpec = field(default_factory=HealthSpec)
     watchdog: WatchdogSpec = field(default_factory=WatchdogSpec)
     restart: RestartSpec = field(default_factory=RestartSpec)
+    autonomous: AutonomousSpec = field(default_factory=AutonomousSpec)
+    apptainer: ApptainerSpec = field(default_factory=ApptainerSpec)
     hooks: dict[str, list[str]] = field(default_factory=dict)
     listen: list[ListenPort] = field(default_factory=list)
     extensions: Dict[str, Any] = field(default_factory=dict)
@@ -390,14 +446,38 @@ class AgentConfig:
         default_factory=ContextManagementConfig
     )
     startup_commands: list[StartupCommand] = field(default_factory=list)
+    # v3-realign: ``startup_prompts`` is separate from ``startup_commands``
+    # (§3). startup_commands are SHELL commands run BEFORE claude starts;
+    # startup_prompts are TEXT fed to claude as the first user message(s).
+    startup_prompts: list[str] = field(default_factory=list)
     startup: "StartupSpec" = field(default_factory=lambda: StartupSpec())
     mcp_servers: dict[str, dict] = field(default_factory=dict)
     multiplexer: str = "tmux"  # "tmux" (default) or "screen"
     hosts_spec: HostsSpec = field(default_factory=HostsSpec)
-    slurm: SlurmSpec = field(default_factory=SlurmSpec)
     scheduling: SchedulingSpec = field(default_factory=SchedulingSpec)
-    orochi: OrochiSpec = field(default_factory=OrochiSpec)
     config_path: str = ""
+    # Declarative bind-mounts: list of {"src": <host>, "dst": <ctr>, "mode": "rw"|"ro"}.
+    mounts: list[dict] = field(default_factory=list)
+    # Container user. "" → image's USER (typically `agent`); "host" → host
+    # operator's UID:GID; "<uid>:<gid>" → explicit numeric. Pair with
+    # spec.mounts + spec.env.HOME for host-shaped paths + ownership.
+    user: str = ""
+    # Inbound A2A endpoint (HTTP /v1/turn + AgentCard).
+    a2a: A2ASpec = field(default_factory=A2ASpec)
+    # v3 ``kind`` discriminator: "Agent" (SDK runner) or "AgentProxy"
+    # (HTTP forwarder — see :class:`ProxySpec`). Validator rejects any
+    # other value. Loader populates from raw["kind"].
+    kind: str = "Agent"
+    # ProxySpec is only meaningful when ``kind == AgentProxy``.
+    # Stored as ``Any`` here so this module stays import-cycle-free with
+    # ``_proxy_types``; the actual type is ``ProxySpec | None``.
+    proxy: Any = None
+    # F-DC1: spec.dot_claude — single directory that holds CLAUDE.md, .mcp.json,
+    # .env, state.md, commands/, skills/, hooks/, etc. and is materialized into
+    # the agent's workdir at start (replaces the legacy ``src_*`` siblings).
+    # Empty = auto-discover ``./dot_claude`` next to spec.yaml; otherwise an
+    # absolute path or a path relative to spec.yaml's directory.
+    dot_claude: str = ""
 
     def __post_init__(self) -> None:
         if not self.screen_name:
@@ -405,4 +485,18 @@ class AgentConfig:
 
     @property
     def expanded_workdir(self) -> str:
-        return str(Path(self.workdir).expanduser())
+        if self.workdir:
+            return str(Path(self.workdir).expanduser())
+        # Per-agent default workspace — lives under sac's user-state
+        # tree so multiple agents stay isolated, mounts at /work
+        # inside the container, persists across restarts. Created
+        # lazily by the runtime adapter (apptainer bind target dir
+        # auto-created by apptainer if missing).
+        return str(
+            Path.home()
+            / ".scitex"
+            / "agent-container"
+            / "runtime"
+            / "agents"
+            / self.name
+        )

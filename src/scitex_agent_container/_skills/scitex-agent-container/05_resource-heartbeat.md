@@ -1,7 +1,8 @@
 ---
-name: scitex-resource-heartbeat
-description: How to run the scitex-resource heartbeat collector so agents can read SLURM and machine state from ~/.scitex/cache/ instead of hammering sinfo/squeue.
-tags: [scitex-agent-container, scitex-package]
+description: |
+  [TOPIC] Resource Heartbeat
+  [DETAILS] How to run the scitex-resource heartbeat collector so agents can read SLURM and machine state from ~/.scitex/cache/ instead of hammering sinfo/squeue..
+tags: [scitex-agent-container-resource-heartbeat]
 ---
 
 # Resource Heartbeat
@@ -97,4 +98,4 @@ systemctl --user enable --now scitex-heartbeat
 ## Related
 
 - `resource-management.md` — the reader-side API
-- `scitex-orochi/resource-hub.md` — aggregating caches across the fleet
+- Downstream fleet hub — aggregating caches across the fleet (sac is fleet-agnostic)

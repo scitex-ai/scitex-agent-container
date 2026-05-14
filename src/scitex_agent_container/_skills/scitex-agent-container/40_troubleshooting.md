@@ -1,7 +1,8 @@
 ---
-name: agent-container-troubleshooting
-description: Common launch failures and their fixes for scitex-agent-container agents.
-tags: [scitex-agent-container, scitex-package]
+description: |
+  [TOPIC] Agent Launch Troubleshooting
+  [DETAILS] Common launch failures and their fixes for scitex-agent-container agents..
+tags: [scitex-agent-container-troubleshooting]
 ---
 
 # Agent Launch Troubleshooting
@@ -33,10 +34,10 @@ spec:
 
 ## Auto-accept logs
 
-Check `~/.scitex/agent-container/logs/{name}/auto-accept.log`:
+Check `~/.scitex/agent-container/runtime/logs/{name}/auto-accept.log`:
 
 ```bash
-cat ~/.scitex/agent-container/logs/my-agent/auto-accept.log
+cat ~/.scitex/agent-container/runtime/logs/my-agent/auto-accept.log
 ```
 
 Shows every poll cycle: pane content, matched handlers, timeouts.
@@ -97,7 +98,7 @@ tmux send-keys -t <name> 1 Enter     # Select option 1
 ## Workspace CLAUDE.md marker abort (`WorkspaceCLAUDEMarkerError`)
 
 `scitex-agent-container start` refuses to deploy when the existing
-`~/.scitex/orochi/runtime/workspaces/<agent>/CLAUDE.md` is non-empty but does not
+`~/.scitex/agent-container/runtime/workspaces/<agent>/CLAUDE.md` is non-empty but does not
 contain the canonical marker pair:
 
 ```
@@ -107,7 +108,7 @@ contain the canonical marker pair:
 ...user tail, preserved across restarts...
 ```
 
-Hard-fail contract (see `runtimes/src_files.py::_validate_marker_invariants`,
+Hard-fail contract (see `runtimes/_dot_claude.py::_validate_marker_invariants`,
 per ywatanabe spec msg 5250–5260):
 
 - exactly **one** Start marker
@@ -139,23 +140,23 @@ markerless non-empty file blocks the deploy.
 
 1. **Inspect first.** Check whether there is any content worth keeping:
    ```bash
-   cat ~/.scitex/orochi/runtime/workspaces/<agent>/CLAUDE.md
+   cat ~/.scitex/agent-container/runtime/workspaces/<agent>/CLAUDE.md
    ```
    Typical placeholder is 5–10 lines of boilerplate; if so, nothing to save.
 2. **Back up custom tail** (if any real content exists):
    ```bash
-   cp ~/.scitex/orochi/runtime/workspaces/<agent>/CLAUDE.md \
-      ~/.scitex/orochi/runtime/workspaces/<agent>/CLAUDE.md.bak
+   cp ~/.scitex/agent-container/runtime/workspaces/<agent>/CLAUDE.md \
+      ~/.scitex/agent-container/runtime/workspaces/<agent>/CLAUDE.md.bak
    ```
 3. **Remove the unmarked file:**
    ```bash
-   rm ~/.scitex/orochi/runtime/workspaces/<agent>/CLAUDE.md
+   rm ~/.scitex/agent-container/runtime/workspaces/<agent>/CLAUDE.md
    ```
 4. **Re-run start.** Deploy will now treat the workspace as empty and
    write a fresh managed section with both markers:
    ```bash
    # shared definition (or swap `shared` -> `<host>` for a host-specific agent)
-   scitex-agent-container start ~/.scitex/orochi/shared/agents/<agent>/<agent>.yaml
+   scitex-agent-container start ~/.scitex/agent-container/agents/<agent>/<agent>.yaml
    ```
 5. **Re-append custom tail** (if you backed up real content) **below** the
    End marker in the newly written file, not above it.

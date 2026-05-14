@@ -6,7 +6,7 @@ wired in the agent's ``.claude/settings.local.json``::
 
     "hooks": {
       "PreToolUse":        [{"matcher": "", "hooks": [
-        {"type": "command", "command": "scitex-agent-container hook-event pretool"}
+        {"type": "command", "command": "scitex-agent-container ingest-hook-event pretool"}
       ]}],
       "PostToolUse":       [...hook-event posttool],
       "UserPromptSubmit":  [...hook-event prompt],
@@ -33,7 +33,7 @@ from pathlib import Path
 
 import click
 
-from ..event_log import append_event
+from .._state.event_log import append_event
 
 
 def _resolve_agent(flag: str) -> str:
@@ -50,7 +50,7 @@ def _resolve_agent(flag: str) -> str:
         return "anonymous-agent"
 
 
-@click.command("hook-event")
+@click.command("ingest-hook-event")
 @click.argument(
     "kind",
     type=click.Choice(
@@ -65,7 +65,13 @@ def _resolve_agent(flag: str) -> str:
     help="Override the resolved agent name.",
 )
 def hook_event(kind: str, agent_flag: str) -> None:
-    """Append a Claude Code hook event to the per-agent ring-buffer."""
+    """Append a Claude Code hook event to the per-agent ring-buffer.
+
+    \b
+    Example:
+      $ echo '{"tool":"Read"}' | sac event ingest PreToolUse
+      $ echo '{}' | sac event ingest Stop --agent head-ywata-note-win
+    """
     # stx-allow: fallback (reason: hook handler must never crash the host agent; any error in stdin read, JSON parse, or event append is swallowed so the tool call is not aborted)
     try:
         raw = sys.stdin.read() or "{}"
