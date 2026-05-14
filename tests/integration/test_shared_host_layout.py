@@ -3,10 +3,17 @@
 sac-only concerns: discovery searches ``~/.scitex/agent-container/agents/``
 plus ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` (plugin port). Any orochi- or
 fleet-specific layering is the consumer's responsibility.
+
+No-mocks: tests use the real ``env_save_restore`` fixture to redirect env
+vars (HOME, SCITEX_DIR, SCITEX_AGENT_CONTAINER_HOSTNAME, *_YAML_DIRS),
+real public seams (``substitute_hostnames(hostname=...)``,
+``resolve_hostname(gethostname=...)``), and real ``tmp_path`` filesystem
+state. No ``monkeypatch``, no ``unittest.mock``.
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from textwrap import dedent
 
@@ -19,20 +26,58 @@ import yaml
 
 
 @pytest.fixture
-def fake_home(monkeypatch, tmp_path):
-    """Redirect ~ to tmp_path and reset env overrides for determinism.
+def fake_home(env_save_restore, tmp_path):
+    """Redirect HOME + SCITEX_DIR to ``tmp_path`` and isolate cwd.
 
-    Also chdirs into ``tmp_path`` so the project-local agent discovery
-    (added 2026-05-03 in config/_resolve.py::_project_local_dirs) walks
-    upward from a clean dir with no ``.scitex/agent-container/agents/``
-    marker — keeping these synthetic-fixture tests insulated from the
-    in-repo sdk-test agent.
+    Real seams only:
+      * ``env_save_restore.set("HOME", ...)`` — production reads via
+        ``Path.home()`` / ``os.path.expanduser("~")``.
+      * ``env_save_restore.set("SCITEX_DIR", ...)`` — production reads
+        via ``scitex_config._ecosystem.local_state.path`` cascade.
+      * ``os.chdir(tmp_path)`` with restore — keeps the project-local
+        agent discovery (``_project_local_dirs`` walks upward from cwd)
+        from picking up the in-repo sdk-test agent.
     """
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("SCITEX_AGENT_CONTAINER_YAML_DIRS", raising=False)
-    monkeypatch.setenv("SCITEX_AGENT_CONTAINER_HOSTNAME", "ywata-note-win")
-    monkeypatch.chdir(tmp_path)
-    return tmp_path
+    # Arrange real env redirects
+    env_save_restore.set("HOME", str(tmp_path))
+    env_save_restore.set("SCITEX_DIR", str(tmp_path / ".scitex"))
+    env_save_restore.delete("SCITEX_AGENT_CONTAINER_YAML_DIRS")
+    env_save_restore.delete("SAC_YAML_DIRS")
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "ywata-note-win")
+    saved_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        yield tmp_path
+    finally:
+        os.chdir(saved_cwd)
+
+
+@pytest.fixture
+def host_env(env_save_restore):
+    """Save/restore hostname env vars for resolve_hostname tests."""
+    # Clear both forms so the test starts from a known state.
+    env_save_restore.delete("SCITEX_AGENT_CONTAINER_HOSTNAME")
+    env_save_restore.delete("SAC_HOSTNAME")
+    return env_save_restore
+
+
+@pytest.fixture
+def host_env_with_scitex_dir(env_save_restore, tmp_path):
+    """host_env + redirect SCITEX_DIR so _config_path lands in tmp_path.
+
+    Also chdirs into ``tmp_path`` so the project-scope local-state
+    lookup in ``_local_state.path`` cannot find a real repo scope.
+    """
+    env_save_restore.delete("SCITEX_AGENT_CONTAINER_HOSTNAME")
+    env_save_restore.delete("SAC_HOSTNAME")
+    env_save_restore.set("SCITEX_DIR", str(tmp_path / ".scitex"))
+    env_save_restore.set("HOME", str(tmp_path))
+    saved_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        yield env_save_restore
+    finally:
+        os.chdir(saved_cwd)
 
 
 def _write_agent_yaml(
@@ -61,27 +106,48 @@ def _write_agent_yaml(
     return dest
 
 
+def _write_scitex_config(scitex_dir: Path, aliases_yaml: str) -> Path:
+    """Write ``$SCITEX_DIR/agent-container/config.yaml`` with given body."""
+    cfg_path = scitex_dir / "agent-container" / "config.yaml"
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg_path.write_text(aliases_yaml)
+    return cfg_path
+
+
 # ---------------------------------------------------------------------------
 # 1. Agent discovery
 # ---------------------------------------------------------------------------
 
 
 class TestDiscovery:
-    def test_discovery_finds_primary_agents(self, fake_home):
+    def test_primary_agent_dir_is_discovered_in_home(self, fake_home):
+        # Arrange
         from scitex_agent_container.cli_pkg.lifecycle._common import (
             _discover_all_agents,
         )
 
         primary = fake_home / ".scitex" / "agent-container" / "agents"
         _write_agent_yaml(primary, "head")
-
+        # Act
         hits = _discover_all_agents()
-        assert len(hits) == 1
+        # Assert
         assert hits[0].endswith("agent-container/agents/head/head.yaml")
 
-    def test_discovery_primary_wins_over_env_var(self, fake_home, monkeypatch):
-        """When the same agent name exists in both primary and env-var dir,
-        primary wins (earlier in the search order)."""
+    def test_primary_agent_dir_yields_exactly_one_hit(self, fake_home):
+        # Arrange
+        from scitex_agent_container.cli_pkg.lifecycle._common import (
+            _discover_all_agents,
+        )
+
+        primary = fake_home / ".scitex" / "agent-container" / "agents"
+        _write_agent_yaml(primary, "head")
+        # Act
+        hits = _discover_all_agents()
+        # Assert
+        assert len(hits) == 1
+
+    def test_primary_beats_env_dir_on_name_collision(self, fake_home, env_save_restore):
+        # Arrange
         from scitex_agent_container.cli_pkg.lifecycle._common import (
             _discover_all_agents,
         )
@@ -90,14 +156,16 @@ class TestDiscovery:
         extra = fake_home / "ext" / "agents"
         _write_agent_yaml(primary, "head", extra_labels={"tier": "primary"})
         _write_agent_yaml(extra, "head", extra_labels={"tier": "extra"})
-        monkeypatch.setenv("SCITEX_AGENT_CONTAINER_YAML_DIRS", str(extra))
-
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_YAML_DIRS", str(extra))
+        # Act
         hits = _discover_all_agents()
-        assert len(hits) == 1
+        # Assert
         assert "agent-container/agents/head/head.yaml" in hits[0]
 
-    def test_discovery_merges_across_search_dirs(self, fake_home, monkeypatch):
-        """Different names across primary and env-var dirs all surface."""
+    def test_discovery_merges_distinct_names_across_dirs(
+        self, fake_home, env_save_restore
+    ):
+        # Arrange
         from scitex_agent_container.cli_pkg.lifecycle._common import (
             _discover_all_agents,
         )
@@ -106,15 +174,14 @@ class TestDiscovery:
         extra = fake_home / "ext" / "agents"
         _write_agent_yaml(primary, "head")
         _write_agent_yaml(extra, "caduceus")
-        monkeypatch.setenv("SCITEX_AGENT_CONTAINER_YAML_DIRS", str(extra))
-
-        hits = _discover_all_agents()
-        assert len(hits) == 2
-        names = {Path(h).parent.name for h in hits}
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_YAML_DIRS", str(extra))
+        # Act
+        names = {Path(h).parent.name for h in _discover_all_agents()}
+        # Assert
         assert names == {"head", "caduceus"}
 
-    def test_discovery_skips_hidden_and_reserved(self, fake_home, monkeypatch):
-        """Dirs starting with . / _ and reserved names are ignored."""
+    def test_hidden_and_reserved_subdirs_are_skipped(self, fake_home, env_save_restore):
+        # Arrange
         from scitex_agent_container.cli_pkg.lifecycle._common import (
             _discover_all_agents,
         )
@@ -127,15 +194,14 @@ class TestDiscovery:
         for skip_name in (".hidden", "_private"):
             _write_agent_yaml(extra, skip_name)
         _write_agent_yaml(extra, "extra-real")
-        monkeypatch.setenv("SCITEX_AGENT_CONTAINER_YAML_DIRS", str(extra))
-
-        hits = _discover_all_agents()
-        names = {Path(h).parent.name for h in hits}
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_YAML_DIRS", str(extra))
+        # Act
+        names = {Path(h).parent.name for h in _discover_all_agents()}
+        # Assert
         assert names == {"primary-real", "extra-real"}
 
-    def test_discovery_env_var_colon_separated(self, fake_home, monkeypatch):
-        """Multiple paths in SCITEX_AGENT_CONTAINER_YAML_DIRS are searched in
-        order; earlier wins on name collision."""
+    def test_env_var_colon_separated_first_path_wins(self, fake_home, env_save_restore):
+        # Arrange
         from scitex_agent_container.cli_pkg.lifecycle._common import (
             _discover_all_agents,
         )
@@ -144,10 +210,10 @@ class TestDiscovery:
         d2 = fake_home / "d2"
         _write_agent_yaml(d1, "head", extra_labels={"src": "d1"})
         _write_agent_yaml(d2, "head", extra_labels={"src": "d2"})
-        monkeypatch.setenv("SCITEX_AGENT_CONTAINER_YAML_DIRS", f"{d1}:{d2}")
-
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_YAML_DIRS", f"{d1}:{d2}")
+        # Act
         hits = _discover_all_agents()
-        assert len(hits) == 1
+        # Assert
         assert str(d1) in hits[0]
 
 
@@ -157,119 +223,143 @@ class TestDiscovery:
 
 
 class TestHostnameSubstitution:
-    def test_substitution_happy_path(self, monkeypatch):
+    def test_substitute_replaces_hostname_in_label_value(self):
+        # Arrange
         from scitex_agent_container.config._host import substitute_hostnames
 
-        monkeypatch.setenv("SCITEX_AGENT_CONTAINER_HOSTNAME", "mba")
-        obj = {
-            "name": "head",
-            "labels": {"machine": "${HOSTNAME}"},
-            "commands": ["echo ${HOSTNAME}"],
-        }
-        out = substitute_hostnames(obj)
+        obj = {"labels": {"machine": "${HOSTNAME}"}}
+        # Act
+        out = substitute_hostnames(obj, hostname="mba")
+        # Assert
         assert out["labels"]["machine"] == "mba"
-        assert out["commands"] == ["echo mba"]
-        assert out["name"] == "head"  # unchanged
 
-    def test_substitution_preserves_other_placeholders(self, monkeypatch):
+    def test_substitute_replaces_hostname_inside_list_string(self):
+        # Arrange
         from scitex_agent_container.config._host import substitute_hostnames
 
-        monkeypatch.setenv("SCITEX_AGENT_CONTAINER_HOSTNAME", "nas")
-        # Non-HOSTNAME placeholders pass through untouched for downstream
-        # (MCP interpolation etc.) to handle.
-        obj = {"token": "${SOME_OTHER_TOKEN}", "host": "${HOSTNAME}"}
-        out = substitute_hostnames(obj)
-        assert out["host"] == "nas"
+        obj = {"commands": ["echo ${HOSTNAME}"]}
+        # Act
+        out = substitute_hostnames(obj, hostname="mba")
+        # Assert
+        assert out["commands"] == ["echo mba"]
+
+    def test_substitute_leaves_non_placeholder_strings_unchanged(self):
+        # Arrange
+        from scitex_agent_container.config._host import substitute_hostnames
+
+        obj = {"name": "head"}
+        # Act
+        out = substitute_hostnames(obj, hostname="mba")
+        # Assert
+        assert out["name"] == "head"
+
+    def test_substitute_preserves_other_placeholders(self):
+        # Arrange
+        from scitex_agent_container.config._host import substitute_hostnames
+
+        obj = {"token": "${SOME_OTHER_TOKEN}"}
+        # Act
+        out = substitute_hostnames(obj, hostname="nas")
+        # Assert
         assert out["token"] == "${SOME_OTHER_TOKEN}"
 
-    def test_substitution_deeply_nested(self, monkeypatch):
+    def test_substitute_walks_deeply_nested_structures(self):
+        # Arrange
         from scitex_agent_container.config._host import substitute_hostnames
 
-        monkeypatch.setenv("SCITEX_AGENT_CONTAINER_HOSTNAME", "spartan")
-        obj = {
-            "a": [{"b": {"c": ["${HOSTNAME}-suffix"]}}],
-        }
-        out = substitute_hostnames(obj)
+        obj = {"a": [{"b": {"c": ["${HOSTNAME}-suffix"]}}]}
+        # Act
+        out = substitute_hostnames(obj, hostname="spartan")
+        # Assert
         assert out["a"][0]["b"]["c"] == ["spartan-suffix"]
 
-    def test_env_var_wins_over_short_hostname(self, monkeypatch):
+    def test_env_var_override_wins_over_socket_gethostname(self, host_env):
+        # Arrange
         from scitex_agent_container.config._host import resolve_hostname
 
-        monkeypatch.setenv("SCITEX_AGENT_CONTAINER_HOSTNAME", "override")
-        monkeypatch.setattr("socket.gethostname", lambda: "ignored.example.com")
-        assert resolve_hostname() == "override"
+        host_env.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "override")
+        # Act
+        result = resolve_hostname(gethostname=lambda: "ignored.example.com")
+        # Assert
+        assert result == "override"
 
-    def test_short_hostname_fallback(self, monkeypatch):
+    def test_short_hostname_is_used_when_env_var_unset(self, host_env):
+        # Arrange: host_env fixture already deletes the env var.
         from scitex_agent_container.config._host import resolve_hostname
 
-        monkeypatch.delenv("SCITEX_AGENT_CONTAINER_HOSTNAME", raising=False)
-        monkeypatch.setattr("socket.gethostname", lambda: "mybox.local")
-        assert resolve_hostname() == "mybox"
+        # Act
+        result = resolve_hostname(gethostname=lambda: "mybox.local")
+        # Assert
+        assert result == "mybox"
 
-    def test_missing_var_raises_when_all_empty(self, monkeypatch):
+    def test_empty_env_and_empty_socket_raises_runtime_error(self, host_env):
+        # Arrange
         from scitex_agent_container.config._host import resolve_hostname
 
-        monkeypatch.delenv("SCITEX_AGENT_CONTAINER_HOSTNAME", raising=False)
-        monkeypatch.setattr("socket.gethostname", lambda: "")
-        with pytest.raises(RuntimeError):
-            resolve_hostname()
+        empty_gethostname = lambda: ""
+        # Act
+        ctx = pytest.raises(RuntimeError)
+        # Assert
+        with ctx:
+            resolve_hostname(gethostname=empty_gethostname)
 
-    def test_alias_map_translates_short_hostname(self, monkeypatch, tmp_path):
-        """~/.scitex/agent-container/config.yaml::hostname_aliases maps
-        raw short-hostname -> canonical label."""
-        import scitex_agent_container.config._host as host_mod
+    def test_alias_map_translates_short_hostname_to_canonical(
+        self, host_env_with_scitex_dir, tmp_path
+    ):
+        # Arrange
+        from scitex_agent_container.config._host import resolve_hostname
 
-        monkeypatch.delenv("SCITEX_AGENT_CONTAINER_HOSTNAME", raising=False)
-        monkeypatch.setattr("socket.gethostname", lambda: "Yusukes-MacBook-Air")
-        config_path = tmp_path / ".scitex" / "agent-container" / "config.yaml"
-        config_path.parent.mkdir(parents=True)
-        config_path.write_text(
+        _write_scitex_config(
+            tmp_path / ".scitex",
             "spec:\n"
             "  hostname_aliases:\n"
             "    Yusukes-MacBook-Air: mba\n"
-            "    DXP480TPLUS-994: nas\n"
+            "    DXP480TPLUS-994: nas\n",
         )
-        monkeypatch.setattr(host_mod, "_config_path", lambda _p=config_path: _p)
-        assert host_mod.resolve_hostname() == "mba"
+        # Act
+        result = resolve_hostname(gethostname=lambda: "Yusukes-MacBook-Air")
+        # Assert
+        assert result == "mba"
 
-    def test_env_var_beats_alias_map(self, monkeypatch, tmp_path):
-        """$SCITEX_AGENT_CONTAINER_HOSTNAME overrides the alias map."""
-        import scitex_agent_container.config._host as host_mod
+    def test_env_var_beats_alias_map(self, host_env_with_scitex_dir, tmp_path):
+        # Arrange
+        from scitex_agent_container.config._host import resolve_hostname
 
-        monkeypatch.setenv("SCITEX_AGENT_CONTAINER_HOSTNAME", "manual-override")
-        monkeypatch.setattr("socket.gethostname", lambda: "Yusukes-MacBook-Air")
-        config_path = tmp_path / ".scitex" / "agent-container" / "config.yaml"
-        config_path.parent.mkdir(parents=True)
-        config_path.write_text(
-            "spec:\n  hostname_aliases:\n    Yusukes-MacBook-Air: mba\n"
+        host_env_with_scitex_dir.set(
+            "SCITEX_AGENT_CONTAINER_HOSTNAME", "manual-override"
         )
-        monkeypatch.setattr(host_mod, "_config_path", lambda _p=config_path: _p)
-        assert host_mod.resolve_hostname() == "manual-override"
-
-    def test_unmapped_host_falls_through_to_identity(self, monkeypatch, tmp_path):
-        """hostname -s with no alias entry returns unchanged."""
-        import scitex_agent_container.config._host as host_mod
-
-        monkeypatch.delenv("SCITEX_AGENT_CONTAINER_HOSTNAME", raising=False)
-        monkeypatch.setattr("socket.gethostname", lambda: "ywata-note-win")
-        config_path = tmp_path / ".scitex" / "agent-container" / "config.yaml"
-        config_path.parent.mkdir(parents=True)
-        config_path.write_text(
-            "spec:\n  hostname_aliases:\n    Yusukes-MacBook-Air: mba\n"
+        _write_scitex_config(
+            tmp_path / ".scitex",
+            "spec:\n  hostname_aliases:\n    Yusukes-MacBook-Air: mba\n",
         )
-        monkeypatch.setattr(host_mod, "_config_path", lambda _p=config_path: _p)
-        assert host_mod.resolve_hostname() == "ywata-note-win"
+        # Act
+        result = resolve_hostname(gethostname=lambda: "Yusukes-MacBook-Air")
+        # Assert
+        assert result == "manual-override"
 
-    def test_missing_config_file_is_not_an_error(self, monkeypatch, tmp_path):
-        """Hostname resolves without a config file — identity fallback only."""
-        import scitex_agent_container.config._host as host_mod
+    def test_unmapped_short_hostname_passes_through_unchanged(
+        self, host_env_with_scitex_dir, tmp_path
+    ):
+        # Arrange
+        from scitex_agent_container.config._host import resolve_hostname
 
-        monkeypatch.delenv("SCITEX_AGENT_CONTAINER_HOSTNAME", raising=False)
-        monkeypatch.setattr("socket.gethostname", lambda: "bare-host")
-        monkeypatch.setattr(
-            host_mod, "_config_path", lambda _p=tmp_path / "no-such.yaml": _p
+        _write_scitex_config(
+            tmp_path / ".scitex",
+            "spec:\n  hostname_aliases:\n    Yusukes-MacBook-Air: mba\n",
         )
-        assert host_mod.resolve_hostname() == "bare-host"
+        # Act
+        result = resolve_hostname(gethostname=lambda: "ywata-note-win")
+        # Assert
+        assert result == "ywata-note-win"
+
+    def test_missing_config_file_falls_back_to_identity(self, host_env_with_scitex_dir):
+        # Arrange: host_env_with_scitex_dir points SCITEX_DIR at empty tmp_path.
+        from scitex_agent_container.config._host import resolve_hostname
+
+        # Act
+        result = resolve_hostname(gethostname=lambda: "bare-host")
+        # Assert
+        assert result == "bare-host"
 
 
 # ---------------------------------------------------------------------------
@@ -278,52 +368,72 @@ class TestHostnameSubstitution:
 
 
 class TestEffectiveId:
-    """compose_effective_name: dir name + HostsSpec + hostname → effective id."""
+    """compose_effective_name: dir name + HostsSpec + hostname -> effective id."""
 
-    def test_hosts_set_appends_suffix(self):
+    def test_hosts_all_appends_hostname_suffix(self):
+        # Arrange
         from scitex_agent_container.config import HostsSpec
         from scitex_agent_container.config._loaders import compose_effective_name
 
-        assert (
-            compose_effective_name("head", HostsSpec(hosts="all"), "ywata-note-win")
-            == "head-ywata-note-win"
+        # Act
+        result = compose_effective_name(
+            "head", HostsSpec(hosts="all"), "ywata-note-win"
         )
+        # Assert
+        assert result == "head-ywata-note-win"
 
-    def test_hosts_set_idempotent_when_name_already_suffixed(self):
+    def test_already_suffixed_name_is_left_idempotent(self):
+        # Arrange
         from scitex_agent_container.config import HostsSpec
         from scitex_agent_container.config._loaders import compose_effective_name
 
-        assert (
-            compose_effective_name(
-                "head-ywata-note-win",
-                HostsSpec(hosts="all"),
-                "ywata-note-win",
-            )
-            == "head-ywata-note-win"
+        # Act
+        result = compose_effective_name(
+            "head-ywata-note-win",
+            HostsSpec(hosts="all"),
+            "ywata-note-win",
         )
+        # Assert
+        assert result == "head-ywata-note-win"
 
-    def test_host_singleton_keeps_bare_name(self):
+    def test_host_singleton_keeps_bare_name_on_preferred_host(self):
+        # Arrange
         from scitex_agent_container.config import HostsSpec
         from scitex_agent_container.config._loaders import compose_effective_name
 
         spec = HostsSpec(host=["ywata-note-win", "mba"])
-        assert compose_effective_name("lead", spec, "ywata-note-win") == "lead"
-        assert compose_effective_name("lead", spec, "mba") == "lead"
+        # Act
+        result = compose_effective_name("lead", spec, "ywata-note-win")
+        # Assert
+        assert result == "lead"
 
-    def test_local_singleton_keeps_bare_name(self):
-        """Both host and hosts empty → local singleton."""
+    def test_host_singleton_keeps_bare_name_on_fallback_host(self):
+        # Arrange
         from scitex_agent_container.config import HostsSpec
         from scitex_agent_container.config._loaders import compose_effective_name
 
-        assert compose_effective_name("lead", HostsSpec(), "anywhere") == "lead"
+        spec = HostsSpec(host=["ywata-note-win", "mba"])
+        # Act
+        result = compose_effective_name("lead", spec, "mba")
+        # Assert
+        assert result == "lead"
 
-    def test_load_yields_host_suffixed_id_for_multi(self, tmp_path, monkeypatch):
-        """Dir-as-SSoT + hosts: all → <dir>-<HOST> id and hostname-substituted labels."""
+    def test_empty_hosts_spec_keeps_bare_name(self):
+        # Arrange
+        from scitex_agent_container.config import HostsSpec
+        from scitex_agent_container.config._loaders import compose_effective_name
+
+        # Act
+        result = compose_effective_name("lead", HostsSpec(), "anywhere")
+        # Assert
+        assert result == "lead"
+
+    def test_load_yields_host_suffixed_id_for_multi(self, env_save_restore, tmp_path):
+        # Arrange
         from scitex_agent_container.config import load_config
 
-        monkeypatch.setenv("SCITEX_AGENT_CONTAINER_HOSTNAME", "ywata-note-win")
-        monkeypatch.setenv("HOME", str(tmp_path))
-
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "ywata-note-win")
+        env_save_restore.set("HOME", str(tmp_path))
         head_dir = tmp_path / "head"
         head_dir.mkdir()
         (head_dir / "head.yaml").write_text(
@@ -341,19 +451,101 @@ class TestEffectiveId:
                 """
             )
         )
+        # Act
         cfg = load_config(str(head_dir / "head.yaml"))
+        # Assert
         assert cfg.name == "head-ywata-note-win"
+
+    def test_load_substitutes_hostname_in_labels(self, env_save_restore, tmp_path):
+        # Arrange
+        from scitex_agent_container.config import load_config
+
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "ywata-note-win")
+        env_save_restore.set("HOME", str(tmp_path))
+        head_dir = tmp_path / "head"
+        head_dir.mkdir()
+        (head_dir / "head.yaml").write_text(
+            dedent(
+                """\
+                apiVersion: scitex-agent-container/v3
+                kind: Agent
+                metadata:
+                  labels:
+                    machine: ${HOSTNAME}
+                spec:
+                  runtime: apptainer
+                  hosts: all
+                """
+            )
+        )
+        # Act
+        cfg = load_config(str(head_dir / "head.yaml"))
+        # Assert
         assert cfg.labels["machine"] == "ywata-note-win"
+
+    def test_load_sets_hosts_all_sentinel_in_spec(self, env_save_restore, tmp_path):
+        # Arrange
+        from scitex_agent_container.config import load_config
+
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "ywata-note-win")
+        env_save_restore.set("HOME", str(tmp_path))
+        head_dir = tmp_path / "head"
+        head_dir.mkdir()
+        (head_dir / "head.yaml").write_text(
+            dedent(
+                """\
+                apiVersion: scitex-agent-container/v3
+                kind: Agent
+                metadata:
+                  labels:
+                    role: head
+                spec:
+                  runtime: apptainer
+                  hosts: all
+                """
+            )
+        )
+        # Act
+        cfg = load_config(str(head_dir / "head.yaml"))
+        # Assert
         assert cfg.hosts_spec.hosts == "all"
+
+    def test_load_workdir_is_runtime_path_for_multi_host(
+        self, env_save_restore, tmp_path
+    ):
+        # Arrange
+        from scitex_agent_container.config import load_config
+
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "ywata-note-win")
+        env_save_restore.set("HOME", str(tmp_path))
+        head_dir = tmp_path / "head"
+        head_dir.mkdir()
+        (head_dir / "head.yaml").write_text(
+            dedent(
+                """\
+                apiVersion: scitex-agent-container/v3
+                kind: Agent
+                metadata:
+                  labels:
+                    role: head
+                spec:
+                  runtime: apptainer
+                  hosts: all
+                """
+            )
+        )
+        # Act
+        cfg = load_config(str(head_dir / "head.yaml"))
+        # Assert
         assert cfg.workdir == (
             "~/.scitex/agent-container/runtime/agents/head-ywata-note-win"
         )
 
-    def test_load_singleton_keeps_bare_id(self, tmp_path, monkeypatch):
+    def test_load_singleton_keeps_bare_id(self, env_save_restore, tmp_path):
+        # Arrange
         from scitex_agent_container.config import load_config
 
-        monkeypatch.setenv("SCITEX_AGENT_CONTAINER_HOSTNAME", "ywata-note-win")
-
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "ywata-note-win")
         d = tmp_path / "lead"
         d.mkdir()
         (d / "lead.yaml").write_text(
@@ -374,9 +566,72 @@ class TestEffectiveId:
                 """
             )
         )
+        # Act
         cfg = load_config(str(d / "lead.yaml"))
+        # Assert
         assert cfg.name == "lead"
-        assert cfg.hosts_spec.host == ["ywata-note-win", "mba", "nas", "spartan"]
+
+    def test_load_singleton_preserves_host_list(self, env_save_restore, tmp_path):
+        # Arrange
+        from scitex_agent_container.config import load_config
+
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "ywata-note-win")
+        d = tmp_path / "lead"
+        d.mkdir()
+        (d / "lead.yaml").write_text(
+            dedent(
+                """\
+                apiVersion: scitex-agent-container/v3
+                kind: Agent
+                metadata:
+                  labels:
+                    role: lead
+                spec:
+                  runtime: apptainer
+                  host:
+                    - ywata-note-win
+                    - mba
+                    - nas
+                    - spartan
+                """
+            )
+        )
+        # Act
+        cfg = load_config(str(d / "lead.yaml"))
+        # Assert
+        assert cfg.hosts_spec.host == [
+            "ywata-note-win",
+            "mba",
+            "nas",
+            "spartan",
+        ]
+
+    def test_load_singleton_leaves_hosts_field_empty(self, env_save_restore, tmp_path):
+        # Arrange
+        from scitex_agent_container.config import load_config
+
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "ywata-note-win")
+        d = tmp_path / "lead"
+        d.mkdir()
+        (d / "lead.yaml").write_text(
+            dedent(
+                """\
+                apiVersion: scitex-agent-container/v3
+                kind: Agent
+                metadata:
+                  labels:
+                    role: lead
+                spec:
+                  runtime: apptainer
+                  host:
+                    - ywata-note-win
+                    - mba
+                """
+            )
+        )
+        # Act
+        cfg = load_config(str(d / "lead.yaml"))
+        # Assert
         assert cfg.hosts_spec.hosts == ""
 
 
@@ -396,53 +651,125 @@ class TestSingletonEnforcement:
             spec.hosts = hosts
         return AgentConfig(name="lead", hosts_spec=spec)
 
-    def test_preferred_host_match_returns_no_skip(self):
+    def test_preferred_host_match_returns_none(self):
+        # Arrange
         from scitex_agent_container.cli_pkg.lifecycle._common import (
             _singleton_skip_reason,
         )
 
         cfg = self._cfg(host=["ywata-note-win", "mba", "nas"])
-        assert _singleton_skip_reason(cfg, "ywata-note-win") is None
+        # Act
+        result = _singleton_skip_reason(cfg, "ywata-note-win")
+        # Assert
+        assert result is None
 
-    def test_fallback_host_returns_no_skip(self):
-        """Fallback hosts in the chain may run as backup."""
+    def test_fallback_host_first_in_chain_returns_none(self):
+        # Arrange
         from scitex_agent_container.cli_pkg.lifecycle._common import (
             _singleton_skip_reason,
         )
 
         cfg = self._cfg(host=["ywata-note-win", "mba", "nas"])
-        assert _singleton_skip_reason(cfg, "mba") is None  # fallback
-        assert _singleton_skip_reason(cfg, "nas") is None  # fallback
+        # Act
+        result = _singleton_skip_reason(cfg, "mba")
+        # Assert
+        assert result is None
+
+    def test_fallback_host_last_in_chain_returns_none(self):
+        # Arrange
+        from scitex_agent_container.cli_pkg.lifecycle._common import (
+            _singleton_skip_reason,
+        )
+
+        cfg = self._cfg(host=["ywata-note-win", "mba", "nas"])
+        # Act
+        result = _singleton_skip_reason(cfg, "nas")
+        # Assert
+        assert result is None
 
     def test_offlist_host_returns_skip_reason(self):
+        # Arrange
         from scitex_agent_container.cli_pkg.lifecycle._common import (
             _singleton_skip_reason,
         )
 
         cfg = self._cfg(host=["ywata-note-win", "mba", "nas"])
+        # Act
         reason = _singleton_skip_reason(cfg, "spartan")
+        # Assert
         assert reason is not None
+
+    def test_offlist_host_skip_reason_mentions_preferred(self):
+        # Arrange
+        from scitex_agent_container.cli_pkg.lifecycle._common import (
+            _singleton_skip_reason,
+        )
+
+        cfg = self._cfg(host=["ywata-note-win", "mba", "nas"])
+        # Act
+        reason = _singleton_skip_reason(cfg, "spartan")
+        # Assert
         assert "ywata-note-win" in reason
+
+    def test_offlist_host_skip_reason_mentions_current_host(self):
+        # Arrange
+        from scitex_agent_container.cli_pkg.lifecycle._common import (
+            _singleton_skip_reason,
+        )
+
+        cfg = self._cfg(host=["ywata-note-win", "mba", "nas"])
+        # Act
+        reason = _singleton_skip_reason(cfg, "spartan")
+        # Assert
         assert "spartan" in reason
+
+    def test_offlist_host_skip_reason_mentions_fallback_hosts(self):
+        # Arrange
+        from scitex_agent_container.cli_pkg.lifecycle._common import (
+            _singleton_skip_reason,
+        )
+
+        cfg = self._cfg(host=["ywata-note-win", "mba", "nas"])
+        # Act
+        reason = _singleton_skip_reason(cfg, "spartan")
+        # Assert
         assert "fallback-hosts" in reason
 
-    def test_multi_instance_never_skips(self):
+    def test_multi_instance_never_skips_on_fallback_host(self):
+        # Arrange
         from scitex_agent_container.cli_pkg.lifecycle._common import (
             _singleton_skip_reason,
         )
 
         cfg = self._cfg(hosts="all")
-        assert _singleton_skip_reason(cfg, "mba") is None
-        assert _singleton_skip_reason(cfg, "ywata-note-win") is None
+        # Act
+        result = _singleton_skip_reason(cfg, "mba")
+        # Assert
+        assert result is None
 
-    def test_local_singleton_never_skips(self):
-        """No host preference (empty) → run wherever sac is invoked."""
+    def test_multi_instance_never_skips_on_preferred_host(self):
+        # Arrange
+        from scitex_agent_container.cli_pkg.lifecycle._common import (
+            _singleton_skip_reason,
+        )
+
+        cfg = self._cfg(hosts="all")
+        # Act
+        result = _singleton_skip_reason(cfg, "ywata-note-win")
+        # Assert
+        assert result is None
+
+    def test_local_singleton_never_skips_anywhere(self):
+        # Arrange
         from scitex_agent_container.cli_pkg.lifecycle._common import (
             _singleton_skip_reason,
         )
 
         cfg = self._cfg()
-        assert _singleton_skip_reason(cfg, "any-host") is None
+        # Act
+        result = _singleton_skip_reason(cfg, "any-host")
+        # Assert
+        assert result is None
 
 
 # ---------------------------------------------------------------------------
@@ -451,40 +778,95 @@ class TestSingletonEnforcement:
 
 
 class TestHostsSpecParser:
-    def test_absent_returns_empty(self):
+    def test_absent_keys_yield_empty_host(self):
+        # Arrange
         from scitex_agent_container.config._parsers import parse_hosts_spec
 
+        # Act
         spec = parse_hosts_spec({})
+        # Assert
         assert spec.host == ""
-        assert spec.hosts == ""
 
-    def test_host_string(self):
+    def test_absent_keys_yield_empty_hosts(self):
+        # Arrange
         from scitex_agent_container.config._parsers import parse_hosts_spec
 
+        # Act
+        spec = parse_hosts_spec({})
+        # Assert
+        assert spec.hosts == ""
+
+    def test_host_string_is_preserved_verbatim(self):
+        # Arrange
+        from scitex_agent_container.config._parsers import parse_hosts_spec
+
+        # Act
         spec = parse_hosts_spec({"host": "spartan"})
+        # Assert
         assert spec.host == "spartan"
-        assert spec.hosts == ""
 
-    def test_host_list(self):
+    def test_host_string_leaves_hosts_empty(self):
+        # Arrange
         from scitex_agent_container.config._parsers import parse_hosts_spec
 
+        # Act
+        spec = parse_hosts_spec({"host": "spartan"})
+        # Assert
+        assert spec.hosts == ""
+
+    def test_host_list_is_preserved_as_list(self):
+        # Arrange
+        from scitex_agent_container.config._parsers import parse_hosts_spec
+
+        # Act
         spec = parse_hosts_spec({"host": ["a", "b", "c"]})
+        # Assert
         assert spec.host == ["a", "b", "c"]
-        assert spec.hosts == ""
 
-    def test_hosts_all_sentinel(self):
+    def test_host_list_leaves_hosts_empty(self):
+        # Arrange
         from scitex_agent_container.config._parsers import parse_hosts_spec
 
+        # Act
+        spec = parse_hosts_spec({"host": ["a", "b", "c"]})
+        # Assert
+        assert spec.hosts == ""
+
+    def test_hosts_all_sentinel_preserved_as_string(self):
+        # Arrange
+        from scitex_agent_container.config._parsers import parse_hosts_spec
+
+        # Act
         spec = parse_hosts_spec({"hosts": "all"})
-        assert spec.host == ""
+        # Assert
         assert spec.hosts == "all"
 
-    def test_hosts_list(self):
+    def test_hosts_all_sentinel_leaves_host_empty(self):
+        # Arrange
         from scitex_agent_container.config._parsers import parse_hosts_spec
 
-        spec = parse_hosts_spec({"hosts": ["mba", "nas"]})
+        # Act
+        spec = parse_hosts_spec({"hosts": "all"})
+        # Assert
         assert spec.host == ""
+
+    def test_hosts_list_preserved_as_list(self):
+        # Arrange
+        from scitex_agent_container.config._parsers import parse_hosts_spec
+
+        # Act
+        spec = parse_hosts_spec({"hosts": ["mba", "nas"]})
+        # Assert
         assert spec.hosts == ["mba", "nas"]
+
+    def test_hosts_list_leaves_host_empty(self):
+        # Arrange
+        from scitex_agent_container.config._parsers import parse_hosts_spec
+
+        # Act
+        spec = parse_hosts_spec({"hosts": ["mba", "nas"]})
+        # Assert
+        assert spec.host == ""
 
 
 class TestHostsSpecValidation:
@@ -502,18 +884,34 @@ class TestHostsSpecValidation:
             "test.yaml",
         )
 
-    def test_both_host_and_hosts_rejected(self):
-        errors = self._validate({"host": "a", "hosts": "all"})
+    def test_both_host_and_hosts_set_is_rejected(self):
+        # Arrange
+        spec_extra = {"host": "a", "hosts": "all"}
+        # Act
+        errors = self._validate(spec_extra)
+        # Assert
         assert any("mutually exclusive" in e for e in errors)
 
-    def test_old_scheduling_block_rejected(self):
-        errors = self._validate({"scheduling": {"mode": "per-host"}})
+    def test_legacy_scheduling_block_is_rejected(self):
+        # Arrange
+        spec_extra = {"scheduling": {"mode": "per-host"}}
+        # Act
+        errors = self._validate(spec_extra)
+        # Assert
         assert any("scheduling block is no longer accepted" in e for e in errors)
 
-    def test_hosts_invalid_string_rejected(self):
-        errors = self._validate({"hosts": "everything"})
+    def test_invalid_hosts_string_is_rejected(self):
+        # Arrange
+        spec_extra = {"hosts": "everything"}
+        # Act
+        errors = self._validate(spec_extra)
+        # Assert
         assert any("'all'" in e for e in errors)
 
-    def test_host_invalid_type_rejected(self):
-        errors = self._validate({"host": 123})
+    def test_invalid_host_type_is_rejected(self):
+        # Arrange
+        spec_extra = {"host": 123}
+        # Act
+        errors = self._validate(spec_extra)
+        # Assert
         assert any("must be a string, list of strings, or empty" in e for e in errors)

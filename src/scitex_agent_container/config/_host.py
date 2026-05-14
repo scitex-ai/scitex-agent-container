@@ -68,7 +68,9 @@ def _load_hostname_aliases() -> dict[str, str]:
     return {str(k): str(v) for k, v in aliases.items()}
 
 
-def resolve_hostname() -> str:
+def resolve_hostname(
+    gethostname: Callable[[], str] = socket.gethostname,
+) -> str:
     """Return the canonical host label for this machine.
 
     Resolution order (first non-empty wins):
@@ -77,6 +79,11 @@ def resolve_hostname() -> str:
       3. ``hostname_aliases[short hostname]`` from
          ``shared/config.yaml`` or ``~/.scitex/agent-container/config.yaml``.
       4. ``socket.gethostname()`` short form (identity fallback).
+
+    Args:
+        gethostname: Callable returning the raw OS hostname. Defaults to
+            ``socket.gethostname`` (production). Tests inject a callable
+            returning a fixed string instead of patching ``socket``.
 
     Raises:
         RuntimeError: If none of the sources produces a non-empty value. This
@@ -90,7 +97,7 @@ def resolve_hostname() -> str:
     env = _sac_env("HOSTNAME", "").strip()
     if env:
         return env
-    hn = socket.gethostname()
+    hn = gethostname()
     short = hn.split(".", 1)[0] if hn else ""
     aliases = _load_hostname_aliases()
     if short and short in aliases:
