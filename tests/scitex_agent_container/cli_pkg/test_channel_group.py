@@ -1,14 +1,23 @@
-"""Tests for ``sac channel send`` — local agent-to-agent messaging."""
+"""Tests for ``sac channel send`` — local agent-to-agent messaging.
+
+PA-306: no `unittest.mock`. The HTTP layer is replaced with a real
+hand-rolled fake `urlopen` callable that records the request and
+returns a real `io.BytesIO` response. The fake is swapped onto
+``channel_group.urllib.request.urlopen`` via explicit save/restore.
+"""
 
 from __future__ import annotations
 
+import io
 import json
+from contextlib import contextmanager
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from typing import Callable, Iterator
 
 import pytest
 from click.testing import CliRunner
 
+import scitex_agent_container.cli_pkg.channel_group as cg_mod
 from scitex_agent_container.cli_pkg.channel_group import send
 
 
@@ -17,6 +26,33 @@ def token_file(tmp_path: Path):
     tf = tmp_path / "tok"
     tf.write_text("test-token", encoding="utf-8")
     return tf
+
+
+@contextmanager
+def _swap_urlopen(fn: Callable) -> Iterator[None]:
+    """Replace the channel_group's urlopen with a real callable."""
+    saved = cg_mod.urllib.request.urlopen
+    cg_mod.urllib.request.urlopen = fn  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        cg_mod.urllib.request.urlopen = saved  # type: ignore[assignment]
+
+
+class _FakeResp:
+    """Minimal context-manager response stand-in. Real I/O via BytesIO."""
+
+    def __init__(self, body: bytes) -> None:
+        self._buf = io.BytesIO(body)
+
+    def __enter__(self) -> "_FakeResp":
+        return self
+
+    def __exit__(self, *_a) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self._buf.getvalue()
 
 
 def test_missing_token_errors_clearly(tmp_path):
@@ -38,24 +74,17 @@ def test_missing_token_errors_clearly(tmp_path):
 
 def test_happy_path_wraps_in_channel_tag(token_file):
     runner = CliRunner()
-    fake_resp = MagicMock()
-    fake_resp.read.return_value = json.dumps(
-        {"name": "alpha", "returncode": 0, "stdout": "ok"}
-    ).encode()
-    fake_resp.__enter__ = lambda s: fake_resp
-    fake_resp.__exit__ = lambda *args: False
     captured: dict = {}
 
     def fake_urlopen(req, timeout=None):
         captured["url"] = req.full_url
         captured["body"] = json.loads(req.data.decode())
         captured["auth"] = req.headers.get("Authorization")
-        return fake_resp
+        return _FakeResp(
+            json.dumps({"name": "alpha", "returncode": 0, "stdout": "ok"}).encode()
+        )
 
-    with patch(
-        "scitex_agent_container.cli_pkg.channel_group.urllib.request.urlopen",
-        side_effect=fake_urlopen,
-    ):
+    with _swap_urlopen(fake_urlopen):
         result = runner.invoke(
             send,
             [
@@ -90,10 +119,7 @@ def test_unreachable_listen_explains(token_file):
     def boom(req, timeout=None):
         raise urllib.error.URLError("connection refused")
 
-    with patch(
-        "scitex_agent_container.cli_pkg.channel_group.urllib.request.urlopen",
-        side_effect=boom,
-    ):
+    with _swap_urlopen(boom):
         result = runner.invoke(
             send,
             [

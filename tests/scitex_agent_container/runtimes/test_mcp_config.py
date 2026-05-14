@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from scitex_agent_container.config import AgentConfig
 from scitex_agent_container.runtimes.mcp_config import (
     _setup_mcp_from_servers,
@@ -35,45 +33,70 @@ def test_setup_mcp_writes_basic_server(tmp_path: Path) -> None:
     assert data["mcpServers"]["hello"]["args"] == ["/x/server.js"]
 
 
-def test_setup_mcp_env_var_interpolation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("MY_TOKEN", "secret-abc")
-    cfg = _make_config(
-        mcp_servers={
-            "svc": {"command": "x", "env": {"TOKEN": "${MY_TOKEN}", "RAW": "literal"}}
-        }
-    )
-    setup_mcp_config(cfg, str(tmp_path))
-    data = json.loads((tmp_path / ".mcp.json").read_text())
-    assert data["mcpServers"]["svc"]["env"]["TOKEN"] == "secret-abc"
-    assert data["mcpServers"]["svc"]["env"]["RAW"] == "literal"
+def _set_env_save(key, val):
+    """PA-306: explicit env mutator with restore-function returned."""
+    import os
+
+    saved = os.environ.get(key)
+    if val is None:
+        os.environ.pop(key, None)
+    else:
+        os.environ[key] = val
+
+    def _restore():
+        if saved is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = saved
+
+    return _restore
 
 
-def test_setup_mcp_env_unresolved_var_kept_literal(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.delenv("NOT_SET_VAR", raising=False)
-    cfg = _make_config(
-        mcp_servers={"s": {"command": "x", "env": {"K": "${NOT_SET_VAR}"}}}
-    )
-    setup_mcp_config(cfg, str(tmp_path))
-    data = json.loads((tmp_path / ".mcp.json").read_text())
-    assert data["mcpServers"]["s"]["env"]["K"] == "${NOT_SET_VAR}"
+def test_setup_mcp_env_var_interpolation(tmp_path: Path) -> None:
+    restore = _set_env_save("MY_TOKEN", "secret-abc")
+    try:
+        cfg = _make_config(
+            mcp_servers={
+                "svc": {
+                    "command": "x",
+                    "env": {"TOKEN": "${MY_TOKEN}", "RAW": "literal"},
+                }
+            }
+        )
+        setup_mcp_config(cfg, str(tmp_path))
+        data = json.loads((tmp_path / ".mcp.json").read_text())
+        assert data["mcpServers"]["svc"]["env"]["TOKEN"] == "secret-abc"
+        assert data["mcpServers"]["svc"]["env"]["RAW"] == "literal"
+    finally:
+        restore()
 
 
-def test_setup_mcp_expands_tilde_in_args(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("HOME", str(tmp_path))
-    cfg = _make_config(
-        mcp_servers={"s": {"command": "x", "args": ["~/conf.json", "/abs/path"]}}
-    )
-    setup_mcp_config(cfg, str(tmp_path))
-    data = json.loads((tmp_path / ".mcp.json").read_text())
-    args = data["mcpServers"]["s"]["args"]
-    assert args[0] == str(tmp_path / "conf.json")
-    assert args[1] == "/abs/path"
+def test_setup_mcp_env_unresolved_var_kept_literal(tmp_path: Path) -> None:
+    restore = _set_env_save("NOT_SET_VAR", None)
+    try:
+        cfg = _make_config(
+            mcp_servers={"s": {"command": "x", "env": {"K": "${NOT_SET_VAR}"}}}
+        )
+        setup_mcp_config(cfg, str(tmp_path))
+        data = json.loads((tmp_path / ".mcp.json").read_text())
+        assert data["mcpServers"]["s"]["env"]["K"] == "${NOT_SET_VAR}"
+    finally:
+        restore()
+
+
+def test_setup_mcp_expands_tilde_in_args(tmp_path: Path) -> None:
+    restore = _set_env_save("HOME", str(tmp_path))
+    try:
+        cfg = _make_config(
+            mcp_servers={"s": {"command": "x", "args": ["~/conf.json", "/abs/path"]}}
+        )
+        setup_mcp_config(cfg, str(tmp_path))
+        data = json.loads((tmp_path / ".mcp.json").read_text())
+        args = data["mcpServers"]["s"]["args"]
+        assert args[0] == str(tmp_path / "conf.json")
+        assert args[1] == "/abs/path"
+    finally:
+        restore()
 
 
 def test_setup_mcp_merges_with_existing(tmp_path: Path) -> None:

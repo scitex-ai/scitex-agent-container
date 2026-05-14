@@ -24,12 +24,21 @@ from scitex_agent_container.config._types import HostsSpec
 
 
 @pytest.fixture(autouse=True)
-def _home_redirect(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def _home_redirect(tmp_path: Path):
+    """PA-306: explicit env save/restore — Path.home() reads $HOME."""
+    import os
+
     home = tmp_path / "home"
     home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr(Path, "home", lambda: home)
-    return home
+    saved = os.environ.get("HOME")
+    os.environ["HOME"] = str(home)
+    try:
+        yield home
+    finally:
+        if saved is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = saved
 
 
 # ---------------------------------------------------------------------------
@@ -46,9 +55,7 @@ def test_resolve_venv_non_string_returns_input() -> None:
     assert _resolve_venv(None) is None  # type: ignore[arg-type]
 
 
-def test_resolve_venv_auto_picks_first_existing(
-    _home_redirect: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_resolve_venv_auto_picks_first_existing(_home_redirect: Path) -> None:
     venv = _home_redirect / ".venv-3.11"
     (venv / "bin").mkdir(parents=True)
     (venv / "bin" / "activate").write_text("")
@@ -239,24 +246,26 @@ def test_load_config_v3_minimal(tmp_path: Path) -> None:
     assert cfg.env["CLAUDE_AGENT_ID"] == "myname"
 
 
-def test_load_config_v3_multi_host_appends_hostname(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(
-        "scitex_agent_container.config._loaders.resolve_hostname",
-        lambda: "mba",
-    )
-    p = tmp_path / "worker" / "worker.yaml"
-    p.parent.mkdir()
-    body = {
-        "apiVersion": "scitex-agent-container/v3",
-        "kind": "Agent",
-        "spec": {
-            "runtime": "apptainer",
-            "apptainer": {"image": "x.sif"},
-            "hosts": ["mba", "spartan"],
-        },
-    }
-    p.write_text(yaml.safe_dump(body))
-    cfg = load_config(p)
-    assert cfg.name == "worker-mba"
+def test_load_config_v3_multi_host_appends_hostname(tmp_path: Path) -> None:
+    # PA-306: hand-rolled fake injection with save/restore.
+    from scitex_agent_container.config import _loaders as _loaders_mod
+
+    _saved_resolve = _loaders_mod.resolve_hostname
+    _loaders_mod.resolve_hostname = lambda: "mba"
+    try:
+        p = tmp_path / "worker" / "worker.yaml"
+        p.parent.mkdir()
+        body = {
+            "apiVersion": "scitex-agent-container/v3",
+            "kind": "Agent",
+            "spec": {
+                "runtime": "apptainer",
+                "apptainer": {"image": "x.sif"},
+                "hosts": ["mba", "spartan"],
+            },
+        }
+        p.write_text(yaml.safe_dump(body))
+        cfg = load_config(p)
+        assert cfg.name == "worker-mba"
+    finally:
+        _loaders_mod.resolve_hostname = _saved_resolve

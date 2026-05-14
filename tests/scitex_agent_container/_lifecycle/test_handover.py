@@ -104,7 +104,18 @@ def test_should_step_aside_self_not_in_list():
     assert _handover._should_step_aside("strange-host", payload) is False
 
 
-def test_hydrate_from_hub_writes_snapshot(tmp_path, monkeypatch):
+def _swap_hub(name: str, fn):
+    """Swap ``_handover.hub_client.<name>`` for ``fn``; return restore fn."""
+    saved = getattr(_handover.hub_client, name)
+    setattr(_handover.hub_client, name, fn)
+
+    def _restore():
+        setattr(_handover.hub_client, name, saved)
+
+    return _restore
+
+
+def test_hydrate_from_hub_writes_snapshot(tmp_path):
     cfg = SimpleNamespace(name="lead", expanded_workdir=str(tmp_path))
 
     def fake_fetch(name):
@@ -115,21 +126,28 @@ def test_hydrate_from_hub_writes_snapshot(tmp_path, monkeypatch):
             "updated_at": "2026-04-29T00:00:00Z",
         }
 
-    monkeypatch.setattr(_handover.hub_client, "fetch_snapshot", fake_fetch)
-    assert _handover.hydrate_from_hub(cfg) is True
-    written = (tmp_path / ".scitex" / "handover" / "snapshot.json").read_text()
-    assert json.loads(written)["payload"] == {"memory": "alpha"}
+    restore = _swap_hub("fetch_snapshot", fake_fetch)
+    try:
+        assert _handover.hydrate_from_hub(cfg) is True
+        written = (tmp_path / ".scitex" / "handover" / "snapshot.json").read_text()
+        assert json.loads(written)["payload"] == {"memory": "alpha"}
+    finally:
+        restore()
 
 
-def test_hydrate_from_hub_404_returns_false(tmp_path, monkeypatch):
+def test_hydrate_from_hub_404_returns_false(tmp_path):
     cfg = SimpleNamespace(name="lead", expanded_workdir=str(tmp_path))
-    monkeypatch.setattr(_handover.hub_client, "fetch_snapshot", lambda n: None)
-    assert _handover.hydrate_from_hub(cfg) is False
-    # No file should be written on miss.
-    assert not (tmp_path / ".scitex" / "handover" / "snapshot.json").exists()
+    restore = _swap_hub("fetch_snapshot", lambda n: None)
+    try:
+        assert _handover.hydrate_from_hub(cfg) is False
+        assert not (tmp_path / ".scitex" / "handover" / "snapshot.json").exists()
+    finally:
+        restore()
 
 
-def test_push_pre_stop_snapshot_calls_hub_client(tmp_path, monkeypatch):
+def test_push_pre_stop_snapshot_calls_hub_client(tmp_path):
+    import os
+
     seen = {}
 
     def fake_push(name, payload, owner_host=""):
@@ -138,10 +156,18 @@ def test_push_pre_stop_snapshot_calls_hub_client(tmp_path, monkeypatch):
         seen["owner_host"] = owner_host
         return True
 
-    monkeypatch.setattr(_handover.hub_client, "push_snapshot", fake_push)
-    monkeypatch.setenv("SCITEX_AGENT_CONTAINER_HOSTNAME", "spartan")
-    cfg = SimpleNamespace(name="lead", expanded_workdir=str(tmp_path))
-    assert _handover.push_pre_stop_snapshot(cfg) is True
+    restore = _swap_hub("push_snapshot", fake_push)
+    saved_host = os.environ.get("SCITEX_AGENT_CONTAINER_HOSTNAME")
+    os.environ["SCITEX_AGENT_CONTAINER_HOSTNAME"] = "spartan"
+    try:
+        cfg = SimpleNamespace(name="lead", expanded_workdir=str(tmp_path))
+        assert _handover.push_pre_stop_snapshot(cfg) is True
+    finally:
+        restore()
+        if saved_host is None:
+            os.environ.pop("SCITEX_AGENT_CONTAINER_HOSTNAME", None)
+        else:
+            os.environ["SCITEX_AGENT_CONTAINER_HOSTNAME"] = saved_host
     assert seen["name"] == "lead"
     assert seen["owner_host"] == "spartan"
     assert seen["payload"]["reason"] == "pre_stop"

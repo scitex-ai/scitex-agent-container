@@ -9,9 +9,10 @@ plus the recall click command's filter+output paths.
 from __future__ import annotations
 
 import json
+import os
+from contextlib import contextmanager
 from datetime import datetime, timezone
-from pathlib import Path
-from unittest.mock import patch
+from typing import Any, Iterator
 
 import pytest
 from click.testing import CliRunner
@@ -24,8 +25,67 @@ from scitex_agent_container.cli_pkg.recall_cmds import (
 
 
 @pytest.fixture(autouse=True)
-def _isolate_home(tmp_path, monkeypatch):
-    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+def _isolate_home(tmp_path):
+    """PA-306: $HOME save/restore — Path.home() reads $HOME on Unix."""
+    saved = os.environ.get("HOME")
+    os.environ["HOME"] = str(tmp_path)
+    try:
+        yield
+    finally:
+        if saved is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = saved
+
+
+@contextmanager
+def _fake_registry(get_returns: Any) -> Iterator[None]:
+    """Inject a fake Registry class into the registry module's namespace.
+
+    Replaces ``patch("...registry.Registry")`` — same effect via direct
+    attribute save/restore, no ``unittest.mock``.
+    """
+    import scitex_agent_container._state.registry as reg_mod
+
+    class _FakeRegistry:
+        def get(self, _name):
+            if isinstance(get_returns, Exception):
+                raise get_returns
+            return get_returns
+
+    if isinstance(get_returns, type) and issubclass(get_returns, Exception):
+        # Caller wants Registry() itself to raise
+        def _raise(*_a, **_kw):
+            raise get_returns("registry broken")
+
+        saved = reg_mod.Registry
+        reg_mod.Registry = _raise  # type: ignore[assignment]
+    else:
+        saved = reg_mod.Registry
+        reg_mod.Registry = _FakeRegistry  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        reg_mod.Registry = saved  # type: ignore[assignment]
+
+
+@contextmanager
+def _fake_load_config(payload: Any) -> Iterator[None]:
+    """Swap scitex_agent_container.config.load_config for a fake."""
+    import scitex_agent_container.config as cfg_mod
+
+    saved = cfg_mod.load_config
+
+    def _fn(*_a, **_kw):
+        if isinstance(payload, Exception):
+            raise payload
+        return payload
+
+    cfg_mod.load_config = _fn  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        cfg_mod.load_config = saved  # type: ignore[assignment]
 
 
 # ---------------------------------------------------------------------------
@@ -102,10 +162,7 @@ def test_resolve_via_registry_session_id_file(tmp_path):
     sid_dir.mkdir(parents=True)
     (sid_dir / "session_id").write_text("the-sid\n")
 
-    with patch("scitex_agent_container._state.registry.Registry") as RegCls:
-        # The recall code does `from .._state.registry import Registry` then `Registry().get(arg)`.
-        instance = RegCls.return_value
-        instance.get.return_value = {"config": "/fake/agent1.yaml"}
+    with _fake_registry({"config": "/fake/agent1.yaml"}):
         out = _resolve_jsonl("agent1")
     assert out == target
 
@@ -132,14 +189,7 @@ def test_resolve_via_registry_workdir_slug(tmp_path):
     class FakeCfg:
         expanded_workdir = "/work/dir"
 
-    with (
-        patch("scitex_agent_container._state.registry.Registry") as RegCls,
-        patch(
-            "scitex_agent_container.config.load_config",
-            return_value=FakeCfg(),
-        ),
-    ):
-        RegCls.return_value.get.return_value = {"config": "/fake/agent2.yaml"}
+    with _fake_registry({"config": "/fake/agent2.yaml"}), _fake_load_config(FakeCfg()):
         out = _resolve_jsonl("agent2")
     assert out == j2
 
@@ -149,25 +199,18 @@ def test_resolve_via_registry_load_config_fails(tmp_path):
     import click
 
     with (
-        patch("scitex_agent_container._state.registry.Registry") as RegCls,
-        patch(
-            "scitex_agent_container.config.load_config",
-            side_effect=ValueError("bad yaml"),
-        ),
+        _fake_registry({"config": "/fake/x.yaml"}),
+        _fake_load_config(ValueError("bad yaml")),
     ):
-        RegCls.return_value.get.return_value = {"config": "/fake/x.yaml"}
         with pytest.raises(click.ClickException):
             _resolve_jsonl("agent3")
 
 
 def test_resolve_registry_raises_falls_through(tmp_path):
-    """Registry().get() raises → entry=None → exception."""
+    """Registry() construction raises → entry=None → exception."""
     import click
 
-    with patch(
-        "scitex_agent_container._state.registry.Registry",
-        side_effect=RuntimeError("registry broken"),
-    ):
+    with _fake_registry(RuntimeError):
         with pytest.raises(click.ClickException):
             _resolve_jsonl("nobody")
 

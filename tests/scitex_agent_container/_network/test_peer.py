@@ -1,4 +1,9 @@
-"""Tests for the peer-to-peer outbound client (Layer 3)."""
+"""Tests for the peer-to-peer outbound client (Layer 3).
+
+PA-306: ``resolve_config`` is swapped via a ``_resolve_yaml`` pytest
+fixture that does explicit save/restore on the real module attribute
+— no ``monkeypatch.setattr``.
+"""
 
 from __future__ import annotations
 
@@ -12,6 +17,22 @@ from scitex_agent_container._network.peer import (
     post_turn_to_url,
     resolve_peer_url,
 )
+
+
+@pytest.fixture
+def resolve_yaml_to():
+    """Yields a setter; the fixture restores the original on teardown."""
+    from scitex_agent_container.config import _resolve
+
+    saved = _resolve.resolve_config
+
+    def _set(yaml_path):
+        _resolve.resolve_config = lambda _name: str(yaml_path)
+
+    try:
+        yield _set
+    finally:
+        _resolve.resolve_config = saved
 
 
 class TestReadYamlEndpoints:
@@ -55,7 +76,7 @@ class TestReadYamlEndpoints:
 
 class TestResolvePeerUrl:
     def test_local_agent_returns_loopback_url(
-        self, tmp_path: Path, monkeypatch
+        self, tmp_path: Path, resolve_yaml_to
     ) -> None:
         agent_yaml = tmp_path / "alpha" / "alpha.yaml"
         agent_yaml.parent.mkdir(parents=True)
@@ -66,17 +87,13 @@ class TestResolvePeerUrl:
             "  runtime: apptainer\n"
             "  a2a: {port: 18888}\n"
         )
-        from scitex_agent_container.config import _resolve
-
-        monkeypatch.setattr(_resolve, "resolve_config", lambda name: str(agent_yaml))
-        # Re-import so peer.resolve_peer_url picks the patched lookup.
+        resolve_yaml_to(agent_yaml)
         from scitex_agent_container._network import peer as _peer
 
-        # peer.resolve_peer_url imports lazily, so monkeypatch survives.
         url = _peer.resolve_peer_url("alpha")
         assert url == "http://127.0.0.1:18888/v1/turn"
 
-    def test_remote_returns_ssh_scheme(self, tmp_path: Path, monkeypatch) -> None:
+    def test_remote_returns_ssh_scheme(self, tmp_path: Path, resolve_yaml_to) -> None:
         """Remote agent → synthetic ssh:// URL; loopback a2a.host is fine
         because we tunnel through ssh."""
         agent_yaml = tmp_path / "beta" / "beta.yaml"
@@ -89,13 +106,11 @@ class TestResolvePeerUrl:
             "  a2a: {port: 19000}\n"
             "  remote: {host: mba}\n"
         )
-        from scitex_agent_container.config import _resolve
-
-        monkeypatch.setattr(_resolve, "resolve_config", lambda name: str(agent_yaml))
+        resolve_yaml_to(agent_yaml)
         url = resolve_peer_url("beta")
         assert url == "ssh://mba:19000/v1/turn"
 
-    def test_no_a2a_port_raises(self, tmp_path: Path, monkeypatch) -> None:
+    def test_no_a2a_port_raises(self, tmp_path: Path, resolve_yaml_to) -> None:
         agent_yaml = tmp_path / "delta" / "delta.yaml"
         agent_yaml.parent.mkdir(parents=True)
         agent_yaml.write_text(
@@ -103,9 +118,7 @@ class TestResolvePeerUrl:
             "kind: Agent\n"
             "spec:\n  runtime: apptainer\n"
         )
-        from scitex_agent_container.config import _resolve
-
-        monkeypatch.setattr(_resolve, "resolve_config", lambda name: str(agent_yaml))
+        resolve_yaml_to(agent_yaml)
         with pytest.raises(PeerError, match="no spec.a2a.port"):
             resolve_peer_url("delta")
 
