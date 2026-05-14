@@ -391,6 +391,23 @@ def build_sdk_options(
         # accepts comma-separated entries too.
         if isinstance(extra_args, dict):
             extra_args["channels"] = ",".join(channels)
+            # Commit 4 of the push channel slice: when the operator
+            # opted into `server:sac`, auto-register the channel adapter
+            # MCP server AND flip the research-preview flag so claude
+            # actually loads it (`--dangerously-load-development-channels`
+            # per docs/sac-and-orochi.md + the official channels skill).
+            if any(c.strip() == "server:sac" for c in channels):
+                extra_args.setdefault(
+                    "dangerously-load-development-channels", "server:sac"
+                )
+                # Inject the stdio MCP entry pointing at `sac mcp channel`.
+                mcps = kwargs.setdefault("mcp_servers", {})
+                if isinstance(mcps, dict) and "sac" not in mcps:
+                    mcps["sac"] = {
+                        "type": "stdio",
+                        "command": "sac",
+                        "args": ["mcp", "channel", "--name", agent_name],
+                    }
         # else: caller passed a raw extra_args list — leave it alone.
 
     return ClaudeAgentOptions(**kwargs)
