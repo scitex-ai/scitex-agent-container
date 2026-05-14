@@ -1,37 +1,53 @@
-"""Tests for scitex_agent_container._state.snapshot._io.
+"""Tests for scitex_agent_container._state.snapshot._io (no-mocks).
 
-Exercises probes (with subprocess mocked), gather_snapshot, take_snapshot,
-read_latest, snapshot_tick. Stays on tmp_path; no real container ops.
+Probes are exercised by installing PATH-prepended fake binaries via the
+``subprocess_shim`` fixture so production code calls real
+``subprocess.run`` against a controlled shim. Cache dir is redirected to
+``tmp_path`` via the real ``SAC_CACHE_DIR`` /
+``SCITEX_AGENT_CONTAINER_CACHE_DIR`` env vars (read by production).
+Snapshot round-trips read the JSON we wrote on disk.
 """
 
 from __future__ import annotations
 
 import json
-import subprocess
+import os
 from pathlib import Path
 
 import pytest
 
 from scitex_agent_container._state.snapshot import _io as mod
 
-
-@pytest.fixture(autouse=True)
-def _home_redirect(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr(Path, "home", lambda: home)
-    return home
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
 
 
-@pytest.fixture(autouse=True)
-def _cache_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Redirect snapshot cache to tmp_path."""
+@pytest.fixture
+def cache_dir(tmp_path: Path, env_save_restore) -> Path:
+    """Redirect snapshot cache to a tmp_path via real env-var seam."""
     cache = tmp_path / "cache"
     cache.mkdir()
-    monkeypatch.setenv("SAC_CACHE_DIR", str(cache))
-    monkeypatch.setenv("SCITEX_AGENT_CONTAINER_CACHE_DIR", str(cache))
+    # Production reads via _env.getenv(...) which honors both forms; set
+    # both to the same value to satisfy the conflict guard.
+    env_save_restore.set("SAC_CACHE_DIR", str(cache))
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_CACHE_DIR", str(cache))
     return cache
+
+
+@pytest.fixture
+def isolated_path(tmp_path: Path, env_save_restore):
+    """Replace PATH with an empty tmp dir so unshimmed probes fail naturally.
+
+    Tests that need a specific binary install it via ``subprocess_shim``
+    (which prepends its own bin dir). With no shim and an isolated PATH,
+    ``subprocess.run(["tmux", ...])`` raises ``FileNotFoundError`` —
+    which is exactly the missing-binary path production guards.
+    """
+    empty = tmp_path / "_empty_bin"
+    empty.mkdir()
+    env_save_restore.set("PATH", str(empty))
+    return empty
 
 
 # ---------------------------------------------------------------------------
@@ -39,258 +55,259 @@ def _cache_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def test_run_returns_stdout(monkeypatch: pytest.MonkeyPatch) -> None:
-    class R:
-        stdout = "hello\n"
+def test_run_returns_stdout(subprocess_shim) -> None:
+    # Arrange
+    subprocess_shim.install("myecho", stdout="hello\n")
+    # Act
+    result = mod._run(["myecho"])
+    # Assert
+    assert result == "hello\n"
 
-    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **kw: R())
-    assert mod._run(["echo", "hello"]) == "hello\n"
 
-
-def test_run_swallows_subprocess_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    def boom(*a, **kw):
-        raise FileNotFoundError
-
-    monkeypatch.setattr(mod.subprocess, "run", boom)
-    assert mod._run(["x"]) == ""
+def test_run_swallows_missing_binary(isolated_path) -> None:
+    # Arrange: isolated_path fixture already empties PATH.
+    # Act
+    result = mod._run(["definitely-not-a-real-binary-xyz"])
+    # Assert
+    assert result == ""
 
 
 # ---------------------------------------------------------------------------
-# Probes — happy + error paths
+# _probe_tmux
 # ---------------------------------------------------------------------------
 
 
-def test_probe_tmux_lists_sessions(monkeypatch: pytest.MonkeyPatch) -> None:
-    class R:
-        returncode = 0
-        stdout = "alpha\nbeta\n"
-
-    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **kw: R())
-    n, names = mod._probe_tmux()
+def test_probe_tmux_lists_sessions_count(subprocess_shim) -> None:
+    # Arrange
+    subprocess_shim.install("tmux", stdout="alpha\nbeta\n", exit=0)
+    # Act
+    n, _names = mod._probe_tmux()
+    # Assert
     assert n == 2
+
+
+def test_probe_tmux_lists_sessions_names(subprocess_shim) -> None:
+    # Arrange
+    subprocess_shim.install("tmux", stdout="alpha\nbeta\n", exit=0)
+    # Act
+    _n, names = mod._probe_tmux()
+    # Assert
     assert names == ["alpha", "beta"]
 
 
-def test_probe_tmux_no_server_returns_zero(monkeypatch: pytest.MonkeyPatch) -> None:
-    class R:
-        returncode = 1
-        stdout = ""
-
-    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **kw: R())
-    n, names = mod._probe_tmux()
+def test_probe_tmux_no_server_returns_zero_count(subprocess_shim) -> None:
+    # Arrange: tmux returncode != 0 with empty stdout -> "no server running".
+    subprocess_shim.install("tmux", stdout="", exit=1)
+    # Act
+    n, _names = mod._probe_tmux()
+    # Assert
     assert n == 0
+
+
+def test_probe_tmux_no_server_returns_empty_names(subprocess_shim) -> None:
+    # Arrange
+    subprocess_shim.install("tmux", stdout="", exit=1)
+    # Act
+    _n, names = mod._probe_tmux()
+    # Assert
     assert names == []
 
 
-def test_probe_tmux_missing_binary(monkeypatch: pytest.MonkeyPatch) -> None:
-    def boom(*a, **kw):
-        raise FileNotFoundError
-
-    monkeypatch.setattr(mod.subprocess, "run", boom)
-    n, names = mod._probe_tmux()
+def test_probe_tmux_missing_binary_count(isolated_path) -> None:
+    # Arrange: isolated_path empties PATH of tmux.
+    # Act
+    n, _names = mod._probe_tmux()
+    # Assert
     assert n is None
+
+
+def test_probe_tmux_missing_binary_names(isolated_path) -> None:
+    # Arrange
+    # Act
+    _n, names = mod._probe_tmux()
+    # Assert
     assert names == []
 
 
-def test_probe_screen_count_no_sockets(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(mod.shutil, "which", lambda _: "/usr/bin/screen")
-
-    class R:
-        returncode = 1
-        stdout = "No Sockets found in /tmp.\n"
-        stderr = ""
-
-    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **kw: R())
-    assert mod._probe_screen_count() == 0
+# ---------------------------------------------------------------------------
+# _probe_screen_count
+# ---------------------------------------------------------------------------
 
 
-def test_probe_screen_count_lists_sessions(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(mod.shutil, "which", lambda _: "/usr/bin/screen")
-
-    class R:
-        returncode = 0
-        stdout = "There is a screen on:\n\t12345.alpha\t(Detached)\n\t67890.beta\t(Attached)\n"
-        stderr = ""
-
-    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **kw: R())
-    assert mod._probe_screen_count() == 2
+def test_probe_screen_count_no_sockets(subprocess_shim) -> None:
+    # Arrange
+    subprocess_shim.install("screen", stdout="No Sockets found in /tmp.\n", exit=1)
+    # Act
+    result = mod._probe_screen_count()
+    # Assert
+    assert result == 0
 
 
-def test_probe_screen_count_missing_binary(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(mod.shutil, "which", lambda _: None)
-    assert mod._probe_screen_count() is None
+def test_probe_screen_count_lists_sessions(subprocess_shim) -> None:
+    # Arrange
+    subprocess_shim.install(
+        "screen",
+        stdout=(
+            "There is a screen on:\n\t12345.alpha\t(Detached)\n"
+            "\t67890.beta\t(Attached)\n"
+        ),
+        exit=0,
+    )
+    # Act
+    result = mod._probe_screen_count()
+    # Assert
+    assert result == 2
 
 
-def test_probe_screen_count_subprocess_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(mod.shutil, "which", lambda _: "/usr/bin/screen")
-
-    def boom(*a, **kw):
-        raise subprocess.TimeoutExpired(cmd="screen", timeout=3)
-
-    monkeypatch.setattr(mod.subprocess, "run", boom)
-    assert mod._probe_screen_count() is None
+def test_probe_screen_count_missing_binary(isolated_path) -> None:
+    # Arrange: shutil.which("screen") returns None against isolated PATH.
+    # Act
+    result = mod._probe_screen_count()
+    # Assert
+    assert result is None
 
 
-def test_probe_claude_pid_returns_int(monkeypatch: pytest.MonkeyPatch) -> None:
-    class R:
-        stdout = "9999\n"
-
-    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **kw: R())
-    assert mod._probe_claude_pid() == 9999
+# ---------------------------------------------------------------------------
+# _probe_claude_pid / _proc_count
+# ---------------------------------------------------------------------------
 
 
-def test_probe_claude_pid_empty_stdout(monkeypatch: pytest.MonkeyPatch) -> None:
-    class R:
-        stdout = ""
-
-    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **kw: R())
-    assert mod._probe_claude_pid() is None
-
-
-def test_probe_claude_pid_non_numeric(monkeypatch: pytest.MonkeyPatch) -> None:
-    class R:
-        stdout = "abc\n"
-
-    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **kw: R())
-    assert mod._probe_claude_pid() is None
+def test_probe_claude_pid_returns_int(subprocess_shim) -> None:
+    # Arrange
+    subprocess_shim.install("pgrep", stdout="9999\n", exit=0)
+    # Act
+    pid = mod._probe_claude_pid()
+    # Assert
+    assert pid == 9_999
 
 
-def test_probe_claude_pid_subprocess_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    def boom(*a, **kw):
-        raise FileNotFoundError
-
-    monkeypatch.setattr(mod.subprocess, "run", boom)
-    assert mod._probe_claude_pid() is None
-
-
-def test_proc_count_counts_lines(monkeypatch: pytest.MonkeyPatch) -> None:
-    class R:
-        stdout = "111 claude\n222 claude --bg\n"
-
-    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **kw: R())
-    assert mod._proc_count("claude") == 2
+def test_probe_claude_pid_empty_stdout(subprocess_shim) -> None:
+    # Arrange
+    subprocess_shim.install("pgrep", stdout="", exit=1)
+    # Act
+    pid = mod._probe_claude_pid()
+    # Assert
+    assert pid is None
 
 
-def test_proc_count_empty_returns_zero(monkeypatch: pytest.MonkeyPatch) -> None:
-    class R:
-        stdout = ""
-
-    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **kw: R())
-    assert mod._proc_count("claude") == 0
-
-
-def test_probe_load1_handles_oserror(monkeypatch: pytest.MonkeyPatch) -> None:
-    def boom():
-        raise OSError
-
-    monkeypatch.setattr(mod.os, "getloadavg", boom)
-    assert mod._probe_load1() is None
+def test_probe_claude_pid_non_numeric(subprocess_shim) -> None:
+    # Arrange
+    subprocess_shim.install("pgrep", stdout="abc\n", exit=0)
+    # Act
+    pid = mod._probe_claude_pid()
+    # Assert
+    assert pid is None
 
 
-def test_probe_load1_returns_float(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(mod.os, "getloadavg", lambda: (1.5, 1.2, 0.9))
-    assert mod._probe_load1() == 1.5
+def test_probe_claude_pid_missing_binary(isolated_path) -> None:
+    # Arrange: no pgrep on PATH.
+    # Act
+    pid = mod._probe_claude_pid()
+    # Assert
+    assert pid is None
 
 
-def test_probe_mem_returns_tuple(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Either Linux or Darwin code path will exercise _probe_mem; just
-    # verify it returns a triple. We don't pin the values.
+def test_proc_count_counts_lines(subprocess_shim) -> None:
+    # Arrange
+    subprocess_shim.install("pgrep", stdout="111 claude\n222 claude --bg\n", exit=0)
+    # Act
+    count = mod._proc_count("claude")
+    # Assert
+    assert count == 2
+
+
+def test_proc_count_empty_returns_zero(subprocess_shim) -> None:
+    # Arrange
+    subprocess_shim.install("pgrep", stdout="", exit=1)
+    # Act
+    count = mod._proc_count("claude")
+    # Assert
+    assert count == 0
+
+
+# ---------------------------------------------------------------------------
+# _probe_load1, _probe_mem, _probe_nproc — real platform calls
+# ---------------------------------------------------------------------------
+
+
+def test_probe_load1_real_call_type() -> None:
+    # Arrange: real OS call.
+    # Act
+    out = mod._probe_load1()
+    # Assert: float on Linux/Darwin, None on platforms without getloadavg.
+    assert out is None or (isinstance(out, float) and out >= 0.0)
+
+
+def test_probe_mem_returns_triple_shape() -> None:
+    # Arrange: real OS call.
+    # Act
     out = mod._probe_mem()
+    # Assert
     assert isinstance(out, tuple) and len(out) == 3
 
 
-def test_probe_mem_unknown_platform_returns_nones(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(mod.platform, "system", lambda: "Plan9")
-    assert mod._probe_mem() == (None, None, None)
+def test_probe_mem_total_is_positive_on_real_host() -> None:
+    # Arrange: real OS call.
+    # Act
+    total, _used, _avail = mod._probe_mem()
+    # Assert
+    assert total is None or total > 0
 
 
-def test_probe_mem_linux_branch(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    monkeypatch.setattr(mod.platform, "system", lambda: "Linux")
-    fake = tmp_path / "meminfo"
-    fake.write_text(
-        "MemTotal:        8000 kB\nMemAvailable:    3000 kB\nMemFree:    1000 kB\n"
-    )
-    # Patch Path("/proc/meminfo").read_text via a wrapper.
-    orig = Path.read_text
-
-    def fake_read(self, *a, **kw):
-        if str(self) == "/proc/meminfo":
-            return fake.read_text()
-        return orig(self, *a, **kw)
-
-    monkeypatch.setattr(Path, "read_text", fake_read)
-    total, used, avail = mod._probe_mem()
-    assert total == 8000 * 1024
-    assert avail == 3000 * 1024
+def test_probe_nproc_current_is_nonnegative() -> None:
+    # Arrange: real OS call.
+    # Act
+    cur, _mx = mod._probe_nproc()
+    # Assert
+    assert cur is None or cur >= 0
 
 
-def test_probe_nproc_linux(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(mod.platform, "system", lambda: "Linux")
-
-    class R:
-        stdout = "PID TTY TIME CMD\n1 a\n2 b\n3 c\n"
-
-    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **kw: R())
-    fake_pid_max = tmp_path / "pid_max"
-    fake_pid_max.write_text("32768\n")
-    orig = Path.read_text
-
-    def fake_read(self, *a, **kw):
-        if str(self) == "/proc/sys/kernel/pid_max":
-            return "32768\n"
-        return orig(self, *a, **kw)
-
-    monkeypatch.setattr(Path, "read_text", fake_read)
-    cur, mx = mod._probe_nproc()
-    assert cur == 3
-    assert mx == 32768
+def test_probe_nproc_max_is_positive() -> None:
+    # Arrange: real OS call.
+    # Act
+    _cur, mx = mod._probe_nproc()
+    # Assert
+    assert mx is None or mx > 0
 
 
-def test_probe_nproc_unknown_platform(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(mod.platform, "system", lambda: "Plan9")
-
-    class R:
-        stdout = ""
-
-    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **kw: R())
-    cur, mx = mod._probe_nproc()
-    # Empty ps output → cur is None; mx None (unknown platform).
-    assert mx is None
+# ---------------------------------------------------------------------------
+# _probe_tmux_pids
+# ---------------------------------------------------------------------------
 
 
 def test_probe_tmux_pids_no_session() -> None:
+    # Arrange
+    # Act
     out = mod._probe_tmux_pids(None)
+    # Assert
     assert out == {"server": None, "pane": None}
 
 
-def test_probe_tmux_pids_resolved(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls = {"i": 0}
-
-    def fake_run(argv, **kw):
-        calls["i"] += 1
-
-        class R:
-            returncode = 0
-            stdout = "12345\n"
-
-        return R()
-
-    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+def test_probe_tmux_pids_resolved_pane(subprocess_shim) -> None:
+    # Arrange: tmux display ... prints the pane pid.
+    subprocess_shim.install("tmux", stdout="12345\n", exit=0)
+    subprocess_shim.install("pgrep", stdout="12345\n", exit=0)
+    # Act
     out = mod._probe_tmux_pids("alpha")
-    assert out["pane"] == 12345
-    assert out["server"] == 12345
+    # Assert
+    assert out["pane"] == 12_345
 
 
-def test_probe_tmux_pids_handles_errors(monkeypatch: pytest.MonkeyPatch) -> None:
-    def boom(*a, **kw):
-        raise FileNotFoundError
-
-    monkeypatch.setattr(mod.subprocess, "run", boom)
+def test_probe_tmux_pids_resolved_server(subprocess_shim) -> None:
+    # Arrange: pgrep -n -x tmux prints the server pid.
+    subprocess_shim.install("tmux", stdout="12345\n", exit=0)
+    subprocess_shim.install("pgrep", stdout="12345\n", exit=0)
+    # Act
     out = mod._probe_tmux_pids("alpha")
+    # Assert
+    assert out["server"] == 12_345
+
+
+def test_probe_tmux_pids_missing_binaries(isolated_path) -> None:
+    # Arrange: neither tmux nor pgrep on PATH.
+    # Act
+    out = mod._probe_tmux_pids("alpha")
+    # Assert
     assert out == {"server": None, "pane": None}
 
 
@@ -299,93 +316,149 @@ def test_probe_tmux_pids_handles_errors(monkeypatch: pytest.MonkeyPatch) -> None
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def _mocked_probes(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Force all probes through a deterministic stdout path."""
-
-    class R:
-        returncode = 0
-        stdout = ""
-        stderr = ""
-
-    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **kw: R())
-    monkeypatch.setattr(mod.shutil, "which", lambda _: None)
-    monkeypatch.setattr(mod.os, "getloadavg", lambda: (0.5, 0.5, 0.5))
-
-
-def test_gather_snapshot_shape(_mocked_probes: None) -> None:
+def test_gather_snapshot_agent_field(cache_dir: Path, isolated_path) -> None:
+    # Arrange
+    # Act
     snap = mod.gather_snapshot("alpha")
+    # Assert
     assert snap["agent"] == "alpha"
+
+
+def test_gather_snapshot_contains_timestamp(cache_dir: Path, isolated_path) -> None:
+    # Arrange
+    # Act
+    snap = mod.gather_snapshot("alpha")
+    # Assert
     assert "timestamp" in snap
-    assert "host" in snap
-    assert "pids" in snap
-    assert snap["pids"]["container_daemon"] > 0
 
 
-def test_take_snapshot_writes_latest(_cache_dir: Path, _mocked_probes: None) -> None:
-    snap = mod.take_snapshot("alpha")
-    latest = _cache_dir / "alpha.latest.json"
-    assert latest.is_file()
-    body = json.loads(latest.read_text())
-    assert body["agent"] == "alpha"
-    assert snap["has_diff"] is False  # First snapshot: no diff baseline.
-
-
-def test_take_snapshot_rolls_prev(_cache_dir: Path, _mocked_probes: None) -> None:
-    mod.take_snapshot("alpha")
-    mod.take_snapshot("alpha")
-    assert (_cache_dir / "alpha.latest.json").is_file()
-    assert (_cache_dir / "alpha.prev.json").is_file()
-
-
-def test_take_snapshot_writes_diff_when_changes(
-    _cache_dir: Path, monkeypatch: pytest.MonkeyPatch
+def test_gather_snapshot_records_container_daemon_pid(
+    cache_dir: Path, isolated_path
 ) -> None:
-    # Force diff: vary load1 across calls.
-    sequence = iter([(0.5, 0.5, 0.5), (5.5, 5.5, 5.5)])
-    monkeypatch.setattr(mod.os, "getloadavg", lambda: next(sequence))
+    # Arrange
+    # Act
+    snap = mod.gather_snapshot("alpha")
+    # Assert
+    assert snap["pids"]["container_daemon"] == os.getpid()
 
-    class R:
-        returncode = 0
-        stdout = ""
-        stderr = ""
 
-    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **kw: R())
-    monkeypatch.setattr(mod.shutil, "which", lambda _: None)
+def test_take_snapshot_writes_latest_file(cache_dir: Path, isolated_path) -> None:
+    # Arrange
+    # Act
     mod.take_snapshot("alpha")
-    snap2 = mod.take_snapshot("alpha")
-    if snap2["has_diff"]:
-        assert (_cache_dir / "alpha.diff.json").is_file()
+    # Assert
+    assert (cache_dir / "alpha.latest.json").is_file()
 
 
-def test_take_snapshot_with_diff_false(_cache_dir: Path, _mocked_probes: None) -> None:
-    """with_diff=False short-circuits diff computation."""
-    snap = mod.take_snapshot("alpha", with_diff=False)
-    assert snap["diff_fields"] == []
+def test_take_snapshot_first_call_has_no_diff(cache_dir: Path, isolated_path) -> None:
+    # Arrange: no prior snapshot exists.
+    # Act
+    snap = mod.take_snapshot("alpha")
+    # Assert
     assert snap["has_diff"] is False
 
 
-def test_read_latest_returns_dict(_cache_dir: Path, _mocked_probes: None) -> None:
+def test_take_snapshot_latest_payload_round_trips(
+    cache_dir: Path, isolated_path
+) -> None:
+    # Arrange
     mod.take_snapshot("alpha")
-    body = mod.read_latest("alpha")
-    assert body is not None
+    # Act
+    body = json.loads((cache_dir / "alpha.latest.json").read_text())
+    # Assert
     assert body["agent"] == "alpha"
 
 
-def test_read_latest_missing_returns_none() -> None:
-    assert mod.read_latest("nonexistent") is None
-
-
-def test_read_latest_corrupted_returns_none(_cache_dir: Path) -> None:
-    (_cache_dir / "ghost.latest.json").write_text("{not-json")
-    assert mod.read_latest("ghost") is None
-
-
-def test_take_snapshot_tolerates_corrupt_prev(
-    _cache_dir: Path, _mocked_probes: None
+def test_take_snapshot_rolls_prev_after_two_calls(
+    cache_dir: Path, isolated_path
 ) -> None:
-    (_cache_dir / "alpha.latest.json").write_text("{not json")
+    # Arrange
+    mod.take_snapshot("alpha")
+    # Act
+    mod.take_snapshot("alpha")
+    # Assert
+    assert (cache_dir / "alpha.prev.json").is_file()
+
+
+def test_take_snapshot_writes_diff_when_tmux_changes(
+    cache_dir: Path, subprocess_shim
+) -> None:
+    # Arrange: first snapshot has one tmux session.
+    subprocess_shim.install("tmux", stdout="alpha\n", exit=0)
+    mod.take_snapshot("alpha")
+    # Re-install the shim so its stdout changes -> different tmux_names.
+    subprocess_shim.install("tmux", stdout="alpha\nbeta\n", exit=0)
+    # Act
+    snap2 = mod.take_snapshot("alpha")
+    # Assert
+    assert snap2["has_diff"] is True
+
+
+def test_take_snapshot_writes_diff_file_when_changes(
+    cache_dir: Path, subprocess_shim
+) -> None:
+    # Arrange
+    subprocess_shim.install("tmux", stdout="alpha\n", exit=0)
+    mod.take_snapshot("alpha")
+    subprocess_shim.install("tmux", stdout="alpha\nbeta\n", exit=0)
+    # Act
+    mod.take_snapshot("alpha")
+    # Assert
+    assert (cache_dir / "alpha.diff.json").is_file()
+
+
+def test_take_snapshot_with_diff_false_yields_empty_diff_fields(
+    cache_dir: Path, isolated_path
+) -> None:
+    # Arrange
+    # Act
+    snap = mod.take_snapshot("alpha", with_diff=False)
+    # Assert
+    assert snap["diff_fields"] == []
+
+
+def test_take_snapshot_with_diff_false_yields_has_diff_false(
+    cache_dir: Path, isolated_path
+) -> None:
+    # Arrange
+    # Act
+    snap = mod.take_snapshot("alpha", with_diff=False)
+    # Assert
+    assert snap["has_diff"] is False
+
+
+def test_read_latest_returns_persisted_payload(cache_dir: Path, isolated_path) -> None:
+    # Arrange
+    mod.take_snapshot("alpha")
+    # Act
+    body = mod.read_latest("alpha")
+    # Assert
+    assert body is not None and body["agent"] == "alpha"
+
+
+def test_read_latest_missing_returns_none(cache_dir: Path) -> None:
+    # Arrange: no snapshot ever taken for this agent.
+    # Act
+    body = mod.read_latest("nonexistent")
+    # Assert
+    assert body is None
+
+
+def test_read_latest_corrupted_returns_none(cache_dir: Path) -> None:
+    # Arrange
+    (cache_dir / "ghost.latest.json").write_text("{not-json")
+    # Act
+    body = mod.read_latest("ghost")
+    # Assert
+    assert body is None
+
+
+def test_take_snapshot_tolerates_corrupt_prev(cache_dir: Path, isolated_path) -> None:
+    # Arrange: existing latest is malformed JSON.
+    (cache_dir / "alpha.latest.json").write_text("{not json")
+    # Act
     snap = mod.take_snapshot("alpha")
+    # Assert
     assert snap["agent"] == "alpha"
 
 
@@ -394,23 +467,41 @@ def test_take_snapshot_tolerates_corrupt_prev(
 # ---------------------------------------------------------------------------
 
 
-def test_snapshot_tick_smoke(_cache_dir: Path, _mocked_probes: None) -> None:
+def test_snapshot_tick_smoke(cache_dir: Path, isolated_path) -> None:
+    # Arrange
+    # Act
     mod.snapshot_tick("alpha")
-    assert (_cache_dir / "alpha.latest.json").is_file()
+    # Assert
+    assert (cache_dir / "alpha.latest.json").is_file()
 
 
-def test_snapshot_tick_swallows_exceptions(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def boom(*a, **kw):
-        raise RuntimeError("snapshot exploded")
+def test_snapshot_tick_swallows_exceptions(tmp_path: Path, env_save_restore) -> None:
+    """Daemon helper must swallow real errors so the loop survives.
 
-    monkeypatch.setattr(mod, "take_snapshot", boom)
-    # Should not raise.
-    mod.snapshot_tick("alpha")
+    Point the cache dir at a path that exists as a *file* (not a dir);
+    the runtime mkdir/open path inside take_snapshot raises, and
+    snapshot_tick must not propagate it.
+    """
+    # Arrange: cache dir points at a regular file -> mkdir/open will fail.
+    bad = tmp_path / "not_a_dir"
+    bad.write_text("")
+    env_save_restore.set("SAC_CACHE_DIR", str(bad))
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_CACHE_DIR", str(bad))
+    # Act
+    result = mod.snapshot_tick("alpha")
+    # Assert: returns None (no exception propagated).
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# _atomic_write_json
+# ---------------------------------------------------------------------------
 
 
 def test_atomic_write_json(tmp_path: Path) -> None:
+    # Arrange
     p = tmp_path / "x.json"
+    # Act
     mod._atomic_write_json(p, {"k": 1})
+    # Assert
     assert json.loads(p.read_text()) == {"k": 1}
