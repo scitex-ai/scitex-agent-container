@@ -280,52 +280,67 @@ class TestAgentCard:
         )
         assert status == 500
 
-    def test_card_url_uses_sac_listen_base_url_env(self, tmp_path, monkeypatch) -> None:
+    def test_card_url_uses_sac_listen_base_url_env(self, tmp_path) -> None:
         """Layer 5: when ``SAC_LISTEN_BASE_URL`` is set, the card's
         ``url`` field uses that base — NOT the runner's volatile port.
 
         This is the contract that keeps an AgentCard's ``url`` stable
         across runner restarts under auto-port-allocation.
         """
-        monkeypatch.setenv("SAC_LISTEN_BASE_URL", "http://127.0.0.1:7878")
-        yaml_path = tmp_path / "spec.yaml"
-        yaml_path.write_text(
-            "apiVersion: scitex-agent-container/v3\nkind: Agent\nspec:\n  runtime: apptainer\n"
-        )
-        status, body = self._run_card_scenario(
-            "ecosystem-auditor", str(yaml_path), "/.well-known/agent-card.json"
-        )
-        assert status == 200
-        assert body is not None
-        # ADR-0004 — A2A v1 AgentCard: per-agent URL lives under
-        # supportedInterfaces[0].url, not at the top level.
-        assert (
-            body["supportedInterfaces"][0]["url"]
-            == "http://127.0.0.1:7878/agents/ecosystem-auditor"
-        )
+        import os
 
-    def test_card_url_falls_back_to_request_base_when_env_unset(
-        self, tmp_path, monkeypatch
-    ) -> None:
+        saved = os.environ.get("SAC_LISTEN_BASE_URL")
+        os.environ["SAC_LISTEN_BASE_URL"] = "http://127.0.0.1:7878"
+        try:
+            yaml_path = tmp_path / "spec.yaml"
+            yaml_path.write_text(
+                "apiVersion: scitex-agent-container/v3\nkind: Agent\nspec:\n  runtime: apptainer\n"
+            )
+            status, body = self._run_card_scenario(
+                "ecosystem-auditor",
+                str(yaml_path),
+                "/.well-known/agent-card.json",
+            )
+            assert status == 200
+            assert body is not None
+            # ADR-0004 — A2A v1 AgentCard: per-agent URL lives under
+            # supportedInterfaces[0].url, not at the top level.
+            assert (
+                body["supportedInterfaces"][0]["url"]
+                == "http://127.0.0.1:7878/agents/ecosystem-auditor"
+            )
+        finally:
+            if saved is None:
+                os.environ.pop("SAC_LISTEN_BASE_URL", None)
+            else:
+                os.environ["SAC_LISTEN_BASE_URL"] = saved
+
+    def test_card_url_falls_back_to_request_base_when_env_unset(self, tmp_path) -> None:
         """Without ``SAC_LISTEN_BASE_URL`` the card's ``url`` falls
         back to ``request.base_url`` — keeps direct ``curl`` against
         the runner port working in non-apptainer test harnesses.
         """
-        monkeypatch.delenv("SAC_LISTEN_BASE_URL", raising=False)
-        yaml_path = tmp_path / "spec.yaml"
-        yaml_path.write_text(
-            "apiVersion: scitex-agent-container/v3\nkind: Agent\nspec:\n  runtime: apptainer\n"
-        )
-        status, body = self._run_card_scenario(
-            "auditor", str(yaml_path), "/.well-known/agent-card.json"
-        )
-        assert status == 200
-        assert body is not None
-        # Without the env override the url is built from request.base_url.
-        # ADR-0004 — A2A v1 AgentCard: URL is under supportedInterfaces[].
-        per_agent_url = body["supportedInterfaces"][0]["url"]
-        assert per_agent_url.startswith("http://127.0.0.1:")
-        assert per_agent_url.endswith("/agents/auditor")
+        import os
+
+        saved = os.environ.pop("SAC_LISTEN_BASE_URL", None)
+        try:
+            yaml_path = tmp_path / "spec.yaml"
+            yaml_path.write_text(
+                "apiVersion: scitex-agent-container/v3\nkind: Agent\nspec:\n  runtime: apptainer\n"
+            )
+            status, body = self._run_card_scenario(
+                "auditor", str(yaml_path), "/.well-known/agent-card.json"
+            )
+            assert status == 200
+            assert body is not None
+            # Without the env override the url is built from request.base_url.
+            # ADR-0004 — A2A v1 AgentCard: URL is under supportedInterfaces[].
+            per_agent_url = body["supportedInterfaces"][0]["url"]
+            assert per_agent_url.startswith("http://127.0.0.1:")
+            assert per_agent_url.endswith("/agents/auditor")
+        finally:
+            if saved is not None:
+                os.environ["SAC_LISTEN_BASE_URL"] = saved
 
 
 # ---------------------------------------------------------------------------

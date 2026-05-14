@@ -84,7 +84,7 @@ class TestRegistry:
         assert reg_dir.exists()
         assert registry.exists("test")
 
-    def test_cleanup_stale_keeps_tmux_sessions(self, registry, monkeypatch):
+    def test_cleanup_stale_keeps_tmux_sessions(self, registry):
         """cleanup_stale must NOT remove entries for live tmux sessions.
 
         Regression test for the MBA false-alarm incident (2026-04-15): agents
@@ -106,13 +106,18 @@ class TestRegistry:
                 result.stdout = ""
             return result
 
-        monkeypatch.setattr("subprocess.run", fake_run)
+        # PA-306: hand-rolled fake injection — save/restore the module
+        # attribute directly instead of using `monkeypatch.setattr`.
+        saved_run = subprocess.run
+        subprocess.run = fake_run  # type: ignore[assignment]
+        try:
+            cleaned = registry.cleanup_stale()
+            assert cleaned == 0, "Must not remove entry when tmux session is alive"
+            assert registry.exists("alive-tmux-agent")
+        finally:
+            subprocess.run = saved_run  # type: ignore[assignment]
 
-        cleaned = registry.cleanup_stale()
-        assert cleaned == 0, "Must not remove entry when tmux session is alive"
-        assert registry.exists("alive-tmux-agent")
-
-    def test_cleanup_stale_removes_dead_sessions(self, registry, monkeypatch):
+    def test_cleanup_stale_removes_dead_sessions(self, registry):
         """cleanup_stale removes entries absent from both tmux and screen."""
         import subprocess
 
@@ -123,8 +128,13 @@ class TestRegistry:
             result.stdout = ""
             return result
 
-        monkeypatch.setattr("subprocess.run", fake_run)
-
-        cleaned = registry.cleanup_stale()
-        assert cleaned == 1
-        assert not registry.exists("dead-agent")
+        # PA-306: hand-rolled fake injection — save/restore the module
+        # attribute directly instead of using `monkeypatch.setattr`.
+        saved_run = subprocess.run
+        subprocess.run = fake_run  # type: ignore[assignment]
+        try:
+            cleaned = registry.cleanup_stale()
+            assert cleaned == 1
+            assert not registry.exists("dead-agent")
+        finally:
+            subprocess.run = saved_run  # type: ignore[assignment]

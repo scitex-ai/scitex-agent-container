@@ -253,7 +253,7 @@ class TestListJsonTimeoutBudget:
     status="unknown" + liveness_unknown=True in the output row.
     """
 
-    def test_timeout_bound_with_hanging_remote(self, monkeypatch, tmp_path):
+    def test_timeout_bound_with_hanging_remote(self, tmp_path):
         """A hanging remote probe must not exceed the per-probe timeout."""
         import time
 
@@ -308,39 +308,38 @@ spec:
                 time.sleep(10)  # longer than our probe timeout
                 return True
 
-        monkeypatch.setattr(
-            _helpers,
-            "_probe_local",
-            lambda cfg: _HangingRuntime().is_running(cfg),
-            raising=False,
-        )
+        # PA-306: hand-rolled fake injection with explicit restore.
+        saved_probe = getattr(_helpers, "_probe_local", None)
+        _helpers._probe_local = lambda cfg: _HangingRuntime().is_running(cfg)
+        try:
+            t0 = time.monotonic()
+            rows = _helpers.get_agent_list_data(
+                _FakeRegistry(), remote_probe_timeout_s=1.0
+            )
+            elapsed = time.monotonic() - t0
 
-        t0 = time.monotonic()
-        # Module-level function reference — the monkeypatch above replaced
-        # ``_probe_local`` within _helpers so any call through that module
-        # picks up the hanging mock.
-        rows = _helpers.get_agent_list_data(_FakeRegistry(), remote_probe_timeout_s=1.0)
-        elapsed = time.monotonic() - t0
+            # Bound: the 10s hang must be cut short by the 1s timeout.
+            assert elapsed < 3.0, (
+                f"get_agent_list_data blocked for {elapsed:.1f}s despite 1s "
+                "probe timeout — todo#254 regression re-introduced"
+            )
+            remote_row = next(r for r in rows if r["name"] == "test-remote")
+            assert remote_row["status"] == "unknown"
+            assert remote_row.get("liveness_unknown") is True
+        finally:
+            if saved_probe is None:
+                if hasattr(_helpers, "_probe_local"):
+                    delattr(_helpers, "_probe_local")
+            else:
+                _helpers._probe_local = saved_probe
 
-        # Bound: the 10s hang must be cut short by the 1s timeout. Even
-        # with ThreadPool overhead, elapsed should be < 3s (generous).
-        assert elapsed < 3.0, (
-            f"get_agent_list_data blocked for {elapsed:.1f}s despite 1s "
-            "probe timeout — todo#254 regression re-introduced"
-        )
-        # And the remote row must be marked liveness_unknown, not "stopped"
-        remote_row = next(r for r in rows if r["name"] == "test-remote")
-        assert remote_row["status"] == "unknown"
-        assert remote_row.get("liveness_unknown") is True
-
-    def test_fast_remote_probe_not_marked_unknown(self, monkeypatch, tmp_path):
+    def test_fast_remote_probe_not_marked_unknown(self, tmp_path):
         """A fast remote probe must NOT be marked liveness_unknown."""
         from scitex_agent_container.cli_pkg import _helpers
 
         d = tmp_path / "test-fast"
         d.mkdir()
         cfg_path = d / "test-fast.yaml"
-        # v3-realign: spec.remote removed (§2). Minimal v3 spec is enough.
         cfg_path.write_text(
             """apiVersion: scitex-agent-container/v3
 kind: Agent
@@ -360,9 +359,19 @@ spec:
                     }
                 ]
 
-        monkeypatch.setattr(_helpers, "_probe_local", lambda cfg: True, raising=False)
-
-        rows = _helpers.get_agent_list_data(_FakeRegistry(), remote_probe_timeout_s=5.0)
-        row = rows[0]
-        assert row["status"] == "running"
-        assert row.get("liveness_unknown") is not True
+        # PA-306: hand-rolled fake injection with explicit restore.
+        saved_probe = getattr(_helpers, "_probe_local", None)
+        _helpers._probe_local = lambda cfg: True
+        try:
+            rows = _helpers.get_agent_list_data(
+                _FakeRegistry(), remote_probe_timeout_s=5.0
+            )
+            row = rows[0]
+            assert row["status"] == "running"
+            assert row.get("liveness_unknown") is not True
+        finally:
+            if saved_probe is None:
+                if hasattr(_helpers, "_probe_local"):
+                    delattr(_helpers, "_probe_local")
+            else:
+                _helpers._probe_local = saved_probe

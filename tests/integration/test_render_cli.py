@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from textwrap import dedent
 
@@ -10,6 +11,27 @@ import pytest
 from click.testing import CliRunner
 
 from scitex_agent_container.cli_pkg._main import main
+
+
+@pytest.fixture
+def slurm_state_env():
+    """Set ``SCITEX_AGENT_CONTAINER_SLURM_STATE_DIR`` and restore on teardown.
+
+    PA-306: replaces ``monkeypatch.setenv``. Returns a setter callable
+    so tests can pass the state dir they just built.
+    """
+    saved = os.environ.get("SCITEX_AGENT_CONTAINER_SLURM_STATE_DIR")
+
+    def _set(state_dir: Path) -> None:
+        os.environ["SCITEX_AGENT_CONTAINER_SLURM_STATE_DIR"] = str(state_dir)
+
+    yield _set
+
+    if saved is None:
+        os.environ.pop("SCITEX_AGENT_CONTAINER_SLURM_STATE_DIR", None)
+    else:
+        os.environ["SCITEX_AGENT_CONTAINER_SLURM_STATE_DIR"] = saved
+
 
 _SLURM_YAML = dedent(
     """\
@@ -102,14 +124,14 @@ class TestRenderSbatch:
 )
 class TestRenderAttach:
     def test_emits_srun_pty_command_with_recorded_jobid(
-        self, slurm_yaml: Path, tmp_path: Path, monkeypatch
+        self, slurm_yaml: Path, tmp_path: Path, slurm_state_env
     ) -> None:
         state_dir = tmp_path / "state"
         state_dir.mkdir()
         (state_dir / "head-spartan.json").write_text(
             json.dumps({"name": "head-spartan", "job_id": "54321"})
         )
-        monkeypatch.setenv("SCITEX_AGENT_CONTAINER_SLURM_STATE_DIR", str(state_dir))
+        slurm_state_env(state_dir)
 
         runner = CliRunner()
         result = runner.invoke(main, ["template", "render-attach", str(slurm_yaml)])
@@ -119,14 +141,14 @@ class TestRenderAttach:
         assert "tmux -L default attach -t head-spartan" in result.output
 
     def test_explicit_job_id_flag_wins(
-        self, slurm_yaml: Path, tmp_path: Path, monkeypatch
+        self, slurm_yaml: Path, tmp_path: Path, slurm_state_env
     ) -> None:
         state_dir = tmp_path / "state"
         state_dir.mkdir()
         (state_dir / "head-spartan.json").write_text(
             json.dumps({"name": "head-spartan", "job_id": "54321"})
         )
-        monkeypatch.setenv("SCITEX_AGENT_CONTAINER_SLURM_STATE_DIR", str(state_dir))
+        slurm_state_env(state_dir)
 
         runner = CliRunner()
         result = runner.invoke(

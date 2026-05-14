@@ -1,20 +1,38 @@
 """Tests for ssh hop-chain rendering helpers.
 
 Covers argv shape of :func:`render_ssh_chain`, the local-hop trimming
-in :func:`skip_local_hops` (mocking ``is_local_host`` so the result is
-deterministic on every dev box), and the full :func:`build_ssh_command`
-wrapper including the no-hop / empty-list short-circuit.
+in :func:`skip_local_hops` (with a hand-rolled fake ``is_local_host``
+so the result is deterministic on every dev box), and the full
+:func:`build_ssh_command` wrapper including the no-hop / empty-list
+short-circuit.
+
+PA-306: no ``unittest.mock``. ``is_local_host`` is swapped at module
+level via a small ``_swap_locality`` context manager — same effect as
+``patch`` but no banned imports or fixtures.
 """
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from contextlib import contextmanager
+from typing import Callable, Iterator
 
+import scitex_agent_container.runtimes._ssh_chain as ssh_chain_mod
 from scitex_agent_container.runtimes._ssh_chain import (
     build_ssh_command,
     render_ssh_chain,
     skip_local_hops,
 )
+
+
+@contextmanager
+def _swap_locality(fn: Callable[[str], bool]) -> Iterator[None]:
+    saved = ssh_chain_mod.is_local_host
+    ssh_chain_mod.is_local_host = fn  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        ssh_chain_mod.is_local_host = saved  # type: ignore[assignment]
+
 
 # --- render_ssh_chain ---------------------------------------------------
 
@@ -44,26 +62,17 @@ def test_render_many_hops_joins_with_commas():
 
 
 def test_skip_local_hops_drops_leading_local():
-    with patch(
-        "scitex_agent_container.runtimes._ssh_chain.is_local_host",
-        side_effect=lambda h: h == "spartan",
-    ):
+    with _swap_locality(lambda h: h == "spartan"):
         assert skip_local_hops(["spartan", "spartan-bm149"]) == ["spartan-bm149"]
 
 
 def test_skip_local_hops_passes_through_remote_only():
-    with patch(
-        "scitex_agent_container.runtimes._ssh_chain.is_local_host",
-        return_value=False,
-    ):
+    with _swap_locality(lambda _h: False):
         assert skip_local_hops(["a", "b", "c"]) == ["a", "b", "c"]
 
 
 def test_skip_local_hops_all_local_yields_empty():
-    with patch(
-        "scitex_agent_container.runtimes._ssh_chain.is_local_host",
-        return_value=True,
-    ):
+    with _swap_locality(lambda _h: True):
         assert skip_local_hops(["spartan"]) == []
         assert skip_local_hops(["a", "b"]) == []
 
@@ -72,19 +81,13 @@ def test_skip_local_hops_stops_at_first_remote():
     # Only LEADING locals are trimmed; a local hop after a remote one
     # must survive (otherwise the chain semantics break).
     seq = ["local-a", "remote-b", "local-c"]
-    with patch(
-        "scitex_agent_container.runtimes._ssh_chain.is_local_host",
-        side_effect=lambda h: h.startswith("local"),
-    ):
+    with _swap_locality(lambda h: h.startswith("local")):
         assert skip_local_hops(seq) == ["remote-b", "local-c"]
 
 
 def test_skip_local_hops_does_not_mutate_input():
     inp = ["spartan", "target"]
-    with patch(
-        "scitex_agent_container.runtimes._ssh_chain.is_local_host",
-        side_effect=lambda h: h == "spartan",
-    ):
+    with _swap_locality(lambda h: h == "spartan"):
         skip_local_hops(inp)
     assert inp == ["spartan", "target"]
 
