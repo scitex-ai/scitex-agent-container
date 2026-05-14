@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
@@ -13,15 +12,25 @@ from scitex_agent_container.cli_pkg.skills_group import skills_group
 
 
 @pytest.fixture(autouse=True)
-def sandbox_home(tmp_path, monkeypatch):
-    """Sandbox Path.home() so install commands never touch real home."""
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
-    (tmp_path / "home").mkdir()
-    return tmp_path
+def sandbox_home(tmp_path):
+    """Sandbox $HOME so install commands never touch the real one. PA-306."""
+    import os
+
+    saved = os.environ.get("HOME")
+    home = tmp_path / "home"
+    home.mkdir()
+    os.environ["HOME"] = str(home)
+    try:
+        yield tmp_path
+    finally:
+        if saved is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = saved
 
 
 @pytest.fixture
-def fake_skills_root(tmp_path, monkeypatch):
+def fake_skills_root(tmp_path):
     """Make _skills_root() point to a tmp dir with two .md files."""
     root = tmp_path / "skills_src"
     root.mkdir()
@@ -29,8 +38,12 @@ def fake_skills_root(tmp_path, monkeypatch):
     sub = root / "nested"
     sub.mkdir()
     (sub / "02_beta.md").write_text("# beta\n", encoding="utf-8")
-    monkeypatch.setattr(sg, "_skills_root", lambda: root)
-    return root
+    saved = sg._skills_root
+    sg._skills_root = lambda: root  # type: ignore[assignment]
+    try:
+        yield root
+    finally:
+        sg._skills_root = saved  # type: ignore[assignment]
 
 
 def test_list_human(fake_skills_root):
@@ -50,10 +63,14 @@ def test_list_json(fake_skills_root):
     assert stems == ["01_alpha", "02_beta"]
 
 
-def test_list_empty(monkeypatch, tmp_path):
-    monkeypatch.setattr(sg, "_skills_root", lambda: tmp_path / "missing")
-    runner = CliRunner()
-    result = runner.invoke(skills_group, ["list"])
+def test_list_empty(tmp_path):
+    saved = sg._skills_root
+    sg._skills_root = lambda: tmp_path / "missing"  # type: ignore[assignment]
+    try:
+        runner = CliRunner()
+        result = runner.invoke(skills_group, ["list"])
+    finally:
+        sg._skills_root = saved  # type: ignore[assignment]
     assert result.exit_code != 0
     assert "no skills" in result.output
 
@@ -180,9 +197,13 @@ def test_install_claude_symlink_skips_when_exists_nonlink(
     assert "skipping" in result.output
 
 
-def test_install_no_skills_dir(monkeypatch, tmp_path):
-    monkeypatch.setattr(sg, "_skills_root", lambda: tmp_path / "missing")
-    runner = CliRunner()
-    result = runner.invoke(skills_group, ["install"])
+def test_install_no_skills_dir(tmp_path):
+    saved = sg._skills_root
+    sg._skills_root = lambda: tmp_path / "missing"  # type: ignore[assignment]
+    try:
+        runner = CliRunner()
+        result = runner.invoke(skills_group, ["install"])
+    finally:
+        sg._skills_root = saved  # type: ignore[assignment]
     assert result.exit_code != 0
     assert "no skills directory" in result.output
