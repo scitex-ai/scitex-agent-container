@@ -110,7 +110,7 @@
 </ul>
 </li>
 <li class="toctree-l1 current"><a class="current reference internal" href="#">Talking to a Running Agent</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="#a2a-sidecar-post-v1-sac-agents-name-turn">1. A2A sidecar — <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/v1/sac/agents/&lt;name&gt;/turn</span></code></a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#a2a-sidecar-post-agents-name-turn">1. A2A sidecar — <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/agents/&lt;name&gt;/turn</span></code></a><ul>
 <li class="toctree-l3"><a class="reference internal" href="#send-a-turn">Send a turn</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#discover-the-agent">Discover the agent</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#one-shot-vs-follow-up">One-shot vs follow-up</a></li>
@@ -461,7 +461,7 @@ ordered from external-friendliest to most internal:</p>
 </tr>
 </thead>
 <tbody>
-<tr class="row-even"><td><p><strong>A2A sidecar</strong> — <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/v1/sac/agents/&lt;name&gt;/turn</span></code> on the agent’s own port</p></td>
+<tr class="row-even"><td><p><strong>A2A sidecar</strong> — <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/agents/&lt;name&gt;/turn</span></code> on the agent’s own port</p></td>
 <td><p>External tools, browsers, curl, peer agents, A2A-spec consumers</p></td>
 <td><p>none (loopback)</p></td>
 </tr>
@@ -469,7 +469,7 @@ ordered from external-friendliest to most internal:</p>
 <td><p>Scripted flows on the same host (the one running the agent)</p></td>
 <td><p>none</p></td>
 </tr>
-<tr class="row-even"><td><p><strong><code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code></strong> — <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/v1/sac/agents/&lt;name&gt;/send</span></code> on the host port (7878)</p></td>
+<tr class="row-even"><td><p><strong><code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code></strong> — <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/agents/&lt;name&gt;/send</span></code> on the host port (7878)</p></td>
 <td><p>Trusted orchestrators (e.g. orochi), cross-host via the existing SSH mesh</p></td>
 <td><p>bearer token</p></td>
 </tr>
@@ -479,8 +479,8 @@ ordered from external-friendliest to most internal:</p>
 inbox, so the SDK conversation is identical regardless of which door
 the prompt came through.</p>
 <hr class="docutils" />
-<section id="a2a-sidecar-post-v1-sac-agents-name-turn">
-<h2>1. A2A sidecar — <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/v1/sac/agents/&lt;name&gt;/turn</span></code><a class="headerlink" href="#a2a-sidecar-post-v1-sac-agents-name-turn" title="Link to this heading"></a></h2>
+<section id="a2a-sidecar-post-agents-name-turn">
+<h2>1. A2A sidecar — <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/agents/&lt;name&gt;/turn</span></code><a class="headerlink" href="#a2a-sidecar-post-agents-name-turn" title="Link to this heading"></a></h2>
 <p>Enable it by leaving <code class="docutils literal notranslate"><span class="pre">spec.a2a.port</span></code> at its default (<code class="docutils literal notranslate"><span class="pre">auto</span></code>) — sac
 claims a free port from <code class="docutils literal notranslate"><span class="pre">~/.scitex/agent-container/config.yaml</span></code>’s
 <code class="docutils literal notranslate"><span class="pre">a2a.port_range</span></code> (default <code class="docutils literal notranslate"><span class="pre">[19000,</span> <span class="pre">19999]</span></code>) at start time and persists
@@ -512,15 +512,15 @@ serve identical handlers:</p>
 </thead>
 <tbody>
 <tr class="row-even"><td><p>POST</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">/v1/sac/agents/&lt;name&gt;/turn</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">/agents/&lt;name&gt;/turn</span></code></p></td>
 <td><p><strong>Canonical.</strong> Drop a prompt onto the SDK session</p></td>
 </tr>
 <tr class="row-odd"><td><p>POST</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">/v1/sac/agents/&lt;name&gt;/send</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">/agents/&lt;name&gt;/send</span></code></p></td>
 <td><p>Alias of <code class="docutils literal notranslate"><span class="pre">/turn</span></code> (matches <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code>’s verb)</p></td>
 </tr>
 <tr class="row-even"><td><p>GET</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">/v1/sac/agents/&lt;name&gt;/card</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">/agents/&lt;name&gt;/card</span></code></p></td>
 <td><p>This agent’s AgentCard</p></td>
 </tr>
 <tr class="row-odd"><td><p>POST</p></td>
@@ -558,7 +558,7 @@ the request to one agent, so a name mismatch returns <code class="docutils liter
 <section id="send-a-turn">
 <h3>Send a turn<a class="headerlink" href="#send-a-turn" title="Link to this heading"></a></h3>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>curl<span class="w"> </span>-s<span class="w"> </span>--max-time<span class="w"> </span><span class="m">120</span><span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>http://127.0.0.1:7901/v1/sac/agents/ecosystem-auditor/turn<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>http://127.0.0.1:7901/agents/ecosystem-auditor/turn<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-H<span class="w"> </span><span class="s1">&#39;Content-Type: application/json&#39;</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;text&quot;: &quot;Which scitex packages currently have audit-all violations?&quot;}&#39;</span>
 </pre></div>
@@ -586,7 +586,7 @@ read it directly:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>curl<span class="w"> </span>-s<span class="w"> </span>http://127.0.0.1:7901/.well-known/agent-card.json<span class="w"> </span><span class="p">|</span><span class="w"> </span>python3<span class="w"> </span>-m<span class="w"> </span>json.tool
 </pre></div>
 </div>
-<p>The card’s <code class="docutils literal notranslate"><span class="pre">url</span></code> field advertises <code class="docutils literal notranslate"><span class="pre">&lt;base&gt;/v1/sac/agents/&lt;name&gt;</span></code> —
+<p>The card’s <code class="docutils literal notranslate"><span class="pre">url</span></code> field advertises <code class="docutils literal notranslate"><span class="pre">&lt;base&gt;/agents/&lt;name&gt;</span></code> —
 exactly the path the sidecar serves — so a client following the
 advertised URL hits a working endpoint.</p>
 </section>
@@ -629,7 +629,7 @@ sac<span class="w"> </span>listen<span class="w"> </span><span class="p">&amp;</
 <span class="nv">TOKEN</span><span class="o">=</span><span class="k">$(</span>cat<span class="w"> </span>~/.scitex/agent-container/tokens/listen-<span class="k">$(</span>hostname<span class="k">)</span>.token<span class="k">)</span>
 
 <span class="c1"># Send a turn through the control plane</span>
-curl<span class="w"> </span>-s<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://127.0.0.1:7878/v1/sac/agents/ecosystem-auditor/send<span class="w"> </span><span class="se">\</span>
+curl<span class="w"> </span>-s<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://127.0.0.1:7878/agents/ecosystem-auditor/send<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-H<span class="w"> </span><span class="s1">&#39;Content-Type: application/json&#39;</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;type&quot;:&quot;prompt&quot;,&quot;prompt&quot;:&quot;Same question, via sac listen.&quot;}&#39;</span>
@@ -650,31 +650,31 @@ consumers):</p>
 <td><p><code class="docutils literal notranslate"><span class="pre">{ok,</span> <span class="pre">version,</span> <span class="pre">host}</span></code></p></td>
 </tr>
 <tr class="row-odd"><td><p>GET</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">/v1/sac/agents</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">/agents</span></code></p></td>
 <td><p>List all agents on this host</p></td>
 </tr>
 <tr class="row-even"><td><p>GET</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">/v1/sac/agents/&lt;name&gt;/status</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">/agents/&lt;name&gt;/status</span></code></p></td>
 <td><p>Full agent state</p></td>
 </tr>
 <tr class="row-odd"><td><p>GET</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">/v1/sac/agents/&lt;name&gt;/tail?since=...&amp;follow=...</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">/agents/&lt;name&gt;/tail?since=...&amp;follow=...</span></code></p></td>
 <td><p>SSE stream of <code class="docutils literal notranslate"><span class="pre">session.jsonl</span></code></p></td>
 </tr>
 <tr class="row-even"><td><p>POST</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">/v1/sac/agents/&lt;name&gt;/send</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">/agents/&lt;name&gt;/send</span></code></p></td>
 <td><p>Send prompt or interrupt key</p></td>
 </tr>
 <tr class="row-odd"><td><p>GET</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">/v1/sac/agents/&lt;name&gt;/card</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">/agents/&lt;name&gt;/card</span></code></p></td>
 <td><p>AgentCard for this agent</p></td>
 </tr>
 <tr class="row-even"><td><p>POST</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">/v1/sac/agents</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">/agents</span></code></p></td>
 <td><p>Create + start from an inline spec</p></td>
 </tr>
 <tr class="row-odd"><td><p>DELETE</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">/v1/sac/agents/&lt;name&gt;</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">/agents/&lt;name&gt;</span></code></p></td>
 <td><p>Stop the agent</p></td>
 </tr>
 </tbody>
@@ -731,10 +731,10 @@ for the full reference.</p>
 <section id="picking-a-transport">
 <h2>Picking a transport<a class="headerlink" href="#picking-a-transport" title="Link to this heading"></a></h2>
 <ul class="simple">
-<li><p><strong>A2A-spec client / browser / curl</strong> → POST to the URL the AgentCard advertises (<code class="docutils literal notranslate"><span class="pre">&lt;base&gt;/v1/sac/agents/&lt;name&gt;/turn</span></code>). Loopback only; no auth.</p></li>
+<li><p><strong>A2A-spec client / browser / curl</strong> → POST to the URL the AgentCard advertises (<code class="docutils literal notranslate"><span class="pre">&lt;base&gt;/agents/&lt;name&gt;/turn</span></code>). Loopback only; no auth.</p></li>
 <li><p><strong>Shell script on the same host</strong> → <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agents</span> <span class="pre">send</span></code> + <code class="docutils literal notranslate"><span class="pre">tail</span></code>. No port, no JSON, no token.</p></li>
 <li><p><strong>Another agent, on the same host</strong> → A2A sidecar; agents have <code class="docutils literal notranslate"><span class="pre">httpx</span></code> in the SIF. Use the canonical URL or the <code class="docutils literal notranslate"><span class="pre">/v1/turn</span></code> shortcut — both work.</p></li>
-<li><p><strong>Orchestrator (orochi, custom)</strong> → <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code> (port 7878) with the bearer token; same <code class="docutils literal notranslate"><span class="pre">/v1/sac/agents/&lt;name&gt;/...</span></code> path shape, cross-host via the existing SSH mesh.</p></li>
+<li><p><strong>Orchestrator (orochi, custom)</strong> → <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code> (port 7878) with the bearer token; same <code class="docutils literal notranslate"><span class="pre">/agents/&lt;name&gt;/...</span></code> path shape, cross-host via the existing SSH mesh.</p></li>
 <li><p><strong>External A2A peer (hosted service, vendor)</strong> → wrap as a <span class="xref myst"><code class="docutils literal notranslate"><span class="pre">kind:</span> <span class="pre">AgentProxy</span></code></span> agent so the rest of sac treats it the same.</p></li>
 </ul>
 <p>Pick the most external transport that meets your needs — every layer

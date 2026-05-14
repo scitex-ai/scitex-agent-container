@@ -110,7 +110,7 @@
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="talking-to-agents.html">Talking to a Running Agent</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="talking-to-agents.html#a2a-sidecar-post-v1-sac-agents-name-turn">1. A2A sidecar — <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/v1/sac/agents/&lt;name&gt;/turn</span></code></a><ul>
+<li class="toctree-l2"><a class="reference internal" href="talking-to-agents.html#a2a-sidecar-post-agents-name-turn">1. A2A sidecar — <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/agents/&lt;name&gt;/turn</span></code></a><ul>
 <li class="toctree-l3"><a class="reference internal" href="talking-to-agents.html#send-a-turn">Send a turn</a></li>
 <li class="toctree-l3"><a class="reference internal" href="talking-to-agents.html#discover-the-agent">Discover the agent</a></li>
 <li class="toctree-l3"><a class="reference internal" href="talking-to-agents.html#one-shot-vs-follow-up">One-shot vs follow-up</a></li>
@@ -542,7 +542,7 @@ not a synonym for “what the agent can do”. The “can do” surface is
 always <code class="docutils literal notranslate"><span class="pre">skills[]</span></code>.</p>
 </div></blockquote>
 <p>The AgentCard at <code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/.well-known/agent-card.json</span></code> (per-agent sidecar
-when <code class="docutils literal notranslate"><span class="pre">spec.a2a.port</span></code> is set) and <code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/v1/sac/agents/&lt;name&gt;/card</span></code>
+when <code class="docutils literal notranslate"><span class="pre">spec.a2a.port</span></code> is set) and <code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/agents/&lt;name&gt;/card</span></code>
 (host-level <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code>) is built <strong>entirely</strong> from spec.yaml:</p>
 <table class="docutils align-default">
 <thead>
@@ -561,7 +561,7 @@ when <code class="docutils literal notranslate"><span class="pre">spec.a2a.port<
 <td><p><code class="docutils literal notranslate"><span class="pre">apiVersion</span></code></p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">url</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">&lt;base&gt;/v1/sac/agents/&lt;name&gt;</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">&lt;base&gt;/agents/&lt;name&gt;</span></code></p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">provider.organization</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">metadata.labels.team</span></code></p></td>
@@ -814,14 +814,14 @@ when <code class="docutils literal notranslate"><span class="pre">spec.a2a.port<
 </tbody>
 </table>
 <p>The per-agent sidecar binds the <strong>same URL shape</strong> as <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code>
-(<code class="docutils literal notranslate"><span class="pre">/v1/sac/agents/&lt;name&gt;/{turn,send,card}</span></code>, <code class="docutils literal notranslate"><span class="pre">/v1/a2a/agents/&lt;name&gt;/...</span></code>,
+(<code class="docutils literal notranslate"><span class="pre">/agents/&lt;name&gt;/{turn,send,card}</span></code>, <code class="docutils literal notranslate"><span class="pre">/v1/a2a/agents/&lt;name&gt;/...</span></code>,
 <code class="docutils literal notranslate"><span class="pre">/.well-known/agent-card.json</span></code>, <code class="docutils literal notranslate"><span class="pre">/health</span></code>), so the same client code
 works against either transport. Per-agent ports are an internal IPC
 mechanism between <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code> and the runner (different processes);
 clients reach every agent through the <strong>one stable host port</strong> at
 <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code> (default <code class="docutils literal notranslate"><span class="pre">:7878</span></code>).</p>
 <p>The AgentCard’s <code class="docutils literal notranslate"><span class="pre">url</span></code> field advertises the <strong>sac listen</strong> URL
-(<code class="docutils literal notranslate"><span class="pre">http://127.0.0.1:7878/v1/sac/agents/&lt;name&gt;</span></code>) regardless of which
+(<code class="docutils literal notranslate"><span class="pre">http://127.0.0.1:7878/agents/&lt;name&gt;</span></code>) regardless of which
 endpoint served the card, so external A2A clients caching the card
 get a URL that survives per-agent port churn.</p>
 </section>

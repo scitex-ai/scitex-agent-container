@@ -42,7 +42,7 @@ are two separate packages with a **one-way dependency**: orochi reads from sac; 
 | Agent process (SDK + session.jsonl)                       | **sac**                                    |
 | Per-host control plane (start/stop/send/tail/list)        | **sac**                                    |
 | Container runtime (apptainer)                             | **sac**                                    |
-| Per-agent local inbox (`POST /v1/sac/agents/<name>/turn`) | **sac**                                    |
+| Per-agent local inbox (`POST /agents/<name>/turn`) | **sac**                                    |
 | In-session push (MCP channel server `server:sac`)         | **sac** — connects to local `sac listen` SSE stream and pushes `notifications/claude/channel` into the running session |
 | Cross-host message routing                                | **orochi**                                 |
 | Human chatops UI (Slack-like web interface)               | **orochi**                                 |
