@@ -37,7 +37,26 @@ __all__ = ["ClaudeSessionRuntime"]
 # error and returns 0 tokens with no log line — heartbeat fresh,
 # every turn empty. Hard to debug. Emit a clear warning at start
 # whenever the size exceeds this threshold.
-_WORKDIR_CLAUDE_SIZE_WARN_BYTES = 10 * 1024 * 1024  # 10 MB
+def _workdir_claude_warn_threshold() -> int:
+    """Resolve the workdir/.claude size-warn threshold at call time.
+
+    Honours ``$SAC_WORKDIR_CLAUDE_WARN_BYTES`` as an override for tests
+    and ops; defaults to 10 MiB.
+    """
+    import os
+
+    override = os.environ.get("SAC_WORKDIR_CLAUDE_WARN_BYTES")
+    if override:
+        try:
+            return int(override)
+        except ValueError:
+            pass
+    return 10 * 1024 * 1024  # 10 MB
+
+
+# Back-compat re-export: read at import time. Production callers should
+# prefer ``_workdir_claude_warn_threshold()`` to see env overrides.
+_WORKDIR_CLAUDE_SIZE_WARN_BYTES = _workdir_claude_warn_threshold()
 
 
 def _workdir_claude_size_bytes(workdir: str | None) -> int:
@@ -75,7 +94,7 @@ def _warn_if_heavy_workdir_claude(config: AgentConfig) -> None:
         config, "workdir", None
     )
     size = _workdir_claude_size_bytes(workdir)
-    if size <= _WORKDIR_CLAUDE_SIZE_WARN_BYTES:
+    if size <= _workdir_claude_warn_threshold():
         return
     mb = size / (1024 * 1024)
     print(
@@ -111,7 +130,15 @@ class ClaudeSessionRuntime(RuntimeBase):
     """Daemon-mode runtime backed by ``claude-agent-sdk``, dispatched
     via apptainer. The host side never spawns a Python subprocess —
     every ``start`` goes through ``apptainer exec`` (or equivalent).
+
+    ``container_runtime_for`` is an injection seam — defaults to the
+    module-level ``_container_runtime_for`` lookup. Tests pass a
+    callable that returns a fake container runtime so the dispatch
+    glue can be exercised without booting a real container.
     """
+
+    def __init__(self, container_runtime_for=None):
+        self._container_runtime_for = container_runtime_for or _container_runtime_for
 
     def _setup_workspace(self, config: AgentConfig) -> None:
         """Materialise CLAUDE.md before launching the SDK runner.
@@ -158,7 +185,7 @@ class ClaudeSessionRuntime(RuntimeBase):
         (the default) returns once the engine reports the container
         is live.
         """
-        container_rt = _container_runtime_for(config)
+        container_rt = self._container_runtime_for(config)
         if container_rt is None:
             print(
                 f"error: ClaudeSessionRuntime requires a container engine "
@@ -190,7 +217,7 @@ class ClaudeSessionRuntime(RuntimeBase):
 
     def stop(self, config: AgentConfig) -> bool:
         """Stop the container; scrub the managed CLAUDE.md section."""
-        container_rt = _container_runtime_for(config)
+        container_rt = self._container_runtime_for(config)
         if container_rt is None:
             return False
         ok = container_rt.stop(config)
@@ -198,7 +225,7 @@ class ClaudeSessionRuntime(RuntimeBase):
         return ok
 
     def is_running(self, config: AgentConfig) -> bool:
-        container_rt = _container_runtime_for(config)
+        container_rt = self._container_runtime_for(config)
         if container_rt is None:
             return False
         return container_rt.is_running(config)
@@ -209,7 +236,7 @@ class ClaudeSessionRuntime(RuntimeBase):
         when the transcript hasn't been written yet — typical for a
         brand-new container that hasn't completed its first turn.
         """
-        container_rt = _container_runtime_for(config)
+        container_rt = self._container_runtime_for(config)
         if container_rt is None:
             return ""
         state_dir = self._state_dir(config)

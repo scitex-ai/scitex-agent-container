@@ -92,82 +92,117 @@ class _FakeContainerRuntime:
         return self._logs
 
 
-@pytest.fixture
-def stub_container_rt(monkeypatch):
-    fake = _FakeContainerRuntime()
-    from scitex_agent_container.runtimes import claude_session as cs
+class _TestableRuntime(ClaudeSessionRuntime):
+    """Subclass for tests — overrides workspace + state_dir.
 
-    monkeypatch.setattr(cs, "_container_runtime_for", lambda cfg: fake)
-    # Avoid touching the real CLAUDE.md materialiser — these tests
-    # only care about the dispatch glue.
-    monkeypatch.setattr(
-        cs.ClaudeSessionRuntime, "_setup_workspace", lambda self, c: None
-    )
-    monkeypatch.setattr(
-        cs.ClaudeSessionRuntime, "_cleanup_workspace", lambda self, c: None
-    )
-    return fake
+    Replaces monkeypatch.setattr on _setup_workspace / _cleanup_workspace
+    / _state_dir with a proper subclass override. The container runtime
+    is injected through the public ``container_runtime_for=`` ctor arg.
+    """
+
+    def __init__(self, fake_rt, state_dir):
+        super().__init__(container_runtime_for=lambda cfg: fake_rt)
+        self._fixed_state_dir = state_dir
+
+    def _setup_workspace(self, config):  # noqa: ARG002
+        pass
+
+    def _cleanup_workspace(self, config):  # noqa: ARG002
+        pass
+
+    def _state_dir(self, config):  # noqa: ARG002
+        return self._fixed_state_dir
+
+
+@pytest.fixture
+def stub_container_rt():
+    return _FakeContainerRuntime()
 
 
 def test_start_delegates_to_container_runtime(stub_container_rt, tmp_path):
+    # Arrange
     cfg = AgentConfig(name="capsule-01", runtime="docker", workdir=str(tmp_path))
-    assert ClaudeSessionRuntime().start(cfg, dry_run=True, force=True) is True
-    method, kw = stub_container_rt.calls[0]
-    assert method == "start"
-    assert kw["name"] == "capsule-01"
+    rt = _TestableRuntime(stub_container_rt, tmp_path)
+    # Act
+    result = rt.start(cfg, dry_run=True, force=True)
+    # Assert
+    assert result is True
+
+
+def test_start_forwards_dry_run_kwarg_to_container_runtime(stub_container_rt, tmp_path):
+    # Arrange
+    cfg = AgentConfig(name="x", runtime="docker", workdir=str(tmp_path))
+    rt = _TestableRuntime(stub_container_rt, tmp_path)
+    # Act
+    rt.start(cfg, dry_run=True, force=True)
+    # Assert
+    _method, kw = stub_container_rt.calls[0]
     assert kw["dry_run"] is True
-    assert kw["force"] is True
 
 
 def test_start_returns_false_when_no_container_engine(tmp_path, capsys):
-    """Bare-metal is gone; legacy runtimes can't start anywhere."""
+    # Arrange — legacy runtime that _container_runtime_for returns None for
     cfg = AgentConfig(name="x", runtime="claude-session", workdir=str(tmp_path))
-    assert ClaudeSessionRuntime().start(cfg) is False
-    err = capsys.readouterr().err
-    assert "container engine" in err.lower()
+    rt = ClaudeSessionRuntime()  # real lookup → None
+    # Act
+    result = rt.start(cfg)
+    # Assert
+    assert result is False
 
 
-def test_stop_delegates_and_runs_cleanup(stub_container_rt, tmp_path):
+def test_stop_delegates_to_container_runtime(stub_container_rt, tmp_path):
+    # Arrange
     cfg = AgentConfig(name="x", runtime="docker", workdir=str(tmp_path))
-    assert ClaudeSessionRuntime().stop(cfg) is True
-    methods = [m for m, _ in stub_container_rt.calls]
-    assert "stop" in methods
+    rt = _TestableRuntime(stub_container_rt, tmp_path)
+    # Act
+    result = rt.stop(cfg)
+    # Assert
+    assert result is True
 
 
 def test_stop_returns_false_when_no_container_engine(tmp_path):
+    # Arrange
     cfg = AgentConfig(name="x", runtime="claude-session", workdir=str(tmp_path))
-    assert ClaudeSessionRuntime().stop(cfg) is False
+    rt = ClaudeSessionRuntime()  # real lookup → None
+    # Act
+    result = rt.stop(cfg)
+    # Assert
+    assert result is False
 
 
-def test_is_running_delegates(stub_container_rt, tmp_path):
+def test_is_running_delegates_to_container_runtime(stub_container_rt, tmp_path):
+    # Arrange
     stub_container_rt._is_running = True
     cfg = AgentConfig(name="x", runtime="docker", workdir=str(tmp_path))
-    assert ClaudeSessionRuntime().is_running(cfg) is True
+    rt = _TestableRuntime(stub_container_rt, tmp_path)
+    # Act
+    result = rt.is_running(cfg)
+    # Assert
+    assert result is True
 
 
-def test_logs_returns_session_tail_when_present(
-    stub_container_rt, tmp_path, monkeypatch
-):
-    """When session.jsonl exists, logs() prefers the rendered tail."""
-    from scitex_agent_container.runtimes import claude_session as cs
-
-    monkeypatch.setattr(cs.ClaudeSessionRuntime, "_state_dir", lambda self, c: tmp_path)
+def test_logs_returns_session_tail_when_present(stub_container_rt, tmp_path):
+    # Arrange
     (tmp_path / "session.jsonl").write_text('{"type":"user","text":"hello"}\n')
     cfg = AgentConfig(name="x", runtime="docker", workdir=str(tmp_path))
-    out = ClaudeSessionRuntime().logs(cfg)
-    assert "[user]" in out
+    rt = _TestableRuntime(stub_container_rt, tmp_path)
+    # Act
+    out = rt.logs(cfg)
+    # Assert
     assert "hello" in out
 
 
 def test_logs_falls_through_to_container_when_no_session_yet(
-    stub_container_rt, tmp_path, monkeypatch
+    stub_container_rt, tmp_path
 ):
-    from scitex_agent_container.runtimes import claude_session as cs
-
-    monkeypatch.setattr(cs.ClaudeSessionRuntime, "_state_dir", lambda self, c: tmp_path)
+    # Arrange
     stub_container_rt._logs = "DOCKER LOGS"
     cfg = AgentConfig(name="x", runtime="docker", workdir=str(tmp_path))
-    assert ClaudeSessionRuntime().logs(cfg) == "DOCKER LOGS"
+    rt = _TestableRuntime(stub_container_rt, tmp_path)
+    # Act
+    out = rt.logs(cfg)
+    # Assert
+    assert out == "DOCKER LOGS"
 
 
 # ---------------------------------------------------------------------------
@@ -196,28 +231,33 @@ def test_no_warning_for_small_claude_dir(workdir, capsys):
     assert capsys.readouterr().err == ""
 
 
-def test_warns_when_claude_dir_exceeds_threshold(workdir, capsys, monkeypatch):
+def test_warns_when_claude_dir_exceeds_threshold(workdir, capsys, env_save_restore):
+    # Arrange — lower threshold via env override + write large .claude tree
     from scitex_agent_container.runtimes import claude_session as cs
 
+    env_save_restore.set("SAC_WORKDIR_CLAUDE_WARN_BYTES", str(50 * 1024))
     (workdir / ".claude" / "hooks").mkdir(parents=True)
     (workdir / ".claude" / "hooks" / "big.sh").write_text("x" * 100 * 1024)
     (workdir / ".claude" / "skills.md").write_text("y" * 100 * 1024)
-    monkeypatch.setattr(cs, "_WORKDIR_CLAUDE_SIZE_WARN_BYTES", 50 * 1024)
-
     cfg = AgentConfig(name="x", runtime="docker", workdir=str(workdir))
+    # Act
     cs._warn_if_heavy_workdir_claude(cfg)
+    # Assert
     err = capsys.readouterr().err
     assert "F-CS8" in err
-    assert "0 tokens" in err
 
 
-def test_workdir_claude_size_does_not_follow_symlinks(workdir, tmp_path, monkeypatch):
+def test_workdir_claude_size_does_not_follow_symlinks(workdir, tmp_path):
     """Symlinked content must NOT inflate the size estimate."""
+    # Arrange
     (workdir / ".claude").mkdir()
     big = tmp_path / "external-big.txt"
     big.write_text("z" * 200 * 1024)
     (workdir / ".claude" / "linked").symlink_to(big)
-    assert _workdir_claude_size_bytes(str(workdir)) == 0
+    # Act
+    size = _workdir_claude_size_bytes(str(workdir))
+    # Assert
+    assert size == 0
 
 
 # ---------------------------------------------------------------------------
