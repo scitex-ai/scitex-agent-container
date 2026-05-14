@@ -74,7 +74,12 @@ def _dispatch_http(
     try:
         with urlrequest.urlopen(req, timeout=_HTTP_TIMEOUT_S) as resp:
             resp.read()
-    except (urlerror.URLError, urlerror.HTTPError, OSError, ValueError) as exc:  # stx-allow: fallback (reason: file system operation failure)
+    except (
+        urlerror.URLError,
+        urlerror.HTTPError,
+        OSError,
+        ValueError,
+    ) as exc:  # stx-allow: fallback (reason: file system operation failure)
         logger.warning(
             "hook[%s/%s] HTTP POST %s failed: %s",
             agent_name,
@@ -92,7 +97,9 @@ def _dispatch_shell(
 ) -> None:
     try:
         argv = shlex.split(cmd)
-    except ValueError as exc:  # stx-allow: fallback (reason: type coercion or format mismatch)
+    except (
+        ValueError
+    ) as exc:  # stx-allow: fallback (reason: type coercion or format mismatch)
         logger.warning(
             "hook[%s/%s] shlex split failed for %r: %s",
             agent_name,
@@ -158,18 +165,34 @@ def run_hook(
     hook_name: str,
     commands: list[str] | None,
     context: Mapping[str, Any] | None = None,
+    pool: Any = None,
 ) -> None:
     """Fire all entries in ``commands`` for ``hook_name``, non-blocking.
 
     Returns immediately. Each entry runs in the shared thread pool.
     Errors are logged and swallowed.
+
+    Parameters
+    ----------
+    pool:
+        Optional executor exposing ``submit(fn, *args, **kwargs)``.
+        Defaults to the module-level shared pool. Callers (and tests)
+        that want a private, joinable executor — so they can block on
+        completion via ``pool.shutdown(wait=True)`` instead of polling
+        side-effects — can pass a real
+        ``concurrent.futures.ThreadPoolExecutor`` here. Behaviour is
+        otherwise identical: same fire-and-forget dispatch, same error
+        swallowing.
     """
     if not commands:
         return
+    executor = pool if pool is not None else _POOL
     for entry in commands:
         try:
-            _POOL.submit(_run_one, entry, agent_name, hook_name, context)
-        except RuntimeError:  # stx-allow: fallback (reason: runtime state error — handled gracefully)
+            executor.submit(_run_one, entry, agent_name, hook_name, context)
+        except (
+            RuntimeError
+        ):  # stx-allow: fallback (reason: runtime state error — handled gracefully)
             # Pool shut down (interpreter exit) — run inline as a
             # last-ditch effort so tests / shutdown paths still work.
             _run_one(entry, agent_name, hook_name, context)
