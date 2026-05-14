@@ -497,24 +497,27 @@ are two separate packages with a <strong>one-way dependency</strong>: orochi rea
 <tr class="row-even"><td><p>Container runtime (apptainer)</p></td>
 <td><p><strong>sac</strong></p></td>
 </tr>
+<tr class="row-odd"><td><p>Per-agent local inbox (<code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/v1/sac/agents/&lt;name&gt;/turn</span></code>)</p></td>
+<td><p><strong>sac</strong></p></td>
+</tr>
+<tr class="row-even"><td><p>In-session push (MCP channel server <code class="docutils literal notranslate"><span class="pre">server:sac</span></code>)</p></td>
+<td><p><strong>sac</strong> — connects to local <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code> SSE stream and pushes <code class="docutils literal notranslate"><span class="pre">notifications/claude/channel</span></code> into the running session</p></td>
+</tr>
 <tr class="row-odd"><td><p>Cross-host message routing</p></td>
 <td><p><strong>orochi</strong></p></td>
 </tr>
 <tr class="row-even"><td><p>Human chatops UI (Slack-like web interface)</p></td>
 <td><p><strong>orochi</strong></p></td>
 </tr>
-<tr class="row-odd"><td><p>In-session push (MCP channel server)</p></td>
-<td><p><strong>orochi</strong> ships MCP; sac runs the agent</p></td>
-</tr>
-<tr class="row-even"><td><p>SSH mesh / tunnel layer (cloudflared + autossh)</p></td>
+<tr class="row-odd"><td><p>SSH mesh / tunnel layer (cloudflared + autossh)</p></td>
 <td><p><strong>orochi</strong></p></td>
 </tr>
-<tr class="row-odd"><td><p>Peer registry</p></td>
+<tr class="row-even"><td><p>Peer registry</p></td>
 <td><p><strong>orochi</strong> (<code class="docutils literal notranslate"><span class="pre">~/.scitex/orochi/peers.yaml</span></code>)</p></td>
 </tr>
 </tbody>
 </table>
-<p><strong>Rule: sac knows containers + sessions on one host; orochi knows messages + people across hosts.</strong></p>
+<p><strong>Rule: sac owns containers + sessions + the local channel primitive on one host; orochi owns messages + people + transport across hosts.</strong> <code class="docutils literal notranslate"><span class="pre">server:orochi-push</span></code> remains orochi’s own MCP channel (for orochi-mediated cross-host topics + chat); <code class="docutils literal notranslate"><span class="pre">server:sac</span></code> is sac’s local primitive that any peer reaches by POSTing to the host’s <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code> — whether the network in between is orochi-mediated, an operator’s SSH tunnel, or nothing at all (same host).</p>
 </section>
 <section id="how-orochi-consumes-sac">
 <h2>How orochi consumes sac<a class="headerlink" href="#how-orochi-consumes-sac" title="Link to this heading"></a></h2>

@@ -42,13 +42,14 @@ are two separate packages with a **one-way dependency**: orochi reads from sac; 
 | Agent process (SDK + session.jsonl)                       | **sac**                                    |
 | Per-host control plane (start/stop/send/tail/list)        | **sac**                                    |
 | Container runtime (apptainer)                             | **sac**                                    |
+| Per-agent local inbox (`POST /v1/sac/agents/<name>/turn`) | **sac**                                    |
+| In-session push (MCP channel server `server:sac`)         | **sac** — connects to local `sac listen` SSE stream and pushes `notifications/claude/channel` into the running session |
 | Cross-host message routing                                | **orochi**                                 |
 | Human chatops UI (Slack-like web interface)               | **orochi**                                 |
-| In-session push (MCP channel server)                      | **orochi** ships MCP; sac runs the agent   |
 | SSH mesh / tunnel layer (cloudflared + autossh)           | **orochi**                                 |
 | Peer registry                                             | **orochi** (`~/.scitex/orochi/peers.yaml`) |
 
-**Rule: sac knows containers + sessions on one host; orochi knows messages + people across hosts.**
+**Rule: sac owns containers + sessions + the local channel primitive on one host; orochi owns messages + people + transport across hosts.** `server:orochi-push` remains orochi's own MCP channel (for orochi-mediated cross-host topics + chat); `server:sac` is sac's local primitive that any peer reaches by POSTing to the host's `sac listen` — whether the network in between is orochi-mediated, an operator's SSH tunnel, or nothing at all (same host).
 
 ## How orochi consumes sac
 
