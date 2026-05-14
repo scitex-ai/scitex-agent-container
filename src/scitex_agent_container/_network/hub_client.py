@@ -47,8 +47,22 @@ def _hub_token() -> str:
     return (_sac_env("HUB_TOKEN", "") or "").strip()
 
 
-def _request(method: str, path: str, *, body: dict | None = None) -> dict | None:
-    """Issue a hub request. Returns parsed JSON dict or ``None`` on error / no hub."""
+def _request(
+    method: str,
+    path: str,
+    *,
+    body: dict | None = None,
+    opener=None,
+) -> dict | None:
+    """Issue a hub request. Returns parsed JSON dict or ``None`` on error / no hub.
+
+    ``opener`` is an injection seam — defaults to ``urlrequest.urlopen``
+    so production calls are unchanged. Tests pass a hand-rolled callable
+    that returns a ``urllib.response``-shaped object (real responses
+    from a ``http.server`` work; mocks are forbidden).
+    """
+    if opener is None:
+        opener = urlrequest.urlopen
     base = _hub_url()
     if not base:
         logger.debug("hub_client: SAC_HUB_URL unset, skipping %s %s", method, path)
@@ -72,7 +86,7 @@ def _request(method: str, path: str, *, body: dict | None = None) -> dict | None
 
     req = urlrequest.Request(url, data=data, method=method, headers=headers)
     try:
-        with urlrequest.urlopen(req, timeout=_HTTP_TIMEOUT_S) as resp:
+        with opener(req, timeout=_HTTP_TIMEOUT_S) as resp:
             raw = resp.read()
             if not raw:
                 return {}
@@ -102,31 +116,38 @@ def push_snapshot(
     payload: dict[str, Any],
     *,
     owner_host: str = "",
+    opener=None,
 ) -> bool:
-    """POST a snapshot for ``agent_name``. Returns True on 200."""
+    """POST a snapshot for ``agent_name``. Returns True on 200.
+
+    ``opener`` threads through to ``_request`` — see its docstring for
+    the test-injection contract.
+    """
     body = {"payload": payload, "owner_host": owner_host}
-    out = _request("POST", f"/api/agents/{agent_name}/snapshot/", body=body)
+    out = _request(
+        "POST", f"/api/agents/{agent_name}/snapshot/", body=body, opener=opener
+    )
     if out is None:
         return False
     return out.get("status") == "ok"
 
 
-def fetch_snapshot(agent_name: str) -> dict | None:
+def fetch_snapshot(agent_name: str, *, opener=None) -> dict | None:
     """GET the latest snapshot. Returns the response dict or ``None``.
 
     Response shape: ``{"agent_name", "owner_host", "payload", "updated_at"}``.
     Returns ``None`` if the agent has no snapshot yet (404) or on transport
     error.
     """
-    return _request("GET", f"/api/agents/{agent_name}/snapshot/latest/")
+    return _request("GET", f"/api/agents/{agent_name}/snapshot/latest/", opener=opener)
 
 
-def fetch_owner(agent_name: str) -> dict:
+def fetch_owner(agent_name: str, *, opener=None) -> dict:
     """GET the owner endpoint. Always returns a dict (empty on error).
 
     Response shape: ``{"agent", "current_host", "priority_list", "healthy"}``.
     """
-    out = _request("GET", f"/api/agents/{agent_name}/owner/")
+    out = _request("GET", f"/api/agents/{agent_name}/owner/", opener=opener)
     if out is None:
         return {
             "agent": agent_name,
