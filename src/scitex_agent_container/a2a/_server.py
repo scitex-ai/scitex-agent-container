@@ -49,6 +49,7 @@ from scitex_agent_container.a2a._card import (
     project_card_proto,
 )
 from scitex_agent_container.a2a._handlers import HANDLERS
+from scitex_agent_container.a2a._inbox_bus import Broker, mint_event
 from scitex_agent_container.a2a.executors import EXECUTORS, BaseSyncExecutor
 
 log = logging.getLogger(__name__)
@@ -135,6 +136,9 @@ class _ServerCtx:
     ) -> None:
         self.yamls = yamls
         self.dispatchers = dispatchers
+        # One in-process broker per sac-listen — fans inbound POSTs out
+        # to every SSE subscriber on /v1/sac/agents/<name>/inbox/stream.
+        self.inbox = Broker()
 
 
 def _build_app(ctx: _ServerCtx) -> Starlette:
@@ -147,7 +151,11 @@ def _build_app(ctx: _ServerCtx) -> Starlette:
         base = _base_url(request)
         agents = sorted(ctx.yamls.keys())
         return JSONResponse(
-            {"agents": [{"name": n, "url": f"{base}/v1/sac/agents/{n}"} for n in agents]}
+            {
+                "agents": [
+                    {"name": n, "url": f"{base}/v1/sac/agents/{n}"} for n in agents
+                ]
+            }
         )
 
     async def get_agent_card(request: Request) -> Response:
@@ -164,16 +172,63 @@ def _build_app(ctx: _ServerCtx) -> Starlette:
             return JSONResponse({"error": f"unknown agent: {name}"}, status_code=404)
 
         try:
-            await request.json()
-        except (ValueError, json.JSONDecodeError) as exc:  # stx-allow: fallback (reason: malformed JSON tolerated)
+            body = await request.json()
+        except (
+            ValueError,
+            json.JSONDecodeError,
+        ) as exc:  # stx-allow: fallback (reason: malformed JSON tolerated)
             return JSONResponse({"error": f"bad JSON: {exc}"}, status_code=400)
+
+        # Channel fan-out: when the JSON-RPC payload is a message/send,
+        # mint a stable event and publish to all inbox subscribers.
+        # The SDK still owns the response path; this is purely the
+        # push-side bus that `sac mcp channel` (commit 2) consumes.
+        await _publish_channel_event(ctx, name, body)
 
         # Forward to SDK dispatcher (handles message/send, message/stream
         # → SSE, tasks/get, tasks/cancel, tasks/pushNotificationConfig/*,
         # tasks/resubscribe).
         dispatcher = ctx.dispatchers[name]
         sdk_route = dispatcher.routes[0]
+        # Restore the body so the SDK route can re-read it (request.json()
+        # caches but the SDK reads the raw stream).
+        request._body = json.dumps(body).encode("utf-8")  # type: ignore[attr-defined]
         return await sdk_route.endpoint(request)  # type: ignore[no-any-return]
+
+    async def get_inbox_stream(request: Request) -> Response:
+        """SSE: one frame per inbound POST to /v1/sac/agents/<name>.
+
+        Consumed by `sac mcp channel` (commit 2) inside the agent's
+        container — each frame turns into a notifications/claude/channel
+        push so Claude sees `<channel source="..." msg_id="..." ...>`
+        tags in real time. Plain SSE — non-sac A2A clients work too.
+        """
+        name = request.path_params["name"]
+        if name not in ctx.yamls:
+            return JSONResponse({"error": f"unknown agent: {name}"}, status_code=404)
+        from starlette.responses import StreamingResponse
+
+        queue = await ctx.inbox.subscribe(name)
+
+        async def stream():
+            try:
+                # Send a comment-only frame so HTTP clients see the
+                # connection open before any real event arrives.
+                yield b": sac-channel ready\n\n"
+                while True:
+                    if await request.is_disconnected():
+                        return
+                    event = await queue.get()
+                    data = json.dumps(event, ensure_ascii=False)
+                    yield f"event: message\ndata: {data}\n\n".encode("utf-8")
+            finally:
+                await ctx.inbox.unsubscribe(name, queue)
+
+        return StreamingResponse(
+            stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     async def get_active_tasks(request: Request) -> Response:
         """Sac-side observability: list every task currently in the
@@ -211,6 +266,11 @@ def _build_app(ctx: _ServerCtx) -> Starlette:
         Route("/v1/sac/agents/{name}", post_agent, methods=["POST"]),
         Route("/v1/sac/agents/{name}/", post_agent, methods=["POST"]),
         Route(
+            "/v1/sac/agents/{name}/inbox/stream",
+            get_inbox_stream,
+            methods=["GET"],
+        ),
+        Route(
             "/v1/sac/agents/{name}/_active",
             get_active_tasks,
             methods=["GET"],
@@ -218,6 +278,50 @@ def _build_app(ctx: _ServerCtx) -> Starlette:
     ]
 
     return Starlette(routes=routes)
+
+
+async def _publish_channel_event(
+    ctx: _ServerCtx, name: str, body: dict[str, Any]
+) -> None:
+    """Extract a publishable event from a JSON-RPC ``message/send`` body
+    and fan it out to inbox subscribers.
+
+    The body shape sac accepts:
+      ``{"jsonrpc": "2.0", "method": "message/send", "params": {...}, ...}``
+    The params SHOULD carry the sac-channel meta (``from_agent``,
+    ``conversation_id``, ``in_reply_to``, ``priority``, ``requires_reply``)
+    in addition to the A2A-standard ``message`` field. Anything missing
+    falls back to safe defaults (``from_agent="unknown"``,
+    ``priority="normal"``, ``requires_reply=False``).
+
+    Non-``message/send`` payloads (``tasks/get``, ``tasks/cancel``, …)
+    do NOT fan out — they're protocol housekeeping, not new turns.
+    """
+    if not isinstance(body, dict):
+        return
+    if body.get("method") != "message/send":
+        return
+    params = body.get("params") or {}
+    if not isinstance(params, dict):
+        return
+    # A2A ``message`` carries the actual content as parts[*].text.
+    message = params.get("message") or {}
+    parts = message.get("parts") if isinstance(message, dict) else None
+    text = ""
+    if isinstance(parts, list):
+        for p in parts:
+            if isinstance(p, dict) and isinstance(p.get("text"), str):
+                text += p["text"]
+    event = mint_event(
+        name,
+        content=text,
+        from_agent=params.get("from_agent"),
+        conversation_id=params.get("conversation_id"),
+        in_reply_to=params.get("in_reply_to"),
+        priority=str(params.get("priority", "normal")),
+        requires_reply=bool(params.get("requires_reply", False)),
+    )
+    await ctx.inbox.publish(name, event)
 
 
 def _base_url(request: Request) -> str:
