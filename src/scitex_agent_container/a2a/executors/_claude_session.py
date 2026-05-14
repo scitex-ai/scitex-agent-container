@@ -23,6 +23,7 @@ class ClaudeSessionExecutor(BaseSyncExecutor):
             user_text,
             channels=self.kwargs.get("channels") or [],
             a2a_port=self.kwargs.get("a2a_port"),
+            permission_mode=self.kwargs.get("permission_mode"),
         )
 
 

@@ -162,9 +162,13 @@ def _patch_sdk(monkeypatch: pytest.MonkeyPatch, msgs: list, raise_on_query=None)
 def _patch_build_options(monkeypatch: pytest.MonkeyPatch) -> None:
     from scitex_agent_container.runtimes import _sdk_common
 
-    def _fake(name, system_prompt=None, model=None, extra=None):
+    def _fake(name, system_prompt=None, model=None, permission_mode=None, extra=None):
         return types.SimpleNamespace(
-            name=name, system=system_prompt, model=model, extra=extra
+            name=name,
+            system=system_prompt,
+            model=model,
+            permission_mode=permission_mode,
+            extra=extra,
         )
 
     monkeypatch.setattr(_sdk_common, "build_sdk_options", _fake)

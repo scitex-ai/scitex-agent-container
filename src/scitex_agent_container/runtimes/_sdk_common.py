@@ -391,40 +391,37 @@ def build_sdk_options(
     # are CLI-only (research preview, MCP `notifications/claude/channel`
     # delivery). We forward each entry as a separate ``--channels`` arg
     # via the SDK's ``extra_args`` escape hatch when available.
-    if channels:
-        extra_args = kwargs.setdefault("extra_args", {})
-        # extra_args is a dict[str, str|None] per SDK convention
-        # ({flag: value} where None means valueless flag). For
-        # repeatable flags we join with comma; claude --channels
-        # accepts comma-separated entries too.
-        if isinstance(extra_args, dict):
-            extra_args["channels"] = ",".join(channels)
-            # Commit 4 of the push channel slice: when the operator
-            # opted into `server:sac`, auto-register the channel adapter
-            # MCP server AND flip the research-preview flag so claude
-            # actually loads it (`--dangerously-load-development-channels`
-            # per docs/sac-and-orochi.md + the official channels skill).
-            if any(c.strip() == "server:sac" for c in channels):
-                extra_args.setdefault(
-                    "dangerously-load-development-channels", "server:sac"
-                )
-                # Inject the stdio MCP entry pointing at `sac mcp channel`.
-                mcps = kwargs.setdefault("mcp_servers", {})
-                if isinstance(mcps, dict) and "sac" not in mcps:
-                    sidecar_args = ["mcp", "channel", "--name", agent_name]
-                    # Point the sidecar at the agent's OWN A2A server
-                    # (not the host-wide sac listen on :7878 which
-                    # doesn't host /agents/<name>/inbox/stream).
-                    if a2a_port is not None:
-                        sidecar_args += [
-                            "--listen-url",
-                            f"http://127.0.0.1:{int(a2a_port)}",
-                        ]
-                    mcps["sac"] = {
-                        "type": "stdio",
-                        "command": "sac",
-                        "args": sidecar_args,
-                    }
-        # else: caller passed a raw extra_args list — leave it alone.
+    if channels and any(c.strip() == "server:sac" for c in channels):
+        # Register `sac mcp channel` as a stdio MCP server. claude will
+        # surface its tools (a2a_send/reply/ack/peers/inbox) under the
+        # `mcp__sac__*` namespace AND consume its push events via the
+        # `notifications/claude/channel` MCP method.
+        #
+        # NOTE: we deliberately do NOT pass `--channels server:sac` or
+        # `--dangerously-load-development-channels server:sac` to the
+        # claude CLI. When those flags were set, claude treated the sac
+        # MCP server as a channel-only consumer and refused to surface
+        # its tools — alpha would answer "I don't have an a2a_send
+        # tool" even though the MCP server was healthy and listing the
+        # tools correctly over stdio.
+        #
+        # If/when the upstream channels research preview supports
+        # tool + channel coexistence on one MCP server, we can re-add
+        # the flag. Until then: MCP tools are the contract; push
+        # delivery rides the same stdio stream as the standard MCP
+        # `notifications/claude/channel` mechanism.
+        mcps = kwargs.setdefault("mcp_servers", {})
+        if isinstance(mcps, dict) and "sac" not in mcps:
+            sidecar_args = ["mcp", "channel", "--name", agent_name]
+            if a2a_port is not None:
+                sidecar_args += [
+                    "--listen-url",
+                    f"http://127.0.0.1:{int(a2a_port)}",
+                ]
+            mcps["sac"] = {
+                "type": "stdio",
+                "command": "sac",
+                "args": sidecar_args,
+            }
 
     return ClaudeAgentOptions(**kwargs)

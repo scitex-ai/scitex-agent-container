@@ -103,6 +103,7 @@ def handle_claude_session(
     *,
     channels: list[str] | None = None,
     a2a_port: int | None = None,
+    permission_mode: str | None = None,
 ) -> str:
     """Drive Claude via ``claude-agent-sdk`` — no ``claude --print``.
 
@@ -173,6 +174,7 @@ def handle_claude_session(
             agent_name,
             system_prompt=system,
             model=model,
+            permission_mode=permission_mode,
             extra=sdk_extra,
         )
     except SDKCommonError as exc:

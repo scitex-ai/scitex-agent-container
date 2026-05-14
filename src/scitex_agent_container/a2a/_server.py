@@ -33,7 +33,6 @@ import socket
 from pathlib import Path
 from typing import Any
 
-import yaml
 from a2a.server.agent_execution import AgentExecutor
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import create_jsonrpc_routes
@@ -52,7 +51,6 @@ from scitex_agent_container.a2a._card import (
 )
 from scitex_agent_container.a2a._handlers import HANDLERS
 from scitex_agent_container.a2a._inbox_bus import Broker, mint_event
-from scitex_agent_container.a2a.executors import EXECUTORS, BaseSyncExecutor
 
 log = logging.getLogger(__name__)
 
@@ -360,67 +358,19 @@ def _base_url(request: Request) -> str:
     return f"{scheme}://{netloc}"
 
 
-# ---------------------------------------------------------------------
-# YAML loading + executor selection
-# ---------------------------------------------------------------------
-
-
-def _load_yaml(path: Path) -> dict[str, Any]:
-    return yaml.safe_load(path.read_text()) or {}
-
-
-def _agent_name_from_yaml(path: Path, v3: dict[str, Any]) -> str:
-    meta = v3.get("metadata") or {}
-    name = meta.get("name")
-    if isinstance(name, str) and name.strip():
-        return name.strip()
-    # Dir-as-SSoT (v3): when file is `spec.yaml`, the agent name MUST
-    # come from its parent dir (the file stem is ambiguous — every
-    # agent's file is `spec.yaml`). Reject the degenerate case
-    # explicitly rather than silently colliding on stem == "spec".
-    if path.stem == "spec":
-        if not path.parent.name:
-            raise ValueError(
-                f"cannot derive agent name from {path}: file is 'spec.yaml' "
-                "but parent dir is empty. Use dir-as-SSoT layout "
-                "(agents/<name>/spec.yaml) or set metadata.name in the yaml."
-            )
-        return path.parent.name
-    return path.stem
-
-
-def _select_handler_key(v3: dict[str, Any], default: str) -> str:
-    """Read ``spec.a2a.handler`` from v3 yaml (falling back to ``default``)."""
-    a2a_block = (v3.get("spec") or {}).get("a2a") or {}
-    key = a2a_block.get("handler")
-    if isinstance(key, str) and key.strip():
-        return key.strip()
-    return default
-
-
-def _build_executor(
-    name: str,
-    handler_key: str,
-    v3: dict[str, Any],
-    a2a_port: int | None,
-) -> BaseSyncExecutor:
-    """Construct an executor with per-agent context (yaml + a2a port).
-
-    ``v3`` and ``a2a_port`` are surfaced via ``BaseSyncExecutor.kwargs``
-    so executors like :class:`ClaudeSessionExecutor` can thread them
-    through to :func:`build_sdk_options` (for ``spec.claude.channels``
-    auto-wiring) and to the ``sac mcp channel`` sidecar (which subscribes
-    to the per-agent inbox SSE at ``http://127.0.0.1:<a2a_port>``).
-    """
-    cls = EXECUTORS.get(handler_key)
-    if cls is None:
-        raise ValueError(
-            f"unknown a2a handler {handler_key!r}; pick one of {sorted(EXECUTORS)}"
-        )
-    claude_block = (v3.get("spec") or {}).get("claude") or {}
-    channels = list(claude_block.get("channels") or [])
-    return cls(agent_name=name, channels=channels, a2a_port=a2a_port)
-
+# YAML loading + executor selection — extracted to ``_build.py``.
+from scitex_agent_container.a2a._build import (  # noqa: E402
+    agent_name_from_yaml as _agent_name_from_yaml,
+)
+from scitex_agent_container.a2a._build import (
+    build_executor as _build_executor,
+)
+from scitex_agent_container.a2a._build import (
+    load_yaml as _load_yaml,
+)
+from scitex_agent_container.a2a._build import (
+    select_handler_key as _select_handler_key,
+)
 
 # ---------------------------------------------------------------------
 # Public serve()
@@ -432,6 +382,7 @@ def build_app(
     *,
     default_handler: str = "echo",
     base_url: str = "http://localhost",
+    listen_port: int | None = None,
 ) -> Starlette:
     """Build the Starlette app for the given agent YAMLs.
 
@@ -441,6 +392,13 @@ def build_app(
     ``base_url`` is used only to seed the SDK's per-agent AgentCard
     (proto). Live requests build their own self-URL from the Host
     header.
+
+    ``listen_port`` is the port the server WILL listen on at boot
+    (which may differ from the yaml's declared ``spec.a2a.port`` when
+    the operator overrides via ``--port``). The sac MCP sidecar's
+    ``--listen-url`` is built from this so it always talks to the
+    SAME server that hosts ``/agents/<name>/inbox/stream``. If
+    omitted, falls back to the yaml's ``spec.a2a.port``.
     """
     yamls: dict[str, dict[str, Any]] = {}
     dispatchers: dict[str, _AgentDispatcher] = {}
@@ -455,9 +413,15 @@ def build_app(
                 f"agent {name!r}: unknown a2a handler {handler_key!r}; "
                 f"pick one of {sorted(HANDLERS)}"
             )
-        a2a_port = ((v3.get("spec") or {}).get("a2a") or {}).get("port")
-        if isinstance(a2a_port, str) or not isinstance(a2a_port, int):
-            a2a_port = None
+        # Prefer the runtime listen_port over the yaml's declared port.
+        # The sidecar MUST point at this process; using the yaml port
+        # breaks when --port differs (e.g., ephemeral ports in tests
+        # or port-conflict reallocation).
+        a2a_port = listen_port
+        if a2a_port is None:
+            yaml_port = ((v3.get("spec") or {}).get("a2a") or {}).get("port")
+            if isinstance(yaml_port, int):
+                a2a_port = yaml_port
         executor = _build_executor(name, handler_key, v3, a2a_port)
         dispatchers[name] = _AgentDispatcher(name, v3, executor, base_url)
 
@@ -489,7 +453,12 @@ def serve(
         ) from exc
 
     base_url = f"http://{host}:{port}"
-    app = build_app(agent_yamls, default_handler=handler, base_url=base_url)
+    app = build_app(
+        agent_yamls,
+        default_handler=handler,
+        base_url=base_url,
+        listen_port=port,
+    )
 
     log.info(
         "sac-a2a (a2a-sdk) listening on http://%s:%d (default handler: %s)",
