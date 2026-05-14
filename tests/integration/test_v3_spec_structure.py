@@ -15,10 +15,17 @@ marked ``xfail(strict=True)`` document the gap items from
 field lands, the ``xfail`` will flip to XPASS and the suite will fail
 with a clear "remove the xfail marker" message — that's the realign
 checklist's done bell.
+
+TQ cleanup (v3_spec_structure slice): every test carries AAA markers
+and exactly one assertion. Multi-field round-trips (health, restart,
+metadata.labels) collapse into ``pytest.parametrize`` over the
+``(field-path, expected-value)`` tuples driving each assertion. Names
+keep >= 3 word-tokens after ``test_`` to satisfy TQ003.
 """
 
 from __future__ import annotations
 
+from operator import attrgetter
 from pathlib import Path
 
 import pytest
@@ -58,23 +65,41 @@ class TestCrossCuttingTopLevel:
     a2a, health, restart, metadata.labels)."""
 
     def test_runtime_apptainer_round_trips(self, tmp_path):
+        # Arrange
         spec = _write_spec(tmp_path, {"runtime": "apptainer"})
+        # Act
         cfg = load_config(str(spec))
+        # Assert
         assert cfg.runtime == "apptainer"
 
-    def test_workdir_round_trips(self, tmp_path):
+    def test_workdir_value_round_trips(self, tmp_path):
+        # Arrange
         spec = _write_spec(
             tmp_path, {"runtime": "apptainer", "workdir": "/tmp/agent-x"}
         )
+        # Act
         cfg = load_config(str(spec))
+        # Assert
         assert cfg.workdir == "/tmp/agent-x"
 
     def test_a2a_port_round_trips(self, tmp_path):
+        # Arrange
         spec = _write_spec(tmp_path, {"runtime": "apptainer", "a2a": {"port": 7901}})
+        # Act
         cfg = load_config(str(spec))
+        # Assert
         assert cfg.a2a.port == 7901
 
-    def test_health_block_round_trips(self, tmp_path):
+    @pytest.mark.parametrize(
+        "attr_path,expected",
+        [
+            ("health.enabled", True),
+            ("health.interval", 60),
+            ("health.method", "sdk-alive"),
+        ],
+    )
+    def test_health_block_field_round_trips(self, tmp_path, attr_path, expected):
+        # Arrange
         spec = _write_spec(
             tmp_path,
             {
@@ -86,12 +111,21 @@ class TestCrossCuttingTopLevel:
                 },
             },
         )
+        # Act
         cfg = load_config(str(spec))
-        assert cfg.health.enabled is True
-        assert cfg.health.interval == 60
-        assert cfg.health.method == "sdk-alive"
+        # Assert
+        assert attrgetter(attr_path)(cfg) == expected
 
-    def test_restart_block_round_trips(self, tmp_path):
+    @pytest.mark.parametrize(
+        "attr_path,expected",
+        [
+            ("restart.policy", "on-failure"),
+            ("restart.max_retries", 3),
+            ("restart.backoff_initial", 30),
+        ],
+    )
+    def test_restart_block_field_round_trips(self, tmp_path, attr_path, expected):
+        # Arrange
         spec = _write_spec(
             tmp_path,
             {
@@ -103,12 +137,20 @@ class TestCrossCuttingTopLevel:
                 },
             },
         )
+        # Act
         cfg = load_config(str(spec))
-        assert cfg.restart.policy == "on-failure"
-        assert cfg.restart.max_retries == 3
-        assert cfg.restart.backoff_initial == 30
+        # Assert
+        assert attrgetter(attr_path)(cfg) == expected
 
-    def test_metadata_labels_round_trip(self, tmp_path):
+    @pytest.mark.parametrize(
+        "label_key,label_value",
+        [
+            ("role", "researcher"),
+            ("team", "lab-a"),
+        ],
+    )
+    def test_metadata_labels_round_trip(self, tmp_path, label_key, label_value):
+        # Arrange
         agent_dir = tmp_path / "labelled"
         agent_dir.mkdir()
         spec_path = agent_dir / "spec.yaml"
@@ -122,9 +164,10 @@ class TestCrossCuttingTopLevel:
                 }
             )
         )
+        # Act
         cfg = load_config(str(spec_path))
-        assert cfg.labels.get("role") == "researcher"
-        assert cfg.labels.get("team") == "lab-a"
+        # Assert
+        assert cfg.labels.get(label_key) == label_value
 
 
 class TestDirAsSSoT:
@@ -132,8 +175,11 @@ class TestDirAsSSoT:
     parent directory of spec.yaml."""
 
     def test_name_derived_from_parent_directory(self, tmp_path):
+        # Arrange
         spec = _write_spec(tmp_path, {"runtime": "apptainer"}, name="auto-named")
+        # Act
         cfg = load_config(str(spec))
+        # Assert
         assert cfg.name == "auto-named"
 
 
@@ -146,26 +192,35 @@ class TestApptainerBlock:
     """Apptainer-scoped knobs that landed pre-realignment (overlay, nv,
     rocm, post, environment, def_file) — these already nest correctly."""
 
-    def test_overlay_round_trips(self, tmp_path):
+    def test_apptainer_overlay_round_trips(self, tmp_path):
+        # Arrange
         spec = _write_spec(
             tmp_path,
             {"runtime": "apptainer", "apptainer": {"overlay": "./ovl.img"}},
         )
+        # Act
         cfg = load_config(str(spec))
+        # Assert
         assert cfg.apptainer.overlay == "./ovl.img"
 
-    def test_nv_round_trips(self, tmp_path):
+    def test_apptainer_nv_flag_round_trips(self, tmp_path):
+        # Arrange
         spec = _write_spec(
             tmp_path, {"runtime": "apptainer", "apptainer": {"nv": True}}
         )
+        # Act
         cfg = load_config(str(spec))
+        # Assert
         assert cfg.apptainer.nv is True
 
-    def test_rocm_round_trips(self, tmp_path):
+    def test_apptainer_rocm_flag_round_trips(self, tmp_path):
+        # Arrange
         spec = _write_spec(
             tmp_path, {"runtime": "apptainer", "apptainer": {"rocm": True}}
         )
+        # Act
         cfg = load_config(str(spec))
+        # Assert
         assert cfg.apptainer.rocm is True
 
 
@@ -176,6 +231,7 @@ class TestApptainerBlockGap:
     """
 
     def test_apptainer_image_round_trips(self, tmp_path):
+        # Arrange
         spec = _write_spec(
             tmp_path,
             {
@@ -183,10 +239,13 @@ class TestApptainerBlockGap:
                 "apptainer": {"image": "/path/to/sac.sif"},
             },
         )
+        # Act
         cfg = load_config(str(spec))
+        # Assert
         assert cfg.apptainer.image == "/path/to/sac.sif"
 
     def test_apptainer_binds_round_trip(self, tmp_path):
+        # Arrange
         spec = _write_spec(
             tmp_path,
             {
@@ -194,10 +253,13 @@ class TestApptainerBlockGap:
                 "apptainer": {"binds": ["/data:/data:ro"]},
             },
         )
+        # Act
         cfg = load_config(str(spec))
+        # Assert
         assert "/data:/data:ro" in cfg.apptainer.binds
 
     def test_apptainer_env_round_trips(self, tmp_path):
+        # Arrange
         spec = _write_spec(
             tmp_path,
             {
@@ -205,10 +267,13 @@ class TestApptainerBlockGap:
                 "apptainer": {"env": {"FOO": "bar"}},
             },
         )
+        # Act
         cfg = load_config(str(spec))
+        # Assert
         assert cfg.apptainer.env.get("FOO") == "bar"
 
     def test_apptainer_raw_args_round_trips(self, tmp_path):
+        # Arrange
         spec = _write_spec(
             tmp_path,
             {
@@ -216,7 +281,9 @@ class TestApptainerBlockGap:
                 "apptainer": {"raw_args": ["--userns", "--cleanenv"]},
             },
         )
+        # Act
         cfg = load_config(str(spec))
+        # Assert
         assert cfg.apptainer.raw_args == ["--userns", "--cleanenv"]
 
 
@@ -228,7 +295,8 @@ class TestApptainerBlockGap:
 class TestClaudeBlock:
     """Session-scoped knobs that landed pre-realignment."""
 
-    def test_channels_round_trip(self, tmp_path):
+    def test_claude_channels_round_trip(self, tmp_path):
+        # Arrange
         spec = _write_spec(
             tmp_path,
             {
@@ -236,10 +304,13 @@ class TestClaudeBlock:
                 "claude": {"channels": ["server:orochi-push"]},
             },
         )
+        # Act
         cfg = load_config(str(spec))
+        # Assert
         assert "server:orochi-push" in cfg.claude.channels
 
-    def test_flags_round_trip(self, tmp_path):
+    def test_claude_flags_round_trip(self, tmp_path):
+        # Arrange
         spec = _write_spec(
             tmp_path,
             {
@@ -247,15 +318,20 @@ class TestClaudeBlock:
                 "claude": {"flags": ["--dangerously-skip-permissions"]},
             },
         )
+        # Act
         cfg = load_config(str(spec))
+        # Assert
         assert "--dangerously-skip-permissions" in cfg.claude.flags
 
-    def test_session_round_trips(self, tmp_path):
+    def test_claude_session_round_trips(self, tmp_path):
+        # Arrange
         spec = _write_spec(
             tmp_path,
             {"runtime": "apptainer", "claude": {"session": "continue"}},
         )
+        # Act
         cfg = load_config(str(spec))
+        # Assert
         assert cfg.claude.session == "continue"
 
 
@@ -264,14 +340,18 @@ class TestClaudeBlockGap:
     `spec.claude.model`; raw_options escape hatch lands fresh."""
 
     def test_claude_model_round_trips(self, tmp_path):
+        # Arrange
         spec = _write_spec(
             tmp_path,
             {"runtime": "apptainer", "claude": {"model": "opus"}},
         )
+        # Act
         cfg = load_config(str(spec))
+        # Assert
         assert cfg.claude.model == "opus"
 
     def test_claude_raw_options_round_trips(self, tmp_path):
+        # Arrange
         spec = _write_spec(
             tmp_path,
             {
@@ -279,7 +359,9 @@ class TestClaudeBlockGap:
                 "claude": {"raw_options": {"max_turns": 50}},
             },
         )
+        # Act
         cfg = load_config(str(spec))
+        # Assert
         assert cfg.claude.raw_options.get("max_turns") == 50
 
 
@@ -289,8 +371,9 @@ class TestClaudeBlockGap:
 
 
 class TestStartup:
-    def test_startup_commands_round_trip(self, tmp_path):
+    def test_startup_commands_command_round_trips(self, tmp_path):
         """`startup_commands` are shell commands run BEFORE claude starts."""
+        # Arrange
         spec = _write_spec(
             tmp_path,
             {
@@ -300,11 +383,14 @@ class TestStartup:
                 ],
             },
         )
+        # Act
         cfg = load_config(str(spec))
-        assert cfg.startup_commands
-        assert cfg.startup_commands[0].command == "echo hello"
+        # Assert — single check is enough: a non-empty list whose first
+        # entry carries the right command string proves the round-trip.
+        assert cfg.startup_commands and cfg.startup_commands[0].command == "echo hello"
 
     def test_startup_prompts_round_trip(self, tmp_path):
+        # Arrange
         spec = _write_spec(
             tmp_path,
             {
@@ -312,7 +398,9 @@ class TestStartup:
                 "startup_prompts": ["Apply the SciTeX quality playbook."],
             },
         )
+        # Act
         cfg = load_config(str(spec))
+        # Assert
         assert cfg.startup_prompts == ["Apply the SciTeX quality playbook."]
 
 
@@ -328,59 +416,77 @@ class TestRemovedFields:
     rejecting the field) and the xfail markers should then be lifted.
     """
 
-    def test_spec_skills_is_rejected(self, tmp_path):
+    def test_spec_skills_is_rejected_by_validator(self, tmp_path):
+        # Arrange
         spec = _write_spec(
             tmp_path,
             {"runtime": "apptainer", "skills": {"required": ["foo"]}},
         )
+        # Act
         errors = validate_config(str(spec))
+        # Assert
         assert any("skills" in e for e in errors), (
             "spec.skills should fail validation after v3 realignment"
         )
 
-    def test_spec_remote_is_rejected(self, tmp_path):
+    def test_spec_remote_is_rejected_by_validator(self, tmp_path):
+        # Arrange
         spec = _write_spec(
             tmp_path,
             {"runtime": "apptainer", "remote": {"host": "spartan"}},
         )
+        # Act
         errors = validate_config(str(spec))
+        # Assert
         assert any("remote" in e for e in errors), (
             "spec.remote should fail validation after v3 realignment"
         )
 
     def test_top_level_spec_image_is_rejected(self, tmp_path):
+        # Arrange
         spec = _write_spec(
             tmp_path,
             {"runtime": "apptainer", "image": "/path/to/sac.sif"},
         )
+        # Act
         errors = validate_config(str(spec))
+        # Assert
         assert any("image" in e and "apptainer" in e for e in errors), (
             "top-level spec.image should fail validation once "
             "spec.apptainer.image is the canonical home"
         )
 
     def test_top_level_spec_mounts_is_rejected(self, tmp_path):
+        # Arrange
         spec = _write_spec(
             tmp_path,
             {"runtime": "apptainer", "mounts": [{"src": "/a", "dst": "/b"}]},
         )
+        # Act
         errors = validate_config(str(spec))
+        # Assert
         assert any("mounts" in e for e in errors)
 
     def test_top_level_spec_env_is_rejected(self, tmp_path):
+        # Arrange
         spec = _write_spec(
             tmp_path,
             {"runtime": "apptainer", "env": {"FOO": "bar"}},
         )
+        # Act
         errors = validate_config(str(spec))
+        # Assert
         assert any("env" in e for e in errors)
 
     def test_top_level_spec_model_is_rejected(self, tmp_path):
+        # Arrange
         spec = _write_spec(
             tmp_path,
             {"runtime": "apptainer", "model": "opus"},
         )
+        # Act
         errors = validate_config(str(spec))
+        # Assert
         assert any("model" in e for e in errors)
 
 
