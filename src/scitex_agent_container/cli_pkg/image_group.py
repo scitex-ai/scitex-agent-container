@@ -40,6 +40,44 @@ _LAYERS = {
 _DEFAULT_LAYER = "base"
 
 
+# ---------------------------------------------------------------------------
+# Backend loaders (public seam for the Python API + tests)
+#
+# The verbs in this group delegate to ``scitex-container``, which is a
+# separately installed package on real systems but absent from this
+# repo's dev / CI tree. We surface the backend lookup as two callable
+# module attributes so:
+#
+#   * external Python users can swap in a different backend (mirror an
+#     in-memory builder, a remote daemon, etc.) by assigning their own
+#     callable, the same way ``logging.getLogger`` can be redirected,
+#   * tests can install a real, hand-rolled fake backend class via the
+#     normal save/restore pattern without monkeypatching deep imports
+#     or fabricating ``sys.modules`` entries.
+#
+# Both loaders raise the real ``ImportError`` if scitex-container is
+# absent — no silent fallbacks.
+# ---------------------------------------------------------------------------
+def _default_load_apptainer():
+    """Default ``apptainer`` backend loader — real import from scitex-container."""
+    from scitex_container import apptainer
+
+    return apptainer
+
+
+def _default_load_env_snapshot():
+    """Default ``env_snapshot`` loader — real import from scitex-container."""
+    from scitex_container import env_snapshot
+
+    return env_snapshot
+
+
+# Module-level overridable references. Reassign these (and restore!) to
+# swap the backend.
+_load_apptainer = _default_load_apptainer
+_load_env_snapshot = _default_load_env_snapshot
+
+
 def _ensure_containers_dir() -> Path:
     """Create ``~/.scitex/agent-container/containers/`` if needed; return it.
 
@@ -148,7 +186,7 @@ def image_build(layer: str, sandbox: bool, dry_run: bool, yes: bool) -> None:
     #       ├── sac-<layer>.sif
     #       ├── sac-<layer>.def                         (recipe snapshot)
     #       └── sac-<layer>.build-YYYY-MMDD-HHMMSS.log  (full build log)
-    from scitex_container.apptainer import build as _sc_build
+    _sc_build = _load_apptainer().build
 
     try:
         output = _sc_build(
@@ -184,7 +222,7 @@ def image_sandbox(source: str, output: Path | None) -> None:
       $ sac image sandbox scitex                          # use the :scitex SIF
       $ sac image sandbox /path/to/scitex.sif --output /tmp/sandbox/
     """
-    from scitex_container.apptainer import sandbox_create
+    sandbox_create = _load_apptainer().sandbox_create
 
     src_path = _resolve_source_to_sif(source)
     result = sandbox_create(
@@ -215,7 +253,7 @@ def image_update(sandbox_dir: Path, packages: tuple[str, ...]) -> None:
       $ sac image update /opt/containers/scitex.sandbox/
       $ sac image update sandbox/ -p scitex -p numpy
     """
-    from scitex_container.apptainer import sandbox_update
+    sandbox_update = _load_apptainer().sandbox_update
 
     pkgs = packages or ("scitex[all]",)
     result = sandbox_update(sandbox_dir=sandbox_dir, packages=pkgs)
@@ -237,7 +275,7 @@ def image_freeze(sandbox_dir: Path, output_sif: Path) -> None:
     Example:
       $ sac image freeze sandbox/ scitex-agent-container-2.28.15.sif
     """
-    from scitex_container.apptainer import sandbox_to_sif
+    sandbox_to_sif = _load_apptainer().sandbox_to_sif
 
     result = sandbox_to_sif(sandbox_dir=sandbox_dir, output_sif=output_sif)
     console.print(f"[green]frozen[/green] {result}")
@@ -323,7 +361,7 @@ def image_switch(version: str) -> None:
     Example:
       $ sac image switch 2.28.15
     """
-    from scitex_container.apptainer import switch_version
+    switch_version = _load_apptainer().switch_version
 
     switch_version(version=version, containers_dir=_CONTAINERS_DIR)
     console.print(f"[green]switched[/green] -> {version}")
@@ -340,7 +378,7 @@ def image_rollback() -> None:
     Example:
       $ sac image rollback
     """
-    from scitex_container.apptainer import rollback
+    rollback = _load_apptainer().rollback
 
     prev = rollback(containers_dir=_CONTAINERS_DIR)
     console.print(f"[green]rolled back[/green] -> {prev}")
@@ -359,7 +397,7 @@ def image_status(as_json: bool) -> None:
       $ sac image status
       $ sac image status --json
     """
-    from scitex_container.apptainer import status as sc_status
+    sc_status = _load_apptainer().status
 
     info = sc_status(containers_dir=_CONTAINERS_DIR)
     if as_json:
@@ -394,7 +432,7 @@ def image_snapshot(output: Path | None) -> None:
       $ sac image snapshot
       $ sac image snapshot -o env.json
     """
-    from scitex_container import env_snapshot
+    env_snapshot = _load_env_snapshot()
 
     snap = env_snapshot(containers_dir=_CONTAINERS_DIR)
     payload = json.dumps(snap, indent=2, default=str)

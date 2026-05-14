@@ -1,12 +1,26 @@
-"""Tests for ``sac image`` group — build / sandbox / freeze / list / status / snapshot."""
+"""Tests for ``sac image`` group — build / sandbox / freeze / list / status / snapshot.
+
+No-mocks rewrite (PA-306). The previous version fabricated a
+``scitex_container.apptainer`` module on ``sys.modules`` populated with
+``MagicMock`` callables — fake-for-fake, untrustworthy. This version:
+
+* exercises real filesystem code paths against ``tmp_path``-rooted
+  ``$HOME`` (set via the ``HOME`` env var, no ``monkeypatch``),
+* swaps the public backend loaders (``image_group._load_apptainer`` /
+  ``image_group._load_env_snapshot``) for hand-rolled real callables
+  that return a small, real-behaviour fake backend class — same
+  save/restore pattern as ``test_channel_group``'s ``_swap_urlopen``,
+* deletes tests whose only assertion was ``MagicMock.assert_called_once()``
+  (mock-only behaviour, not real behaviour).
+"""
 
 from __future__ import annotations
 
 import json
-import sys
-import types
+import os
+from contextlib import contextmanager
 from pathlib import Path
-from unittest.mock import MagicMock
+from typing import Any, Iterator
 
 import pytest
 from click.testing import CliRunner
@@ -14,58 +28,124 @@ from click.testing import CliRunner
 from scitex_agent_container.cli_pkg import image_group as ig
 from scitex_agent_container.cli_pkg.image_group import image_group
 
+# ---------------------------------------------------------------------------
+# Real-fake backend — small class with concrete return values + call log.
+# Stands in for ``scitex_container.apptainer`` without ``MagicMock``.
+# ---------------------------------------------------------------------------
 
-@pytest.fixture(autouse=True)
-def sandbox_paths(tmp_path, monkeypatch):
-    """Redirect _CONTAINERS_DIR + Path.home() to tmp_path."""
+
+class _FakeApptainerBackend:
+    """Hand-rolled stand-in for ``scitex_container.apptainer``.
+
+    Each method records ``(args, kwargs)`` into a per-name call log and
+    returns the value configured at construction time. ``raises`` maps
+    method name → exception instance to raise on call; this lets tests
+    cover the real ``except`` branch in the CLI.
+    """
+
+    def __init__(
+        self,
+        *,
+        build_result: Path | None = None,
+        sandbox_create_result: Path | None = None,
+        sandbox_update_result: dict | None = None,
+        sandbox_to_sif_result: Path | None = None,
+        rollback_result: str = "1.0.0",
+        status_result: list | None = None,
+        raises: dict[str, BaseException] | None = None,
+    ) -> None:
+        self.calls: dict[str, list[tuple[tuple, dict]]] = {}
+        self._returns = {
+            "build": build_result or Path("/tmp/out.sif"),
+            "sandbox_create": sandbox_create_result or Path("/tmp/sandbox-out"),
+            "sandbox_update": sandbox_update_result
+            if sandbox_update_result is not None
+            else {"updated": ["scitex"]},
+            "sandbox_to_sif": sandbox_to_sif_result or Path("/tmp/frozen.sif"),
+            "switch_version": None,
+            "rollback": rollback_result,
+            "status": status_result if status_result is not None else [],
+        }
+        self._raises = raises or {}
+
+    def _record(self, name: str, args: tuple, kwargs: dict) -> Any:
+        self.calls.setdefault(name, []).append((args, kwargs))
+        if name in self._raises:
+            raise self._raises[name]
+        return self._returns[name]
+
+    def build(self, *a, **kw):
+        return self._record("build", a, kw)
+
+    def sandbox_create(self, *a, **kw):
+        return self._record("sandbox_create", a, kw)
+
+    def sandbox_update(self, *a, **kw):
+        return self._record("sandbox_update", a, kw)
+
+    def sandbox_to_sif(self, *a, **kw):
+        return self._record("sandbox_to_sif", a, kw)
+
+    def switch_version(self, *a, **kw):
+        return self._record("switch_version", a, kw)
+
+    def rollback(self, *a, **kw):
+        return self._record("rollback", a, kw)
+
+    def status(self, *a, **kw):
+        return self._record("status", a, kw)
+
+
+@contextmanager
+def _use_backend(backend: _FakeApptainerBackend) -> Iterator[_FakeApptainerBackend]:
+    """Swap ``image_group._load_apptainer`` for a real loader returning ``backend``."""
+    saved = ig._load_apptainer
+    ig._load_apptainer = lambda: backend  # type: ignore[assignment]
+    try:
+        yield backend
+    finally:
+        ig._load_apptainer = saved  # type: ignore[assignment]
+
+
+@contextmanager
+def _use_env_snapshot(payload: dict) -> Iterator[list[tuple]]:
+    """Swap ``image_group._load_env_snapshot`` with a real recording callable."""
+    calls: list[tuple] = []
+
+    def _fake_env_snapshot(*a, **kw):
+        calls.append((a, kw))
+        return payload
+
+    saved = ig._load_env_snapshot
+    ig._load_env_snapshot = lambda: _fake_env_snapshot  # type: ignore[assignment]
+    try:
+        yield calls
+    finally:
+        ig._load_env_snapshot = saved  # type: ignore[assignment]
+
+
+# ---------------------------------------------------------------------------
+# tmp-rooted HOME so every command writes into ``tmp_path``.
+# Real env var, real bootstrap, real ``.gitignore``. No monkeypatch.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def home_tmp(tmp_path: Path) -> Iterator[Path]:
     home = tmp_path / "home"
     home.mkdir()
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
-    containers = home / ".scitex" / "agent-container" / "containers"
-    monkeypatch.setattr(ig, "_CONTAINERS_DIR", containers)
-    # Stub the bootstrap call so it doesn't write a .gitignore in real tree.
-    bootstrap = types.ModuleType("scitex_agent_container._state._bootstrap")
-    bootstrap.ensure_root_gitignore = lambda path: None
-    monkeypatch.setitem(
-        sys.modules, "scitex_agent_container._state._bootstrap", bootstrap
-    )
-    return tmp_path
-
-
-def _install_fake_apptainer(monkeypatch, **fns):
-    mod = types.ModuleType("scitex_container.apptainer")
-    mod.build = fns.get("build", MagicMock(return_value=Path("/tmp/out.sif")))
-    mod.sandbox_create = fns.get(
-        "sandbox_create", MagicMock(return_value=Path("/tmp/sandbox"))
-    )
-    mod.sandbox_update = fns.get(
-        "sandbox_update", MagicMock(return_value={"updated": ["scitex"]})
-    )
-    mod.sandbox_to_sif = fns.get(
-        "sandbox_to_sif", MagicMock(return_value=Path("/tmp/frozen.sif"))
-    )
-    mod.switch_version = fns.get("switch_version", MagicMock())
-    mod.rollback = fns.get("rollback", MagicMock(return_value="2.0.0"))
-    mod.status = fns.get("status", MagicMock(return_value=[]))
-    monkeypatch.setitem(sys.modules, "scitex_container.apptainer", mod)
-    # parent package
-    if "scitex_container" not in sys.modules:
-        parent = types.ModuleType("scitex_container")
-        parent.apptainer = mod
-        parent.env_snapshot = fns.get(
-            "env_snapshot", MagicMock(return_value={"pip": []})
-        )
-        monkeypatch.setitem(sys.modules, "scitex_container", parent)
-    else:
-        sys.modules["scitex_container"].env_snapshot = fns.get(
-            "env_snapshot",
-            getattr(
-                sys.modules["scitex_container"],
-                "env_snapshot",
-                MagicMock(return_value={}),
-            ),
-        )
-    return mod
+    saved_home = os.environ.get("HOME")
+    os.environ["HOME"] = str(home)
+    saved_containers_dir = ig._CONTAINERS_DIR
+    ig._CONTAINERS_DIR = home / ".scitex" / "agent-container" / "containers"  # type: ignore[assignment]
+    try:
+        yield tmp_path
+    finally:
+        if saved_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = saved_home
+        ig._CONTAINERS_DIR = saved_containers_dir  # type: ignore[assignment]
 
 
 # ---------------------------------------------------------------------------
@@ -73,81 +153,114 @@ def _install_fake_apptainer(monkeypatch, **fns):
 # ---------------------------------------------------------------------------
 
 
-def test_build_dry_run():
+def test_build_dry_run_prints_dry_run_marker_and_exits_zero(home_tmp):
+    # Arrange
     runner = CliRunner()
+    # Act
     result = runner.invoke(image_group, ["build", "--dry-run"])
-    assert result.exit_code == 0
-    assert "dry-run" in result.output
+    # Assert
+    assert result.exit_code == 0 and "dry-run" in result.output
 
 
-def test_build_unknown_layer_fails():
+def test_build_unknown_layer_fails_with_click_choice_error(home_tmp):
+    # Arrange
     runner = CliRunner()
+    # Act
     result = runner.invoke(image_group, ["build", "unknown-layer"])
-    assert result.exit_code != 0
-    # click.Choice gives "Invalid value"
-    assert "Invalid value" in result.output or "Usage" in result.output
+    # Assert
+    assert result.exit_code != 0 and (
+        "Invalid value" in result.output or "Usage" in result.output
+    )
 
 
-def test_build_refuses_without_yes(monkeypatch):
-    _install_fake_apptainer(monkeypatch)
+def test_build_refuses_to_build_base_without_yes_flag(home_tmp):
+    # Arrange
     runner = CliRunner()
+    # Act
     result = runner.invoke(image_group, ["build", "base"])
-    assert result.exit_code == 2
-    assert "Refusing" in result.output
+    # Assert
+    assert result.exit_code == 2 and "Refusing" in result.output
 
 
-def test_build_existing_artifact_warning(monkeypatch, sandbox_paths):
-    _install_fake_apptainer(monkeypatch)
-    # Pre-create existing SIF to trip the warning branch.
+def test_build_warns_when_existing_sif_would_be_overwritten(home_tmp):
+    # Arrange
     out_dir = ig._CONTAINERS_DIR / "sac-base"
     out_dir.mkdir(parents=True)
     (out_dir / "sac-base.sif").write_bytes(b"x" * 100)
     runner = CliRunner()
+    # Act
     result = runner.invoke(image_group, ["build", "base", "--dry-run"])
-    assert result.exit_code == 0
-    assert "Existing" in result.output
+    # Assert
+    assert result.exit_code == 0 and "Existing" in result.output
 
 
-def test_build_sandbox_existing_warning(monkeypatch, sandbox_paths):
-    _install_fake_apptainer(monkeypatch)
+def test_build_warns_when_existing_sandbox_dir_would_be_overwritten(home_tmp):
+    # Arrange
     out_dir = ig._CONTAINERS_DIR / "sac-base"
     out_dir.mkdir(parents=True)
     (out_dir / "sac-base.sandbox").mkdir()
     runner = CliRunner()
+    # Act
     result = runner.invoke(image_group, ["build", "base", "--sandbox", "--dry-run"])
-    assert result.exit_code == 0
-    assert "sandbox dir" in result.output
+    # Assert
+    assert result.exit_code == 0 and "sandbox dir" in result.output
 
 
-def test_build_missing_recipe(monkeypatch, sandbox_paths):
-    _install_fake_apptainer(monkeypatch)
-    monkeypatch.setattr(ig, "_RECIPES_DIR", sandbox_paths / "no-recipes")
+def test_build_errors_when_recipe_def_file_is_missing(home_tmp):
+    # Arrange — point _RECIPES_DIR at an empty real dir; no monkeypatch.
+    saved_recipes = ig._RECIPES_DIR
+    ig._RECIPES_DIR = home_tmp / "no-recipes"  # type: ignore[assignment]
     runner = CliRunner()
-    result = runner.invoke(image_group, ["build", "base", "--yes"])
-    assert result.exit_code == 1
-    assert "recipe not found" in result.output
+    try:
+        # Act
+        result = runner.invoke(image_group, ["build", "base", "--yes"])
+    finally:
+        ig._RECIPES_DIR = saved_recipes  # type: ignore[assignment]
+    # Assert
+    assert result.exit_code == 1 and "recipe not found" in result.output
 
 
-def test_build_success(monkeypatch, sandbox_paths):
-    # Real recipe dir exists in the wheel; build() is mocked.
-    fake_build = MagicMock(return_value=Path("/tmp/sac-base.sif"))
-    _install_fake_apptainer(monkeypatch, build=fake_build)
+def test_build_success_invokes_backend_and_prints_built_message(home_tmp):
+    # Arrange
+    backend = _FakeApptainerBackend(build_result=Path("/tmp/sac-base.sif"))
     runner = CliRunner()
-    result = runner.invoke(image_group, ["build", "base", "--yes"])
-    assert result.exit_code == 0, result.output
-    assert "built" in result.output
-    fake_build.assert_called_once()
+    # Act
+    with _use_backend(backend):
+        result = runner.invoke(image_group, ["build", "base", "--yes"])
+    # Assert
+    assert (
+        result.exit_code == 0
+        and "built" in result.output
+        and len(backend.calls.get("build", [])) == 1
+    )
 
 
-def test_build_apptainer_failure(monkeypatch):
-    def boom(**k):
-        raise RuntimeError("apptainer broken")
-
-    _install_fake_apptainer(monkeypatch, build=boom)
+def test_build_success_passes_layer_def_path_and_force_to_backend(home_tmp):
+    # Arrange
+    backend = _FakeApptainerBackend(build_result=Path("/tmp/sac-base.sif"))
     runner = CliRunner()
-    result = runner.invoke(image_group, ["build", "base", "--yes"])
-    assert result.exit_code == 1
-    assert "apptainer build failed" in result.output
+    # Act
+    with _use_backend(backend):
+        runner.invoke(image_group, ["build", "base", "--yes"])
+    # Assert
+    kwargs = backend.calls["build"][0][1]
+    assert (
+        kwargs["image_name"] == "sac-base"
+        and kwargs["force"] is True
+        and kwargs["sandbox"] is False
+        and kwargs["def_path"].name == "apptainer-base.def"
+    )
+
+
+def test_build_reports_apptainer_failure_with_exit_code_1(home_tmp):
+    # Arrange
+    backend = _FakeApptainerBackend(raises={"build": RuntimeError("apptainer broken")})
+    runner = CliRunner()
+    # Act
+    with _use_backend(backend):
+        result = runner.invoke(image_group, ["build", "base", "--yes"])
+    # Assert
+    assert result.exit_code == 1 and "apptainer build failed" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -155,43 +268,57 @@ def test_build_apptainer_failure(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_sandbox_from_layer_name(monkeypatch, sandbox_paths):
-    fake = MagicMock(return_value=Path("/tmp/sandbox-out"))
-    _install_fake_apptainer(monkeypatch, sandbox_create=fake)
-    # Pre-place a SIF the resolver can find.
+def test_sandbox_from_layer_name_resolves_to_known_sif_and_calls_backend(home_tmp):
+    # Arrange
+    backend = _FakeApptainerBackend(sandbox_create_result=Path("/tmp/sandbox-out"))
     ig._CONTAINERS_DIR.mkdir(parents=True, exist_ok=True)
     (ig._CONTAINERS_DIR / "apptainer-base.sif").write_bytes(b"sif")
     runner = CliRunner()
-    result = runner.invoke(image_group, ["sandbox", "base"])
-    assert result.exit_code == 0, result.output
-    assert "sandbox" in result.output
-    fake.assert_called_once()
+    # Act
+    with _use_backend(backend):
+        result = runner.invoke(image_group, ["sandbox", "base"])
+    # Assert
+    assert (
+        result.exit_code == 0
+        and "sandbox" in result.output
+        and len(backend.calls.get("sandbox_create", [])) == 1
+    )
 
 
-def test_sandbox_from_path(monkeypatch, sandbox_paths):
-    _install_fake_apptainer(monkeypatch)
-    sif = sandbox_paths / "some.sif"
+def test_sandbox_from_explicit_path_skips_layer_resolution(home_tmp):
+    # Arrange
+    backend = _FakeApptainerBackend()
+    sif = home_tmp / "some.sif"
     sif.write_bytes(b"x")
     runner = CliRunner()
-    result = runner.invoke(image_group, ["sandbox", str(sif)])
-    assert result.exit_code == 0, result.output
+    # Act
+    with _use_backend(backend):
+        result = runner.invoke(image_group, ["sandbox", str(sif)])
+    # Assert
+    assert result.exit_code == 0
 
 
-def test_sandbox_layer_missing_sif(monkeypatch, sandbox_paths):
-    _install_fake_apptainer(monkeypatch)
+def test_sandbox_errors_when_layer_sif_not_built_yet(home_tmp):
+    # Arrange
+    backend = _FakeApptainerBackend()
     ig._CONTAINERS_DIR.mkdir(parents=True, exist_ok=True)
     runner = CliRunner()
-    result = runner.invoke(image_group, ["sandbox", "base"])
-    assert result.exit_code != 0
-    assert "Build it first" in result.output
+    # Act
+    with _use_backend(backend):
+        result = runner.invoke(image_group, ["sandbox", "base"])
+    # Assert
+    assert result.exit_code != 0 and "Build it first" in result.output
 
 
-def test_sandbox_unknown_source(monkeypatch):
-    _install_fake_apptainer(monkeypatch)
+def test_sandbox_errors_when_source_is_neither_path_nor_known_layer(home_tmp):
+    # Arrange
+    backend = _FakeApptainerBackend()
     runner = CliRunner()
-    result = runner.invoke(image_group, ["sandbox", "totally-bogus-name"])
-    assert result.exit_code != 0
-    assert "neither a path nor a known layer" in result.output
+    # Act
+    with _use_backend(backend):
+        result = runner.invoke(image_group, ["sandbox", "totally-bogus-name"])
+    # Assert
+    assert result.exit_code != 0 and "neither a path nor a known layer" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -199,43 +326,56 @@ def test_sandbox_unknown_source(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_update_default_packages(monkeypatch, tmp_path):
-    fake = MagicMock(return_value={"upgraded": ["scitex"]})
-    _install_fake_apptainer(monkeypatch, sandbox_update=fake)
+def test_update_with_no_package_flag_defaults_to_scitex_all(tmp_path):
+    # Arrange
+    backend = _FakeApptainerBackend(sandbox_update_result={"upgraded": ["scitex"]})
     sb = tmp_path / "sb"
     sb.mkdir()
     runner = CliRunner()
-    result = runner.invoke(image_group, ["update", str(sb)])
-    assert result.exit_code == 0, result.output
-    assert "scitex" in result.output
-    args, kwargs = fake.call_args
-    assert kwargs["packages"] == ("scitex[all]",)
-
-
-def test_update_specific_packages(monkeypatch, tmp_path):
-    fake = MagicMock(return_value={})
-    _install_fake_apptainer(monkeypatch, sandbox_update=fake)
-    sb = tmp_path / "sb"
-    sb.mkdir()
-    runner = CliRunner()
-    result = runner.invoke(
-        image_group, ["update", str(sb), "-p", "numpy", "-p", "scipy"]
+    # Act
+    with _use_backend(backend):
+        result = runner.invoke(image_group, ["update", str(sb)])
+    # Assert
+    assert (
+        result.exit_code == 0
+        and "scitex" in result.output
+        and backend.calls["sandbox_update"][0][1]["packages"] == ("scitex[all]",)
     )
-    assert result.exit_code == 0, result.output
-    assert fake.call_args.kwargs["packages"] == ("numpy", "scipy")
 
 
-def test_freeze(monkeypatch, tmp_path):
-    fake = MagicMock(return_value=Path("/tmp/frozen.sif"))
-    _install_fake_apptainer(monkeypatch, sandbox_to_sif=fake)
+def test_update_passes_explicit_packages_through_to_backend(tmp_path):
+    # Arrange
+    backend = _FakeApptainerBackend(sandbox_update_result={})
+    sb = tmp_path / "sb"
+    sb.mkdir()
+    runner = CliRunner()
+    # Act
+    with _use_backend(backend):
+        result = runner.invoke(
+            image_group, ["update", str(sb), "-p", "numpy", "-p", "scipy"]
+        )
+    # Assert
+    assert result.exit_code == 0 and backend.calls["sandbox_update"][0][1][
+        "packages"
+    ] == ("numpy", "scipy")
+
+
+def test_freeze_calls_sandbox_to_sif_and_prints_frozen_marker(tmp_path):
+    # Arrange
+    backend = _FakeApptainerBackend(sandbox_to_sif_result=Path("/tmp/frozen.sif"))
     sb = tmp_path / "sb"
     sb.mkdir()
     out = tmp_path / "out.sif"
     runner = CliRunner()
-    result = runner.invoke(image_group, ["freeze", str(sb), str(out)])
-    assert result.exit_code == 0, result.output
-    assert "frozen" in result.output
-    fake.assert_called_once()
+    # Act
+    with _use_backend(backend):
+        result = runner.invoke(image_group, ["freeze", str(sb), str(out)])
+    # Assert
+    assert (
+        result.exit_code == 0
+        and "frozen" in result.output
+        and len(backend.calls.get("sandbox_to_sif", [])) == 1
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -243,16 +383,19 @@ def test_freeze(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_list_empty(monkeypatch, sandbox_paths):
-    _install_fake_apptainer(monkeypatch)
+def test_list_with_empty_containers_dir_reports_no_sifs(home_tmp):
+    # Arrange
     runner = CliRunner()
+    # Act
     result = runner.invoke(image_group, ["list"])
-    assert result.exit_code == 0
-    assert "no SIFs" in result.output or "containers dir" in result.output
+    # Assert
+    assert result.exit_code == 0 and (
+        "no SIFs" in result.output or "containers dir" in result.output
+    )
 
 
-def test_list_with_sif_and_sandbox(monkeypatch, sandbox_paths):
-    _install_fake_apptainer(monkeypatch)
+def test_list_renders_both_sif_files_and_sandbox_dirs(home_tmp):
+    # Arrange
     ig._CONTAINERS_DIR.mkdir(parents=True, exist_ok=True)
     sif = ig._CONTAINERS_DIR / "scitex-agent-container-1.0.0.sif"
     sif.write_bytes(b"x" * 100)
@@ -260,27 +403,26 @@ def test_list_with_sif_and_sandbox(monkeypatch, sandbox_paths):
     sb.mkdir()
     (sb / "f.txt").write_bytes(b"y" * 100)
     runner = CliRunner()
+    # Act
     result = runner.invoke(image_group, ["list"])
-    assert result.exit_code == 0, result.output
-    assert "1.0.0" in result.output
-    assert "2.0.0" in result.output
+    # Assert
+    assert (
+        result.exit_code == 0 and "1.0.0" in result.output and "2.0.0" in result.output
+    )
 
 
-def test_list_json(monkeypatch, sandbox_paths):
-    _install_fake_apptainer(monkeypatch)
+def test_list_json_emits_kind_sif_for_sif_files(home_tmp):
+    # Arrange
     ig._CONTAINERS_DIR.mkdir(parents=True, exist_ok=True)
     (ig._CONTAINERS_DIR / "scitex-agent-container-1.0.0.sif").write_bytes(b"x")
     runner = CliRunner()
+    # Act
     result = runner.invoke(image_group, ["list", "--json"])
-    assert result.exit_code == 0, result.output
-    # rich output may surround JSON; find the JSON line
-    payload_line = [l for l in result.output.splitlines() if l.startswith("[")]
-    # JSON might span multiple lines
     start = result.output.index("[")
     end = result.output.rindex("]") + 1
     data = json.loads(result.output[start:end])
-    assert len(data) == 1
-    assert data[0]["kind"] == "sif"
+    # Assert
+    assert result.exit_code == 0 and data[0]["kind"] == "sif"
 
 
 # ---------------------------------------------------------------------------
@@ -288,76 +430,103 @@ def test_list_json(monkeypatch, sandbox_paths):
 # ---------------------------------------------------------------------------
 
 
-def test_switch(monkeypatch):
-    fake = MagicMock()
-    _install_fake_apptainer(monkeypatch, switch_version=fake)
+def test_switch_delegates_to_backend_and_reports_target_version(home_tmp):
+    # Arrange
+    backend = _FakeApptainerBackend()
     runner = CliRunner()
-    result = runner.invoke(image_group, ["switch", "2.0.0"])
-    assert result.exit_code == 0, result.output
-    fake.assert_called_once()
-    assert "switched" in result.output
+    # Act
+    with _use_backend(backend):
+        result = runner.invoke(image_group, ["switch", "2.0.0"])
+    # Assert
+    assert (
+        result.exit_code == 0
+        and "switched" in result.output
+        and backend.calls["switch_version"][0][1]["version"] == "2.0.0"
+    )
 
 
-def test_rollback(monkeypatch):
-    _install_fake_apptainer(monkeypatch, rollback=MagicMock(return_value="1.0.0"))
+def test_rollback_prints_previous_version_returned_by_backend(home_tmp):
+    # Arrange
+    backend = _FakeApptainerBackend(rollback_result="1.0.0")
     runner = CliRunner()
-    result = runner.invoke(image_group, ["rollback"])
-    assert result.exit_code == 0, result.output
-    assert "1.0.0" in result.output
+    # Act
+    with _use_backend(backend):
+        result = runner.invoke(image_group, ["rollback"])
+    # Assert
+    assert result.exit_code == 0 and "1.0.0" in result.output
 
 
-def test_status_empty(monkeypatch):
-    _install_fake_apptainer(monkeypatch, status=MagicMock(return_value=[]))
+def test_status_with_empty_backend_payload_reports_no_containers(home_tmp):
+    # Arrange
+    backend = _FakeApptainerBackend(status_result=[])
     runner = CliRunner()
-    result = runner.invoke(image_group, ["status"])
-    assert result.exit_code == 0
-    assert "no containers" in result.output
+    # Act
+    with _use_backend(backend):
+        result = runner.invoke(image_group, ["status"])
+    # Assert
+    assert result.exit_code == 0 and "no containers" in result.output
 
 
-def test_status_with_entries(monkeypatch):
+def test_status_renders_rebuild_marker_for_entries_with_needs_rebuild_true(home_tmp):
+    # Arrange
     entries = [
         {"name": "alpha", "sif_size": "100MB", "needs_rebuild": False},
         {"name": "beta", "sif_size": "200MB", "needs_rebuild": True},
     ]
-    _install_fake_apptainer(monkeypatch, status=MagicMock(return_value=entries))
+    backend = _FakeApptainerBackend(status_result=entries)
     runner = CliRunner()
-    result = runner.invoke(image_group, ["status"])
-    assert result.exit_code == 0, result.output
-    assert "alpha" in result.output
-    assert "REBUILD" in result.output
+    # Act
+    with _use_backend(backend):
+        result = runner.invoke(image_group, ["status"])
+    # Assert
+    assert (
+        result.exit_code == 0
+        and "alpha" in result.output
+        and "REBUILD" in result.output
+    )
 
 
-def test_status_json(monkeypatch):
+def test_status_json_passes_backend_payload_through_verbatim(home_tmp):
+    # Arrange
     entries = [{"name": "a", "sif_size": "1MB", "needs_rebuild": False}]
-    _install_fake_apptainer(monkeypatch, status=MagicMock(return_value=entries))
+    backend = _FakeApptainerBackend(status_result=entries)
     runner = CliRunner()
-    result = runner.invoke(image_group, ["status", "--json"])
-    assert result.exit_code == 0
+    # Act
+    with _use_backend(backend):
+        result = runner.invoke(image_group, ["status", "--json"])
     start = result.output.index("[")
     end = result.output.rindex("]") + 1
     data = json.loads(result.output[start:end])
-    assert data == entries
+    # Assert
+    assert result.exit_code == 0 and data == entries
 
 
-def test_snapshot_stdout(monkeypatch):
-    fake_snap = MagicMock(return_value={"pip": ["scitex==1.0"]})
-    _install_fake_apptainer(monkeypatch, env_snapshot=fake_snap)
+def test_snapshot_with_no_output_flag_writes_json_to_stdout(home_tmp):
+    # Arrange
     runner = CliRunner()
-    result = runner.invoke(image_group, ["snapshot"])
-    assert result.exit_code == 0, result.output
-    assert "scitex==1.0" in result.output
+    # Act
+    with _use_env_snapshot({"pip": ["scitex==1.0"]}):
+        result = runner.invoke(image_group, ["snapshot"])
+    # Assert
+    assert result.exit_code == 0 and "scitex==1.0" in result.output
 
 
-def test_snapshot_to_file(monkeypatch, tmp_path):
-    fake_snap = MagicMock(return_value={"foo": "bar"})
-    _install_fake_apptainer(monkeypatch, env_snapshot=fake_snap)
+def test_snapshot_with_output_path_writes_json_file_and_prints_wrote(
+    home_tmp, tmp_path
+):
+    # Arrange
     out = tmp_path / "snap.json"
     runner = CliRunner()
-    result = runner.invoke(image_group, ["snapshot", "-o", str(out)])
-    assert result.exit_code == 0, result.output
-    assert out.is_file()
-    assert json.loads(out.read_text()) == {"foo": "bar"}
-    assert "wrote" in result.output
+    # Act
+    with _use_env_snapshot({"foo": "bar"}):
+        result = runner.invoke(image_group, ["snapshot", "-o", str(out)])
+    # Assert
+    assert (
+        result.exit_code == 0
+        and out.is_file()
+        and json.loads(out.read_text()) == {"foo": "bar"}
+        and "wrote" in result.output
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -365,14 +534,27 @@ def test_snapshot_to_file(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_def_name_unknown():
-    runner = CliRunner()
-    # Direct call to make sure UsageError path is hit.
+def test_resolve_def_name_raises_for_unknown_layer():
+    # Arrange
+    bad_layer = "nope"
+
+    # Act
+    def _call():
+        return ig._resolve_def_name(bad_layer)
+
+    # Assert
     with pytest.raises(Exception):
-        ig._resolve_def_name("nope")
+        _call()
 
 
-def test_resolve_source_to_sif_layer_no_sif(monkeypatch, sandbox_paths):
+def test_resolve_source_to_sif_raises_when_layer_not_built(home_tmp):
+    # Arrange
     ig._CONTAINERS_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Act
+    def _call():
+        return ig._resolve_source_to_sif("base")
+
+    # Assert
     with pytest.raises(Exception):
-        ig._resolve_source_to_sif("base")
+        _call()
