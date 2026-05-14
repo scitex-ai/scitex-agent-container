@@ -111,8 +111,18 @@ def test_no_token_leak(tmp_path: Path) -> None:
     # Simulate a successful API response.
     api_payload = json.dumps(
         [
-            {"window": "5h", "used": 2000, "limit": 20000, "resetAt": "2026-01-01T05:00:00Z"},
-            {"window": "7d", "used": 8000, "limit": 200000, "resetAt": "2026-01-08T00:00:00Z"},
+            {
+                "window": "5h",
+                "used": 2000,
+                "limit": 20000,
+                "resetAt": "2026-01-01T05:00:00Z",
+            },
+            {
+                "window": "7d",
+                "used": 8000,
+                "limit": 200000,
+                "resetAt": "2026-01-08T00:00:00Z",
+            },
         ]
     ).encode()
 
@@ -130,7 +140,15 @@ def test_no_token_leak(tmp_path: Path) -> None:
     # NOTE: "token" is intentionally omitted from key checks because legitimate
     # metric keys like "used_tokens_5h" contain "token" as part of their name.
     # The implementation's _FORBIDDEN_KEY_SUBSTRINGS list matches this logic.
-    forbidden_in_keys = ("accesstoken", "refreshtoken", "sk-ant-", "bearer", "password", "secret", "credential")
+    forbidden_in_keys = (
+        "accesstoken",
+        "refreshtoken",
+        "sk-ant-",
+        "bearer",
+        "password",
+        "secret",
+        "credential",
+    )
     forbidden_in_values = ("sk-ant-", "bearer ")
 
     for key, value in result.items():
@@ -573,7 +591,7 @@ def test_fetch_usage_refreshes_expired_token_then_succeeds(
 
     refresh_calls: list[str] = []
 
-    def fake_refresh(_home, _refresh, _client):
+    def fake_refresh(_home, _refresh, _client, *, opener=None):
         refresh_calls.append("ok")
         return "NEW"
 
