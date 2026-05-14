@@ -119,12 +119,20 @@ def test_list_claims_returns_rows(db: Path) -> None:
     assert names == {"a", "b"}
 
 
-def test_config_yaml_range_override(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_config_yaml_range_override(tmp_path: Path) -> None:
+    import os
+
     cfg = tmp_path / "config.yaml"
     cfg.write_text("a2a:\n  port_range: [30000, 30001]\n")
-    monkeypatch.setenv("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg))
-    db = tmp_path / "state.db"
-    p = pa.claim_port("alpha", db_path=db)
-    assert 30000 <= p <= 30001
+    key = "SCITEX_AGENT_CONTAINER_CONFIG"
+    saved = os.environ.get(key)
+    os.environ[key] = str(cfg)
+    try:
+        db = tmp_path / "state.db"
+        p = pa.claim_port("alpha", db_path=db)
+        assert 30000 <= p <= 30001
+    finally:
+        if saved is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = saved

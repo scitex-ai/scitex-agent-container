@@ -121,20 +121,16 @@ def test_cleanup_removes_statusline(tmp_path):
 # Merged from test_settings_json_extras.py (PS-204 orphan consolidation)
 # ---------------------------------------------------------------------------
 
-import json
 
 import pytest
 
 import scitex_agent_container.runtimes.settings_json as sj_mod
 from scitex_agent_container.config import AgentConfig
-from scitex_agent_container.config._types import ClaudeSpec
 from scitex_agent_container.runtimes.settings_json import (
     _mcp_server_names,
     _needs_dev_channels,
     _needs_skip_permissions,
-    cleanup_settings_json,
     ensure_global_settings_json,
-    setup_settings_json,
 )
 
 # ---------------------------------------------------------------------------
@@ -215,10 +211,24 @@ def test_mcp_server_names_no_files_no_servers(tmp_path):
 
 
 @pytest.fixture
-def fake_home(monkeypatch, tmp_path):
-    """Redirect Path.home() to a tmp_path."""
-    monkeypatch.setattr(sj_mod.Path, "home", classmethod(lambda cls: tmp_path))
-    return tmp_path
+def fake_home(tmp_path):
+    """Redirect Path.home() to a tmp_path via $HOME.
+
+    PA-306: no `monkeypatch.setattr` on Path.home. Path.home() reads
+    $HOME on Unix; mutating the env var with explicit save/restore
+    is the real equivalent.
+    """
+    import os
+
+    saved = os.environ.get("HOME")
+    os.environ["HOME"] = str(tmp_path)
+    try:
+        yield tmp_path
+    finally:
+        if saved is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = saved
 
 
 def test_ensure_global_settings_creates_when_missing(fake_home):

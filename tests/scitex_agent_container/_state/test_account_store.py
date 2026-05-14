@@ -34,13 +34,25 @@ from scitex_agent_container._state.account_store import (
 
 
 @pytest.fixture(autouse=True)
-def _isolate_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def _isolate_home(tmp_path: Path):
     """Force Path.home() to point inside tmp_path for the test's duration.
 
     Belt-and-suspenders: even if account_store's `home=...` plumbing
-    regresses, no test write can ever land outside tmp_path.
+    regresses, no test write can ever land outside tmp_path. PA-306:
+    no `monkeypatch.setattr` — Path.home() reads $HOME on Unix, so
+    explicit env save/restore is the real equivalent.
     """
-    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+    import os
+
+    saved = os.environ.get("HOME")
+    os.environ["HOME"] = str(tmp_path)
+    try:
+        yield
+    finally:
+        if saved is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = saved
 
 
 def test_save_then_list_round_trip(tmp_path: Path) -> None:

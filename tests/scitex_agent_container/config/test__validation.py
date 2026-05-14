@@ -95,11 +95,21 @@ def test_non_string_model_rejected():
 
 
 @pytest.fixture(autouse=True)
-def _isolate_runtime_warning_marker(tmp_path, monkeypatch):
+def _isolate_runtime_warning_marker(tmp_path):
     """Each test gets its own XDG_RUNTIME_DIR so the once-per-shell
-    marker file doesn't leak warnings between cases."""
-    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
-    yield
+    marker file doesn't leak warnings between cases. Explicit env
+    save/restore — no monkeypatch (PA-306)."""
+    import os
+
+    saved = os.environ.get("XDG_RUNTIME_DIR")
+    os.environ["XDG_RUNTIME_DIR"] = str(tmp_path)
+    try:
+        yield
+    finally:
+        if saved is None:
+            os.environ.pop("XDG_RUNTIME_DIR", None)
+        else:
+            os.environ["XDG_RUNTIME_DIR"] = saved
 
 
 def test_validate_raw_rejects_f_cs6_aliases_after_f_cs17():

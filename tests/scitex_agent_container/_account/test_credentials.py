@@ -7,8 +7,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 from scitex_agent_container._account.credentials import (
     _FORBIDDEN_SUBSTRINGS,
     _all_safe_keys,
@@ -204,9 +202,7 @@ def test_partial_claude_json_no_oauth_account(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_accounts_list_json_contains_claude_account(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_accounts_list_json_contains_claude_account(tmp_path: Path) -> None:
     fake_home = tmp_path / "home"
     fake_home.mkdir()
     _write_claude_json(

@@ -85,12 +85,23 @@ V2_WITH_MCP = {
 
 
 class TestV2Config:
-    def test_v2_auto_derived_workdir(self, monkeypatch, tmp_path):
-        monkeypatch.setenv("HOME", str(tmp_path))
-        path = _write_config(MINIMAL_V2_CONFIG)
-        config = load_config(path)
-        assert config.workdir == "~/.scitex/agent-container/runtime/agents/head-test"
-        Path(path).unlink()
+    def test_v2_auto_derived_workdir(self, tmp_path):
+        import os
+
+        saved = os.environ.get("HOME")
+        os.environ["HOME"] = str(tmp_path)
+        try:
+            path = _write_config(MINIMAL_V2_CONFIG)
+            config = load_config(path)
+            assert (
+                config.workdir == "~/.scitex/agent-container/runtime/agents/head-test"
+            )
+            Path(path).unlink()
+        finally:
+            if saved is None:
+                os.environ.pop("HOME", None)
+            else:
+                os.environ["HOME"] = saved
 
     def test_v2_screen_name(self):
         """v2 screen_name is {name}, not cld-{name}."""

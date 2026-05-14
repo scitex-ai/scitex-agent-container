@@ -9,6 +9,7 @@ agent startup.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -17,11 +18,23 @@ from scitex_agent_container._listen import _config as listen_cfg
 
 
 @pytest.fixture
-def cfg_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Redirect the ``_default_config_path`` lookup at a tmp dir."""
+def cfg_path(tmp_path: Path):
+    """Redirect the ``_default_config_path`` lookup at a tmp dir.
+
+    Uses explicit save/restore of ``$SCITEX_AGENT_CONTAINER_CONFIG``
+    rather than ``monkeypatch.setenv`` per PA-306 (no mocks).
+    """
     p = tmp_path / "config.yaml"
-    monkeypatch.setenv("SCITEX_AGENT_CONTAINER_CONFIG", str(p))
-    return p
+    key = "SCITEX_AGENT_CONTAINER_CONFIG"
+    saved = os.environ.get(key)
+    os.environ[key] = str(p)
+    try:
+        yield p
+    finally:
+        if saved is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = saved
 
 
 class TestListenBaseURL:
