@@ -21,8 +21,19 @@ from scitex_agent_container.runtimes.onboarding import (
 
 
 @pytest.fixture(autouse=True)
-def _isolate_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+def _isolate_home(tmp_path: Path):
+    """PA-306: $HOME save/restore — Path.home() reads $HOME on Unix."""
+    import os
+
+    saved = os.environ.get("HOME")
+    os.environ["HOME"] = str(tmp_path)
+    try:
+        yield
+    finally:
+        if saved is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = saved
 
 
 def _load(home: Path) -> dict:
@@ -135,7 +146,7 @@ class TestEnsureProjectOnboardingErrorHandling:
         assert result is False
         assert any("cannot read" in r.getMessage() for r in caplog.records)
 
-    def test_unreadable_file_returns_false(self, tmp_path, monkeypatch, caplog):
+    def test_unreadable_file_returns_false(self, tmp_path, caplog):
         claude_json = tmp_path / ".claude.json"
         claude_json.write_text("{}")
 
@@ -148,24 +159,33 @@ class TestEnsureProjectOnboardingErrorHandling:
                 raise OSError("simulated read failure")
             return real_open(self, *args, **kwargs)
 
-        monkeypatch.setattr(Path, "open", _fake_open)
-        import logging
+        # PA-306: save/restore Path.open directly.
+        saved_open = Path.open
+        Path.open = _fake_open  # type: ignore[assignment]
+        try:
+            import logging
 
-        with caplog.at_level(logging.WARNING):
-            result = ensure_project_onboarding(str(tmp_path / "ws"), home=tmp_path)
-        assert result is False
+            with caplog.at_level(logging.WARNING):
+                result = ensure_project_onboarding(str(tmp_path / "ws"), home=tmp_path)
+            assert result is False
+        finally:
+            Path.open = saved_open  # type: ignore[assignment]
 
-    def test_write_failure_returns_false(self, tmp_path, monkeypatch, caplog):
+    def test_write_failure_returns_false(self, tmp_path, caplog):
         from scitex_agent_container.runtimes import onboarding as ob
 
         def _boom(src, dst):
             raise OSError("simulated replace failure")
 
-        monkeypatch.setattr(ob.os, "replace", _boom)
-        import logging
+        saved_replace = ob.os.replace
+        ob.os.replace = _boom  # type: ignore[assignment]
+        try:
+            import logging
 
-        with caplog.at_level(logging.WARNING):
-            result = ensure_project_onboarding(str(tmp_path / "ws"), home=tmp_path)
+            with caplog.at_level(logging.WARNING):
+                result = ensure_project_onboarding(str(tmp_path / "ws"), home=tmp_path)
+        finally:
+            ob.os.replace = saved_replace  # type: ignore[assignment]
         assert result is False
         assert any("cannot write" in r.getMessage() for r in caplog.records)
         # tmp file should be cleaned up

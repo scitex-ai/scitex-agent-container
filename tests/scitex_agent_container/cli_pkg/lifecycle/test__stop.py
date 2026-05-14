@@ -1,19 +1,44 @@
-"""Tests for cli_pkg.lifecycle._stop."""
+"""Tests for cli_pkg.lifecycle._stop.
+
+PA-306: no ``unittest.mock``. Collaborators are swapped at the
+module namespace via a small ``_swap`` context manager.
+"""
 
 from __future__ import annotations
 
+import os
+from contextlib import contextmanager
 from pathlib import Path
-from unittest.mock import patch
+from typing import Callable, Iterator
 
 import pytest
 from click.testing import CliRunner
 
+import scitex_agent_container.cli_pkg.lifecycle._stop as stop_mod
 from scitex_agent_container.cli_pkg.lifecycle._stop import stop
 
 
 @pytest.fixture(autouse=True)
-def _isolate_home(tmp_path, monkeypatch):
-    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+def _isolate_home(tmp_path):
+    saved = os.environ.get("HOME")
+    os.environ["HOME"] = str(tmp_path)
+    try:
+        yield
+    finally:
+        if saved is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = saved
+
+
+@contextmanager
+def _swap(name: str, fn: Callable) -> Iterator[None]:
+    saved = getattr(stop_mod, name)
+    setattr(stop_mod, name, fn)
+    try:
+        yield
+    finally:
+        setattr(stop_mod, name, saved)
 
 
 def _seed(tmp_path: Path, names) -> Path:
@@ -27,7 +52,7 @@ def _seed(tmp_path: Path, names) -> Path:
 
 
 class _FakeCfg:
-    def __init__(self, name):
+    def __init__(self, name: str) -> None:
         self.name = name
 
 
@@ -51,16 +76,10 @@ def test_bulk_without_yes_refuses(tmp_path):
 
 def test_bulk_with_yes_stops_all(tmp_path):
     root = _seed(tmp_path, ["a", "b"])
-    stopped = []
+    stopped: list = []
     with (
-        patch(
-            "scitex_agent_container.cli_pkg.lifecycle._stop.load_config",
-            side_effect=lambda p: _FakeCfg(Path(p).stem),
-        ),
-        patch(
-            "scitex_agent_container.cli_pkg.lifecycle._stop.agent_stop",
-            side_effect=lambda name, force: stopped.append((name, force)),
-        ),
+        _swap("load_config", lambda p: _FakeCfg(Path(p).stem)),
+        _swap("agent_stop", lambda name, force: stopped.append((name, force))),
     ):
         runner = CliRunner()
         result = runner.invoke(stop, [str(root), "-y"])
@@ -69,16 +88,13 @@ def test_bulk_with_yes_stops_all(tmp_path):
 
 
 def test_bulk_failure_reports_and_exits_nonzero(tmp_path):
+    def _boom(_name, _force):
+        raise RuntimeError("boom")
+
     root = _seed(tmp_path, ["a", "b"])
     with (
-        patch(
-            "scitex_agent_container.cli_pkg.lifecycle._stop.load_config",
-            side_effect=lambda p: _FakeCfg(Path(p).stem),
-        ),
-        patch(
-            "scitex_agent_container.cli_pkg.lifecycle._stop.agent_stop",
-            side_effect=RuntimeError("boom"),
-        ),
+        _swap("load_config", lambda p: _FakeCfg(Path(p).stem)),
+        _swap("agent_stop", _boom),
     ):
         runner = CliRunner()
         result = runner.invoke(stop, [str(root), "-y"])
@@ -87,11 +103,8 @@ def test_bulk_failure_reports_and_exits_nonzero(tmp_path):
 
 
 def test_single_name_path(tmp_path):
-    stopped = []
-    with patch(
-        "scitex_agent_container.cli_pkg.lifecycle._stop.agent_stop",
-        side_effect=lambda name, force: stopped.append((name, force)),
-    ):
+    stopped: list = []
+    with _swap("agent_stop", lambda name, force: stopped.append((name, force))):
         runner = CliRunner()
         result = runner.invoke(stop, ["alpha"])
     assert result.exit_code == 0
@@ -102,20 +115,11 @@ def test_single_name_path(tmp_path):
 def test_single_yaml_path_resolves_name(tmp_path):
     p = tmp_path / "foo.yaml"
     p.write_text("name: foo\n")
-    stopped = []
+    stopped: list = []
     with (
-        patch(
-            "scitex_agent_container.cli_pkg.lifecycle._stop.resolve_with_prefix",
-            return_value=str(p),
-        ),
-        patch(
-            "scitex_agent_container.cli_pkg.lifecycle._stop.load_config",
-            return_value=_FakeCfg("resolved-foo"),
-        ),
-        patch(
-            "scitex_agent_container.cli_pkg.lifecycle._stop.agent_stop",
-            side_effect=lambda name, force: stopped.append((name, force)),
-        ),
+        _swap("resolve_with_prefix", lambda *_a, **_kw: str(p)),
+        _swap("load_config", lambda *_a, **_kw: _FakeCfg("resolved-foo")),
+        _swap("agent_stop", lambda name, force: stopped.append((name, force))),
     ):
         runner = CliRunner()
         result = runner.invoke(stop, [str(p), "--force"])
@@ -124,10 +128,10 @@ def test_single_yaml_path_resolves_name(tmp_path):
 
 
 def test_single_failure_exits_nonzero(tmp_path):
-    with patch(
-        "scitex_agent_container.cli_pkg.lifecycle._stop.agent_stop",
-        side_effect=RuntimeError("nope"),
-    ):
+    def _boom(name, force=False):
+        raise RuntimeError("nope")
+
+    with _swap("agent_stop", _boom):
         runner = CliRunner()
         result = runner.invoke(stop, ["alpha"])
     assert result.exit_code == 1

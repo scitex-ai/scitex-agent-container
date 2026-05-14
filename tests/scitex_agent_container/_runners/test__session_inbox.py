@@ -1,10 +1,18 @@
-"""Tests for the runner's inbound-turn channel (PR1: queue + executor wiring)."""
+"""Tests for the runner's inbound-turn channel (PR1: queue + executor wiring).
+
+PA-306: no ``unittest.mock``. The SDK symbols are swapped on
+``claude_agent_sdk`` and runner module directly via a ``_swap_sdk``
+context manager that save/restores each attribute. ``state_root``
+fixture uses explicit env / module-attribute save/restore.
+"""
 
 from __future__ import annotations
 
 import asyncio
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from typing import Iterator
 
 import pytest
 
@@ -39,7 +47,6 @@ class _FakeSDKClient:
     def __init__(self, options=None) -> None:
         self.queries: list[str] = []
         self.interrupted = 0
-        # Per-turn scripted reply: list of message lists (one per query call)
         self.scripts: list[list] = []
 
     async def __aenter__(self):
@@ -55,7 +62,6 @@ class _FakeSDKClient:
         self.interrupted += 1
 
     async def receive_response(self):
-        # Pop the next scripted turn; default to a minimal valid reply.
         if self.scripts:
             msgs = self.scripts.pop(0)
         else:
@@ -68,43 +74,56 @@ class _FakeSDKClient:
 
 
 @pytest.fixture
-def state_root(tmp_path: Path, monkeypatch) -> Path:
+def state_root(tmp_path: Path) -> Iterator[Path]:
+    """Real save/restore of module attrs that previously used monkeypatch."""
     from scitex_agent_container._runners import _session_state
-
-    monkeypatch.setattr(runner, "DEFAULT_STATE_ROOT", tmp_path)
-    monkeypatch.setattr(_session_state, "DEFAULT_STATE_ROOT", tmp_path)
-    # Stub build_sdk_options so the conversation loop doesn't hit the
-    # real Anthropic auth resolver (which fails in CI without creds).
-    from types import SimpleNamespace
-
     from scitex_agent_container.runtimes import _sdk_common
 
-    def _fake_build(name, **kw):
-        return SimpleNamespace(name=name, **kw)
+    saved_runner_root = runner.DEFAULT_STATE_ROOT
+    saved_sess_root = _session_state.DEFAULT_STATE_ROOT
+    saved_build = _sdk_common.build_sdk_options
+    runner.DEFAULT_STATE_ROOT = tmp_path
+    _session_state.DEFAULT_STATE_ROOT = tmp_path
+    _sdk_common.build_sdk_options = lambda name, **kw: SimpleNamespace(name=name, **kw)
+    try:
+        yield tmp_path
+    finally:
+        runner.DEFAULT_STATE_ROOT = saved_runner_root
+        _session_state.DEFAULT_STATE_ROOT = saved_sess_root
+        _sdk_common.build_sdk_options = saved_build
 
-    monkeypatch.setattr(_sdk_common, "build_sdk_options", _fake_build)
-    return tmp_path
 
-
-def _patch_sdk_surface(fake_client: _FakeSDKClient):
-    """Patch the SDK symbols imported inside _run_conversation."""
+@contextmanager
+def _swap_sdk(fake_client: _FakeSDKClient) -> Iterator[None]:
+    """Swap the SDK surface used by ``_run_conversation`` for fakes."""
     import claude_agent_sdk
 
-    return [
-        patch.object(
-            claude_agent_sdk, "ClaudeSDKClient", lambda options=None: fake_client
-        ),
-        patch.object(claude_agent_sdk, "AssistantMessage", _FakeAssistantMsg),
-        patch.object(claude_agent_sdk, "TextBlock", _FakeTextBlock),
-        patch.object(claude_agent_sdk, "ResultMessage", _FakeResultMsg),
-        patch.object(claude_agent_sdk, "UserMessage", type("U", (), {})),
-    ]
+    keys = (
+        "ClaudeSDKClient",
+        "AssistantMessage",
+        "TextBlock",
+        "ResultMessage",
+        "UserMessage",
+    )
+    saved = {k: getattr(claude_agent_sdk, k, None) for k in keys}
+    claude_agent_sdk.ClaudeSDKClient = lambda options=None: fake_client  # type: ignore[assignment]
+    claude_agent_sdk.AssistantMessage = _FakeAssistantMsg  # type: ignore[assignment]
+    claude_agent_sdk.TextBlock = _FakeTextBlock  # type: ignore[assignment]
+    claude_agent_sdk.ResultMessage = _FakeResultMsg  # type: ignore[assignment]
+    claude_agent_sdk.UserMessage = type("U", (), {})  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                if hasattr(claude_agent_sdk, k):
+                    delattr(claude_agent_sdk, k)
+            else:
+                setattr(claude_agent_sdk, k, v)
 
 
 class TestInboxDrain:
     def test_turn_envelope_resolves_with_assistant_text(self, state_root: Path) -> None:
-        """A TurnEnvelope is drained, the SDK is queried, and the future
-        resolves with the concatenated assistant chunks."""
         client = _FakeSDKClient()
         client.scripts = [
             [
@@ -120,10 +139,7 @@ class TestInboxDrain:
             env = TurnEnvelope(text="hi", response=loop.create_future())
             await inbox.put(env)
             await inbox.put(ShutdownEnvelope())
-            patches = _patch_sdk_surface(client)
-            for p in patches:
-                p.start()
-            try:
+            with _swap_sdk(client):
                 await runner._run_conversation(
                     "alpha",
                     state_root / "alpha",
@@ -132,9 +148,6 @@ class TestInboxDrain:
                     resume_session_id=None,
                     stop=stop,
                 )
-            finally:
-                for p in patches:
-                    p.stop()
             return await env.response
 
         reply = asyncio.run(_scenario())
@@ -142,8 +155,6 @@ class TestInboxDrain:
         assert client.queries == ["hi"]
 
     def test_multiple_turns_processed_serially(self, state_root: Path) -> None:
-        """Two TurnEnvelopes followed by Shutdown — each turn's future
-        resolves independently, queries hit the SDK in order."""
         client = _FakeSDKClient()
         client.scripts = [
             [_FakeAssistantMsg("first"), _FakeResultMsg("sess-2", {})],
@@ -159,10 +170,7 @@ class TestInboxDrain:
             for env in (e1, e2):
                 await inbox.put(env)
             await inbox.put(ShutdownEnvelope())
-            patches = _patch_sdk_surface(client)
-            for p in patches:
-                p.start()
-            try:
+            with _swap_sdk(client):
                 await runner._run_conversation(
                     "beta",
                     state_root / "beta",
@@ -171,9 +179,6 @@ class TestInboxDrain:
                     resume_session_id=None,
                     stop=stop,
                 )
-            finally:
-                for p in patches:
-                    p.stop()
             return await e1.response, await e2.response
 
         r1, r2 = asyncio.run(_scenario())
@@ -182,7 +187,6 @@ class TestInboxDrain:
         assert client.queries == ["q1", "q2"]
 
     def test_exit_after_sets_stop(self, state_root: Path) -> None:
-        """A turn with exit_after=True signals stop after completion."""
         client = _FakeSDKClient()
 
         async def _scenario():
@@ -193,10 +197,7 @@ class TestInboxDrain:
                 text="bye", response=loop.create_future(), exit_after=True
             )
             await inbox.put(env)
-            patches = _patch_sdk_surface(client)
-            for p in patches:
-                p.start()
-            try:
+            with _swap_sdk(client):
                 await runner._run_conversation(
                     "gamma",
                     state_root / "gamma",
@@ -205,9 +206,6 @@ class TestInboxDrain:
                     resume_session_id=None,
                     stop=stop,
                 )
-            finally:
-                for p in patches:
-                    p.stop()
             return stop.is_set()
 
         assert asyncio.run(_scenario()) is True
@@ -232,3 +230,9 @@ class TestDrainFailedInbox:
                 return str(exc)
 
         assert asyncio.run(_scenario()) == "boom"
+
+
+# Keep ``ExitStack`` referenced even though our new pattern uses
+# ``with _swap_sdk(...)`` directly — kept for forward-compat if a
+# multi-swap helper grows back.
+_ = ExitStack

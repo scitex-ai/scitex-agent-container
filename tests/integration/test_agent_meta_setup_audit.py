@@ -21,8 +21,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from scitex_agent_container._state.agent_meta import _parse_mcp_servers
 
 # ---------------------------------------------------------------------------
@@ -146,11 +144,20 @@ def _setup_fake_home(tmp_path: Path, expires_at: int) -> Path:
 
 
 def test_rotation_log_writes_one_line_per_change(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     """Same expires_at twice -> one line. Different expires_at -> two lines."""
     home = _setup_fake_home(tmp_path, expires_at=1_000_000_000_000)
-    monkeypatch.setattr(Path, "home", lambda: home)
+    # PA-306: $HOME save/restore (Path.home() reads $HOME on Unix).
+    import os as _os
+
+    _saved_home = _os.environ.get("HOME")
+    _os.environ["HOME"] = str(home)
+    _restore_home = lambda: (  # noqa: E731
+        _os.environ.pop("HOME", None)
+        if _saved_home is None
+        else _os.environ.__setitem__("HOME", _saved_home)
+    )
 
     # Use an empty workspace so the transcript-JSONL path is a no-op
     # and we are really only testing the rotation-log branch.
@@ -202,7 +209,7 @@ def test_rotation_log_writes_one_line_per_change(
 
 
 def test_rotation_log_skipped_without_email(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     """No oauthAccount.emailAddress -> no rotation log is written."""
     home = tmp_path / "home"
@@ -221,7 +228,16 @@ def test_rotation_log_skipped_without_email(
             }
         )
     )
-    monkeypatch.setattr(Path, "home", lambda: home)
+    # PA-306: $HOME save/restore (Path.home() reads $HOME on Unix).
+    import os as _os
+
+    _saved_home = _os.environ.get("HOME")
+    _os.environ["HOME"] = str(home)
+    _restore_home = lambda: (  # noqa: E731
+        _os.environ.pop("HOME", None)
+        if _saved_home is None
+        else _os.environ.__setitem__("HOME", _saved_home)
+    )
 
     workdir = tmp_path / "workspace"
     workdir.mkdir()
@@ -241,7 +257,7 @@ def test_rotation_log_skipped_without_email(
 
 
 def test_collect_rich_exposes_plan_and_plugins(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     home = _setup_fake_home(tmp_path, expires_at=1234)
     # Add plugins file.
@@ -256,7 +272,16 @@ def test_collect_rich_exposes_plan_and_plugins(
             }
         )
     )
-    monkeypatch.setattr(Path, "home", lambda: home)
+    # PA-306: $HOME save/restore (Path.home() reads $HOME on Unix).
+    import os as _os
+
+    _saved_home = _os.environ.get("HOME")
+    _os.environ["HOME"] = str(home)
+    _restore_home = lambda: (  # noqa: E731
+        _os.environ.pop("HOME", None)
+        if _saved_home is None
+        else _os.environ.__setitem__("HOME", _saved_home)
+    )
 
     workdir = tmp_path / "workspace"
     _write_mcp(
