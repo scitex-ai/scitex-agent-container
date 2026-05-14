@@ -318,7 +318,11 @@ def fleet_card(
         "name": "scitex-agent-container",
         "description": description
         or "scitex-agent-container fleet — A2A protocol surface.",
-        "version": "scitex-agent-container/1",
+        # Match the per-agent `version` convention (the YAML's
+        # ``apiVersion: scitex-agent-container/v3``) — both fleet and
+        # member cards now use the ``v<N>`` prefix so clients can parse
+        # them with the same regex.
+        "version": "scitex-agent-container/v1",
         # v1: no top-level url; binding URLs live under supportedInterfaces[].
         "supportedInterfaces": [
             {
