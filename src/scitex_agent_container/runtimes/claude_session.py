@@ -116,11 +116,11 @@ class ClaudeSessionRuntime(RuntimeBase):
     def _setup_workspace(self, config: AgentConfig) -> None:
         """Materialise CLAUDE.md before launching the SDK runner.
 
-        Writes ``<workdir>/.claude/CLAUDE.md`` with an agent-container
-        managed section that lists the agent's HARD skills
-        (``spec.skills.required[]`` -> ``@<path>`` lines, eagerly
-        inlined by the SDK) and SOFT skills (``spec.skills.available[]``
-        -> reference listing, agent reads on demand). See F-CS1.
+        ADR-0003 (D6/D7): the agent's container ``$HOME`` is bind-mounted
+        from ``runtime/<name>/home/``. We materialise ``dot_claude/`` and
+        the sac-managed CLAUDE.md there (instead of the workdir, which
+        is the project-source mount at ``/work``). Claude SDK's
+        ``$HOME/.claude/`` discovery then sees skills, hooks, .mcp.json.
 
         Best-effort: skipped for stub configs that don't carry the full
         AgentConfig surface (unit-test SimpleNamespace fixtures).
@@ -128,24 +128,19 @@ class ClaudeSessionRuntime(RuntimeBase):
         required_attrs = ("expanded_workdir", "skills", "claude", "env", "labels")
         if not all(hasattr(config, a) for a in required_attrs):
             return
-        workdir = config.expanded_workdir
-        # Sac-managed agent-container section in <workdir>/.claude/CLAUDE.md.
-        setup_claude_md(config, workdir)
-        # Materialize the agent's ``dot_claude/`` directory into the
-        # workspace (CLAUDE.md + .mcp.json + .env + state.md at workdir
-        # root; commands/, skills/, hooks/, etc. under workdir/.claude/).
-        # No-op when neither ``spec.dot_claude`` nor a default
-        # ``./dot_claude`` sibling exists.
-        deploy_dot_claude(config, workdir)
+        home_dir = str(self._state_dir(config) / "home")
+        Path(home_dir).mkdir(parents=True, exist_ok=True)
+        setup_claude_md(config, home_dir)
+        deploy_dot_claude(config, home_dir)
 
     def _cleanup_workspace(self, config: AgentConfig) -> None:
         """Remove the agent-container CLAUDE.md section on stop."""
         required_attrs = ("expanded_workdir", "skills", "claude", "env", "labels")
         if not all(hasattr(config, a) for a in required_attrs):
             return
-        workdir = config.expanded_workdir
-        cleanup_claude_md(config, workdir)
-        cleanup_dot_claude(config, workdir)
+        home_dir = str(self._state_dir(config) / "home")
+        cleanup_claude_md(config, home_dir)
+        cleanup_dot_claude(config, home_dir)
 
     def start(
         self,

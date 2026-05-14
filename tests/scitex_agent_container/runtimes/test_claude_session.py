@@ -255,6 +255,12 @@ def _make_skills_config(workdir: Path, skill_root: Path) -> AgentConfig:
     )
 
 
+def _claude_md_path(runtime: ClaudeSessionRuntime, config: AgentConfig) -> Path:
+    """ADR-0003: CLAUDE.md materialises into ``runtime/<name>/home/.claude/``,
+    not ``workdir/.claude/``."""
+    return runtime._state_dir(config) / "home" / ".claude" / "CLAUDE.md"
+
+
 class TestSetupWorkspace:
     """``_setup_workspace`` writes CLAUDE.md with hard + soft sections."""
 
@@ -263,10 +269,11 @@ class TestSetupWorkspace:
     ) -> None:
         skill_root, hard_md, _soft_md = skill_roots
         config = _make_skills_config(workdir, skill_root)
+        runtime = ClaudeSessionRuntime()
 
-        ClaudeSessionRuntime()._setup_workspace(config)
+        runtime._setup_workspace(config)
 
-        claude_md = workdir / ".claude" / "CLAUDE.md"
+        claude_md = _claude_md_path(runtime, config)
         assert claude_md.exists()
         assert f"@{hard_md}" in claude_md.read_text()
 
@@ -275,10 +282,11 @@ class TestSetupWorkspace:
     ) -> None:
         skill_root, _hard_md, soft_md = skill_roots
         config = _make_skills_config(workdir, skill_root)
+        runtime = ClaudeSessionRuntime()
 
-        ClaudeSessionRuntime()._setup_workspace(config)
+        runtime._setup_workspace(config)
 
-        text = (workdir / ".claude" / "CLAUDE.md").read_text()
+        text = _claude_md_path(runtime, config).read_text()
         assert f"@{soft_md}" not in text
         assert "f-cs1-soft-skill" in text
 
@@ -287,9 +295,10 @@ class TestSetupWorkspace:
     ) -> None:
         skill_root, _hard, _soft = skill_roots
         config = _make_skills_config(workdir, skill_root)
+        runtime = ClaudeSessionRuntime()
 
-        ClaudeSessionRuntime()._setup_workspace(config)
-        text = (workdir / ".claude" / "CLAUDE.md").read_text()
+        runtime._setup_workspace(config)
+        text = _claude_md_path(runtime, config).read_text()
         assert "agent-container:start" in text
         assert "agent-container:end" in text
 
@@ -303,7 +312,7 @@ class TestCleanupWorkspace:
         runtime = ClaudeSessionRuntime()
         runtime._setup_workspace(config)
         runtime._cleanup_workspace(config)
-        claude_md = workdir / ".claude" / "CLAUDE.md"
+        claude_md = _claude_md_path(runtime, config)
         if claude_md.exists():
             assert "agent-container:start" not in claude_md.read_text()
 
