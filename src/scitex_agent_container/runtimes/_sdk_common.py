@@ -392,24 +392,20 @@ def build_sdk_options(
     # delivery). We forward each entry as a separate ``--channels`` arg
     # via the SDK's ``extra_args`` escape hatch when available.
     if channels and any(c.strip() == "server:sac" for c in channels):
-        # Register `sac mcp channel` as a stdio MCP server. claude will
-        # surface its tools (a2a_send/reply/ack/peers/inbox) under the
-        # `mcp__sac__*` namespace AND consume its push events via the
-        # `notifications/claude/channel` MCP method.
-        #
-        # NOTE: we deliberately do NOT pass `--channels server:sac` or
-        # `--dangerously-load-development-channels server:sac` to the
-        # claude CLI. When those flags were set, claude treated the sac
-        # MCP server as a channel-only consumer and refused to surface
-        # its tools — alpha would answer "I don't have an a2a_send
-        # tool" even though the MCP server was healthy and listing the
-        # tools correctly over stdio.
-        #
-        # If/when the upstream channels research preview supports
-        # tool + channel coexistence on one MCP server, we can re-add
-        # the flag. Until then: MCP tools are the contract; push
-        # delivery rides the same stdio stream as the standard MCP
-        # `notifications/claude/channel` mechanism.
+        # Register `sac mcp channel` as a stdio MCP server. claude
+        # exposes its tools (a2a_send/reply/ack/peers/inbox) under the
+        # `mcp__sac__*` namespace AND delivers its push events through
+        # the standard MCP `notifications/claude/channel` method —
+        # provided claude was started with
+        # `--dangerously-load-development-channels`, which is what
+        # turns rendering of those `<channel ...>` tags on in the
+        # session. The `--channels server:sac` flag (without the
+        # dangerously- prefix) caused claude to treat the MCP server
+        # as channel-only and dropped the tool surface; we do NOT set
+        # that one. Net effect: tools + push delivery both work.
+        extra_args = kwargs.setdefault("extra_args", {})
+        if isinstance(extra_args, dict):
+            extra_args.setdefault("dangerously-load-development-channels", "server:sac")
         mcps = kwargs.setdefault("mcp_servers", {})
         if isinstance(mcps, dict) and "sac" not in mcps:
             sidecar_args = ["mcp", "channel", "--name", agent_name]
