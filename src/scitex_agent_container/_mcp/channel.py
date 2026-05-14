@@ -232,15 +232,26 @@ def _register_tools(
         return None
 
     def _wrap_message_send(content: str, **extra: Any) -> dict[str, Any]:
+        # sac-extension fields (from_agent, conversation_id, ...) live
+        # under ``params.metadata`` per A2A v1 — the SDK's strict proto
+        # validator rejects unknown top-level params fields, so we
+        # CANNOT splat them at the params root.
+        metadata: dict[str, Any] = {"from_agent": agent_name}
+        metadata.update({k: v for k, v in extra.items() if v is not None})
         params: dict[str, Any] = {
-            "message": {"parts": [{"text": content}]},
-            "from_agent": agent_name,
+            "message": {
+                "message_id": _uuid.uuid4().hex,
+                "role": "ROLE_USER",
+                "parts": [{"text": content}],
+            },
+            "metadata": metadata,
         }
-        params.update({k: v for k, v in extra.items() if v is not None})
         return {
             "jsonrpc": "2.0",
             "id": _uuid.uuid4().hex,
-            "method": "message/send",
+            # v1 gRPC-style method name; sac's `_publish_channel_event`
+            # accepts both `SendMessage` and legacy `message/send`.
+            "method": "SendMessage",
             "params": params,
         }
 

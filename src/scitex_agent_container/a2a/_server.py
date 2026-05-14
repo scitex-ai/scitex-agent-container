@@ -319,14 +319,23 @@ async def _publish_channel_event(
         for p in parts:
             if isinstance(p, dict) and isinstance(p.get("text"), str):
                 text += p["text"]
+    # sac-extension fields live in ``params.metadata`` per A2A v1
+    # (the SDK rejects unknown top-level params fields under strict
+    # proto validation). We also accept ``message.metadata`` as a
+    # secondary location since some clients prefer message-scoped
+    # metadata over request-scoped.
+    sac_meta: dict[str, Any] = {}
+    for src in (params.get("metadata"), message.get("metadata")):
+        if isinstance(src, dict):
+            sac_meta.update(src)
     event = mint_event(
         name,
         content=text,
-        from_agent=params.get("from_agent"),
-        conversation_id=params.get("conversation_id"),
-        in_reply_to=params.get("in_reply_to"),
-        priority=str(params.get("priority", "normal")),
-        requires_reply=bool(params.get("requires_reply", False)),
+        from_agent=sac_meta.get("from_agent"),
+        conversation_id=sac_meta.get("conversation_id"),
+        in_reply_to=sac_meta.get("in_reply_to"),
+        priority=str(sac_meta.get("priority", "normal")),
+        requires_reply=bool(sac_meta.get("requires_reply", False)),
     )
     await ctx.inbox.publish(name, event)
 
