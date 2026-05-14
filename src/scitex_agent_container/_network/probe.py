@@ -62,12 +62,24 @@ DEFAULT_HUB_PORT = 443
 DEFAULT_HUB_URL = ""
 DEFAULT_TIMEOUT_S = 3.0
 
-DEFAULT_LOG_ROOT = (
-    Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".scitex")
-    / "agent-container"
-    / "logs"
-    / "network"
-)
+
+def _default_log_root() -> Path:
+    """Resolve the JSONL log root at call time.
+
+    Honours ``$SAC_PROBE_LOG_ROOT`` as an explicit override (test
+    isolation + ops override), then ``$XDG_DATA_HOME``, falling back to
+    ``~/.scitex/agent-container/logs/network``.
+    """
+    override = os.environ.get("SAC_PROBE_LOG_ROOT")
+    if override:
+        return Path(override)
+    base = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".scitex")
+    return base / "agent-container" / "logs" / "network"
+
+
+# Back-compat re-export. Reads of this attribute get the path at import
+# time; ``_default_log_root()`` is the authoritative source.
+DEFAULT_LOG_ROOT = _default_log_root()
 
 
 @dataclass
@@ -404,7 +416,7 @@ def summarise(results: Iterable[ProbeResult]) -> dict[str, Any]:
 
 
 def _log_path(agent: str, root: Path | None = None) -> Path:
-    base = Path(root) if root else DEFAULT_LOG_ROOT
+    base = Path(root) if root else _default_log_root()
     base.mkdir(parents=True, exist_ok=True)
     safe = re.sub(r"[^a-zA-Z0-9_.\-]", "-", agent or "anonymous-agent")
     return base / f"{safe}.jsonl"
@@ -440,9 +452,17 @@ def run_and_log(
     hub_url: str = DEFAULT_HUB_URL,
     timeout: float = DEFAULT_TIMEOUT_S,
     root: Path | None = None,
+    probes=None,
 ) -> dict[str, Any]:
-    """One-shot convenience: run all probes, log, return the summary."""
-    results = run_all_probes(
+    """One-shot convenience: run all probes, log, return the summary.
+
+    ``probes`` is an injection seam — defaults to ``run_all_probes`` so
+    production callers are unchanged. Tests pass a hand-rolled callable
+    that returns a list of ``ProbeResult`` objects.
+    """
+    if probes is None:
+        probes = run_all_probes
+    results = probes(
         hub_host=hub_host,
         hub_port=hub_port,
         hub_url=hub_url,
