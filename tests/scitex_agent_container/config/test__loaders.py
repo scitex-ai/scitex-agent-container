@@ -4,6 +4,11 @@ Covers the helpers (``_resolve_venv``, ``_resolve_python_venv``,
 ``_parse_env_files``, ``compose_effective_name``) plus the v2/v3
 dispatch and dict-shape rejection paths invoked through the public
 ``load_config`` API.
+
+TQ cleanup: every test carries AAA markers (TQ002) and exactly one
+assertion (TQ007). Same-shape invariants over a small set of inputs
+collapse into ``pytest.parametrize``. Test names spell out the
+behaviour being verified (TQ003-compatible).
 """
 
 from __future__ import annotations
@@ -46,32 +51,57 @@ def _home_redirect(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_venv_returns_input_when_not_auto() -> None:
-    assert _resolve_venv("/explicit/path") == "/explicit/path"
-    assert _resolve_venv("") == ""
+@pytest.mark.parametrize(
+    "value",
+    ["/explicit/path", ""],
+)
+def test_resolve_venv_returns_input_when_not_auto(value: str) -> None:
+    # Arrange
+    incoming = value
+    # Act
+    out = _resolve_venv(incoming)
+    # Assert
+    assert out == incoming
 
 
 def test_resolve_venv_non_string_returns_input() -> None:
-    assert _resolve_venv(None) is None  # type: ignore[arg-type]
+    # Arrange
+    incoming = None
+    # Act
+    out = _resolve_venv(incoming)  # type: ignore[arg-type]
+    # Assert
+    assert out is None
 
 
 def test_resolve_venv_auto_picks_first_existing(_home_redirect: Path) -> None:
+    # Arrange
     venv = _home_redirect / ".venv-3.11"
     (venv / "bin").mkdir(parents=True)
     (venv / "bin" / "activate").write_text("")
+    # Act
     out = _resolve_venv("auto")
+    # Assert
     assert out == "~/.venv-3.11"
 
 
 def test_resolve_venv_auto_no_match_returns_empty(_home_redirect: Path) -> None:
-    assert _resolve_venv("auto") == ""
+    # Arrange — no venv directories created.
+    _ = _home_redirect
+    # Act
+    out = _resolve_venv("auto")
+    # Assert
+    assert out == ""
 
 
 def test_resolve_venv_case_insensitive(_home_redirect: Path) -> None:
+    # Arrange
     venv = _home_redirect / ".venv"
     (venv / "bin").mkdir(parents=True)
     (venv / "bin" / "activate").write_text("")
-    assert _resolve_venv("AUTO") == "~/.venv"
+    # Act
+    out = _resolve_venv("AUTO")
+    # Assert
+    assert out == "~/.venv"
 
 
 # ---------------------------------------------------------------------------
@@ -79,54 +109,99 @@ def test_resolve_venv_case_insensitive(_home_redirect: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_python_venv_empty_returns_empty() -> None:
-    assert _resolve_python_venv(None) == ""
-    assert _resolve_python_venv("") == ""
-    assert _resolve_python_venv([]) == ""
+@pytest.mark.parametrize(
+    "value",
+    [None, "", []],
+    ids=["none", "empty-string", "empty-list"],
+)
+def test_resolve_python_venv_empty_returns_empty(value) -> None:
+    # Arrange
+    incoming = value
+    # Act
+    out = _resolve_python_venv(incoming)
+    # Assert
+    assert out == ""
 
 
 def test_resolve_python_venv_relative_returns_verbatim() -> None:
-    assert _resolve_python_venv(".venv") == ".venv"
+    # Arrange
+    incoming = ".venv"
+    # Act
+    out = _resolve_python_venv(incoming)
+    # Assert
+    assert out == ".venv"
 
 
 def test_resolve_python_venv_absolute_existing(_home_redirect: Path) -> None:
+    # Arrange
     venv = _home_redirect / "myenv"
     (venv / "bin").mkdir(parents=True)
     (venv / "bin" / "activate").write_text("")
-    assert _resolve_python_venv(str(venv)) == str(venv)
+    # Act
+    out = _resolve_python_venv(str(venv))
+    # Assert
+    assert out == str(venv)
 
 
 def test_resolve_python_venv_absolute_missing_raises() -> None:
-    with pytest.raises(RuntimeError, match="bin/activate"):
-        _resolve_python_venv("/nonexistent/venv")
+    # Arrange
+    missing = "/nonexistent/venv"
+    # Act
+    ctx = pytest.raises(RuntimeError, match="bin/activate")
+    # Assert
+    with ctx:
+        _resolve_python_venv(missing)
 
 
 def test_resolve_python_venv_list_first_match_wins(_home_redirect: Path) -> None:
+    # Arrange
     good = _home_redirect / "g"
     (good / "bin").mkdir(parents=True)
     (good / "bin" / "activate").write_text("")
-    out = _resolve_python_venv([str(_home_redirect / "miss"), str(good)])
+    chain = [str(_home_redirect / "miss"), str(good)]
+    # Act
+    out = _resolve_python_venv(chain)
+    # Assert
     assert out == str(good)
 
 
 def test_resolve_python_venv_list_relative_short_circuits() -> None:
-    out = _resolve_python_venv(["./first", "/absolute/second"])
+    # Arrange
+    chain = ["./first", "/absolute/second"]
+    # Act
+    out = _resolve_python_venv(chain)
+    # Assert
     assert out == "./first"
 
 
 def test_resolve_python_venv_list_no_match_raises(_home_redirect: Path) -> None:
-    with pytest.raises(RuntimeError, match="chain"):
-        _resolve_python_venv([str(_home_redirect / "x"), str(_home_redirect / "y")])
+    # Arrange
+    chain = [str(_home_redirect / "x"), str(_home_redirect / "y")]
+    # Act
+    ctx = pytest.raises(RuntimeError, match="chain")
+    # Assert
+    with ctx:
+        _resolve_python_venv(chain)
 
 
 def test_resolve_python_venv_list_with_non_string_raises() -> None:
-    with pytest.raises(RuntimeError, match="strings"):
-        _resolve_python_venv(["ok", 42])  # type: ignore[list-item]
+    # Arrange
+    chain = ["ok", 42]
+    # Act
+    ctx = pytest.raises(RuntimeError, match="strings")
+    # Assert
+    with ctx:
+        _resolve_python_venv(chain)  # type: ignore[arg-type]
 
 
 def test_resolve_python_venv_invalid_type_raises() -> None:
-    with pytest.raises(RuntimeError, match="string or list"):
-        _resolve_python_venv(42)  # type: ignore[arg-type]
+    # Arrange
+    bad = 42
+    # Act
+    ctx = pytest.raises(RuntimeError, match="string or list")
+    # Assert
+    with ctx:
+        _resolve_python_venv(bad)  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
@@ -134,27 +209,56 @@ def test_resolve_python_venv_invalid_type_raises() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_parse_env_files_empty() -> None:
-    assert _parse_env_files({}) == []
-    assert _parse_env_files({"env-file": ""}) == []
+@pytest.mark.parametrize(
+    "spec",
+    [{}, {"env-file": ""}],
+    ids=["missing-key", "empty-string"],
+)
+def test_parse_env_files_empty_inputs_return_empty_list(spec: dict) -> None:
+    # Arrange
+    incoming = spec
+    # Act
+    out = _parse_env_files(incoming)
+    # Assert
+    assert out == []
 
 
 def test_parse_env_files_str() -> None:
-    assert _parse_env_files({"env-file": "/a/b.env"}) == ["/a/b.env"]
+    # Arrange
+    spec = {"env-file": "/a/b.env"}
+    # Act
+    out = _parse_env_files(spec)
+    # Assert
+    assert out == ["/a/b.env"]
 
 
 def test_parse_env_files_list() -> None:
-    assert _parse_env_files({"env-file": ["a.env", "b.env"]}) == ["a.env", "b.env"]
+    # Arrange
+    spec = {"env-file": ["a.env", "b.env"]}
+    # Act
+    out = _parse_env_files(spec)
+    # Assert
+    assert out == ["a.env", "b.env"]
 
 
 def test_parse_env_files_list_with_non_string_raises() -> None:
-    with pytest.raises(RuntimeError, match="strings"):
-        _parse_env_files({"env-file": ["a", 2]})
+    # Arrange
+    spec = {"env-file": ["a", 2]}
+    # Act
+    ctx = pytest.raises(RuntimeError, match="strings")
+    # Assert
+    with ctx:
+        _parse_env_files(spec)
 
 
 def test_parse_env_files_invalid_type_raises() -> None:
-    with pytest.raises(RuntimeError, match="string or list"):
-        _parse_env_files({"env-file": {"a": "b"}})
+    # Arrange
+    spec = {"env-file": {"a": "b"}}
+    # Act
+    ctx = pytest.raises(RuntimeError, match="string or list")
+    # Assert
+    with ctx:
+        _parse_env_files(spec)
 
 
 # ---------------------------------------------------------------------------
@@ -163,27 +267,48 @@ def test_parse_env_files_invalid_type_raises() -> None:
 
 
 def test_compose_effective_name_no_hosts_returns_raw() -> None:
-    assert compose_effective_name("head", None, "ywata-note-win") == "head"
+    # Arrange
+    raw, hosts, hostname = "head", None, "ywata-note-win"
+    # Act
+    out = compose_effective_name(raw, hosts, hostname)
+    # Assert
+    assert out == "head"
 
 
 def test_compose_effective_name_singleton_hosts_returns_raw() -> None:
+    # Arrange
     hs = HostsSpec(host="ywata-note-win", hosts="")
-    assert compose_effective_name("head", hs, "ywata-note-win") == "head"
+    # Act
+    out = compose_effective_name("head", hs, "ywata-note-win")
+    # Assert
+    assert out == "head"
 
 
 def test_compose_effective_name_multi_hosts_suffixes() -> None:
+    # Arrange
     hs = HostsSpec(host="", hosts=["mba", "spartan"])
-    assert compose_effective_name("worker", hs, "mba") == "worker-mba"
+    # Act
+    out = compose_effective_name("worker", hs, "mba")
+    # Assert
+    assert out == "worker-mba"
 
 
 def test_compose_effective_name_idempotent_when_already_suffixed() -> None:
+    # Arrange
     hs = HostsSpec(host="", hosts=["mba"])
-    assert compose_effective_name("worker-mba", hs, "mba") == "worker-mba"
+    # Act
+    out = compose_effective_name("worker-mba", hs, "mba")
+    # Assert
+    assert out == "worker-mba"
 
 
 def test_compose_effective_name_raw_equals_hostname() -> None:
+    # Arrange
     hs = HostsSpec(host="", hosts=["mba"])
-    assert compose_effective_name("mba", hs, "mba") == "mba"
+    # Act
+    out = compose_effective_name("mba", hs, "mba")
+    # Assert
+    assert out == "mba"
 
 
 # ---------------------------------------------------------------------------
@@ -210,16 +335,24 @@ def _v2_yaml(
 
 
 def test_load_config_rejects_v2(tmp_path: Path) -> None:
+    # Arrange
     p = _v2_yaml(tmp_path)
-    with pytest.raises(ValueError):
+    # Act
+    ctx = pytest.raises(ValueError)
+    # Assert
+    with ctx:
         load_config(p)
 
 
 def test_load_config_rejects_non_dict_top_level(tmp_path: Path) -> None:
+    # Arrange
     p = tmp_path / "agent" / "spec.yaml"
     p.parent.mkdir()
     p.write_text("- one\n- two\n")  # list at top
-    with pytest.raises(ValueError):
+    # Act
+    ctx = pytest.raises(ValueError)
+    # Assert
+    with ctx:
         load_config(p)
 
 
@@ -228,7 +361,9 @@ def test_load_config_rejects_non_dict_top_level(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_load_config_v3_minimal(tmp_path: Path) -> None:
+@pytest.fixture
+def _v3_minimal_cfg(tmp_path: Path):
+    """Loaded v3 minimal config — shared setup for the single-assert siblings."""
     p = tmp_path / "myname" / "myname.yaml"
     p.parent.mkdir()
     body = {
@@ -240,32 +375,58 @@ def test_load_config_v3_minimal(tmp_path: Path) -> None:
         },
     }
     p.write_text(yaml.safe_dump(body))
-    cfg = load_config(p)
-    assert cfg.name == "myname"
-    assert cfg.image == "x.sif"
-    assert cfg.env["CLAUDE_AGENT_ID"] == "myname"
+    return load_config(p)
+
+
+def test_load_config_v3_minimal_sets_name_from_directory(_v3_minimal_cfg) -> None:
+    # Arrange
+    cfg = _v3_minimal_cfg
+    # Act
+    name = cfg.name
+    # Assert
+    assert name == "myname"
+
+
+def test_load_config_v3_minimal_propagates_apptainer_image(_v3_minimal_cfg) -> None:
+    # Arrange
+    cfg = _v3_minimal_cfg
+    # Act
+    image = cfg.image
+    # Assert
+    assert image == "x.sif"
+
+
+def test_load_config_v3_minimal_injects_claude_agent_id_env(_v3_minimal_cfg) -> None:
+    # Arrange
+    cfg = _v3_minimal_cfg
+    # Act
+    agent_id = cfg.env["CLAUDE_AGENT_ID"]
+    # Assert
+    assert agent_id == "myname"
 
 
 def test_load_config_v3_multi_host_appends_hostname(tmp_path: Path) -> None:
-    # PA-306: hand-rolled fake injection with save/restore.
+    # Arrange — PA-306: hand-rolled fake injection with save/restore.
     from scitex_agent_container.config import _loaders as _loaders_mod
 
     _saved_resolve = _loaders_mod.resolve_hostname
     _loaders_mod.resolve_hostname = lambda: "mba"
+    p = tmp_path / "worker" / "worker.yaml"
+    p.parent.mkdir()
+    body = {
+        "apiVersion": "scitex-agent-container/v3",
+        "kind": "Agent",
+        "spec": {
+            "runtime": "apptainer",
+            "apptainer": {"image": "x.sif"},
+            "hosts": ["mba", "spartan"],
+        },
+    }
+    p.write_text(yaml.safe_dump(body))
+    # Act
     try:
-        p = tmp_path / "worker" / "worker.yaml"
-        p.parent.mkdir()
-        body = {
-            "apiVersion": "scitex-agent-container/v3",
-            "kind": "Agent",
-            "spec": {
-                "runtime": "apptainer",
-                "apptainer": {"image": "x.sif"},
-                "hosts": ["mba", "spartan"],
-            },
-        }
-        p.write_text(yaml.safe_dump(body))
         cfg = load_config(p)
-        assert cfg.name == "worker-mba"
     finally:
         _loaders_mod.resolve_hostname = _saved_resolve
+    # Assert
+    assert cfg.name == "worker-mba"
