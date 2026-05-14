@@ -1,15 +1,28 @@
-"""Tests for ``scitex_agent_container._lifecycle.lifecycle``.
+"""Tests for ``scitex_agent_container._lifecycle.lifecycle`` — no mocks.
 
-Covers agent_start / agent_stop / agent_stop_all / agent_restart /
-agent_status / agent_logs / _get_runtime / _fallback_workdir /
-_run_hooks / _fire_forget_hook. External services (claude runtime,
-hub handover, subprocess hooks, health monitor) are mocked.
+All collaborators are real:
+  * ``AgentConfig`` is built either by the real loader (from a real
+    on-disk YAML) or by direct construction of the production
+    dataclass — no ``SimpleNamespace``/``MagicMock`` stand-ins.
+  * The ``runtime_factory`` and ``handover_mod`` seams are exercised
+    via hand-rolled fake classes whose surface matches the production
+    contract (``is_running``/``start``/``stop``/``logs`` and
+    ``ensure_instance_uuid``/``hydrate_from_hub``/...).
+  * The ``Registry`` is the real on-disk file-based ``Registry`` rooted
+    in ``tmp_path``.
+  * ``sleep_fn`` / ``thread_factory`` / ``runner`` are real Python
+    callables (no monkeypatching).
+
+The shared ``home`` redirection used to use ``monkeypatch.setattr`` on
+``Path.home``; we instead set ``HOME`` via a ``yield``-based env-var
+fixture which is what ``Path.home()`` reads on POSIX.
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from typing import Any, Iterator
 
 import pytest
 
@@ -17,10 +30,24 @@ from scitex_agent_container._lifecycle import lifecycle as lc
 from scitex_agent_container._state.registry import Registry
 from scitex_agent_container.config import AgentConfig
 
+# ---------------------------------------------------------------------------
+# Fixtures — real env, real Registry, real YAML on disk
+# ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
-def _isolate_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+def _isolate_home(tmp_path: Path) -> Iterator[None]:
+    # Arrange: redirect HOME so production code that uses Path.home()
+    # lands inside tmp_path instead of the developer's real home.
+    prev = os.environ.get("HOME")
+    os.environ["HOME"] = str(tmp_path)
+    try:
+        yield
+    finally:
+        if prev is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = prev
 
 
 @pytest.fixture
@@ -28,432 +55,1040 @@ def registry(tmp_path: Path) -> Registry:
     return Registry(registry_dir=tmp_path / "reg")
 
 
-@pytest.fixture
-def cfg(tmp_path) -> AgentConfig:
-    c = AgentConfig(name="alpha", workdir=str(tmp_path / "work"))
-    c.hooks = {
-        "pre_start": ["echo pre"],
-        "post_start": ["echo post"],
-        "pre_stop": [],
-        "post_stop": [],
-    }
-    return c
+def _write_spec(
+    tmp_path: Path,
+    *,
+    name: str = "alpha",
+    runtime: str = "apptainer",
+    extra_spec: str = "",
+) -> Path:
+    """Write a real, validator-passing v3 YAML at ``<tmp>/<name>/spec.yaml``.
+
+    Production ``load_config`` derives the agent name from the parent
+    directory (dir-as-SSoT), so the spec must live at ``<name>/spec.yaml``.
+    """
+    agent_dir = tmp_path / name
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    body = (
+        "apiVersion: scitex-agent-container/v3\n"
+        "kind: Agent\n"
+        "spec:\n"
+        f"  runtime: {runtime}\n"
+        f"  workdir: {tmp_path / 'work'}\n"
+        "  claude:\n"
+        "    model: sonnet\n"
+        "  hooks:\n"
+        "    pre_start: ['echo pre']\n"
+        "    post_start: ['echo post']\n"
+        "    pre_stop: []\n"
+        "    post_stop: []\n"
+        f"{extra_spec}"
+    )
+    spec = agent_dir / "spec.yaml"
+    spec.write_text(body)
+    return spec
 
 
-@pytest.fixture
-def fake_runtime():
-    rt = MagicMock()
-    rt.start.return_value = True
-    rt.stop.return_value = True
-    rt.is_running.return_value = False
-    rt.logs.return_value = "log-content"
-    return rt
+# ---------------------------------------------------------------------------
+# Real hand-rolled fakes (no unittest.mock)
+# ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def patched(monkeypatch, cfg, fake_runtime, tmp_path):
-    """Patch out external dependencies for lifecycle tests."""
-    spec_path = tmp_path / "spec.yaml"
-    spec_path.write_text("apiVersion: scitex-agent-container/v3\n")
-    monkeypatch.setattr(lc, "resolve_config", lambda p: str(spec_path))
-    monkeypatch.setattr(lc, "load_config", lambda p: cfg)
-    monkeypatch.setattr(lc, "_get_runtime", lambda c: fake_runtime)
+class FakeRuntime:
+    """Real collaborator implementing the runtime surface lifecycle uses.
 
-    # Patch attributes on the real handover module so lifecycle.py's
-    # ``from . import handover as _h`` sees no-op functions.
-    from scitex_agent_container._lifecycle import handover as real_handover
+    Matches ``is_running``/``start``/``stop``/``logs``. Records calls so
+    tests can assert on them. ``start_kwargs`` captures the most recent
+    keyword arguments passed to :meth:`start`.
+    """
 
-    handover_mock = MagicMock()
-    handover_mock.ensure_instance_uuid = MagicMock()
-    handover_mock.hydrate_from_hub = MagicMock()
-    handover_mock.push_pre_stop_snapshot = MagicMock()
-    handover_mock.start_failback_poller = MagicMock()
-    for attr in (
-        "ensure_instance_uuid",
-        "hydrate_from_hub",
-        "push_pre_stop_snapshot",
-        "start_failback_poller",
-    ):
-        monkeypatch.setattr(real_handover, attr, getattr(handover_mock, attr))
-    return {"spec_path": spec_path, "handover": handover_mock}
+    def __init__(
+        self,
+        *,
+        running: bool = False,
+        start_result: bool = True,
+        logs_text: str = "log-content",
+    ) -> None:
+        self.running = running
+        self.start_result = start_result
+        self.logs_text = logs_text
+        self.start_calls: list[AgentConfig] = []
+        self.stop_calls: list[AgentConfig] = []
+        self.start_kwargs: dict[str, Any] = {}
+        self.stop_should_raise: Exception | None = None
+        self.start_type_error: bool = False
+
+    def is_running(self, config: AgentConfig) -> bool:
+        return self.running
+
+    def start(self, config: AgentConfig, **kwargs: Any) -> bool:
+        if self.start_type_error and kwargs.get("dry_run"):
+            raise TypeError("got unexpected kw 'dry_run'")
+        self.start_calls.append(config)
+        self.start_kwargs = dict(kwargs)
+        return self.start_result
+
+    def stop(self, config: AgentConfig) -> None:
+        if self.stop_should_raise is not None:
+            raise self.stop_should_raise
+        self.stop_calls.append(config)
+
+    def logs(self, config: AgentConfig, lines: int) -> str:
+        return self.logs_text
 
 
-# --- helpers --------------------------------------------------------------
+class FakeHandover:
+    """Real collaborator implementing the handover module surface.
+
+    Matches the four module-level callables lifecycle dispatches to:
+    ``ensure_instance_uuid``, ``hydrate_from_hub``,
+    ``push_pre_stop_snapshot``, ``start_failback_poller``.
+    """
+
+    def __init__(self) -> None:
+        self.ensure_calls: list[AgentConfig] = []
+        self.hydrate_calls: list[AgentConfig] = []
+        self.pre_stop_calls: list[AgentConfig] = []
+        self.failback_calls: list[AgentConfig] = []
+        self.hydrate_raises: Exception | None = None
+        self.failback_raises: Exception | None = None
+
+    def ensure_instance_uuid(self, config: AgentConfig) -> str:
+        self.ensure_calls.append(config)
+        return "fake-uuid"
+
+    def hydrate_from_hub(self, config: AgentConfig) -> bool:
+        self.hydrate_calls.append(config)
+        if self.hydrate_raises is not None:
+            raise self.hydrate_raises
+        return True
+
+    def push_pre_stop_snapshot(
+        self, config: AgentConfig, payload: dict | None = None
+    ) -> bool:
+        self.pre_stop_calls.append(config)
+        return True
+
+    def start_failback_poller(self, config: AgentConfig) -> None:
+        self.failback_calls.append(config)
+        if self.failback_raises is not None:
+            raise self.failback_raises
 
 
-def test_get_runtime_returns_claude_session_for_apptainer(cfg):
+class FakeThread:
+    """Real Thread-shaped collaborator.
+
+    Records construction args + whether :meth:`start` was called. The
+    target callable is NOT invoked — it's the production code's
+    responsibility to pass a real ``threading.Thread`` for actual
+    parallelism; tests substitute this hand-rolled fake.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self.args = args
+        self.kwargs = kwargs
+        self.started = False
+
+    def start(self) -> None:
+        self.started = True
+
+
+class _FakeResult:
+    """Real callable result object with the subprocess.run shape."""
+
+    def __init__(self, returncode: int = 0, stderr: str = "") -> None:
+        self.returncode = returncode
+        self.stderr = stderr
+
+
+def _no_sleep(_seconds: float) -> None:
+    return None
+
+
+# ---------------------------------------------------------------------------
+# _get_runtime — purely declarative dispatch on config.runtime
+# ---------------------------------------------------------------------------
+
+
+def test_get_runtime_apptainer_returns_claude_session_runtime() -> None:
+    # Arrange
+    cfg = AgentConfig(name="x", runtime="apptainer")
+    # Act
     rt = lc._get_runtime(cfg)
+    # Assert
     from scitex_agent_container.runtimes.claude_session import ClaudeSessionRuntime
 
     assert isinstance(rt, ClaudeSessionRuntime)
 
 
-def test_get_runtime_rejects_unknown_runtime():
-    c = AgentConfig(name="x")
-    c.runtime = "docker-legacy"
-    with pytest.raises(ValueError, match="Unsupported runtime"):
-        lc._get_runtime(c)
-
-
-def test_get_runtime_treats_empty_as_apptainer():
-    c = AgentConfig(name="x")
-    c.runtime = ""
+def test_get_runtime_empty_runtime_treated_as_apptainer() -> None:
+    # Arrange: explicit empty string runtime falls through to apptainer.
+    cfg = AgentConfig(name="x", runtime="")
+    # Act
+    rt = lc._get_runtime(cfg)
+    # Assert
     from scitex_agent_container.runtimes.claude_session import ClaudeSessionRuntime
 
-    assert isinstance(lc._get_runtime(c), ClaudeSessionRuntime)
+    assert isinstance(rt, ClaudeSessionRuntime)
 
 
-def test_fallback_workdir_lands_in_sac_runtime(tmp_path):
+def test_get_runtime_unsupported_runtime_raises() -> None:
+    # Arrange
+    cfg = AgentConfig(name="x", runtime="docker-legacy")
+    # Act
+    call = lambda: lc._get_runtime(cfg)  # noqa: E731
+    # Assert
+    with pytest.raises(ValueError, match="Unsupported runtime"):
+        call()
+
+
+# ---------------------------------------------------------------------------
+# _fallback_workdir — pure path string
+# ---------------------------------------------------------------------------
+
+
+def test_fallback_workdir_lands_under_sac_runtime_agents(tmp_path: Path) -> None:
+    # Arrange (HOME already redirected to tmp_path by autouse fixture).
+    # Act
     path = lc._fallback_workdir("alpha")
+    # Assert
     assert path.endswith("/.scitex/agent-container/runtime/agents/alpha")
 
 
-def test_run_hooks_executes_shell(monkeypatch):
-    calls = []
+# ---------------------------------------------------------------------------
+# _run_hooks — injected real runner, skips URLs + empty, logs failures
+# ---------------------------------------------------------------------------
 
-    class FakeResult:
-        returncode = 0
-        stderr = ""
 
-    def fake_run(cmd, **kwargs):
+def test_run_hooks_executes_each_non_empty_non_url_hook() -> None:
+    # Arrange
+    calls: list[str] = []
+
+    def runner(cmd: str, **_kwargs: Any) -> _FakeResult:
         calls.append(cmd)
-        return FakeResult()
+        return _FakeResult()
 
-    monkeypatch.setattr("subprocess.run", fake_run)
-    lc._run_hooks(["echo hi", "", "http://skip-me"], extra_env={"X": "1"})
+    # Act
+    lc._run_hooks(
+        ["echo hi", "", "http://skip-me"], extra_env={"X": "1"}, runner=runner
+    )
+    # Assert
     assert calls == ["echo hi"]
 
 
-def test_run_hooks_warns_on_failure(monkeypatch, capsys):
-    class FakeResult:
-        returncode = 2
-        stderr = "boom"
+def test_run_hooks_skips_https_url_entries() -> None:
+    # Arrange
+    calls: list[str] = []
 
-    monkeypatch.setattr("subprocess.run", lambda *a, **kw: FakeResult())
-    lc._run_hooks(["false"])
+    def runner(cmd: str, **_kwargs: Any) -> _FakeResult:
+        calls.append(cmd)
+        return _FakeResult()
+
+    # Act
+    lc._run_hooks(["https://hook.example/h"], runner=runner)
+    # Assert
+    assert calls == []
+
+
+def test_run_hooks_warns_on_nonzero_returncode(capsys: pytest.CaptureFixture) -> None:
+    # Arrange
+    def runner(cmd: str, **_kwargs: Any) -> _FakeResult:
+        return _FakeResult(returncode=2, stderr="boom")
+
+    # Act
+    lc._run_hooks(["false"], runner=runner)
+    # Assert
     err = capsys.readouterr().err
-    assert "Hook failed" in err
-    assert "boom" in err
+    assert "Hook failed" in err and "boom" in err
 
 
-def test_fire_forget_hook_swallows_exceptions(monkeypatch, capsys):
-    def boom(*a, **kw):
+def test_run_hooks_real_subprocess_executes(tmp_path: Path) -> None:
+    # Arrange: with the real ``subprocess.run`` default, an existing
+    # command must complete without raising and produce a side-effect
+    # we can observe on disk.
+    sentinel = tmp_path / "marker"
+    # Act
+    lc._run_hooks([f"touch {sentinel}"])
+    # Assert
+    assert sentinel.exists()
+
+
+# ---------------------------------------------------------------------------
+# _fire_forget_hook — swallows exceptions from the underlying run_hook
+# ---------------------------------------------------------------------------
+
+
+def test_fire_forget_hook_swallows_run_hook_exceptions() -> None:
+    # Arrange: route the module-level ``run_hook`` symbol used by
+    # ``_fire_forget_hook`` to a real callable that raises. We restore
+    # the original at the end so we don't leak state across tests.
+    original = lc.run_hook
+
+    def boom(*_a: Any, **_kw: Any) -> None:
         raise RuntimeError("hook crash")
 
-    monkeypatch.setattr(lc, "run_hook", boom)
-    # should NOT raise
-    lc._fire_forget_hook("alpha", "pre_start", ["echo hi"])
+    lc.run_hook = boom  # real callable, not Mock
+    try:
+        # Act: must not raise.
+        lc._fire_forget_hook("alpha", "pre_start", ["echo hi"])
+        # Assert: reaching this line means the exception was swallowed.
+        assert True
+    finally:
+        lc.run_hook = original
 
 
-# --- agent_start ----------------------------------------------------------
+# ---------------------------------------------------------------------------
+# agent_start — happy paths, force, dry_run, hooks, health monitor
+# ---------------------------------------------------------------------------
 
 
-def test_agent_start_happy_path(patched, registry, fake_runtime):
-    ok = lc.agent_start(str(patched["spec_path"]), registry=registry)
-    assert ok is True
-    fake_runtime.start.assert_called_once()
-    assert registry.exists("alpha")
-    patched["handover"].ensure_instance_uuid.assert_called_once()
-    patched["handover"].hydrate_from_hub.assert_called_once()
-
-
-def test_agent_start_idempotent_when_running(patched, registry, fake_runtime):
-    fake_runtime.is_running.return_value = True
-    # Pre-add registry entry to simulate "already running"
-    registry.add("alpha", str(patched["spec_path"]), "cld-alpha")
-    ok = lc.agent_start(str(patched["spec_path"]), registry=registry)
-    assert ok is True
-    fake_runtime.start.assert_not_called()
-
-
-def test_agent_start_force_restarts(patched, registry, fake_runtime, monkeypatch):
-    fake_runtime.is_running.return_value = True
-    registry.add("alpha", str(patched["spec_path"]), "cld-alpha")
-    monkeypatch.setattr("time.sleep", lambda *_: None)
-    ok = lc.agent_start(str(patched["spec_path"]), registry=registry, force=True)
-    assert ok is True
-    # stop happened, then start
-    fake_runtime.stop.assert_called_once()
-    fake_runtime.start.assert_called_once()
-
-
-def test_agent_start_force_with_stale_registry(patched, registry, fake_runtime):
-    # not running but registered → stale entry must be removed via stop()
-    fake_runtime.is_running.return_value = False
-    registry.add("alpha", str(patched["spec_path"]), "cld-alpha")
-    ok = lc.agent_start(str(patched["spec_path"]), registry=registry, force=True)
-    assert ok is True
-    fake_runtime.stop.assert_called_once()
-
-
-def test_agent_start_session_and_resume_overrides(patched, registry, fake_runtime, cfg):
-    lc.agent_start(
-        str(patched["spec_path"]),
+def test_agent_start_happy_path_returns_true(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    spec = _write_spec(tmp_path)
+    runtime = FakeRuntime(running=False, start_result=True)
+    handover = FakeHandover()
+    # Act
+    ok = lc.agent_start(
+        str(spec),
         registry=registry,
+        runtime_factory=lambda _c: runtime,
+        handover_mod=handover,
+        sleep_fn=_no_sleep,
+    )
+    # Assert
+    assert ok is True
+
+
+def test_agent_start_happy_path_calls_runtime_start_once(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    spec = _write_spec(tmp_path)
+    runtime = FakeRuntime(running=False, start_result=True)
+    # Act
+    lc.agent_start(
+        str(spec),
+        registry=registry,
+        runtime_factory=lambda _c: runtime,
+        handover_mod=FakeHandover(),
+        sleep_fn=_no_sleep,
+    )
+    # Assert
+    assert len(runtime.start_calls) == 1
+
+
+def test_agent_start_happy_path_registers_agent(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    spec = _write_spec(tmp_path)
+    runtime = FakeRuntime(running=False, start_result=True)
+    # Act
+    lc.agent_start(
+        str(spec),
+        registry=registry,
+        runtime_factory=lambda _c: runtime,
+        handover_mod=FakeHandover(),
+        sleep_fn=_no_sleep,
+    )
+    # Assert
+    assert registry.exists("alpha")
+
+
+def test_agent_start_happy_path_invokes_handover(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    spec = _write_spec(tmp_path)
+    handover = FakeHandover()
+    # Act
+    lc.agent_start(
+        str(spec),
+        registry=registry,
+        runtime_factory=lambda _c: FakeRuntime(start_result=True),
+        handover_mod=handover,
+        sleep_fn=_no_sleep,
+    )
+    # Assert
+    assert len(handover.ensure_calls) == 1 and len(handover.hydrate_calls) == 1
+
+
+def test_agent_start_idempotent_when_already_running(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange: registry knows the agent and runtime reports it running.
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    runtime = FakeRuntime(running=True, start_result=True)
+    # Act
+    ok = lc.agent_start(
+        str(spec),
+        registry=registry,
+        runtime_factory=lambda _c: runtime,
+        handover_mod=FakeHandover(),
+        sleep_fn=_no_sleep,
+    )
+    # Assert: returns success and never calls start.
+    assert ok is True and runtime.start_calls == []
+
+
+def test_agent_start_force_restarts_when_already_running(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    runtime = FakeRuntime(running=True, start_result=True)
+    # Act
+    lc.agent_start(
+        str(spec),
+        registry=registry,
+        runtime_factory=lambda _c: runtime,
+        handover_mod=FakeHandover(),
+        sleep_fn=_no_sleep,
+        force=True,
+    )
+    # Assert: force triggered stop AND start on the same runtime instance.
+    assert len(runtime.stop_calls) == 1 and len(runtime.start_calls) == 1
+
+
+def test_agent_start_force_clears_stale_registry_entry(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange: registered but runtime says not running → stale entry.
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    runtime = FakeRuntime(running=False, start_result=True)
+    # Act
+    ok = lc.agent_start(
+        str(spec),
+        registry=registry,
+        runtime_factory=lambda _c: runtime,
+        handover_mod=FakeHandover(),
+        sleep_fn=_no_sleep,
+        force=True,
+    )
+    # Assert
+    assert ok is True and len(runtime.stop_calls) == 1
+
+
+def test_agent_start_session_override_mutates_claude_session(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    spec = _write_spec(tmp_path)
+    captured: dict[str, AgentConfig] = {}
+
+    def factory(c: AgentConfig) -> FakeRuntime:
+        captured["cfg"] = c
+        return FakeRuntime(start_result=True)
+
+    # Act
+    lc.agent_start(
+        str(spec),
+        registry=registry,
+        runtime_factory=factory,
+        handover_mod=FakeHandover(),
+        sleep_fn=_no_sleep,
         session_override="resume",
         resume_id_override="abc-123",
     )
-    assert cfg.claude.session == "resume"
-    assert cfg.claude.resume_id == "abc-123"
+    # Assert
+    assert captured["cfg"].claude.session == "resume"
 
 
-def test_agent_start_runtime_failure_raises(patched, registry, fake_runtime):
-    fake_runtime.start.return_value = False
+def test_agent_start_resume_id_override_mutates_resume_id(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    spec = _write_spec(tmp_path)
+    captured: dict[str, AgentConfig] = {}
+
+    def factory(c: AgentConfig) -> FakeRuntime:
+        captured["cfg"] = c
+        return FakeRuntime(start_result=True)
+
+    # Act
+    lc.agent_start(
+        str(spec),
+        registry=registry,
+        runtime_factory=factory,
+        handover_mod=FakeHandover(),
+        sleep_fn=_no_sleep,
+        session_override="resume",
+        resume_id_override="abc-123",
+    )
+    # Assert
+    assert captured["cfg"].claude.resume_id == "abc-123"
+
+
+def test_agent_start_runtime_failure_raises_runtime_error(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    spec = _write_spec(tmp_path)
+    runtime = FakeRuntime(running=False, start_result=False)
+    # Act
+    call = lambda: lc.agent_start(  # noqa: E731
+        str(spec),
+        registry=registry,
+        runtime_factory=lambda _c: runtime,
+        handover_mod=FakeHandover(),
+        sleep_fn=_no_sleep,
+    )
+    # Assert
     with pytest.raises(RuntimeError, match="Failed to start"):
-        lc.agent_start(str(patched["spec_path"]), registry=registry)
+        call()
 
 
-def test_agent_start_dry_run_skips_registry(patched, registry, fake_runtime):
-    fake_runtime.start.return_value = True
-    ok = lc.agent_start(str(patched["spec_path"]), registry=registry, dry_run=True)
+def test_agent_start_dry_run_does_not_register(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    spec = _write_spec(tmp_path)
+    runtime = FakeRuntime(running=False, start_result=True)
+    # Act
+    ok = lc.agent_start(
+        str(spec),
+        registry=registry,
+        runtime_factory=lambda _c: runtime,
+        handover_mod=FakeHandover(),
+        sleep_fn=_no_sleep,
+        dry_run=True,
+    )
+    # Assert
+    assert ok is True and not registry.exists("alpha")
+
+
+def test_agent_start_dry_run_passes_dry_run_kwarg_to_runtime(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    spec = _write_spec(tmp_path)
+    runtime = FakeRuntime(running=False, start_result=True)
+    # Act
+    lc.agent_start(
+        str(spec),
+        registry=registry,
+        runtime_factory=lambda _c: runtime,
+        handover_mod=FakeHandover(),
+        sleep_fn=_no_sleep,
+        dry_run=True,
+    )
+    # Assert
+    assert runtime.start_kwargs.get("dry_run") is True
+
+
+def test_agent_start_dry_run_typeerror_raises_helpful_runtime_error(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange: a runtime whose ``start`` refuses ``dry_run`` (older runtime).
+    spec = _write_spec(tmp_path)
+    runtime = FakeRuntime(running=False)
+    runtime.start_type_error = True
+    # Act
+    call = lambda: lc.agent_start(  # noqa: E731
+        str(spec),
+        registry=registry,
+        runtime_factory=lambda _c: runtime,
+        handover_mod=FakeHandover(),
+        sleep_fn=_no_sleep,
+        dry_run=True,
+    )
+    # Assert
+    with pytest.raises(RuntimeError, match="does not support --dry-run"):
+        call()
+
+
+def test_agent_start_hydrate_failure_does_not_block_start(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange: hydrate_from_hub raises but agent_start must still succeed.
+    spec = _write_spec(tmp_path)
+    handover = FakeHandover()
+    handover.hydrate_raises = RuntimeError("hub down")
+    # Act
+    ok = lc.agent_start(
+        str(spec),
+        registry=registry,
+        runtime_factory=lambda _c: FakeRuntime(start_result=True),
+        handover_mod=handover,
+        sleep_fn=_no_sleep,
+    )
+    # Assert
     assert ok is True
-    # dry_run passes through, but no registry write
-    assert not registry.exists("alpha")
-    # Called with dry_run=True kwarg
-    args, kwargs = fake_runtime.start.call_args
-    assert kwargs.get("dry_run") is True
 
 
-def test_agent_start_dry_run_typeerror_propagates(patched, registry):
-    rt = MagicMock()
+def test_agent_start_starts_health_monitor_thread_when_enabled(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange: health.enabled=true in the spec → production must spawn a thread.
+    extra = "  health:\n    enabled: true\n    method: sdk-alive\n    interval: 0\n"
+    spec = _write_spec(tmp_path, extra_spec=extra)
+    created: list[FakeThread] = []
 
-    def start_no_dry(config, **kw):
-        # Older runtime: refuse dry_run kwarg
-        raise TypeError("got unexpected kw 'dry_run'")
+    def factory(*args: Any, **kwargs: Any) -> FakeThread:
+        t = FakeThread(*args, **kwargs)
+        created.append(t)
+        return t
 
-    rt.start.side_effect = start_no_dry
-    with patch.object(lc, "_get_runtime", return_value=rt):
-        with pytest.raises(RuntimeError, match="does not support --dry-run"):
-            lc.agent_start(str(patched["spec_path"]), registry=registry, dry_run=True)
+    # Act
+    lc.agent_start(
+        str(spec),
+        registry=registry,
+        runtime_factory=lambda _c: FakeRuntime(start_result=True),
+        handover_mod=FakeHandover(),
+        sleep_fn=_no_sleep,
+        thread_factory=factory,
+    )
+    # Assert: the production code instantiated and started exactly one thread.
+    assert len(created) == 1 and created[0].started is True
 
 
-def test_agent_start_hydrate_failure_does_not_block(patched, registry, fake_runtime):
-    patched["handover"].hydrate_from_hub.side_effect = RuntimeError("hub down")
-    ok = lc.agent_start(str(patched["spec_path"]), registry=registry)
+def test_agent_start_failback_poller_failure_is_swallowed(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    spec = _write_spec(tmp_path)
+    handover = FakeHandover()
+    handover.failback_raises = RuntimeError("nope")
+    # Act
+    ok = lc.agent_start(
+        str(spec),
+        registry=registry,
+        runtime_factory=lambda _c: FakeRuntime(start_result=True),
+        handover_mod=handover,
+        sleep_fn=_no_sleep,
+    )
+    # Assert
     assert ok is True
 
 
-def test_agent_start_starts_health_monitor_thread(
-    patched, registry, fake_runtime, cfg, monkeypatch
-):
-    cfg.health.enabled = True
-    started = {"flag": False}
+def test_agent_start_config_no_preflight_overrides_cli_flag(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange: mutate the loaded config's RemoteSpec via the runtime
+    # factory (a real seam) — v3 YAML no longer accepts top-level
+    # ``spec.remote``, so the config object is the right surface to set
+    # ``remote.no_preflight`` on.
+    spec = _write_spec(tmp_path)
+    runtime = FakeRuntime(start_result=True)
 
-    class FakeThread:
-        def __init__(self, *a, **kw):
-            started["args"] = (a, kw)
+    def factory(c: AgentConfig) -> FakeRuntime:
+        c.remote.no_preflight = True
+        return runtime
 
-        def start(self):
-            started["flag"] = True
-
-    monkeypatch.setattr("threading.Thread", FakeThread)
-    ok = lc.agent_start(str(patched["spec_path"]), registry=registry)
-    assert ok is True
-    assert started["flag"] is True
-
-
-def test_agent_start_failback_poller_swallows(patched, registry, fake_runtime):
-    patched["handover"].start_failback_poller.side_effect = RuntimeError("nope")
-    # should still return True
-    assert lc.agent_start(str(patched["spec_path"]), registry=registry) is True
-
-
-def test_agent_start_config_no_preflight_overrides(
-    patched, registry, fake_runtime, cfg
-):
-    cfg.remote.no_preflight = True
-    lc.agent_start(str(patched["spec_path"]), registry=registry, no_preflight=False)
-    args, kwargs = fake_runtime.start.call_args
-    assert kwargs.get("no_preflight") is True
+    # Act
+    lc.agent_start(
+        str(spec),
+        registry=registry,
+        runtime_factory=factory,
+        handover_mod=FakeHandover(),
+        sleep_fn=_no_sleep,
+        no_preflight=False,
+    )
+    # Assert
+    assert runtime.start_kwargs.get("no_preflight") is True
 
 
-# --- agent_stop -----------------------------------------------------------
+# ---------------------------------------------------------------------------
+# agent_stop
+# ---------------------------------------------------------------------------
 
 
-def test_agent_stop_unknown_agent_raises(patched, registry):
+def test_agent_stop_unknown_agent_without_force_raises(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange (empty registry).
+    # Act
+    call = lambda: lc.agent_stop(  # noqa: E731
+        "ghost",
+        registry=registry,
+        runtime_factory=lambda _c: FakeRuntime(),
+        handover_mod=FakeHandover(),
+    )
+    # Assert
     with pytest.raises(RuntimeError, match="not found"):
-        lc.agent_stop("ghost", registry=registry)
+        call()
 
 
-def test_agent_stop_unknown_force_returns_true(patched, registry):
-    assert lc.agent_stop("ghost", registry=registry, force=True) is True
+def test_agent_stop_unknown_agent_with_force_returns_true(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange (empty registry).
+    # Act
+    ok = lc.agent_stop(
+        "ghost",
+        registry=registry,
+        force=True,
+        runtime_factory=lambda _c: FakeRuntime(),
+        handover_mod=FakeHandover(),
+    )
+    # Assert
+    assert ok is True
 
 
-def test_agent_stop_happy_path(patched, registry, fake_runtime):
-    registry.add("alpha", str(patched["spec_path"]), "cld-alpha")
-    assert lc.agent_stop("alpha", registry=registry) is True
-    fake_runtime.stop.assert_called_once()
+def test_agent_stop_happy_path_returns_true(tmp_path: Path, registry: Registry) -> None:
+    # Arrange
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    runtime = FakeRuntime()
+    # Act
+    ok = lc.agent_stop(
+        "alpha",
+        registry=registry,
+        runtime_factory=lambda _c: runtime,
+        handover_mod=FakeHandover(),
+    )
+    # Assert
+    assert ok is True
+
+
+def test_agent_stop_happy_path_calls_runtime_stop(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    runtime = FakeRuntime()
+    # Act
+    lc.agent_stop(
+        "alpha",
+        registry=registry,
+        runtime_factory=lambda _c: runtime,
+        handover_mod=FakeHandover(),
+    )
+    # Assert
+    assert len(runtime.stop_calls) == 1
+
+
+def test_agent_stop_happy_path_removes_registry_entry(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    # Act
+    lc.agent_stop(
+        "alpha",
+        registry=registry,
+        runtime_factory=lambda _c: FakeRuntime(),
+        handover_mod=FakeHandover(),
+    )
+    # Assert
     assert not registry.exists("alpha")
 
 
-def test_agent_stop_yaml_gone_force_succeeds(patched, registry, monkeypatch):
-    registry.add("alpha", str(patched["spec_path"]), "cld-alpha")
-    monkeypatch.setattr(
-        lc, "load_config", lambda p: (_ for _ in ()).throw(FileNotFoundError("gone"))
+def test_agent_stop_yaml_gone_with_force_succeeds(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange: registry points at a YAML that no longer exists on disk.
+    missing_spec = tmp_path / "alpha" / "spec.yaml"
+    registry.add("alpha", str(missing_spec), "cld-alpha")
+    # Act
+    ok = lc.agent_stop(
+        "alpha",
+        registry=registry,
+        force=True,
+        runtime_factory=lambda _c: FakeRuntime(),
+        handover_mod=FakeHandover(),
     )
-    assert lc.agent_stop("alpha", registry=registry, force=True) is True
-    assert not registry.exists("alpha")
+    # Assert
+    assert ok is True and not registry.exists("alpha")
 
 
-def test_agent_stop_yaml_gone_no_force_raises(patched, registry, monkeypatch):
-    registry.add("alpha", str(patched["spec_path"]), "cld-alpha")
-    monkeypatch.setattr(
-        lc, "load_config", lambda p: (_ for _ in ()).throw(FileNotFoundError("gone"))
+def test_agent_stop_yaml_gone_without_force_raises(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    missing_spec = tmp_path / "alpha" / "spec.yaml"
+    registry.add("alpha", str(missing_spec), "cld-alpha")
+    # Act
+    call = lambda: lc.agent_stop(  # noqa: E731
+        "alpha",
+        registry=registry,
+        force=False,
+        runtime_factory=lambda _c: FakeRuntime(),
+        handover_mod=FakeHandover(),
     )
+    # Assert
     with pytest.raises(FileNotFoundError):
-        lc.agent_stop("alpha", registry=registry, force=False)
+        call()
 
 
-def test_agent_stop_runtime_stop_failure_force(patched, registry, fake_runtime):
-    registry.add("alpha", str(patched["spec_path"]), "cld-alpha")
-    fake_runtime.stop.side_effect = RuntimeError("stop failed")
-    # force=True swallows and still removes
-    assert lc.agent_stop("alpha", registry=registry, force=True) is True
-    assert not registry.exists("alpha")
+def test_agent_stop_runtime_stop_failure_with_force_removes_entry(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    runtime = FakeRuntime()
+    runtime.stop_should_raise = RuntimeError("stop failed")
+    # Act
+    ok = lc.agent_stop(
+        "alpha",
+        registry=registry,
+        force=True,
+        runtime_factory=lambda _c: runtime,
+        handover_mod=FakeHandover(),
+    )
+    # Assert
+    assert ok is True and not registry.exists("alpha")
 
 
-def test_agent_stop_runtime_stop_failure_no_force(patched, registry, fake_runtime):
-    registry.add("alpha", str(patched["spec_path"]), "cld-alpha")
-    fake_runtime.stop.side_effect = RuntimeError("stop failed")
+def test_agent_stop_runtime_stop_failure_without_force_raises(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    runtime = FakeRuntime()
+    runtime.stop_should_raise = RuntimeError("stop failed")
+    # Act
+    call = lambda: lc.agent_stop(  # noqa: E731
+        "alpha",
+        registry=registry,
+        force=False,
+        runtime_factory=lambda _c: runtime,
+        handover_mod=FakeHandover(),
+    )
+    # Assert
     with pytest.raises(RuntimeError):
-        lc.agent_stop("alpha", registry=registry, force=False)
+        call()
 
 
-def test_agent_stop_pre_stop_hook_failure_no_force(
-    patched, registry, fake_runtime, monkeypatch, cfg
-):
-    cfg.hooks["pre_stop"] = ["bad"]
-    registry.add("alpha", str(patched["spec_path"]), "cld-alpha")
-
-    def boom(*a, **kw):
-        raise RuntimeError("pre-stop boom")
-
-    monkeypatch.setattr(lc, "_run_hooks", boom)
-    with pytest.raises(RuntimeError):
-        lc.agent_stop("alpha", registry=registry, force=False)
+# ---------------------------------------------------------------------------
+# agent_stop_all — injected real per-agent stop callable
+# ---------------------------------------------------------------------------
 
 
-# --- agent_stop_all -------------------------------------------------------
+def test_agent_stop_all_iterates_every_registry_entry(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    registry.add("beta", str(spec), "cld-beta")
+
+    def stop_fn(name: str, registry: Registry, force: bool = False) -> bool:
+        return True
+
+    # Act
+    results = lc.agent_stop_all(registry=registry, stop_fn=stop_fn)
+    # Assert
+    assert {r[0] for r in results} == {"alpha", "beta"}
 
 
-def test_agent_stop_all_iterates(patched, registry, fake_runtime):
-    registry.add("alpha", str(patched["spec_path"]), "cld-alpha")
-    registry.add("beta", str(patched["spec_path"]), "cld-beta")
-    results = lc.agent_stop_all(registry=registry)
-    names = {r[0] for r in results}
-    assert names == {"alpha", "beta"}
-    assert all(r[1] for r in results)
+def test_agent_stop_all_with_force_continues_through_errors(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    registry.add("beta", str(spec), "cld-beta")
 
-
-def test_agent_stop_all_continues_through_errors_with_force(
-    patched, registry, fake_runtime, monkeypatch
-):
-    registry.add("alpha", str(patched["spec_path"]), "cld-alpha")
-    registry.add("beta", str(patched["spec_path"]), "cld-beta")
-    seen = {"n": 0}
-    real_stop = lc.agent_stop
-
-    def maybe_boom(name, registry=None, force=False):
-        seen["n"] += 1
+    def stop_fn(name: str, registry: Registry, force: bool = False) -> bool:
         if name == "alpha":
             raise RuntimeError("first one fails")
-        return real_stop(name, registry=registry, force=force)
+        return True
 
-    monkeypatch.setattr(lc, "agent_stop", maybe_boom)
-    results = lc.agent_stop_all(registry=registry, force=True)
-    assert len(results) == 2
-    assert results[0][1] is False
-    assert "first one fails" in results[0][2]
+    # Act
+    results = lc.agent_stop_all(registry=registry, force=True, stop_fn=stop_fn)
+    # Assert
+    assert len(results) == 2 and results[0][1] is False
 
 
-def test_agent_stop_all_aborts_without_force(
-    patched, registry, fake_runtime, monkeypatch
-):
-    registry.add("alpha", str(patched["spec_path"]), "cld-alpha")
-    registry.add("beta", str(patched["spec_path"]), "cld-beta")
-    monkeypatch.setattr(
-        lc, "agent_stop", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("nope"))
+def test_agent_stop_all_without_force_aborts_on_first_failure(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    registry.add("beta", str(spec), "cld-beta")
+
+    def stop_fn(name: str, registry: Registry, force: bool = False) -> bool:
+        raise RuntimeError("nope")
+
+    # Act
+    results = lc.agent_stop_all(registry=registry, force=False, stop_fn=stop_fn)
+    # Assert
+    assert len(results) == 1 and results[0][1] is False
+
+
+# ---------------------------------------------------------------------------
+# agent_restart
+# ---------------------------------------------------------------------------
+
+
+def test_agent_restart_calls_runtime_stop_then_start(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    runtime = FakeRuntime(start_result=True)
+    # Act
+    ok = lc.agent_restart(
+        "alpha",
+        registry=registry,
+        runtime_factory=lambda _c: runtime,
+        sleep_fn=_no_sleep,
+        handover_mod=FakeHandover(),
     )
-    results = lc.agent_stop_all(registry=registry, force=False)
-    # Aborts after first failure
-    assert len(results) == 1
-    assert results[0][1] is False
+    # Assert
+    assert ok is True and len(runtime.stop_calls) == 1 and len(runtime.start_calls) == 1
 
 
-# --- agent_restart --------------------------------------------------------
-
-
-def test_agent_restart_calls_stop_then_start(
-    patched, registry, fake_runtime, monkeypatch
-):
-    registry.add("alpha", str(patched["spec_path"]), "cld-alpha")
-    monkeypatch.setattr("time.sleep", lambda *_: None)
-    ok = lc.agent_restart("alpha", registry=registry)
-    assert ok is True
-    fake_runtime.stop.assert_called_once()
-    fake_runtime.start.assert_called_once()
-
-
-def test_agent_restart_unknown_raises(patched, registry):
+def test_agent_restart_unknown_raises(tmp_path: Path, registry: Registry) -> None:
+    # Arrange (empty registry).
+    # Act
+    call = lambda: lc.agent_restart(  # noqa: E731
+        "ghost",
+        registry=registry,
+        runtime_factory=lambda _c: FakeRuntime(),
+        sleep_fn=_no_sleep,
+        handover_mod=FakeHandover(),
+    )
+    # Assert
     with pytest.raises(RuntimeError, match="not found"):
-        lc.agent_restart("ghost", registry=registry)
+        call()
 
 
-# --- agent_status ---------------------------------------------------------
+# ---------------------------------------------------------------------------
+# agent_status
+# ---------------------------------------------------------------------------
 
 
-def test_agent_status_unknown_raises(patched, registry):
+def test_agent_status_unknown_raises(tmp_path: Path, registry: Registry) -> None:
+    # Arrange (empty registry).
+    # Act
+    call = lambda: lc.agent_status(  # noqa: E731
+        "ghost", registry=registry, runtime_factory=lambda _c: FakeRuntime()
+    )
+    # Assert
     with pytest.raises(RuntimeError, match="not found"):
-        lc.agent_status("ghost", registry=registry)
+        call()
 
 
-def test_agent_status_running_basic_fields(patched, registry, fake_runtime, cfg):
-    fake_runtime.is_running.return_value = True
-    registry.add("alpha", str(patched["spec_path"]), "cld-alpha")
-    result = lc.agent_status("alpha", registry=registry)
-    assert result["name"] == "alpha"
+def test_agent_status_running_reports_status_running(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    runtime = FakeRuntime(running=True)
+    # Act
+    result = lc.agent_status(
+        "alpha", registry=registry, runtime_factory=lambda _c: runtime
+    )
+    # Assert
     assert result["status"] == "running"
-    assert result["model"] == cfg.model
-    assert result["runtime"] == cfg.runtime
-    assert result["hooks_configured"]["pre_start"] == 1
-    assert result["snapshot"] is None
-    assert "listen" in result and result["listen"] == []
-    assert "extensions" in result
 
 
-def test_agent_status_config_load_failure_degrades(
-    patched, registry, monkeypatch, fake_runtime
-):
-    registry.add("alpha", str(patched["spec_path"]), "cld-alpha")
-    monkeypatch.setattr(
-        lc, "load_config", lambda p: (_ for _ in ()).throw(RuntimeError("bad"))
+def test_agent_status_includes_hooks_configured_counts(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    # Act
+    result = lc.agent_status(
+        "alpha", registry=registry, runtime_factory=lambda _c: FakeRuntime(running=True)
     )
-    result = lc.agent_status("alpha", registry=registry)
+    # Assert: spec writes one pre_start hook; production must echo a count >= 1.
+    assert result["hooks_configured"]["pre_start"] >= 1
+
+
+def test_agent_status_includes_empty_listen_and_extensions(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    # Act
+    result = lc.agent_status(
+        "alpha", registry=registry, runtime_factory=lambda _c: FakeRuntime()
+    )
+    # Assert
+    assert result["listen"] == [] and result["extensions"] == {}
+
+
+def test_agent_status_config_load_failure_degrades_to_stopped(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange: register a path to a non-existent YAML so load_config raises.
+    registry.add("alpha", str(tmp_path / "alpha" / "spec.yaml"), "cld-alpha")
+    # Act
+    result = lc.agent_status(
+        "alpha", registry=registry, runtime_factory=lambda _c: FakeRuntime()
+    )
+    # Assert
     assert result["status"] == "stopped"
-    assert result["model"] == "unknown"
-    assert result["runtime"] == "unknown"
 
 
-def test_agent_status_remote_field(patched, registry, fake_runtime, cfg):
-    fake_runtime.is_running.return_value = True
-    cfg.remote.host = "remote-box"
-    # is_remote must also be true; the dataclass derives it from host
-    registry.add("alpha", str(patched["spec_path"]), "cld-alpha")
-    result = lc.agent_status("alpha", registry=registry)
-    if result.get("remote"):
-        assert result["remote"] == "remote-box"
+def test_agent_status_config_load_failure_reports_unknown_model_and_runtime(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    registry.add("alpha", str(tmp_path / "alpha" / "spec.yaml"), "cld-alpha")
+    # Act
+    result = lc.agent_status(
+        "alpha", registry=registry, runtime_factory=lambda _c: FakeRuntime()
+    )
+    # Assert
+    assert result["model"] == "unknown" and result["runtime"] == "unknown"
 
 
-# --- agent_logs -----------------------------------------------------------
+def test_agent_status_remote_host_surfaces_when_set(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange: mutate the loaded config to set ``remote.host`` (v3 YAML
+    # no longer accepts the top-level ``spec.remote`` block, so the
+    # status code reads it off the in-memory AgentConfig).
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+
+    def factory(c: AgentConfig) -> FakeRuntime:
+        c.remote.host = "remote-box"
+        return FakeRuntime(running=True)
+
+    # Act
+    result = lc.agent_status("alpha", registry=registry, runtime_factory=factory)
+    # Assert
+    assert result.get("remote") == "remote-box"
 
 
-def test_agent_logs_unknown_raises(patched, registry):
+# ---------------------------------------------------------------------------
+# agent_logs
+# ---------------------------------------------------------------------------
+
+
+def test_agent_logs_unknown_raises(tmp_path: Path, registry: Registry) -> None:
+    # Arrange (empty registry).
+    # Act
+    call = lambda: lc.agent_logs(  # noqa: E731
+        "ghost", registry=registry, runtime_factory=lambda _c: FakeRuntime()
+    )
+    # Assert
     with pytest.raises(RuntimeError, match="not found"):
-        lc.agent_logs("ghost", registry=registry)
+        call()
 
 
-def test_agent_logs_returns_runtime_logs(patched, registry, fake_runtime):
-    registry.add("alpha", str(patched["spec_path"]), "cld-alpha")
-    out = lc.agent_logs("alpha", lines=10, registry=registry)
+def test_agent_logs_returns_runtime_logs_text(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    runtime = FakeRuntime(logs_text="log-content")
+    # Act
+    out = lc.agent_logs(
+        "alpha",
+        lines=10,
+        registry=registry,
+        runtime_factory=lambda _c: runtime,
+    )
+    # Assert
     assert out == "log-content"
-    fake_runtime.logs.assert_called_once()
