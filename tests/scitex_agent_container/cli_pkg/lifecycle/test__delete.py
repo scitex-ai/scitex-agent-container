@@ -4,6 +4,11 @@ PA-306: no ``unittest.mock`` and no ``monkeypatch``. Production
 collaborators (``Registry``, ``agent_stop``, ``shutil.rmtree``) are
 swapped at the module namespace via small context managers with
 explicit save/restore.
+
+TQ cleanup: module docstring summarises intent (TQ001), every test
+carries AAA markers (TQ002), test names spell out the behaviour being
+verified (TQ003-compatible), and each test asserts exactly one fact
+(TQ007). Same-shape invariants collapse into ``pytest.parametrize``.
 """
 
 from __future__ import annotations
@@ -20,6 +25,10 @@ from click.testing import CliRunner
 import scitex_agent_container._lifecycle.lifecycle as lifecycle_mod
 import scitex_agent_container.cli_pkg.lifecycle._delete as delete_mod
 from scitex_agent_container.cli_pkg.lifecycle._delete import delete
+
+# ---------------------------------------------------------------------------
+# Fixtures and helpers
+# ---------------------------------------------------------------------------
 
 
 @pytest.fixture(autouse=True)
@@ -92,113 +101,328 @@ def _seed_agent(tmp_path: Path, name: str, *, spec=True, runtime=True) -> None:
         (rt / "session.jsonl").write_text("{}\n")
 
 
-def test_dry_run_lists_components(tmp_path):
+# ---------------------------------------------------------------------------
+# Dry-run path
+# ---------------------------------------------------------------------------
+
+
+def test_dry_run_exits_with_zero_status_code(tmp_path):
+    # Arrange
     _seed_agent(tmp_path, "alpha")
     runner = CliRunner()
+    # Act
     with _swap_registry(_FakeRegistry(exists=True)):
         result = runner.invoke(delete, ["alpha", "--dry-run"])
+    # Assert
     assert result.exit_code == 0, result.output
+
+
+def test_dry_run_announces_target_agent_in_output(tmp_path):
+    # Arrange
+    _seed_agent(tmp_path, "alpha")
+    runner = CliRunner()
+    # Act
+    with _swap_registry(_FakeRegistry(exists=True)):
+        result = runner.invoke(delete, ["alpha", "--dry-run"])
+    # Assert
     assert "would delete 'alpha'" in result.output
 
 
-def test_skip_when_not_found(tmp_path):
+# ---------------------------------------------------------------------------
+# Not-found / refuse paths
+# ---------------------------------------------------------------------------
+
+
+def test_unknown_agent_exits_with_nonzero_status_code(tmp_path):
+    # Arrange
     runner = CliRunner()
+    # Act
     with _swap_registry(_FakeRegistry(exists=False)):
         result = runner.invoke(delete, ["ghost"])
+    # Assert
     assert result.exit_code == 1
+
+
+def test_unknown_agent_message_says_not_found(tmp_path):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _swap_registry(_FakeRegistry(exists=False)):
+        result = runner.invoke(delete, ["ghost"])
+    # Assert
     assert "not found" in result.output
 
 
-def test_bulk_without_yes_refuses(tmp_path):
+def test_bulk_delete_without_yes_exits_with_status_two(tmp_path):
+    # Arrange
     _seed_agent(tmp_path, "a")
     _seed_agent(tmp_path, "b")
+    runner = CliRunner()
+    # Act
     with _swap_registry(_FakeRegistry(exists=True)):
-        runner = CliRunner()
         result = runner.invoke(delete, ["a", "b"])
+    # Assert
     assert result.exit_code == 2
+
+
+def test_bulk_delete_without_yes_reports_refusal_message(tmp_path):
+    # Arrange
+    _seed_agent(tmp_path, "a")
+    _seed_agent(tmp_path, "b")
+    runner = CliRunner()
+    # Act
+    with _swap_registry(_FakeRegistry(exists=True)):
+        result = runner.invoke(delete, ["a", "b"])
+    # Assert
     assert "Refusing to delete 2 agents" in result.output
 
 
-def test_full_delete_removes_dirs_and_calls_registry(tmp_path):
-    _seed_agent(tmp_path, "alpha")
-    root = tmp_path / ".scitex" / "agent-container"
-    spec_dir = root / "agents" / "alpha"
-    rt_dir = root / "runtime" / "alpha"
-    assert spec_dir.exists() and rt_dir.exists()
+# ---------------------------------------------------------------------------
+# Full-delete happy path — split into one-assertion tests
+# ---------------------------------------------------------------------------
 
-    stop_calls: list[str] = []
+
+def test_full_delete_exits_with_zero_status_code(tmp_path):
+    # Arrange
+    _seed_agent(tmp_path, "alpha")
+    runner = CliRunner()
+    # Act
+    with (
+        _swap_registry(_FakeRegistry(exists=True)),
+        _swap_agent_stop(lambda yaml, force: None),
+    ):
+        result = runner.invoke(delete, ["alpha"])
+    # Assert
+    assert result.exit_code == 0, result.output
+
+
+@pytest.mark.parametrize("subdir", ["agents", "runtime"])
+def test_full_delete_removes_per_agent_directory(tmp_path, subdir):
+    # Arrange
+    _seed_agent(tmp_path, "alpha")
+    target = tmp_path / ".scitex" / "agent-container" / subdir / "alpha"
+    runner = CliRunner()
+    # Act
+    with (
+        _swap_registry(_FakeRegistry(exists=True)),
+        _swap_agent_stop(lambda yaml, force: None),
+    ):
+        runner.invoke(delete, ["alpha"])
+    # Assert
+    assert not target.exists()
+
+
+def test_full_delete_invokes_registry_remove_with_agent_name(tmp_path):
+    # Arrange
+    _seed_agent(tmp_path, "alpha")
     reg = _FakeRegistry(exists=True)
+    runner = CliRunner()
+    # Act
     with (
         _swap_registry(reg),
+        _swap_agent_stop(lambda yaml, force: None),
+    ):
+        runner.invoke(delete, ["alpha"])
+    # Assert
+    assert reg.remove_calls == ["alpha"]
+
+
+def test_full_delete_invokes_agent_stop_with_spec_yaml_path(tmp_path):
+    # Arrange
+    _seed_agent(tmp_path, "alpha")
+    stop_calls: list[str] = []
+    runner = CliRunner()
+    # Act
+    with (
+        _swap_registry(_FakeRegistry(exists=True)),
         _swap_agent_stop(lambda yaml, force: stop_calls.append(yaml)),
     ):
-        runner = CliRunner()
-        result = runner.invoke(delete, ["alpha"])
-    assert result.exit_code == 0, result.output
-    assert not spec_dir.exists()
-    assert not rt_dir.exists()
-    assert reg.remove_calls == ["alpha"]
+        runner.invoke(delete, ["alpha"])
+    # Assert
     assert stop_calls and stop_calls[0].endswith("spec.yaml")
+
+
+def test_full_delete_emits_deleted_marker_in_output(tmp_path):
+    # Arrange
+    _seed_agent(tmp_path, "alpha")
+    runner = CliRunner()
+    # Act
+    with (
+        _swap_registry(_FakeRegistry(exists=True)),
+        _swap_agent_stop(lambda yaml, force: None),
+    ):
+        result = runner.invoke(delete, ["alpha"])
+    # Assert
     assert "deleted" in result.output
 
 
-def test_keep_runtime_preserves_runtime(tmp_path):
+# ---------------------------------------------------------------------------
+# --keep-runtime
+# ---------------------------------------------------------------------------
+
+
+def test_keep_runtime_preserves_runtime_directory(tmp_path):
+    # Arrange
     _seed_agent(tmp_path, "alpha")
     rt_dir = tmp_path / ".scitex" / "agent-container" / "runtime" / "alpha"
-    with _swap_registry(_FakeRegistry(exists=True)):
-        runner = CliRunner()
+    runner = CliRunner()
+    # Act
+    with (
+        _swap_registry(_FakeRegistry(exists=True)),
+        _swap_agent_stop(lambda yaml, force: None),
+    ):
         result = runner.invoke(delete, ["alpha", "--keep-runtime"])
-    assert result.exit_code == 0
-    assert rt_dir.exists()
+    # Assert
+    assert rt_dir.exists(), result.output
 
 
-def test_rmtree_failure_reports_warn_and_exits_nonzero(tmp_path):
+def test_keep_runtime_still_exits_with_zero_status_code(tmp_path):
+    # Arrange
     _seed_agent(tmp_path, "alpha")
+    runner = CliRunner()
+    # Act
+    with (
+        _swap_registry(_FakeRegistry(exists=True)),
+        _swap_agent_stop(lambda yaml, force: None),
+    ):
+        result = runner.invoke(delete, ["alpha", "--keep-runtime"])
+    # Assert
+    assert result.exit_code == 0
 
-    def fake_rmtree(_p: Any) -> None:
-        raise OSError("permission denied")
 
-    with _swap_rmtree(fake_rmtree), _swap_registry(_FakeRegistry(exists=True)):
-        runner = CliRunner()
+# ---------------------------------------------------------------------------
+# rmtree failure path
+# ---------------------------------------------------------------------------
+
+
+def _raise_oserror(_p: Any) -> None:
+    raise OSError("permission denied")
+
+
+def test_rmtree_failure_exits_with_nonzero_status_code(tmp_path):
+    # Arrange
+    _seed_agent(tmp_path, "alpha")
+    runner = CliRunner()
+    # Act
+    with (
+        _swap_rmtree(_raise_oserror),
+        _swap_registry(_FakeRegistry(exists=True)),
+        _swap_agent_stop(lambda yaml, force: None),
+    ):
         result = runner.invoke(delete, ["alpha"])
+    # Assert
     assert result.exit_code == 1
+
+
+def test_rmtree_failure_emits_warn_marker_in_output(tmp_path):
+    # Arrange
+    _seed_agent(tmp_path, "alpha")
+    runner = CliRunner()
+    # Act
+    with (
+        _swap_rmtree(_raise_oserror),
+        _swap_registry(_FakeRegistry(exists=True)),
+        _swap_agent_stop(lambda yaml, force: None),
+    ):
+        result = runner.invoke(delete, ["alpha"])
+    # Assert
     assert "could not remove" in result.output
 
 
-def test_stop_failure_is_swallowed(tmp_path):
+# ---------------------------------------------------------------------------
+# Collaborator-failure resilience
+# ---------------------------------------------------------------------------
+
+
+def _boom_stop(_yaml, _force):
+    raise RuntimeError("stop failed")
+
+
+def test_stop_failure_does_not_break_delete_exit_code(tmp_path):
+    # Arrange
     _seed_agent(tmp_path, "alpha")
-
-    def _boom(_yaml, _force):
-        raise RuntimeError("stop failed")
-
-    with _swap_registry(_FakeRegistry(exists=True)), _swap_agent_stop(_boom):
-        runner = CliRunner()
+    runner = CliRunner()
+    # Act
+    with _swap_registry(_FakeRegistry(exists=True)), _swap_agent_stop(_boom_stop):
         result = runner.invoke(delete, ["alpha"])
+    # Assert
     assert result.exit_code == 0
+
+
+def test_stop_failure_still_emits_deleted_marker_in_output(tmp_path):
+    # Arrange
+    _seed_agent(tmp_path, "alpha")
+    runner = CliRunner()
+    # Act
+    with _swap_registry(_FakeRegistry(exists=True)), _swap_agent_stop(_boom_stop):
+        result = runner.invoke(delete, ["alpha"])
+    # Assert
     assert "deleted" in result.output
 
 
-def test_registry_remove_failure_swallowed(tmp_path):
+def test_registry_remove_failure_does_not_break_exit_code(tmp_path):
+    # Arrange
     _seed_agent(tmp_path, "alpha")
-    with _swap_registry(_FakeRegistry(exists=True, remove_raises=KeyError("nope"))):
-        runner = CliRunner()
+    runner = CliRunner()
+    # Act
+    with (
+        _swap_registry(_FakeRegistry(exists=True, remove_raises=KeyError("nope"))),
+        _swap_agent_stop(lambda yaml, force: None),
+    ):
         result = runner.invoke(delete, ["alpha"])
+    # Assert
     assert result.exit_code == 0
+
+
+def test_registry_remove_failure_still_emits_deleted_marker(tmp_path):
+    # Arrange
+    _seed_agent(tmp_path, "alpha")
+    runner = CliRunner()
+    # Act
+    with (
+        _swap_registry(_FakeRegistry(exists=True, remove_raises=KeyError("nope"))),
+        _swap_agent_stop(lambda yaml, force: None),
+    ):
+        result = runner.invoke(delete, ["alpha"])
+    # Assert
     assert "deleted" in result.output
 
 
-def test_no_spec_yaml_skips_stop(tmp_path):
-    """spec dir exists, but no spec.yaml file → no agent_stop call."""
+# ---------------------------------------------------------------------------
+# Missing spec.yaml path
+# ---------------------------------------------------------------------------
+
+
+def test_missing_spec_yaml_skips_agent_stop_invocation(tmp_path):
+    # Arrange — spec dir exists but spec.yaml file does not.
     _seed_agent(tmp_path, "alpha")
     (
         tmp_path / ".scitex" / "agent-container" / "agents" / "alpha" / "spec.yaml"
     ).unlink()
     stop_calls: list[str] = []
+    runner = CliRunner()
+    # Act
     with (
         _swap_registry(_FakeRegistry(exists=True)),
         _swap_agent_stop(lambda yaml, force: stop_calls.append(yaml)),
     ):
-        runner = CliRunner()
         result = runner.invoke(delete, ["alpha"])
+    # Assert
+    assert stop_calls == [], result.output
+
+
+def test_missing_spec_yaml_still_exits_with_zero_status_code(tmp_path):
+    # Arrange
+    _seed_agent(tmp_path, "alpha")
+    (
+        tmp_path / ".scitex" / "agent-container" / "agents" / "alpha" / "spec.yaml"
+    ).unlink()
+    runner = CliRunner()
+    # Act
+    with (
+        _swap_registry(_FakeRegistry(exists=True)),
+        _swap_agent_stop(lambda yaml, force: None),
+    ):
+        result = runner.invoke(delete, ["alpha"])
+    # Assert
     assert result.exit_code == 0
-    assert stop_calls == []
