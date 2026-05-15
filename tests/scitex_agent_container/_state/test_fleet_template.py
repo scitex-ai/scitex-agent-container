@@ -1,4 +1,9 @@
-"""Tests for scitex_agent_container._state.fleet_template (F-CS2)."""
+"""Tests for scitex_agent_container._state.fleet_template (F-CS2).
+
+One-assertion-per-test with explicit Arrange/Act/Assert markers
+(TQ002/TQ007). ``pytest.parametrize`` is used where the matrix is
+genuinely declarative (TQ001). No mocks/monkeypatch (PA-306).
+"""
 
 from __future__ import annotations
 
@@ -24,112 +29,219 @@ spec:
     - command: "Run capsule ${CAPSULE_ID} on ${PROJECT}."
 """
 
+_TWO_ROW_CSV = "name,PROJECT,CAPSULE_ID\ncap-aa-1,paper-x,aa-1\ncap-aa-2,paper-x,aa-2\n"
+
 
 def _write(p: Path, content: str) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content)
 
 
-def test_expand_materialises_one_yaml_per_csv_row(tmp_path: Path):
+@pytest.fixture
+def two_row_expansion(tmp_path: Path) -> list[Path]:
+    """Materialise the standard two-row fleet used by several tests."""
     template = tmp_path / "template.yaml"
     csv_file = tmp_path / "fleet.csv"
     _write(template, _TEMPLATE)
-    _write(
-        csv_file,
-        "name,PROJECT,CAPSULE_ID\ncap-aa-1,paper-x,aa-1\ncap-aa-2,paper-x,aa-2\n",
-    )
-    out = tmp_path / "out"
-    paths = expand_params_file(template, csv_file, out)
-    assert [p.name for p in paths] == ["cap-aa-1.yaml", "cap-aa-2.yaml"]
-    rendered = paths[0].read_text()
-    assert "${" not in rendered
-    assert "/tmp/cap-aa-1-workdir" in rendered
-    assert "project: paper-x" in rendered
+    _write(csv_file, _TWO_ROW_CSV)
+    return expand_params_file(template, csv_file, tmp_path / "out")
 
 
-def test_expand_substitutes_name_token(tmp_path: Path):
+def test_expand_emits_one_yaml_per_csv_row(two_row_expansion: list[Path]):
+    # Arrange
+    paths = two_row_expansion
+    # Act
+    names = [p.name for p in paths]
+    # Assert
+    assert names == ["cap-aa-1.yaml", "cap-aa-2.yaml"]
+
+
+def test_expand_substitutes_all_placeholders(two_row_expansion: list[Path]):
+    # Arrange
+    rendered = two_row_expansion[0].read_text()
+    # Act
+    leftover = find_unsubstituted_vars(rendered)
+    # Assert
+    assert leftover == []
+
+
+def test_expand_substitutes_name_token_in_workdir(
+    two_row_expansion: list[Path],
+):
+    # Arrange
+    rendered = two_row_expansion[0].read_text()
+    # Act
+    workdir_present = "/tmp/cap-aa-1-workdir" in rendered
+    # Assert
+    assert workdir_present
+
+
+def test_expand_substitutes_named_column_value(
+    two_row_expansion: list[Path],
+):
+    # Arrange
+    rendered = two_row_expansion[0].read_text()
+    # Act
+    project_present = "project: paper-x" in rendered
+    # Assert
+    assert project_present
+
+
+def test_expand_exposes_name_column_as_dollar_name(tmp_path: Path):
     """The 'name' column is also exposed as ``${name}`` in templates."""
+    # Arrange
     template = tmp_path / "t.yaml"
     csv_file = tmp_path / "f.csv"
     _write(template, "spec:\n  workdir: /tmp/${name}\n")
     _write(csv_file, "name\nfoo\n")
+    # Act
     paths = expand_params_file(template, csv_file, tmp_path / "out")
+    # Assert
     assert "/tmp/foo" in paths[0].read_text()
 
 
-def test_expand_rejects_unresolved_placeholder(tmp_path: Path):
+@pytest.mark.parametrize(
+    "template_body, csv_body, expected_match",
+    [
+        pytest.param(
+            "spec: { workdir: /tmp/${MISSING_VAR} }\n",
+            "name\nfoo\n",
+            "MISSING_VAR",
+            id="unresolved-placeholder",
+        ),
+        pytest.param(
+            "spec: { runtime: apptainer }\n",
+            "PROJECT,CAPSULE_ID\np,c\n",
+            "name",
+            id="missing-name-column",
+        ),
+        pytest.param(
+            "spec: { runtime: apptainer }\n",
+            "name\nfoo\nfoo\n",
+            "duplicate",
+            id="duplicate-names",
+        ),
+    ],
+)
+def test_expand_rejects_invalid_input(
+    tmp_path: Path,
+    template_body: str,
+    csv_body: str,
+    expected_match: str,
+):
+    # Arrange
     template = tmp_path / "t.yaml"
     csv_file = tmp_path / "f.csv"
-    _write(template, "spec: { workdir: /tmp/${MISSING_VAR} }\n")
-    _write(csv_file, "name\nfoo\n")
-    with pytest.raises(ValueError, match="MISSING_VAR"):
-        expand_params_file(template, csv_file, tmp_path / "out")
-
-
-def test_expand_rejects_missing_name_column(tmp_path: Path):
-    template = tmp_path / "t.yaml"
-    csv_file = tmp_path / "f.csv"
-    _write(template, "spec: { runtime: apptainer }\n")
-    _write(csv_file, "PROJECT,CAPSULE_ID\np,c\n")
-    with pytest.raises(ValueError, match="name"):
-        expand_params_file(template, csv_file, tmp_path / "out")
-
-
-def test_expand_rejects_duplicate_names(tmp_path: Path):
-    template = tmp_path / "t.yaml"
-    csv_file = tmp_path / "f.csv"
-    _write(template, "spec: { runtime: apptainer }\n")
-    _write(csv_file, "name\nfoo\nfoo\n")
-    with pytest.raises(ValueError, match="duplicate"):
+    _write(template, template_body)
+    _write(csv_file, csv_body)
+    raiser = pytest.raises(ValueError, match=expected_match)
+    # Act
+    # Assert
+    with raiser:
         expand_params_file(template, csv_file, tmp_path / "out")
 
 
 def test_expand_skips_blank_rows(tmp_path: Path):
+    # Arrange
     template = tmp_path / "t.yaml"
     csv_file = tmp_path / "f.csv"
     _write(template, "spec: { runtime: apptainer }\n")
     _write(csv_file, "name\nfoo\n\nbar\n")
+    # Act
     paths = expand_params_file(template, csv_file, tmp_path / "out")
+    # Assert
     assert [p.name for p in paths] == ["foo.yaml", "bar.yaml"]
 
 
-def test_expand_overwrite_protects_by_default(tmp_path: Path):
+@pytest.fixture
+def expanded_once(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """Run a single expansion and return (template, csv, out_dir)."""
     template = tmp_path / "t.yaml"
     csv_file = tmp_path / "f.csv"
     _write(template, "spec: { runtime: apptainer }\n")
     _write(csv_file, "name\nfoo\n")
     out = tmp_path / "out"
     expand_params_file(template, csv_file, out)
-    with pytest.raises(FileExistsError):
+    return template, csv_file, out
+
+
+def test_expand_refuses_to_clobber_without_overwrite_flag(
+    expanded_once: tuple[Path, Path, Path],
+):
+    # Arrange
+    template, csv_file, out = expanded_once
+    raiser = pytest.raises(FileExistsError)
+    # Act
+    # Assert
+    with raiser:
         expand_params_file(template, csv_file, out)
-    # Overwrite=True replaces.
+
+
+def test_expand_overwrite_true_replaces_existing(
+    expanded_once: tuple[Path, Path, Path],
+):
+    # Arrange
+    template, csv_file, out = expanded_once
+    target = out / "foo" / "foo.yaml"
+    # Act
     expand_params_file(template, csv_file, out, overwrite=True)
+    # Assert
+    assert target.is_file()
 
 
-def test_render_one_writes_single_instance(tmp_path: Path):
+def test_render_one_writes_single_instance_with_substitutions(tmp_path: Path):
+    # Arrange
     template = tmp_path / "t.yaml"
     _write(template, "spec:\n  workdir: /tmp/${name}-${TASK}\n")
+    # Act
     p = render_one(
         template,
         {"TASK": "smoke"},
         tmp_path / "out",
         name="ad-hoc-1",
     )
+    # Assert
     assert p.read_text().strip() == "spec:\n  workdir: /tmp/ad-hoc-1-smoke"
 
 
-def test_find_unsubstituted_vars_lists_unique_names():
+def test_find_unsubstituted_vars_lists_unique_names_sorted():
+    # Arrange
     s = "x ${A} y ${B} z ${A}"
-    assert find_unsubstituted_vars(s) == ["A", "B"]
+    # Act
+    result = find_unsubstituted_vars(s)
+    # Assert
+    assert result == ["A", "B"]
 
 
-def test_read_csv_rows_strips_blanks(tmp_path: Path):
+@pytest.fixture
+def csv_with_blanks_and_whitespace(tmp_path: Path) -> list[dict[str, str]]:
+    """A CSV row set with a blank line and leading whitespace in values."""
     csv_file = tmp_path / "f.csv"
     _write(csv_file, "name,X\n foo, 1\n\nbar, 2\n")
-    rows = read_csv_rows(csv_file)
-    assert [r["name"] for r in rows] == [" foo", "bar"]
-    # Values pass through verbatim (template substitution is exact).
-    assert rows[0]["X"] == " 1"
+    return read_csv_rows(csv_file)
+
+
+def test_read_csv_rows_skips_blank_lines(
+    csv_with_blanks_and_whitespace: list[dict[str, str]],
+):
+    # Arrange
+    rows = csv_with_blanks_and_whitespace
+    # Act
+    names = [r["name"] for r in rows]
+    # Assert
+    assert names == [" foo", "bar"]
+
+
+def test_read_csv_rows_preserves_value_whitespace_verbatim(
+    csv_with_blanks_and_whitespace: list[dict[str, str]],
+):
+    """Template substitution is exact, so CSV values pass through verbatim."""
+    # Arrange
+    rows = csv_with_blanks_and_whitespace
+    # Act
+    x_value = rows[0]["X"]
+    # Assert
+    assert x_value == " 1"
 
 
 # ---------------------------------------------------------------------------
@@ -137,10 +249,9 @@ def test_read_csv_rows_strips_blanks(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_start_params_file_expands_and_dry_runs(tmp_path: Path):
-    """End-to-end: --params-file + --dry-run materialises N yamls and
-    runs the existing dry-run path against each. We only assert on the
-    materialised files (no live spawn) so the test is hermetic."""
+@pytest.fixture
+def cli_dry_run_result(tmp_path: Path):
+    """Invoke ``sac agent start --params-file --dry-run`` once."""
     template = tmp_path / "template.yaml"
     csv_file = tmp_path / "fleet.csv"
     _write(
@@ -169,12 +280,36 @@ def test_start_params_file_expands_and_dry_runs(tmp_path: Path):
             "--dry-run",
         ],
     )
-    assert result.exit_code == 0, result.output
-    assert (out_dir / "alpha" / "alpha.yaml").is_file()
-    assert (out_dir / "beta" / "beta.yaml").is_file()
+    return result, out_dir
 
 
-def test_start_params_file_requires_single_target(tmp_path: Path):
+def test_start_params_file_dry_run_exits_zero(cli_dry_run_result):
+    # Arrange
+    result, _ = cli_dry_run_result
+    # Act
+    exit_code = result.exit_code
+    # Assert
+    assert exit_code == 0, result.output
+
+
+@pytest.mark.parametrize("agent_name", ["alpha", "beta"])
+def test_start_params_file_dry_run_materialises_yaml(
+    cli_dry_run_result, agent_name: str
+):
+    """End-to-end: --params-file + --dry-run materialises N yamls and
+    runs the existing dry-run path against each. We only assert on the
+    materialised files (no live spawn) so the test is hermetic."""
+    # Arrange
+    _, out_dir = cli_dry_run_result
+    # Act
+    target = out_dir / agent_name / f"{agent_name}.yaml"
+    # Assert
+    assert target.is_file()
+
+
+@pytest.fixture
+def cli_two_targets_result(tmp_path: Path):
+    """Invoke start with two TARGET args — this should fail."""
     template = tmp_path / "t.yaml"
     csv_file = tmp_path / "f.csv"
     _write(template, "spec: { runtime: apptainer }\n")
@@ -185,9 +320,30 @@ def test_start_params_file_requires_single_target(tmp_path: Path):
     from scitex_agent_container.cli_pkg.lifecycle import start
 
     runner = CliRunner()
-    result = runner.invoke(
+    return runner.invoke(
         start,
         [str(template), str(template), "--params-file", str(csv_file)],
     )
-    assert result.exit_code == 2
-    assert "exactly one TARGET" in (result.output + (result.stderr or ""))
+
+
+def test_start_params_file_with_two_targets_exits_with_usage_error(
+    cli_two_targets_result,
+):
+    # Arrange
+    result = cli_two_targets_result
+    # Act
+    exit_code = result.exit_code
+    # Assert
+    assert exit_code == 2
+
+
+def test_start_params_file_with_two_targets_reports_target_arity(
+    cli_two_targets_result,
+):
+    # Arrange
+    result = cli_two_targets_result
+    combined = result.output + (result.stderr or "")
+    # Act
+    has_message = "exactly one TARGET" in combined
+    # Assert
+    assert has_message
