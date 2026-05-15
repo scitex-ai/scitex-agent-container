@@ -135,10 +135,16 @@ def test_executors_yaml_handler_drives_app_build_body():
         # Assert
         assert body == {
             "agents": [
-                # agent-listing entry (not an AgentCard), so {name, url} is fine
-                {  # stx-allow: STX-SAC001
+                {
                     "name": "mock-claude",
-                    "url": "http://testserver/agents/mock-claude",
+                    "supportedInterfaces": [
+                        {
+                            "url": "http://testserver/agents/mock-claude",
+                            "protocolBinding": "HTTP+JSON",
+                            "tenant": "mock-claude",
+                            "protocolVersion": "1.0",
+                        }
+                    ],
                 }
             ]
         }
@@ -241,17 +247,25 @@ def test_fleet_card_endpoint_carries_fleet_name(echo_client: TestClient):
 
 
 def test_fleet_card_endpoint_lists_member_agents(echo_client: TestClient):
-    """The fleet card's sac extension lists each member agent."""
+    """The fleet card's sac extension lists each member agent (v1 shape)."""
     # Arrange
     client = echo_client
     # Act
     body = client.get("/.well-known/agent-card.json").json()
     # Assert
-    # agent-listing entry (not an AgentCard), so {name, url} is fine
+    # Each member mirrors the v1 AgentCard shape: URL under
+    # supportedInterfaces[], not a top-level `url` (ADR-0004 D11).
     assert body["x-scitex-agent-container"]["agents"] == [
-        {  # stx-allow: STX-SAC001
+        {
             "name": "mock-echo",
-            "url": "http://testserver/agents/mock-echo",
+            "supportedInterfaces": [
+                {
+                    "url": "http://testserver/agents/mock-echo",
+                    "protocolBinding": "HTTP+JSON",
+                    "tenant": "mock-echo",
+                    "protocolVersion": "1.0",
+                }
+            ],
         }
     ]
 
@@ -267,18 +281,26 @@ def test_list_agents_endpoint_returns_200(echo_client: TestClient):
 
 
 def test_list_agents_endpoint_enumerates_members(echo_client: TestClient):
-    """The /agents/ index body enumerates each agent and its URL."""
+    """The /agents/ index body enumerates each agent in v1 shape."""
     # Arrange
     client = echo_client
     # Act
     body = client.get("/agents/").json()
     # Assert
-    # agent-listing entry (not an AgentCard), so {name, url} is fine
+    # Each member mirrors the v1 AgentCard shape: URL under
+    # supportedInterfaces[], not a top-level `url` (ADR-0004 D11).
     assert body == {
         "agents": [
-            {  # stx-allow: STX-SAC001
+            {
                 "name": "mock-echo",
-                "url": "http://testserver/agents/mock-echo",
+                "supportedInterfaces": [
+                    {
+                        "url": "http://testserver/agents/mock-echo",
+                        "protocolBinding": "HTTP+JSON",
+                        "tenant": "mock-echo",
+                        "protocolVersion": "1.0",
+                    }
+                ],
             }
         ]
     }

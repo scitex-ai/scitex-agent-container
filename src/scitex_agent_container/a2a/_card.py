@@ -373,7 +373,23 @@ def fleet_card(
             }
         ],
         "x-scitex-agent-container": {
-            "agents": [{"name": n, "url": f"{base}/agents/{n}"} for n in agents],
+            # Each member entry mirrors the v1 AgentCard shape: binding
+            # URLs live under ``supportedInterfaces[]`` (ADR-0004 D11),
+            # not on a top-level ``url`` (which v1 dropped).
+            "agents": [
+                {
+                    "name": n,
+                    "supportedInterfaces": [
+                        {
+                            "url": f"{base}/agents/{n}",
+                            "protocolBinding": "HTTP+JSON",
+                            "tenant": n,
+                            "protocolVersion": "1.0",
+                        }
+                    ],
+                }
+                for n in agents
+            ],
         },
     }
 

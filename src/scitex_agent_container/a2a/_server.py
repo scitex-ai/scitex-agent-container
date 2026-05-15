@@ -161,8 +161,26 @@ def _build_app(ctx: _ServerCtx) -> Starlette:
     async def list_agents(request: Request) -> Response:
         base = _base_url(request)
         agents = sorted(ctx.yamls.keys())
+        # Each member entry mirrors the v1 AgentCard shape: binding URLs
+        # live under ``supportedInterfaces[]`` (ADR-0004 D11), not a
+        # top-level ``url`` (which v1 dropped).
         return JSONResponse(
-            {"agents": [{"name": n, "url": f"{base}/agents/{n}"} for n in agents]}
+            {
+                "agents": [
+                    {
+                        "name": n,
+                        "supportedInterfaces": [
+                            {
+                                "url": f"{base}/agents/{n}",
+                                "protocolBinding": "HTTP+JSON",
+                                "tenant": n,
+                                "protocolVersion": "1.0",
+                            }
+                        ],
+                    }
+                    for n in agents
+                ]
+            }
         )
 
     async def get_agent_card(request: Request) -> Response:
@@ -446,7 +464,10 @@ def serve(
     """
     try:
         import uvicorn
-    except ImportError as exc:  # pragma: no cover  # stx-allow: fallback (reason: optional dependency not installed)
+    except Exception as exc:  # pragma: no cover  # stx-allow: fallback (reason: optional dependency not installed)
+        # Broaden: uvicorn import can fail with non-ImportError if a
+        # transitive dep (httptools, websockets) is mis-built. Surface
+        # any such failure as an actionable ImportError.
         raise ImportError(
             "uvicorn is required to run 'sac a2a serve'; install with "
             "'pip install uvicorn'."
