@@ -729,3 +729,680 @@ def test_health_body_reports_upstream_and_trust(
         "upstream": "https://peer.example.com",
         "trust": "local-mesh",
     }
+
+
+# ---------------------------------------------------------------------------
+# _upstream_base — well-known suffix stripping
+# ---------------------------------------------------------------------------
+
+
+def test_upstream_base_strips_v1_well_known_suffix() -> None:
+    # Arrange
+    from scitex_agent_container._runners.a2a_proxy import _upstream_base
+
+    upstream = "https://peer.example.com/.well-known/agent-card.json"
+    # Act
+    base = _upstream_base(upstream)
+    # Assert
+    assert base == "https://peer.example.com"
+
+
+def test_upstream_base_strips_legacy_well_known_suffix() -> None:
+    # Arrange
+    from scitex_agent_container._runners.a2a_proxy import _upstream_base
+
+    upstream = "https://peer.example.com/.well-known/agent.json"
+    # Act
+    base = _upstream_base(upstream)
+    # Assert
+    assert base == "https://peer.example.com"
+
+
+# ---------------------------------------------------------------------------
+# POST /v1/turn — bad JSON / HTTPError / non-JSON upstream reply
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def bad_json_post_response() -> httpx.Response:
+    # Arrange
+    upstream = _make_upstream()
+    client = _client_for_upstream(upstream)
+    app = build_app(
+        name="proxy-front",
+        upstream="http://upstream.test",
+        trust="untrusted",
+        redact=[],
+        timeout_s=5.0,
+        upstream_card=None,
+        httpx_client=client,
+    )
+    # Act
+    with TestClient(app) as tc:
+        return tc.post(
+            "/v1/turn",
+            content=b"not-json",
+            headers={"content-type": "application/json"},
+        )
+
+
+def test_post_v1_turn_bad_json_returns_status_400(
+    bad_json_post_response: httpx.Response,
+) -> None:
+    # Arrange
+    r = bad_json_post_response
+    # Act
+    status = r.status_code
+    # Assert
+    assert status == 400
+
+
+def test_post_v1_turn_bad_json_error_mentions_json(
+    bad_json_post_response: httpx.Response,
+) -> None:
+    # Arrange
+    r = bad_json_post_response
+    # Act
+    err = r.json()["error"].lower()
+    # Assert
+    assert "bad json" in err
+
+
+@pytest.fixture
+def upstream_http_error_response() -> httpx.Response:
+    # Arrange
+    async def boom(request: Request) -> Response:
+        raise httpx.ConnectError("conn refused")
+
+    upstream = _make_upstream(turn_handler=boom)
+    client = _client_for_upstream(upstream)
+    app = build_app(
+        name="proxy-front",
+        upstream="http://upstream.test",
+        trust="untrusted",
+        redact=[],
+        timeout_s=5.0,
+        upstream_card=None,
+        httpx_client=client,
+    )
+    # Act
+    with TestClient(app) as tc:
+        return tc.post("/v1/turn", json={"text": "hi"})
+
+
+def test_upstream_connect_error_returns_status_502(
+    upstream_http_error_response: httpx.Response,
+) -> None:
+    # Arrange
+    r = upstream_http_error_response
+    # Act
+    status = r.status_code
+    # Assert
+    assert status == 502
+
+
+def test_upstream_connect_error_mentions_unreachable(
+    upstream_http_error_response: httpx.Response,
+) -> None:
+    # Arrange
+    r = upstream_http_error_response
+    # Act
+    err = r.json()["error"]
+    # Assert
+    assert "unreachable" in err
+
+
+@pytest.fixture
+def upstream_non_json_response() -> httpx.Response:
+    # Arrange
+    async def plain(request: Request) -> Response:
+        return Response("plain-text-reply", status_code=200)
+
+    upstream = _make_upstream(turn_handler=plain)
+    client = _client_for_upstream(upstream)
+    app = build_app(
+        name="proxy-front",
+        upstream="http://upstream.test",
+        trust="untrusted",
+        redact=[],
+        timeout_s=5.0,
+        upstream_card=None,
+        httpx_client=client,
+    )
+    # Act
+    with TestClient(app) as tc:
+        return tc.post("/v1/turn", json={"text": "hi"})
+
+
+def test_upstream_non_json_wraps_text_as_reply_field(
+    upstream_non_json_response: httpx.Response,
+) -> None:
+    # Arrange
+    r = upstream_non_json_response
+    # Act
+    body = r.json()
+    # Assert
+    assert body == {"reply": "plain-text-reply"}
+
+
+# ---------------------------------------------------------------------------
+# Real local upstream server (uvicorn on ephemeral port, background thread)
+# ---------------------------------------------------------------------------
+
+
+def _free_port() -> int:
+    import socket
+
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
+@pytest.fixture
+def real_upstream_server() -> Any:
+    """Spin up an actual uvicorn server with a small Starlette upstream.
+
+    Yields ``("http://127.0.0.1:<port>", recorder)`` where recorder is
+    a dict the upstream mutates so tests can observe traffic.
+    """
+    import threading
+    import time
+
+    import uvicorn
+
+    recorder: dict[str, Any] = {"hits": 0}
+
+    async def post_turn(request: Request) -> JSONResponse:
+        recorder["hits"] += 1
+        body = await request.json()
+        return JSONResponse({"reply": f"echo:{body.get('text', '')}"})
+
+    async def get_card(request: Request) -> JSONResponse:
+        return JSONResponse({"name": "real-peer", "skills": []})
+
+    app = Starlette(
+        routes=[
+            Route("/v1/turn", post_turn, methods=["POST"]),
+            Route("/.well-known/agent-card.json", get_card, methods=["GET"]),
+        ]
+    )
+
+    port = _free_port()
+    config = uvicorn.Config(
+        app, host="127.0.0.1", port=port, log_level="warning", lifespan="off"
+    )
+    server = uvicorn.Server(config)
+
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+
+    # Wait until the server reports it's actually listening.
+    deadline = time.time() + 5.0
+    while time.time() < deadline and not server.started:
+        time.sleep(0.02)
+    if not server.started:
+        server.should_exit = True
+        thread.join(timeout=2.0)
+        raise RuntimeError("upstream uvicorn server failed to start")
+
+    try:
+        yield (f"http://127.0.0.1:{port}", recorder)
+    finally:
+        server.should_exit = True
+        thread.join(timeout=2.0)
+
+
+@pytest.fixture
+def failing_upstream_server() -> Any:
+    """Real uvicorn server whose card endpoint returns 500."""
+    import threading
+    import time
+
+    import uvicorn
+
+    async def bad_card(request: Request) -> Response:
+        return Response("boom", status_code=500)
+
+    app = Starlette(
+        routes=[Route("/.well-known/agent-card.json", bad_card, methods=["GET"])]
+    )
+
+    port = _free_port()
+    config = uvicorn.Config(
+        app, host="127.0.0.1", port=port, log_level="warning", lifespan="off"
+    )
+    server = uvicorn.Server(config)
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+
+    deadline = time.time() + 5.0
+    while time.time() < deadline and not server.started:
+        time.sleep(0.02)
+    if not server.started:
+        server.should_exit = True
+        thread.join(timeout=2.0)
+        raise RuntimeError("upstream uvicorn server failed to start")
+
+    try:
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        server.should_exit = True
+        thread.join(timeout=2.0)
+
+
+# ---------------------------------------------------------------------------
+# Fresh-client path (httpx_client=None) — talks to real local server
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def fresh_client_post_response(real_upstream_server: Any) -> httpx.Response:
+    # Arrange
+    base, _recorder = real_upstream_server
+    app = build_app(
+        name="proxy-front",
+        upstream=base,
+        trust="untrusted",
+        redact=[],
+        timeout_s=5.0,
+        upstream_card=None,
+        httpx_client=None,
+    )
+    # Act
+    with TestClient(app) as tc:
+        resp = tc.post("/v1/turn", json={"text": "hi"})
+    # Assert (deferred)
+    return resp
+
+
+def test_fresh_client_post_returns_status_200(
+    fresh_client_post_response: httpx.Response,
+) -> None:
+    # Arrange
+    r = fresh_client_post_response
+    # Act
+    status = r.status_code
+    # Assert
+    assert status == 200
+
+
+def test_fresh_client_post_returns_echo_body(
+    fresh_client_post_response: httpx.Response,
+) -> None:
+    # Arrange
+    r = fresh_client_post_response
+    # Act
+    body = r.json()
+    # Assert
+    assert body == {"reply": "echo:hi"}
+
+
+# ---------------------------------------------------------------------------
+# _fetch_upstream_card — real local server
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def fetched_upstream_card(real_upstream_server: Any) -> tuple[Any, str]:
+    # Arrange
+    import asyncio as _asyncio
+
+    from scitex_agent_container._runners.a2a_proxy import _fetch_upstream_card
+
+    base, _recorder = real_upstream_server
+    # Act
+    result = _asyncio.run(_fetch_upstream_card(base, timeout_s=5.0))
+    # Assert (deferred)
+    return result
+
+
+def test_fetch_upstream_card_returns_card_dict(
+    fetched_upstream_card: tuple[Any, str],
+) -> None:
+    # Arrange
+    card, _err = fetched_upstream_card
+    # Act
+    name = card["name"]
+    # Assert
+    assert name == "real-peer"
+
+
+def test_fetch_upstream_card_returns_empty_error_on_success(
+    fetched_upstream_card: tuple[Any, str],
+) -> None:
+    # Arrange
+    _card, err = fetched_upstream_card
+    # Act
+    actual = err
+    # Assert
+    assert actual == ""
+
+
+@pytest.fixture
+def fetched_upstream_card_failure(failing_upstream_server: Any) -> tuple[Any, str]:
+    # Arrange
+    import asyncio as _asyncio
+
+    from scitex_agent_container._runners.a2a_proxy import _fetch_upstream_card
+
+    base = failing_upstream_server
+    # Act
+    result = _asyncio.run(_fetch_upstream_card(base, timeout_s=5.0))
+    # Assert (deferred)
+    return result
+
+
+def test_fetch_upstream_card_returns_none_on_failure(
+    fetched_upstream_card_failure: tuple[Any, str],
+) -> None:
+    # Arrange
+    card, _err = fetched_upstream_card_failure
+    # Act
+    actual = card
+    # Assert
+    assert actual is None
+
+
+def test_fetch_upstream_card_returns_error_message_on_failure(
+    fetched_upstream_card_failure: tuple[Any, str],
+) -> None:
+    # Arrange
+    _card, err = fetched_upstream_card_failure
+    # Act
+    actual = err
+    # Assert
+    assert actual != ""
+
+
+# ---------------------------------------------------------------------------
+# _parse_argv — CLI argument parsing
+# ---------------------------------------------------------------------------
+
+
+def test_parse_argv_required_name_and_upstream_set() -> None:
+    # Arrange
+    from scitex_agent_container._runners.a2a_proxy import _parse_argv
+
+    argv = ["--name", "px", "--upstream", "http://u"]
+    # Act
+    ns = _parse_argv(argv)
+    # Assert
+    assert (ns.name, ns.upstream) == ("px", "http://u")
+
+
+def test_parse_argv_defaults_trust_to_untrusted() -> None:
+    # Arrange
+    from scitex_agent_container._runners.a2a_proxy import _parse_argv
+
+    argv = ["--name", "px", "--upstream", "http://u"]
+    # Act
+    ns = _parse_argv(argv)
+    # Assert
+    assert ns.trust == "untrusted"
+
+
+def test_parse_argv_accepts_redact_csv_string() -> None:
+    # Arrange
+    from scitex_agent_container._runners.a2a_proxy import _parse_argv
+
+    argv = ["--name", "px", "--upstream", "http://u", "--redact", "a,b,c"]
+    # Act
+    ns = _parse_argv(argv)
+    # Assert
+    assert ns.redact == "a,b,c"
+
+
+def test_parse_argv_accepts_a2a_port_int() -> None:
+    # Arrange
+    from scitex_agent_container._runners.a2a_proxy import _parse_argv
+
+    argv = ["--name", "px", "--upstream", "http://u", "--a2a-port", "7901"]
+    # Act
+    ns = _parse_argv(argv)
+    # Assert
+    assert ns.a2a_port == 7901
+
+
+# ---------------------------------------------------------------------------
+# run() lifecycle — pid + heartbeat written, terminates on SIGTERM
+#
+# Drives the real ``run`` coroutine against the real local upstream
+# (so ``_fetch_upstream_card`` actually fetches the upstream's card),
+# then issues SIGTERM to itself to exercise the signal-handler /
+# shutdown / heartbeat-stopping path.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def run_lifecycle_state_dir(tmp_path: Any, real_upstream_server: Any) -> Any:
+    # Arrange
+    import asyncio as _asyncio
+    import os
+    import signal
+
+    from scitex_agent_container._runners import a2a_proxy as _mod
+
+    base, _recorder = real_upstream_server
+    state_root = tmp_path / "rt"
+
+    async def _drive() -> int:
+        task = _asyncio.create_task(
+            _mod.run(
+                "px",
+                upstream=base,
+                trust="untrusted",
+                redact=[],
+                timeout_s=1.0,
+                state_root=state_root,
+                tick_seconds=0.05,
+                a2a_host="127.0.0.1",
+                a2a_port=None,
+            )
+        )
+        # Let the runner write pid + heartbeat, then signal stop.
+        await _asyncio.sleep(0.2)
+        os.kill(os.getpid(), signal.SIGTERM)
+        return await _asyncio.wait_for(task, timeout=5.0)
+
+    # Act
+    rc = _asyncio.run(_drive())
+    # Assert (deferred)
+    return {"rc": rc, "state_dir": state_root / "px"}
+
+
+def test_run_returns_zero_on_clean_shutdown(
+    run_lifecycle_state_dir: dict[str, Any],
+) -> None:
+    # Arrange
+    result = run_lifecycle_state_dir
+    # Act
+    rc = result["rc"]
+    # Assert
+    assert rc == 0
+
+
+def test_run_writes_pid_file_in_state_dir(
+    run_lifecycle_state_dir: dict[str, Any],
+) -> None:
+    # Arrange
+    state_dir = run_lifecycle_state_dir["state_dir"]
+    # Act
+    pid_file = state_dir / "pid"
+    # Assert
+    assert pid_file.is_file()
+
+
+def test_run_writes_heartbeat_file_in_state_dir(
+    run_lifecycle_state_dir: dict[str, Any],
+) -> None:
+    # Arrange
+    state_dir = run_lifecycle_state_dir["state_dir"]
+    # Act
+    hb_file = state_dir / "heartbeat.json"
+    # Assert
+    assert hb_file.is_file()
+
+
+def test_run_final_heartbeat_state_is_stopping(
+    run_lifecycle_state_dir: dict[str, Any],
+) -> None:
+    # Arrange
+    import json as _json
+
+    state_dir = run_lifecycle_state_dir["state_dir"]
+    # Act
+    hb = _json.loads((state_dir / "heartbeat.json").read_text())
+    # Assert
+    assert hb["state"] == "stopping"
+
+
+# ---------------------------------------------------------------------------
+# main() — CLI entry; drives a real (short-lived) run() against the
+# real local upstream, terminated by a self-issued SIGTERM from a
+# background thread once we know the runner is up.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def main_short_run(tmp_path: Any, real_upstream_server: Any) -> dict[str, Any]:
+    # Arrange
+    import os
+    import signal
+    import threading
+    import time
+
+    from scitex_agent_container._runners.a2a_proxy import main as _main
+
+    base, _recorder = real_upstream_server
+    state_root = tmp_path / "rt"
+    target_pid = os.getpid()
+
+    def _shoot() -> None:
+        # Give run() time to install the signal handler, then SIGTERM.
+        time.sleep(0.3)
+        os.kill(target_pid, signal.SIGTERM)
+
+    killer = threading.Thread(target=_shoot, daemon=True)
+    killer.start()
+
+    # Act
+    rc = _main(
+        [
+            "--name",
+            "px-main",
+            "--upstream",
+            base,
+            "--redact",
+            "a, ,b",
+            "--state-root",
+            str(state_root),
+            "--tick-seconds",
+            "0.05",
+        ]
+    )
+    killer.join(timeout=2.0)
+    # Assert (deferred)
+    return {"rc": rc, "state_dir": state_root / "px-main"}
+
+
+def test_main_returns_zero_on_clean_shutdown(
+    main_short_run: dict[str, Any],
+) -> None:
+    # Arrange
+    result = main_short_run
+    # Act
+    rc = result["rc"]
+    # Assert
+    assert rc == 0
+
+
+def test_main_writes_pid_under_state_root(
+    main_short_run: dict[str, Any],
+) -> None:
+    # Arrange
+    state_dir = main_short_run["state_dir"]
+    # Act
+    pid_file = state_dir / "pid"
+    # Assert
+    assert pid_file.is_file()
+
+
+# ---------------------------------------------------------------------------
+# run() with --a2a-port — exercises the uvicorn-server branch so the
+# real proxy serves /health on the bound port, then SIGTERM cancels the
+# serve task to cover the shutdown cleanup path.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def run_with_bound_port(tmp_path: Any, real_upstream_server: Any) -> dict[str, Any]:
+    # Arrange
+    import asyncio as _asyncio
+    import os
+    import signal
+
+    from scitex_agent_container._runners import a2a_proxy as _mod
+
+    base, _recorder = real_upstream_server
+    state_root = tmp_path / "rt"
+    proxy_port = _free_port()
+    health_status: dict[str, Any] = {"code": None}
+
+    async def _drive() -> int:
+        task = _asyncio.create_task(
+            _mod.run(
+                "px-bound",
+                upstream=base,
+                trust="untrusted",
+                redact=[],
+                timeout_s=1.0,
+                state_root=state_root,
+                tick_seconds=0.05,
+                a2a_host="127.0.0.1",
+                a2a_port=proxy_port,
+            )
+        )
+        # Wait for the proxy to be ready by hitting /health.
+        async with httpx.AsyncClient(timeout=2.0) as c:
+            for _ in range(50):
+                try:
+                    r = await c.get(f"http://127.0.0.1:{proxy_port}/health")
+                    if r.status_code == 200:
+                        health_status["code"] = r.status_code
+                        break
+                except (
+                    httpx.HTTPError
+                ):  # stx-allow: fallback (reason: server still booting)
+                    pass
+                await _asyncio.sleep(0.05)
+        os.kill(os.getpid(), signal.SIGTERM)
+        return await _asyncio.wait_for(task, timeout=5.0)
+
+    # Act
+    rc = _asyncio.run(_drive())
+    # Assert (deferred)
+    return {"rc": rc, "health_code": health_status["code"]}
+
+
+def test_run_with_bound_port_returns_zero(
+    run_with_bound_port: dict[str, Any],
+) -> None:
+    # Arrange
+    result = run_with_bound_port
+    # Act
+    rc = result["rc"]
+    # Assert
+    assert rc == 0
+
+
+def test_run_with_bound_port_serves_health_endpoint(
+    run_with_bound_port: dict[str, Any],
+) -> None:
+    # Arrange
+    result = run_with_bound_port
+    # Act
+    code = result["health_code"]
+    # Assert
+    assert code == 200
