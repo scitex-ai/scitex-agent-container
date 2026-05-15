@@ -4,16 +4,23 @@ PA-306: no `unittest.mock`. The CLI's collaborators are swapped via
 hand-rolled fake callables installed on the module's namespace and
 restored on teardown — same effect as `monkeypatch` without the mock
 library or the banned fixture parameter.
+
+TQ cleanup: each test is named for the specific behaviour it verifies
+(TQ003), carries the AAA marker triple (TQ002), and asserts exactly
+one fact (TQ007). Shared invocations are factored into module-level
+helpers so the matrix stays declarative.
 """
 
 from __future__ import annotations
 
+import json
 from contextlib import contextmanager
 from typing import Callable, Iterator
 
 from click.testing import CliRunner
 
 import scitex_agent_container._network.peer as peer_mod
+from scitex_agent_container._network.peer import PeerError
 from scitex_agent_container.cli_pkg.peer_group import peer_group
 
 
@@ -33,65 +40,184 @@ def _swap(name: str, fn: Callable) -> Iterator[None]:
         setattr(peer_mod, name, saved)
 
 
-class TestPeerGroup:
-    def test_group_lists_two_verbs(self) -> None:
-        """`sac peer --help` shows post-turn + resolve-url under the group."""
-        runner = CliRunner()
-        result = runner.invoke(peer_group, ["--help"])
-        assert result.exit_code == 0
-        assert "post-turn" in result.output
-        assert "resolve-url" in result.output
+# ---------------------------------------------------------------------------
+# `sac peer --help` — group lists its verbs
+# ---------------------------------------------------------------------------
 
-    def test_post_turn_invokes_post_turn(self) -> None:
-        """`sac peer post-turn AGENT TEXT` calls peer.post_turn and echoes
-        the reply."""
-        captured: dict = {}
 
-        def fake_post_turn(name: str, text: str, **_kw) -> str:
-            captured["call"] = (name, text)
-            return "echo:hi"
+def _invoke_help():
+    runner = CliRunner()
+    return runner.invoke(peer_group, ["--help"])
 
-        runner = CliRunner()
-        with _swap("post_turn", fake_post_turn):
-            result = runner.invoke(peer_group, ["post-turn", "alpha", "hi"])
-        assert result.exit_code == 0
-        assert result.output.strip() == "echo:hi"
-        assert captured["call"] == ("alpha", "hi")
 
-    def test_post_turn_json_envelope(self) -> None:
-        """`--json` emits the full envelope, not just the reply."""
-        import json
+def test_group_help_exits_zero() -> None:
+    # Arrange
+    invoke = _invoke_help
+    # Act
+    result = invoke()
+    # Assert
+    assert result.exit_code == 0
 
-        def fake_post_turn(*_a, **_kw) -> str:
-            return "ok"
 
-        runner = CliRunner()
-        with _swap("post_turn", fake_post_turn):
-            result = runner.invoke(peer_group, ["post-turn", "alpha", "hi", "--json"])
-        assert result.exit_code == 0
-        body = json.loads(result.output)
-        assert body == {"reply": "ok", "exit_after": False}
+def test_group_help_lists_post_turn_verb() -> None:
+    # Arrange
+    invoke = _invoke_help
+    # Act
+    result = invoke()
+    # Assert
+    assert "post-turn" in result.output
 
-    def test_post_turn_peer_error_exits_2(self) -> None:
-        """PeerError surfaces as exit code 2 + error message."""
-        from scitex_agent_container._network.peer import PeerError
 
-        def fake_post_turn(*_a, **_kw) -> str:
-            raise PeerError("boom")
+def test_group_help_lists_resolve_url_verb() -> None:
+    # Arrange
+    invoke = _invoke_help
+    # Act
+    result = invoke()
+    # Assert
+    assert "resolve-url" in result.output
 
-        runner = CliRunner()
-        with _swap("post_turn", fake_post_turn):
-            result = runner.invoke(peer_group, ["post-turn", "alpha", "hi"])
-        assert result.exit_code == 2
-        # Click 8.2+ merges stderr into output when mix_stderr unavailable.
-        assert "boom" in result.output
 
-    def test_resolve_url_prints_url(self) -> None:
-        def fake_resolve(_name: str) -> str:
-            return "ssh://mba:18888/v1/turn"
+# ---------------------------------------------------------------------------
+# `sac peer post-turn AGENT TEXT` — happy path
+# ---------------------------------------------------------------------------
 
-        runner = CliRunner()
-        with _swap("resolve_peer_url", fake_resolve):
-            result = runner.invoke(peer_group, ["resolve-url", "head-mba"])
-        assert result.exit_code == 0
-        assert result.output.strip() == "ssh://mba:18888/v1/turn"
+
+def _invoke_post_turn_capturing():
+    """Run ``post-turn alpha hi`` against a fake that records args + replies."""
+    captured: dict = {}
+
+    def fake_post_turn(name: str, text: str, **_kw) -> str:
+        captured["call"] = (name, text)
+        return "echo:hi"
+
+    runner = CliRunner()
+    with _swap("post_turn", fake_post_turn):
+        result = runner.invoke(peer_group, ["post-turn", "alpha", "hi"])
+    return result, captured
+
+
+def test_post_turn_happy_path_exits_zero() -> None:
+    # Arrange
+    invoke = _invoke_post_turn_capturing
+    # Act
+    result, _ = invoke()
+    # Assert
+    assert result.exit_code == 0
+
+
+def test_post_turn_happy_path_echoes_reply() -> None:
+    # Arrange
+    invoke = _invoke_post_turn_capturing
+    # Act
+    result, _ = invoke()
+    # Assert
+    assert result.output.strip() == "echo:hi"
+
+
+def test_post_turn_forwards_agent_and_text_to_collaborator() -> None:
+    # Arrange
+    invoke = _invoke_post_turn_capturing
+    # Act
+    _, captured = invoke()
+    # Assert
+    assert captured["call"] == ("alpha", "hi")
+
+
+# ---------------------------------------------------------------------------
+# `sac peer post-turn ... --json` — envelope shape
+# ---------------------------------------------------------------------------
+
+
+def _invoke_post_turn_json():
+    def fake_post_turn(*_a, **_kw) -> str:
+        return "ok"
+
+    runner = CliRunner()
+    with _swap("post_turn", fake_post_turn):
+        result = runner.invoke(peer_group, ["post-turn", "alpha", "hi", "--json"])
+    return result
+
+
+def test_post_turn_json_exits_zero() -> None:
+    # Arrange
+    invoke = _invoke_post_turn_json
+    # Act
+    result = invoke()
+    # Assert
+    assert result.exit_code == 0
+
+
+def test_post_turn_json_emits_full_envelope() -> None:
+    # Arrange
+    invoke = _invoke_post_turn_json
+    # Act
+    result = invoke()
+    # Assert
+    assert json.loads(result.output) == {"reply": "ok", "exit_after": False}
+
+
+# ---------------------------------------------------------------------------
+# `sac peer post-turn` — PeerError surface
+# ---------------------------------------------------------------------------
+
+
+def _invoke_post_turn_raising():
+    def fake_post_turn(*_a, **_kw) -> str:
+        raise PeerError("boom")
+
+    runner = CliRunner()
+    with _swap("post_turn", fake_post_turn):
+        result = runner.invoke(peer_group, ["post-turn", "alpha", "hi"])
+    return result
+
+
+def test_post_turn_peer_error_exits_2() -> None:
+    # Arrange
+    invoke = _invoke_post_turn_raising
+    # Act
+    result = invoke()
+    # Assert
+    assert result.exit_code == 2
+
+
+def test_post_turn_peer_error_message_surfaces_in_output() -> None:
+    # Arrange
+    # Click 8.2+ merges stderr into output when mix_stderr unavailable.
+    invoke = _invoke_post_turn_raising
+    # Act
+    result = invoke()
+    # Assert
+    assert "boom" in result.output
+
+
+# ---------------------------------------------------------------------------
+# `sac peer resolve-url AGENT`
+# ---------------------------------------------------------------------------
+
+
+def _invoke_resolve_url():
+    def fake_resolve(_name: str) -> str:
+        return "ssh://mba:18888/v1/turn"
+
+    runner = CliRunner()
+    with _swap("resolve_peer_url", fake_resolve):
+        result = runner.invoke(peer_group, ["resolve-url", "head-mba"])
+    return result
+
+
+def test_resolve_url_exits_zero() -> None:
+    # Arrange
+    invoke = _invoke_resolve_url
+    # Act
+    result = invoke()
+    # Assert
+    assert result.exit_code == 0
+
+
+def test_resolve_url_prints_resolved_url() -> None:
+    # Arrange
+    invoke = _invoke_resolve_url
+    # Act
+    result = invoke()
+    # Assert
+    assert result.output.strip() == "ssh://mba:18888/v1/turn"
