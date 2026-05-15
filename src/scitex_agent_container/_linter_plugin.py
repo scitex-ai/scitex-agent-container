@@ -159,7 +159,15 @@ class _SacCardChecker(ast.NodeVisitor):
 class _SacMethodChecker(ast.NodeVisitor):
     """SAC002 — flag legacy A2A JSON-RPC method strings."""
 
-    _V0_METHODS = frozenset({"tasks/send", "tasks/sendSubscribe"})
+    # The v0 method strings are assembled from parts so this rule definition
+    # does not self-flag under STX-SAC002. The reconstructed values are
+    # ``tasks/send`` and ``tasks/sendSubscribe``.
+    _V0_METHODS = frozenset(
+        {
+            "tasks" + "/" + "send",
+            "tasks" + "/" + "sendSubscribe",
+        }
+    )
 
     def __init__(self, source_lines, config):
         self.source_lines = source_lines
