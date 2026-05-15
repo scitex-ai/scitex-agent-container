@@ -20,6 +20,12 @@ If the system prompt forbids tools, if ``--channels`` flags neuter
 the MCP server, if ``permission_mode`` isn't propagated, if the
 sidecar's listen URL is wrong — any of those break this test.
 
+TQ cleanup: module docstring summarises intent (TQ001); every test
+carries AAA markers (TQ002); descriptive names spell out the verified
+behaviour (TQ003); each test asserts exactly one fact (TQ007). Same-
+shape invariants over a single arrange/act collapse into
+``pytest.parametrize``.
+
 Cost
 ====
 Each invocation spawns a real claude turn (haiku) so the test takes
@@ -259,22 +265,16 @@ def test_alpha_invokes_peers_tool_without_reporting_unregistered(
     )
 
 
-def test_alpha_peers_tool_reply_lists_alpha_peer(peers_tool_reply: str) -> None:
+@pytest.mark.parametrize("expected_peer", ["alpha", "beta"])
+def test_alpha_peers_tool_reply_lists_expected_peer(
+    peers_tool_reply: str, expected_peer: str
+) -> None:
     # Arrange
     reply = peers_tool_reply
     # Act
-    has_alpha = "alpha" in reply
+    has_peer = expected_peer in reply
     # Assert
-    assert has_alpha, f"peers tool reply missing 'alpha' peer name:\n{reply}"
-
-
-def test_alpha_peers_tool_reply_lists_beta_peer(peers_tool_reply: str) -> None:
-    # Arrange
-    reply = peers_tool_reply
-    # Act
-    has_beta = "beta" in reply
-    # Assert
-    assert has_beta, f"peers tool reply missing 'beta' peer name:\n{reply}"
+    assert has_peer, f"peers tool reply missing {expected_peer!r} peer name:\n{reply}"
 
 
 def test_a2a_send_from_alpha_sets_from_agent_to_alpha(
