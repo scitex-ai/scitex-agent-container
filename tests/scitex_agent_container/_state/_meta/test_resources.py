@@ -42,6 +42,16 @@ def test_pids_from_session_parses_real_subprocess_output(subprocess_shim):
     assert (pid, ppid) == (9_999, 4_242)
 
 
+def test_pids_from_session_swallows_int_parse_error(subprocess_shim):
+    # Arrange — tmux shim returns non-numeric pid, triggering ValueError
+    # inside the try block (line 46-47 catch path).
+    subprocess_shim.install("tmux", stdout="not-a-number\n")
+    # Act
+    pid, ppid = _pids_from_session("sess", multiplexer="tmux")
+    # Assert
+    assert (pid, ppid) == (0, 0)
+
+
 def test_collect_host_metrics_returns_dict():
     # Arrange
     collector = _collect_host_metrics
