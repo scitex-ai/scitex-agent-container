@@ -38,6 +38,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
+
 from .._env import getenv as _sac_env
 
 DEFAULT_DB_PATH = Path(
@@ -157,14 +158,62 @@ def new_uuid7() -> str:
     return str(uuid.uuid4())
 
 
-def _connect(db_path: Path) -> sqlite3.Connection:
+def _default_connector(db_path: Path) -> sqlite3.Connection:
+    """Default sqlite3 connection factory.
+
+    Extracted so tests can inject a hand-rolled connection that
+    simulates lock contention without relying on monkeypatch.
+    """
+    return sqlite3.connect(db_path, timeout=30.0)
+
+
+def _connect(
+    db_path: Path,
+    connector=_default_connector,
+) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
+    # ``timeout`` (sqlite3 ``busy_timeout``) governs how long the
+    # driver waits for a peer to release the write-lock before
+    # returning ``OperationalError: database is locked``. The default
+    # (5s) is plenty for the single-host workload but bursts of
+    # concurrent ``claim_port`` calls have been observed to lose a
+    # writer in ~13% of 8-way races — see
+    # tests/scitex_agent_container/_state/test_port_allocator.py
+    # ``test_threaded_contention_*``. Bumping to 30s plus the
+    # PRAGMA below removes the flake without changing semantics.
+    conn = connector(db_path)
     conn.row_factory = sqlite3.Row
+    # busy_timeout must be set BEFORE any other statement so it
+    # covers the journal_mode change below — switching journal_mode
+    # acquires an exclusive lock and SQLite's pre-PRAGMA default
+    # timeout would otherwise return "database is locked" immediately
+    # when two threads open a fresh state.db concurrently.
+    conn.execute("PRAGMA busy_timeout = 30000")
     # WAL: better write concurrency, smaller commit fsync cost. Safe
     # for the single-host workload sac runs today; the file stays
-    # SQLite-compatible for ssh-cp.
-    conn.execute("PRAGMA journal_mode = WAL")
+    # SQLite-compatible for ssh-cp. ``journal_mode`` is persisted in
+    # the file header — only the first connection on a fresh DB
+    # needs to mutate it. Skipping the SET when the file is already
+    # in WAL avoids the exclusive-lock contention that busy_timeout
+    # cannot cover for journal-mode changes (observed: ~10% flake
+    # rate on 8-way concurrent first opens of a fresh state.db).
+    current_mode = conn.execute("PRAGMA journal_mode").fetchone()
+    if current_mode and str(current_mode[0]).lower() != "wal":
+        # The journal_mode switch needs a file-exclusive lock that
+        # busy_timeout does not always cover (other openers in their
+        # own ``PRAGMA journal_mode`` call hold a shared read-lock
+        # for a brief window). Bounded retry with a short backoff
+        # serialises the racing first-openers cleanly.
+        import time
+
+        for attempt in range(50):
+            try:
+                conn.execute("PRAGMA journal_mode = WAL")
+                break
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc).lower() or attempt == 49:
+                    raise
+                time.sleep(0.02 * (attempt + 1))
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
