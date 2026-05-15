@@ -25,6 +25,9 @@ from click.testing import CliRunner
 
 from scitex_agent_container.cli_pkg.installation_group import (
     _cron_line,
+    _find_python311,
+    _find_sac_src,
+    boot,
     install_post_merge_cron,
 )
 
@@ -252,6 +255,126 @@ def test_dry_run_and_uninstall_together_exit_2(crontab_shim):
     result = _run_cron_cli(["--dry-run", "--uninstall"])
     # Assert
     assert result.exit_code == 2
+
+
+# ---------------------------------------------------------------------------
+# Confirmation and crontab error branches
+# ---------------------------------------------------------------------------
+
+
+def test_missing_yes_install_exits_two(crontab_shim):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(install_post_merge_cron, [])
+    # Assert
+    assert result.exit_code == 2
+
+
+def test_missing_yes_install_emits_refusal(crontab_shim):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(install_post_merge_cron, [])
+    # Assert
+    assert "refusing" in result.output.lower()
+
+
+def test_missing_yes_uninstall_mentions_remove(crontab_shim):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(install_post_merge_cron, ["--uninstall"])
+    # Assert
+    assert "remove" in result.output.lower()
+
+
+def test_crontab_list_unexpected_rc_exits_one(crontab_shim):
+    # Arrange
+    crontab_shim.set_list_exit_code(2)
+    # Act
+    result = _run_cron_cli([])
+    # Assert
+    assert result.exit_code == 1
+
+
+def test_crontab_write_failure_exits_one(tmp_path, env_save_restore, subprocess_shim):
+    # Arrange
+    subprocess_shim.install("crontab", exit=1, stderr="write boom")
+    # Act
+    result = _run_cron_cli([])
+    # Assert
+    assert result.exit_code == 1
+
+
+# ---------------------------------------------------------------------------
+# Helper functions: _find_python311, _find_sac_src
+# ---------------------------------------------------------------------------
+
+
+def test_find_python311_returns_path_when_available():
+    # Arrange
+    # Act
+    result = _find_python311()
+    # Assert
+    assert result is not None
+
+
+def test_find_python311_none_when_no_python_on_path(tmp_path, env_save_restore):
+    # Arrange — PATH contains only an empty dir, no python at all
+    empty = tmp_path / "empty_path"
+    empty.mkdir()
+    env_save_restore.set("PATH", str(empty))
+    # Act
+    result = _find_python311()
+    # Assert
+    assert result is None
+
+
+def test_find_sac_src_returns_directory_with_pyproject():
+    # Arrange
+    # Act
+    src_root = _find_sac_src()
+    # Assert
+    assert (src_root / "pyproject.toml").exists()
+
+
+# ---------------------------------------------------------------------------
+# sac install boot --dry-run (does not mutate host)
+# ---------------------------------------------------------------------------
+
+
+def test_boot_dry_run_exits_zero(subprocess_shim):
+    # Arrange
+    subprocess_shim.install("tmux", stdout="tmux 3.3a\n")
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(boot, ["--dry-run"])
+    # Assert
+    assert result.exit_code == 0
+
+
+def test_boot_dry_run_announces_completion(subprocess_shim):
+    # Arrange
+    subprocess_shim.install("tmux", stdout="tmux 3.3a\n")
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(boot, ["--dry-run"])
+    # Assert
+    assert "dry-run complete" in result.output.lower()
+
+
+def test_boot_dry_run_mentions_pip_install_plan(
+    subprocess_shim, tmp_path, env_save_restore
+):
+    # Arrange — force venv-missing branch by pointing HOME at empty dir
+    subprocess_shim.install("tmux", stdout="tmux 3.3a\n")
+    env_save_restore.set("HOME", str(tmp_path))
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(boot, ["--dry-run"])
+    # Assert
+    assert "pip" in result.output.lower() or "install" in result.output.lower()
 
 
 # ---------------------------------------------------------------------------
