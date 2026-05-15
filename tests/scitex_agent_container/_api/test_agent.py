@@ -43,7 +43,6 @@ import scitex_agent_container as sac  # noqa: E402
         ("db", "migrate"),
         ("db", "export"),
         ("db", "import_"),
-        ("host", "show"),
         ("host", "list"),
         ("host", "validate"),
         ("host", "probe"),

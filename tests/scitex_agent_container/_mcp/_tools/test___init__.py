@@ -382,15 +382,6 @@ def test_host_list_dispatches_host_prefixed_argv():
     assert captured[-1][1][0] == "host"
 
 
-def test_host_show_dispatches_host_prefixed_argv():
-    # Arrange
-    with _recording() as captured:
-        # Act
-        _host.host_show()
-    # Assert
-    assert captured[-1][1][0] == "host"
-
-
 def test_host_probe_dispatches_host_prefixed_argv():
     # Arrange
     with _recording() as captured:
