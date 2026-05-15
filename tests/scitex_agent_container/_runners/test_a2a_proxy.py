@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
+import pytest
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -57,36 +58,69 @@ def _client_for_upstream(upstream_app: Starlette) -> httpx.AsyncClient:
 # splice_card — pure logic
 # ---------------------------------------------------------------------------
 
+_SPLICE_UPSTREAM = {
+    "name": "real-peer",
+    "url": "http://peer/agents/real-peer",
+    "skills": [{"id": "peer.do-things", "name": "do-things"}],
+    "capabilities": {"streaming": True},
+    "provider": {"organization": "peer-org"},
+}
 
-def test_splice_card_preserves_upstream_skills_overrides_name_and_url() -> None:
-    upstream = {
-        "name": "real-peer",
-        "url": "http://peer/agents/real-peer",
-        "skills": [{"id": "peer.do-things", "name": "do-things"}],
-        "capabilities": {"streaming": True},
-        "provider": {"organization": "peer-org"},
-    }
-    out = splice_card(
+
+@pytest.fixture(scope="module")
+def spliced_card() -> dict[str, Any]:
+    # Arrange
+    upstream = _SPLICE_UPSTREAM
+    # Act
+    return splice_card(
         upstream,
         name="proxy-front",
         our_url="http://us/agents/proxy-front",
         upstream="https://peer.example.com",
         trust="local-mesh",
     )
-    assert out["name"] == "proxy-front"
-    assert out["url"] == "http://us/agents/proxy-front"
-    assert out["skills"] == upstream["skills"]
-    assert out["capabilities"] == upstream["capabilities"]
-    assert out["provider"] == upstream["provider"]
-    assert out["x-scitex-agent-container"] == {
+
+
+@pytest.mark.parametrize(
+    "key,expected",
+    [
+        ("name", "proxy-front"),
+        ("url", "http://us/agents/proxy-front"),
+        ("skills", _SPLICE_UPSTREAM["skills"]),
+        ("capabilities", _SPLICE_UPSTREAM["capabilities"]),
+        ("provider", _SPLICE_UPSTREAM["provider"]),
+    ],
+)
+def test_splice_card_preserves_or_overrides_top_level_fields(
+    spliced_card: dict[str, Any], key: str, expected: Any
+) -> None:
+    # Arrange
+    card = spliced_card
+    # Act
+    actual = card[key]
+    # Assert
+    assert actual == expected
+
+
+def test_splice_card_sets_scitex_agent_container_extension_block(
+    spliced_card: dict[str, Any],
+) -> None:
+    # Arrange
+    card = spliced_card
+    # Act
+    ext = card["x-scitex-agent-container"]
+    # Assert
+    assert ext == {
         "kind": "AgentProxy",
         "upstream": "https://peer.example.com",
         "trust": "local-mesh",
     }
 
 
-def test_splice_card_surfaces_fetch_error_when_upstream_none() -> None:
-    out = splice_card(
+@pytest.fixture(scope="module")
+def spliced_card_with_fetch_error() -> dict[str, Any]:
+    # Arrange / Act
+    return splice_card(
         None,
         name="proxy-front",
         our_url="http://us/agents/proxy-front",
@@ -94,10 +128,28 @@ def test_splice_card_surfaces_fetch_error_when_upstream_none() -> None:
         trust="untrusted",
         fetch_error="ConnectError: dial timeout",
     )
-    assert out["name"] == "proxy-front"
-    assert out["x-scitex-agent-container"]["upstream_card_fetch_error"] == (
-        "ConnectError: dial timeout"
-    )
+
+
+def test_splice_card_keeps_our_name_when_upstream_is_none(
+    spliced_card_with_fetch_error: dict[str, Any],
+) -> None:
+    # Arrange
+    card = spliced_card_with_fetch_error
+    # Act
+    name = card["name"]
+    # Assert
+    assert name == "proxy-front"
+
+
+def test_splice_card_surfaces_fetch_error_when_upstream_none(
+    spliced_card_with_fetch_error: dict[str, Any],
+) -> None:
+    # Arrange
+    card = spliced_card_with_fetch_error
+    # Act
+    err = card["x-scitex-agent-container"]["upstream_card_fetch_error"]
+    # Assert
+    assert err == "ConnectError: dial timeout"
 
 
 # ---------------------------------------------------------------------------
@@ -105,7 +157,9 @@ def test_splice_card_surfaces_fetch_error_when_upstream_none() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_post_v1_turn_forwards_to_upstream_and_returns_reply() -> None:
+@pytest.fixture
+def forward_roundtrip_response() -> httpx.Response:
+    # Arrange
     upstream = _make_upstream()
     client = _client_for_upstream(upstream)
     app = build_app(
@@ -117,10 +171,31 @@ def test_post_v1_turn_forwards_to_upstream_and_returns_reply() -> None:
         upstream_card=None,
         httpx_client=client,
     )
+    # Act
     with TestClient(app) as tc:
-        r = tc.post("/v1/turn", json={"text": "hello"})
-        assert r.status_code == 200
-        assert r.json() == {"reply": "echo:hello"}
+        return tc.post("/v1/turn", json={"text": "hello"})
+
+
+def test_post_v1_turn_forward_returns_status_200(
+    forward_roundtrip_response: httpx.Response,
+) -> None:
+    # Arrange
+    r = forward_roundtrip_response
+    # Act
+    status = r.status_code
+    # Assert
+    assert status == 200
+
+
+def test_post_v1_turn_forward_returns_upstream_reply_body(
+    forward_roundtrip_response: httpx.Response,
+) -> None:
+    # Arrange
+    r = forward_roundtrip_response
+    # Act
+    body = r.json()
+    # Assert
+    assert body == {"reply": "echo:hello"}
 
 
 # ---------------------------------------------------------------------------
@@ -128,7 +203,9 @@ def test_post_v1_turn_forwards_to_upstream_and_returns_reply() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_upstream_timeout_returns_504() -> None:
+@pytest.fixture
+def upstream_timeout_response() -> httpx.Response:
+    # Arrange
     async def hang(request: Request) -> Response:
         raise httpx.ReadTimeout("upstream hung")
 
@@ -143,10 +220,31 @@ def test_upstream_timeout_returns_504() -> None:
         upstream_card=None,
         httpx_client=client,
     )
+    # Act
     with TestClient(app) as tc:
-        r = tc.post("/v1/turn", json={"text": "hi"})
-        assert r.status_code == 504
-        assert "timeout" in r.json()["error"].lower()
+        return tc.post("/v1/turn", json={"text": "hi"})
+
+
+def test_upstream_timeout_returns_status_504(
+    upstream_timeout_response: httpx.Response,
+) -> None:
+    # Arrange
+    r = upstream_timeout_response
+    # Act
+    status = r.status_code
+    # Assert
+    assert status == 504
+
+
+def test_upstream_timeout_error_message_mentions_timeout(
+    upstream_timeout_response: httpx.Response,
+) -> None:
+    # Arrange
+    r = upstream_timeout_response
+    # Act
+    msg = r.json()["error"].lower()
+    # Assert
+    assert "timeout" in msg
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +252,9 @@ def test_upstream_timeout_returns_504() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_upstream_500_returns_502_with_message() -> None:
+@pytest.fixture
+def upstream_500_response() -> httpx.Response:
+    # Arrange
     async def boom(request: Request) -> Response:
         return Response("kaboom", status_code=500)
 
@@ -169,10 +269,31 @@ def test_upstream_500_returns_502_with_message() -> None:
         upstream_card=None,
         httpx_client=client,
     )
+    # Act
     with TestClient(app) as tc:
-        r = tc.post("/v1/turn", json={"text": "hi"})
-        assert r.status_code == 502
-        assert "kaboom" in r.json()["error"]
+        return tc.post("/v1/turn", json={"text": "hi"})
+
+
+def test_upstream_500_returns_status_502(
+    upstream_500_response: httpx.Response,
+) -> None:
+    # Arrange
+    r = upstream_500_response
+    # Act
+    status = r.status_code
+    # Assert
+    assert status == 502
+
+
+def test_upstream_500_error_message_includes_upstream_body(
+    upstream_500_response: httpx.Response,
+) -> None:
+    # Arrange
+    r = upstream_500_response
+    # Act
+    err = r.json()["error"]
+    # Assert
+    assert "kaboom" in err
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +301,9 @@ def test_upstream_500_returns_502_with_message() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_redact_term_in_prompt_returns_400() -> None:
+@pytest.fixture
+def redacted_prompt_run() -> tuple[httpx.Response, dict[str, bool]]:
+    # Arrange
     called = {"forwarded": False}
 
     async def handler(request: Request) -> Response:
@@ -198,11 +321,43 @@ def test_redact_term_in_prompt_returns_400() -> None:
         upstream_card=None,
         httpx_client=client,
     )
+    # Act
     with TestClient(app) as tc:
         r = tc.post("/v1/turn", json={"text": "leaking SECRET data"})
-        assert r.status_code == 400
-        assert "redacted" in r.json()["error"]
-    assert called["forwarded"] is False
+    return r, called
+
+
+def test_redact_term_in_prompt_returns_status_400(
+    redacted_prompt_run: tuple[httpx.Response, dict[str, bool]],
+) -> None:
+    # Arrange
+    r, _ = redacted_prompt_run
+    # Act
+    status = r.status_code
+    # Assert
+    assert status == 400
+
+
+def test_redact_term_in_prompt_error_message_mentions_redacted(
+    redacted_prompt_run: tuple[httpx.Response, dict[str, bool]],
+) -> None:
+    # Arrange
+    r, _ = redacted_prompt_run
+    # Act
+    err = r.json()["error"]
+    # Assert
+    assert "redacted" in err
+
+
+def test_redact_term_in_prompt_does_not_forward_to_upstream(
+    redacted_prompt_run: tuple[httpx.Response, dict[str, bool]],
+) -> None:
+    # Arrange
+    _, called = redacted_prompt_run
+    # Act
+    forwarded = called["forwarded"]
+    # Assert
+    assert forwarded is False
 
 
 # ---------------------------------------------------------------------------
@@ -210,7 +365,9 @@ def test_redact_term_in_prompt_returns_400() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_upstream_redirect_to_other_host_returns_502() -> None:
+@pytest.fixture
+def upstream_redirect_response() -> httpx.Response:
+    # Arrange
     async def redirector(request: Request) -> Response:
         return Response(
             "",
@@ -229,11 +386,42 @@ def test_upstream_redirect_to_other_host_returns_502() -> None:
         upstream_card=None,
         httpx_client=client,
     )
+    # Act
     with TestClient(app) as tc:
-        r = tc.post("/v1/turn", json={"text": "hi"})
-        assert r.status_code == 502
-        assert "disallowed host" in r.json()["error"]
-        assert "evil.example.com" in r.json()["error"]
+        return tc.post("/v1/turn", json={"text": "hi"})
+
+
+def test_upstream_redirect_to_other_host_returns_status_502(
+    upstream_redirect_response: httpx.Response,
+) -> None:
+    # Arrange
+    r = upstream_redirect_response
+    # Act
+    status = r.status_code
+    # Assert
+    assert status == 502
+
+
+def test_upstream_redirect_to_other_host_error_says_disallowed_host(
+    upstream_redirect_response: httpx.Response,
+) -> None:
+    # Arrange
+    r = upstream_redirect_response
+    # Act
+    err = r.json()["error"]
+    # Assert
+    assert "disallowed host" in err
+
+
+def test_upstream_redirect_to_other_host_error_includes_offending_host(
+    upstream_redirect_response: httpx.Response,
+) -> None:
+    # Arrange
+    r = upstream_redirect_response
+    # Act
+    err = r.json()["error"]
+    # Assert
+    assert "evil.example.com" in err
 
 
 # ---------------------------------------------------------------------------
@@ -241,38 +429,82 @@ def test_upstream_redirect_to_other_host_returns_502() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_agent_card_splices_upstream_card_with_our_overrides() -> None:
-    upstream_card = {
-        "name": "real-peer",
-        "url": "http://peer/agents/real-peer",
-        "skills": [{"id": "peer.do-things", "name": "do-things"}],
-        "capabilities": {"streaming": True},
-    }
+_AGENT_CARD_UPSTREAM = {
+    "name": "real-peer",
+    "url": "http://peer/agents/real-peer",
+    "skills": [{"id": "peer.do-things", "name": "do-things"}],
+    "capabilities": {"streaming": True},
+}
+
+
+@pytest.fixture
+def agent_card_response() -> dict[str, Any]:
+    # Arrange
     app = build_app(
         name="proxy-front",
         upstream="https://peer.example.com",
         trust="local-mesh",
         redact=[],
         timeout_s=5.0,
-        upstream_card=upstream_card,
+        upstream_card=_AGENT_CARD_UPSTREAM,
     )
+    # Act
     with TestClient(app) as tc:
         r = tc.get("/.well-known/agent-card.json")
-        assert r.status_code == 200
-        card = r.json()
-        assert card["name"] == "proxy-front"
-        assert card["skills"] == upstream_card["skills"]
-        assert card["capabilities"] == upstream_card["capabilities"]
-        assert card["x-scitex-agent-container"]["kind"] == "AgentProxy"
-        assert (
-            card["x-scitex-agent-container"]["upstream"] == "https://peer.example.com"
-        )
-        assert card["x-scitex-agent-container"]["trust"] == "local-mesh"
-        # url is request-derived (testserver host); just sanity check shape.
-        assert "/agents/proxy-front" in card["url"]
+    return {"status": r.status_code, "card": r.json()}
 
 
-def test_agent_card_fallback_when_upstream_card_missing() -> None:
+def test_agent_card_returns_status_200(
+    agent_card_response: dict[str, Any],
+) -> None:
+    # Arrange
+    result = agent_card_response
+    # Act
+    status = result["status"]
+    # Assert
+    assert status == 200
+
+
+@pytest.mark.parametrize(
+    "path,expected",
+    [
+        (("name",), "proxy-front"),
+        (("skills",), _AGENT_CARD_UPSTREAM["skills"]),
+        (("capabilities",), _AGENT_CARD_UPSTREAM["capabilities"]),
+        (("x-scitex-agent-container", "kind"), "AgentProxy"),
+        (("x-scitex-agent-container", "upstream"), "https://peer.example.com"),
+        (("x-scitex-agent-container", "trust"), "local-mesh"),
+    ],
+)
+def test_agent_card_splices_field(
+    agent_card_response: dict[str, Any],
+    path: tuple[str, ...],
+    expected: Any,
+) -> None:
+    # Arrange
+    card = agent_card_response["card"]
+    # Act
+    actual: Any = card
+    for key in path:
+        actual = actual[key]
+    # Assert
+    assert actual == expected
+
+
+def test_agent_card_url_is_request_derived_for_our_agent(
+    agent_card_response: dict[str, Any],
+) -> None:
+    # Arrange
+    card = agent_card_response["card"]
+    # Act
+    url = card["url"]
+    # Assert
+    assert "/agents/proxy-front" in url
+
+
+@pytest.fixture
+def agent_card_fallback_response() -> dict[str, Any]:
+    # Arrange
     app = build_app(
         name="proxy-front",
         upstream="https://peer.example.com",
@@ -282,15 +514,43 @@ def test_agent_card_fallback_when_upstream_card_missing() -> None:
         upstream_card=None,
         upstream_card_error="ConnectError: dial timeout",
     )
+    # Act
     with TestClient(app) as tc:
         r = tc.get("/.well-known/agent.json")  # mirror route
-        assert r.status_code == 200
-        card = r.json()
-        assert card["name"] == "proxy-front"
-        assert (
-            card["x-scitex-agent-container"]["upstream_card_fetch_error"]
-            == "ConnectError: dial timeout"
-        )
+    return {"status": r.status_code, "card": r.json()}
+
+
+def test_agent_card_fallback_returns_status_200(
+    agent_card_fallback_response: dict[str, Any],
+) -> None:
+    # Arrange
+    result = agent_card_fallback_response
+    # Act
+    status = result["status"]
+    # Assert
+    assert status == 200
+
+
+def test_agent_card_fallback_keeps_our_name(
+    agent_card_fallback_response: dict[str, Any],
+) -> None:
+    # Arrange
+    card = agent_card_fallback_response["card"]
+    # Act
+    name = card["name"]
+    # Assert
+    assert name == "proxy-front"
+
+
+def test_agent_card_fallback_surfaces_upstream_fetch_error(
+    agent_card_fallback_response: dict[str, Any],
+) -> None:
+    # Arrange
+    card = agent_card_fallback_response["card"]
+    # Act
+    err = card["x-scitex-agent-container"]["upstream_card_fetch_error"]
+    # Assert
+    assert err == "ConnectError: dial timeout"
 
 
 # ---------------------------------------------------------------------------
@@ -298,7 +558,9 @@ def test_agent_card_fallback_when_upstream_card_missing() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_health_returns_upstream_and_trust() -> None:
+@pytest.fixture
+def health_response() -> dict[str, Any]:
+    # Arrange
     app = build_app(
         name="proxy-front",
         upstream="https://peer.example.com",
@@ -307,11 +569,33 @@ def test_health_returns_upstream_and_trust() -> None:
         timeout_s=5.0,
         upstream_card=None,
     )
+    # Act
     with TestClient(app) as tc:
         r = tc.get("/health")
-        assert r.status_code == 200
-        assert r.json() == {
-            "status": "ok",
-            "upstream": "https://peer.example.com",
-            "trust": "local-mesh",
-        }
+    return {"status": r.status_code, "body": r.json()}
+
+
+def test_health_returns_status_200(
+    health_response: dict[str, Any],
+) -> None:
+    # Arrange
+    result = health_response
+    # Act
+    status = result["status"]
+    # Assert
+    assert status == 200
+
+
+def test_health_body_reports_upstream_and_trust(
+    health_response: dict[str, Any],
+) -> None:
+    # Arrange
+    result = health_response
+    # Act
+    body = result["body"]
+    # Assert
+    assert body == {
+        "status": "ok",
+        "upstream": "https://peer.example.com",
+        "trust": "local-mesh",
+    }
