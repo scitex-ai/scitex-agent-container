@@ -117,6 +117,31 @@ async def test_unsubscribe_then_publish_reports_zero_delivered() -> None:
     assert delivered == 0
 
 
+@pytest.mark.asyncio
+async def test_unsubscribe_one_keeps_remaining_subscriber_attached() -> None:
+    # Arrange two subscribers so unsubscribing one leaves a non-empty set.
+    broker = Broker()
+    q1 = await broker.subscribe("alice")
+    await broker.subscribe("alice")
+    # Act unsubscribe only one — the agent key must NOT be popped.
+    await broker.unsubscribe("alice", q1)
+    delivered = await broker.publish("alice", {"x": 9})
+    # Assert remaining subscriber still receives events.
+    assert delivered == 1
+
+
+@pytest.mark.asyncio
+async def test_subscriber_count_reflects_active_subscriptions() -> None:
+    # Arrange
+    broker = Broker()
+    await broker.subscribe("alice")
+    await broker.subscribe("alice")
+    # Act
+    count = await broker.subscriber_count("alice")
+    # Assert
+    assert count == 2
+
+
 # ---------------------------------------------------------------------------
 # Bounded-queue / slow-consumer policy: when more than 64 events are published
 # to a subscriber that never drains, the broker keeps the newest 64 and drops
@@ -279,3 +304,12 @@ def test_mint_event_omits_unset_optional_field(minimal_minted_event, field) -> N
     present = field in event
     # Assert
     assert present is False
+
+
+def test_mint_event_attaches_extra_metadata_when_provided() -> None:
+    # Arrange
+    event = mint_event("alice", content="hi", extra={"trace_id": "abc"})
+    # Act
+    extra = event.get("extra")
+    # Assert
+    assert extra == {"trace_id": "abc"}
