@@ -139,6 +139,46 @@ def test_sac_agents_check_for_unknown_agent_exits_nonzero(tmp_path, env_save_res
     assert result.returncode != 0
 
 
+# Parametrized: every agent-scoped subcommand must surface "agent not in
+# registry" as a non-zero exit. CI gate so a future regression that
+# silently swallows the error (exit 0 with stderr-only message) cannot
+# slip past — `set -e`-style callers depend on this contract.
+_UNKNOWN_AGENT_INVOCATIONS = [
+    pytest.param(("status", "nonexistent-agent-xyz-smoke"), id="status"),
+    pytest.param(("tail", "nonexistent-agent-xyz-smoke"), id="tail"),
+    pytest.param(("health", "nonexistent-agent-xyz-smoke"), id="health"),
+    pytest.param(("recall", "nonexistent-agent-xyz-smoke"), id="recall"),
+    pytest.param(("send", "nonexistent-agent-xyz-smoke", "hello"), id="send"),
+    pytest.param(("stop", "nonexistent-agent-xyz-smoke"), id="stop"),
+    pytest.param(
+        ("start", "nonexistent-agent-xyz-smoke", "--dry-run"), id="start-dry-run"
+    ),
+    pytest.param(("check", "nonexistent-agent-xyz-smoke"), id="check"),
+]
+
+
+@pytest.mark.parametrize("argv", _UNKNOWN_AGENT_INVOCATIONS)
+def test_sac_agents_subcommand_exits_nonzero_for_unknown_agent(
+    argv, tmp_path, env_save_restore
+):
+    # Arrange — fully isolate the lookup: empty HOME, no extra YAML
+    # search dirs, and an empty registry dir.
+    home = tmp_path / "home"
+    home.mkdir()
+    registry = tmp_path / "registry"
+    registry.mkdir()
+    env_save_restore.set("HOME", str(home))
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_YAML_DIRS", "")
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_REGISTRY_DIR", str(registry))
+    # Act
+    result = _run("agents", *argv)
+    # Assert
+    assert result.returncode != 0, (
+        f"sac agents {' '.join(argv)} unexpectedly exited 0\n"
+        f"stdout={result.stdout!r}\nstderr={result.stderr!r}"
+    )
+
+
 def test_sac_agents_list_runs_against_tmp_registry(tmp_path, env_save_restore):
     # Arrange — point both the registry dir AND HOME at tmp_path so the
     # list reads from an isolated, empty registry.
