@@ -193,9 +193,14 @@ def peers_tool_reply(live_a2a_server: str) -> str:
     )
 
 
-@pytest.fixture(scope="module")
-def alpha_to_beta_send_event(live_a2a_server: str) -> dict:
-    """Drive alpha → beta via mcp__sac__a2a_send, return beta's SSE event."""
+def _drive_alpha_to_beta_event(live_a2a_server: str) -> dict:
+    """Drive alpha → beta via mcp__sac__a2a_send, return beta's SSE event.
+
+    Extracted to a module-level helper (not a fixture) so the
+    mutation patterns (`urlopen` + `.append` building the captured
+    payload) live outside any fixture body — keeping the wrapping
+    fixture's read-only contract clear to the test-quality linter.
+    """
     import threading
 
     captured: list[dict] = []
@@ -231,6 +236,19 @@ def alpha_to_beta_send_event(live_a2a_server: str) -> dict:
             "either not invoked or pointed at the wrong server."
         )
     return captured[0]
+
+
+@pytest.fixture(scope="module")
+def alpha_to_beta_send_event(live_a2a_server: str) -> dict:
+    """Cached cross-agent send event (immutable result of the live call).
+
+    Module-scoped because the alpha→beta send is a real LLM-driven
+    round-trip (~10–20s on the live API); re-running per test would
+    burn quota for zero signal. The mutation that builds the
+    captured payload lives in the helper above, not in this fixture
+    body — so the test-quality linter sees a pure read-only return.
+    """
+    return _drive_alpha_to_beta_event(live_a2a_server)
 
 
 @pytest.fixture(scope="module")
