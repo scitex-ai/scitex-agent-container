@@ -62,7 +62,7 @@ def _check_a2a_card(config: AgentConfig) -> tuple[bool, str]:
     """Probe the agent's A2A AgentCard endpoint.
 
     Reads ``spec.a2a.{port,host}`` from the YAML and issues a GET to
-    ``http://<host>:<port>/agents/<name>/.well-known/agent.json``.
+    ``http://<host>:<port>/agents/<name>/.well-known/agent-card.json``.
     Healthy iff the endpoint returns 200 with ``name == config.name``.
     """
     import json
@@ -77,7 +77,7 @@ def _check_a2a_card(config: AgentConfig) -> tuple[bool, str]:
 
     host = str(a2a.get("host", "127.0.0.1"))
     port = int(a2a["port"])
-    url = f"http://{host}:{port}/agents/{config.name}/.well-known/agent.json"
+    url = f"http://{host}:{port}/agents/{config.name}/.well-known/agent-card.json"
     t0 = time.time()
     try:
         with urllib.request.urlopen(url, timeout=5) as resp:

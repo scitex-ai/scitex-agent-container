@@ -451,9 +451,9 @@ def live_serve_card_status(live_serve_yaml: Path) -> Iterator[int]:
         stderr=subprocess.PIPE,
     )
     try:
-        # Server's real route per a2a/_server.py (agent-card.json, not
-        # agent.json). a2a_doctor uses a different URL — that mismatch
-        # is a separate concern, not under test here.
+        # Server's real route per a2a/_server.py (agent-card.json) —
+        # the canonical A2A v1 well-known path. ``a2a_doctor`` now hits
+        # the same URL (fix: align doctor with server agent-card path).
         url = f"http://127.0.0.1:{port}/agents/smoke-agent/.well-known/agent-card.json"
         if not _wait_for_card(url, timeout=20.0):
             pytest.skip("a2a serve subprocess never became ready")
@@ -477,3 +477,88 @@ def test_serve_subprocess_serves_card_endpoint(
     is_ok = status == 200
     # Assert
     assert is_ok
+
+
+# ---------------------------------------------------------------------------
+# a2a_doctor <-> a2a_serve agreement (regression: agent-card path mismatch)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def live_doctor_against_serve(tmp_path: Path) -> Iterator[dict]:
+    """Boot ``sac a2a serve`` then run ``sac a2a doctor`` against it.
+
+    Pins the doctor<->server path agreement: both ends MUST agree on
+    the canonical A2A v1 well-known path (``agent-card.json``). If the
+    doctor reverts to ``agent.json``, this fixture surfaces ``ok=False``.
+    """
+    name = "smoke-doctor-agent"
+    agent_dir = tmp_path / name
+    agent_dir.mkdir()
+    spec = agent_dir / "spec.yaml"
+    port = _free_port()
+    spec.write_text(
+        "apiVersion: scitex-agent-container/v3\n"
+        "kind: Agent\n"
+        "metadata:\n"
+        f"  name: {name}\n"
+        "spec:\n"
+        "  a2a:\n"
+        "    host: 127.0.0.1\n"
+        f"    port: {port}\n"
+        "    handler: echo\n"
+    )
+    cmd = _sac_cmd() + [
+        "a2a",
+        "serve",
+        str(spec),
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(port),
+        "--handler",
+        "echo",
+    ]
+    proc = subprocess.Popen(
+        cmd,
+        env=os.environ.copy(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        url = f"http://127.0.0.1:{port}/agents/{name}/.well-known/agent-card.json"
+        if not _wait_for_card(url, timeout=20.0):
+            pytest.skip("a2a serve subprocess never became ready")
+        res = CliRunner().invoke(a2a, ["doctor", str(spec), "--json"])
+        yield {"exit_code": res.exit_code, "envelope": json.loads(res.output)}
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+
+
+def test_doctor_against_live_serve_exits_zero(
+    live_doctor_against_serve: dict,
+) -> None:
+    """``sac a2a doctor`` succeeds against a live ``sac a2a serve``."""
+    # Arrange
+    rt = live_doctor_against_serve
+    # Act
+    code = rt["exit_code"]
+    # Assert
+    assert code == 0, rt["envelope"]
+
+
+def test_doctor_against_live_serve_envelope_ok(
+    live_doctor_against_serve: dict,
+) -> None:
+    """The doctor's JSON envelope advertises ok=True for the live server."""
+    # Arrange
+    rt = live_doctor_against_serve
+    # Act
+    ok = rt["envelope"]["ok"]
+    # Assert
+    assert ok is True, rt["envelope"]
