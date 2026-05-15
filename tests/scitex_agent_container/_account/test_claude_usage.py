@@ -139,12 +139,12 @@ def test_cache_hit_returns_cached_data_without_http_call(tmp_path: Path) -> None
     _make_fresh_cache(
         home,
         {
-            "used_tokens_5h": 1000,
-            "limit_tokens_5h": 10000,
+            "used_tokens_5h": 1_000,
+            "limit_tokens_5h": 10_000,
             "used_pct_5h": 10.0,
             "reset_at_5h": "2026-01-01T00:00:00Z",
-            "used_tokens_7d": 5000,
-            "limit_tokens_7d": 100000,
+            "used_tokens_7d": 5_000,
+            "limit_tokens_7d": 100_000,
             "used_pct_7d": 5.0,
             "reset_at_7d": "2026-01-08T00:00:00Z",
             "fetched_at": "",
@@ -169,11 +169,11 @@ def _opener_must_not_be_called(req, timeout=None):
 def test_cache_hit_preserves_used_tokens_5h(tmp_path: Path) -> None:
     # Arrange
     home = _make_home_full_creds(tmp_path)
-    _make_fresh_cache(home, dict(_EMPTY_RESULT, used_tokens_5h=1000))
+    _make_fresh_cache(home, dict(_EMPTY_RESULT, used_tokens_5h=1_000))
     # Act
     result = fetch_usage(home=home, opener=_opener_must_not_be_called)
     # Assert
-    assert result["used_tokens_5h"] == 1000
+    assert result["used_tokens_5h"] == 1_000
 
 
 # ---------------------------------------------------------------------------
@@ -182,8 +182,13 @@ def test_cache_hit_preserves_used_tokens_5h(tmp_path: Path) -> None:
 
 
 _API_PAYLOAD_OK = [
-    {"window": "5h", "used": 2000, "limit": 20000, "resetAt": "2026-01-01T05:00:00Z"},
-    {"window": "7d", "used": 8000, "limit": 200000, "resetAt": "2026-01-08T00:00:00Z"},
+    {"window": "5h", "used": 2_000, "limit": 20_000, "resetAt": "2026-01-01T05:00:00Z"},
+    {
+        "window": "7d",
+        "used": 8_000,
+        "limit": 200_000,
+        "resetAt": "2026-01-08T00:00:00Z",
+    },
 ]
 
 
