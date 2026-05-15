@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import io
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -316,3 +317,72 @@ def test_main_fallback_path_persists_payload(state_dir, env_save_restore):
     sl_mod.main(stdin=_Stdin(payload), runner=runner)
     # Assert
     assert (state_dir / "agent-fb-persist.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# main() default-argument branches (stdin=None, runner=None, str raw)
+# ---------------------------------------------------------------------------
+
+
+class _StrStdin:
+    """Real text-stream stand-in: ``.read()`` returns str (no ``.buffer``)."""
+
+    def __init__(self, text: str) -> None:
+        self._text = text
+
+    def read(self) -> str:
+        return self._text
+
+
+def test_main_default_stdin_reads_from_sys_stdin(state_dir, env_save_restore):
+    # Arrange swap sys.stdin with a real bytes-stream stand-in.
+    env_save_restore.set("CLAUDE_AGENT_ID", "agent-default-stdin")
+    payload = json.dumps({"context_window": {"used_percentage": 33}}).encode()
+    saved = sys.stdin
+    sys.stdin = _Stdin(payload)
+    try:
+        # Act
+        sl_mod.main(runner=lambda argv, input=None: _R0())
+    except SystemExit:
+        pass
+    finally:
+        sys.stdin = saved
+    # Assert default-stdin branch persisted the payload from sys.stdin.
+    assert (state_dir / "agent-default-stdin.json").exists()
+
+
+class _R0:
+    returncode = 0
+
+
+def test_main_default_runner_uses_subprocess_run(
+    state_dir, env_save_restore, subprocess_shim
+):
+    # Arrange real claude-hud shim on PATH so default runner finds it.
+    env_save_restore.set("CLAUDE_AGENT_ID", "agent-default-runner")
+    subprocess_shim.install("claude-hud", exit=0)
+    payload = json.dumps({"context_window": {"used_percentage": 12}}).encode()
+    # Act invoke without runner so subprocess.run default fires.
+    try:
+        sl_mod.main(stdin=_Stdin(payload))
+    except SystemExit:
+        pass
+    # Assert the real subprocess.run reached the shim.
+    assert subprocess_shim.call_count("claude-hud") == 1
+
+
+def test_main_encodes_str_stdin_to_bytes_before_persist(state_dir, env_save_restore):
+    # Arrange stdin without ``.buffer`` so ``.read()`` returns str.
+    env_save_restore.set("CLAUDE_AGENT_ID", "agent-str-stdin")
+    payload_text = json.dumps({"context_window": {"used_percentage": 7}})
+    # Act
+    try:
+        sl_mod.main(
+            stdin=_StrStdin(payload_text),
+            runner=lambda argv, input=None: _R0(),
+        )
+    except SystemExit:
+        pass
+    # Assert persisted file contains the UTF-8 encoded payload.
+    stored = (state_dir / "agent-str-stdin.json").read_bytes()
+    assert stored == payload_text.encode()
