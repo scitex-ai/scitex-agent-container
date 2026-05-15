@@ -6,6 +6,11 @@ read session_id → cd workdir → exec claude --resume <sid> -p.
 PA-306: no ``unittest.mock``. Production collaborators are swapped at
 the module namespace via ``_swap`` context managers, and env mutations
 go through explicit save/restore.
+
+TQ cleanup: each test is named for the specific behaviour it verifies
+(TQ003), carries the AAA marker triple (TQ002), and asserts exactly one
+fact (TQ007). Shared invariants over equivalent inputs are collapsed
+into ``pytest.parametrize`` so the matrix stays declarative.
 """
 
 from __future__ import annotations
@@ -92,62 +97,152 @@ def isolated_env(tmp_path):
             os.environ[key] = saved_env
 
 
-def test_rejects_neither_prompt_nor_key(isolated_env):
+# ---------------------------------------------------------------------------
+# CLI argument validation
+# ---------------------------------------------------------------------------
+
+
+def test_invocation_without_prompt_or_key_exits_nonzero(isolated_env):
+    # Arrange
     runner = CliRunner()
+    # Act
     result = runner.invoke(send, ["alpha"])
+    # Assert
     assert result.exit_code != 0
+
+
+def test_invocation_without_prompt_or_key_reports_requirement_in_output(
+    isolated_env,
+):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(send, ["alpha"])
+    # Assert
     assert "Either PROMPT or --key is required" in result.output
 
 
-def test_rejects_both_prompt_and_key(isolated_env):
+def test_invocation_with_both_prompt_and_key_exits_nonzero(isolated_env):
+    # Arrange
     runner = CliRunner()
+    # Act
     result = runner.invoke(send, ["alpha", "hello", "--key", "ESC"])
+    # Assert
     assert result.exit_code != 0
+
+
+def test_invocation_with_both_prompt_and_key_reports_mutual_exclusion(
+    isolated_env,
+):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(send, ["alpha", "hello", "--key", "ESC"])
+    # Assert
     assert "mutually exclusive" in result.output
 
 
-def test_key_esc_sends_sigint(isolated_env):
+# ---------------------------------------------------------------------------
+# --key ESC: SIGINT delivery
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def alpha_with_pid(isolated_env):
+    """isolated_env plus a recorded pid file for the alpha agent."""
     (isolated_env / "state" / "alpha" / "pid").write_text("4242")
-    killed: dict = {}
-    with _swap_os_kill(lambda pid, sig: killed.update(pid=pid, sig=sig)):
+    return isolated_env
+
+
+def _invoke_key_esc_capturing_kill():
+    """Run ``send alpha --key ESC`` and return (result, kill_call)."""
+    kill_call: dict = {}
+    with _swap_os_kill(lambda pid, sig: kill_call.update(pid=pid, sig=sig)):
         runner = CliRunner()
         result = runner.invoke(send, ["alpha", "--key", "ESC"])
+    return result, kill_call
+
+
+def test_key_esc_with_recorded_pid_exits_zero(alpha_with_pid):
+    # Arrange
+    invoke = _invoke_key_esc_capturing_kill
+    # Act
+    result, _ = invoke()
+    # Assert
     assert result.exit_code == 0, result.output
-    assert killed["pid"] == 4242
-    assert killed["sig"] == 2  # SIGINT
 
 
-def test_key_unsupported_is_usage_error(isolated_env):
+@pytest.mark.parametrize(
+    "field,expected",
+    [
+        ("pid", 4_242),
+        ("sig", 2),  # signal.SIGINT
+    ],
+)
+def test_key_esc_delivers_sigint_to_recorded_pid(alpha_with_pid, field, expected):
+    # Arrange
+    invoke = _invoke_key_esc_capturing_kill
+    # Act
+    _, kill_call = invoke()
+    # Assert
+    assert kill_call[field] == expected
+
+
+def test_key_unsupported_exits_nonzero(isolated_env):
+    # Arrange
     runner = CliRunner()
+    # Act
     result = runner.invoke(send, ["alpha", "--key", "F12"])
+    # Assert
     assert result.exit_code != 0
+
+
+def test_key_unsupported_reports_not_supported(isolated_env):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(send, ["alpha", "--key", "F12"])
+    # Assert
     assert "not supported" in result.output
 
 
-def test_key_missing_pid_errors_clearly(isolated_env):
+def test_key_esc_without_pid_file_exits_nonzero(isolated_env):
+    # Arrange
     runner = CliRunner()
+    # Act
     result = runner.invoke(send, ["alpha", "--key", "ESC"])
+    # Assert
     assert result.exit_code != 0
+
+
+def test_key_esc_without_pid_file_reports_not_running(isolated_env):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(send, ["alpha", "--key", "ESC"])
+    # Assert
     assert "not running" in result.output
 
 
-def test_missing_session_id_errors_clearly(tmp_path):
+# ---------------------------------------------------------------------------
+# Missing session_id
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def isolated_env_without_session_id(tmp_path):
+    """isolated_env, but with the session_id file deleted before yield."""
     yaml_root = _seed_agent(tmp_path, "alpha", "sid-1")
     key = "SCITEX_AGENT_CONTAINER_YAML_DIRS"
     saved_env = os.environ.get(key)
-    os.environ[key] = str(yaml_root)
     saved_state = send_mod.state_dir_for
+    os.environ[key] = str(yaml_root)
     send_mod.state_dir_for = (  # type: ignore[assignment]
         lambda name, root=None: tmp_path / "state" / name
     )
-    # remove the session_id file
     (tmp_path / "state" / "alpha" / "session_id").unlink()
     try:
-        with _swap("_find_claude_binary", lambda: "/usr/bin/true"):
-            runner = CliRunner()
-            result = runner.invoke(send, ["alpha", "hi"])
-        assert result.exit_code != 0
-        assert "No session_id recorded" in result.output
+        yield tmp_path
     finally:
         send_mod.state_dir_for = saved_state  # type: ignore[assignment]
         if saved_env is None:
@@ -156,8 +251,40 @@ def test_missing_session_id_errors_clearly(tmp_path):
             os.environ[key] = saved_env
 
 
-def test_happy_path_invokes_claude_with_resume_in_workdir(isolated_env):
-    runner = CliRunner()
+def _invoke_send_without_session_id():
+    """Run ``send alpha hi`` against a missing session_id and return result."""
+    with _swap("_find_claude_binary", lambda: "/usr/bin/true"):
+        runner = CliRunner()
+        return runner.invoke(send, ["alpha", "hi"])
+
+
+def test_missing_session_id_exits_nonzero(isolated_env_without_session_id):
+    # Arrange
+    invoke = _invoke_send_without_session_id
+    # Act
+    result = invoke()
+    # Assert
+    assert result.exit_code != 0
+
+
+def test_missing_session_id_reports_no_session_recorded(
+    isolated_env_without_session_id,
+):
+    # Arrange
+    invoke = _invoke_send_without_session_id
+    # Act
+    result = invoke()
+    # Assert
+    assert "No session_id recorded" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Happy path: resume invocation
+# ---------------------------------------------------------------------------
+
+
+def _invoke_happy_path():
+    """Run ``send alpha 'follow up please'`` and capture argv/cwd."""
     captured: dict = {}
 
     def fake_call(argv, cwd=None):
@@ -169,9 +296,25 @@ def test_happy_path_invokes_claude_with_resume_in_workdir(isolated_env):
         _swap("_find_claude_binary", lambda: "/usr/local/bin/claude"),
         _swap_subprocess_call(fake_call),
     ):
-        result = runner.invoke(send, ["alpha", "follow up please"])
+        captured["result"] = CliRunner().invoke(send, ["alpha", "follow up please"])
+    return captured
 
-    assert result.exit_code == 0, result.output
+
+def test_happy_path_exits_zero(isolated_env):
+    # Arrange
+    invoke = _invoke_happy_path
+    # Act
+    captured = invoke()
+    # Assert
+    assert captured["result"].exit_code == 0, captured["result"].output
+
+
+def test_happy_path_invokes_claude_with_resume_prefix(isolated_env):
+    # Arrange
+    invoke = _invoke_happy_path
+    # Act
+    captured = invoke()
+    # Assert
     assert captured["argv"][:5] == [
         "/usr/local/bin/claude",
         "--resume",
@@ -179,52 +322,144 @@ def test_happy_path_invokes_claude_with_resume_in_workdir(isolated_env):
         "-p",
         "follow up please",
     ]
-    assert "--output-format" in captured["argv"]
-    assert "stream-json" in captured["argv"]
-    assert str(isolated_env / "workdir") == captured["cwd"]
 
 
-def test_no_stream_strips_stream_args(isolated_env):
-    runner = CliRunner()
+@pytest.mark.parametrize(
+    "flag",
+    ["--output-format", "stream-json"],
+)
+def test_happy_path_argv_contains_streaming_flag(isolated_env, flag):
+    # Arrange
+    invoke = _invoke_happy_path
+    # Act
+    captured = invoke()
+    # Assert
+    assert flag in captured["argv"]
+
+
+def test_happy_path_runs_in_agent_workdir(isolated_env):
+    # Arrange
+    expected_cwd = str(isolated_env / "workdir")
+    # Act
+    captured = _invoke_happy_path()
+    # Assert
+    assert expected_cwd == captured["cwd"]
+
+
+# ---------------------------------------------------------------------------
+# --no-stream
+# ---------------------------------------------------------------------------
+
+
+def _invoke_no_stream():
+    """Run ``send alpha hello --no-stream`` and capture argv/result."""
     captured: dict = {}
     with (
         _swap("_find_claude_binary", lambda: "/x/claude"),
         _swap_subprocess_call(lambda argv, cwd=None: captured.update(argv=argv) or 0),
     ):
-        result = runner.invoke(send, ["alpha", "hello", "--no-stream"])
-    assert result.exit_code == 0
-    assert "stream-json" not in captured["argv"]
-    assert "--output-format" not in captured["argv"]
+        captured["result"] = CliRunner().invoke(send, ["alpha", "hello", "--no-stream"])
+    return captured
 
 
-def test_model_and_max_turns_forwarded(isolated_env):
-    runner = CliRunner()
+def test_no_stream_exits_zero(isolated_env):
+    # Arrange
+    invoke = _invoke_no_stream
+    # Act
+    captured = invoke()
+    # Assert
+    assert captured["result"].exit_code == 0
+
+
+@pytest.mark.parametrize(
+    "flag",
+    ["stream-json", "--output-format"],
+)
+def test_no_stream_strips_streaming_flag(isolated_env, flag):
+    # Arrange
+    invoke = _invoke_no_stream
+    # Act
+    captured = invoke()
+    # Assert
+    assert flag not in captured["argv"]
+
+
+# ---------------------------------------------------------------------------
+# --model / --max-turns forwarding
+# ---------------------------------------------------------------------------
+
+
+def _invoke_model_and_max_turns():
+    """Run ``send alpha hi --model opus --max-turns 3`` and capture argv."""
     captured: dict = {}
     with (
         _swap("_find_claude_binary", lambda: "/x/claude"),
         _swap_subprocess_call(lambda argv, cwd=None: captured.update(argv=argv) or 0),
     ):
-        result = runner.invoke(
+        captured["result"] = CliRunner().invoke(
             send, ["alpha", "hi", "--model", "opus", "--max-turns", "3"]
         )
-    assert result.exit_code == 0
-    assert "--model" in captured["argv"]
-    assert "opus" in captured["argv"]
-    assert "--max-turns" in captured["argv"]
-    assert "3" in captured["argv"]
+    return captured
 
 
-def test_double_dash_forward_passes_args_through(isolated_env):
-    runner = CliRunner()
+def test_model_and_max_turns_invocation_exits_zero(isolated_env):
+    # Arrange
+    invoke = _invoke_model_and_max_turns
+    # Act
+    captured = invoke()
+    # Assert
+    assert captured["result"].exit_code == 0
+
+
+@pytest.mark.parametrize(
+    "token",
+    ["--model", "opus", "--max-turns", "3"],
+)
+def test_model_and_max_turns_forwarded_in_argv(isolated_env, token):
+    # Arrange
+    invoke = _invoke_model_and_max_turns
+    # Act
+    captured = invoke()
+    # Assert
+    assert token in captured["argv"]
+
+
+# ---------------------------------------------------------------------------
+# Trailing ``--`` passthrough
+# ---------------------------------------------------------------------------
+
+
+def _invoke_double_dash_passthrough():
+    """Run ``send alpha hi -- --dangerously-skip-permissions --debug``."""
     captured: dict = {}
     with (
         _swap("_find_claude_binary", lambda: "/x/claude"),
         _swap_subprocess_call(lambda argv, cwd=None: captured.update(argv=argv) or 0),
     ):
-        result = runner.invoke(
+        captured["result"] = CliRunner().invoke(
             send,
             ["alpha", "hi", "--", "--dangerously-skip-permissions", "--debug"],
         )
-    assert result.exit_code == 0, result.output
-    assert "--dangerously-skip-permissions" in captured["argv"]
-    assert "--debug" in captured["argv"]
+    return captured
+
+
+def test_double_dash_invocation_exits_zero(isolated_env):
+    # Arrange
+    invoke = _invoke_double_dash_passthrough
+    # Act
+    captured = invoke()
+    # Assert
+    assert captured["result"].exit_code == 0, captured["result"].output
+
+
+@pytest.mark.parametrize(
+    "passthrough_arg",
+    ["--dangerously-skip-permissions", "--debug"],
+)
+def test_double_dash_forwards_extra_arg_to_argv(isolated_env, passthrough_arg):
+    # Arrange
+    invoke = _invoke_double_dash_passthrough
+    # Act
+    captured = invoke()
+    # Assert
+    assert passthrough_arg in captured["argv"]
