@@ -16,6 +16,8 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import Callable, Iterator
 
+import pytest
+
 import scitex_agent_container.runtimes._ssh_chain as ssh_chain_mod
 from scitex_agent_container.runtimes._ssh_chain import (
     build_ssh_command,
@@ -37,58 +39,87 @@ def _swap_locality(fn: Callable[[str], bool]) -> Iterator[None]:
 # --- render_ssh_chain ---------------------------------------------------
 
 
-def test_render_empty_returns_empty():
-    assert render_ssh_chain([]) == []
-
-
-def test_render_single_hop_is_bare_host():
-    assert render_ssh_chain(["alpha"]) == ["alpha"]
-
-
-def test_render_two_hops_uses_J_flag():
-    # Two hops → first is the jump, last is the terminal.
-    assert render_ssh_chain(["hop1", "target"]) == ["-J", "hop1", "target"]
-
-
-def test_render_many_hops_joins_with_commas():
-    assert render_ssh_chain(["h1", "h2", "h3", "final"]) == [
-        "-J",
-        "h1,h2,h3",
-        "final",
-    ]
+@pytest.mark.parametrize(
+    "hops, expected",
+    [
+        ([], []),
+        (["alpha"], ["alpha"]),
+        (["hop1", "target"], ["-J", "hop1", "target"]),
+        (["h1", "h2", "h3", "final"], ["-J", "h1,h2,h3", "final"]),
+    ],
+    ids=[
+        "empty_returns_empty",
+        "single_hop_is_bare_host",
+        "two_hops_uses_J_flag",
+        "many_hops_joins_with_commas",
+    ],
+)
+def test_render_ssh_chain_shapes_argv(hops, expected):
+    # Arrange
+    chain = list(hops)
+    # Act
+    rendered = render_ssh_chain(chain)
+    # Assert
+    assert rendered == expected
 
 
 # --- skip_local_hops ----------------------------------------------------
 
 
 def test_skip_local_hops_drops_leading_local():
+    # Arrange
+    chain = ["spartan", "spartan-bm149"]
+    # Act
     with _swap_locality(lambda h: h == "spartan"):
-        assert skip_local_hops(["spartan", "spartan-bm149"]) == ["spartan-bm149"]
+        result = skip_local_hops(chain)
+    # Assert
+    assert result == ["spartan-bm149"]
 
 
 def test_skip_local_hops_passes_through_remote_only():
+    # Arrange
+    chain = ["a", "b", "c"]
+    # Act
     with _swap_locality(lambda _h: False):
-        assert skip_local_hops(["a", "b", "c"]) == ["a", "b", "c"]
+        result = skip_local_hops(chain)
+    # Assert
+    assert result == ["a", "b", "c"]
 
 
-def test_skip_local_hops_all_local_yields_empty():
+@pytest.mark.parametrize(
+    "chain",
+    [["spartan"], ["a", "b"]],
+    ids=["single_local", "two_locals"],
+)
+def test_skip_local_hops_all_local_yields_empty(chain):
+    # Arrange
+    inp = list(chain)
+    # Act
     with _swap_locality(lambda _h: True):
-        assert skip_local_hops(["spartan"]) == []
-        assert skip_local_hops(["a", "b"]) == []
+        result = skip_local_hops(inp)
+    # Assert
+    assert result == []
 
 
 def test_skip_local_hops_stops_at_first_remote():
     # Only LEADING locals are trimmed; a local hop after a remote one
     # must survive (otherwise the chain semantics break).
+    # Arrange
     seq = ["local-a", "remote-b", "local-c"]
+    # Act
     with _swap_locality(lambda h: h.startswith("local")):
-        assert skip_local_hops(seq) == ["remote-b", "local-c"]
+        result = skip_local_hops(seq)
+    # Assert
+    assert result == ["remote-b", "local-c"]
 
 
 def test_skip_local_hops_does_not_mutate_input():
+    # Arrange
     inp = ["spartan", "target"]
+    # Act
     with _swap_locality(lambda h: h == "spartan"):
         skip_local_hops(inp)
+    # Assert
     assert inp == ["spartan", "target"]
 
 
@@ -96,26 +127,45 @@ def test_skip_local_hops_does_not_mutate_input():
 
 
 def test_build_ssh_command_empty_returns_none():
-    assert build_ssh_command([], "echo ok") is None
+    # Arrange
+    hops: list[str] = []
+    # Act
+    cmd = build_ssh_command(hops, "echo ok")
+    # Assert
+    assert cmd is None
 
 
 def test_build_ssh_command_single_hop_no_opts():
-    cmd = build_ssh_command(["host"], "echo ok")
+    # Arrange
+    hops = ["host"]
+    # Act
+    cmd = build_ssh_command(hops, "echo ok")
+    # Assert
     assert cmd == ["ssh", "host", "echo ok"]
 
 
 def test_build_ssh_command_with_opts_preserves_order():
-    cmd = build_ssh_command(["host"], "uptime", ssh_opts=["-o", "BatchMode=yes"])
+    # Arrange
+    hops = ["host"]
+    # Act
+    cmd = build_ssh_command(hops, "uptime", ssh_opts=["-o", "BatchMode=yes"])
+    # Assert
     assert cmd == ["ssh", "-o", "BatchMode=yes", "host", "uptime"]
 
 
 def test_build_ssh_command_multi_hop_emits_J_flag():
-    cmd = build_ssh_command(["hop1", "hop2", "final"], "hostname")
+    # Arrange
+    hops = ["hop1", "hop2", "final"]
+    # Act
+    cmd = build_ssh_command(hops, "hostname")
+    # Assert
     assert cmd == ["ssh", "-J", "hop1,hop2", "final", "hostname"]
 
 
 def test_build_ssh_command_multi_hop_with_opts():
-    cmd = build_ssh_command(
-        ["hop1", "final"], "id", ssh_opts=["-o", "ConnectTimeout=10"]
-    )
+    # Arrange
+    hops = ["hop1", "final"]
+    # Act
+    cmd = build_ssh_command(hops, "id", ssh_opts=["-o", "ConnectTimeout=10"])
+    # Assert
     assert cmd == ["ssh", "-o", "ConnectTimeout=10", "-J", "hop1", "final", "id"]
