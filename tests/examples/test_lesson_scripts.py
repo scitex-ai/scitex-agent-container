@@ -120,35 +120,56 @@ def _script_has_no_stale_cli(script: Path) -> None:
 # 1. parse check
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("script", ALL_SCRIPTS, ids=lambda p: p.name)
-def test_script_parses(script: Path) -> None:
+def test_each_lesson_script_parses_under_bash_n(script: Path) -> None:
     """``bash -n`` must accept every tutorial script."""
-    _script_parses(script)
+    # Arrange
+    target = script
+    # Act
+    result = _probe_parses(target)
+    # Assert
+    assert result.returncode == 0, f"bash -n failed for {target.name}:\n{result.stderr}"
 
 
 # ---------------------------------------------------------------------------
 # 2. read-only execution
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("script", NUMBERED_SCRIPTS, ids=lambda p: p.name)
-def test_script_runs_readonly(script: Path, tmp_path: Path) -> None:
+def test_each_lesson_script_runs_readonly_under_tmp_home(
+    script: Path, tmp_path: Path
+) -> None:
     """Running a script without --apply must exit 0 under a tmp HOME.
 
     Scripts perform only dry-run / status calls (``sac image list``,
     ``sac agents list``, echo statements). Where they invoke sac
     subcommands they tolerate failure via ``|| true``.
     """
-    _script_runs_readonly(script, tmp_path)
+    # Arrange
+    target = script
+    # Act
+    result = _probe_runs_readonly(target, tmp_path)
+    # Assert
+    assert result.returncode == 0, (
+        f"{target.name} exited {result.returncode}\n"
+        f"--- stdout ---\n{result.stdout}\n"
+        f"--- stderr ---\n{result.stderr}"
+    )
 
 
 # ---------------------------------------------------------------------------
 # 3. stale-CLI lint
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("script", ALL_SCRIPTS, ids=lambda p: p.name)
-def test_script_has_no_stale_cli_strings(script: Path) -> None:
+def test_each_lesson_script_has_no_stale_cli_strings(script: Path) -> None:
     """No tutorial script may reference legacy CLI surface."""
-    _script_has_no_stale_cli(script)
+    # Arrange
+    target = script
+    # Act
+    offenders = _probe_stale_cli_offenders(target)
+    # Assert
+    assert not offenders, f"{target.name} contains stale CLI strings: {offenders}"
 
 
-def test_location_label_is_not_bare_LOCAL() -> None:
+def test_no_lesson_script_mentions_bare_LOCAL_label() -> None:
     """The old ``LOCAL`` location label has been replaced by
     ``host@host-workdir:container-workdir``. No tutorial script should
     advertise the legacy label as the expected output.
@@ -158,7 +179,10 @@ def test_location_label_is_not_bare_LOCAL() -> None:
     """
     import re
 
+    # Arrange
     pattern = re.compile(r"(?<![A-Z_])LOCAL(?![A-Z_])")
+    # Act
+    offenders: dict[str, list[str]] = {}
     for script in ALL_SCRIPTS:
         text = script.read_text()
         # Strip comment lines that explicitly say "old label was LOCAL" —
@@ -170,4 +194,7 @@ def test_location_label_is_not_bare_LOCAL() -> None:
             for line in text.splitlines()
             if pattern.search(line) and "old" not in line.lower()
         ]
-        assert not matches, f"{script.name} mentions bare LOCAL label: {matches!r}"
+        if matches:
+            offenders[script.name] = matches
+    # Assert
+    assert not offenders, f"scripts mention bare LOCAL label: {offenders!r}"
