@@ -104,9 +104,17 @@ def _get_rule(rule_id: str):
 
 
 def _make_issue(rule, line: int, col: int, source_line: str):
-    """Construct an ``Issue`` matching scitex-dev's checker shape."""
-    from scitex_dev.linter.checker import Issue
+    """Construct an ``Issue`` matching scitex-dev's checker shape.
 
+    Returns ``None`` if *source_line* carries a ``# stx-allow`` comment
+    suppressing *rule.id*. scitex-dev's main ``SciTeXChecker._add`` honours
+    these comments but plugin checkers populate ``self.issues`` directly,
+    bypassing the suppression path — so we re-implement the check here.
+    """
+    from scitex_dev.linter.checker import Issue, _is_allowed_by_comment
+
+    if _is_allowed_by_comment(source_line, rule.id):
+        return None
     return Issue(rule=rule, line=line, col=col, source_line=source_line)
 
 
@@ -142,7 +150,9 @@ class _SacCardChecker(ast.NodeVisitor):
             rule = _get_rule("STX-SAC001")
             if rule is not None:
                 src = _source_at(self.source_lines, node.lineno)
-                self.issues.append(_make_issue(rule, node.lineno, node.col_offset, src))
+                issue = _make_issue(rule, node.lineno, node.col_offset, src)
+                if issue is not None:
+                    self.issues.append(issue)
         self.generic_visit(node)
 
 
@@ -161,7 +171,9 @@ class _SacMethodChecker(ast.NodeVisitor):
             rule = _get_rule("STX-SAC002")
             if rule is not None:
                 src = _source_at(self.source_lines, node.lineno)
-                self.issues.append(_make_issue(rule, node.lineno, node.col_offset, src))
+                issue = _make_issue(rule, node.lineno, node.col_offset, src)
+                if issue is not None:
+                    self.issues.append(issue)
         self.generic_visit(node)
 
 

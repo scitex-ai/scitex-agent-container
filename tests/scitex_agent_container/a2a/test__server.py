@@ -135,7 +135,8 @@ def test_executors_yaml_handler_drives_app_build_body():
         # Assert
         assert body == {
             "agents": [
-                {
+                # agent-listing entry (not an AgentCard), so {name, url} is fine
+                {  # stx-allow: STX-SAC001
                     "name": "mock-claude",
                     "url": "http://testserver/agents/mock-claude",
                 }
@@ -246,8 +247,12 @@ def test_fleet_card_endpoint_lists_member_agents(echo_client: TestClient):
     # Act
     body = client.get("/.well-known/agent-card.json").json()
     # Assert
+    # agent-listing entry (not an AgentCard), so {name, url} is fine
     assert body["x-scitex-agent-container"]["agents"] == [
-        {"name": "mock-echo", "url": "http://testserver/agents/mock-echo"}
+        {  # stx-allow: STX-SAC001
+            "name": "mock-echo",
+            "url": "http://testserver/agents/mock-echo",
+        }
     ]
 
 
@@ -268,8 +273,14 @@ def test_list_agents_endpoint_enumerates_members(echo_client: TestClient):
     # Act
     body = client.get("/agents/").json()
     # Assert
+    # agent-listing entry (not an AgentCard), so {name, url} is fine
     assert body == {
-        "agents": [{"name": "mock-echo", "url": "http://testserver/agents/mock-echo"}]
+        "agents": [
+            {  # stx-allow: STX-SAC001
+                "name": "mock-echo",
+                "url": "http://testserver/agents/mock-echo",
+            }
+        ]
     }
 
 

@@ -112,7 +112,12 @@ def test_sac001_ignores_v1_shaped_card():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("method", ["tasks/send", "tasks/sendSubscribe"])
+# Legacy compat coverage: this is the linter plugin's own self-test that asserts
+# detection of v0 method strings — the strings MUST appear here verbatim.
+@pytest.mark.parametrize(
+    "method",
+    ["tasks/send", "tasks/sendSubscribe"],  # stx-allow: STX-SAC002
+)
 def test_sac002_flags_legacy_method_string(method):
     # Arrange
     src = f'm = "{method}"\n'

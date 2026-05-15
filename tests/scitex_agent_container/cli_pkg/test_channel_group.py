@@ -55,9 +55,16 @@ class _FakeResp:
         return self._buf.getvalue()
 
 
-def test_missing_token_errors_clearly(tmp_path):
+# ---------------------------------------------------------------------------
+# Scenario fixtures — run each CLI invocation once and let per-behaviour
+# tests assert on a single facet of the captured outcome.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def missing_token_result(tmp_path: Path):
     runner = CliRunner()
-    result = runner.invoke(
+    return runner.invoke(
         send,
         [
             "alpha",
@@ -68,11 +75,10 @@ def test_missing_token_errors_clearly(tmp_path):
             "http://127.0.0.1:1",
         ],
     )
-    assert result.exit_code != 0
-    assert "No sac-listen token" in result.output
 
 
-def test_happy_path_wraps_in_channel_tag(token_file):
+@pytest.fixture
+def happy_path_outcome(token_file) -> dict:
     runner = CliRunner()
     captured: dict = {}
 
@@ -99,20 +105,11 @@ def test_happy_path_wraps_in_channel_tag(token_file):
             ],
         )
 
-    assert result.exit_code == 0, result.output
-    # URL is the per-agent send endpoint
-    assert captured["url"] == "http://127.0.0.1:7878/agents/alpha/send"
-    # Body has type=prompt and channel-wrapped payload
-    assert captured["body"]["type"] == "prompt"
-    p = captured["body"]["prompt"]
-    assert p.startswith('<channel source="sac" from="quality-orchestrator">')
-    assert "hello there" in p
-    assert p.endswith("</channel>")
-    # Bearer token forwarded
-    assert captured["auth"] == "Bearer test-token"
+    return {"result": result, "captured": captured}
 
 
-def test_unreachable_listen_explains(token_file):
+@pytest.fixture
+def unreachable_listen_result(token_file):
     runner = CliRunner()
     import urllib.error
 
@@ -132,6 +129,137 @@ def test_unreachable_listen_explains(token_file):
             ],
         )
 
-    assert result.exit_code != 0
-    assert "unreachable" in result.output
-    assert "Is `sac listen` running" in result.output
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Missing token --> command must fail with an explanatory message
+# ---------------------------------------------------------------------------
+
+
+def test_missing_token_file_makes_send_exit_nonzero(missing_token_result) -> None:
+    # Arrange
+    result = missing_token_result
+    # Act
+    exit_code = result.exit_code
+    # Assert
+    assert exit_code != 0
+
+
+def test_missing_token_file_prints_no_sac_listen_token_message(
+    missing_token_result,
+) -> None:
+    # Arrange
+    result = missing_token_result
+    # Act
+    output = result.output
+    # Assert
+    assert "No sac-listen token" in output
+
+
+# ---------------------------------------------------------------------------
+# Happy path --> CLI exits 0 and request body is correctly framed
+# ---------------------------------------------------------------------------
+
+
+def test_send_happy_path_exits_zero(happy_path_outcome: dict) -> None:
+    # Arrange
+    outcome = happy_path_outcome
+    # Act
+    result = outcome["result"]
+    # Assert
+    assert result.exit_code == 0, result.output
+
+
+def test_send_targets_per_agent_send_endpoint_url(happy_path_outcome: dict) -> None:
+    # Arrange
+    outcome = happy_path_outcome
+    # Act
+    url = outcome["captured"]["url"]
+    # Assert
+    assert url == "http://127.0.0.1:7878/agents/alpha/send"
+
+
+def test_send_request_body_type_is_prompt(happy_path_outcome: dict) -> None:
+    # Arrange
+    outcome = happy_path_outcome
+    # Act
+    body_type = outcome["captured"]["body"]["type"]
+    # Assert
+    assert body_type == "prompt"
+
+
+def test_send_prompt_opens_with_channel_tag(happy_path_outcome: dict) -> None:
+    # Arrange
+    outcome = happy_path_outcome
+    # Act
+    prompt = outcome["captured"]["body"]["prompt"]
+    # Assert
+    assert prompt.startswith('<channel source="sac" from="quality-orchestrator">')
+
+
+def test_send_prompt_contains_user_message_text(happy_path_outcome: dict) -> None:
+    # Arrange
+    outcome = happy_path_outcome
+    # Act
+    prompt = outcome["captured"]["body"]["prompt"]
+    # Assert
+    assert "hello there" in prompt
+
+
+def test_send_prompt_closes_with_channel_end_tag(happy_path_outcome: dict) -> None:
+    # Arrange
+    outcome = happy_path_outcome
+    # Act
+    prompt = outcome["captured"]["body"]["prompt"]
+    # Assert
+    assert prompt.endswith("</channel>")
+
+
+def test_send_forwards_token_as_bearer_authorization_header(
+    happy_path_outcome: dict,
+) -> None:
+    # Arrange
+    outcome = happy_path_outcome
+    # Act
+    auth = outcome["captured"]["auth"]
+    # Assert
+    assert auth == "Bearer test-token"
+
+
+# ---------------------------------------------------------------------------
+# Listen URL unreachable --> command must explain the failure
+# ---------------------------------------------------------------------------
+
+
+def test_unreachable_listen_url_makes_send_exit_nonzero(
+    unreachable_listen_result,
+) -> None:
+    # Arrange
+    result = unreachable_listen_result
+    # Act
+    exit_code = result.exit_code
+    # Assert
+    assert exit_code != 0
+
+
+def test_unreachable_listen_url_output_contains_unreachable(
+    unreachable_listen_result,
+) -> None:
+    # Arrange
+    result = unreachable_listen_result
+    # Act
+    output = result.output
+    # Assert
+    assert "unreachable" in output
+
+
+def test_unreachable_listen_url_output_suggests_checking_sac_listen(
+    unreachable_listen_result,
+) -> None:
+    # Arrange
+    result = unreachable_listen_result
+    # Act
+    output = result.output
+    # Assert
+    assert "Is `sac listen` running" in output

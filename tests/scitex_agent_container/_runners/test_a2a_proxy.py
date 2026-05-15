@@ -58,7 +58,8 @@ def _client_for_upstream(upstream_app: Starlette) -> httpx.AsyncClient:
 # splice_card — pure logic
 # ---------------------------------------------------------------------------
 
-_SPLICE_UPSTREAM = {
+# Legacy compat coverage: splice_card consumes v0 upstream cards by design.
+_SPLICE_UPSTREAM = {  # stx-allow: STX-SAC001
     "name": "real-peer",
     "url": "http://peer/agents/real-peer",
     "skills": [{"id": "peer.do-things", "name": "do-things"}],
@@ -429,7 +430,8 @@ def test_upstream_redirect_to_other_host_error_includes_offending_host(
 # ---------------------------------------------------------------------------
 
 
-_AGENT_CARD_UPSTREAM = {
+# Legacy compat coverage: splice_card consumes v0 upstream cards by design.
+_AGENT_CARD_UPSTREAM = {  # stx-allow: STX-SAC001
     "name": "real-peer",
     "url": "http://peer/agents/real-peer",
     "skills": [{"id": "peer.do-things", "name": "do-things"}],
