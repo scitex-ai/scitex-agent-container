@@ -142,3 +142,58 @@ class TestProbeNetworkCLI:
         CliRunner().invoke(main, ["host", "probe-hub", "--quiet"])
         # Assert
         assert (tmp_path / "head-ywata-note-win.jsonl").is_file()
+
+    def test_explicit_hub_url_skips_env_lookup(self, tmp_path: Path, env_save_restore):
+        # Arrange explicit --hub-url so the env-fallback branch is skipped.
+        env_save_restore.set("SAC_PROBE_LOG_ROOT", str(tmp_path))
+        env_save_restore.delete("SAC_HUB_URL")
+        env_save_restore.delete("SCITEX_AGENT_CONTAINER_HUB_URL")
+        # Act
+        result = CliRunner().invoke(
+            main,
+            [
+                "host",
+                "probe-hub",
+                "--agent",
+                "explicit-url",
+                "--hub-url",
+                "https://hub.example/",
+                "--quiet",
+            ],
+        )
+        # Assert JSONL written — flag bypassed env entirely.
+        assert (tmp_path / "explicit-url.jsonl").is_file(), result.output
+
+    def test_explicit_hub_host_skips_url_derivation(
+        self, tmp_path: Path, env_save_restore
+    ):
+        # Arrange explicit --hub-host AND --hub-url so derivation is skipped.
+        env_save_restore.set("SAC_PROBE_LOG_ROOT", str(tmp_path))
+        env_save_restore.delete("SAC_HUB_URL")
+        # Act
+        result = CliRunner().invoke(
+            main,
+            [
+                "host",
+                "probe-hub",
+                "--agent",
+                "both-flags",
+                "--hub-host",
+                "hub.example",
+                "--hub-url",
+                "https://hub.example/",
+                "--quiet",
+            ],
+        )
+        # Assert
+        assert (tmp_path / "both-flags.jsonl").is_file(), result.output
+
+    def test_missing_hub_config_exits_two(self, tmp_path: Path, env_save_restore):
+        # Arrange no hub-url, no env — hits 98->102 skip and error branch.
+        env_save_restore.set("SAC_PROBE_LOG_ROOT", str(tmp_path))
+        env_save_restore.set("SAC_HUB_URL", "")
+        env_save_restore.delete("SCITEX_AGENT_CONTAINER_HUB_URL")
+        # Act
+        result = CliRunner().invoke(main, ["host", "probe-hub", "--agent", "x"])
+        # Assert
+        assert result.exit_code == 2
