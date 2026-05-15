@@ -112,7 +112,7 @@ def live_a2a_server():
         except (urllib.error.URLError, OSError):
             if proc.poll() is not None:
                 tail = (proc.stdout.read() if proc.stdout else "") or ""
-                pytest.fail(f"sac a2a serve exited early: {tail[-1000:]}")
+                pytest.fail(f"sac a2a serve exited early: {tail[-1_000:]}")
             time.sleep(0.5)
     else:
         proc.terminate()
@@ -156,25 +156,27 @@ def _send_text(base: str, agent: str, text: str, *, timeout: float = 90) -> str:
     )
     with urllib.request.urlopen(req, timeout=timeout) as r:
         env = json.load(r)
-    assert "result" in env, f"JSON-RPC error from server: {env}"
+    if "result" not in env:
+        raise AssertionError(f"JSON-RPC error from server: {env}")
     task = env["result"]["task"]
     state = task["status"]["state"]
-    assert "COMPLETED" in state, f"task state {state!r} (not completed); env={env}"
+    if "COMPLETED" not in state:
+        raise AssertionError(f"task state {state!r} (not completed); env={env}")
     return task["status"]["message"]["parts"][0]["text"]
 
 
 # ---------------------------------------------------------------------------
-# The core workflow assertion
+# Scenario fixtures — each fixture drives one live workflow once, then
+# multiple test functions assert on different facets of the captured
+# result. Keeps the cost of the live call to one Claude turn per
+# scenario while letting each TQ007-compliant test focus on a single
+# observable behaviour.
 # ---------------------------------------------------------------------------
 
 
-def test_alpha_can_invoke_advertised_mcp_peers_tool(live_a2a_server: str) -> None:
-    """The AgentCard lists `mcp__sac__a2a_peers` under
-    `capabilities.extensions[].params.mcp_tools`. This test asserts the
-    runtime ACTUALLY lets the model invoke it and that the response is
-    the real peer listing — not a model hallucination, not a refusal.
-    """
-    reply = _send_text(
+@pytest.fixture(scope="module")
+def peers_tool_reply(live_a2a_server: str) -> str:
+    return _send_text(
         live_a2a_server,
         "alpha",
         "Invoke the tool named mcp__sac__a2a_peers right now with no "
@@ -183,28 +185,11 @@ def test_alpha_can_invoke_advertised_mcp_peers_tool(live_a2a_server: str) -> Non
         "tool is not available in your tool list, reply with exactly: "
         "TOOL NOT REGISTERED",
     )
-    # The card said the tool is there; the runtime must back that up.
-    assert "TOOL NOT REGISTERED" not in reply, (
-        "AgentCard advertises `mcp__sac__a2a_peers` under "
-        "capabilities.extensions[], but the model says the tool isn't "
-        "available. The card lied to the client. "
-        f"Reply was:\n{reply}"
-    )
-    # The tool's actual output is `{"agents":[{"name":"alpha","url":...},{"name":"beta","url":...}]}`.
-    # The model may add framing but the peer names should appear.
-    assert "alpha" in reply and "beta" in reply, (
-        "Tool may have been invoked but reply doesn't contain both peer "
-        f"names. Reply was:\n{reply}"
-    )
 
 
-def test_alpha_can_message_beta_via_a2a_send(live_a2a_server: str) -> None:
-    """The full agent-to-agent workflow: alpha invokes its
-    ``mcp__sac__a2a_send`` tool to deliver a message to beta. Beta's
-    inbox SSE must fire with ``from_agent: "alpha"`` and the right
-    content. This is the canonical workflow the AgentCard advertises;
-    if it fails, the system is broken end-to-end.
-    """
+@pytest.fixture(scope="module")
+def alpha_to_beta_send_event(live_a2a_server: str) -> dict:
+    """Drive alpha → beta via mcp__sac__a2a_send, return beta's SSE event."""
     import threading
 
     captured: list[dict] = []
@@ -233,29 +218,18 @@ def test_alpha_can_message_beta_via_a2a_send(live_a2a_server: str) -> None:
         timeout=120,
     )
 
-    assert sse_done.wait(timeout=15), (
-        "alpha was asked to call mcp__sac__a2a_send to beta, but "
-        "beta's inbox SSE never received an event. The tool was "
-        "either not invoked or pointed at the wrong server."
-    )
-    ev = captured[0]
-    assert ev.get("from_agent") == "alpha", (
-        "beta got an event but from_agent isn't 'alpha'. The sidecar "
-        "is supposed to auto-fill `from_agent` from its --name arg. "
-        f"Got: {ev}"
-    )
-    assert "alpha" in (ev.get("content") or "").lower(), (
-        f"beta's event content doesn't match what alpha was asked to "
-        f"send. Got content={ev.get('content')!r}"
-    )
+    if not sse_done.wait(timeout=15):
+        pytest.fail(
+            "alpha was asked to call mcp__sac__a2a_send to beta, but "
+            "beta's inbox SSE never received an event. The tool was "
+            "either not invoked or pointed at the wrong server."
+        )
+    return captured[0]
 
 
-def test_alpha_sees_advertised_mcp_send_tool(live_a2a_server: str) -> None:
-    """`mcp__sac__a2a_send` is also advertised on the card; assert it
-    appears in alpha's tool list when asked. We don't drive an actual
-    send (that's a follow-up test) — just make sure the tool is at
-    least visible to the model."""
-    reply = _send_text(
+@pytest.fixture(scope="module")
+def alpha_tool_listing_reply(live_a2a_server: str) -> str:
+    return _send_text(
         live_a2a_server,
         "alpha",
         "List the exact names of every tool you have access to. One "
@@ -263,8 +237,95 @@ def test_alpha_sees_advertised_mcp_send_tool(live_a2a_server: str) -> None:
         "all, reply with exactly: NO TOOLS.",
         timeout=60,
     )
-    assert "NO TOOLS" not in reply, f"model reports no tools at all. Reply:\n{reply}"
-    assert "mcp__sac__a2a_send" in reply, (
+
+
+# ---------------------------------------------------------------------------
+# Assertions — one observable behaviour per test.
+# ---------------------------------------------------------------------------
+
+
+def test_alpha_invokes_peers_tool_without_reporting_unregistered(
+    peers_tool_reply: str,
+) -> None:
+    # Arrange
+    reply = peers_tool_reply
+    # Act
+    advertised_but_missing = "TOOL NOT REGISTERED" in reply
+    # Assert
+    assert not advertised_but_missing, (
+        "AgentCard advertises `mcp__sac__a2a_peers` under "
+        "capabilities.extensions[], but the model says the tool isn't "
+        f"available. The card lied to the client. Reply was:\n{reply}"
+    )
+
+
+def test_alpha_peers_tool_reply_lists_alpha_peer(peers_tool_reply: str) -> None:
+    # Arrange
+    reply = peers_tool_reply
+    # Act
+    has_alpha = "alpha" in reply
+    # Assert
+    assert has_alpha, f"peers tool reply missing 'alpha' peer name:\n{reply}"
+
+
+def test_alpha_peers_tool_reply_lists_beta_peer(peers_tool_reply: str) -> None:
+    # Arrange
+    reply = peers_tool_reply
+    # Act
+    has_beta = "beta" in reply
+    # Assert
+    assert has_beta, f"peers tool reply missing 'beta' peer name:\n{reply}"
+
+
+def test_a2a_send_from_alpha_sets_from_agent_to_alpha(
+    alpha_to_beta_send_event: dict,
+) -> None:
+    # Arrange
+    ev = alpha_to_beta_send_event
+    # Act
+    from_agent = ev.get("from_agent")
+    # Assert
+    assert from_agent == "alpha", (
+        "beta got an event but from_agent isn't 'alpha'. The sidecar "
+        "is supposed to auto-fill `from_agent` from its --name arg. "
+        f"Got: {ev}"
+    )
+
+
+def test_a2a_send_from_alpha_delivers_expected_content_to_beta(
+    alpha_to_beta_send_event: dict,
+) -> None:
+    # Arrange
+    ev = alpha_to_beta_send_event
+    # Act
+    content = (ev.get("content") or "").lower()
+    # Assert
+    assert "alpha" in content, (
+        f"beta's event content doesn't match what alpha was asked to "
+        f"send. Got content={ev.get('content')!r}"
+    )
+
+
+def test_alpha_tool_listing_does_not_report_no_tools(
+    alpha_tool_listing_reply: str,
+) -> None:
+    # Arrange
+    reply = alpha_tool_listing_reply
+    # Act
+    reports_no_tools = "NO TOOLS" in reply
+    # Assert
+    assert not reports_no_tools, f"model reports no tools at all. Reply:\n{reply}"
+
+
+def test_alpha_tool_listing_includes_advertised_a2a_send(
+    alpha_tool_listing_reply: str,
+) -> None:
+    # Arrange
+    reply = alpha_tool_listing_reply
+    # Act
+    has_send_tool = "mcp__sac__a2a_send" in reply
+    # Assert
+    assert has_send_tool, (
         "AgentCard advertises `mcp__sac__a2a_send` under "
         "capabilities.extensions[], but the model's tool list doesn't "
         f"include it. Reply was:\n{reply}"
