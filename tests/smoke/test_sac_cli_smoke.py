@@ -14,8 +14,8 @@ assert, ≥3-word test names, ``pytest.mark.smoke``.
 
 from __future__ import annotations
 
-import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -28,23 +28,34 @@ pytestmark = pytest.mark.smoke
 # ---------------------------------------------------------------------------
 
 
-def _sac() -> str:
-    """Resolve the installed ``sac`` entrypoint or skip the suite.
+def _sac_cmd() -> list[str]:
+    """Resolve the ``sac`` CLI invocation against the active interpreter.
 
-    The smoke layer is *only* meaningful against a real installed CLI;
-    if no ``sac`` is on PATH, the layer self-skips rather than masking
-    a missing binary as a passing test (no-false-positives).
+    Rather than relying on ``shutil.which("sac")`` — which would pick up
+    a system-wide install (e.g. ``~/.local/bin/sac``) pointing at a
+    different Python without ``scitex_agent_container`` installed — we
+    invoke the CLI as ``<sys.executable> -m scitex_agent_container.cli``.
+    This guarantees the CLI runs inside the very interpreter that pytest
+    itself is using, so the package import always resolves.
+
+    The suite still self-skips when the module is unimportable, since a
+    smoke layer is only meaningful against a real installed CLI
+    (no-false-positives).
     """
-    found = shutil.which("sac")
-    if not found:
-        pytest.skip("sac binary not on PATH; smoke layer requires editable install")
-    return found
+    import importlib.util
+
+    if importlib.util.find_spec("scitex_agent_container.cli") is None:
+        pytest.skip(
+            "scitex_agent_container.cli not importable in active venv; "
+            "smoke layer requires editable install"
+        )
+    return [sys.executable, "-m", "scitex_agent_container.cli"]
 
 
 def _run(*args: str, cwd: Path | None = None, timeout: int = 30):
     """Run ``sac <args>`` via real subprocess, capture stdout/stderr/exit."""
     return subprocess.run(
-        [_sac(), *args],
+        [*_sac_cmd(), *args],
         capture_output=True,
         text=True,
         cwd=str(cwd) if cwd else None,
