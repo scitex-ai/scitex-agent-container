@@ -18,11 +18,9 @@ dict on top of the base ``agent_status`` result.
 from __future__ import annotations
 
 import json
-import re
 import socket
 import subprocess
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from .._account.claude_usage import fetch_usage
@@ -59,45 +57,17 @@ def detect_multiplexer(session: str) -> str:
     return ""
 
 
-def _encode_claude_project(workdir: str) -> str:
-    """Replicate Claude Code's cwd -> projects dir name encoding.
-
-    ``/`` and ``.`` both become ``-``, but triple-or-more dashes that
-    come from hidden dirs (``/.foo``) are collapsed back to ``--``.
-    """
-    encoded = workdir.replace("/", "-").replace(".", "-")
-    return re.sub(r"-{3,}", "--", encoded)
-
-
-def _latest_jsonls(workdir: str) -> list[Path]:
-    # Claude Code encodes the *resolved* cwd, so follow symlinks first.
-    # stx-allow: fallback (reason: broken symlink or cross-device path can
-    # raise — raw workdir string is an acceptable fallback for encoding)
-    try:
-        resolved = str(Path(workdir).expanduser().resolve())
-    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-        resolved = workdir
-    proj_dir = Path.home() / ".claude" / "projects" / _encode_claude_project(resolved)
-    if not proj_dir.is_dir():
-        return []
-    # stx-allow: fallback (reason: concurrent file deletion between glob and
-    # stat() causes OSError — return empty list rather than raising)
-    try:
-        return sorted(
-            proj_dir.glob("*.jsonl"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
-    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-        return []
-
-
-# Skills-block parser lives in ``_meta/skills.py``; re-exported here to
-# preserve the ``agent_meta._parse_skills`` access path used by tests.
-# Pane capture, subagent counting, and state classification live in
-# ``_meta/pane.py``; re-exported here to preserve the
-# ``agent_meta._capture_pane`` / ``_classify_pane_state`` etc. access
-# paths used by tests and the integration suite.
+# Helpers live in ``_meta/`` submodules; re-exported here to preserve
+# the ``agent_meta._foo`` access paths used by tests and the
+# integration suite. Each submodule is kept under the 512-line hook
+# ceiling so future edits stay unblocked.
+from ._meta.config_files import (  # noqa: F401
+    _config_candidates,
+    _parse_mcp_servers,
+    _read_claude_md,
+    _read_mcp_json,
+    _redact_mcp_tree,
+)
 from ._meta.pane import (  # noqa: F401
     _SUBAGENT_MARKER_RE,
     _capture_pane,
@@ -105,236 +75,14 @@ from ._meta.pane import (  # noqa: F401
     _subagent_count_from_pane,
     parse_subagent_count_from_pane_text,
 )
-
-# Secret redaction lives in ``_meta/secrets.py``; re-exported here to
-# preserve the ``agent_meta._redact_secrets`` access path used by tests.
+from ._meta.resources import _collect_host_metrics, _pids_from_session  # noqa: F401
 from ._meta.secrets import _SECRET_PATTERNS, _redact_secrets  # noqa: F401
 from ._meta.skills import _parse_skills  # noqa: F401
-
-
-def _config_candidates(workdir: str, filename: str) -> list[Path]:
-    """Return a prioritised list of candidate locations for ``filename``.
-
-    Historically only ``<workdir>/<filename>`` was probed, which meant
-    agents whose workspace wasn't provisioned with that file pushed an
-    empty ``claude_md`` / ``mcp_json`` to the hub. Walk a wider set of
-    plausible locations so every agent gets populated content:
-
-    1. ``<workdir>/<filename>``
-    2. ``<workdir>/.claude/<filename>``   (nested config style)
-    3. Legacy sibling ``<workdir-parent>/mamba-<name>/<filename>``
-    4. Nearest enclosing git-root ``<filename>``
-    5. ``~/.claude/<filename>``           (user-global fallback)
-    6. ``~/<filename>``
-    """
-    home = Path.home()
-    cands: list[Path] = []
-    if workdir:
-        p = Path(workdir)
-        cands += [p / filename, p / ".claude" / filename]
-        if p.parent.name == "workspaces":
-            cands.append(p.parent / f"mamba-{p.name}" / filename)
-        # stx-allow: fallback (reason: git root walk can fail on pathological
-        # filesystems — missing git root just skips that candidate)
-        try:
-            git_root = p
-            while git_root != git_root.parent and not (git_root / ".git").exists():
-                git_root = git_root.parent
-            if (git_root / ".git").exists():
-                cands.append(git_root / filename)
-        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-            pass
-    cands += [home / ".claude" / filename, home / filename]
-    # Dedup preserving order.
-    seen: set[str] = set()
-    uniq: list[Path] = []
-    for c in cands:
-        k = str(c)
-        if k in seen:
-            continue
-        seen.add(k)
-        uniq.append(c)
-    return uniq
-
-
-def _read_claude_md(workdir: str, max_chars: int = 20000) -> str:
-    for p in _config_candidates(workdir, "CLAUDE.md"):
-        # stx-allow: fallback (reason: permission error on one candidate
-        # must not prevent trying the next — best-effort file read)
-        try:
-            if not p.is_file():
-                continue
-            return p.read_text(errors="replace")[:max_chars]
-        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-            continue
-    return ""
-
-
-def _redact_mcp_tree(obj):
-    if isinstance(obj, dict):
-        out = {}
-        for k, v in obj.items():
-            if isinstance(v, str) and any(
-                t in k.upper() for t in ("TOKEN", "SECRET", "KEY", "PASSWORD")
-            ):
-                out[k] = "***REDACTED***"
-            else:
-                out[k] = _redact_mcp_tree(v)
-        return out
-    if isinstance(obj, list):
-        return [_redact_mcp_tree(x) for x in obj]
-    return obj
-
-
-def _read_mcp_json(workdir: str, max_chars: int = 10000) -> str:
-    for p in _config_candidates(workdir, ".mcp.json"):
-        # stx-allow: fallback (reason: permission error on one candidate
-        # must not prevent trying the next — best-effort file read)
-        try:
-            if not p.is_file():
-                continue
-            raw = p.read_text(errors="replace")
-        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-            continue
-        # stx-allow: fallback (reason: corrupt JSON falls back to raw-with-
-        # redaction rather than raising — collect_rich is best-effort)
-        try:
-            doc = json.loads(raw)
-            pretty = json.dumps(_redact_mcp_tree(doc), indent=2)
-            return pretty[:max_chars]
-        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-            return _redact_secrets(raw[:max_chars])
-    return ""
-
-
-def _parse_mcp_servers(workdir: str) -> list[dict[str, Any]]:
-    """Return a structured summary of MCP servers configured for this agent.
-
-    Parses ``<workdir>/.mcp.json`` into a flat list of
-    ``{name, transport, url_host, command}`` entries so the dashboard
-    can render a setup-audit table alongside installed plugins. URL
-    hosts (not full URLs) and commands (not args) are surfaced because
-    that is enough to verify the server is pointing at the right
-    endpoint without exposing query-string secrets.
-
-    Returns [] if the file is missing or malformed — callers never get
-    ``None``.
-    """
-    try:
-        p = Path(workdir) / ".mcp.json"
-        if not p.is_file():
-            return []
-        doc = json.loads(p.read_text(errors="replace"))
-    except Exception:
-        return []
-    if not isinstance(doc, dict):
-        return []
-    servers = doc.get("mcpServers")
-    if not isinstance(servers, dict):
-        return []
-    out: list[dict[str, Any]] = []
-    for sname, sconf in servers.items():
-        if not isinstance(sconf, dict):
-            continue
-        transport = sconf.get("type") or sconf.get("transport")
-        url_host: str | None = None
-        url_val = sconf.get("url")
-        if isinstance(url_val, str):
-            try:
-                from urllib.parse import urlparse
-
-                url_host = urlparse(url_val).hostname or None
-            except Exception:
-                url_host = None
-        command = sconf.get("command")
-        if not isinstance(command, str):
-            command = None
-        out.append(
-            {
-                "name": sname,
-                "transport": transport if isinstance(transport, str) else None,
-                "url_host": url_host,
-                "command": command,
-            }
-        )
-    return out
-
-
-def _pids_from_session(session: str, multiplexer: str) -> tuple[int, int]:
-    pid = 0
-    ppid = 0
-    if multiplexer != "tmux":
-        return pid, ppid
-    # stx-allow: fallback (reason: tmux session may not exist yet or pgrep
-    # may return no results — pid/ppid of 0 is a valid "unknown" sentinel)
-    try:
-        out = (
-            subprocess.run(
-                ["tmux", "list-panes", "-t", session, "-F", "#{pane_pid}"],
-                capture_output=True,
-                text=True,
-            )
-            .stdout.strip()
-            .splitlines()
-        )
-        if out:
-            ppid = int(out[0])
-            ps = (
-                subprocess.run(
-                    ["pgrep", "-P", str(ppid), "-f", "claude"],
-                    capture_output=True,
-                    text=True,
-                )
-                .stdout.strip()
-                .splitlines()
-            )
-            pid = int(ps[0]) if ps else ppid
-    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-        pass
-    return pid, ppid
-
-
-def _read_sdk_session_state(name: str, workdir: str) -> dict | None:
-    """Surface ``runtime: claude-session`` state on the status JSON.
-
-    Returns ``None`` for agents that aren't using the SDK runtime
-    (heartbeat file absent). For SDK agents, returns a dict with the
-    persisted session id, accumulated per-turn token totals, and the
-    latest heartbeat state. Best-effort: any IO / parse failure
-    yields ``None`` so non-SDK agents never see this field populated
-    and SDK agents on transient state-dir glitches degrade silently.
-    """
-    try:
-        from .._runners import claude_session as _runner
-    except Exception:  # stx-allow: fallback (reason: import path may differ in tests / partial installs — collect_rich is best-effort)
-        return None
-
-    # Try the project-local state root first (matches the runtime
-    # adapter's _project_runtime_root logic — keeps the read symmetric
-    # with the write path).
-    # Walk from cwd, NOT workdir: ``workdir`` may point at a /tmp
-    # scratch dir while the agent's YAML lives under a project-scope
-    # repo. cwd is what discovery already uses on ``sac agent start``, so
-    # the read here stays symmetric with the write.
-    try:
-        from scitex_config._ecosystem import local_state
-
-        scope = local_state.find_project_scope("agent-container")
-    except Exception:  # stx-allow: fallback (reason: scitex-config optional)
-        scope = None
-
-    state_dir = (
-        (scope / "runtime" / name) if scope is not None else _runner.state_dir_for(name)
-    )
-    if not (state_dir / "heartbeat.json").is_file():
-        return None
-
-    return {
-        "session_id": _runner.read_session_id(state_dir),
-        "quota": _runner.read_quota(state_dir),
-        "heartbeat": _runner.read_heartbeat(state_dir),
-        "state_dir": str(state_dir),
-    }
+from ._meta.transcript import (  # noqa: F401
+    _encode_claude_project,
+    _latest_jsonls,
+    _read_sdk_session_state,
+)
 
 
 def collect_rich(
@@ -688,40 +436,10 @@ def collect_rich(
             pass
 
     # ---- Machine resource metrics (psutil, optional) -----------------------
-    # stx-allow: fallback (reason: psutil is an optional dependency; absent
-    # on minimal installs — metrics dict stays empty, dashboard handles it)
-    try:
-        import psutil as _psutil
-
-        _cpu_pct = _psutil.cpu_percent(interval=None)
-        _vm = _psutil.virtual_memory()
-        _disk = _psutil.disk_usage("/")
-        _load = _psutil.getloadavg()
-        _cpu_count = _psutil.cpu_count(logical=True) or 0
-        # stx-allow: fallback (reason: cpu_freq may be None on VMs/containers)
-        try:
-            _freq = _psutil.cpu_freq()
-            _cpu_model = f"{_cpu_count}x @ {_freq.max:.0f}MHz" if _freq else ""
-        except Exception:
-            _cpu_model = ""
-        _metrics = {
-            "cpu_count": _cpu_count,
-            "cpu_model": _cpu_model,
-            "cpu_used_percent": round(_cpu_pct, 1),
-            "load_avg_1m": round(_load[0], 2),
-            "load_avg_5m": round(_load[1], 2),
-            "load_avg_15m": round(_load[2], 2),
-            "mem_used_percent": round(_vm.percent, 1),
-            "mem_total_mb": round(_vm.total / 1024 / 1024, 1),
-            "mem_free_mb": round(_vm.available / 1024 / 1024, 1),
-            "mem_used_mb": round((_vm.total - _vm.available) / 1024 / 1024, 1),
-            "disk_used_percent": round(_disk.percent, 1),
-            "disk_total_mb": round(_disk.total / 1024 / 1024, 1),
-            "disk_used_mb": round(_disk.used / 1024 / 1024, 1),
-            "resource_source": "local",
-        }
-    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-        _metrics = {}
+    # Body lives in ``_meta/resources.py`` so this module stays under
+    # the 512-line hook ceiling. Returns ``{}`` on any failure (psutil
+    # missing, container without /proc, etc.) — dashboard handles empty.
+    _metrics = _collect_host_metrics()
 
     return {
         "multiplexer": multiplexer,
