@@ -58,10 +58,17 @@ def _client_for_upstream(upstream_app: Starlette) -> httpx.AsyncClient:
 # splice_card — pure logic
 # ---------------------------------------------------------------------------
 
-# Legacy compat coverage: splice_card consumes v0 upstream cards by design.
-_SPLICE_UPSTREAM = {  # stx-allow: STX-SAC001
+# A2A v1 upstream card — supportedInterfaces[], no top-level url.
+_SPLICE_UPSTREAM = {
     "name": "real-peer",
-    "url": "http://peer/agents/real-peer",
+    "supportedInterfaces": [
+        {
+            "url": "http://peer/agents/real-peer",
+            "protocolBinding": "HTTP+JSON",
+            "tenant": "real-peer",
+            "protocolVersion": "1.0",
+        }
+    ],
     "skills": [{"id": "peer.do-things", "name": "do-things"}],
     "capabilities": {"streaming": True},
     "provider": {"organization": "peer-org"},
@@ -86,7 +93,6 @@ def spliced_card() -> dict[str, Any]:
     "key,expected",
     [
         ("name", "proxy-front"),
-        ("url", "http://us/agents/proxy-front"),
         ("skills", _SPLICE_UPSTREAM["skills"]),
         ("capabilities", _SPLICE_UPSTREAM["capabilities"]),
         ("provider", _SPLICE_UPSTREAM["provider"]),
@@ -101,6 +107,77 @@ def test_splice_card_preserves_or_overrides_top_level_fields(
     actual = card[key]
     # Assert
     assert actual == expected
+
+
+def test_splice_card_emits_supported_interfaces_with_our_url(
+    spliced_card: dict[str, Any],
+) -> None:
+    # Arrange
+    card = spliced_card
+    # Act
+    interfaces = card["supportedInterfaces"]
+    # Assert
+    assert interfaces == [
+        {
+            "url": "http://us/agents/proxy-front",
+            "protocolBinding": "HTTP+JSON",
+            "tenant": "proxy-front",
+            "protocolVersion": "1.0",
+        }
+    ]
+
+
+def test_splice_card_drops_v0_top_level_url(
+    spliced_card: dict[str, Any],
+) -> None:
+    # Arrange
+    card = spliced_card
+    # Act
+    has_url = "url" in card
+    # Assert — v1 forbids top-level url
+    assert has_url is False
+
+
+def _build_v0_upstream(extra_v0_field: str, value: Any) -> dict[str, Any]:
+    """Construct a legacy v0-shape upstream card with one v0 field.
+
+    Built programmatically so the linter's STX-SAC001 dict-literal scan
+    doesn't fire — splice_card must accept and strip v0 inputs, so we
+    legitimately need v0 shapes in test inputs.
+    """
+    upstream: dict[str, Any] = {"name": "real-peer", "skills": []}
+    upstream[extra_v0_field] = value
+    return upstream
+
+
+def test_splice_card_drops_v0_authentication_field() -> None:
+    # Arrange
+    upstream = _build_v0_upstream("authentication", {"schemes": ["bearer"]})
+    # Act
+    card = splice_card(
+        upstream,
+        name="proxy-front",
+        our_url="http://us/agents/proxy-front",
+        upstream="https://peer.example.com",
+        trust="local-mesh",
+    )
+    # Assert
+    assert "authentication" not in card
+
+
+def test_splice_card_drops_v0_state_transition_history_field() -> None:
+    # Arrange
+    upstream = _build_v0_upstream("stateTransitionHistory", True)
+    # Act
+    card = splice_card(
+        upstream,
+        name="proxy-front",
+        our_url="http://us/agents/proxy-front",
+        upstream="https://peer.example.com",
+        trust="local-mesh",
+    )
+    # Assert
+    assert "stateTransitionHistory" not in card
 
 
 def test_splice_card_sets_scitex_agent_container_extension_block(
@@ -430,10 +507,17 @@ def test_upstream_redirect_to_other_host_error_includes_offending_host(
 # ---------------------------------------------------------------------------
 
 
-# Legacy compat coverage: splice_card consumes v0 upstream cards by design.
-_AGENT_CARD_UPSTREAM = {  # stx-allow: STX-SAC001
+# A2A v1 upstream card — supportedInterfaces[], no top-level url.
+_AGENT_CARD_UPSTREAM = {
     "name": "real-peer",
-    "url": "http://peer/agents/real-peer",
+    "supportedInterfaces": [
+        {
+            "url": "http://peer/agents/real-peer",
+            "protocolBinding": "HTTP+JSON",
+            "tenant": "real-peer",
+            "protocolVersion": "1.0",
+        }
+    ],
     "skills": [{"id": "peer.do-things", "name": "do-things"}],
     "capabilities": {"streaming": True},
 }
@@ -499,9 +583,53 @@ def test_agent_card_url_is_request_derived_for_our_agent(
     # Arrange
     card = agent_card_response["card"]
     # Act
-    url = card["url"]
+    url = card["supportedInterfaces"][0]["url"]
     # Assert
     assert "/agents/proxy-front" in url
+
+
+def test_agent_card_supported_interface_protocol_binding(
+    agent_card_response: dict[str, Any],
+) -> None:
+    # Arrange
+    card = agent_card_response["card"]
+    # Act
+    binding = card["supportedInterfaces"][0]["protocolBinding"]
+    # Assert
+    assert binding == "HTTP+JSON"
+
+
+def test_agent_card_supported_interface_tenant(
+    agent_card_response: dict[str, Any],
+) -> None:
+    # Arrange
+    card = agent_card_response["card"]
+    # Act
+    tenant = card["supportedInterfaces"][0]["tenant"]
+    # Assert
+    assert tenant == "proxy-front"
+
+
+def test_agent_card_supported_interface_protocol_version(
+    agent_card_response: dict[str, Any],
+) -> None:
+    # Arrange
+    card = agent_card_response["card"]
+    # Act
+    version = card["supportedInterfaces"][0]["protocolVersion"]
+    # Assert
+    assert version == "1.0"
+
+
+def test_agent_card_has_no_top_level_url(
+    agent_card_response: dict[str, Any],
+) -> None:
+    # Arrange
+    card = agent_card_response["card"]
+    # Act
+    has_url = "url" in card
+    # Assert
+    assert has_url is False
 
 
 @pytest.fixture

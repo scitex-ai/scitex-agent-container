@@ -77,24 +77,43 @@ def splice_card(
     trust: str,
     fetch_error: str = "",
 ) -> dict[str, Any]:
-    """Return an AgentCard built from upstream's card + our overrides.
+    """Return an A2A v1-shaped AgentCard built from upstream's card + our overrides.
 
-    Preserves upstream's skills / capabilities / provider / authentication
-    / default*Modes. Overrides:
+    Preserves upstream's skills / capabilities / provider / default*Modes
+    and any non-v0 fields. Overrides:
 
       * ``name``  ->  our ``name``
-      * ``url``   ->  our ``our_url``
+      * ``supportedInterfaces``  ->  ``[{url: our_url, protocolBinding:
+                                     "HTTP+JSON", tenant: name,
+                                     protocolVersion: "1.0"}]``
       * ``x-scitex-agent-container``  ->  block describing the proxy
                                           (kind, upstream, trust;
                                           optionally upstream_card_fetch_error)
 
+    A2A v0-shape fields (``url``, ``authentication``,
+    ``stateTransitionHistory``) on the upstream card are dropped — any
+    A2A v1 client validating via ``ParseDict(card, AgentCard())`` would
+    reject them otherwise. See ``a2a/_card.py::build_card`` for the
+    canonical v1 shape.
+
     If ``upstream_card`` is ``None`` (boot-time fetch failed), serve a
-    minimal card with our overrides + the fetch error surfaced under
+    minimal v1 card with our overrides + the fetch error surfaced under
     ``x-scitex-agent-container.upstream_card_fetch_error``.
     """
     base: dict[str, Any] = dict(upstream_card or {})
+    # Drop A2A v0-shape top-level fields that v1 ParseDict would reject.
+    for v0_field in ("url", "authentication", "stateTransitionHistory"):
+        base.pop(v0_field, None)
+
     base["name"] = name
-    base["url"] = our_url
+    base["supportedInterfaces"] = [
+        {
+            "url": our_url,
+            "protocolBinding": "HTTP+JSON",
+            "tenant": name,
+            "protocolVersion": "1.0",
+        }
+    ]
 
     sx: dict[str, Any] = {
         "kind": "AgentProxy",
