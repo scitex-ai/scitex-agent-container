@@ -13,7 +13,10 @@ SCRIPT = (
 
 
 def test_skill_script_exists_and_is_python():
-    assert SCRIPT.is_file()
-    text = SCRIPT.read_text(encoding="utf-8")
-    # Must be syntactically valid Python.
-    compile(text, str(SCRIPT), "exec")
+    # Arrange
+    script = SCRIPT
+    # Act
+    text = script.read_text(encoding="utf-8") if script.is_file() else None
+    compiled = compile(text, str(script), "exec") if text is not None else None
+    # Assert
+    assert compiled is not None
