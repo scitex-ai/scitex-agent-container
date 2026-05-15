@@ -513,7 +513,7 @@ def test_recall_limit_drops_pre_tail_entries(runner, five_message_log):
 @pytest.fixture
 def long_text_log(tmp_path):
     p = tmp_path / "s.jsonl"
-    long_text = "x" * 1000
+    long_text = "x" * 1_000
     _write_jsonl(p, [_user("2026-04-28T10:00:00Z", long_text)])
     return p, long_text
 
