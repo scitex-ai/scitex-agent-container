@@ -14,7 +14,7 @@ object** as the flat top-level one — no aliasing layer that could
 drift.
 """
 
-from . import account, agent, db, host, image, mcp, skills
+from . import account, agent, db, host, image, mcp, skills, template
 
 __all__ = [
     "agent",
@@ -24,4 +24,5 @@ __all__ = [
     "account",
     "skills",
     "mcp",
+    "template",
 ]
