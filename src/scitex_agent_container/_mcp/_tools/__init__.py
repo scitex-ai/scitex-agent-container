@@ -19,6 +19,7 @@ from ._host import register_host_tools
 from ._image import register_image_tools
 from ._info import register_info_tools
 from ._skills import register_skills_tools
+from ._telegram import register_telegram_tools
 from ._template import register_template_tools
 
 
@@ -32,6 +33,9 @@ def register_all_tools(mcp) -> None:
     register_skills_tools(mcp)
     register_template_tools(mcp)
     register_info_tools(mcp)
+    # Phase 1 fold scaffolding — no-op unless
+    # ``SCITEX_AGENT_CONTAINER_TELEGRAM_FOLD=1`` is set in the environment.
+    register_telegram_tools(mcp)
 
 
 __all__ = ["register_all_tools"]
