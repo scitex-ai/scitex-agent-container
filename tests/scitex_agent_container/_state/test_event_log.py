@@ -116,7 +116,7 @@ class TestPreviewToolInput:
     def test_preview_truncates_long_input_at_300_chars(self):
         # Arrange
         tool = "Bash"
-        payload = {"command": "x" * 1000}
+        payload = {"command": "x" * 1_000}
         # Act
         out = _preview_tool_input(tool, payload)
         # Assert
