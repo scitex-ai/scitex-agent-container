@@ -25,6 +25,8 @@ smoke tests.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from click.testing import CliRunner
 
 from scitex_agent_container.cli_pkg.lifecycle._start import start
@@ -187,6 +189,159 @@ class TestParamsFile:
         result = runner.invoke(start, [str(template), "--params-file", str(csv)])
         # Assert
         assert "name" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Singleton host-skip — drives the real ``_singleton_skip_reason`` against
+# a real YAML on disk; hostname is pinned via the production env var so the
+# command short-circuits before reaching ``agent_start``. No mocks.
+# ---------------------------------------------------------------------------
+
+
+def _write_singleton_yaml(parent: Path, name: str, host: str) -> Path:
+    """Write an agent YAML pinned to ``host`` under ``<parent>/<name>/<name>.yaml``."""
+    sub = parent / name
+    sub.mkdir(parents=True, exist_ok=True)
+    y = sub / f"{name}.yaml"
+    y.write_text(
+        "apiVersion: scitex-agent-container/v3\n"
+        "kind: Agent\n"
+        "spec:\n"
+        "  runtime: apptainer\n"
+        f"  host: {host}\n"
+        "  apptainer:\n"
+        "    image: ~/.scitex/agent-container/containers/sac-base.sif\n"
+        "  claude:\n"
+        "    model: haiku\n"
+    )
+    return y
+
+
+class TestSingletonHostSkip:
+    def test_single_target_singleton_skip_exits_clean(self, tmp_path, env_save_restore):
+        # Arrange
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        yaml_path = _write_singleton_yaml(tmp_path, "mini", "nowhere-host")
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, [str(yaml_path)])
+        # Assert
+        assert result.exit_code == 0
+
+    def test_single_target_singleton_skip_explains_host_mismatch(
+        self, tmp_path, env_save_restore
+    ):
+        # Arrange
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        yaml_path = _write_singleton_yaml(tmp_path, "mini", "nowhere-host")
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, [str(yaml_path)])
+        # Assert
+        assert "Skipping 'mini'" in result.output
+
+    def test_single_target_singleton_skip_emits_json_status(
+        self, tmp_path, env_save_restore
+    ):
+        # Arrange
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        yaml_path = _write_singleton_yaml(tmp_path, "mini", "nowhere-host")
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, [str(yaml_path), "--json"])
+        # Assert
+        assert '"status": "skipped"' in result.output
+
+    def test_bulk_directory_singleton_skip_renders_skip_line(
+        self, tmp_path, env_save_restore
+    ):
+        # Arrange
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        agents_dir = tmp_path / "agents"
+        _write_singleton_yaml(agents_dir, "aa", "nowhere-host")
+        _write_singleton_yaml(agents_dir, "bb", "nowhere-host")
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, [str(agents_dir), "-y"])
+        # Assert
+        assert "SKIP aa" in result.output
+
+    def test_bulk_directory_singleton_skip_exits_zero(self, tmp_path, env_save_restore):
+        # Arrange
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        agents_dir = tmp_path / "agents"
+        _write_singleton_yaml(agents_dir, "aa", "nowhere-host")
+        _write_singleton_yaml(agents_dir, "bb", "nowhere-host")
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, [str(agents_dir), "-y"])
+        # Assert
+        assert result.exit_code == 0
+
+
+# ---------------------------------------------------------------------------
+# Resume + foreground branches — non-validation flag plumbing that exits via
+# the singleton-skip short-circuit so no real ``agent_start`` is invoked.
+# ---------------------------------------------------------------------------
+
+
+class TestResumeAndForeground:
+    def test_resume_without_session_is_accepted(self, tmp_path, env_save_restore):
+        # Arrange — --resume without --session must default session_mode to
+        # "resume" rather than rejecting the invocation.
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        yaml_path = _write_singleton_yaml(tmp_path, "mini", "nowhere-host")
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, [str(yaml_path), "--resume", "abc-uuid"])
+        # Assert
+        assert result.exit_code == 0
+
+    def test_resume_with_matching_session_resume_is_accepted(
+        self, tmp_path, env_save_restore
+    ):
+        # Arrange
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        yaml_path = _write_singleton_yaml(tmp_path, "mini", "nowhere-host")
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(
+            start, [str(yaml_path), "--resume", "abc", "--session", "resume"]
+        )
+        # Assert
+        assert result.exit_code == 0
+
+    def test_foreground_with_multiple_targets_takes_multiplex_branch(
+        self, tmp_path, env_save_restore
+    ):
+        # Arrange — two singleton-skipped targets so multi_foreground is True
+        # (disables per-runtime attach) but `not dry_run` blocks the actual
+        # multiplex call; we just exercise the branch where foreground gets
+        # demoted from True -> False.
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        y1 = _write_singleton_yaml(tmp_path, "mini1", "nowhere-host")
+        y2 = _write_singleton_yaml(tmp_path, "mini2", "nowhere-host")
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, [str(y1), str(y2), "--foreground", "--dry-run"])
+        # Assert
+        assert result.exit_code == 0
+
+    def test_foreground_with_bulk_directory_takes_multiplex_branch(
+        self, tmp_path, env_save_restore
+    ):
+        # Arrange
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        agents_dir = tmp_path / "agents"
+        _write_singleton_yaml(agents_dir, "aa", "nowhere-host")
+        _write_singleton_yaml(agents_dir, "bb", "nowhere-host")
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(
+            start, [str(agents_dir), "-y", "--foreground", "--dry-run"]
+        )
+        # Assert
+        assert "SKIP bb" in result.output
 
 
 # ---------------------------------------------------------------------------
