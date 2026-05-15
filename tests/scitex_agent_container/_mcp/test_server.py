@@ -339,3 +339,60 @@ def test_skills_get_unknown_name_lists_available_skills(skills_tools: dict):
     result = skills_get(name="definitely-not-a-real-skill-xxxx")
     # Assert
     assert "available" in result
+
+
+# ---------------------------------------------------------------------------
+# run_server transport selection
+# ---------------------------------------------------------------------------
+
+
+class _RunRecorder:
+    """Real collaborator standing in for a FastMCP server.
+
+    Mirrors the structural contract of ``server.run(transport=..., host=..., port=...)``
+    used by :func:`run_server`. Records every call so the test can assert
+    which transport branch fired. Not a mock — it is a concrete class
+    with explicit behaviour (append to ``self.calls``).
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def run(self, **kwargs) -> None:
+        self.calls.append(kwargs)
+
+
+@pytest.fixture
+def run_recorder_server():
+    """Install a recorder as the module-level singleton and restore it after."""
+    from scitex_agent_container._mcp import server as server_mod
+
+    saved = server_mod.mcp
+    recorder = _RunRecorder()
+    server_mod.mcp = recorder
+    try:
+        yield recorder
+    finally:
+        server_mod.mcp = saved
+
+
+def test_run_server_default_uses_stdio_transport(run_recorder_server):
+    # Arrange
+    from scitex_agent_container._mcp.server import run_server
+
+    # Act
+    run_server()
+    # Assert
+    assert run_recorder_server.calls == [{}]
+
+
+def test_run_server_http_passes_host_and_port(run_recorder_server):
+    # Arrange
+    from scitex_agent_container._mcp.server import run_server
+
+    # Act
+    run_server(transport="http", host="0.0.0.0", port=9100)
+    # Assert
+    assert run_recorder_server.calls == [
+        {"transport": "http", "host": "0.0.0.0", "port": 9100}
+    ]
