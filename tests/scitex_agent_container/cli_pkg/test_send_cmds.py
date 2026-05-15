@@ -78,18 +78,29 @@ spec:
 
 @pytest.fixture
 def isolated_env(tmp_path):
-    """PA-306: env + send_mod.state_dir_for save/restore in one fixture."""
+    """PA-306: env + send_mod.state_dir_for save/restore in one fixture.
+
+    Also pins ``resolve_config`` to the seeded yaml root so a pre-existing
+    ``~/.scitex/agent-container/agents/<name>/spec.yaml`` on the dev box
+    cannot shadow the per-test fixture (resolver search order puts the
+    home install root before ``$SCITEX_AGENT_CONTAINER_YAML_DIRS``).
+    """
     yaml_root = _seed_agent(tmp_path, "alpha", "abc-123-def")
     key = "SCITEX_AGENT_CONTAINER_YAML_DIRS"
     saved_env = os.environ.get(key)
     saved_state = send_mod.state_dir_for
+    saved_resolve = send_mod.resolve_config
     os.environ[key] = str(yaml_root)
     send_mod.state_dir_for = (  # type: ignore[assignment]
         lambda name, root=None: tmp_path / "state" / name
     )
+    send_mod.resolve_config = (  # type: ignore[assignment]
+        lambda name: str(yaml_root / name / "spec.yaml")
+    )
     try:
         yield tmp_path
     finally:
+        send_mod.resolve_config = saved_resolve  # type: ignore[assignment]
         send_mod.state_dir_for = saved_state  # type: ignore[assignment]
         if saved_env is None:
             os.environ.pop(key, None)
@@ -236,14 +247,19 @@ def isolated_env_without_session_id(tmp_path):
     key = "SCITEX_AGENT_CONTAINER_YAML_DIRS"
     saved_env = os.environ.get(key)
     saved_state = send_mod.state_dir_for
+    saved_resolve = send_mod.resolve_config
     os.environ[key] = str(yaml_root)
     send_mod.state_dir_for = (  # type: ignore[assignment]
         lambda name, root=None: tmp_path / "state" / name
+    )
+    send_mod.resolve_config = (  # type: ignore[assignment]
+        lambda name: str(yaml_root / name / "spec.yaml")
     )
     (tmp_path / "state" / "alpha" / "session_id").unlink()
     try:
         yield tmp_path
     finally:
+        send_mod.resolve_config = saved_resolve  # type: ignore[assignment]
         send_mod.state_dir_for = saved_state  # type: ignore[assignment]
         if saved_env is None:
             os.environ.pop(key, None)
