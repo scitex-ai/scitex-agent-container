@@ -1,4 +1,4 @@
-name: pytest-matrix-on-ubuntu-py3-11-3-12-3-13
+name: tests
 
 on:
   push:

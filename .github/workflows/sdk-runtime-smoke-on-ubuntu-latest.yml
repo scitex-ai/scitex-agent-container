@@ -1,4 +1,4 @@
-name: sdk-runtime-smoke-on-ubuntu-latest
+name: sdk-smoke
 
 # End-to-end smoke test for the claude-session runtime.
 #

@@ -1,4 +1,4 @@
-name: rtd-sphinx-build-on-ubuntu-latest
+name: docs
 
 on:
   push:

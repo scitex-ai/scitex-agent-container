@@ -1,4 +1,4 @@
-name: live-haiku-api-integration-on-ubuntu-latest
+name: haiku
 
 # End-to-end tests that spawn a real Claude Code agent backed by
 # haiku and run the nonce-probe + compact paths against it.

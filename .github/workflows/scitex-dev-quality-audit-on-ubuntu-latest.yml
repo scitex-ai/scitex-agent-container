@@ -11,7 +11,7 @@
 #   - audit-docs         drift between SKILL.md examples and real code
 #   - audit-lines        per-file line-count allowlist
 #   - audit-scope        public API covered by tests
-name: scitex-dev-quality-audit-on-ubuntu-latest
+name: quality
 
 on:
   push:
