@@ -35,6 +35,11 @@ classifiers = [
 dependencies = [
     "click>=8.0",
     "pyyaml>=6.0",
+    # Round-trip YAML writer used by ``sac host add/remove/set`` so
+    # operator-authored comments + key order in config.yaml survive a
+    # sac-side edit. Read paths still use pyyaml (cheaper, no comment
+    # bookkeeping).
+    "ruamel.yaml>=0.18",
     "rich>=13.0",
     "scitex-config>=0.3.0",
     "scitex-container>=0.1.0",
