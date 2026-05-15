@@ -216,8 +216,8 @@ def rich_with_transcript(
             "message": {
                 "model": "claude-opus-4-6",
                 "usage": {
-                    "input_tokens": 1000,
-                    "cache_read_input_tokens": 499000,
+                    "input_tokens": 1_000,
+                    "cache_read_input_tokens": 499_000,
                     "cache_creation_input_tokens": 0,
                 },
                 "content": [
@@ -440,7 +440,7 @@ FULL_TERSE_SOURCE = {
         "has_diff": False,
         "diff_fields": ["tmux_count"],  # must NOT leak into terse
     },
-    "extra_bulky_field": "x" * 5000,  # must NOT leak
+    "extra_bulky_field": "x" * 5_000,  # must NOT leak
     "agent_meta": {"context_pct": 42.0},  # must NOT leak
 }
 
@@ -580,7 +580,7 @@ def realistic_terse() -> dict:
             "diff_fields": [],
         },
         "agent_meta": {"context_pct": 37.5},
-        "pane_text": "x" * 10000,
+        "pane_text": "x" * 10_000,
     }
     return project_terse(realistic, TERSE_STATUS_FIELDS)
 
@@ -793,9 +793,9 @@ def representative_full_status() -> dict:
         "hostname_canonical": "mba.hpc.unimelb.edu.au",
         "machine": "mba",
         # Bulky / PII — must be dropped by the projection
-        "pane_text": "x" * 10000,
-        "claude_md": "y" * 20000,
-        "mcp_json": "z" * 5000,
+        "pane_text": "x" * 10_000,
+        "claude_md": "y" * 20_000,
+        "mcp_json": "z" * 5_000,
         "last_user_msg": "q" * 200,
         "stuck_prompt_text": "s" * 200,
         "recent_prompts": ["p" * 500] * 10,
