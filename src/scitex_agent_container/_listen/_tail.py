@@ -54,7 +54,13 @@ def _runtime_session_jsonl(name: str) -> Path:
     )
 
 
-async def _stream_tail(path: Path, since: datetime | None, follow: bool):
+async def _stream_tail(
+    path: Path,
+    since: datetime | None,
+    follow: bool,
+    heartbeat_interval: float = 15.0,
+    poll_interval: float = 0.5,
+):
     line_no = 0
     seen_since = since is None
     if not path.is_file():
@@ -62,7 +68,7 @@ async def _stream_tail(path: Path, since: datetime | None, follow: bool):
             return
 
     while not path.is_file():
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(poll_interval)
 
     last_heartbeat = asyncio.get_event_loop().time()
     with path.open("r", encoding="utf-8") as fh:
@@ -96,11 +102,11 @@ async def _stream_tail(path: Path, since: datetime | None, follow: bool):
             if not follow:
                 return
             now = asyncio.get_event_loop().time()
-            if now - last_heartbeat >= 15.0:
+            if now - last_heartbeat >= heartbeat_interval:
                 yield b": keep-alive\n\n"
                 last_heartbeat = now
             try:
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(poll_interval)
             except (asyncio.CancelledError, GeneratorExit):
                 raise
 
