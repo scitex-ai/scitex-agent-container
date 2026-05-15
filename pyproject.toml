@@ -170,5 +170,6 @@ ignore = ["E501"]
 # tests/conftest.py force-set of COVERAGE_PROCESS_START + a .pth shim.
 # See ~/proj/scitex-dev/src/scitex_dev/_skills/general/05_development_06_subprocess-coverage.md.
 parallel = true
+branch = true
 source = ["scitex_agent_container"]
 concurrency = ["multiprocessing", "thread"]
