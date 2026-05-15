@@ -96,8 +96,11 @@ class _MainGroup(LazyGroup):
         self._completion_attached = True
         try:
             from scitex_dev._cli._completion import attach_shell_completion
-        except ImportError:
-            return  # scitex-dev[cli-audit] not installed; commands stay missing
+        except Exception:  # stx-allow: fallback (reason: scitex-dev[cli-audit] is optional; broaden beyond ImportError so a misbuilt transitive dep can't break CLI startup)
+            # scitex-dev[cli-audit] not installed (or its import chain
+            # raised something other than ImportError); completion
+            # commands stay missing — non-fatal for the CLI itself.
+            return
         attach_shell_completion(self, prog_name="scitex-agent-container")
         # The upstream helper writes an ``eval "$(_NAME_COMPLETE=...)"``
         # line in ~/.bashrc for ONE binary. Two problems for sac:

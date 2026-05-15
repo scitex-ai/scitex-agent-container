@@ -56,7 +56,11 @@ async def _consume_sse(
     """
     try:
         import httpx
-    except ImportError as exc:  # pragma: no cover
+    except Exception as exc:  # pragma: no cover
+        # Catch broadly: optional deps can fail at *import time* with
+        # non-ImportError errors (e.g. a misconfigured transitive dep
+        # raising RuntimeError). Surface them as an actionable
+        # ImportError so the caller knows install/upgrade is needed.
         raise ImportError(
             "httpx is required for sac mcp channel — install with `pip install httpx`"
         ) from exc

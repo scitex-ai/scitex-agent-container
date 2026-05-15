@@ -351,7 +351,9 @@ async def run(
     if a2a_port is not None:
         try:
             import uvicorn
-        except ImportError as exc:  # stx-allow: fallback (reason: optional dep; runner stays alive heart-beating even if server can't bind)
+        except Exception as exc:  # stx-allow: fallback (reason: optional dep; runner stays alive heart-beating even if server can't bind)
+            # Broad: uvicorn import can fail with non-ImportError when
+            # transitive deps (httptools, websockets) are mis-built.
             logger.error("a2a_proxy needs uvicorn: %s", exc)
         else:
             app = build_app(

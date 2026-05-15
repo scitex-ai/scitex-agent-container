@@ -243,7 +243,7 @@ def resolve_agent_workspace(agent_name: str) -> tuple[dict, str | None]:
     """
     try:
         from scitex_agent_container._state.registry import Registry
-    except ImportError:  # stx-allow: fallback (reason: optional dep at runtime)
+    except Exception:  # stx-allow: fallback (reason: optional dep at runtime; broaden beyond ImportError so a misbuilt transitive dep can't crash the option-builder)
         return {}, None
 
     try:
@@ -319,7 +319,7 @@ def build_sdk_options(
     """
     try:
         from claude_agent_sdk import ClaudeAgentOptions
-    except ImportError as exc:  # stx-allow: fallback (reason: optional dep at runtime)
+    except Exception as exc:  # stx-allow: fallback (reason: optional dep at runtime; broaden beyond ImportError so misbuilt transitive deps surface as actionable SDKCommonError)
         raise SDKCommonError(
             "claude-agent-sdk is not installed (`pip install claude-agent-sdk`)"
         ) from exc
