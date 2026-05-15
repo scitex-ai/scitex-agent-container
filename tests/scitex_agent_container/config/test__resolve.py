@@ -11,6 +11,11 @@ from pathlib import Path
 import pytest
 
 from scitex_agent_container.config import resolve_config
+from scitex_agent_container.config._resolve import (
+    AmbiguousAgent,
+    enumerate_agent_names,
+    resolve_with_prefix,
+)
 
 
 def _write(p: Path, name: str = "x") -> Path:
@@ -73,61 +78,116 @@ def _primary(home: Path) -> Path:
     return home / ".scitex" / "agent-container" / "agents"
 
 
-def test_resolve_config_uses_primary_root(fake_home):
+def test_resolve_config_finds_spec_in_primary_agents_root(fake_home):
+    # Arrange
     hit = _write(_primary(fake_home) / "foo" / "spec.yaml", "foo")
-    assert resolve_config("foo") == str(hit)
+    # Act
+    result = resolve_config("foo")
+    # Assert
+    assert result == str(hit)
 
 
-def test_resolve_config_supports_nested_name_dir(fake_home):
+def test_resolve_config_finds_spec_in_nested_name_directory(fake_home):
     """Every agent must live in its own directory with a ``spec.yaml``."""
+    # Arrange
     hit = _write(_primary(fake_home) / "foo" / "spec.yaml", "foo")
-    assert resolve_config("foo") == str(hit)
+    # Act
+    result = resolve_config("foo")
+    # Assert
+    assert result == str(hit)
 
 
-def test_resolve_config_primary_preferred_over_env_var(fake_home, env_bag):
+def test_resolve_config_prefers_primary_root_over_env_var_dir(fake_home, env_bag):
+    # Arrange
     primary_hit = _write(_primary(fake_home) / "foo" / "spec.yaml", "primary")
     envdir = fake_home / "envdir"
     _write(envdir / "foo" / "spec.yaml", "env")
     env_bag.setenv("SCITEX_AGENT_CONTAINER_YAML_DIRS", str(envdir))
-    assert resolve_config("foo") == str(primary_hit)
+    # Act
+    result = resolve_config("foo")
+    # Assert
+    assert result == str(primary_hit)
 
 
-def test_resolve_config_env_var_plugin_port(fake_home, env_bag):
+def test_resolve_config_falls_back_to_env_var_plugin_port(fake_home, env_bag):
+    # Arrange
     envdir = fake_home / "envdir"
     envhit = _write(envdir / "foo" / "spec.yaml", "env")
     env_bag.setenv("SCITEX_AGENT_CONTAINER_YAML_DIRS", str(envdir))
-    assert resolve_config("foo") == str(envhit)
+    # Act
+    result = resolve_config("foo")
+    # Assert
+    assert result == str(envhit)
 
 
-def test_resolve_config_env_var_colon_separated(fake_home, env_bag):
+def test_resolve_config_walks_colon_separated_env_var_dirs(fake_home, env_bag):
+    # Arrange
     d1 = fake_home / "d1"
     d2 = fake_home / "d2"
     d1.mkdir()
     expected = _write(d2 / "foo" / "spec.yaml", "d2")
     env_bag.setenv("SCITEX_AGENT_CONTAINER_YAML_DIRS", f"{d1}:{d2}")
-    assert resolve_config("foo") == str(expected)
+    # Act
+    result = resolve_config("foo")
+    # Assert
+    assert result == str(expected)
 
 
-def test_resolve_config_not_found_lists_searched_paths(fake_home, env_bag):
-    env_bag.setenv("SCITEX_AGENT_CONTAINER_YAML_DIRS", f"{fake_home}/a:{fake_home}/b")
+@pytest.fixture
+def missing_config_error(fake_home, env_bag):
+    """Trigger ``resolve_config('missing')`` and return the error message."""
+    # Arrange
+    env_bag.setenv(
+        "SCITEX_AGENT_CONTAINER_YAML_DIRS",
+        f"{fake_home}/a:{fake_home}/b",
+    )
+    # Act
     with pytest.raises(FileNotFoundError) as excinfo:
         resolve_config("missing")
-    msg = str(excinfo.value)
-    assert ".scitex/agent-container/agents" in msg
-    assert "SCITEX_AGENT_CONTAINER_YAML_DIRS" in msg
-    assert f"{fake_home}/a" in msg
-    assert f"{fake_home}/b" in msg
-    assert "missing" in msg
+    return str(excinfo.value), fake_home
 
 
-def test_resolve_config_absolute_path_unchanged(fake_home, tmp_path):
+@pytest.mark.parametrize(
+    "fragment_template",
+    [
+        ".scitex/agent-container/agents",
+        "SCITEX_AGENT_CONTAINER_YAML_DIRS",
+        "{home}/a",
+        "{home}/b",
+        "missing",
+    ],
+)
+def test_resolve_config_not_found_error_lists_searched_path(
+    missing_config_error, fragment_template
+):
+    # Arrange
+    msg, fake_home = missing_config_error
+    fragment = fragment_template.format(home=fake_home)
+    # Act
+    contained = fragment in msg
+    # Assert
+    assert contained
+
+
+def test_resolve_config_returns_absolute_path_unchanged_when_file_exists(
+    fake_home, tmp_path
+):
+    # Arrange
     abs_yaml = _write(tmp_path / "elsewhere" / "my.yaml", "abs")
-    assert resolve_config(str(abs_yaml)) == str(abs_yaml)
+    # Act
+    result = resolve_config(str(abs_yaml))
+    # Assert
+    assert result == str(abs_yaml)
 
 
-def test_resolve_config_absolute_path_missing_raises(fake_home, tmp_path):
-    with pytest.raises(FileNotFoundError):
-        resolve_config(str(tmp_path / "nope" / "x.yaml"))
+def test_resolve_config_absolute_path_raises_when_file_missing(fake_home, tmp_path):
+    # Arrange
+    missing_abs = str(tmp_path / "nope" / "x.yaml")
+    # Act
+    raises_ctx = pytest.raises(FileNotFoundError)
+    # Assert
+    with raises_ctx:
+        resolve_config(missing_abs)
 
 
 # ---------------------------------------------------------------------------
@@ -142,12 +202,6 @@ def test_resolve_config_absolute_path_missing_raises(fake_home, tmp_path):
 #   3. Path arguments (containing '/' or .yaml/.yml) bypass the entire
 #      fallback logic.
 # ---------------------------------------------------------------------------
-
-from scitex_agent_container.config._resolve import (
-    AmbiguousAgent,
-    enumerate_agent_names,
-    resolve_with_prefix,
-)
 
 
 @pytest.fixture
@@ -180,63 +234,154 @@ def _mkagent(root: Path, name: str) -> None:
     )
 
 
-def test_enumerate_returns_all_agents(agent_root: Path):
+def test_enumerate_agent_names_returns_all_created_agents(agent_root: Path):
+    # Arrange
     _mkagent(agent_root, "alpha")
     _mkagent(agent_root, "beta")
     _mkagent(agent_root, "gamma")
+    # Act
     names = enumerate_agent_names()
+    # Assert
     assert {"alpha", "beta", "gamma"}.issubset(set(names))
 
 
-def test_resolve_with_prefix_exact_match(agent_root: Path):
+def test_resolve_with_prefix_returns_spec_for_exact_match(agent_root: Path):
+    # Arrange
     _mkagent(agent_root, "alpha")
+    # Act
     p = resolve_with_prefix("alpha")
+    # Assert
     assert p.endswith("/alpha/spec.yaml")
 
 
-def test_resolve_with_prefix_unique_prefix_resolves(agent_root: Path, capsys):
+@pytest.fixture
+def unique_prefix_resolution(agent_root, capsys):
+    """Resolve ``polish-`` against a single ``polish-clew`` agent."""
+    # Arrange
     _mkagent(agent_root, "polish-clew")
-    p = resolve_with_prefix("polish-")
-    assert p.endswith("/polish-clew/spec.yaml")
+    # Act
+    path = resolve_with_prefix("polish-")
     err = capsys.readouterr().err
-    assert "polish-clew" in err
-    assert "prefix match" in err
+    return path, err
 
 
-def test_resolve_with_prefix_ambiguous_raises(agent_root: Path):
+def test_resolve_with_prefix_unique_match_returns_spec_path(
+    unique_prefix_resolution,
+):
+    # Arrange
+    path, _err = unique_prefix_resolution
+    # Act
+    suffix_ok = path.endswith("/polish-clew/spec.yaml")
+    # Assert
+    assert suffix_ok
+
+
+def test_resolve_with_prefix_unique_match_emits_matched_name_to_stderr(
+    unique_prefix_resolution,
+):
+    # Arrange
+    _path, err = unique_prefix_resolution
+    # Act
+    contained = "polish-clew" in err
+    # Assert
+    assert contained
+
+
+def test_resolve_with_prefix_unique_match_announces_prefix_match_hint(
+    unique_prefix_resolution,
+):
+    # Arrange
+    _path, err = unique_prefix_resolution
+    # Act
+    contained = "prefix match" in err
+    # Assert
+    assert contained
+
+
+@pytest.fixture
+def ambiguous_prefix_error(agent_root):
+    """Trigger ``AmbiguousAgent`` from three ``sai-*`` agents."""
+    # Arrange
     _mkagent(agent_root, "sai-factorout")
     _mkagent(agent_root, "sai-test")
     _mkagent(agent_root, "sai-test2")
+    # Act
     with pytest.raises(AmbiguousAgent) as exc:
         resolve_with_prefix("sai")
-    assert exc.value.prefix == "sai"
-    assert sorted(exc.value.matches) == [
-        "sai-factorout",
-        "sai-test",
-        "sai-test2",
-    ]
+    return exc.value
 
 
-def test_resolve_with_prefix_no_match_raises_file_not_found(agent_root: Path):
-    with pytest.raises(FileNotFoundError):
-        resolve_with_prefix("ghost-agent-no-prefix-hits")
+def test_resolve_with_prefix_ambiguous_error_records_prefix(
+    ambiguous_prefix_error,
+):
+    # Arrange
+    err = ambiguous_prefix_error
+    # Act
+    prefix = err.prefix
+    # Assert
+    assert prefix == "sai"
 
 
-def test_path_argument_bypasses_smart_logic(agent_root: Path, tmp_path: Path):
+def test_resolve_with_prefix_ambiguous_error_lists_all_matches(
+    ambiguous_prefix_error,
+):
+    # Arrange
+    err = ambiguous_prefix_error
+    # Act
+    matches = sorted(err.matches)
+    # Assert
+    assert matches == ["sai-factorout", "sai-test", "sai-test2"]
+
+
+def test_resolve_with_prefix_no_match_raises_file_not_found_error(
+    agent_root: Path,
+):
+    # Arrange
+    bogus = "ghost-agent-no-prefix-hits"
+    # Act
+    raises_ctx = pytest.raises(FileNotFoundError)
+    # Assert
+    with raises_ctx:
+        resolve_with_prefix(bogus)
+
+
+def test_resolve_with_prefix_returns_path_argument_unchanged(
+    agent_root: Path, tmp_path: Path
+):
     """A path argument must NOT trigger prefix matching — the user
     provided an explicit file path, honour it."""
+    # Arrange
     yaml_path = tmp_path / "explicit.yaml"
     yaml_path.write_text(
         "apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
         "spec: { runtime: apptainer }\n"
     )
-    assert resolve_with_prefix(str(yaml_path)) == str(yaml_path)
+    # Act
+    result = resolve_with_prefix(str(yaml_path))
+    # Assert
+    assert result == str(yaml_path)
 
 
-def test_ambiguous_agent_str_lists_matches():
+@pytest.fixture
+def ambiguous_agent_str() -> str:
+    """Render an ``AmbiguousAgent`` exception to its string form."""
+    # Arrange
     err = AmbiguousAgent("sai", ["sai-test", "sai-factorout"])
-    s = str(err)
-    assert "sai" in s
-    assert "sai-test" in s
-    assert "sai-factorout" in s
+    # Act
+    return str(err)
+
+
+@pytest.mark.parametrize(
+    "fragment",
+    ["sai", "sai-test", "sai-factorout"],
+)
+def test_ambiguous_agent_str_contains_prefix_and_each_match(
+    ambiguous_agent_str, fragment
+):
+    # Arrange
+    rendered = ambiguous_agent_str
+    # Act
+    contained = fragment in rendered
+    # Assert
+    assert contained
