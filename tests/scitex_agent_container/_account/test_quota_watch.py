@@ -295,3 +295,176 @@ def test_select_next_account_returns_none_when_only_current_account_present():
     result = _select_next_account(accounts, current_email="only@x.com")
     # Assert
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# check_and_rotate — only the current account is stored
+# ---------------------------------------------------------------------------
+
+
+def test_check_and_rotate_only_current_account_stored_reports_no_accounts(tmp_path):
+    # Arrange
+    home = _make_home(tmp_path, email="primary@example.com")
+    store = _make_store(
+        tmp_path,
+        [{"name": "primary", "email_address": "primary@example.com"}],
+    )
+    # Act
+    with _fake_fetch_usage({"used_pct_5h": 92.0, "used_pct_7d": 70.0, "error": None}):
+        result = check_and_rotate(threshold=80.0, store_dir=store, home=home)
+    # Assert
+    assert result["action"] == "no_accounts"
+
+
+def test_check_and_rotate_only_current_account_message_mentions_cannot_rotate(tmp_path):
+    # Arrange
+    home = _make_home(tmp_path, email="primary@example.com")
+    store = _make_store(
+        tmp_path,
+        [{"name": "primary", "email_address": "primary@example.com"}],
+    )
+    # Act
+    with _fake_fetch_usage({"used_pct_5h": 92.0, "used_pct_7d": 70.0, "error": None}):
+        result = check_and_rotate(threshold=80.0, store_dir=store, home=home)
+    # Assert
+    assert "cannot rotate" in result["message"]
+
+
+# ---------------------------------------------------------------------------
+# check_and_rotate — unexpected exception path returns error dict
+# ---------------------------------------------------------------------------
+
+
+@contextmanager
+def _exploding_fetch_usage() -> Iterator[None]:
+    """Swap ``qw_mod.fetch_usage`` for a stub that raises an exception."""
+    saved = qw_mod.fetch_usage
+
+    def _boom(*_a, **_kw):
+        raise RuntimeError("boom from fetch_usage")
+
+    qw_mod.fetch_usage = _boom  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        qw_mod.fetch_usage = saved  # type: ignore[assignment]
+
+
+def test_check_and_rotate_unexpected_exception_returns_error_action(tmp_path):
+    # Arrange
+    home = _make_home(tmp_path)
+    # Act
+    with _exploding_fetch_usage():
+        result = check_and_rotate(threshold=80.0, home=home)
+    # Assert
+    assert result["action"] == "error"
+
+
+def test_check_and_rotate_unexpected_exception_message_quotes_exception_text(tmp_path):
+    # Arrange
+    home = _make_home(tmp_path)
+    # Act
+    with _exploding_fetch_usage():
+        result = check_and_rotate(threshold=80.0, home=home)
+    # Assert
+    assert "boom from fetch_usage" in result["message"]
+
+
+# ---------------------------------------------------------------------------
+# survival_mode_check
+# ---------------------------------------------------------------------------
+
+
+def test_survival_mode_check_single_account_high_quota_flags_survival(tmp_path):
+    # Arrange
+    home = _make_home(tmp_path, email="primary@example.com")
+    store = _make_store(
+        tmp_path,
+        [{"name": "primary", "email_address": "primary@example.com"}],
+    )
+    # Act
+    with _fake_fetch_usage({"used_pct_5h": 75.0, "used_pct_7d": 20.0, "error": None}):
+        result = qw_mod.survival_mode_check(store_dir=store, home=home)
+    # Assert
+    assert result["survival_mode"] is True
+
+
+def test_survival_mode_check_single_account_high_quota_message_contains_marker(
+    tmp_path,
+):
+    # Arrange
+    home = _make_home(tmp_path, email="primary@example.com")
+    store = _make_store(
+        tmp_path,
+        [{"name": "primary", "email_address": "primary@example.com"}],
+    )
+    # Act
+    with _fake_fetch_usage({"used_pct_5h": 75.0, "used_pct_7d": 20.0, "error": None}):
+        result = qw_mod.survival_mode_check(store_dir=store, home=home)
+    # Assert
+    assert "SURVIVAL MODE" in result["message"]
+
+
+def test_survival_mode_check_multi_account_does_not_flag_survival(tmp_path):
+    # Arrange
+    home = _make_home(tmp_path, email="primary@example.com")
+    store = _make_store(
+        tmp_path,
+        [
+            {"name": "primary", "email_address": "primary@example.com"},
+            {"name": "backup", "email_address": "backup@example.com"},
+        ],
+    )
+    # Act
+    with _fake_fetch_usage({"used_pct_5h": 99.0, "used_pct_7d": 10.0, "error": None}):
+        result = qw_mod.survival_mode_check(store_dir=store, home=home)
+    # Assert
+    assert result["survival_mode"] is False
+
+
+def test_survival_mode_check_low_quota_does_not_flag_survival(tmp_path):
+    # Arrange
+    home = _make_home(tmp_path, email="primary@example.com")
+    store = _make_store(
+        tmp_path,
+        [{"name": "primary", "email_address": "primary@example.com"}],
+    )
+    # Act
+    with _fake_fetch_usage({"used_pct_5h": 10.0, "used_pct_7d": 5.0, "error": None}):
+        result = qw_mod.survival_mode_check(store_dir=store, home=home)
+    # Assert
+    assert result["survival_mode"] is False
+
+
+def test_survival_mode_check_ok_message_includes_account_count(tmp_path):
+    # Arrange
+    home = _make_home(tmp_path, email="primary@example.com")
+    store = _make_store(
+        tmp_path,
+        [{"name": "primary", "email_address": "primary@example.com"}],
+    )
+    # Act
+    with _fake_fetch_usage({"used_pct_5h": 10.0, "used_pct_7d": 5.0, "error": None}):
+        result = qw_mod.survival_mode_check(store_dir=store, home=home)
+    # Assert
+    assert "1 account" in result["message"]
+
+
+def test_survival_mode_check_exception_returns_safe_default(tmp_path):
+    # Arrange
+    home = _make_home(tmp_path)
+    # Act
+    with _exploding_fetch_usage():
+        result = qw_mod.survival_mode_check(home=home)
+    # Assert
+    assert result["survival_mode"] is False
+
+
+def test_survival_mode_check_exception_message_quotes_exception_text(tmp_path):
+    # Arrange
+    home = _make_home(tmp_path)
+    # Act
+    with _exploding_fetch_usage():
+        result = qw_mod.survival_mode_check(home=home)
+    # Assert
+    assert "boom from fetch_usage" in result["message"]
