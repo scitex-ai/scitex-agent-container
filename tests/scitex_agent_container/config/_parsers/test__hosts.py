@@ -217,6 +217,16 @@ def test_parse_scheduling_coerces_fallback_host_entries_to_strings():
     assert sched.fallback_hosts == ["1", "two", "3.0"]
 
 
+def test_parse_scheduling_empty_list_block_raises_value_error():
+    # Arrange — falsy non-dict (empty list) must not be silently coerced to {}.
+    spec = {"scheduling": []}
+    # Act
+    call = lambda: parse_scheduling(spec)
+    # Assert
+    with pytest.raises(ValueError, match="mapping"):
+        call()
+
+
 def test_parse_scheduling_none_block_marks_explicit_flag_true():
     # Arrange — ``scheduling: null`` in YAML lands as None here.
     spec = {"scheduling": None}
