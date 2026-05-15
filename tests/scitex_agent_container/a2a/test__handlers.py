@@ -20,6 +20,15 @@ import pytest
 
 from scitex_agent_container.a2a import _handlers as h
 
+
+def _has_anthropic_creds() -> bool:
+    """Detect whether Anthropic credentials are available for live SDK calls."""
+    if os.environ.get("SAC_ANTHROPIC_API_KEY"):
+        return True
+    cred = Path.home() / ".claude" / ".credentials.json"
+    return cred.is_file()
+
+
 # ---------------------------------------------------------------------------
 # Fixtures — real isolation via tmp_path + a controlled env dict.
 # ---------------------------------------------------------------------------
@@ -463,6 +472,14 @@ def test_claude_session_missing_sdk_raises_handler_error(
         invoke()
 
 
+@pytest.mark.skipif(
+    not _has_anthropic_creds(),
+    reason=(
+        "build_sdk_options fails earlier with auth-missing when no "
+        "Anthropic credentials available (CI runners). Set "
+        "SAC_ANTHROPIC_API_KEY or run `claude /login` to enable."
+    ),
+)
 def test_claude_session_channels_without_port_raises(isolated_env: Path) -> None:
     """``server:sac`` channel needs a2a_port — real SDKCommonError → HandlerError.
 
