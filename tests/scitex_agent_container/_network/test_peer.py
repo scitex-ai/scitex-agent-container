@@ -24,9 +24,10 @@ from pathlib import Path
 
 import pytest
 
-from scitex_agent_container._network.peer import (
+from scitex_agent_container._network.peer import (  # noqa: F401
     PeerError,
     _read_yaml_endpoints,
+    post_turn,
     post_turn_to_url,
     resolve_peer_url,
 )
@@ -254,3 +255,297 @@ class TestPostTurnToUrl:
             raised.append(exc)
         # Assert
         assert raised and isinstance(raised[0], PeerError)
+
+
+# ---------------------------------------------------------------------------
+# 8 — HTTP error-body propagation via real loopback server.
+# ---------------------------------------------------------------------------
+
+
+def _start_local_server(handler_cls):
+    """Spin up a daemon BaseHTTPRequestHandler on 127.0.0.1; return (server, thread, port)."""
+    import http.server
+    import socket
+    import threading
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    server = http.server.HTTPServer(("127.0.0.1", port), handler_cls)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread, port
+
+
+def _make_status_handler(status: int, body: bytes, content_type: str = "text/plain"):
+    import http.server
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a, **kw):
+            pass
+
+    return _Handler
+
+
+class TestPostTurnHttpErrorPaths:
+    def test_http_500_response_raises_peer_error(self) -> None:
+        # Arrange
+        handler = _make_status_handler(500, b"boom-detail")
+        server, thread, port = _start_local_server(handler)
+        try:
+            # Act
+            action = lambda: post_turn_to_url(
+                f"http://127.0.0.1:{port}/v1/turn", "hi", timeout_s=5.0
+            )
+            # Assert
+            with pytest.raises(PeerError, match="HTTP 500"):
+                action()
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2.0)
+
+    def test_http_error_includes_response_body(self) -> None:
+        # Arrange
+        handler = _make_status_handler(503, b"upstream-down")
+        server, thread, port = _start_local_server(handler)
+        raised: list[BaseException] = []
+        try:
+            # Act
+            try:
+                post_turn_to_url(
+                    f"http://127.0.0.1:{port}/v1/turn", "hi", timeout_s=5.0
+                )
+            except PeerError as exc:
+                raised.append(exc)
+            # Assert
+            assert raised and "upstream-down" in str(raised[0])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2.0)
+
+    def test_malformed_json_reply_raises_peer_error(self) -> None:
+        # Arrange
+        handler = _make_status_handler(
+            200, b'{"not_reply": "oops"}', "application/json"
+        )
+        server, thread, port = _start_local_server(handler)
+        try:
+            # Act
+            action = lambda: post_turn_to_url(
+                f"http://127.0.0.1:{port}/v1/turn", "hi", timeout_s=5.0
+            )
+            # Assert
+            with pytest.raises(PeerError, match="malformed body"):
+                action()
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2.0)
+
+
+# ---------------------------------------------------------------------------
+# 9 — resolve_peer_url: FileNotFoundError → PeerError; post_turn end-to-end.
+# ---------------------------------------------------------------------------
+
+
+class TestResolvePeerUrlMissingYaml:
+    def test_missing_yaml_raises_peer_error(self) -> None:
+        # Arrange
+        from scitex_agent_container.config import _resolve
+
+        saved = _resolve.resolve_config
+
+        def _raiser(_name):
+            raise FileNotFoundError("agent 'ghost' not found in any search path")
+
+        _resolve.resolve_config = _raiser
+        try:
+            # Act
+            action = lambda: resolve_peer_url("ghost")
+            # Assert
+            with pytest.raises(PeerError, match="ghost"):
+                action()
+        finally:
+            _resolve.resolve_config = saved
+
+
+class TestPostTurnEndToEnd:
+    def test_post_turn_resolves_yaml_and_round_trips_reply(
+        self, tmp_path: Path, resolve_yaml_to
+    ) -> None:
+        # Arrange — real local HTTP server + real YAML resolution.
+        import http.server
+        import json as _json
+
+        class _Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):  # noqa: N802
+                length = int(self.headers.get("Content-Length", "0"))
+                body = _json.loads(self.rfile.read(length).decode("utf-8"))
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(
+                    _json.dumps({"reply": f"ack:{body['text']}"}).encode("utf-8")
+                )
+
+            def log_message(self, *a, **kw):
+                pass
+
+        server, thread, port = _start_local_server(_Handler)
+        agent_yaml = tmp_path / "gamma" / "gamma.yaml"
+        agent_yaml.parent.mkdir(parents=True)
+        agent_yaml.write_text(
+            "apiVersion: scitex-agent-container/v3\n"
+            "kind: Agent\n"
+            "spec:\n"
+            f"  a2a: {{port: {port}}}\n"
+        )
+        resolve_yaml_to(agent_yaml)
+        try:
+            # Act
+            reply = post_turn("gamma", "ping", timeout_s=5.0)
+            # Assert
+            assert reply == "ack:ping"
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2.0)
+
+
+# ---------------------------------------------------------------------------
+# 10 — SSH transport fallback via PATH-installed ssh shim.
+# ---------------------------------------------------------------------------
+
+
+class TestPostTurnViaSsh:
+    def test_ssh_fallback_returns_reply_from_remote_curl(self, subprocess_shim) -> None:
+        # Arrange — fake ssh prints a JSON envelope to stdout.
+        import json as _json
+
+        stdout = _json.dumps({"reply": "remote-ack"}) + "\n"
+        subprocess_shim.install("ssh", stdout=stdout, exit=0)
+        # Act
+        reply = post_turn_to_url("ssh://mba:18888/v1/turn", "hi", timeout_s=2.0)
+        # Assert
+        assert reply == "remote-ack"
+
+    def test_ssh_fallback_invokes_ssh_with_target_host(self, subprocess_shim) -> None:
+        # Arrange
+        import json as _json
+
+        stdout = _json.dumps({"reply": "ok"}) + "\n"
+        subprocess_shim.install("ssh", stdout=stdout, exit=0)
+        # Act
+        post_turn_to_url("ssh://my-host:19000/v1/turn", "hi", timeout_s=2.0)
+        # Assert
+        argv = subprocess_shim.argv_for("ssh")
+        assert "my-host" in argv
+
+    def test_ssh_fallback_skips_banner_lines_before_json(self, subprocess_shim) -> None:
+        # Arrange — .bashrc banner precedes the JSON body.
+        import json as _json
+
+        stdout = (
+            "Welcome to remote host\n"
+            "Last login: yesterday\n" + _json.dumps({"reply": "after-banner"}) + "\n"
+        )
+        subprocess_shim.install("ssh", stdout=stdout, exit=0)
+        # Act
+        reply = post_turn_to_url("ssh://mba:18888/v1/turn", "hi", timeout_s=2.0)
+        # Assert
+        assert reply == "after-banner"
+
+    def test_ssh_nonzero_exit_raises_peer_error_with_stderr(
+        self, subprocess_shim
+    ) -> None:
+        # Arrange
+        subprocess_shim.install("ssh", stdout="", stderr="permission denied", exit=255)
+        # Act
+        action = lambda: post_turn_to_url(
+            "ssh://mba:18888/v1/turn", "hi", timeout_s=2.0
+        )
+        # Assert
+        with pytest.raises(PeerError, match="permission denied"):
+            action()
+
+    def test_ssh_non_json_stdout_raises_peer_error(self, subprocess_shim) -> None:
+        # Arrange
+        subprocess_shim.install("ssh", stdout="not json at all\n", exit=0)
+        # Act
+        action = lambda: post_turn_to_url(
+            "ssh://mba:18888/v1/turn", "hi", timeout_s=2.0
+        )
+        # Assert
+        with pytest.raises(PeerError, match="non-JSON"):
+            action()
+
+    def test_ssh_empty_stdout_raises_peer_error(self, subprocess_shim) -> None:
+        # Arrange
+        subprocess_shim.install("ssh", stdout="", exit=0)
+        # Act
+        action = lambda: post_turn_to_url(
+            "ssh://mba:18888/v1/turn", "hi", timeout_s=2.0
+        )
+        # Assert
+        with pytest.raises(PeerError, match="non-JSON"):
+            action()
+
+    def test_ssh_reply_missing_key_raises_malformed_body(self, subprocess_shim) -> None:
+        # Arrange
+        import json as _json
+
+        subprocess_shim.install("ssh", stdout=_json.dumps({"other": 1}) + "\n", exit=0)
+        # Act
+        action = lambda: post_turn_to_url(
+            "ssh://mba:18888/v1/turn", "hi", timeout_s=2.0
+        )
+        # Assert
+        with pytest.raises(PeerError, match="malformed body"):
+            action()
+
+    def test_ssh_url_without_host_raises_peer_error(self) -> None:
+        # Arrange
+        bad_url = "ssh:///v1/turn"
+        # Act
+        action = lambda: post_turn_to_url(bad_url, "hi", timeout_s=1.0)
+        # Assert
+        with pytest.raises(PeerError, match="malformed ssh URL"):
+            action()
+
+
+# ---------------------------------------------------------------------------
+# 11 — _read_yaml_endpoints extra shapes: remote list, unreadable file.
+# ---------------------------------------------------------------------------
+
+
+class TestReadYamlEndpointsExtras:
+    def test_remote_list_form_uses_last_alias(self, tmp_path: Path) -> None:
+        # Arrange — chain form: list of alias hops, destination is last.
+        y = tmp_path / "chain.yaml"
+        y.write_text(
+            "apiVersion: scitex-agent-container/v3\n"
+            "kind: Agent\n"
+            "spec:\n"
+            "  a2a: {port: 22000}\n"
+            "  remote: [bastion, intermediate, final-host]\n"
+        )
+        # Act
+        result = _read_yaml_endpoints(str(y))
+        # Assert
+        assert result == (None, 22000, "final-host")
+
+    def test_unreadable_yaml_returns_all_none(self, tmp_path: Path) -> None:
+        # Arrange — pointer to a path that does not exist.
+        missing = tmp_path / "nope.yaml"
+        # Act
+        result = _read_yaml_endpoints(str(missing))
+        # Assert
+        assert result == (None, None, None)
