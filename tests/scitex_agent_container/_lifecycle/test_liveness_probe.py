@@ -70,7 +70,7 @@ def test_generate_nonce_with_custom_byte_count_returns_double_length_hex(
 def test_generate_nonce_default_produces_near_unique_samples_in_practice():
     """Collision probability over 1000 8-hex samples is negligible."""
     # Arrange
-    sample_count = 1000
+    sample_count = 1_000
     # Act
     samples = {generate_nonce() for _ in range(sample_count)}
     # Assert
@@ -194,11 +194,11 @@ def test_pane_is_busy_with_old_marker_outside_tail_window_returns_false():
     The 2000-char tail window strips the old marker."""
     # Arrange
     old = "Working\u2026 earlier\n"
-    huge_noise = "x" * 5000
+    huge_noise = "x" * 5_000
     new_tail = "\nquiet now\n> \n"
     pane = old + huge_noise + new_tail
     # Act
-    result = pane_is_busy(pane, tail_chars=2000)
+    result = pane_is_busy(pane, tail_chars=2_000)
     # Assert
     assert result is False
 
