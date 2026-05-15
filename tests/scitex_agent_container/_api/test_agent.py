@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 
 pytest.importorskip("fastmcp")
+pytest.importorskip("scitex_agent_container")
 
 import scitex_agent_container as sac  # noqa: E402
 
