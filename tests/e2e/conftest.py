@@ -2,8 +2,8 @@
 
 These tests exercise full user-facing workflows against real
 subsystems (real ``sac`` subprocess, real ``apptainer`` container
-runtime, real HTTP loopback servers). They are SLOW and EXPENSIVE and
-are skipped by default; opt in with ``RUN_E2E=1``.
+runtime, real HTTP loopback servers). They are MANDATORY — run on
+every PR alongside unit + integration tests.
 
 Rationale
 =========
@@ -14,17 +14,13 @@ covers the live-Claude / a2a wire surface; this layer complements it by
 driving the full ``sac agents start … stop`` lifecycle against the
 actual apptainer + registry + a2a stack.
 
-Skip strategy
-=============
-* Tests carry ``@pytest.mark.e2e`` so they are excluded from the
-  default ``addopts`` filter.
-* The session-scoped ``_require_run_e2e`` autouse fixture in this file
-  additionally skips every test under ``tests/e2e/`` unless
-  ``RUN_E2E`` is set in the environment, so a stray ``pytest -m e2e``
-  invocation on a developer box also no-ops cleanly.
-* Per-test skipif guards (``shutil.which("apptainer") is None`` etc.)
-  handle the case where ``RUN_E2E=1`` is set but the host lacks the
-  specific subsystem.
+Environment requirements
+========================
+* ``sac`` binary on PATH (provided by editable install in CI).
+* ``apptainer`` on PATH for lifecycle/fleet tests (CI must install).
+* Per-test ``pytest.skip`` is acceptable only when a specific
+  subsystem (e.g. apptainer) is genuinely missing from the runner —
+  not as a default opt-in gate.
 
 Each test is responsible for its own cleanup (``sac agents stop`` in a
 ``try/finally`` or via fixture teardown). Registry pollution across
@@ -35,7 +31,6 @@ operator's real agents.
 
 from __future__ import annotations
 
-import os
 import shutil
 import socket
 import subprocess
@@ -45,18 +40,6 @@ from pathlib import Path
 from typing import Iterator
 
 import pytest
-
-# ---------------------------------------------------------------------------
-# Global gate — skip everything under tests/e2e/ when RUN_E2E is not set.
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(autouse=True)
-def _require_run_e2e() -> None:
-    """Skip every e2e test unless ``RUN_E2E`` is set in the environment."""
-    if not os.environ.get("RUN_E2E"):
-        pytest.skip("E2E disabled by default; set RUN_E2E=1 to enable")
-
 
 # ---------------------------------------------------------------------------
 # Shared helpers — port allocation, sac binary discovery, registry probe.
