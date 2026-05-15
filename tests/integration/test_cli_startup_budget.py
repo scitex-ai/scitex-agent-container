@@ -34,19 +34,19 @@ def _budget_s() -> float:
         return _DEFAULT_BUDGET_S
 
 
-def test_cli_help_under_budget() -> None:
-    """``scitex-agent-container --help`` must complete within the budget.
+@pytest.fixture
+def help_run_samples() -> tuple[list[float], list[subprocess.CompletedProcess[str]]]:
+    """Run ``scitex-agent-container --help`` three times and collect timings + results.
 
-    Spawns a fresh subprocess so the parent's already-warmed
-    ``sys.modules`` doesn't mask import cost. Takes the best of three
-    runs to absorb scheduler / disk-cache jitter — we care about the
-    floor, not the worst case.
+    Spawns fresh subprocesses so the parent's already-warmed
+    ``sys.modules`` doesn't mask import cost.
     """
     binary = shutil.which("scitex-agent-container")
     if binary is None:
         pytest.skip("scitex-agent-container CLI not on PATH (install -e .)")
 
     samples: list[float] = []
+    results: list[subprocess.CompletedProcess[str]] = []
     for _ in range(3):
         t0 = time.perf_counter()
         result = subprocess.run(
@@ -55,12 +55,39 @@ def test_cli_help_under_budget() -> None:
             text=True,
         )
         samples.append(time.perf_counter() - t0)
-        assert result.returncode == 0, (
-            f"--help exited {result.returncode}\nstderr: {result.stderr}"
-        )
+        results.append(result)
+    return samples, results
 
-    best = min(samples)
+
+def test_cli_help_exits_zero(
+    help_run_samples: tuple[list[float], list[subprocess.CompletedProcess[str]]],
+) -> None:
+    """Every ``--help`` invocation must exit cleanly."""
+    # Arrange
+    _, results = help_run_samples
+    # Act
+    failed = [r for r in results if r.returncode != 0]
+    # Assert
+    assert not failed, (
+        f"--help exited non-zero on {len(failed)} run(s); "
+        f"first stderr: {failed[0].stderr if failed else ''}"
+    )
+
+
+def test_cli_help_under_budget(
+    help_run_samples: tuple[list[float], list[subprocess.CompletedProcess[str]]],
+) -> None:
+    """``scitex-agent-container --help`` must complete within the budget.
+
+    Takes the best of three runs to absorb scheduler / disk-cache jitter —
+    we care about the floor, not the worst case.
+    """
+    # Arrange
+    samples, _ = help_run_samples
     budget = _budget_s()
+    # Act
+    best = min(samples)
+    # Assert
     assert best < budget, (
         f"`scitex-agent-container --help` took {best:.3f}s "
         f"(budget {budget:.3f}s). Samples: {[f'{s:.3f}' for s in samples]}. "
