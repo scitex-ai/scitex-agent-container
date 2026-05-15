@@ -96,11 +96,18 @@ def _sh_quote(s: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def test_handle_echo_returns_canned_reply() -> None:
-    out = h.handle_echo("alpha", "hi")
-    assert "alpha" in out
-    assert "hi" in out
-    assert "echo handler" in out
+@pytest.mark.parametrize(
+    "expected_substring",
+    ["alpha", "hi", "echo handler"],
+    ids=["agent-name", "user-text", "handler-tag"],
+)
+def test_handle_echo_returns_canned_reply(expected_substring: str) -> None:
+    # Arrange
+    agent, text = "alpha", "hi"
+    # Act
+    out = h.handle_echo(agent, text)
+    # Assert
+    assert expected_substring in out
 
 
 # ---------------------------------------------------------------------------
@@ -109,21 +116,36 @@ def test_handle_echo_returns_canned_reply() -> None:
 
 
 def test_handle_claude_cli_returns_stdout(isolated_env: Path) -> None:
+    # Arrange
     bin_ = _write_shim(isolated_env, "fake-claude", stdout="hi")
     os.environ["SAC_A2A_CLAUDE_BIN"] = str(bin_)
-    assert h.handle_claude_cli("alpha", "say hi") == "hi"
+    # Act
+    result = h.handle_claude_cli("alpha", "say hi")
+    # Assert
+    assert result == "hi"
 
 
 def test_handle_claude_cli_empty_stdout_yields_placeholder(
     isolated_env: Path,
 ) -> None:
+    # Arrange
     bin_ = _write_shim(isolated_env, "fake-claude", stdout="")
     os.environ["SAC_A2A_CLAUDE_BIN"] = str(bin_)
-    assert h.handle_claude_cli("alpha", "x") == "(empty response)"
+    # Act
+    result = h.handle_claude_cli("alpha", "x")
+    # Assert
+    assert result == "(empty response)"
 
 
-def test_handle_claude_cli_passes_model_when_env_set(isolated_env: Path) -> None:
-    # Shim records its argv into a file so the test can inspect it.
+@pytest.mark.parametrize(
+    "expected_token",
+    ["--model", "sonnet-4"],
+    ids=["flag", "value"],
+)
+def test_handle_claude_cli_passes_model_when_env_set(
+    isolated_env: Path, expected_token: str
+) -> None:
+    # Arrange — shim records its argv into a file so the test can inspect it.
     record = isolated_env / "argv.txt"
     bin_ = isolated_env / "fake-claude"
     bin_.write_text(
@@ -134,21 +156,26 @@ def test_handle_claude_cli_passes_model_when_env_set(isolated_env: Path) -> None
     bin_.chmod(bin_.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     os.environ["SAC_A2A_CLAUDE_BIN"] = str(bin_)
     os.environ["SAC_A2A_CLAUDE_MODEL"] = "sonnet-4"
-
+    # Act
     h.handle_claude_cli("alpha", "x")
-
     argv = record.read_text().splitlines()
-    assert "--model" in argv
-    assert "sonnet-4" in argv
+    # Assert
+    assert expected_token in argv
 
 
 def test_handle_claude_cli_not_found_raises(isolated_env: Path) -> None:
+    # Arrange
     os.environ["SAC_A2A_CLAUDE_BIN"] = str(isolated_env / "does-not-exist")
-    with pytest.raises(h.HandlerError, match="claude CLI not found"):
-        h.handle_claude_cli("alpha", "x")
+    raises_ctx = pytest.raises(h.HandlerError, match="claude CLI not found")
+    # Act
+    call = lambda: h.handle_claude_cli("alpha", "x")
+    # Assert
+    with raises_ctx:
+        call()
 
 
 def test_handle_claude_cli_timeout_raises(isolated_env: Path) -> None:
+    # Arrange
     bin_ = _write_shim(isolated_env, "slow-claude", sleep_seconds=2.0)
     os.environ["SAC_A2A_CLAUDE_BIN"] = str(bin_)
     os.environ["SAC_A2A_CLAUDE_TIMEOUT_S"] = "0.2"
@@ -157,21 +184,28 @@ def test_handle_claude_cli_timeout_raises(isolated_env: Path) -> None:
     import importlib
 
     importlib.reload(h)
+    # Act
+    call = lambda: h.handle_claude_cli("alpha", "x")
+    # Assert
     try:
         with pytest.raises(h.HandlerError, match="timeout"):
-            h.handle_claude_cli("alpha", "x")
+            call()
     finally:
         os.environ.pop("SAC_A2A_CLAUDE_TIMEOUT_S", None)
         importlib.reload(h)
 
 
 def test_handle_claude_cli_nonzero_rc_raises(isolated_env: Path) -> None:
+    # Arrange
     bin_ = _write_shim(
         isolated_env, "fake-claude", stdout="", stderr="boom", exit_code=2
     )
     os.environ["SAC_A2A_CLAUDE_BIN"] = str(bin_)
+    # Act
+    call = lambda: h.handle_claude_cli("alpha", "x")
+    # Assert
     with pytest.raises(h.HandlerError, match="rc=2"):
-        h.handle_claude_cli("alpha", "x")
+        call()
 
 
 # ---------------------------------------------------------------------------
@@ -179,8 +213,13 @@ def test_handle_claude_cli_nonzero_rc_raises(isolated_env: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize(
+    "field,expected",
+    [("mcp", {}), ("cwd", None)],
+    ids=["mcp-empty-dict", "cwd-none"],
+)
 def test_agent_mcp_servers_and_cwd_unknown_agent_returns_empty(
-    isolated_env: Path,
+    isolated_env: Path, field: str, expected: object
 ) -> None:
     """For an agent NOT registered in the Registry, the shim returns
     the documented ``({}, None)`` fallback — no exception, no spurious
@@ -191,9 +230,13 @@ def test_agent_mcp_servers_and_cwd_unknown_agent_returns_empty(
     real config) — that's where we exercise the populated path, not
     here. This unit verifies the "unknown agent" contract.
     """
-    mcp, cwd = h._agent_mcp_servers_and_cwd("never-registered")
-    assert mcp == {}
-    assert cwd is None
+    # Arrange
+    agent_name = "never-registered"
+    # Act
+    mcp, cwd = h._agent_mcp_servers_and_cwd(agent_name)
+    actual = {"mcp": mcp, "cwd": cwd}[field]
+    # Assert
+    assert actual == expected
 
 
 # ---------------------------------------------------------------------------
@@ -212,60 +255,90 @@ def test_agent_mcp_servers_and_cwd_unknown_agent_returns_empty(
 
 
 def test_handle_exec_requires_env_var(isolated_env: Path) -> None:
-    with pytest.raises(h.HandlerError, match="SAC_A2A_EXEC_COMMAND is not set"):
-        h.handle_exec("alpha", "x")
+    # Arrange
+    call = lambda: h.handle_exec("alpha", "x")
+    # Act
+    raises_ctx = pytest.raises(h.HandlerError, match="SAC_A2A_EXEC_COMMAND is not set")
+    # Assert
+    with raises_ctx:
+        call()
 
 
 def test_handle_exec_invalid_shell_word_raises(isolated_env: Path) -> None:
+    # Arrange
     os.environ["SAC_A2A_EXEC_COMMAND"] = "unterminated 'quote"
+    # Act
+    call = lambda: h.handle_exec("alpha", "x")
+    # Assert
     with pytest.raises(h.HandlerError, match="could not parse"):
-        h.handle_exec("alpha", "x")
+        call()
 
 
 def test_handle_exec_happy_path(isolated_env: Path) -> None:
+    # Arrange
     bin_ = _write_shim(isolated_env, "fake-exec", stdout="output")
     os.environ["SAC_A2A_EXEC_COMMAND"] = str(bin_)
-    assert h.handle_exec("alpha", "ignored") == "output"
+    # Act
+    result = h.handle_exec("alpha", "ignored")
+    # Assert
+    assert result == "output"
 
 
 def test_handle_exec_empty_output_placeholder(isolated_env: Path) -> None:
+    # Arrange
     bin_ = _write_shim(isolated_env, "fake-exec", stdout="")
     os.environ["SAC_A2A_EXEC_COMMAND"] = str(bin_)
-    assert h.handle_exec("alpha", "x") == "(empty response)"
+    # Act
+    result = h.handle_exec("alpha", "x")
+    # Assert
+    assert result == "(empty response)"
 
 
 def test_handle_exec_command_not_found(isolated_env: Path) -> None:
+    # Arrange
     os.environ["SAC_A2A_EXEC_COMMAND"] = str(isolated_env / "no-such-binary")
+    # Act
+    call = lambda: h.handle_exec("alpha", "x")
+    # Assert
     with pytest.raises(h.HandlerError, match="exec command not found"):
-        h.handle_exec("alpha", "x")
+        call()
 
 
 def test_handle_exec_timeout(isolated_env: Path) -> None:
+    # Arrange
     bin_ = _write_shim(isolated_env, "slow-exec", sleep_seconds=2.0)
     os.environ["SAC_A2A_EXEC_COMMAND"] = str(bin_)
     os.environ["SAC_A2A_EXEC_TIMEOUT_S"] = "0.2"
     import importlib
 
     importlib.reload(h)
+    # Act
+    call = lambda: h.handle_exec("alpha", "x")
+    # Assert
     try:
         with pytest.raises(h.HandlerError, match="timeout"):
-            h.handle_exec("alpha", "x")
+            call()
     finally:
         os.environ.pop("SAC_A2A_EXEC_TIMEOUT_S", None)
         importlib.reload(h)
 
 
 def test_handle_exec_nonzero_rc(isolated_env: Path) -> None:
+    # Arrange
     bin_ = _write_shim(
         isolated_env, "fake-exec", stdout="", stderr="stderr blob", exit_code=17
     )
     os.environ["SAC_A2A_EXEC_COMMAND"] = str(bin_)
+    # Act
+    call = lambda: h.handle_exec("alpha", "x")
+    # Assert
     with pytest.raises(h.HandlerError, match="rc=17"):
-        h.handle_exec("alpha", "x")
+        call()
 
 
 def test_handle_exec_passes_agent_name_via_env(isolated_env: Path) -> None:
     """The handler must export SAC_A2A_AGENT into the child's env."""
+    # Arrange
     record = isolated_env / "agent.txt"
     bin_ = isolated_env / "fake-exec"
     bin_.write_text(
@@ -275,7 +348,9 @@ def test_handle_exec_passes_agent_name_via_env(isolated_env: Path) -> None:
     )
     bin_.chmod(bin_.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     os.environ["SAC_A2A_EXEC_COMMAND"] = str(bin_)
+    # Act
     h.handle_exec("delta", "stdin")
+    # Assert
     assert record.read_text() == "delta"
 
 
@@ -284,12 +359,25 @@ def test_handle_exec_passes_agent_name_via_env(isolated_env: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_handlers_registry_contains_all_four_keys() -> None:
-    assert set(h.HANDLERS) == {"echo", "claude_session", "claude_cli", "exec"}
-    assert h.HANDLERS["echo"] is h.handle_echo
-    assert h.HANDLERS["claude_cli"] is h.handle_claude_cli
-    assert h.HANDLERS["claude_session"] is h.handle_claude_session
-    assert h.HANDLERS["exec"] is h.handle_exec
+@pytest.mark.parametrize(
+    "key,expected",
+    [
+        ("__keys__", {"echo", "claude_session", "claude_cli", "exec"}),
+        ("echo", "handle_echo"),
+        ("claude_cli", "handle_claude_cli"),
+        ("claude_session", "handle_claude_session"),
+        ("exec", "handle_exec"),
+    ],
+    ids=["all-keys", "echo", "claude_cli", "claude_session", "exec"],
+)
+def test_handlers_registry_contains_all_four_keys(key: str, expected: object) -> None:
+    # Arrange
+    registry = h.HANDLERS
+    # Act
+    actual = set(registry) if key == "__keys__" else registry[key]
+    expected_value = expected if key == "__keys__" else getattr(h, expected)
+    # Assert
+    assert actual == expected_value or actual is expected_value
 
 
 # Keep ``sys`` referenced for tooling that doesn't follow ``# noqa`` on imports
