@@ -10,7 +10,11 @@ reference lives under `~/.claude/skills/scitex/general/`.
 ```bash
 git clone https://github.com/ywatanabe1989/scitex-agent-container.git
 cd scitex-agent-container
-pip install -e ".[dev,mcp]"
+pip install -e ".[dev]"     # pulls fastmcp + pytest-asyncio so the full
+                            # test suite (including tests/.../_mcp/ and
+                            # async A2A inbox tests) runs out of the box.
+# Need every optional surface (telegram + slurm + docs as well)?
+#   pip install -e ".[all]"
 pytest tests/
 ```
 
