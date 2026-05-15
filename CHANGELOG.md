@@ -7,6 +7,16 @@ versioning follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **telegram fold (Phase 1)** — design + scaffolding for folding
+  claude-code-telegrammer's transport tools into sac MCP (Option A from
+  `GITIGNORED/dev/05_sac-mcp-telegram.md`). New `_telegram/` package with a
+  `TelegramBridge` skeleton (Phase 2 port target documented in the module
+  docstring) and `_mcp/_tools/_telegram.py` with 6 transport tool stubs
+  (`telegram_send`, `telegram_reply`, `telegram_react`,
+  `telegram_edit_message`, `telegram_download_attachment`,
+  `telegram_send_document`). Registration is feature-flagged off behind
+  `SCITEX_AGENT_CONTAINER_TELEGRAM_FOLD=1` — no user-visible behaviour
+  change yet. Design doc at `docs/design/telegram-fold.md`.
 - **F-CS15** — `sac mcp` server. New `_mcp/` package + `cli_pkg/mcp_cmds.py`
   Click group exposing `start`, `doctor`, `list-tools`, `install` against a
   FastMCP server with 36 `sac_*` tools mirroring the CLI surface (agent /
