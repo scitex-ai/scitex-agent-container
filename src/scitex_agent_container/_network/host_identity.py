@@ -35,7 +35,20 @@ from pathlib import Path
 
 import yaml
 
-HOST_IDENTITY_PATH = Path.home() / ".scitex" / "host-identity.yaml"
+
+def _default_identity_path() -> Path:
+    """Resolve the legacy host-identity YAML path at call time.
+
+    Read at call time (not import time) so tests can redirect by setting
+    ``$HOME`` or ``$SAC_HOST_IDENTITY_PATH``. Env override wins so the
+    test isolation matches the env-driven pattern used elsewhere
+    (SAC_HUB_URL, SCITEX_AGENT_CONTAINER_YAML_DIRS, ...).
+    """
+    env = os.environ.get("SAC_HOST_IDENTITY_PATH")
+    if env:
+        return Path(env)
+    return Path.home() / ".scitex" / "host-identity.yaml"
+
 
 _UNIVERSAL_LOOPBACK: set[str] = {"localhost", "127.0.0.1", "::1"}
 
@@ -46,47 +59,58 @@ def _short(name: str) -> str:
     return name.split(".", 1)[0] if name else name
 
 
-def _auto_aliases() -> set[str]:
-    """Names this host always answers to, derived from the OS."""
+def _auto_aliases(
+    *,
+    hostname: str | None = None,
+    nodename: str | None = None,
+) -> set[str]:
+    """Names this host always answers to, derived from the OS.
+
+    Parameters are an injection point for tests — pass ``hostname`` /
+    ``nodename`` to bypass the live ``socket`` / ``os.uname`` calls.
+    """
     names: set[str] = set(_UNIVERSAL_LOOPBACK)
-    # stx-allow: fallback (reason: socket.gethostname() can fail in restricted container environments; loopback names are still returned as a safe baseline)
-    try:
-        hn = socket.gethostname()
-        if hn:
-            names.add(hn)
-            names.add(_short(hn))
-    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-        pass
-    # stx-allow: fallback (reason: os.uname() is unavailable on some platforms (e.g. Windows); hostname-derived names are best-effort and the loopback set is still complete)
-    try:
-        nn = os.uname().nodename
-        if nn:
-            names.add(nn)
-            names.add(_short(nn))
-    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-        pass
+    if hostname is None:
+        # stx-allow: fallback (reason: socket.gethostname() can fail in restricted container environments; loopback names are still returned as a safe baseline)
+        try:
+            hostname = socket.gethostname()
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+            hostname = ""
+    if hostname:
+        names.add(hostname)
+        names.add(_short(hostname))
+    if nodename is None:
+        # stx-allow: fallback (reason: os.uname() is unavailable on some platforms (e.g. Windows); hostname-derived names are best-effort and the loopback set is still complete)
+        try:
+            nodename = os.uname().nodename
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+            nodename = ""
+    if nodename:
+        names.add(nodename)
+        names.add(_short(nodename))
     return names
 
 
-def _load_file_aliases() -> set[str]:
-    """Read aliases from ``~/.scitex/host-identity.yaml``."""
-    if not HOST_IDENTITY_PATH.exists():
+def _load_file_aliases(path: Path | None = None) -> set[str]:
+    """Read aliases from the host-identity YAML.
+
+    ``path`` defaults to ``_default_identity_path()`` so the env override
+    is honoured at call time, not module-import time.
+    """
+    p = path if path is not None else _default_identity_path()
+    if not p.exists():
         return set()
     try:
-        data = yaml.safe_load(HOST_IDENTITY_PATH.read_text()) or {}
+        data = yaml.safe_load(p.read_text()) or {}
     except (
         yaml.YAMLError
     ) as exc:  # stx-allow: fallback (reason: expected failure — see inline comment)
-        raise RuntimeError(f"Invalid YAML in {HOST_IDENTITY_PATH}: {exc}") from exc
+        raise RuntimeError(f"Invalid YAML in {p}: {exc}") from exc
     if not isinstance(data, dict):
-        raise RuntimeError(
-            f"{HOST_IDENTITY_PATH} must be a YAML mapping, got {type(data).__name__}"
-        )
+        raise RuntimeError(f"{p} must be a YAML mapping, got {type(data).__name__}")
     raw = data.get("aliases") or []
     if not isinstance(raw, list):
-        raise RuntimeError(
-            f"{HOST_IDENTITY_PATH}: 'aliases' must be a list, got {type(raw).__name__}"
-        )
+        raise RuntimeError(f"{p}: 'aliases' must be a list, got {type(raw).__name__}")
     return {str(a).strip() for a in raw if a is not None and str(a).strip()}
 
 
@@ -112,6 +136,26 @@ def _load_resource_aliases() -> set[str]:
     return out
 
 
+def compute_identities(
+    *,
+    hostname: str | None = None,
+    nodename: str | None = None,
+    file_aliases: set[str] | None = None,
+    resource_aliases: set[str] | None = None,
+) -> set[str]:
+    """Pure computation of the local-identity set from explicit inputs.
+
+    The production wrapper ``get_local_identities`` calls this with
+    values collected from the OS, the legacy YAML, and scitex-resource.
+    Tests call it directly with controlled inputs — no module-attribute
+    patching required.
+    """
+    auto = _auto_aliases(hostname=hostname, nodename=nodename)
+    resources = resource_aliases if resource_aliases is not None else set()
+    files = file_aliases if file_aliases is not None else set()
+    return {n.lower() for n in (auto | resources | files) if n}
+
+
 def get_local_identities() -> set[str]:
     """Return the set of names (lower-cased) this host answers to.
 
@@ -121,8 +165,10 @@ def get_local_identities() -> set[str]:
     global _CACHE
     if _CACHE is not None:
         return _CACHE
-    names = _auto_aliases() | _load_resource_aliases() | _load_file_aliases()
-    _CACHE = {n.lower() for n in names if n}
+    _CACHE = compute_identities(
+        file_aliases=_load_file_aliases(),
+        resource_aliases=_load_resource_aliases(),
+    )
     return _CACHE
 
 

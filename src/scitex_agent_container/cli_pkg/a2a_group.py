@@ -160,7 +160,10 @@ def a2a_doctor(
         _emit(result, as_json)
         sys.exit(2)
 
-    url = f"http://{eff_host}:{int(eff_port)}/v1/sac/agents/{name}/.well-known/agent.json"
+    # Canonical A2A v1 well-known path is ``agent-card.json`` (matches
+    # ``a2a/_server.py`` + ADR-0004). The pre-v1 ``agent.json`` spelling
+    # is no longer served by sac.
+    url = f"http://{eff_host}:{int(eff_port)}/agents/{name}/.well-known/agent-card.json"
     t0 = time.time()
     try:
         with urllib.request.urlopen(url, timeout=timeout) as resp:

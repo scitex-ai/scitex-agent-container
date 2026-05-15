@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import fcntl
 import json
-import os
 import time
 import urllib.error
 import urllib.request
@@ -150,6 +149,8 @@ def _refresh_access_token(
     home: Path,
     refresh_token: str,
     client_id: str,
+    *,
+    opener=None,
 ) -> str | None:
     """POST to token endpoint and atomically update credentials file.
 
@@ -170,9 +171,10 @@ def _refresh_access_token(
         headers={"Content-Type": "application/json"},
         method="POST",
     )
+    _opener = opener if opener is not None else urllib.request.urlopen
     # stx-allow: fallback (reason: token refresh endpoint may be unreachable or return malformed JSON; None causes caller to proceed with the old token)
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with _opener(req, timeout=15) as resp:
             raw = resp.read()
         payload = json.loads(raw)
     except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
@@ -259,7 +261,7 @@ def _write_cache(home: Path, result: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _fetch_from_api(access_token: str) -> list[dict[str, Any]] | None:
+def _fetch_from_api(access_token: str, *, opener=None) -> list[dict[str, Any]] | None:
     """Call the usage API and return the parsed JSON.
 
     Returns None on failure.  The response may be a list of window objects
@@ -270,11 +272,14 @@ def _fetch_from_api(access_token: str) -> list[dict[str, Any]] | None:
         headers={"Authorization": f"Bearer {access_token}"},
         method="GET",
     )
+    _opener = opener if opener is not None else urllib.request.urlopen
     # stx-allow: fallback (reason: network timeout or DNS failure hitting api.anthropic.com; None tells caller quota is unavailable, error returned to user)
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with _opener(req, timeout=15) as resp:
             raw = resp.read()
-    except urllib.error.HTTPError as exc:  # stx-allow: fallback (reason: expected failure — see inline comment)
+    except (
+        urllib.error.HTTPError
+    ) as exc:  # stx-allow: fallback (reason: expected failure — see inline comment)
         if exc.code == 401:
             raise  # caller handles 401 as token-expired
         return None
@@ -315,11 +320,7 @@ def _parse_windows(windows: list[dict[str, Any]]) -> dict[str, Any]:
         suffix = win.replace("h", "h").replace("d", "d")  # already correct
         result[f"used_tokens_{suffix}"] = used if isinstance(used, int) else None
         result[f"limit_tokens_{suffix}"] = limit if isinstance(limit, int) else None
-        if (
-            isinstance(used, int)
-            and isinstance(limit, int)
-            and limit > 0
-        ):
+        if isinstance(used, int) and isinstance(limit, int) and limit > 0:
             result[f"used_pct_{suffix}"] = round(used / limit * 100, 2)
         else:
             result[f"used_pct_{suffix}"] = None
@@ -338,17 +339,13 @@ def _check_no_token_leak(result: dict[str, Any]) -> None:
         key_l = key.lower()
         for needle in _FORBIDDEN_KEY_SUBSTRINGS:
             if needle in key_l:
-                raise RuntimeError(
-                    f"claude_usage: forbidden key detected: {key!r}"
-                )
+                raise RuntimeError(f"claude_usage: forbidden key detected: {key!r}")
         if value is None or isinstance(value, bool):
             continue
         val_l = str(value).lower()
         for needle in _FORBIDDEN_VALUE_SUBSTRINGS:
             if needle in val_l:
-                raise RuntimeError(
-                    f"claude_usage: forbidden value under key {key!r}"
-                )
+                raise RuntimeError(f"claude_usage: forbidden value under key {key!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -356,7 +353,7 @@ def _check_no_token_leak(result: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def fetch_usage(home: Path | None = None) -> dict[str, Any]:
+def fetch_usage(home: Path | None = None, *, opener=None) -> dict[str, Any]:
     """Return live Claude API quota metrics.
 
     Reads the OAuth access token from ``~/.claude/.credentials.json``,
@@ -398,7 +395,9 @@ def fetch_usage(home: Path | None = None) -> dict[str, Any]:
     # --- refresh if expired -------------------------------------------------
     if _is_token_expired(expires_at_ms):
         if refresh_token and client_id:
-            new_token = _refresh_access_token(_home, refresh_token, client_id)
+            new_token = _refresh_access_token(
+                _home, refresh_token, client_id, opener=opener
+            )
             if new_token:
                 access_token = new_token
             # If refresh failed, try with the old token anyway
@@ -407,16 +406,20 @@ def fetch_usage(home: Path | None = None) -> dict[str, Any]:
     windows = None
     # stx-allow: fallback (reason: network errors or unexpected exceptions from the usage API are caught and surfaced as an error dict rather than an unhandled exception)
     try:
-        windows = _fetch_from_api(access_token)
-    except urllib.error.HTTPError as exc:  # stx-allow: fallback (reason: expected failure — see inline comment)
+        windows = _fetch_from_api(access_token, opener=opener)
+    except (
+        urllib.error.HTTPError
+    ) as exc:  # stx-allow: fallback (reason: expected failure — see inline comment)
         if exc.code == 401 and refresh_token and client_id:
             # Try refresh once on 401
-            new_token = _refresh_access_token(_home, refresh_token, client_id)
+            new_token = _refresh_access_token(
+                _home, refresh_token, client_id, opener=opener
+            )
             if new_token:
                 access_token = new_token
                 # stx-allow: fallback (reason: second API attempt after token refresh may still fail due to network issues; pass lets the 401 handler return an error dict)
                 try:
-                    windows = _fetch_from_api(access_token)
+                    windows = _fetch_from_api(access_token, opener=opener)
                 except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                     pass
         if windows is None:
@@ -437,7 +440,9 @@ def fetch_usage(home: Path | None = None) -> dict[str, Any]:
     # Security guard — must run before cache write
     try:
         _check_no_token_leak(result)
-    except RuntimeError as exc:  # stx-allow: fallback (reason: runtime state error — handled gracefully)
+    except (
+        RuntimeError
+    ) as exc:  # stx-allow: fallback (reason: runtime state error — handled gracefully)
         return _err(str(exc))
 
     _write_cache(_home, result)

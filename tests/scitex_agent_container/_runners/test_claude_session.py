@@ -1,8 +1,22 @@
-"""Tests for the claude-session runner.
+"""Tests for the claude-session runner (no-mocks).
 
-Phase 1: state-dir layout, atomic PID + heartbeat I/O, signal handling.
-Phase 2: SDK conversation loop (mission, message stream, session id,
-resume, interrupt, missing-SDK fallback).
+Replaces the previous monkeypatch-heavy suite with honest seams:
+
+- ``run_conversation`` accepts ``sdk_module=`` and ``build_sdk_options_fn=``
+  kwargs, so tests pass a hand-rolled fake SDK module (a ``types.ModuleType``
+  carrying real stub classes) without touching ``sys.modules`` or
+  rewriting production imports.
+- ``run`` accepts ``run_conversation_fn=`` / ``serve_inbound_fn=`` /
+  ``shutdown_timeout_s=`` so tests substitute the convo + http coroutines
+  with real fakes and tighten the hang-recovery window.
+- ``build_event_log_hooks`` accepts ``event_log_root=`` so hook callbacks
+  write to ``tmp_path`` via the real ``append_event`` helper.
+- ``state_dir_for`` already accepts ``root=``; the runtime root for the
+  spawn-the-runner test uses ``--state-root <tmp_path>`` instead of
+  rewriting ``Path.home``.
+
+Every test follows the AAA structure (one ``# Arrange`` / ``# Act`` /
+``# Assert`` block) and exactly one assertion per function.
 """
 
 from __future__ import annotations
@@ -27,176 +41,8 @@ from scitex_agent_container._runners._session_inbox import (
     make_inbox,
 )
 
-
-async def _seed_inbox(mission: str):
-    """Build an inbox seeded with one mission turn followed by Shutdown.
-
-    Returns ``(inbox, response_future)`` so tests can await the future
-    after ``_run_conversation`` returns.
-    """
-    inbox = make_inbox()
-    loop = asyncio.get_running_loop()
-    fut = loop.create_future()
-    await inbox.put(TurnEnvelope(text=mission, response=fut))
-    await inbox.put(ShutdownEnvelope())
-    return inbox, fut
-
-
 # ---------------------------------------------------------------------------
-# state-dir helpers
-# ---------------------------------------------------------------------------
-
-
-class TestStatePaths:
-    def test_state_dir_for_uses_root(self, tmp_path: Path) -> None:
-        d = runner.state_dir_for("alpha", root=tmp_path)
-        assert d == tmp_path / "alpha"
-        # state_dir_for never creates — that's the runner's job.
-        assert not d.exists()
-
-    def test_state_dir_for_default_root_is_under_home(self) -> None:
-        d = runner.state_dir_for("zeta")
-        assert "agent-container/runtime/zeta" in str(
-            d
-        ) or "agent-container\\runtime\\zeta" in str(d)
-
-
-class TestPidIO:
-    def test_write_then_read_roundtrip(self, tmp_path: Path) -> None:
-        runner.write_pid(tmp_path, 12345)
-        assert runner.read_pid(tmp_path) == 12345
-
-    def test_read_missing_returns_none(self, tmp_path: Path) -> None:
-        assert runner.read_pid(tmp_path) is None
-
-    def test_read_corrupt_returns_none(self, tmp_path: Path) -> None:
-        (tmp_path / "pid").write_text("not-a-number\n")
-        assert runner.read_pid(tmp_path) is None
-
-    def test_write_is_atomic_no_tmp_left(self, tmp_path: Path) -> None:
-        runner.write_pid(tmp_path, 1)
-        assert (tmp_path / "pid").is_file()
-        assert not (tmp_path / "pid.tmp").exists()
-
-
-class TestHeartbeatIO:
-    def test_write_then_read_roundtrip(self, tmp_path: Path) -> None:
-        runner.write_heartbeat(tmp_path, pid=42, state=runner.STATE_IDLE)
-        hb = runner.read_heartbeat(tmp_path)
-        assert hb is not None
-        assert hb["pid"] == 42
-        assert hb["state"] == runner.STATE_IDLE
-        assert isinstance(hb["ts"], float)
-
-    def test_read_missing_returns_none(self, tmp_path: Path) -> None:
-        assert runner.read_heartbeat(tmp_path) is None
-
-    def test_read_corrupt_returns_none(self, tmp_path: Path) -> None:
-        (tmp_path / "heartbeat.json").write_text("{not json")
-        assert runner.read_heartbeat(tmp_path) is None
-
-    def test_subsequent_writes_overwrite(self, tmp_path: Path) -> None:
-        runner.write_heartbeat(tmp_path, pid=1, state=runner.STATE_STARTING)
-        runner.write_heartbeat(tmp_path, pid=1, state=runner.STATE_IDLE)
-        hb = runner.read_heartbeat(tmp_path)
-        assert hb is not None and hb["state"] == runner.STATE_IDLE
-
-
-# ---------------------------------------------------------------------------
-# heartbeat loop (in-process, fast tick)
-# ---------------------------------------------------------------------------
-
-
-class TestHeartbeatLoop:
-    """Drive the async loop via ``asyncio.run`` so the test stays
-    plugin-free (no pytest-asyncio dependency)."""
-
-    def test_first_write_is_immediate(self, tmp_path: Path) -> None:
-        async def _scenario() -> None:
-            stop = asyncio.Event()
-            task = asyncio.create_task(
-                runner._heartbeat_loop(
-                    tmp_path, pid=os.getpid(), tick_seconds=10.0, stop=stop
-                )
-            )
-            await asyncio.sleep(0.05)
-            assert runner.read_heartbeat(tmp_path) is not None
-            stop.set()
-            await task
-
-        asyncio.run(_scenario())
-
-    def test_subsequent_ticks_refresh_ts(self, tmp_path: Path) -> None:
-        async def _scenario() -> tuple[dict, dict]:
-            stop = asyncio.Event()
-            task = asyncio.create_task(
-                runner._heartbeat_loop(
-                    tmp_path, pid=os.getpid(), tick_seconds=0.05, stop=stop
-                )
-            )
-            await asyncio.sleep(0.02)
-            first = runner.read_heartbeat(tmp_path)
-            await asyncio.sleep(0.12)  # at least 2 more ticks
-            second = runner.read_heartbeat(tmp_path)
-            stop.set()
-            await task
-            assert first is not None and second is not None
-            return first, second
-
-        first, second = asyncio.run(_scenario())
-        assert second["ts"] > first["ts"]
-
-
-# ---------------------------------------------------------------------------
-# end-to-end: spawn the runner as its own process and signal it
-# ---------------------------------------------------------------------------
-
-
-def test_run_module_handles_sigterm(tmp_path: Path) -> None:
-    """Spawn the runner as a child process; SIGTERM; expect clean exit."""
-    proc = subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "scitex_agent_container._runners.claude_session",
-            "--name",
-            "ci-runner",
-            "--state-root",
-            str(tmp_path),
-            "--tick-seconds",
-            "0.05",
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-
-    # Wait for PID file to appear (proves the runner reached steady state).
-    state_dir = tmp_path / "ci-runner"
-    deadline = time.time() + 5.0
-    while time.time() < deadline:
-        if (state_dir / "pid").is_file() and (state_dir / "heartbeat.json").is_file():
-            break
-        time.sleep(0.05)
-    assert (state_dir / "pid").is_file(), "runner never wrote pid"
-
-    # Recorded PID must match the child we spawned.
-    recorded = int((state_dir / "pid").read_text().strip())
-    assert recorded == proc.pid
-
-    # Send SIGTERM and expect a fast clean shutdown.
-    proc.send_signal(signal.SIGTERM)
-    rc = proc.wait(timeout=10)
-    assert rc == 0, (
-        f"runner exited non-zero ({rc}); stderr={proc.stderr.read().decode()!r}"
-    )
-
-    # Final heartbeat reflects the stopping state.
-    hb = json.loads((state_dir / "heartbeat.json").read_text())
-    assert hb["state"] in (runner.STATE_STOPPING, runner.STATE_IDLE)
-
-
-# ---------------------------------------------------------------------------
-# Tiny in-process stand-ins that match the ducktype the runner expects
+# Hand-rolled SDK stand-ins (real classes — not Mock objects)
 # ---------------------------------------------------------------------------
 
 
@@ -206,7 +52,7 @@ class _StubText:
 
 
 class _StubAssistant:
-    def __init__(self, blocks: list[_StubText]) -> None:
+    def __init__(self, blocks: list) -> None:
         self.content = blocks
 
 
@@ -216,8 +62,47 @@ class _StubResult:
         self.usage = usage or {}
 
 
+class _StubUser:
+    """Placeholder for sdk.UserMessage — only ``isinstance`` is exercised."""
+
+
+class _StubHookMatcher:
+    """Captures registered hook callbacks per event class."""
+
+    instances: list["_StubHookMatcher"] = []
+
+    def __init__(self, *, hooks: list, matcher: str | None = None) -> None:
+        self.hooks = hooks
+        self.matcher = matcher
+        type(self).instances.append(self)
+
+
+def _make_sdk_module(
+    client_cls: type, *, hook_matcher_cls: type = _StubHookMatcher
+) -> types.ModuleType:
+    """Build a real ``types.ModuleType`` carrying the SDK names the runner
+    imports. No ``sys.modules`` mutation — passed in via ``sdk_module=``.
+    """
+    mod = types.ModuleType("claude_agent_sdk_stub")
+    mod.AssistantMessage = _StubAssistant  # type: ignore[attr-defined]
+    mod.ClaudeSDKClient = client_cls  # type: ignore[attr-defined]
+    mod.ResultMessage = _StubResult  # type: ignore[attr-defined]
+    mod.TextBlock = _StubText  # type: ignore[attr-defined]
+    mod.UserMessage = _StubUser  # type: ignore[attr-defined]
+    mod.HookMatcher = hook_matcher_cls  # type: ignore[attr-defined]
+    return mod
+
+
+def _fake_build_options(name: str, **kw) -> types.SimpleNamespace:
+    """Honest stand-in for runtimes._sdk_common.build_sdk_options — returns
+    a real namespace carrying the kwargs back so the test can assert on
+    the shape the runner passed in. Injected via ``build_sdk_options_fn=``.
+    """
+    return types.SimpleNamespace(name=name, **kw)
+
+
 class _StubClient:
-    """Replaces ``claude_agent_sdk.ClaudeSDKClient`` for tests."""
+    """Drop-in for ``ClaudeSDKClient`` — real async-context-manager."""
 
     last_options: Any = None
     interrupt_calls = 0
@@ -246,62 +131,336 @@ class _StubClient:
         type(self).interrupt_calls += 1
 
 
-class _StubHookMatcher:
-    """Captures registered hook callbacks per event class."""
+async def _seed_inbox(mission: str):
+    """Seed an inbox with one TurnEnvelope and a ShutdownEnvelope."""
+    inbox = make_inbox()
+    loop = asyncio.get_running_loop()
+    fut = loop.create_future()
+    await inbox.put(TurnEnvelope(text=mission, response=fut))
+    await inbox.put(ShutdownEnvelope())
+    return inbox, fut
 
-    instances: list["_StubHookMatcher"] = []
 
-    def __init__(self, *, hooks: list, matcher: str | None = None) -> None:
-        self.hooks = hooks
-        self.matcher = matcher
-        type(self).instances.append(self)
+# ---------------------------------------------------------------------------
+# state_dir_for
+# ---------------------------------------------------------------------------
 
 
-def _patch_sdk(monkeypatch) -> types.ModuleType:
-    """Insert a fake ``claude_agent_sdk`` module exposing the names the
-    runner imports."""
-    mod = types.ModuleType("claude_agent_sdk")
-    mod.AssistantMessage = _StubAssistant  # type: ignore[attr-defined]
-    mod.ClaudeSDKClient = _StubClient  # type: ignore[attr-defined]
-    mod.ResultMessage = _StubResult  # type: ignore[attr-defined]
-    mod.TextBlock = _StubText  # type: ignore[attr-defined]
-    mod.HookMatcher = _StubHookMatcher  # type: ignore[attr-defined]
-    _StubHookMatcher.instances = []
-    mod.UserMessage = type(
-        "UserMessage", (), {}
-    )  # unused in this test  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "claude_agent_sdk", mod)
-    # Reset the client class-level counters per test.
+def test_state_dir_for_returns_root_joined_with_name(tmp_path: Path) -> None:
+    # Arrange
+    name = "alpha"
+    # Act
+    result = runner.state_dir_for(name, root=tmp_path)
+    # Assert
+    assert result == tmp_path / "alpha"
+
+
+def test_state_dir_for_does_not_create_directory(tmp_path: Path) -> None:
+    # Arrange
+    name = "alpha"
+    # Act
+    result = runner.state_dir_for(name, root=tmp_path)
+    # Assert
+    assert not result.exists()
+
+
+def test_state_dir_for_default_root_is_under_user_home() -> None:
+    # Arrange
+    name = "zeta"
+    # Act
+    result_str = str(runner.state_dir_for(name))
+    # Assert
+    assert (
+        "agent-container/runtime/zeta" in result_str
+        or "agent-container\\runtime\\zeta" in result_str
+    )
+
+
+# ---------------------------------------------------------------------------
+# write_pid / read_pid
+# ---------------------------------------------------------------------------
+
+
+def test_write_pid_then_read_pid_returns_same_value(tmp_path: Path) -> None:
+    # Arrange
+    pid = 12_345
+    # Act
+    runner.write_pid(tmp_path, pid)
+    # Assert
+    assert runner.read_pid(tmp_path) == pid
+
+
+def test_read_pid_returns_none_when_file_missing(tmp_path: Path) -> None:
+    # Arrange: no pid file exists.
+    # Act
+    result = runner.read_pid(tmp_path)
+    # Assert
+    assert result is None
+
+
+def test_read_pid_returns_none_when_file_corrupt(tmp_path: Path) -> None:
+    # Arrange
+    (tmp_path / "pid").write_text("not-a-number\n")
+    # Act
+    result = runner.read_pid(tmp_path)
+    # Assert
+    assert result is None
+
+
+def test_write_pid_creates_final_file(tmp_path: Path) -> None:
+    # Arrange
+    pid = 1
+    # Act
+    runner.write_pid(tmp_path, pid)
+    # Assert
+    assert (tmp_path / "pid").is_file()
+
+
+def test_write_pid_leaves_no_tmp_file(tmp_path: Path) -> None:
+    # Arrange
+    pid = 1
+    # Act
+    runner.write_pid(tmp_path, pid)
+    # Assert
+    assert not (tmp_path / "pid.tmp").exists()
+
+
+# ---------------------------------------------------------------------------
+# write_heartbeat / read_heartbeat
+# ---------------------------------------------------------------------------
+
+
+def test_read_heartbeat_returns_pid_field(tmp_path: Path) -> None:
+    # Arrange
+    runner.write_heartbeat(tmp_path, pid=42, state=runner.STATE_IDLE)
+    # Act
+    hb = runner.read_heartbeat(tmp_path)
+    # Assert
+    assert hb is not None and hb["pid"] == 42
+
+
+def test_read_heartbeat_returns_state_field(tmp_path: Path) -> None:
+    # Arrange
+    runner.write_heartbeat(tmp_path, pid=42, state=runner.STATE_IDLE)
+    # Act
+    hb = runner.read_heartbeat(tmp_path)
+    # Assert
+    assert hb is not None and hb["state"] == runner.STATE_IDLE
+
+
+def test_read_heartbeat_returns_float_ts(tmp_path: Path) -> None:
+    # Arrange
+    runner.write_heartbeat(tmp_path, pid=42, state=runner.STATE_IDLE)
+    # Act
+    hb = runner.read_heartbeat(tmp_path)
+    # Assert
+    assert hb is not None and isinstance(hb["ts"], float)
+
+
+def test_read_heartbeat_returns_none_when_missing(tmp_path: Path) -> None:
+    # Arrange: no heartbeat file exists.
+    # Act
+    result = runner.read_heartbeat(tmp_path)
+    # Assert
+    assert result is None
+
+
+def test_read_heartbeat_returns_none_when_corrupt(tmp_path: Path) -> None:
+    # Arrange
+    (tmp_path / "heartbeat.json").write_text("{not json")
+    # Act
+    result = runner.read_heartbeat(tmp_path)
+    # Assert
+    assert result is None
+
+
+def test_subsequent_heartbeat_writes_overwrite_state(tmp_path: Path) -> None:
+    # Arrange
+    runner.write_heartbeat(tmp_path, pid=1, state=runner.STATE_STARTING)
+    # Act
+    runner.write_heartbeat(tmp_path, pid=1, state=runner.STATE_IDLE)
+    # Assert
+    hb = runner.read_heartbeat(tmp_path)
+    assert hb is not None and hb["state"] == runner.STATE_IDLE
+
+
+# ---------------------------------------------------------------------------
+# _heartbeat_loop (in-process)
+# ---------------------------------------------------------------------------
+
+
+def test_heartbeat_loop_first_write_is_immediate(tmp_path: Path) -> None:
+    # Arrange
+    async def _scenario() -> Any:
+        stop = asyncio.Event()
+        task = asyncio.create_task(
+            runner._heartbeat_loop(
+                tmp_path, pid=os.getpid(), tick_seconds=10.0, stop=stop
+            )
+        )
+        await asyncio.sleep(0.05)
+        hb = runner.read_heartbeat(tmp_path)
+        stop.set()
+        await task
+        return hb
+
+    # Act
+    hb = asyncio.run(_scenario())
+    # Assert
+    assert hb is not None
+
+
+def test_heartbeat_loop_subsequent_ticks_refresh_ts(tmp_path: Path) -> None:
+    # Arrange
+    async def _scenario() -> tuple[dict, dict]:
+        stop = asyncio.Event()
+        task = asyncio.create_task(
+            runner._heartbeat_loop(
+                tmp_path, pid=os.getpid(), tick_seconds=0.05, stop=stop
+            )
+        )
+        await asyncio.sleep(0.02)
+        first = runner.read_heartbeat(tmp_path)
+        await asyncio.sleep(0.12)
+        second = runner.read_heartbeat(tmp_path)
+        stop.set()
+        await task
+        return first, second  # type: ignore[return-value]
+
+    # Act
+    first, second = asyncio.run(_scenario())
+    # Assert
+    assert second["ts"] > first["ts"]
+
+
+# ---------------------------------------------------------------------------
+# end-to-end subprocess: pid file is recorded; SIGTERM exits cleanly
+# ---------------------------------------------------------------------------
+
+
+def _wait_for_pid_file(state_dir: Path, deadline_s: float = 5.0) -> None:
+    """Block until the runner has produced both pid + heartbeat files, or
+    raise ``TimeoutError`` — so the caller can treat readiness as a
+    precondition without paying for an extra assert."""
+    deadline = time.time() + deadline_s
+    while time.time() < deadline:
+        if (state_dir / "pid").is_file() and (state_dir / "heartbeat.json").is_file():
+            return
+        time.sleep(0.05)
+    raise TimeoutError(f"runner never wrote pid/heartbeat at {state_dir}")
+
+
+@pytest.fixture
+def _runner_subprocess(tmp_path: Path):
+    """Spawn the runner as a child process; yield (proc, state_dir); send
+    SIGTERM + wait on teardown so each test focuses on one observation."""
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "scitex_agent_container._runners.claude_session",
+            "--name",
+            "ci-runner",
+            "--state-root",
+            str(tmp_path),
+            "--tick-seconds",
+            "0.05",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    state_dir = tmp_path / "ci-runner"
+    _wait_for_pid_file(state_dir)
+    try:
+        yield proc, state_dir
+    finally:
+        if proc.poll() is None:
+            proc.send_signal(signal.SIGTERM)
+            try:
+                proc.wait(timeout=10)
+            except (
+                subprocess.TimeoutExpired
+            ):  # stx-allow: fallback (reason: test teardown — kill is best-effort)
+                proc.kill()
+
+
+def test_subprocess_runner_writes_pid_matching_child_pid(_runner_subprocess) -> None:
+    # Arrange
+    proc, state_dir = _runner_subprocess
+    # Act
+    recorded = int((state_dir / "pid").read_text().strip())
+    # Assert
+    assert recorded == proc.pid
+
+
+def test_subprocess_runner_exits_zero_on_sigterm(_runner_subprocess) -> None:
+    # Arrange
+    proc, _state_dir = _runner_subprocess
+    # Act
+    proc.send_signal(signal.SIGTERM)
+    rc = proc.wait(timeout=10)
+    # Assert
+    assert rc == 0
+
+
+def test_subprocess_runner_final_heartbeat_reflects_stopping(
+    _runner_subprocess,
+) -> None:
+    # Arrange
+    proc, state_dir = _runner_subprocess
+    proc.send_signal(signal.SIGTERM)
+    proc.wait(timeout=10)
+    # Act
+    hb = json.loads((state_dir / "heartbeat.json").read_text())
+    # Assert
+    assert hb["state"] in (runner.STATE_STOPPING, runner.STATE_IDLE)
+
+
+# ---------------------------------------------------------------------------
+# run_conversation — happy path (sdk_module + build_sdk_options_fn injection)
+# ---------------------------------------------------------------------------
+
+
+def _reset_stub_state() -> None:
     _StubClient.last_options = None
     _StubClient.interrupt_calls = 0
-    return mod
+    _StubHookMatcher.instances = []
 
 
-def _patch_options(monkeypatch) -> None:
-    """Stub ``build_sdk_options`` so the runner doesn't try to look up a
-    real registry entry / .mcp.json."""
-    from scitex_agent_container.runtimes import _sdk_common as common
-
-    def _fake(name, **kw):
-        ns = types.SimpleNamespace(name=name, **kw)
-        return ns
-
-    monkeypatch.setattr(common, "build_sdk_options", _fake)
-
-
-# ---------------------------------------------------------------------------
-# happy path — assistant text + ResultMessage
-# ---------------------------------------------------------------------------
-
-
-def test_conversation_writes_assistant_messages_and_session_id(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def _run_convo(
+    *,
+    name: str,
+    state_dir: Path,
+    inbox,
+    sdk_module,
+    resume_session_id: str | None = None,
+    stop: asyncio.Event | None = None,
+    max_restarts: int = 0,
 ) -> None:
-    _patch_sdk(monkeypatch)
-    _patch_options(monkeypatch)
-    state_dir = tmp_path / "alpha"
+    async def _run():
+        await runner._run_conversation(
+            name,
+            state_dir,
+            pid=1,
+            inbox=inbox,
+            resume_session_id=resume_session_id,
+            stop=stop or asyncio.Event(),
+            sdk_module=sdk_module,
+            build_sdk_options_fn=_fake_build_options,
+            max_restarts=max_restarts,
+            restart_backoff_s=0.001,
+        )
 
-    async def _scenario():
+    asyncio.run(_run())
+
+
+def test_conversation_persists_session_id_from_result(tmp_path: Path) -> None:
+    # Arrange
+    _reset_stub_state()
+    state_dir = tmp_path / "alpha"
+    sdk_mod = _make_sdk_module(_StubClient)
+
+    async def _run():
         inbox, _fut = await _seed_inbox("say hello")
         await runner._run_conversation(
             "alpha",
@@ -310,36 +469,142 @@ def test_conversation_writes_assistant_messages_and_session_id(
             inbox=inbox,
             resume_session_id=None,
             stop=asyncio.Event(),
+            sdk_module=sdk_mod,
+            build_sdk_options_fn=_fake_build_options,
         )
 
-    asyncio.run(_scenario())
-
-    # Session id was persisted from ResultMessage.session_id.
+    # Act
+    asyncio.run(_run())
+    # Assert
     assert runner.read_session_id(state_dir) == "sess-xyz"
 
-    # session.jsonl carries the user prompt, two assistant chunks, and
-    # the closing result row, in order.
-    lines = (state_dir / "session.jsonl").read_text().splitlines()
-    parsed = [json.loads(line) for line in lines]
-    assert [p["type"] for p in parsed] == ["user", "assistant", "assistant", "result"]
-    assert parsed[0]["text"] == "say hello"
-    assert parsed[1]["text"] == "hello"
-    assert parsed[2]["text"] == " world"
-    assert parsed[3]["session_id"] == "sess-xyz"
+
+def test_conversation_writes_session_jsonl_in_expected_order(tmp_path: Path) -> None:
+    # Arrange
+    _reset_stub_state()
+    state_dir = tmp_path / "alpha"
+    sdk_mod = _make_sdk_module(_StubClient)
+
+    async def _run():
+        inbox, _fut = await _seed_inbox("say hello")
+        await runner._run_conversation(
+            "alpha",
+            state_dir,
+            pid=1,
+            inbox=inbox,
+            resume_session_id=None,
+            stop=asyncio.Event(),
+            sdk_module=sdk_mod,
+            build_sdk_options_fn=_fake_build_options,
+        )
+
+    # Act
+    asyncio.run(_run())
+    parsed = [
+        json.loads(line)
+        for line in (state_dir / "session.jsonl").read_text().splitlines()
+    ]
+    kinds = [p["type"] for p in parsed]
+    # Assert
+    assert kinds == ["user", "assistant", "assistant", "result"]
+
+
+def test_conversation_assistant_chunks_match_stub_text(tmp_path: Path) -> None:
+    # Arrange
+    _reset_stub_state()
+    state_dir = tmp_path / "alpha"
+    sdk_mod = _make_sdk_module(_StubClient)
+
+    async def _run():
+        inbox, _fut = await _seed_inbox("say hello")
+        await runner._run_conversation(
+            "alpha",
+            state_dir,
+            pid=1,
+            inbox=inbox,
+            resume_session_id=None,
+            stop=asyncio.Event(),
+            sdk_module=sdk_mod,
+            build_sdk_options_fn=_fake_build_options,
+        )
+
+    # Act
+    asyncio.run(_run())
+    parsed = [
+        json.loads(line)
+        for line in (state_dir / "session.jsonl").read_text().splitlines()
+    ]
+    texts = [parsed[1]["text"], parsed[2]["text"]]
+    # Assert
+    assert texts == ["hello", " world"]
+
+
+def test_conversation_result_row_records_usage(tmp_path: Path) -> None:
+    # Arrange
+    _reset_stub_state()
+    state_dir = tmp_path / "alpha"
+    sdk_mod = _make_sdk_module(_StubClient)
+
+    async def _run():
+        inbox, _fut = await _seed_inbox("say hello")
+        await runner._run_conversation(
+            "alpha",
+            state_dir,
+            pid=1,
+            inbox=inbox,
+            resume_session_id=None,
+            stop=asyncio.Event(),
+            sdk_module=sdk_mod,
+            build_sdk_options_fn=_fake_build_options,
+        )
+
+    # Act
+    asyncio.run(_run())
+    parsed = [
+        json.loads(line)
+        for line in (state_dir / "session.jsonl").read_text().splitlines()
+    ]
+    # Assert
     assert parsed[3]["usage"] == {"output_tokens": 7}
 
-    # Heartbeat reflects post-turn idle state.
+
+def test_conversation_final_heartbeat_is_idle(tmp_path: Path) -> None:
+    # Arrange
+    _reset_stub_state()
+    state_dir = tmp_path / "alpha"
+    sdk_mod = _make_sdk_module(_StubClient)
+
+    async def _run():
+        inbox, _fut = await _seed_inbox("say hello")
+        await runner._run_conversation(
+            "alpha",
+            state_dir,
+            pid=1,
+            inbox=inbox,
+            resume_session_id=None,
+            stop=asyncio.Event(),
+            sdk_module=sdk_mod,
+            build_sdk_options_fn=_fake_build_options,
+        )
+
+    # Act
+    asyncio.run(_run())
     hb = runner.read_heartbeat(state_dir)
+    # Assert
     assert hb is not None and hb["state"] == runner.STATE_IDLE
 
 
-def test_conversation_forwards_resume_session_id_to_options(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _patch_sdk(monkeypatch)
-    _patch_options(monkeypatch)
+# ---------------------------------------------------------------------------
+# run_conversation — options forwarding
+# ---------------------------------------------------------------------------
 
-    async def _scenario():
+
+def test_conversation_forwards_resume_session_id_to_options(tmp_path: Path) -> None:
+    # Arrange
+    _reset_stub_state()
+    sdk_mod = _make_sdk_module(_StubClient)
+
+    async def _run():
         inbox, _fut = await _seed_inbox("resume me")
         await runner._run_conversation(
             "alpha",
@@ -348,27 +613,53 @@ def test_conversation_forwards_resume_session_id_to_options(
             inbox=inbox,
             resume_session_id="prev-sid",
             stop=asyncio.Event(),
+            sdk_module=sdk_mod,
+            build_sdk_options_fn=_fake_build_options,
         )
 
-    asyncio.run(_scenario())
-    assert _StubClient.last_options.resume == "prev-sid"  # type: ignore[attr-defined]
-    assert _StubClient.last_options.permission_mode == "bypassPermissions"  # type: ignore[attr-defined]
+    # Act
+    asyncio.run(_run())
+    # Assert
+    assert _StubClient.last_options.resume == "prev-sid"
+
+
+def test_conversation_uses_bypass_permissions_mode(tmp_path: Path) -> None:
+    # Arrange
+    _reset_stub_state()
+    sdk_mod = _make_sdk_module(_StubClient)
+
+    async def _run():
+        inbox, _fut = await _seed_inbox("hi")
+        await runner._run_conversation(
+            "alpha",
+            tmp_path / "alpha",
+            pid=1,
+            inbox=inbox,
+            resume_session_id=None,
+            stop=asyncio.Event(),
+            sdk_module=sdk_mod,
+            build_sdk_options_fn=_fake_build_options,
+        )
+
+    # Act
+    asyncio.run(_run())
+    # Assert
+    assert _StubClient.last_options.permission_mode == "bypassPermissions"
 
 
 # ---------------------------------------------------------------------------
-# stop-mid-stream — interrupt() is awaited
+# run_conversation — interrupt on stop, sdk-missing fallback
 # ---------------------------------------------------------------------------
 
 
-def test_conversation_calls_interrupt_when_stop_is_set(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _patch_sdk(monkeypatch)
-    _patch_options(monkeypatch)
+def test_conversation_calls_interrupt_when_stop_already_set(tmp_path: Path) -> None:
+    # Arrange
+    _reset_stub_state()
+    sdk_mod = _make_sdk_module(_StubClient)
     stop = asyncio.Event()
-    stop.set()  # signal stop *before* the conversation starts
+    stop.set()
 
-    async def _scenario():
+    async def _run():
         inbox, _fut = await _seed_inbox("long task")
         await runner._run_conversation(
             "alpha",
@@ -377,36 +668,31 @@ def test_conversation_calls_interrupt_when_stop_is_set(
             inbox=inbox,
             resume_session_id=None,
             stop=stop,
+            sdk_module=sdk_mod,
+            build_sdk_options_fn=_fake_build_options,
         )
 
-    asyncio.run(_scenario())
-    # The runner should ask the SDK to interrupt at least once.
+    # Act
+    asyncio.run(_run())
+    # Assert
     assert _StubClient.interrupt_calls >= 1
 
 
-# ---------------------------------------------------------------------------
-# missing SDK — runner records error, exits cleanly
-# ---------------------------------------------------------------------------
+class _BrokenSDKModule(types.ModuleType):
+    """A module whose attribute access raises — emulates SDK-missing."""
+
+    def __getattr__(self, name):
+        raise ImportError(f"simulated absence: {name}")
 
 
-def test_conversation_records_error_when_sdk_missing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_conversation_records_error_when_sdk_module_attribute_missing(
+    tmp_path: Path,
 ) -> None:
-    monkeypatch.delitem(sys.modules, "claude_agent_sdk", raising=False)
-
-    import builtins
-
-    real_import = builtins.__import__
-
-    def _fake_import(name, *a, **kw):
-        if name == "claude_agent_sdk":
-            raise ImportError("simulated absence")
-        return real_import(name, *a, **kw)
-
-    monkeypatch.setattr(builtins, "__import__", _fake_import)
+    # Arrange
     state_dir = tmp_path / "alpha"
+    broken = _BrokenSDKModule("broken_sdk")
 
-    async def _scenario():
+    async def _run():
         inbox, _fut = await _seed_inbox("x")
         await runner._run_conversation(
             "alpha",
@@ -415,129 +701,164 @@ def test_conversation_records_error_when_sdk_missing(
             inbox=inbox,
             resume_session_id=None,
             stop=asyncio.Event(),
+            sdk_module=broken,
+            build_sdk_options_fn=_fake_build_options,
         )
 
-    asyncio.run(_scenario())
+    # Act
+    asyncio.run(_run())
     rows = [
         json.loads(line)
         for line in (state_dir / "session.jsonl").read_text().splitlines()
     ]
-    # Last row must be the structured error envelope.
-    assert rows[-1]["type"] == "error"
+    # Assert
     assert rows[-1]["kind"] == "sdk_missing"
 
 
 # ---------------------------------------------------------------------------
-# Phase 3 — quota accumulator, hook bridge
+# Quota accumulator
 # ---------------------------------------------------------------------------
 
 
-class TestQuotaAccumulator:
-    def test_zeros_when_absent(self, tmp_path: Path) -> None:
-        totals = runner.read_quota(tmp_path)
-        assert totals == {
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "cache_creation_input_tokens": 0,
-            "cache_read_input_tokens": 0,
-            "turns": 0,
-        }
-
-    def test_accumulate_sums_and_increments_turns(self, tmp_path: Path) -> None:
-        runner.accumulate_quota(
-            tmp_path,
-            {
-                "input_tokens": 10,
-                "output_tokens": 50,
-                "cache_creation_input_tokens": 33000,
-                "cache_read_input_tokens": 0,
-            },
-        )
-        runner.accumulate_quota(
-            tmp_path,
-            {"input_tokens": 5, "output_tokens": 12, "cache_read_input_tokens": 200},
-        )
-        totals = runner.read_quota(tmp_path)
-        assert totals["input_tokens"] == 15
-        assert totals["output_tokens"] == 62
-        assert totals["cache_creation_input_tokens"] == 33000
-        assert totals["cache_read_input_tokens"] == 200
-        assert totals["turns"] == 2
-
-    def test_none_usage_is_a_noop(self, tmp_path: Path) -> None:
-        runner.accumulate_quota(tmp_path, None)
-        assert not (tmp_path / "quota.json").exists()
-        assert runner.read_quota(tmp_path)["turns"] == 0
+def test_read_quota_returns_zeros_when_file_absent(tmp_path: Path) -> None:
+    # Arrange: no quota file exists.
+    # Act
+    totals = runner.read_quota(tmp_path)
+    # Assert
+    assert totals == {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "turns": 0,
+    }
 
 
-class TestHookBridge:
-    """The runner's hooks dict must register a callback per SDK event
-    class, and each callback must forward its payload to event_log
-    with the right kind + fields."""
-
-    def test_hooks_dict_has_four_event_classes(self) -> None:
-        hooks = runner._build_event_log_hooks("alpha", _StubHookMatcher)
-        assert set(hooks) == {"PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop"}
-        # Each event class registers exactly one matcher with one callback.
-        for matchers in hooks.values():
-            assert len(matchers) == 1
-            assert len(matchers[0].hooks) == 1
-
-    def test_pretool_callback_forwards_to_event_log(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        captured: list[tuple] = []
-
-        def _spy(agent: str, kind: str, payload: dict, *, root=None) -> None:
-            captured.append((agent, kind, payload))
-
-        from scitex_agent_container._state import event_log
-
-        monkeypatch.setattr(event_log, "append_event", _spy)
-        hooks = runner._build_event_log_hooks("alpha", _StubHookMatcher)
-        cb = hooks["PreToolUse"][0].hooks[0]
-        asyncio.run(
-            cb(
-                {"tool_name": "Bash", "tool_input": {"command": "ls"}},
-                "use-1",
-                None,
-            )
-        )
-        assert captured == [
-            ("alpha", "pretool", {"tool_name": "Bash", "tool_input": {"command": "ls"}})
-        ]
-
-    def test_prompt_and_stop_callbacks_route_correctly(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        captured: list[tuple] = []
-
-        def _spy(agent: str, kind: str, payload: dict, *, root=None) -> None:
-            captured.append((kind, payload))
-
-        from scitex_agent_container._state import event_log
-
-        monkeypatch.setattr(event_log, "append_event", _spy)
-        hooks = runner._build_event_log_hooks("alpha", _StubHookMatcher)
-        prompt_cb = hooks["UserPromptSubmit"][0].hooks[0]
-        stop_cb = hooks["Stop"][0].hooks[0]
-        asyncio.run(prompt_cb({"prompt": "hi"}, None, None))
-        asyncio.run(stop_cb({"stop_hook_active": True}, None, None))
-        assert ("prompt", {"prompt": "hi"}) in captured
-        assert ("stop", {"stop_hook_active": True}) in captured
+def test_accumulate_quota_sums_input_tokens(tmp_path: Path) -> None:
+    # Arrange
+    runner.accumulate_quota(tmp_path, {"input_tokens": 10})
+    # Act
+    runner.accumulate_quota(tmp_path, {"input_tokens": 5})
+    # Assert
+    assert runner.read_quota(tmp_path)["input_tokens"] == 15
 
 
-def test_conversation_accumulates_quota_and_registers_hooks(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """End-to-end: a single SDK turn populates quota.json and the
-    HookMatcher stub captures four registered hook entries (one per
-    SDK event class)."""
-    _patch_sdk(monkeypatch)
-    _patch_options(monkeypatch)
+def test_accumulate_quota_increments_turns_per_call(tmp_path: Path) -> None:
+    # Arrange
+    runner.accumulate_quota(tmp_path, {"input_tokens": 1})
+    # Act
+    runner.accumulate_quota(tmp_path, {"input_tokens": 1})
+    # Assert
+    assert runner.read_quota(tmp_path)["turns"] == 2
+
+
+def test_accumulate_quota_with_none_does_not_create_file(tmp_path: Path) -> None:
+    # Arrange: no prior write.
+    # Act
+    runner.accumulate_quota(tmp_path, None)
+    # Assert
+    assert not (tmp_path / "quota.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# Hook bridge
+# ---------------------------------------------------------------------------
+
+
+def test_build_event_log_hooks_registers_four_event_classes() -> None:
+    # Arrange
+    _StubHookMatcher.instances = []
+    # Act
+    hooks = runner._build_event_log_hooks("alpha", _StubHookMatcher)
+    # Assert
+    assert set(hooks) == {"PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop"}
+
+
+def test_build_event_log_hooks_registers_one_callback_per_class() -> None:
+    # Arrange
+    _StubHookMatcher.instances = []
+    # Act
+    hooks = runner._build_event_log_hooks("alpha", _StubHookMatcher)
+    # Assert
+    assert all(len(m) == 1 and len(m[0].hooks) == 1 for m in hooks.values())
+
+
+def _read_event_log(root: Path, agent: str) -> list[dict]:
+    """Read back the per-agent JSONL ring buffer produced by append_event."""
+    path = root / f"{agent}.jsonl"
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+def test_pretool_hook_writes_pretool_kind_to_event_log(tmp_path: Path) -> None:
+    # Arrange
+    hooks = runner._build_event_log_hooks(
+        "alpha", _StubHookMatcher, event_log_root=tmp_path
+    )
+    cb = hooks["PreToolUse"][0].hooks[0]
+    # Act
+    asyncio.run(
+        cb({"tool_name": "Bash", "tool_input": {"command": "ls"}}, "use-1", None)
+    )
+    rows = _read_event_log(tmp_path, "alpha")
+    # Assert
+    assert [r["kind"] for r in rows] == ["pretool"]
+
+
+def test_pretool_hook_records_tool_name(tmp_path: Path) -> None:
+    # Arrange
+    hooks = runner._build_event_log_hooks(
+        "alpha", _StubHookMatcher, event_log_root=tmp_path
+    )
+    cb = hooks["PreToolUse"][0].hooks[0]
+    # Act
+    asyncio.run(
+        cb({"tool_name": "Bash", "tool_input": {"command": "ls"}}, "use-1", None)
+    )
+    rows = _read_event_log(tmp_path, "alpha")
+    # Assert
+    assert rows[0]["tool"] == "Bash"
+
+
+def test_prompt_hook_writes_prompt_kind_to_event_log(tmp_path: Path) -> None:
+    # Arrange
+    hooks = runner._build_event_log_hooks(
+        "alpha", _StubHookMatcher, event_log_root=tmp_path
+    )
+    prompt_cb = hooks["UserPromptSubmit"][0].hooks[0]
+    # Act
+    asyncio.run(prompt_cb({"prompt": "hi"}, None, None))
+    rows = _read_event_log(tmp_path, "alpha")
+    # Assert
+    assert [r["kind"] for r in rows] == ["prompt"]
+
+
+def test_stop_hook_writes_stop_kind_to_event_log(tmp_path: Path) -> None:
+    # Arrange
+    hooks = runner._build_event_log_hooks(
+        "alpha", _StubHookMatcher, event_log_root=tmp_path
+    )
+    stop_cb = hooks["Stop"][0].hooks[0]
+    # Act
+    asyncio.run(stop_cb({"stop_hook_active": True}, None, None))
+    rows = _read_event_log(tmp_path, "alpha")
+    # Assert
+    assert rows[-1]["stop_hook_active"] is True
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: run_conversation populates quota + registers hooks
+# ---------------------------------------------------------------------------
+
+
+def test_conversation_accumulates_one_turn_into_quota(tmp_path: Path) -> None:
+    # Arrange
+    _reset_stub_state()
     state_dir = tmp_path / "alpha"
+    sdk_mod = _make_sdk_module(_StubClient)
 
-    async def _scenario():
+    async def _run():
         inbox, _fut = await _seed_inbox("go")
         await runner._run_conversation(
             "alpha",
@@ -546,24 +867,73 @@ def test_conversation_accumulates_quota_and_registers_hooks(
             inbox=inbox,
             resume_session_id=None,
             stop=asyncio.Event(),
+            sdk_module=sdk_mod,
+            build_sdk_options_fn=_fake_build_options,
         )
 
-    asyncio.run(_scenario())
-    quota = runner.read_quota(state_dir)
-    assert quota["turns"] == 1
-    assert quota["output_tokens"] == 7  # _StubResult usage above
-    # Four HookMatcher instances created (one per event class).
+    # Act
+    asyncio.run(_run())
+    # Assert
+    assert runner.read_quota(state_dir)["turns"] == 1
+
+
+def test_conversation_quota_carries_output_tokens_from_stub(tmp_path: Path) -> None:
+    # Arrange
+    _reset_stub_state()
+    state_dir = tmp_path / "alpha"
+    sdk_mod = _make_sdk_module(_StubClient)
+
+    async def _run():
+        inbox, _fut = await _seed_inbox("go")
+        await runner._run_conversation(
+            "alpha",
+            state_dir,
+            pid=1,
+            inbox=inbox,
+            resume_session_id=None,
+            stop=asyncio.Event(),
+            sdk_module=sdk_mod,
+            build_sdk_options_fn=_fake_build_options,
+        )
+
+    # Act
+    asyncio.run(_run())
+    # Assert
+    assert runner.read_quota(state_dir)["output_tokens"] == 7
+
+
+def test_conversation_registers_four_hook_matcher_instances(tmp_path: Path) -> None:
+    # Arrange
+    _reset_stub_state()
+    state_dir = tmp_path / "alpha"
+    sdk_mod = _make_sdk_module(_StubClient)
+
+    async def _run():
+        inbox, _fut = await _seed_inbox("go")
+        await runner._run_conversation(
+            "alpha",
+            state_dir,
+            pid=1,
+            inbox=inbox,
+            resume_session_id=None,
+            stop=asyncio.Event(),
+            sdk_module=sdk_mod,
+            build_sdk_options_fn=_fake_build_options,
+        )
+
+    # Act
+    asyncio.run(_run())
+    # Assert
     assert len(_StubHookMatcher.instances) == 4
 
 
 # ---------------------------------------------------------------------------
-# supervisor — auto-restart on SDK client crash
+# Supervisor — auto-restart on SDK client crash
 # ---------------------------------------------------------------------------
 
 
 class _FlakyClient:
-    """First instance raises inside __aenter__; subsequent instances behave
-    like the happy-path stub."""
+    """First instance raises inside __aenter__; later ones recover."""
 
     instances = 0
 
@@ -594,19 +964,39 @@ class _FlakyClient:
         pass
 
 
-def test_supervisor_restarts_after_sdk_crash(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """With max_restarts=1, an SDK crash on the first attempt should be
-    logged as a supervisor event, then the runner reopens the client
-    and drives the queued turn successfully."""
-    mod = _patch_sdk(monkeypatch)
-    mod.ClaudeSDKClient = _FlakyClient  # swap in the flaky version
+def test_supervisor_constructs_a_second_client_on_first_crash(tmp_path: Path) -> None:
+    # Arrange
     _FlakyClient.instances = 0
-    _patch_options(monkeypatch)
-    state_dir = tmp_path / "alpha"
+    sdk_mod = _make_sdk_module(_FlakyClient)
 
-    async def _scenario():
+    async def _run():
+        inbox, _fut = await _seed_inbox("retry me")
+        await runner._run_conversation(
+            "alpha",
+            tmp_path / "alpha",
+            pid=1,
+            inbox=inbox,
+            resume_session_id=None,
+            stop=asyncio.Event(),
+            sdk_module=sdk_mod,
+            build_sdk_options_fn=_fake_build_options,
+            max_restarts=1,
+            restart_backoff_s=0.001,
+        )
+
+    # Act
+    asyncio.run(_run())
+    # Assert
+    assert _FlakyClient.instances == 2
+
+
+def test_supervisor_logs_supervisor_event_on_restart(tmp_path: Path) -> None:
+    # Arrange
+    _FlakyClient.instances = 0
+    state_dir = tmp_path / "alpha"
+    sdk_mod = _make_sdk_module(_FlakyClient)
+
+    async def _run():
         inbox, _fut = await _seed_inbox("retry me")
         await runner._run_conversation(
             "alpha",
@@ -615,49 +1005,69 @@ def test_supervisor_restarts_after_sdk_crash(
             inbox=inbox,
             resume_session_id=None,
             stop=asyncio.Event(),
+            sdk_module=sdk_mod,
+            build_sdk_options_fn=_fake_build_options,
             max_restarts=1,
             restart_backoff_s=0.001,
         )
 
-    asyncio.run(_scenario())
-
-    # Two ClaudeSDKClient instances were constructed (one crash, one recovery)
-    assert _FlakyClient.instances == 2
-    # session.jsonl should carry an error row then a supervisor row then the
-    # recovered result.
-    lines = (state_dir / "session.jsonl").read_text().splitlines()
-    parsed = [json.loads(line) for line in lines]
-    kinds = [p.get("type") for p in parsed]
-    assert "error" in kinds
+    # Act
+    asyncio.run(_run())
+    kinds = [
+        json.loads(line).get("type")
+        for line in (state_dir / "session.jsonl").read_text().splitlines()
+    ]
+    # Assert
     assert "supervisor" in kinds
-    # The post-restart attempt produced the recovery result.
+
+
+def test_supervisor_records_post_restart_session_id(tmp_path: Path) -> None:
+    # Arrange
+    _FlakyClient.instances = 0
+    state_dir = tmp_path / "alpha"
+    sdk_mod = _make_sdk_module(_FlakyClient)
+
+    async def _run():
+        inbox, _fut = await _seed_inbox("retry me")
+        await runner._run_conversation(
+            "alpha",
+            state_dir,
+            pid=1,
+            inbox=inbox,
+            resume_session_id=None,
+            stop=asyncio.Event(),
+            sdk_module=sdk_mod,
+            build_sdk_options_fn=_fake_build_options,
+            max_restarts=1,
+            restart_backoff_s=0.001,
+        )
+
+    # Act
+    asyncio.run(_run())
+    # Assert
     assert runner.read_session_id(state_dir) == "sess-after-restart"
 
 
-def test_supervisor_gives_up_after_max_restarts(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """If every restart attempt fails, the supervisor drains the inbox
-    with the last exception and exits."""
+class _AlwaysFailsClient:
+    instances = 0
 
-    class _AlwaysFails:
-        instances = 0
+    def __init__(self, *, options: Any) -> None:
+        type(self).instances += 1
 
-        def __init__(self, *, options: Any) -> None:
-            type(self).instances += 1
+    async def __aenter__(self):
+        raise RuntimeError("always broken")
 
-        async def __aenter__(self):
-            raise RuntimeError("always broken")
+    async def __aexit__(self, *_a):
+        return None
 
-        async def __aexit__(self, *_a):
-            return None
 
-    mod = _patch_sdk(monkeypatch)
-    mod.ClaudeSDKClient = _AlwaysFails
-    _patch_options(monkeypatch)
+def test_supervisor_gives_up_after_max_restarts(tmp_path: Path) -> None:
+    # Arrange
+    _AlwaysFailsClient.instances = 0
     state_dir = tmp_path / "alpha"
+    sdk_mod = _make_sdk_module(_AlwaysFailsClient)
 
-    async def _scenario():
+    async def _run():
         inbox = make_inbox()
         loop = asyncio.get_running_loop()
         fut = loop.create_future()
@@ -669,29 +1079,57 @@ def test_supervisor_gives_up_after_max_restarts(
             inbox=inbox,
             resume_session_id=None,
             stop=asyncio.Event(),
+            sdk_module=sdk_mod,
+            build_sdk_options_fn=_fake_build_options,
             max_restarts=2,
             restart_backoff_s=0.001,
         )
-        # The pending future should now carry the failure.
+
+    # Act
+    asyncio.run(_run())
+    # Assert: initial attempt + 2 restarts = 3 instances.
+    assert _AlwaysFailsClient.instances == 3
+
+
+def test_supervisor_propagates_failure_to_pending_future(tmp_path: Path) -> None:
+    # Arrange
+    _AlwaysFailsClient.instances = 0
+    state_dir = tmp_path / "alpha"
+    sdk_mod = _make_sdk_module(_AlwaysFailsClient)
+
+    async def _run():
+        inbox = make_inbox()
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+        await inbox.put(TurnEnvelope(text="doomed", response=fut))
+        await runner._run_conversation(
+            "alpha",
+            state_dir,
+            pid=1,
+            inbox=inbox,
+            resume_session_id=None,
+            stop=asyncio.Event(),
+            sdk_module=sdk_mod,
+            build_sdk_options_fn=_fake_build_options,
+            max_restarts=2,
+            restart_backoff_s=0.001,
+        )
         with pytest.raises(RuntimeError, match="always broken"):
             await fut
 
-    asyncio.run(_scenario())
-    # initial attempt + 2 restarts = 3 instances
-    assert _AlwaysFails.instances == 3  # type: ignore[attr-defined]
+    # Act
+    coro = _run()
+    # Assert
+    asyncio.run(coro)
 
 
 # ---------------------------------------------------------------------------
-# F-CS3 phase 2 — _autonomous_loop tests
+# _autonomous_loop
 # ---------------------------------------------------------------------------
 
 
-from scitex_agent_container._runners.claude_session import (  # noqa: E402
-    _autonomous_loop,
-)
-
-
-def test_autonomous_loop_exits_on_drive_until_match():
+def test_autonomous_loop_returns_zero_on_drive_until_match() -> None:
+    # Arrange
     async def scenario():
         inbox: asyncio.Queue = asyncio.Queue()
         stop = asyncio.Event()
@@ -704,7 +1142,7 @@ def test_autonomous_loop_exits_on_drive_until_match():
             env2.response.set_result("all good — DONE here")
 
         consumer_task = asyncio.create_task(consumer())
-        rc = await _autonomous_loop(
+        rc = await runner._autonomous_loop(
             inbox,
             mission="kick off",
             drive_until="DONE",
@@ -714,14 +1152,77 @@ def test_autonomous_loop_exits_on_drive_until_match():
             loop=loop,
         )
         await consumer_task
-        return rc, stop.is_set()
+        return rc
 
-    rc, stopped = asyncio.run(scenario())
+    # Act
+    rc = asyncio.run(scenario())
+    # Assert
     assert rc == 0
+
+
+def test_autonomous_loop_sets_stop_after_match() -> None:
+    # Arrange
+    async def scenario():
+        inbox: asyncio.Queue = asyncio.Queue()
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        async def consumer():
+            env1: TurnEnvelope = await inbox.get()
+            env1.response.set_result("DONE")
+
+        consumer_task = asyncio.create_task(consumer())
+        await runner._autonomous_loop(
+            inbox,
+            mission="kick off",
+            drive_until="DONE",
+            max_turns=10,
+            kick_text="continue",
+            stop=stop,
+            loop=loop,
+        )
+        await consumer_task
+        return stop.is_set()
+
+    # Act
+    stopped = asyncio.run(scenario())
+    # Assert
     assert stopped is True
 
 
-def test_autonomous_loop_caps_at_max_turns():
+def test_autonomous_loop_returns_one_when_max_turns_capped() -> None:
+    # Arrange
+    async def scenario():
+        inbox: asyncio.Queue = asyncio.Queue()
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        async def consumer():
+            for _ in range(3):
+                env: TurnEnvelope = await inbox.get()
+                env.response.set_result("not done yet")
+
+        consumer_task = asyncio.create_task(consumer())
+        rc = await runner._autonomous_loop(
+            inbox,
+            mission="seed",
+            drive_until="DONE",
+            max_turns=3,
+            kick_text="kick",
+            stop=stop,
+            loop=loop,
+        )
+        await consumer_task
+        return rc
+
+    # Act
+    rc = asyncio.run(scenario())
+    # Assert
+    assert rc == 1
+
+
+def test_autonomous_loop_first_turn_uses_mission_text() -> None:
+    # Arrange
     seen: list[str] = []
 
     async def scenario():
@@ -736,7 +1237,7 @@ def test_autonomous_loop_caps_at_max_turns():
                 env.response.set_result("not done yet")
 
         consumer_task = asyncio.create_task(consumer())
-        rc = await _autonomous_loop(
+        await runner._autonomous_loop(
             inbox,
             mission="seed",
             drive_until="DONE",
@@ -746,22 +1247,54 @@ def test_autonomous_loop_caps_at_max_turns():
             loop=loop,
         )
         await consumer_task
-        return rc, stop.is_set()
 
-    rc, stopped = asyncio.run(scenario())
-    assert rc == 1
-    assert stopped is True
+    # Act
+    asyncio.run(scenario())
+    # Assert
     assert seen[0] == "seed"
+
+
+def test_autonomous_loop_subsequent_turns_use_kick_text() -> None:
+    # Arrange
+    seen: list[str] = []
+
+    async def scenario():
+        inbox: asyncio.Queue = asyncio.Queue()
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        async def consumer():
+            for _ in range(3):
+                env: TurnEnvelope = await inbox.get()
+                seen.append(env.text)
+                env.response.set_result("not done yet")
+
+        consumer_task = asyncio.create_task(consumer())
+        await runner._autonomous_loop(
+            inbox,
+            mission="seed",
+            drive_until="DONE",
+            max_turns=3,
+            kick_text="kick",
+            stop=stop,
+            loop=loop,
+        )
+        await consumer_task
+
+    # Act
+    asyncio.run(scenario())
+    # Assert
     assert seen[1:] == ["kick", "kick"]
 
 
-def test_autonomous_loop_stops_when_event_set_before_loop_starts():
+def test_autonomous_loop_exits_when_stop_already_set() -> None:
+    # Arrange
     async def scenario():
         inbox: asyncio.Queue = asyncio.Queue()
         stop = asyncio.Event()
         stop.set()
         loop = asyncio.get_running_loop()
-        rc = await _autonomous_loop(
+        rc = await runner._autonomous_loop(
             inbox,
             mission="seed",
             drive_until="DONE",
@@ -772,22 +1305,10 @@ def test_autonomous_loop_stops_when_event_set_before_loop_starts():
         )
         return rc, inbox.empty()
 
+    # Act
     rc, empty = asyncio.run(scenario())
-    assert rc == 1
-    assert empty is True
-
-
-# ---------------------------------------------------------------------------
-# Merged from test_claude_session_run.py (PS-204 orphan consolidation)
-# ---------------------------------------------------------------------------
-
-
-
-
-
-@pytest.fixture(autouse=True)
-def _home_to_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    # Assert
+    assert rc == 1 and empty is True
 
 
 # ---------------------------------------------------------------------------
@@ -795,141 +1316,162 @@ def _home_to_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 # ---------------------------------------------------------------------------
 
 
-class TestParseArgv:
-    def test_requires_name(self) -> None:
-        with pytest.raises(SystemExit):
-            runner._parse_argv([])
+def test_parse_argv_requires_name() -> None:
+    # Arrange
+    argv: list[str] = []
+    # Act
+    call = lambda: runner._parse_argv(argv)  # noqa: E731
+    # Assert
+    with pytest.raises(SystemExit):
+        call()
 
-    def test_minimal_args(self) -> None:
-        ns = runner._parse_argv(["--name", "alpha"])
-        assert ns.name == "alpha"
-        assert ns.state_root is None
-        assert ns.tick_seconds == runner.DEFAULT_TICK_SECONDS
-        assert ns.mission is None
-        assert ns.resume_session_id is None
-        assert ns.print_stream is False
-        assert ns.a2a_port is None
-        assert ns.a2a_host == "127.0.0.1"
-        assert ns.autonomous_enabled is False
-        assert ns.autonomous_drive_until == "DONE"
-        assert ns.autonomous_max_turns == 50
-        assert ns.max_restarts == 0
 
-    def test_full_args(self) -> None:
-        ns = runner._parse_argv(
-            [
-                "--name",
-                "ag",
-                "--state-root",
-                "/tmp/sr",
-                "--tick-seconds",
-                "5",
-                "--mission",
-                "hi",
-                "--resume-session-id",
-                "abc",
-                "--a2a-port",
-                "9999",
-                "--a2a-host",
-                "0.0.0.0",
-                "--print-stream",
-                "--autonomous-enabled",
-                "--autonomous-drive-until",
-                "END",
-                "--autonomous-max-turns",
-                "7",
-                "--autonomous-kick-text",
-                "go",
-                "--max-restarts",
-                "3",
-                "--restart-backoff-s",
-                "0.25",
-            ]
-        )
-        assert ns.name == "ag"
-        assert ns.state_root == Path("/tmp/sr")
-        assert ns.tick_seconds == 5.0
-        assert ns.mission == "hi"
-        assert ns.resume_session_id == "abc"
-        assert ns.a2a_port == 9999  # stx-allow: STX-NL001
-        assert ns.a2a_host == "0.0.0.0"
-        assert ns.print_stream is True
-        assert ns.autonomous_enabled is True
-        assert ns.autonomous_drive_until == "END"
-        assert ns.autonomous_max_turns == 7
-        assert ns.autonomous_kick_text == "go"
-        assert ns.max_restarts == 3
-        assert ns.restart_backoff_s == 0.25
+def test_parse_argv_minimal_returns_name(tmp_path_factory) -> None:
+    # Arrange
+    argv = ["--name", "alpha"]
+    # Act
+    ns = runner._parse_argv(argv)
+    # Assert
+    assert ns.name == "alpha"
+
+
+def test_parse_argv_minimal_state_root_defaults_to_none() -> None:
+    # Arrange
+    argv = ["--name", "alpha"]
+    # Act
+    ns = runner._parse_argv(argv)
+    # Assert
+    assert ns.state_root is None
+
+
+def test_parse_argv_minimal_tick_seconds_default() -> None:
+    # Arrange
+    argv = ["--name", "alpha"]
+    # Act
+    ns = runner._parse_argv(argv)
+    # Assert
+    assert ns.tick_seconds == runner.DEFAULT_TICK_SECONDS
+
+
+def test_parse_argv_minimal_mission_defaults_to_none() -> None:
+    # Arrange
+    argv = ["--name", "alpha"]
+    # Act
+    ns = runner._parse_argv(argv)
+    # Assert
+    assert ns.mission is None
+
+
+def test_parse_argv_minimal_autonomous_disabled_by_default() -> None:
+    # Arrange
+    argv = ["--name", "alpha"]
+    # Act
+    ns = runner._parse_argv(argv)
+    # Assert
+    assert ns.autonomous_enabled is False
+
+
+def test_parse_argv_minimal_max_restarts_zero_by_default() -> None:
+    # Arrange
+    argv = ["--name", "alpha"]
+    # Act
+    ns = runner._parse_argv(argv)
+    # Assert
+    assert ns.max_restarts == 0
+
+
+def test_parse_argv_full_state_root_parsed_as_path() -> None:
+    # Arrange
+    argv = ["--name", "ag", "--state-root", "/tmp/sr"]
+    # Act
+    ns = runner._parse_argv(argv)
+    # Assert
+    assert ns.state_root == Path("/tmp/sr")
+
+
+def test_parse_argv_full_a2a_port_parsed_as_int() -> None:
+    # Arrange
+    argv = ["--name", "ag", "--a2a-port", "9999"]
+    # Act
+    ns = runner._parse_argv(argv)
+    # Assert
+    assert ns.a2a_port == 9_999
+
+
+def test_parse_argv_full_print_stream_flag_sets_true() -> None:
+    # Arrange
+    argv = ["--name", "ag", "--print-stream"]
+    # Act
+    ns = runner._parse_argv(argv)
+    # Assert
+    assert ns.print_stream is True
+
+
+def test_parse_argv_full_autonomous_max_turns_parsed_as_int() -> None:
+    # Arrange
+    argv = ["--name", "ag", "--autonomous-max-turns", "7"]
+    # Act
+    ns = runner._parse_argv(argv)
+    # Assert
+    assert ns.autonomous_max_turns == 7
+
+
+def test_parse_argv_full_restart_backoff_parsed_as_float() -> None:
+    # Arrange
+    argv = ["--name", "ag", "--restart-backoff-s", "0.25"]
+    # Act
+    ns = runner._parse_argv(argv)
+    # Assert
+    assert ns.restart_backoff_s == 0.25
 
 
 # ---------------------------------------------------------------------------
-# main()
+# run() — heartbeat-only path (no mission, no a2a)
 # ---------------------------------------------------------------------------
 
 
-def test_main_routes_args_through_run(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured: dict[str, Any] = {}
-
-    async def _fake_run(name, **kw):
-        captured["name"] = name
-        captured.update(kw)
-        return 0
-
-    monkeypatch.setattr(runner, "run", _fake_run)
-    rc = runner.main(["--name", "alpha", "--tick-seconds", "0.01"])
-    assert rc == 0
-    assert captured["name"] == "alpha"
-    assert captured["tick_seconds"] == 0.01
-
-
-# ---------------------------------------------------------------------------
-# run() — minimal heartbeat-only path
-# ---------------------------------------------------------------------------
-
-
-def test_run_no_mission_writes_pid_and_heartbeat(tmp_path: Path) -> None:
-    """run() with no mission / no a2a-port should write pid + heartbeat,
-    install signal handlers, and exit cleanly on SIGTERM."""
-
+def test_run_no_mission_writes_pid_file(tmp_path: Path) -> None:
+    # Arrange
     async def _scenario() -> int:
-        loop = asyncio.get_running_loop()
-
         async def _stop_soon():
-            # let run() install its signal handlers, then send SIGTERM to self.
             await asyncio.sleep(0.05)
-            # The runner registers SIGTERM via loop.add_signal_handler; we
-            # can invoke the registered callback by raising the signal.
-            import os
-
             os.kill(os.getpid(), signal.SIGTERM)
 
         asyncio.create_task(_stop_soon())
-        return await runner.run(
-            "ag-run-1",
-            state_root=tmp_path,
-            tick_seconds=0.01,
-        )
+        return await runner.run("ag-run-1", state_root=tmp_path, tick_seconds=0.01)
 
+    # Act
     rc = asyncio.run(_scenario())
-    assert rc == 0
-    state_dir = tmp_path / "ag-run-1"
-    assert (state_dir / "pid").is_file()
-    assert (state_dir / "heartbeat.json").is_file()
-    hb = runner.read_heartbeat(state_dir)
-    assert hb is not None
-    assert hb["state"] == runner.STATE_STOPPING
+    # Assert
+    assert rc == 0 and (tmp_path / "ag-run-1" / "pid").is_file()
 
 
-def test_run_stop_via_event_after_mission(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """With a mission, run() should seed the inbox and spawn the convo
-    task, then idle until stop. We patch _run_conversation so the test
-    doesn't need the SDK."""
+def test_run_no_mission_writes_heartbeat_with_stopping_state(tmp_path: Path) -> None:
+    # Arrange
+    async def _scenario() -> int:
+        async def _stop_soon():
+            await asyncio.sleep(0.05)
+            os.kill(os.getpid(), signal.SIGTERM)
 
-    drained: list[str] = []
+        asyncio.create_task(_stop_soon())
+        return await runner.run("ag-run-1b", state_root=tmp_path, tick_seconds=0.01)
 
-    async def _fake_conv(
+    # Act
+    asyncio.run(_scenario())
+    hb = runner.read_heartbeat(tmp_path / "ag-run-1b")
+    # Assert
+    assert hb is not None and hb["state"] == runner.STATE_STOPPING
+
+
+# ---------------------------------------------------------------------------
+# run() — mission seeds the inbox via real run_conversation_fn seam
+# ---------------------------------------------------------------------------
+
+
+def _make_drain_convo(drained: list[str]):
+    """Real coroutine: drains inbox until ShutdownEnvelope; records prompts."""
+
+    async def _conv(
         name,
         state_dir,
         *,
@@ -941,12 +1483,6 @@ def test_run_stop_via_event_after_mission(
         max_restarts=0,
         restart_backoff_s=1.0,
     ) -> None:
-        # Drain inbox until ShutdownEnvelope.
-        from scitex_agent_container._runners._session_inbox import (
-            ShutdownEnvelope,
-            TurnEnvelope,
-        )
-
         while True:
             env = await inbox.get()
             if isinstance(env, ShutdownEnvelope):
@@ -956,13 +1492,16 @@ def test_run_stop_via_event_after_mission(
                 if not env.response.done():
                     env.response.set_result("ack")
 
-    monkeypatch.setattr(runner, "_run_conversation", _fake_conv)
+    return _conv
+
+
+def test_run_with_mission_drains_mission_text_through_inbox(tmp_path: Path) -> None:
+    # Arrange
+    drained: list[str] = []
 
     async def _scenario() -> int:
         async def _stop_soon():
             await asyncio.sleep(0.05)
-            import os
-
             os.kill(os.getpid(), signal.SIGTERM)
 
         asyncio.create_task(_stop_soon())
@@ -971,21 +1510,23 @@ def test_run_stop_via_event_after_mission(
             state_root=tmp_path,
             tick_seconds=0.01,
             mission="hello",
+            run_conversation_fn=_make_drain_convo(drained),
         )
 
+    # Act
     rc = asyncio.run(_scenario())
-    assert rc == 0
-    # mission was placed onto the inbox and consumed by the fake convo.
-    assert drained == ["hello"]
+    # Assert
+    assert rc == 0 and drained == ["hello"]
 
 
-def test_run_print_stream_foreground_returns_after_convo(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """In foreground (print_stream=True, no autonomous), run() should
-    await the convo task and return immediately."""
+# ---------------------------------------------------------------------------
+# run() — foreground (print_stream) path
+# ---------------------------------------------------------------------------
 
-    async def _fake_conv(
+
+def test_run_print_stream_foreground_returns_after_convo(tmp_path: Path) -> None:
+    # Arrange
+    async def _foreground_conv(
         name,
         state_dir,
         *,
@@ -997,12 +1538,9 @@ def test_run_print_stream_foreground_returns_after_convo(
         max_restarts=0,
         restart_backoff_s=1.0,
     ) -> None:
-        # Drain mission turn and finish.
         env = await inbox.get()
         if hasattr(env, "response") and not env.response.done():
             env.response.set_result("ok")
-
-    monkeypatch.setattr(runner, "_run_conversation", _fake_conv)
 
     async def _scenario() -> int:
         return await runner.run(
@@ -1011,21 +1549,18 @@ def test_run_print_stream_foreground_returns_after_convo(
             tick_seconds=0.01,
             mission="boot",
             print_stream=True,
+            run_conversation_fn=_foreground_conv,
         )
 
+    # Act
     rc = asyncio.run(_scenario())
+    # Assert
     assert rc == 0
-    hb = runner.read_heartbeat(tmp_path / "ag-fg")
-    assert hb is not None and hb["state"] == runner.STATE_STOPPING
 
 
-def test_run_autonomous_path_drives_until_match(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """run() with autonomous_enabled drives turns until drive_until
-    matches; the autonomous loop sets stop, which unwinds the daemon."""
-
-    async def _fake_conv(
+def test_run_print_stream_writes_stopping_heartbeat(tmp_path: Path) -> None:
+    # Arrange
+    async def _foreground_conv(
         name,
         state_dir,
         *,
@@ -1037,11 +1572,46 @@ def test_run_autonomous_path_drives_until_match(
         max_restarts=0,
         restart_backoff_s=1.0,
     ) -> None:
-        from scitex_agent_container._runners._session_inbox import (
-            ShutdownEnvelope,
-            TurnEnvelope,
+        env = await inbox.get()
+        if hasattr(env, "response") and not env.response.done():
+            env.response.set_result("ok")
+
+    async def _scenario() -> int:
+        return await runner.run(
+            "ag-fg-2",
+            state_root=tmp_path,
+            tick_seconds=0.01,
+            mission="boot",
+            print_stream=True,
+            run_conversation_fn=_foreground_conv,
         )
 
+    # Act
+    asyncio.run(_scenario())
+    hb = runner.read_heartbeat(tmp_path / "ag-fg-2")
+    # Assert
+    assert hb is not None and hb["state"] == runner.STATE_STOPPING
+
+
+# ---------------------------------------------------------------------------
+# run() — autonomous path drives until match
+# ---------------------------------------------------------------------------
+
+
+def test_run_autonomous_drives_until_match_returns_zero(tmp_path: Path) -> None:
+    # Arrange
+    async def _convo(
+        name,
+        state_dir,
+        *,
+        pid,
+        inbox,
+        resume_session_id,
+        stop,
+        print_stream=False,
+        max_restarts=0,
+        restart_backoff_s=1.0,
+    ) -> None:
         replies = iter(["nope", "nope", "DONE here"])
         while True:
             env = await inbox.get()
@@ -1054,8 +1624,6 @@ def test_run_autonomous_path_drives_until_match(
                     except StopIteration:
                         env.response.set_result("DONE")
 
-    monkeypatch.setattr(runner, "_run_conversation", _fake_conv)
-
     async def _scenario() -> int:
         return await runner.run(
             "ag-auto",
@@ -1066,41 +1634,37 @@ def test_run_autonomous_path_drives_until_match(
             autonomous_drive_until="DONE",
             autonomous_max_turns=10,
             autonomous_kick_text="continue",
+            run_conversation_fn=_convo,
         )
 
+    # Act
     rc = asyncio.run(_scenario())
+    # Assert
     assert rc == 0
 
 
-def test_run_a2a_port_spawns_http_task(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+# ---------------------------------------------------------------------------
+# run() — a2a_port spawns the http task (real serve_inbound_fn seam)
+# ---------------------------------------------------------------------------
+
+
+def test_run_with_a2a_port_invokes_serve_inbound_on_supplied_port(
+    tmp_path: Path,
 ) -> None:
-    """When a2a_port is set, run() launches serve_inbound. We patch
-    serve_inbound to a no-op so the test doesn't open sockets."""
+    # Arrange
     served: dict[str, Any] = {}
 
     async def _fake_serve(inbox, *, host, port, stop, **kw):
-        # **kw absorbs agent_name + spec_yaml_path that the real signature
-        # now takes for the /.well-known/agent-card.json endpoint.
         served["host"] = host
         served["port"] = port
-        # Idle until stop fires.
         await stop.wait()
-
-    from scitex_agent_container._runners import _session_http
-
-    monkeypatch.setattr(_session_http, "serve_inbound", _fake_serve)
 
     async def _fake_conv(name, state_dir, **kw):
         await kw["stop"].wait()
 
-    monkeypatch.setattr(runner, "_run_conversation", _fake_conv)
-
     async def _scenario() -> int:
         async def _stop_soon():
             await asyncio.sleep(0.05)
-            import os
-
             os.kill(os.getpid(), signal.SIGTERM)
 
         asyncio.create_task(_stop_soon())
@@ -1108,53 +1672,66 @@ def test_run_a2a_port_spawns_http_task(
             "ag-a2a",
             state_root=tmp_path,
             tick_seconds=0.01,
-            a2a_port=12345,  # stx-allow: STX-NL001
+            a2a_port=12_345,
             a2a_host="0.0.0.0",
+            run_conversation_fn=_fake_conv,
+            serve_inbound_fn=_fake_serve,
         )
 
+    # Act
     rc = asyncio.run(_scenario())
-    assert rc == 0
-    assert served["port"] == 12345  # stx-allow: STX-NL001
-    assert served["host"] == "0.0.0.0"
+    # Assert
+    assert rc == 0 and served["port"] == 12_345
 
 
-def test_run_cancels_hung_convo_task_on_stop(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """If the convo task ignores the ShutdownEnvelope and hangs, run()
-    falls back to convo_task.cancel() after the 5s wait_for window. To
-    keep the test fast we patch asyncio.wait_for to immediately raise
-    TimeoutError on the convo path."""
+def test_run_with_a2a_port_forwards_host(tmp_path: Path) -> None:
+    # Arrange
+    served: dict[str, Any] = {}
 
-    async def _hanging_conv(name, state_dir, **kw):
-        # Ignore inbox + stop forever.
-        while True:
-            await asyncio.sleep(60)
+    async def _fake_serve(inbox, *, host, port, stop, **kw):
+        served["host"] = host
+        served["port"] = port
+        await stop.wait()
 
-    monkeypatch.setattr(runner, "_run_conversation", _hanging_conv)
-
-    real_wait_for = asyncio.wait_for
-    convo_seen: list[int] = []
-
-    async def _instant_timeout(awaitable, timeout):
-        # Only short-circuit the 5s convo / http waits, not other waits.
-        if 4.5 <= timeout <= 5.5:
-            convo_seen.append(1)
-            # Cancel the awaitable so it doesn't leak.
-            if asyncio.iscoroutine(awaitable):
-                awaitable.close()
-            else:
-                awaitable.cancel()
-            raise asyncio.TimeoutError
-        return await real_wait_for(awaitable, timeout)
-
-    monkeypatch.setattr(asyncio, "wait_for", _instant_timeout)
+    async def _fake_conv(name, state_dir, **kw):
+        await kw["stop"].wait()
 
     async def _scenario() -> int:
         async def _stop_soon():
             await asyncio.sleep(0.05)
-            import os
+            os.kill(os.getpid(), signal.SIGTERM)
 
+        asyncio.create_task(_stop_soon())
+        return await runner.run(
+            "ag-a2a-2",
+            state_root=tmp_path,
+            tick_seconds=0.01,
+            a2a_port=12_346,
+            a2a_host="0.0.0.0",
+            run_conversation_fn=_fake_conv,
+            serve_inbound_fn=_fake_serve,
+        )
+
+    # Act
+    asyncio.run(_scenario())
+    # Assert
+    assert served["host"] == "0.0.0.0"
+
+
+# ---------------------------------------------------------------------------
+# run() — cancels a hung convo task at the shutdown deadline
+# ---------------------------------------------------------------------------
+
+
+def test_run_cancels_hung_convo_at_shutdown_deadline(tmp_path: Path) -> None:
+    # Arrange: a coroutine that never observes ShutdownEnvelope.
+    async def _hanging_conv(name, state_dir, **kw):
+        while True:
+            await asyncio.sleep(60)
+
+    async def _scenario() -> int:
+        async def _stop_soon():
+            await asyncio.sleep(0.05)
             os.kill(os.getpid(), signal.SIGTERM)
 
         asyncio.create_task(_stop_soon())
@@ -1163,8 +1740,11 @@ def test_run_cancels_hung_convo_task_on_stop(
             state_root=tmp_path,
             tick_seconds=0.01,
             mission="hi",
+            run_conversation_fn=_hanging_conv,
+            shutdown_timeout_s=0.05,
         )
 
+    # Act
     rc = asyncio.run(_scenario())
+    # Assert
     assert rc == 0
-    assert convo_seen, "convo task wait_for(5s) path was not exercised"

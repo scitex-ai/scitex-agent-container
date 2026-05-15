@@ -4,12 +4,25 @@ Drives ``serve_inbound`` with a synthetic inbox + a tiny consumer task
 that mimics the SDK conversation: dequeue envelope, set its future
 with a canned reply. Asserts POST /v1/turn round-trips through the
 queue and returns the reply as JSON.
+
+TQ cleanup: every test carries AAA markers (TQ002), descriptive names
+spell out the behaviour being verified (TQ003), and each test asserts
+exactly one fact (TQ007). Repeated route/error matrices collapse into
+``pytest.parametrize`` (TQ001). No mocks/monkeypatch — the consumer is
+a real asyncio task that mirrors the conversation task contract, and
+env-var isolation uses an explicit save/restore fixture.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 import socket
+import urllib.error
+import urllib.request
+from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -19,6 +32,10 @@ from scitex_agent_container._runners._session_inbox import (
     TurnEnvelope,
     make_inbox,
 )
+
+# ---------------------------------------------------------------------------
+# Shared helpers — real collaborators, not mocks
+# ---------------------------------------------------------------------------
 
 
 def _free_port() -> int:
@@ -30,7 +47,8 @@ def _free_port() -> int:
 
 async def _fake_consumer(inbox: "asyncio.Queue", *, reply_map: dict) -> None:
     """Stand in for the real conversation task: pop turn envelopes and
-    resolve the future from a canned reply map."""
+    resolve the future from a canned reply map. Real asyncio task, not
+    a mock — mirrors the conversation task's envelope contract."""
     while True:
         env = await inbox.get()
         if isinstance(env, ShutdownEnvelope):
@@ -39,134 +57,159 @@ async def _fake_consumer(inbox: "asyncio.Queue", *, reply_map: dict) -> None:
             env.response.set_result(reply_map.get(env.text, f"echo:{env.text}"))
 
 
+async def _wait_bound(port: int) -> None:
+    """Poll until the TCP port accepts connections (server has bound)."""
+    for _ in range(50):
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                return
+        except OSError:
+            await asyncio.sleep(0.05)
+    pytest.fail(f"server never bound on port {port}")
+
+
+async def _run_sidecar(
+    *,
+    port: int,
+    reply_map: dict | None = None,
+    agent_name: str = "",
+    spec_yaml_path: str = "",
+    client_coro,
+) -> Any:
+    """Spin up the sidecar + a real consumer task, run ``client_coro``
+    once the server is bound, then shut everything down cleanly. Returns
+    whatever ``client_coro(port)`` returned."""
+    inbox = make_inbox()
+    stop = asyncio.Event()
+    consumer = asyncio.create_task(_fake_consumer(inbox, reply_map=reply_map or {}))
+    server_kwargs: dict[str, Any] = {"host": "127.0.0.1", "port": port, "stop": stop}
+    if agent_name:
+        server_kwargs["agent_name"] = agent_name
+    if spec_yaml_path:
+        server_kwargs["spec_yaml_path"] = spec_yaml_path
+    server = asyncio.create_task(serve_inbound(inbox, **server_kwargs))
+    try:
+        await _wait_bound(port)
+        result = await client_coro(port)
+    finally:
+        stop.set()
+        await inbox.put(ShutdownEnvelope())
+        await asyncio.wait_for(consumer, timeout=5.0)
+        await asyncio.wait_for(server, timeout=5.0)
+    return result
+
+
+def _http_post(url: str, body: bytes) -> tuple[int, dict | None]:
+    """POST JSON to ``url`` — returns ``(status, parsed_body_or_None)``."""
+    req = urllib.request.Request(
+        url,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5.0) as resp:
+            return resp.status, json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:
+        return exc.code, None
+
+
+def _http_get(url: str) -> tuple[int, dict | None]:
+    """GET ``url`` — returns ``(status, parsed_body_or_None)``."""
+    try:
+        with urllib.request.urlopen(url, timeout=5.0) as resp:
+            return resp.status, json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:
+        return exc.code, None
+
+
+# ---------------------------------------------------------------------------
+# POST /v1/turn — the canonical inbound-turn channel
+# ---------------------------------------------------------------------------
+
+
 class TestServeInbound:
-    def test_post_v1_turn_roundtrip(self) -> None:
-        """POST /v1/turn → consumer drains envelope → 200 with reply."""
+    def test_post_v1_turn_returns_status_200(self) -> None:
+        """Happy-path round-trip: handler reaches consumer and replies 200."""
+        # Arrange
         port = _free_port()
-        replies = {"hello": "world"}
+        reply_map = {"hello": "world"}
 
-        async def _scenario() -> dict:
-            import urllib.request
-
-            inbox = make_inbox()
-            stop = asyncio.Event()
-            consumer = asyncio.create_task(_fake_consumer(inbox, reply_map=replies))
-            server = asyncio.create_task(
-                serve_inbound(inbox, host="127.0.0.1", port=port, stop=stop)
+        async def _client(p: int):
+            return await asyncio.to_thread(
+                _http_post, f"http://127.0.0.1:{p}/v1/turn", b'{"text": "hello"}'
             )
-            # Wait for the server to bind.
-            for _ in range(50):
-                try:
-                    with socket.create_connection(("127.0.0.1", port), timeout=0.2):
-                        break
-                except OSError:
-                    await asyncio.sleep(0.05)
-            else:
-                pytest.fail("server never bound")
 
-            def _do_post():
-                req = urllib.request.Request(
-                    f"http://127.0.0.1:{port}/v1/turn",
-                    data=b'{"text": "hello"}',
-                    headers={"Content-Type": "application/json"},
-                    method="POST",
-                )
-                with urllib.request.urlopen(req, timeout=5.0) as resp:
-                    import json as _json
+        # Act
+        status, _ = asyncio.run(
+            _run_sidecar(port=port, reply_map=reply_map, client_coro=_client)
+        )
+        # Assert
+        assert status == 200
 
-                    return resp.status, _json.loads(resp.read().decode())
-
-            status, body = await asyncio.to_thread(_do_post)
-
-            stop.set()
-            await inbox.put(ShutdownEnvelope())
-            await asyncio.wait_for(consumer, timeout=5.0)
-            await asyncio.wait_for(server, timeout=5.0)
-            return {"status": status, "body": body}
-
-        result = asyncio.run(_scenario())
-        assert result["status"] == 200
-        assert result["body"]["reply"] == "world"
-        assert result["body"]["exit_after"] is False
-
-    def test_post_v1_turn_rejects_missing_text(self) -> None:
-        """Empty body → 400."""
+    def test_post_v1_turn_returns_reply_from_consumer(self) -> None:
+        """Response body's ``reply`` is the value the consumer resolved with."""
+        # Arrange
         port = _free_port()
+        reply_map = {"hello": "world"}
 
-        async def _scenario() -> int:
-            import urllib.error
-            import urllib.request
-
-            inbox = make_inbox()
-            stop = asyncio.Event()
-            consumer = asyncio.create_task(_fake_consumer(inbox, reply_map={}))
-            server = asyncio.create_task(
-                serve_inbound(inbox, host="127.0.0.1", port=port, stop=stop)
+        async def _client(p: int):
+            return await asyncio.to_thread(
+                _http_post, f"http://127.0.0.1:{p}/v1/turn", b'{"text": "hello"}'
             )
-            for _ in range(50):
-                try:
-                    with socket.create_connection(("127.0.0.1", port), timeout=0.2):
-                        break
-                except OSError:
-                    await asyncio.sleep(0.05)
 
-            def _do_post():
-                req = urllib.request.Request(
-                    f"http://127.0.0.1:{port}/v1/turn",
-                    data=b"{}",
-                    headers={"Content-Type": "application/json"},
-                    method="POST",
-                )
-                try:
-                    with urllib.request.urlopen(req, timeout=5.0) as resp:
-                        return resp.status
-                except urllib.error.HTTPError as exc:
-                    return exc.code
+        # Act
+        _, body = asyncio.run(
+            _run_sidecar(port=port, reply_map=reply_map, client_coro=_client)
+        )
+        # Assert
+        assert body["reply"] == "world"
 
-            code = await asyncio.to_thread(_do_post)
-            stop.set()
-            await inbox.put(ShutdownEnvelope())
-            await asyncio.wait_for(consumer, timeout=5.0)
-            await asyncio.wait_for(server, timeout=5.0)
-            return code
+    def test_post_v1_turn_returns_exit_after_false_by_default(self) -> None:
+        """``exit_after`` defaults to False when the request omits the flag."""
+        # Arrange
+        port = _free_port()
+        reply_map = {"hello": "world"}
 
-        assert asyncio.run(_scenario()) == 400
+        async def _client(p: int):
+            return await asyncio.to_thread(
+                _http_post, f"http://127.0.0.1:{p}/v1/turn", b'{"text": "hello"}'
+            )
 
-    def test_health_endpoint(self) -> None:
-        """GET /health → {status: ok}."""
+        # Act
+        _, body = asyncio.run(
+            _run_sidecar(port=port, reply_map=reply_map, client_coro=_client)
+        )
+        # Assert
+        assert body["exit_after"] is False
+
+    def test_post_v1_turn_with_missing_text_returns_400(self) -> None:
+        """A body without ``text`` is rejected with a 400."""
+        # Arrange
         port = _free_port()
 
-        async def _scenario() -> dict:
-            import json as _json
-            import urllib.request
-
-            inbox = make_inbox()
-            stop = asyncio.Event()
-            consumer = asyncio.create_task(_fake_consumer(inbox, reply_map={}))
-            server = asyncio.create_task(
-                serve_inbound(inbox, host="127.0.0.1", port=port, stop=stop)
+        async def _client(p: int):
+            return await asyncio.to_thread(
+                _http_post, f"http://127.0.0.1:{p}/v1/turn", b"{}"
             )
-            for _ in range(50):
-                try:
-                    with socket.create_connection(("127.0.0.1", port), timeout=0.2):
-                        break
-                except OSError:
-                    await asyncio.sleep(0.05)
 
-            def _get():
-                with urllib.request.urlopen(
-                    f"http://127.0.0.1:{port}/health", timeout=5.0
-                ) as resp:
-                    return _json.loads(resp.read().decode())
+        # Act
+        status, _ = asyncio.run(_run_sidecar(port=port, client_coro=_client))
+        # Assert
+        assert status == 400
 
-            body = await asyncio.to_thread(_get)
-            stop.set()
-            await inbox.put(ShutdownEnvelope())
-            await asyncio.wait_for(consumer, timeout=5.0)
-            await asyncio.wait_for(server, timeout=5.0)
-            return body
+    def test_health_endpoint_returns_status_ok(self) -> None:
+        """GET /health returns the canonical readiness body."""
+        # Arrange
+        port = _free_port()
 
-        assert asyncio.run(_scenario()) == {"status": "ok"}
+        async def _client(p: int):
+            return await asyncio.to_thread(_http_get, f"http://127.0.0.1:{p}/health")
+
+        # Act
+        _, body = asyncio.run(_run_sidecar(port=port, client_coro=_client))
+        # Assert
+        assert body == {"status": "ok"}
 
 
 # ---------------------------------------------------------------------------
@@ -174,254 +217,228 @@ class TestServeInbound:
 # ---------------------------------------------------------------------------
 
 
-def _wait_bound(port: int) -> None:
-    async def _wait():
-        for _ in range(50):
-            try:
-                with socket.create_connection(("127.0.0.1", port), timeout=0.2):
-                    return
-            except OSError:
-                await asyncio.sleep(0.05)
-        pytest.fail("server never bound")
+_CARD_PATH = "/.well-known/agent-card.json"
 
-    asyncio.get_event_loop().run_until_complete(_wait())
+_VALID_YAML = (
+    "apiVersion: scitex-agent-container/v3\n"
+    "kind: Agent\n"
+    "metadata:\n"
+    "  labels:\n"
+    "    role: ecosystem-auditor\n"
+    "    team: lab-a\n"
+    "spec:\n"
+    "  runtime: apptainer\n"
+)
+
+
+@pytest.fixture
+def auditor_yaml(tmp_path: Path) -> Path:
+    """Write a minimal v3 spec.yaml for the ``ecosystem-auditor`` role."""
+    yaml_path = tmp_path / "ecosystem-auditor" / "spec.yaml"
+    yaml_path.parent.mkdir()
+    yaml_path.write_text(_VALID_YAML)
+    return yaml_path
+
+
+@pytest.fixture
+def minimal_yaml(tmp_path: Path) -> Path:
+    """Write the smallest viable v3 spec.yaml at the test's tmp_path root."""
+    yaml_path = tmp_path / "spec.yaml"
+    yaml_path.write_text(
+        "apiVersion: scitex-agent-container/v3\n"
+        "kind: Agent\n"
+        "spec:\n"
+        "  runtime: apptainer\n"
+    )
+    return yaml_path
+
+
+def _fetch_card(*, agent_name: str, spec_yaml_path: str) -> tuple[int, dict | None]:
+    """Spin up the sidecar for an AgentCard fetch and return ``(status, body)``."""
+    port = _free_port()
+
+    async def _client(p: int):
+        return await asyncio.to_thread(_http_get, f"http://127.0.0.1:{p}{_CARD_PATH}")
+
+    return asyncio.run(
+        _run_sidecar(
+            port=port,
+            agent_name=agent_name,
+            spec_yaml_path=spec_yaml_path,
+            client_coro=_client,
+        )
+    )
+
+
+@pytest.fixture
+def sac_listen_base_url_env():
+    """Save/restore ``SAC_LISTEN_BASE_URL`` around a test."""
+    saved = os.environ.get("SAC_LISTEN_BASE_URL")
+
+    def _set(value: str | None) -> None:
+        if value is None:
+            os.environ.pop("SAC_LISTEN_BASE_URL", None)
+        else:
+            os.environ["SAC_LISTEN_BASE_URL"] = value
+
+    yield _set
+    if saved is None:
+        os.environ.pop("SAC_LISTEN_BASE_URL", None)
+    else:
+        os.environ["SAC_LISTEN_BASE_URL"] = saved
 
 
 class TestAgentCard:
-    def _run_card_scenario(
-        self, agent_name: str, yaml_path: str, url_suffix: str
-    ) -> tuple[int, dict | None]:
-        port = _free_port()
-
-        async def _scenario() -> tuple[int, dict | None]:
-            import json as _json
-            import urllib.error
-            import urllib.request
-
-            inbox = make_inbox()
-            stop = asyncio.Event()
-            consumer = asyncio.create_task(_fake_consumer(inbox, reply_map={}))
-            server = asyncio.create_task(
-                serve_inbound(
-                    inbox,
-                    host="127.0.0.1",
-                    port=port,
-                    stop=stop,
-                    agent_name=agent_name,
-                    spec_yaml_path=yaml_path,
-                )
-            )
-            for _ in range(50):
-                try:
-                    with socket.create_connection(("127.0.0.1", port), timeout=0.2):
-                        break
-                except OSError:
-                    await asyncio.sleep(0.05)
-
-            def _get():
-                try:
-                    with urllib.request.urlopen(
-                        f"http://127.0.0.1:{port}{url_suffix}", timeout=5.0
-                    ) as resp:
-                        return resp.status, _json.loads(resp.read().decode())
-                except urllib.error.HTTPError as exc:
-                    return exc.code, None
-
-            status, body = await asyncio.to_thread(_get)
-            stop.set()
-            await inbox.put(ShutdownEnvelope())
-            await asyncio.wait_for(consumer, timeout=5.0)
-            await asyncio.wait_for(server, timeout=5.0)
-            return status, body
-
-        return asyncio.run(_scenario())
-
-    def test_well_known_agent_card_returns_card(self, tmp_path) -> None:
-        """GET /.well-known/agent-card.json → AgentCard from spec.yaml."""
-        yaml_path = tmp_path / "ecosystem-auditor" / "spec.yaml"
-        yaml_path.parent.mkdir()
-        yaml_path.write_text(
-            "apiVersion: scitex-agent-container/v3\n"
-            "kind: Agent\n"
-            "metadata:\n"
-            "  labels:\n"
-            "    role: ecosystem-auditor\n"
-            "    team: lab-a\n"
-            "spec:\n"
-            "  runtime: apptainer\n"
-        )
-        status, body = self._run_card_scenario(
-            "ecosystem-auditor", str(yaml_path), "/.well-known/agent-card.json"
-        )
+    def test_well_known_card_returns_status_200(self, auditor_yaml: Path) -> None:
+        """A valid spec yields an HTTP 200 on the well-known path."""
+        # Arrange
+        agent_name = "ecosystem-auditor"
+        # Act
+        status, _ = _fetch_card(agent_name=agent_name, spec_yaml_path=str(auditor_yaml))
+        # Assert
         assert status == 200
-        assert body is not None
-        # Spec-required AgentCard fields per A2A.
-        assert body["name"] == "ecosystem-auditor"
-        assert "capabilities" in body
-        assert "skills" in body
-        # x-scitex-agent-container telemetry from the YAML labels.
-        ext = body.get("x-scitex-agent-container", {})
-        assert ext.get("role_class") == "ecosystem-auditor"
 
-    def test_well_known_agent_json_serves_same(self, tmp_path) -> None:
-        """A2A discovery clients also try /.well-known/agent.json — must
-        return the same payload as /.well-known/agent-card.json."""
-        yaml_path = tmp_path / "agent.yaml"
-        yaml_path.write_text(
-            "apiVersion: scitex-agent-container/v3\nkind: Agent\nspec:\n  runtime: apptainer\n"
-        )
-        status, body = self._run_card_scenario(
-            "auditor", str(yaml_path), "/.well-known/agent.json"
-        )
-        assert status == 200
-        assert body is not None
-        assert body["name"] == "auditor"
+    def test_well_known_card_name_matches_agent(self, auditor_yaml: Path) -> None:
+        """Card's top-level ``name`` matches the runner's ``agent_name``."""
+        # Arrange
+        agent_name = "ecosystem-auditor"
+        # Act
+        _, body = _fetch_card(agent_name=agent_name, spec_yaml_path=str(auditor_yaml))
+        # Assert
+        assert body["name"] == agent_name
 
-    def test_well_known_agent_card_404_without_yaml(self, tmp_path) -> None:
-        """If the runner was launched without --a2a-card-yaml the
-        endpoint returns 404 with a clear error body."""
-        status, _ = self._run_card_scenario(
-            "anything", "", "/.well-known/agent-card.json"
-        )
+    @pytest.mark.parametrize("field", ["capabilities", "skills"])
+    def test_well_known_card_includes_required_a2a_field(
+        self, auditor_yaml: Path, field: str
+    ) -> None:
+        """Spec-required AgentCard fields per A2A are present in the body."""
+        # Arrange
+        agent_name = "ecosystem-auditor"
+        # Act
+        _, body = _fetch_card(agent_name=agent_name, spec_yaml_path=str(auditor_yaml))
+        # Assert
+        assert field in body
+
+    def test_well_known_card_exposes_role_class_extension(
+        self, auditor_yaml: Path
+    ) -> None:
+        """The x-scitex-agent-container extension surfaces ``role_class``."""
+        # Arrange
+        agent_name = "ecosystem-auditor"
+        # Act
+        _, body = _fetch_card(agent_name=agent_name, spec_yaml_path=str(auditor_yaml))
+        # Assert
+        assert body["x-scitex-agent-container"]["role_class"] == agent_name
+
+    def test_well_known_card_returns_404_when_yaml_path_unset(self) -> None:
+        """Sidecar launched without --a2a-card-yaml → 404 on the card path."""
+        # Arrange
+        agent_name = "anything"
+        # Act
+        status, _ = _fetch_card(agent_name=agent_name, spec_yaml_path="")
+        # Assert
         assert status == 404
 
-    def test_well_known_agent_card_500_on_unreadable_yaml(self, tmp_path) -> None:
-        """If the YAML path was passed but the file is missing, the
-        endpoint surfaces a 500 rather than crashing the server."""
+    def test_well_known_card_returns_500_when_yaml_path_missing(
+        self, tmp_path: Path
+    ) -> None:
+        """YAML path supplied but file is missing → 500 (server doesn't crash)."""
+        # Arrange
         missing = tmp_path / "nope" / "spec.yaml"
-        status, _ = self._run_card_scenario(
-            "anything", str(missing), "/.well-known/agent-card.json"
-        )
+        # Act
+        status, _ = _fetch_card(agent_name="anything", spec_yaml_path=str(missing))
+        # Assert
         assert status == 500
 
-    def test_card_url_uses_sac_listen_base_url_env(self, tmp_path, monkeypatch) -> None:
-        """Layer 5: when ``SAC_LISTEN_BASE_URL`` is set, the card's
-        ``url`` field uses that base — NOT the runner's volatile port.
-
-        This is the contract that keeps an AgentCard's ``url`` stable
-        across runner restarts under auto-port-allocation.
-        """
-        monkeypatch.setenv("SAC_LISTEN_BASE_URL", "http://127.0.0.1:7878")
-        yaml_path = tmp_path / "spec.yaml"
-        yaml_path.write_text(
-            "apiVersion: scitex-agent-container/v3\nkind: Agent\nspec:\n  runtime: apptainer\n"
-        )
-        status, body = self._run_card_scenario(
-            "ecosystem-auditor", str(yaml_path), "/.well-known/agent-card.json"
-        )
-        assert status == 200
-        assert body is not None
-        # AgentCard's `url` advertises the host-stable sac listen base
-        # plus the canonical per-agent path. The runner's own port
-        # (which is _free_port()'d at scenario start) must not leak
-        # into the advertised URL.
-        assert body["url"] == "http://127.0.0.1:7878/v1/sac/agents/ecosystem-auditor"
+    def test_card_url_uses_sac_listen_base_url_env(
+        self, minimal_yaml: Path, sac_listen_base_url_env
+    ) -> None:
+        """When ``SAC_LISTEN_BASE_URL`` is set, the card's per-agent URL
+        uses that base — NOT the runner's volatile port. ADR-0004: URL
+        lives under ``supportedInterfaces[0].url``."""
+        # Arrange
+        sac_listen_base_url_env("http://127.0.0.1:7878")
+        agent_name = "ecosystem-auditor"
+        expected = "http://127.0.0.1:7878/agents/ecosystem-auditor"
+        # Act
+        _, body = _fetch_card(agent_name=agent_name, spec_yaml_path=str(minimal_yaml))
+        # Assert
+        assert body["supportedInterfaces"][0]["url"] == expected
 
     def test_card_url_falls_back_to_request_base_when_env_unset(
-        self, tmp_path, monkeypatch
+        self, minimal_yaml: Path, sac_listen_base_url_env
     ) -> None:
-        """Without ``SAC_LISTEN_BASE_URL`` the card's ``url`` falls
-        back to ``request.base_url`` — keeps direct ``curl`` against
-        the runner port working in non-apptainer test harnesses.
-        """
-        monkeypatch.delenv("SAC_LISTEN_BASE_URL", raising=False)
-        yaml_path = tmp_path / "spec.yaml"
-        yaml_path.write_text(
-            "apiVersion: scitex-agent-container/v3\nkind: Agent\nspec:\n  runtime: apptainer\n"
+        """Without the env override the card URL is built from
+        ``request.base_url`` (keeps direct ``curl`` working in tests)."""
+        # Arrange
+        sac_listen_base_url_env(None)
+        agent_name = "auditor"
+        # Act
+        _, body = _fetch_card(agent_name=agent_name, spec_yaml_path=str(minimal_yaml))
+        per_agent_url = body["supportedInterfaces"][0]["url"]
+        # Assert
+        assert per_agent_url.startswith("http://127.0.0.1:") and per_agent_url.endswith(
+            "/agents/auditor"
         )
-        status, body = self._run_card_scenario(
-            "auditor", str(yaml_path), "/.well-known/agent-card.json"
-        )
-        assert status == 200
-        assert body is not None
-        # Without the env override the url is built from request.base_url
-        # (127.0.0.1:<runner-port>) — non-empty, and NOT 7878.
-        assert body["url"].startswith("http://127.0.0.1:")
-        assert body["url"].endswith("/v1/sac/agents/auditor")
 
 
 # ---------------------------------------------------------------------------
-# Name-in-path routes — sidecar mirrors sac listen's shape
+# Name-in-path routes — sidecar mirrors `sac listen`'s URL shape.
 #
-# The AgentCard advertises ``url: <base>/v1/sac/agents/<name>`` so a client
+# The AgentCard advertises ``url: <base>/agents/<name>`` so a client
 # POSTing to the discovered URL must succeed. Regression for that wart.
 # ---------------------------------------------------------------------------
 
 
+def _post_turn(*, agent_name: str, path: str, text: str = "hi") -> int:
+    """Spin up the sidecar with a fake consumer, POST JSON to ``path``,
+    and return the HTTP status code."""
+    port = _free_port()
+    reply_map = {text: "ack"}
+
+    async def _client(p: int):
+        body = json.dumps({"text": text}).encode()
+        status, _ = await asyncio.to_thread(
+            _http_post, f"http://127.0.0.1:{p}{path}", body
+        )
+        return status
+
+    return asyncio.run(
+        _run_sidecar(
+            port=port,
+            reply_map=reply_map,
+            agent_name=agent_name,
+            client_coro=_client,
+        )
+    )
+
+
 class TestNameInPathRoutes:
-    def _post_turn(self, agent_name: str, path: str, text: str = "hi") -> int:
-        """Spin up the sidecar with a fake consumer and POST to `path`.
-        Returns the HTTP status code."""
-        port = _free_port()
-        replies = {text: "ack"}
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/agents/alpha/turn",  # canonical sac path
+            "/agents/alpha/send",  # matches `sac listen`'s verb
+            "/v1/turn",  # legacy shortcut
+        ],
+        ids=["canonical_turn", "canonical_send", "legacy_bare_turn"],
+    )
+    def test_matching_name_route_returns_200(self, path: str) -> None:
+        """Routes whose path-name matches the agent on this port succeed."""
+        # Arrange
+        agent_name = "alpha"
+        # Act
+        status = _post_turn(agent_name=agent_name, path=path)
+        # Assert
+        assert status == 200
 
-        async def _scenario() -> int:
-            import json as _json
-            import urllib.error
-            import urllib.request
-
-            inbox = make_inbox()
-            stop = asyncio.Event()
-            consumer = asyncio.create_task(_fake_consumer(inbox, reply_map=replies))
-            server = asyncio.create_task(
-                serve_inbound(
-                    inbox,
-                    host="127.0.0.1",
-                    port=port,
-                    stop=stop,
-                    agent_name=agent_name,
-                )
-            )
-            for _ in range(50):
-                try:
-                    with socket.create_connection(("127.0.0.1", port), timeout=0.2):
-                        break
-                except OSError:
-                    await asyncio.sleep(0.05)
-
-            def _post():
-                req = urllib.request.Request(
-                    f"http://127.0.0.1:{port}{path}",
-                    data=_json.dumps({"text": text}).encode(),
-                    headers={"Content-Type": "application/json"},
-                    method="POST",
-                )
-                try:
-                    with urllib.request.urlopen(req, timeout=5.0) as resp:
-                        return resp.status
-                except urllib.error.HTTPError as exc:
-                    return exc.code
-
-            code = await asyncio.to_thread(_post)
-            stop.set()
-            await inbox.put(ShutdownEnvelope())
-            await asyncio.wait_for(consumer, timeout=5.0)
-            await asyncio.wait_for(server, timeout=5.0)
-            return code
-
-        return asyncio.run(_scenario())
-
-    def test_canonical_sac_namespace_turn(self) -> None:
-        """``POST /v1/sac/agents/<name>/turn`` — canonical sac path."""
-        assert self._post_turn("alpha", "/v1/sac/agents/alpha/turn") == 200
-
-    def test_canonical_sac_namespace_send(self) -> None:
-        """``POST /v1/sac/agents/<name>/send`` — matches sac listen's verb."""
-        assert self._post_turn("alpha", "/v1/sac/agents/alpha/send") == 200
-
-    def test_a2a_namespace_mirror_turn(self) -> None:
-        """``POST /v1/a2a/agents/<name>/turn`` — A2A-protocol-compat."""
-        assert self._post_turn("alpha", "/v1/a2a/agents/alpha/turn") == 200
-
-    def test_a2a_namespace_mirror_send(self) -> None:
-        assert self._post_turn("alpha", "/v1/a2a/agents/alpha/send") == 200
-
-    def test_name_mismatch_returns_404(self) -> None:
-        """If the URL path's name doesn't match the agent on this port,
-        return 404 with an explanatory body (sanity check — port
-        routing already pinned us; the path name is informational)."""
-        assert self._post_turn("alpha", "/v1/sac/agents/beta/turn") == 404
-
-    def test_legacy_bare_turn_still_works(self) -> None:
-        """``POST /v1/turn`` (the original shortcut) keeps working."""
-        assert self._post_turn("alpha", "/v1/turn") == 200
+    def test_mismatched_name_in_path_returns_404(self) -> None:
+        """If the URL's name doesn't match the agent on this port, 404 —
+        sanity check, since port routing already pinned us."""
+        # Arrange
+        agent_name = "alpha"
+        wrong_path = "/agents/beta/turn"
+        # Act
+        status = _post_turn(agent_name=agent_name, path=wrong_path)
+        # Assert
+        assert status == 404

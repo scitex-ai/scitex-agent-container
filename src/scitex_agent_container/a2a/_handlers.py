@@ -31,10 +31,15 @@ from scitex_agent_container._env import getenv as _sac_env
 CLAUDE_TIMEOUT_S = float(_sac_env("A2A_CLAUDE_TIMEOUT_S", "25"))
 EXEC_TIMEOUT_S = float(_sac_env("A2A_EXEC_TIMEOUT_S", "25"))
 
-CLAUDE_DEFAULT_SYSTEM = (
-    "You are a brief responder. Reply to the user in one or two short "
-    "sentences. Do not run any tools, do not ask follow-up questions."
-)
+# sac does NOT inject a default system prompt. The agent's persona +
+# rules belong to the operator's yaml / `~/.claude/CLAUDE.md`, not to
+# this framework. Set `SAC_A2A_CLAUDE_SYSTEM` only if you explicitly
+# want sac to override the operator's prompt for the A2A turn path.
+#
+# Prior versions of this file hardcoded `"Do not run any tools"` in
+# the default — that silently neutered `spec.claude.channels:
+# [server:sac]` (tools registered, then refused). Removed wholesale:
+# no surprise prompts in production.
 
 
 class HandlerError(RuntimeError):
@@ -49,8 +54,10 @@ def handle_echo(agent_name: str, user_text: str) -> str:
 def handle_claude_cli(agent_name: str, user_text: str) -> str:
     """Run ``claude --print`` once with ``user_text``, return stdout."""
     claude_bin = _sac_env("A2A_CLAUDE_BIN", "claude")
-    system = _sac_env("A2A_CLAUDE_SYSTEM", CLAUDE_DEFAULT_SYSTEM)
-    cmd = [claude_bin, "--print", "--append-system-prompt", system]
+    system = _sac_env("A2A_CLAUDE_SYSTEM", "").strip()
+    cmd = [claude_bin, "--print"]
+    if system:
+        cmd.extend(["--append-system-prompt", system])
     model = _sac_env("A2A_CLAUDE_MODEL")
     if model:
         cmd.extend(["--model", model])
@@ -90,7 +97,14 @@ def _agent_mcp_servers_and_cwd(agent_name: str) -> tuple[dict, str | None]:
     return resolve_agent_workspace(agent_name)
 
 
-def handle_claude_session(agent_name: str, user_text: str) -> str:
+def handle_claude_session(
+    agent_name: str,
+    user_text: str,
+    *,
+    channels: list[str] | None = None,
+    a2a_port: int | None = None,
+    permission_mode: str | None = None,
+) -> str:
     """Drive Claude via ``claude-agent-sdk`` — no ``claude --print``.
 
     Same wire contract as :func:`handle_claude_cli` (sync ``(name, text)
@@ -108,8 +122,9 @@ def handle_claude_session(agent_name: str, user_text: str) -> str:
     Env knobs:
 
     * ``SAC_A2A_CLAUDE_MODEL`` — model id (default: SDK default).
-    * ``SAC_A2A_CLAUDE_SYSTEM`` — appended system prompt (default:
-      :data:`CLAUDE_DEFAULT_SYSTEM`).
+    * ``SAC_A2A_CLAUDE_SYSTEM`` — optional explicit override for the
+      A2A turn's system prompt. Unset by default; sac no longer
+      injects any framework-side prompt.
     * ``SAC_A2A_CLAUDE_TIMEOUT_S`` — per-call timeout in seconds
       (default 25; bump for prompts that read multiple files / call MCP).
 
@@ -138,13 +153,29 @@ def handle_claude_session(agent_name: str, user_text: str) -> str:
         build_sdk_options,
     )
 
-    system = _sac_env("A2A_CLAUDE_SYSTEM", CLAUDE_DEFAULT_SYSTEM)
+    # No framework-injected system prompt. Operators wanting an A2A-turn
+    # override can set SAC_A2A_CLAUDE_SYSTEM explicitly; otherwise we
+    # pass None and the agent uses its own configured persona.
+    system = _sac_env("A2A_CLAUDE_SYSTEM", "").strip() or None
     model = _sac_env("A2A_CLAUDE_MODEL")
+    # Forward `spec.claude.channels` + the agent's own A2A port so the
+    # sac MCP sidecar (auto-injected when `server:sac` is in channels)
+    # subscribes to THIS agent's inbox SSE at
+    # ``http://127.0.0.1:<a2a_port>/agents/<name>/inbox/stream``.
+    sdk_extra: dict | None = None
+    if channels or a2a_port is not None:
+        sdk_extra = {}
+        if channels:
+            sdk_extra["_channels"] = list(channels)
+        if a2a_port is not None:
+            sdk_extra["_a2a_port"] = int(a2a_port)
     try:
         options = build_sdk_options(
             agent_name,
             system_prompt=system,
             model=model,
+            permission_mode=permission_mode,
+            extra=sdk_extra,
         )
     except SDKCommonError as exc:
         raise HandlerError(str(exc)) from exc

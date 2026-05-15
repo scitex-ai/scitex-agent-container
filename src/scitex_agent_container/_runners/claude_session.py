@@ -110,10 +110,17 @@ __all__ += ["_drain_failed_inbox", "_safe_repr", "_run_conversation"]
 
 # Backwards-compat shim: tests + agent_meta call ``runner._build_event_log_hooks``
 # directly. Re-route to the new home so the rename doesn't break them.
-def _build_event_log_hooks(agent_name: str, hook_matcher_cls: Any) -> dict:
+def _build_event_log_hooks(
+    agent_name: str,
+    hook_matcher_cls: Any,
+    *,
+    event_log_root: Any | None = None,
+) -> dict:
     from ._session_hooks import build_event_log_hooks
 
-    return build_event_log_hooks(agent_name, hook_matcher_cls)
+    return build_event_log_hooks(
+        agent_name, hook_matcher_cls, event_log_root=event_log_root
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +186,9 @@ async def run(
     autonomous_kick_text: str = "Continue. Print DONE when finished.",
     max_restarts: int = 0,
     restart_backoff_s: float = 1.0,
+    run_conversation_fn: Any | None = None,
+    serve_inbound_fn: Any | None = None,
+    shutdown_timeout_s: float = 5.0,
 ) -> int:
     """Run the daemon loop until SIGTERM / SIGINT.
 
@@ -225,10 +235,13 @@ async def run(
     http_task: asyncio.Task | None = None
 
     if a2a_port is not None:
-        from ._session_http import serve_inbound
+        if serve_inbound_fn is None:
+            from ._session_http import (
+                serve_inbound as serve_inbound_fn,  # type: ignore[no-redef]
+            )
 
         http_task = asyncio.create_task(
-            serve_inbound(
+            serve_inbound_fn(
                 inbox,
                 host=a2a_host,
                 port=a2a_port,
@@ -253,8 +266,13 @@ async def run(
                 exit_after=print_stream,
             )
             await inbox.put(mission_env)
+        _convo_fn = (
+            run_conversation_fn
+            if run_conversation_fn is not None
+            else _run_conversation
+        )
         convo_task = asyncio.create_task(
-            _run_conversation(
+            _convo_fn(
                 name,
                 state_dir,
                 pid=pid,
@@ -309,7 +327,7 @@ async def run(
         if convo_task is not None and not convo_task.done():
             await inbox.put(ShutdownEnvelope())
             try:
-                await asyncio.wait_for(convo_task, timeout=5.0)
+                await asyncio.wait_for(convo_task, timeout=shutdown_timeout_s)
             except (
                 asyncio.TimeoutError,
                 asyncio.CancelledError,
@@ -324,7 +342,7 @@ async def run(
                     pass
         if http_task is not None and not http_task.done():
             try:
-                await asyncio.wait_for(http_task, timeout=5.0)
+                await asyncio.wait_for(http_task, timeout=shutdown_timeout_s)
             except (
                 asyncio.TimeoutError,
                 asyncio.CancelledError,

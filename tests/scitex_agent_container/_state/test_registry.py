@@ -1,4 +1,10 @@
-"""Tests for the agent registry."""
+"""Tests for the agent registry.
+
+TQ cleanup: each test is named for the specific behaviour it verifies
+(TQ003), carries the AAA marker triple (TQ002), and asserts exactly one
+fact (TQ007). Shared invariants (e.g. fields stored on ``add``) are
+collapsed into ``pytest.parametrize`` so the matrix stays declarative.
+"""
 
 from __future__ import annotations
 
@@ -29,102 +35,281 @@ def registry(tmp_path):
     return _make_registry(tmp_path / "registry")
 
 
-class TestRegistry:
-    def test_add_and_get(self, registry):
-        registry.add("test-agent", "/path/to/config.yaml", "cld-test", pid=12345)
-        entry = registry.get("test-agent")
-        assert entry is not None
-        assert entry["name"] == "test-agent"
-        assert entry["config"] == "/path/to/config.yaml"
-        assert entry["screen"] == "cld-test"
-        assert entry["pid"] == 12345
-        assert "started_at" in entry
+# ---------------------------------------------------------------------------
+# add / get
+# ---------------------------------------------------------------------------
 
-    def test_get_nonexistent(self, registry):
-        assert registry.get("nonexistent") is None
 
-    def test_exists(self, registry):
-        assert not registry.exists("test-agent")
-        registry.add("test-agent", "/path/config.yaml", "cld-test")
-        assert registry.exists("test-agent")
+@pytest.fixture
+def registry_with_one_agent(registry):
+    """Registry seeded with one fully-specified entry."""
+    registry.add(
+        "test-agent",
+        "/path/to/config.yaml",
+        "cld-test",
+        pid=12_345,
+    )
+    return registry
 
-    def test_remove(self, registry):
-        registry.add("test-agent", "/path/config.yaml", "cld-test")
-        assert registry.exists("test-agent")
-        registry.remove("test-agent")
-        assert not registry.exists("test-agent")
 
-    def test_remove_nonexistent(self, registry):
-        # Should not raise
-        registry.remove("nonexistent")
+@pytest.mark.parametrize(
+    "field,expected",
+    [
+        ("name", "test-agent"),
+        ("config", "/path/to/config.yaml"),
+        ("screen", "cld-test"),
+        ("pid", 12_345),
+    ],
+)
+def test_add_then_get_returns_entry_with_field_value(
+    registry_with_one_agent, field, expected
+):
+    # Arrange
+    registry = registry_with_one_agent
+    # Act
+    entry = registry.get("test-agent")
+    # Assert
+    assert entry[field] == expected
 
-    def test_list_all_empty(self, registry):
-        entries = registry.list_all()
-        assert entries == []
 
-    def test_list_all(self, registry):
-        registry.add("agent-a", "/a.yaml", "cld-a")
-        registry.add("agent-b", "/b.yaml", "cld-b")
-        entries = registry.list_all()
-        assert len(entries) == 2
-        names = {e["name"] for e in entries}
-        assert names == {"agent-a", "agent-b"}
+def test_add_then_get_records_started_at_timestamp_field(
+    registry_with_one_agent,
+):
+    # Arrange
+    registry = registry_with_one_agent
+    # Act
+    entry = registry.get("test-agent")
+    # Assert
+    assert "started_at" in entry
 
-    def test_add_overwrites(self, registry):
-        registry.add("test-agent", "/old.yaml", "cld-old")
-        registry.add("test-agent", "/new.yaml", "cld-new")
-        entry = registry.get("test-agent")
-        assert entry["config"] == "/new.yaml"
-        assert entry["screen"] == "cld-new"
 
-    def test_registry_dir_created(self, tmp_path):
-        reg_dir = tmp_path / "deep" / "nested" / "registry"
-        registry = _make_registry(reg_dir)
-        registry.add("test", "/config.yaml", "cld-test")
-        assert reg_dir.exists()
-        assert registry.exists("test")
+def test_get_returns_none_for_unregistered_agent_name(registry):
+    # Arrange — fresh registry, no entries added.
+    name = "nonexistent"
+    # Act
+    result = registry.get(name)
+    # Assert
+    assert result is None
 
-    def test_cleanup_stale_keeps_tmux_sessions(self, registry, monkeypatch):
-        """cleanup_stale must NOT remove entries for live tmux sessions.
 
-        Regression test for the MBA false-alarm incident (2026-04-15): agents
-        ran under tmux but cleanup_stale probed screen -ls only, causing the
-        entire registry to be wiped and scitex-agent-container list to return [].
-        """
-        import subprocess
+# ---------------------------------------------------------------------------
+# exists
+# ---------------------------------------------------------------------------
 
-        registry.add("alive-tmux-agent", "/config.yaml", "cld-alive")
 
-        # Simulate: tmux reports session alive, screen reports nothing
-        def fake_run(cmd, **kwargs):
-            result = subprocess.CompletedProcess(cmd, returncode=0)
-            result.stdout = ""
-            if cmd[0] == "tmux":
-                result.returncode = 0  # tmux has-session succeeds
-            else:
-                result.returncode = 1  # screen -ls finds nothing
-                result.stdout = ""
-            return result
+def test_exists_returns_false_before_agent_is_added(registry):
+    # Arrange — registry has no entries.
+    name = "test-agent"
+    # Act
+    present = registry.exists(name)
+    # Assert
+    assert present is False
 
-        monkeypatch.setattr("subprocess.run", fake_run)
 
-        cleaned = registry.cleanup_stale()
-        assert cleaned == 0, "Must not remove entry when tmux session is alive"
-        assert registry.exists("alive-tmux-agent")
+def test_exists_returns_true_after_agent_is_added(registry):
+    # Arrange
+    registry.add("test-agent", "/path/config.yaml", "cld-test")
+    # Act
+    present = registry.exists("test-agent")
+    # Assert
+    assert present is True
 
-    def test_cleanup_stale_removes_dead_sessions(self, registry, monkeypatch):
-        """cleanup_stale removes entries absent from both tmux and screen."""
-        import subprocess
 
-        registry.add("dead-agent", "/config.yaml", "cld-dead")
+# ---------------------------------------------------------------------------
+# remove
+# ---------------------------------------------------------------------------
 
-        def fake_run(cmd, **kwargs):
-            result = subprocess.CompletedProcess(cmd, returncode=1)
-            result.stdout = ""
-            return result
 
-        monkeypatch.setattr("subprocess.run", fake_run)
+def test_remove_deletes_existing_agent_entry(registry):
+    # Arrange
+    registry.add("test-agent", "/path/config.yaml", "cld-test")
+    # Act
+    registry.remove("test-agent")
+    # Assert
+    assert not registry.exists("test-agent")
 
-        cleaned = registry.cleanup_stale()
-        assert cleaned == 1
-        assert not registry.exists("dead-agent")
+
+def test_remove_is_silent_no_op_for_unknown_agent_name(registry):
+    # Arrange — registry has no "nonexistent" entry.
+    name = "nonexistent"
+    # Act
+    registry.remove(name)  # must not raise
+    # Assert
+    assert not registry.exists(name)
+
+
+# ---------------------------------------------------------------------------
+# list_all
+# ---------------------------------------------------------------------------
+
+
+def test_list_all_returns_empty_list_for_fresh_registry(registry):
+    # Arrange — no entries.
+    # Act
+    entries = registry.list_all()
+    # Assert
+    assert entries == []
+
+
+def test_list_all_returns_entry_count_matching_added_agents(registry):
+    # Arrange
+    registry.add("agent-a", "/a.yaml", "cld-a")
+    registry.add("agent-b", "/b.yaml", "cld-b")
+    # Act
+    entries = registry.list_all()
+    # Assert
+    assert len(entries) == 2
+
+
+def test_list_all_returns_entries_with_all_added_agent_names(registry):
+    # Arrange
+    registry.add("agent-a", "/a.yaml", "cld-a")
+    registry.add("agent-b", "/b.yaml", "cld-b")
+    # Act
+    names = {e["name"] for e in registry.list_all()}
+    # Assert
+    assert names == {"agent-a", "agent-b"}
+
+
+# ---------------------------------------------------------------------------
+# add semantics: overwrite
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "field,expected",
+    [
+        ("config", "/new.yaml"),
+        ("screen", "cld-new"),
+    ],
+)
+def test_add_overwrites_existing_entry_field_with_latest_value(
+    registry, field, expected
+):
+    # Arrange
+    registry.add("test-agent", "/old.yaml", "cld-old")
+    registry.add("test-agent", "/new.yaml", "cld-new")
+    # Act
+    entry = registry.get("test-agent")
+    # Assert
+    assert entry[field] == expected
+
+
+# ---------------------------------------------------------------------------
+# directory bootstrap
+# ---------------------------------------------------------------------------
+
+
+def test_registry_creates_missing_parent_directories_on_first_use(tmp_path):
+    # Arrange
+    reg_dir = tmp_path / "deep" / "nested" / "registry"
+    # Act
+    _make_registry(reg_dir)
+    # Assert
+    assert reg_dir.exists()
+
+
+def test_registry_dir_creation_allows_subsequent_agent_add_to_persist(
+    tmp_path,
+):
+    # Arrange
+    reg_dir = tmp_path / "deep" / "nested" / "registry"
+    registry = _make_registry(reg_dir)
+    # Act
+    registry.add("test", "/config.yaml", "cld-test")
+    # Assert
+    assert registry.exists("test")
+
+
+# ---------------------------------------------------------------------------
+# cleanup_stale: multiplexer probes
+#
+# Regression guard for the MBA false-alarm incident (2026-04-15): agents
+# ran under tmux but cleanup_stale probed screen -ls only, causing the
+# entire registry to be wiped and ``scitex-agent-container list`` to
+# return [].
+#
+# PA-306: hand-rolled fake injection — save/restore the module attribute
+# directly instead of using ``monkeypatch.setattr``.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def patched_subprocess_run():
+    """Yield a setter that swaps ``subprocess.run`` and restores it after."""
+    import subprocess
+
+    saved = subprocess.run
+
+    def _install(fake):
+        subprocess.run = fake  # type: ignore[assignment]
+
+    try:
+        yield _install
+    finally:
+        subprocess.run = saved  # type: ignore[assignment]
+
+
+def _make_fake_run(tmux_alive: bool, screen_alive: bool):
+    """Build a ``subprocess.run`` stub whose return codes mimic live sessions."""
+    import subprocess
+
+    def fake_run(cmd, **kwargs):
+        result = subprocess.CompletedProcess(cmd, returncode=1)
+        result.stdout = ""
+        if cmd[0] == "tmux":
+            result.returncode = 0 if tmux_alive else 1
+        else:  # screen
+            result.returncode = 0 if screen_alive else 1
+            result.stdout = cmd[-1] if screen_alive else ""
+        return result
+
+    return fake_run
+
+
+def test_cleanup_stale_returns_zero_when_tmux_session_is_alive(
+    registry, patched_subprocess_run
+):
+    # Arrange
+    registry.add("alive-tmux-agent", "/config.yaml", "cld-alive")
+    patched_subprocess_run(_make_fake_run(tmux_alive=True, screen_alive=False))
+    # Act
+    cleaned = registry.cleanup_stale()
+    # Assert
+    assert cleaned == 0
+
+
+def test_cleanup_stale_keeps_entry_when_tmux_session_is_alive(
+    registry, patched_subprocess_run
+):
+    # Arrange
+    registry.add("alive-tmux-agent", "/config.yaml", "cld-alive")
+    patched_subprocess_run(_make_fake_run(tmux_alive=True, screen_alive=False))
+    # Act
+    registry.cleanup_stale()
+    # Assert
+    assert registry.exists("alive-tmux-agent")
+
+
+def test_cleanup_stale_returns_count_one_when_both_multiplexers_dead(
+    registry, patched_subprocess_run
+):
+    # Arrange
+    registry.add("dead-agent", "/config.yaml", "cld-dead")
+    patched_subprocess_run(_make_fake_run(tmux_alive=False, screen_alive=False))
+    # Act
+    cleaned = registry.cleanup_stale()
+    # Assert
+    assert cleaned == 1
+
+
+def test_cleanup_stale_removes_entry_when_both_multiplexers_dead(
+    registry, patched_subprocess_run
+):
+    # Arrange
+    registry.add("dead-agent", "/config.yaml", "cld-dead")
+    patched_subprocess_run(_make_fake_run(tmux_alive=False, screen_alive=False))
+    # Act
+    registry.cleanup_stale()
+    # Assert
+    assert not registry.exists("dead-agent")

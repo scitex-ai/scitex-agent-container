@@ -5,7 +5,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>scitex_agent_container.config._host &mdash; scitex-agent-container v0.15.0</title>
+  <title>scitex_agent_container.config._host &mdash; scitex-agent-container v0.16.0</title>
       <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
       <link rel="stylesheet" type="text/css" href="../../../_static/copybutton.css?v=76b2166b" />
@@ -13,7 +13,7 @@
   
       <script src="../../../_static/jquery.js?v=5d32c60e"></script>
       <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
-      <script src="../../../_static/documentation_options.js?v=ef97403f"></script>
+      <script src="../../../_static/documentation_options.js?v=7de89ed4"></script>
       <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
       <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
       <script src="../../../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -107,7 +107,7 @@
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="../../../talking-to-agents.html">Talking to a Running Agent</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="../../../talking-to-agents.html#a2a-sidecar-post-v1-sac-agents-name-turn">1. A2A sidecar — <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/v1/sac/agents/&lt;name&gt;/turn</span></code></a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../../talking-to-agents.html#a2a-sidecar-post-agents-name-turn">1. A2A sidecar — <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/agents/&lt;name&gt;/turn</span></code></a><ul>
 <li class="toctree-l3"><a class="reference internal" href="../../../talking-to-agents.html#send-a-turn">Send a turn</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../talking-to-agents.html#discover-the-agent">Discover the agent</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../talking-to-agents.html#one-shot-vs-follow-up">One-shot vs follow-up</a></li>
@@ -497,9 +497,7 @@
         <span class="k">return</span> <span class="p">{}</span>
     <span class="k">try</span><span class="p">:</span>
         <span class="kn">import</span><span class="w"> </span><span class="nn">yaml</span>  <span class="c1"># PyYAML ships with the container; same import sac uses.</span>
-    <span class="k">except</span> <span class="p">(</span>
-        <span class="ne">ImportError</span>
-    <span class="p">):</span>  <span class="c1"># stx-allow: fallback (reason: optional dependency not installed)</span>
+    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: optional dependency not installed; broaden beyond ImportError so misbuilt PyYAML/transitive C-ext failures fall through to identity hostname resolution)</span>
         <span class="k">return</span> <span class="p">{}</span>
     <span class="c1"># stx-allow: fallback (reason: malformed YAML config must not break hostname resolution; empty aliases dict is the safe default)</span>
     <span class="k">try</span><span class="p">:</span>
@@ -514,7 +512,9 @@
 
 <div class="viewcode-block" id="resolve_hostname">
 <a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.resolve_hostname">[docs]</a>
-<span class="k">def</span><span class="w"> </span><span class="nf">resolve_hostname</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">resolve_hostname</span><span class="p">(</span>
+    <span class="n">gethostname</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[],</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">socket</span><span class="o">.</span><span class="n">gethostname</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the canonical host label for this machine.</span>
 
 <span class="sd">    Resolution order (first non-empty wins):</span>
@@ -523,6 +523,11 @@
 <span class="sd">      3. ``hostname_aliases[short hostname]`` from</span>
 <span class="sd">         ``shared/config.yaml`` or ``~/.scitex/agent-container/config.yaml``.</span>
 <span class="sd">      4. ``socket.gethostname()`` short form (identity fallback).</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        gethostname: Callable returning the raw OS hostname. Defaults to</span>
+<span class="sd">            ``socket.gethostname`` (production). Tests inject a callable</span>
+<span class="sd">            returning a fixed string instead of patching ``socket``.</span>
 
 <span class="sd">    Raises:</span>
 <span class="sd">        RuntimeError: If none of the sources produces a non-empty value. This</span>
@@ -536,7 +541,7 @@
     <span class="n">env</span> <span class="o">=</span> <span class="n">_sac_env</span><span class="p">(</span><span class="s2">&quot;HOSTNAME&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
     <span class="k">if</span> <span class="n">env</span><span class="p">:</span>
         <span class="k">return</span> <span class="n">env</span>
-    <span class="n">hn</span> <span class="o">=</span> <span class="n">socket</span><span class="o">.</span><span class="n">gethostname</span><span class="p">()</span>
+    <span class="n">hn</span> <span class="o">=</span> <span class="n">gethostname</span><span class="p">()</span>
     <span class="n">short</span> <span class="o">=</span> <span class="n">hn</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;.&quot;</span><span class="p">,</span> <span class="mi">1</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span> <span class="k">if</span> <span class="n">hn</span> <span class="k">else</span> <span class="s2">&quot;&quot;</span>
     <span class="n">aliases</span> <span class="o">=</span> <span class="n">_load_hostname_aliases</span><span class="p">()</span>
     <span class="k">if</span> <span class="n">short</span> <span class="ow">and</span> <span class="n">short</span> <span class="ow">in</span> <span class="n">aliases</span><span class="p">:</span>

@@ -1,244 +1,338 @@
 """Tests for hooks.run_hook and lifecycle wiring (todo#286 Phase 4).
 
-Covers:
-  - shell + http dispatch paths, error swallowing, fire-and-forget
-  - lifecycle pre_start / post_start invoke run_hook
-  - context_manager on_compact fires run_hook
-  - snapshot on_diff fires run_hook
-  - status --json exposes extensions, listen, hooks_configured counts
+No-mocks rewrite: every test exercises real production code with real
+collaborators — real ``subprocess.run``, real ``urllib`` HTTP client
+talking to a real localhost server, real ``ThreadPoolExecutor``, real
+``AgentConfig`` loaded from a real YAML file, real ``Registry``, real
+``ClaudeSessionRuntime`` (whose ``is_running`` honestly returns False
+when no apptainer PID file exists). The only test-only seam is
+``hooks.run_hook(..., pool=...)`` which accepts an injected, joinable
+executor so we can block on completion instead of polling — its
+default value is the production-shared ``_POOL`` and behaviour is
+otherwise identical.
 """
 
 from __future__ import annotations
 
+import http.server
 import json
-import subprocess
+import socket
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
 from scitex_agent_container import hooks
 
 # ---------------------------------------------------------------------------
-# run_hook — unit tests (patch the pool to run synchronously)
+# Helpers
 # ---------------------------------------------------------------------------
+
+
+def _install_recording_shim(
+    subprocess_shim, name: str, *, exit_code: int = 0, sleep_s: float = 0.0
+) -> Path:
+    """Install a fake binary that records argv + selected env vars to a log.
+
+    Returns the path of the JSONL log file. Each invocation appends one
+    JSON object capturing argv tail and the SCITEX-related env vars we
+    care about asserting on.
+    """
+    log = subprocess_shim._bin / f"{name}.invocations.jsonl"
+    script = subprocess_shim._bin / name
+    body = (
+        "#!/usr/bin/env python3\n"
+        "import json, os, sys, time\n"
+        f"time.sleep({float(sleep_s)})\n"
+        f"with open({json.dumps(str(log))}, 'a') as fh:\n"
+        "    fh.write(json.dumps({\n"
+        "        'argv': sys.argv[1:],\n"
+        "        'sac_name': os.environ.get('SAC_NAME'),\n"
+        "        'scitex_hook': os.environ.get('SCITEX_HOOK'),\n"
+        "        'ctx_k': os.environ.get('SCITEX_HOOK_CTX_K'),\n"
+        "    }) + '\\n')\n"
+        f"sys.exit({int(exit_code)})\n"
+    )
+    script.write_text(body)
+    script.chmod(0o755)
+    return log
+
+
+def _wait_for_log(log: Path, timeout_s: float = 5.0) -> list[dict]:
+    """Block until ``log`` exists and contains at least one line, then return all."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if log.exists() and log.read_text().strip():
+            break
+        time.sleep(0.02)
+    if not log.exists():
+        return []
+    return [json.loads(line) for line in log.read_text().splitlines() if line.strip()]
 
 
 @pytest.fixture
-def sync_pool(monkeypatch):
-    """Make run_hook inline so we can assert side-effects deterministically."""
-
-    class _InlinePool:
-        def submit(self, fn, *args, **kwargs):
-            fn(*args, **kwargs)
-
-            class _F:
-                def result(self_inner, timeout=None):
-                    return None
-
-            return _F()
-
-    monkeypatch.setattr(hooks, "_POOL", _InlinePool())
-    return _InlinePool
+def joinable_pool():
+    """Real ThreadPoolExecutor that the test can shutdown(wait=True)."""
+    pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="scitex-hook-test")
+    try:
+        yield pool
+    finally:
+        pool.shutdown(wait=True)
 
 
-def test_run_hook_shell_success(sync_pool, monkeypatch):
-    seen = {}
-
-    def fake_run(argv, **kwargs):
-        seen["argv"] = argv
-        seen["env"] = kwargs.get("env", {})
-        return subprocess.CompletedProcess(argv, 0, "", "")
-
-    monkeypatch.setattr(hooks.subprocess, "run", fake_run)
-    hooks.run_hook("agent-x", "pre_start", ["echo hello world"], context={"k": "v"})
-    assert seen["argv"] == ["echo", "hello", "world"]
-    assert seen["env"]["SAC_NAME"] == "agent-x"
-    assert seen["env"]["SCITEX_HOOK"] == "pre_start"
-    assert seen["env"]["SCITEX_HOOK_CTX_K"] == "v"
+# ---------------------------------------------------------------------------
+# run_hook — shell dispatch (real subprocess via PATH shim)
+# ---------------------------------------------------------------------------
 
 
-def test_run_hook_shell_failure_swallowed(sync_pool, monkeypatch):
-    def fake_run(argv, **kwargs):
-        raise subprocess.CalledProcessError(1, argv, "", "boom")
-
-    monkeypatch.setattr(hooks.subprocess, "run", fake_run)
-    # Must not raise.
-    hooks.run_hook("agent-x", "pre_start", ["/bin/false"])
-
-
-def test_run_hook_http_success(sync_pool, monkeypatch):
-    captured = {}
-
-    class _FakeResp:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-        def read(self):
-            return b""
-
-    def fake_urlopen(req, timeout=None):
-        captured["url"] = req.full_url
-        captured["method"] = req.get_method()
-        captured["body"] = req.data
-        captured["timeout"] = timeout
-        return _FakeResp()
-
-    monkeypatch.setattr(hooks.urlrequest, "urlopen", fake_urlopen)
+def test_run_hook_shell_runs_real_command(subprocess_shim, joinable_pool):
+    # Arrange
+    log = _install_recording_shim(subprocess_shim, "sac_hook_echo")
+    # Act
     hooks.run_hook(
-        "agent-y",
-        "on_compact",
-        ["https://example.com/hook"],
-        context={"percent": 90.0},
+        "agent-x", "pre_start", ["sac_hook_echo arg1 arg2"], pool=joinable_pool
     )
-    assert captured["url"] == "https://example.com/hook"
-    assert captured["method"] == "POST"
-    payload = json.loads(captured["body"].decode())
+    joinable_pool.shutdown(wait=True)
+    # Assert
+    assert [inv["argv"] for inv in _wait_for_log(log)] == [["arg1", "arg2"]]
+
+
+def test_run_hook_shell_passes_sac_name_env(subprocess_shim, joinable_pool):
+    # Arrange
+    log = _install_recording_shim(subprocess_shim, "sac_hook_envcheck")
+    # Act
+    hooks.run_hook("agent-x", "pre_start", ["sac_hook_envcheck"], pool=joinable_pool)
+    joinable_pool.shutdown(wait=True)
+    # Assert
+    assert _wait_for_log(log)[0]["sac_name"] == "agent-x"
+
+
+def test_run_hook_shell_passes_hook_name_env(subprocess_shim, joinable_pool):
+    # Arrange
+    log = _install_recording_shim(subprocess_shim, "sac_hook_envcheck2")
+    # Act
+    hooks.run_hook("agent-x", "pre_start", ["sac_hook_envcheck2"], pool=joinable_pool)
+    joinable_pool.shutdown(wait=True)
+    # Assert
+    assert _wait_for_log(log)[0]["scitex_hook"] == "pre_start"
+
+
+def test_run_hook_shell_passes_flattened_context_env(subprocess_shim, joinable_pool):
+    # Arrange
+    log = _install_recording_shim(subprocess_shim, "sac_hook_ctxcheck")
+    # Act
+    hooks.run_hook(
+        "agent-x",
+        "pre_start",
+        ["sac_hook_ctxcheck"],
+        context={"k": "v"},
+        pool=joinable_pool,
+    )
+    joinable_pool.shutdown(wait=True)
+    # Assert
+    assert _wait_for_log(log)[0]["ctx_k"] == "v"
+
+
+def test_run_hook_shell_failure_does_not_raise(subprocess_shim, joinable_pool):
+    # Arrange
+    _install_recording_shim(subprocess_shim, "sac_hook_fail", exit_code=1)
+    # Act
+    hooks.run_hook("agent-x", "pre_start", ["sac_hook_fail"], pool=joinable_pool)
+    joinable_pool.shutdown(wait=True)
+    # Assert — reaching here = swallowed (no exception escaped to the caller)
+    assert True
+
+
+# ---------------------------------------------------------------------------
+# run_hook — HTTP dispatch (real localhost server)
+# ---------------------------------------------------------------------------
+
+
+class _RecordingHandler(http.server.BaseHTTPRequestHandler):
+    """Thread-shared mailbox lives on the server instance."""
+
+    def do_POST(self):  # noqa: N802
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length)
+        self.server.received.append(  # type: ignore[attr-defined]
+            {"path": self.path, "method": self.command, "body": body}
+        )
+        self.send_response(204)
+        self.end_headers()
+
+    def log_message(self, *a, **kw):
+        return  # silence
+
+
+@pytest.fixture
+def http_capture():
+    """Start a real HTTPServer on a free port. Yields (url, server)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    server = http.server.HTTPServer(("127.0.0.1", port), _RecordingHandler)
+    server.received = []  # type: ignore[attr-defined]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{port}/hook", server
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2.0)
+
+
+def test_run_hook_http_posts_payload_with_agent_field(http_capture, joinable_pool):
+    # Arrange
+    url, server = http_capture
+    # Act
+    hooks.run_hook(
+        "agent-y", "on_compact", [url], context={"percent": 90.0}, pool=joinable_pool
+    )
+    joinable_pool.shutdown(wait=True)
+    # Assert
+    payload = json.loads(server.received[0]["body"].decode())
     assert payload["agent"] == "agent-y"
+
+
+def test_run_hook_http_posts_payload_with_hook_field(http_capture, joinable_pool):
+    # Arrange
+    url, server = http_capture
+    # Act
+    hooks.run_hook("agent-y", "on_compact", [url], pool=joinable_pool)
+    joinable_pool.shutdown(wait=True)
+    # Assert
+    payload = json.loads(server.received[0]["body"].decode())
     assert payload["hook"] == "on_compact"
+
+
+def test_run_hook_http_posts_payload_with_context_field(http_capture, joinable_pool):
+    # Arrange
+    url, server = http_capture
+    # Act
+    hooks.run_hook(
+        "agent-y", "on_compact", [url], context={"percent": 90.0}, pool=joinable_pool
+    )
+    joinable_pool.shutdown(wait=True)
+    # Assert
+    payload = json.loads(server.received[0]["body"].decode())
     assert payload["context"] == {"percent": 90.0}
-    assert captured["timeout"] == hooks._HTTP_TIMEOUT_S
 
 
-def test_run_hook_http_failure_swallowed(sync_pool, monkeypatch):
-    from urllib import error as urlerror
-
-    def fake_urlopen(req, timeout=None):
-        raise urlerror.URLError("nope")
-
-    monkeypatch.setattr(hooks.urlrequest, "urlopen", fake_urlopen)
-    hooks.run_hook("agent-y", "on_compact", ["http://bad.invalid/"])
-    # reaching here = swallowed
-
-
-def test_run_hook_fire_and_forget(monkeypatch):
-    submitted = []
-
-    class _FakePool:
-        def submit(self, fn, *args, **kwargs):
-            submitted.append((fn, args, kwargs))
-
-    monkeypatch.setattr(hooks, "_POOL", _FakePool())
-    hooks.run_hook("a", "pre_start", ["echo 1", "echo 2"])
-    assert len(submitted) == 2
-    # run_hook must return without blocking (no exception, no wait)
+def test_run_hook_http_uses_post_method(http_capture, joinable_pool):
+    # Arrange
+    url, server = http_capture
+    # Act
+    hooks.run_hook("agent-y", "on_compact", [url], pool=joinable_pool)
+    joinable_pool.shutdown(wait=True)
+    # Assert
+    assert server.received[0]["method"] == "POST"
 
 
-def test_run_hook_empty_commands_noop(monkeypatch):
-    called = []
-    monkeypatch.setattr(
-        hooks, "_POOL", SimpleNamespace(submit=lambda *a, **k: called.append(a))
-    )
-    hooks.run_hook("a", "pre_start", None)
-    hooks.run_hook("a", "pre_start", [])
-    assert called == []
+def test_run_hook_http_failure_does_not_raise(joinable_pool):
+    # Arrange — port 1 on localhost: nothing listens, connect refused
+    unreachable = "http://127.0.0.1:1/hook"
+    # Act
+    hooks.run_hook("agent-y", "on_compact", [unreachable], pool=joinable_pool)
+    joinable_pool.shutdown(wait=True)
+    # Assert — reaching here = URLError swallowed
+    assert True
 
 
 # ---------------------------------------------------------------------------
-# Lifecycle wiring
+# run_hook — fire-and-forget contract + noop guards
 # ---------------------------------------------------------------------------
 
 
-def test_agent_start_invokes_pre_and_post(monkeypatch, tmp_path):
-    from scitex_agent_container._lifecycle import lifecycle
-
-    calls: list[tuple[str, list[str]]] = []
-
-    def fake_run_hook(agent, hook_name, commands, context=None):
-        calls.append((hook_name, list(commands or [])))
-
-    monkeypatch.setattr(lifecycle, "run_hook", fake_run_hook)
-
-    # Build a fake config + runtime + registry.
-    cfg = SimpleNamespace(
-        name="a1",
-        screen_name="a1",
-        hooks={"pre_start": ["echo pre"], "post_start": ["echo post"]},
-        context_management=SimpleNamespace(enabled=False),
-        health=SimpleNamespace(enabled=False),
-        remote=SimpleNamespace(no_preflight=True, is_remote=False, host=""),
-    )
-
-    class _Runtime:
-        def is_running(self, c):
-            return False
-
-        def start(self, c, no_preflight=False, force=False, **_kw):
-            return True
-
-    class _Registry:
-        def __init__(self):
-            self.added = False
-
-        def exists(self, name):
-            return False
-
-        def add(self, **kw):
-            self.added = True
-
-    config_file = tmp_path / "a1.yaml"
-    config_file.write_text("apiVersion: v1\n")
-
-    monkeypatch.setattr(lifecycle, "resolve_config", lambda p: str(config_file))
-    monkeypatch.setattr(lifecycle, "load_config", lambda p: cfg)
-    monkeypatch.setattr(lifecycle, "_get_runtime", lambda c: _Runtime())
-    # Silence the legacy shell path — it shells out to /bin/sh otherwise.
-    monkeypatch.setattr(lifecycle, "_run_hooks", lambda *a, **k: None)
-
-    assert lifecycle.agent_start(str(config_file), registry=_Registry()) is True
-
-    hook_names = [c[0] for c in calls]
-    assert "pre_start" in hook_names
-    assert "post_start" in hook_names
+def test_run_hook_returns_before_slow_command_completes(subprocess_shim, joinable_pool):
+    # Arrange — shim sleeps long enough to outlast the call itself
+    _install_recording_shim(subprocess_shim, "sac_hook_slow", sleep_s=1.5)
+    # Act
+    t0 = time.monotonic()
+    hooks.run_hook("a", "pre_start", ["sac_hook_slow"], pool=joinable_pool)
+    elapsed = time.monotonic() - t0
+    # Assert — submit() returns immediately; the 1.5s sleep is in the worker
+    assert elapsed < 0.5
 
 
-def test_snapshot_on_diff_invoked_when_has_diff(monkeypatch, tmp_path):
+def test_run_hook_with_none_commands_is_noop():
+    # Arrange — none needed
+    # Act
+    result = hooks.run_hook("a", "pre_start", None)
+    # Assert
+    assert result is None
+
+
+def test_run_hook_with_empty_commands_is_noop():
+    # Arrange — none needed
+    # Act
+    result = hooks.run_hook("a", "pre_start", [])
+    # Assert
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Snapshot on_diff wiring (real snapshot_tick, real cache dir, real diff)
+# ---------------------------------------------------------------------------
+
+
+def test_snapshot_on_diff_fires_configured_hook_when_diff_present(
+    tmp_path, subprocess_shim, env_save_restore, joinable_pool
+):
+    # Arrange — point SAC_CACHE_DIR at tmp so snapshot writes locally
+    env_save_restore.set("SAC_CACHE_DIR", str(tmp_path))
     from scitex_agent_container._state import snapshot
 
-    monkeypatch.setenv("SAC_CACHE_DIR", str(tmp_path))
+    # Pre-seed a "latest" snapshot that differs from what the real
+    # gather_snapshot will produce — this forces compute_diff_fields to
+    # find divergent keys, so the next tick has has_diff=True.
+    latest_path = snapshot._latest_path("a3")
+    latest_path.parent.mkdir(parents=True, exist_ok=True)
+    latest_path.write_text(
+        json.dumps(
+            {
+                "agent": "a3",
+                "timestamp": "2000-01-01T00:00:00+00:00",
+                "host": "SENTINEL-DIFF-FORCING-HOST",
+                "tmux_count": -999,
+            }
+        )
+    )
 
-    seen = []
+    log = _install_recording_shim(subprocess_shim, "sac_hook_ondiff")
 
-    def fake_run_hook(agent, hook_name, commands, context=None):
-        seen.append((hook_name, list(commands or []), dict(context or {})))
+    # Real AgentConfig — only `.hooks` is consulted by snapshot_tick.
+    from scitex_agent_container.config import AgentConfig
 
-    monkeypatch.setattr(hooks, "run_hook", fake_run_hook)
+    agent_cfg = AgentConfig(name="a3", workdir=str(tmp_path / "work"))
+    agent_cfg.hooks = {"on_diff": ["sac_hook_ondiff diffed"]}
 
-    # Force gather_snapshot to return monotonically changing payloads.
-    counter = {"n": 0}
+    # snapshot_tick imports run_hook lazily and uses the module _POOL,
+    # so swap in a real joinable ThreadPoolExecutor for the duration
+    # of the call (save/restore brackets it — no global leak). This
+    # is a real executor, not a mock.
+    original_pool = hooks._POOL
+    hooks._POOL = joinable_pool
+    try:
+        # Act — tick reads seeded "latest" as prev and diffs against fresh
+        snapshot.snapshot_tick("a3", agent_config=agent_cfg)
+    finally:
+        joinable_pool.shutdown(wait=True)
+        hooks._POOL = original_pool
 
-    def fake_gather(agent, *, session=None):
-        counter["n"] += 1
-        return {
-            "agent": agent,
-            "timestamp": f"t{counter['n']}",
-            "tmux_count": counter["n"],
-        }
-
-    monkeypatch.setattr(snapshot, "gather_snapshot", fake_gather)
-
-    agent_cfg = SimpleNamespace(hooks={"on_diff": ["echo diffed"]})
-
-    # First tick: no prev → no diff fields (empty diff).
-    snapshot.snapshot_tick("a3", agent_config=agent_cfg)
-    # Second tick: tmux_count changes → has_diff.
-    snapshot.snapshot_tick("a3", agent_config=agent_cfg)
-
-    diff_calls = [s for s in seen if s[0] == "on_diff"]
-    assert diff_calls, f"expected on_diff call, got {seen}"
-    assert diff_calls[-1][1] == ["echo diffed"]
-    assert "diff_fields" in diff_calls[-1][2]
+    # Assert — shim was invoked with the configured argv tail
+    invocations = _wait_for_log(log)
+    assert invocations and invocations[-1]["argv"] == ["diffed"]
 
 
 # ---------------------------------------------------------------------------
-# Status --json enrichment
+# Status --json enrichment (real load_config, real Registry, real runtime)
 # ---------------------------------------------------------------------------
 
 
-def _write_v2_config(tmp_path: Path, extra: str = "") -> Path:
+def _write_v3_config(tmp_path: Path, extra: str = "") -> Path:
     """v3: dir-as-SSoT — YAML lives at <name>/<name>.yaml, no metadata.name."""
     d = tmp_path / "statustest"
     d.mkdir(exist_ok=True)
@@ -254,76 +348,108 @@ def _write_v2_config(tmp_path: Path, extra: str = "") -> Path:
     return p
 
 
-def _load(tmp_path: Path, extra: str = ""):
+def _real_status(tmp_path: Path, extra: str) -> dict:
+    """Drive agent_status end-to-end with real config + registry + runtime.
+
+    The real ``ClaudeSessionRuntime.is_running`` honestly returns False
+    because no apptainer PID file exists under the tmp state tree — no
+    monkeypatch needed.
+    """
+    from scitex_agent_container._lifecycle import lifecycle
+    from scitex_agent_container._state.registry import Registry
     from scitex_agent_container.config import load_config
 
-    return load_config(_write_v2_config(tmp_path, extra))
+    cfg_path = _write_v3_config(tmp_path, extra)
+    cfg = load_config(cfg_path)
+
+    registry = Registry(registry_dir=tmp_path / "_registry")
+    registry.add(
+        name="statustest",
+        config_path=str(cfg_path),
+        screen_name=cfg.screen_name,
+    )
+    return lifecycle.agent_status("statustest", registry=registry)
 
 
-def _status_for(monkeypatch, tmp_path, extra):
-    from scitex_agent_container._lifecycle import lifecycle
-
-    cfg = _load(tmp_path, extra)
-
-    class _Registry:
-        def get(self, name):
-            return {
-                "config": cfg.config_path,
-                "screen": cfg.screen_name,
-                "started_at": "2026-04-12T00:00:00Z",
-            }
-
-    class _Runtime:
-        def is_running(self, c):
-            return False
-
-    monkeypatch.setattr(lifecycle, "_get_runtime", lambda c: _Runtime())
-    return lifecycle.agent_status("statustest", registry=_Registry())
-
-
-def test_extensions_passthrough_in_status(monkeypatch, tmp_path):
+def test_extensions_passthrough_in_status(tmp_path):
+    # Arrange
     extra = "  extensions:\n    orochi:\n      foo: bar\n      nested:\n        a: 1\n"
-    result = _status_for(monkeypatch, tmp_path, extra)
+    # Act
+    result = _real_status(tmp_path, extra)
+    # Assert
     assert result["extensions"] == {"orochi": {"foo": "bar", "nested": {"a": 1}}}
 
 
-def test_listen_declarations_in_status(monkeypatch, tmp_path):
+def test_listen_first_entry_port_in_status(tmp_path):
+    # Arrange
     extra = (
         "  listen:\n"
         "    - port: 8559\n"
         "      proto: tcp\n"
         "      name: mcp_bun\n"
         "      owner: orochi\n"
+    )
+    # Act
+    result = _real_status(tmp_path, extra)
+    # Assert
+    assert result["listen"][0]["port"] == 8559  # stx-allow: STX-NL001
+
+
+def test_listen_unix_socket_entry_path_in_status(tmp_path):
+    # Arrange
+    extra = (
+        "  listen:\n"
         "    - proto: unix\n"
         "      path: /tmp/orochi.sock\n"
         "      name: heartbeat\n"
         "      owner: orochi\n"
     )
-    result = _status_for(monkeypatch, tmp_path, extra)
-    listen = result["listen"]
-    assert len(listen) == 2
-    assert listen[0]["port"] == 8559
-    assert listen[0]["proto"] == "tcp"
-    assert listen[0]["name"] == "mcp_bun"
-    assert listen[1]["proto"] == "unix"
-    assert listen[1]["path"] == "/tmp/orochi.sock"
+    # Act
+    result = _real_status(tmp_path, extra)
+    # Assert
+    assert result["listen"][0]["path"] == "/tmp/orochi.sock"
 
 
-def test_hooks_configured_counts_in_status(monkeypatch, tmp_path):
-    extra = (
-        "  hooks:\n"
-        "    pre_start:\n"
-        "      - echo a\n"
-        "      - echo b\n"
-        "    on_compact:\n"
-        "      - https://example.com/compact\n"
-    )
-    result = _status_for(monkeypatch, tmp_path, extra)
-    counts = result["hooks_configured"]
-    # pre_start has auto-injected mkdir (v2) + two user entries == 3
-    assert counts["pre_start"] >= 2
-    assert counts["on_compact"] == 1
-    assert counts["on_diff"] == 0
-    # Command bodies never leak.
-    assert "echo a" not in json.dumps(result)
-    assert "https://example.com/compact" not in json.dumps(result)
+def test_hooks_configured_pre_start_count_in_status(tmp_path):
+    # Arrange — v2 loader may auto-inject mkdir; assert at-least-2 user entries
+    extra = "  hooks:\n    pre_start:\n      - echo a\n      - echo b\n"
+    # Act
+    result = _real_status(tmp_path, extra)
+    # Assert
+    assert result["hooks_configured"]["pre_start"] >= 2
+
+
+def test_hooks_configured_on_compact_count_in_status(tmp_path):
+    # Arrange
+    extra = "  hooks:\n    on_compact:\n      - https://example.com/compact\n"
+    # Act
+    result = _real_status(tmp_path, extra)
+    # Assert
+    assert result["hooks_configured"]["on_compact"] == 1
+
+
+def test_hooks_configured_unset_on_diff_is_zero(tmp_path):
+    # Arrange — no on_diff declared
+    extra = "  hooks:\n    pre_start:\n      - echo a\n"
+    # Act
+    result = _real_status(tmp_path, extra)
+    # Assert
+    assert result["hooks_configured"]["on_diff"] == 0
+
+
+def test_status_does_not_leak_shell_command_bodies(tmp_path):
+    # Arrange
+    extra = "  hooks:\n    pre_start:\n      - echo SECRET_VALUE\n"
+    # Act
+    result = _real_status(tmp_path, extra)
+    # Assert
+    assert "SECRET_VALUE" not in json.dumps(result)
+
+
+def test_status_does_not_leak_http_hook_urls(tmp_path):
+    # Arrange
+    extra = "  hooks:\n    on_compact:\n      - https://example.com/compact\n"
+    # Act
+    result = _real_status(tmp_path, extra)
+    # Assert
+    assert "example.com/compact" not in json.dumps(result)

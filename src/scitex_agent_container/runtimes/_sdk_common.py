@@ -243,7 +243,7 @@ def resolve_agent_workspace(agent_name: str) -> tuple[dict, str | None]:
     """
     try:
         from scitex_agent_container._state.registry import Registry
-    except ImportError:  # stx-allow: fallback (reason: optional dep at runtime)
+    except Exception:  # stx-allow: fallback (reason: optional dep at runtime; broaden beyond ImportError so a misbuilt transitive dep can't crash the option-builder)
         return {}, None
 
     try:
@@ -319,7 +319,7 @@ def build_sdk_options(
     """
     try:
         from claude_agent_sdk import ClaudeAgentOptions
-    except ImportError as exc:  # stx-allow: fallback (reason: optional dep at runtime)
+    except Exception as exc:  # stx-allow: fallback (reason: optional dep at runtime; broaden beyond ImportError so misbuilt transitive deps surface as actionable SDKCommonError)
         raise SDKCommonError(
             "claude-agent-sdk is not installed (`pip install claude-agent-sdk`)"
         ) from exc
@@ -374,23 +374,67 @@ def build_sdk_options(
     # this way either, which is the right default for container-as-
     # boundary anyway.)
     kwargs.setdefault("setting_sources", [])
+    # Pop sac-private keys from ``extra`` BEFORE merging into kwargs —
+    # ClaudeAgentOptions is strict and rejects unknown fields. The
+    # ``_*`` prefix marks these as sac-internal (not SDK fields).
+    channels: list[str] | None = None
+    a2a_port: int | None = None
     if extra:
-        kwargs.update(extra)
+        extra = dict(extra)  # shallow copy so we can mutate
+        channels = extra.pop("_channels", None)
+        a2a_port = extra.pop("_a2a_port", None)
+        if extra:
+            kwargs.update(extra)
 
     # spec.claude.channels → claude CLI --channels passthrough.
     # The SDK runs the bundled claude binary as a subprocess; channels
     # are CLI-only (research preview, MCP `notifications/claude/channel`
     # delivery). We forward each entry as a separate ``--channels`` arg
     # via the SDK's ``extra_args`` escape hatch when available.
-    channels = (extra or {}).get("_channels") if extra else None
-    if channels:
+    if channels and any(c.strip() == "server:sac" for c in channels):
+        # Register `sac mcp channel` as a stdio MCP server. claude
+        # exposes its tools (a2a_send/reply/ack/peers/inbox) under the
+        # `mcp__sac__*` namespace AND delivers its push events through
+        # the standard MCP `notifications/claude/channel` method —
+        # provided claude was started with
+        # `--dangerously-load-development-channels`, which is what
+        # turns rendering of those `<channel ...>` tags on in the
+        # session. The `--channels server:sac` flag (without the
+        # dangerously- prefix) caused claude to treat the MCP server
+        # as channel-only and dropped the tool surface; we do NOT set
+        # that one. Net effect: tools + push delivery both work.
         extra_args = kwargs.setdefault("extra_args", {})
-        # extra_args is a dict[str, str|None] per SDK convention
-        # ({flag: value} where None means valueless flag). For
-        # repeatable flags we join with comma; claude --channels
-        # accepts comma-separated entries too.
         if isinstance(extra_args, dict):
-            extra_args["channels"] = ",".join(channels)
-        # else: caller passed a raw extra_args list — leave it alone.
+            extra_args.setdefault("dangerously-load-development-channels", "server:sac")
+        mcps = kwargs.setdefault("mcp_servers", {})
+        if isinstance(mcps, dict) and "sac" not in mcps:
+            # No silent fallback. The sidecar's --listen-url MUST point
+            # at the actual server hosting /agents/<name>/inbox/stream.
+            # If a2a_port wasn't threaded through, the caller forgot to
+            # pass listen_port to build_app — surface that explicitly
+            # rather than letting the sidecar quietly fall back to env
+            # / 127.0.0.1:7878 and produce "Command failed with no
+            # output" tool errors at runtime.
+            if a2a_port is None:
+                raise SDKCommonError(
+                    "spec.claude.channels=[server:sac] is set but no "
+                    "a2a_port was threaded through to build_sdk_options. "
+                    "The MCP sidecar needs the server's actual listen "
+                    "port for its --listen-url. Pass listen_port to "
+                    "build_app(), or set spec.a2a.port in the yaml."
+                )
+            sidecar_args = [
+                "mcp",
+                "channel",
+                "--name",
+                agent_name,
+                "--listen-url",
+                f"http://127.0.0.1:{int(a2a_port)}",
+            ]
+            mcps["sac"] = {
+                "type": "stdio",
+                "command": "sac",
+                "args": sidecar_args,
+            }
 
     return ClaudeAgentOptions(**kwargs)

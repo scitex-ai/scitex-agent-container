@@ -47,7 +47,7 @@ PACKAGES = [
 ]
 
 
-def test_import(module):
+def _try_import(module):
     try:
         importlib.import_module(module)
         return True, ""
@@ -59,7 +59,7 @@ def test_import(module):
         return False, f"{type(e).__name__}: {e}"
 
 
-def test_cli(entry, timeout=15):
+def _try_cli(entry, timeout=15):
     path = shutil.which(entry)
     if not path:
         return None, "cli not found"
@@ -97,11 +97,11 @@ def main(as_json: bool) -> None:
     """
     results = []
     for pip_name, module, entry in PACKAGES:
-        imp_ok, imp_msg = test_import(module)
+        imp_ok, imp_msg = _try_import(module)
         if imp_ok is None:
             status, detail = "SKIP", imp_msg
         else:
-            cli_ok, cli_msg = test_cli(entry)
+            cli_ok, cli_msg = _try_cli(entry)
             if imp_ok and (cli_ok or cli_ok is None):
                 status = "PASS"
                 detail = cli_msg if cli_ok is None else ""

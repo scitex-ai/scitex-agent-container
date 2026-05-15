@@ -268,8 +268,8 @@ spec:
   # ----------------------------------------------------------------------
   # a2a — per-agent inbound HTTP turn endpoint.
   # When `port` is set, the runner exposes (also via `sac listen`):
-  #   POST /v1/sac/agents/<name>/{turn,send}   canonical (mirrored at /v1/a2a/...)
-  #   GET  /v1/sac/agents/<name>/card          AgentCard (also /.well-known/agent-card.json)
+  #   POST /agents/<name>/{turn,send}   canonical (mirrored at /v1/a2a/...)
+  #   GET  /agents/<name>/card          AgentCard (also /.well-known/agent-card.json)
   #   GET  /health
   # Per-agent ports are INTERNAL IPC; external clients reach every agent
   # through the host's `sac listen` (default :7878). Operators normally

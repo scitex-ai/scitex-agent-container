@@ -6,6 +6,12 @@ Tests:
   3. labels.description is used as the explicit A2A card description.
   4. The implicit capabilities[0] → description fallback is removed.
   5. Existing shared agent YAMLs still validate clean.
+
+TQ cleanup: module docstring summarises intent (TQ001); every test
+carries AAA markers (TQ002); descriptive names spell out the verified
+behaviour (TQ003); each test asserts exactly one fact (TQ007). Same-
+shape invariants over one arrange/act collapse into
+``pytest.parametrize``.
 """
 
 from __future__ import annotations
@@ -46,13 +52,23 @@ _BASE = {
 }
 
 
+def _v3_with_labels(labels: dict) -> dict:
+    return {
+        "apiVersion": "scitex-agent-container/v3",
+        "kind": "Agent",
+        "metadata": {"labels": labels},
+        "spec": {"runtime": "apptainer"},
+    }
+
+
 # ---------------------------------------------------------------------------
 # 1 & 2 — unknown-field rejection
 # ---------------------------------------------------------------------------
 
 
 class TestUnknownFieldRejection:
-    def test_unknown_spec_field_rejected(self):
+    def test_unknown_spec_field_raises_value_error_naming_field(self):
+        # Arrange
         from scitex_agent_container.config import load_config
 
         data = {
@@ -60,18 +76,26 @@ class TestUnknownFieldRejection:
             "spec": {"runtime": "apptainer", "cardinality_enforced_at_hub": True},
         }
         path = _write_yaml(data)
+        # Act
+        action = lambda: load_config(path)
+        # Assert
         with pytest.raises(ValueError, match="cardinality_enforced_at_hub"):
-            load_config(path)
+            action()
 
-    def test_unknown_top_level_field_rejected(self):
+    def test_unknown_top_level_field_raises_value_error_naming_field(self):
+        # Arrange
         from scitex_agent_container.config import load_config
 
         data = {**_BASE, "stale_field": "oops"}
         path = _write_yaml(data)
+        # Act
+        action = lambda: load_config(path)
+        # Assert
         with pytest.raises(ValueError, match="stale_field"):
-            load_config(path)
+            action()
 
-    def test_known_spec_fields_accepted(self):
+    def test_known_spec_fields_accepted_preserves_runtime(self):
+        # Arrange
         from scitex_agent_container.config import load_config
 
         data = {
@@ -84,10 +108,14 @@ class TestUnknownFieldRejection:
             },
         }
         path = _write_yaml(data)
+        # Act
         cfg = load_config(path)
+        # Assert
         assert cfg.runtime == "apptainer"
 
-    def test_validate_raw_returns_errors_for_unknown_spec(self):
+    @pytest.mark.parametrize("bad_field", ["bad_field", "another_bad"])
+    def test_validate_raw_reports_each_unknown_spec_field_by_name(self, bad_field):
+        # Arrange
         from scitex_agent_container.config._validation import validate_raw
 
         raw = {
@@ -95,10 +123,10 @@ class TestUnknownFieldRejection:
             "kind": "Agent",
             "spec": {"runtime": "apptainer", "bad_field": 1, "another_bad": 2},
         }
+        # Act
         errors = validate_raw(raw, "test.yaml")
-        messages = "\n".join(errors)
-        assert "bad_field" in messages
-        assert "another_bad" in messages
+        # Assert
+        assert bad_field in "\n".join(errors)
 
 
 # ---------------------------------------------------------------------------
@@ -107,43 +135,45 @@ class TestUnknownFieldRejection:
 
 
 class TestLabelsDescription:
-    def _v3(self, labels: dict) -> dict:
-        return {
-            "apiVersion": "scitex-agent-container/v3",
-            "kind": "Agent",
-            "metadata": {"labels": labels},
-            "spec": {"runtime": "apptainer"},
-        }
-
-    def test_explicit_description_used(self):
+    def test_explicit_labels_description_used_as_card_description(self):
+        # Arrange
         from scitex_agent_container.a2a._card import project_card
 
-        v3 = self._v3({"description": "My explicit agent description"})
+        v3 = _v3_with_labels({"description": "My explicit agent description"})
+        # Act
         card = project_card("my-agent", v3, "http://localhost")
+        # Assert
         assert card["description"] == "My explicit agent description"
 
-    def test_role_fallback_when_no_description(self):
+    def test_role_label_fallback_used_as_card_description_when_no_description(self):
+        # Arrange
         from scitex_agent_container.a2a._card import project_card
 
-        v3 = self._v3({"role": "researcher"})
+        v3 = _v3_with_labels({"role": "researcher"})
+        # Act
         card = project_card("my-agent", v3, "http://localhost")
+        # Assert
         assert card["description"] == "sac agent: my-agent (researcher)"
 
-    def test_default_fallback_when_no_description_or_role(self):
+    def test_default_description_fallback_when_no_description_or_role(self):
+        # Arrange
         from scitex_agent_container.a2a._card import project_card
 
-        v3 = self._v3({})
+        v3 = _v3_with_labels({})
+        # Act
         card = project_card("my-agent", v3, "http://localhost")
+        # Assert
         assert card["description"] == "sac agent: my-agent"
 
-    def test_capabilities_no_longer_used_as_description(self):
+    def test_capabilities_label_does_not_become_card_description(self):
         """The implicit capabilities[0] → description fallback is removed."""
+        # Arrange
         from scitex_agent_container.a2a._card import project_card
 
-        v3 = self._v3({"capabilities": "search,index"})
+        v3 = _v3_with_labels({"capabilities": "search,index"})
+        # Act
         card = project_card("my-agent", v3, "http://localhost")
-        # capabilities should NOT appear as the card description
-        assert card["description"] != "Search"
+        # Assert
         assert card["description"] == "sac agent: my-agent"
 
 
@@ -170,7 +200,9 @@ def _classify_v3_yamls():
     for yaml_path in sorted(_SHARED_AGENTS_DIR.rglob("*.yaml")):
         try:
             raw = yaml.safe_load(yaml_path.read_text())
-        except Exception:
+        except (
+            Exception
+        ):  # stx-allow: fallback (reason: skip unreadable test fixture YAMLs)
             continue
         if not isinstance(raw, dict):
             continue
@@ -187,31 +219,43 @@ def _classify_v3_yamls():
 
 _VALID_YAMLS, _INVALID_YAMLS = _classify_v3_yamls()
 
+# Flatten (yaml_path, [field1, field2]) -> [(yaml_path, field1), ...] so
+# each (path, single-field) row becomes one test with one assertion.
+_INVALID_YAMLS_FLAT = [
+    (path, field) for path, fields in _INVALID_YAMLS for field in fields
+]
+
 
 @pytest.mark.parametrize("yaml_path", _VALID_YAMLS, ids=lambda p: p.stem)
-def test_valid_shared_agent_yaml_no_unknown_spec_fields(yaml_path):
+def test_valid_shared_agent_yaml_emits_no_unknown_field_errors(yaml_path):
     """Agents without unknown spec fields produce no FR#3 validation errors."""
+    # Arrange
     from scitex_agent_container.config._validation import validate_raw
 
     raw = yaml.safe_load(yaml_path.read_text())
+    # Act
     errors = validate_raw(raw, str(yaml_path))
     unknown_errors = [
         e for e in errors if "Unknown spec field" in e or "Unknown top-level field" in e
     ]
+    # Assert
     assert not unknown_errors, f"Unexpected unknown-field errors: {unknown_errors}"
 
 
 @pytest.mark.parametrize(
-    "yaml_path,unknown_fields",
-    _INVALID_YAMLS,
+    "yaml_path,unknown_field",
+    _INVALID_YAMLS_FLAT,
     ids=lambda x: x.stem if isinstance(x, Path) else str(x),
 )
-def test_invalid_shared_agent_yaml_now_rejected(yaml_path, unknown_fields):
+def test_invalid_shared_agent_yaml_validation_error_names_unknown_field(
+    yaml_path, unknown_field
+):
     """Agents with unknown spec fields now produce errors naming those fields."""
+    # Arrange
     from scitex_agent_container.config._validation import validate_raw
 
     raw = yaml.safe_load(yaml_path.read_text())
+    # Act
     errors = validate_raw(raw, str(yaml_path))
-    error_msg = "\n".join(errors)
-    for field in unknown_fields:
-        assert field in error_msg, f"Expected '{field}' in validation errors"
+    # Assert
+    assert unknown_field in "\n".join(errors)

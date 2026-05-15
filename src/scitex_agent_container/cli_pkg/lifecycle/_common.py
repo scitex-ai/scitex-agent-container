@@ -84,7 +84,7 @@ def _iter_agent_yamls(agents_dir: "Path") -> "list[tuple[str, str]]":
     return results
 
 
-def _discover_all_agents() -> list[str]:
+def _discover_all_agents(project_local_dirs=None) -> list[str]:
     """Find all agent YAML files via sac's standard search chain.
 
     Search locations (earlier wins on name collision):
@@ -103,7 +103,11 @@ def _discover_all_agents() -> list[str]:
     from pathlib import Path
 
     from ..._env import getenv as _sac_env
-    from ...config._resolve import _project_local_dirs
+
+    if project_local_dirs is None:
+        from ...config._resolve import _project_local_dirs as _default_local
+
+        project_local_dirs = _default_local
 
     # name -> yaml path; later writes are ignored (earlier = higher priority).
     found: dict[str, str] = {}
@@ -112,7 +116,7 @@ def _discover_all_agents() -> list[str]:
     primary = home / ".scitex" / "agent-container" / "agents"
     # Project-local first (so an in-repo test agent wins over a stale
     # global with the same name), then home root, then env-port.
-    search_dirs: list[Path] = list(_project_local_dirs())
+    search_dirs: list[Path] = list(project_local_dirs())
     search_dirs.append(primary)
 
     env_raw = _sac_env("YAML_DIRS", "")
@@ -129,7 +133,7 @@ def _discover_all_agents() -> list[str]:
     return [found[name] for name in sorted(found)]
 
 
-def _multiplex_foreground_tails(names):
+def _multiplex_foreground_tails(names, sleeper=None):
     """Tail each agent's session.jsonl with a ``[<name>]`` line-prefix
     until every heartbeat reports "stopping" (or Ctrl-C).
 
@@ -141,6 +145,8 @@ def _multiplex_foreground_tails(names):
     import time as _time
     from pathlib import Path as _Path
 
+    if sleeper is None:
+        sleeper = _time.sleep
     root = _Path.home() / ".scitex" / "agent-container" / "runtime"
     # Start at end-of-file for each agent so we tail only NEW turns —
     # otherwise every re-start replays the whole historical session.jsonl
@@ -200,7 +206,7 @@ def _multiplex_foreground_tails(names):
                     done[n] = True
                     click.echo(f"[{n}] (stopped)")
             if not any_progress:
-                _time.sleep(0.5)
+                sleeper(0.5)
     except KeyboardInterrupt:
         click.echo("\n[foreground] interrupted; agents keep running in background.")
 

@@ -16,6 +16,15 @@ Design constraints:
   "Inconsistent" therefore means *slot present but older than ~1 day*
   or *slot missing entirely*. Operators rotating mid-day can force
   with ``--force``.
+
+No-mocks seams (PA-306): ``_load_scitex_git`` is a real callable that
+returns a backend exposing ``format_age``, ``get_variable``,
+``list_secrets``, ``set_secret_with_sha_sidecar``, ``sha256_hex``.
+Tests swap it for a hand-rolled real fake (same pattern as
+``image_group._load_apptainer``). ``_credentials_path()`` is a
+function (not a module-level constant) so it picks up the current
+``$HOME`` at call time, letting tests redirect ``HOME`` to ``tmp_path``
+without monkeypatching module globals.
 """
 
 from __future__ import annotations
@@ -24,39 +33,51 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import click
-
-# scitex-git ships in the [dev] extra (see pyproject.toml). The
-# ``sac dev …`` commands need it for the gh-secret/variable wrappers
-# and sha256 sidecar; raise a clean message if a runtime install
-# without [dev] tries to invoke them.
-from scitex_dev import try_import_optional
 
 from .._env import getenv as _sac_env
 from ._helpers import HelpRecursiveGroup
 
-scitex_git = try_import_optional(
-    "scitex_git", extra="dev", pkg="scitex-agent-container"
-)
-_SCITEX_GIT_OK = scitex_git is not None
-if _SCITEX_GIT_OK:
-    format_age = scitex_git.format_age
-    get_variable = scitex_git.get_variable
-    list_secrets = scitex_git.list_secrets
-    set_secret_with_sha_sidecar = scitex_git.set_secret_with_sha_sidecar
-    sha256_hex = scitex_git.sha256_hex
+
+def _load_scitex_git() -> Any | None:
+    """Return the ``scitex_git`` module (or a test-installed fake), or None.
+
+    Lazy import seam — kept as a module-level callable so tests can
+    swap it for a real-callable returning a hand-rolled fake (mirrors
+    ``image_group._load_apptainer``). Production code calls this once
+    per command invocation; the cost is one ``importlib`` lookup.
+    """
+    # scitex-git ships in the [dev] extra (see pyproject.toml). The
+    # ``sac dev …`` commands need it for the gh-secret/variable wrappers
+    # and sha256 sidecar; raise a clean message if a runtime install
+    # without [dev] tries to invoke them.
+    from scitex_dev import try_import_optional
+
+    return try_import_optional("scitex_git", extra="dev", pkg="scitex-agent-container")
 
 
-def _require_scitex_git() -> None:
-    if not _SCITEX_GIT_OK:
+def _require_scitex_git() -> Any:
+    """Return the loaded scitex-git backend or raise a clean ClickException."""
+    backend = _load_scitex_git()
+    if backend is None:
         raise click.ClickException(
             "`sac dev` needs the [dev] extra. Install with: "
             "pip install -e '.[dev]' (or pip install scitex-git>=0.1.3)."
         )
+    return backend
 
 
-_CREDENTIALS_PATH = Path.home() / ".claude" / ".credentials.json"
+def _credentials_path() -> Path:
+    """Return ``~/.claude/.credentials.json`` resolved against the current ``$HOME``.
+
+    A function (not a module-level constant) so it picks up the
+    current ``$HOME`` env var on every call — lets tests redirect
+    ``HOME`` to a tmpdir without monkeypatching module globals.
+    """
+    return Path.home() / ".claude" / ".credentials.json"
+
 
 # Single GH Actions secret slot, matching the canonical local env var
 # name. The runner inside CI (`provision_anthropic_auth`) auto-detects
@@ -134,8 +155,9 @@ def _resolve_local_token() -> tuple[str, str]:
     val = _sac_env("ANTHROPIC_API_KEY")
     if val:
         return val, "env:SAC_ANTHROPIC_API_KEY"
-    if _CREDENTIALS_PATH.is_file():
-        return _read_credentials_oauth_token(_CREDENTIALS_PATH), str(_CREDENTIALS_PATH)
+    creds = _credentials_path()
+    if creds.is_file():
+        return _read_credentials_oauth_token(creds), str(creds)
     raise click.ClickException(
         "no Anthropic auth found — set SAC_ANTHROPIC_API_KEY or run "
         "'claude /login' so ~/.claude/.credentials.json exists"
@@ -177,7 +199,7 @@ def extract_apikey_from_credentials(path: Path | None, as_export: bool) -> None:
       $ sac dev extract-apikey-from-credentials
       $ eval "$(sac dev extract-apikey-from-credentials --export)"
     """
-    token = _read_credentials_oauth_token(path or _CREDENTIALS_PATH)
+    token = _read_credentials_oauth_token(path or _credentials_path())
     if as_export:
         click.echo(f"export SAC_ANTHROPIC_API_KEY={token}")
     else:
@@ -219,7 +241,7 @@ def upload_apikey_from_credentials_to_github(dry_run: bool, yes: bool) -> None:
       $ sac dev upload-apikey-from-credentials-to-github --dry-run
       $ sac dev upload-apikey-from-credentials-to-github --yes
     """
-    _require_scitex_git()
+    backend = _require_scitex_git()
     if shutil.which("gh") is None:
         raise click.ClickException("'gh' CLI not found on PATH")
 
@@ -229,9 +251,9 @@ def upload_apikey_from_credentials_to_github(dry_run: bool, yes: bool) -> None:
     target_slot = _ANTHROPIC_SLOT
     sha_var = f"{target_slot}_SHA256"
     kind = _classify_token(local)
-    remote = list_secrets(repo)
-    local_sha = sha256_hex(local)
-    remote_sha = get_variable(repo, sha_var)
+    remote = backend.list_secrets(repo)
+    local_sha = backend.sha256_hex(local)
+    remote_sha = backend.get_variable(repo, sha_var)
 
     click.echo(f"repo:        {repo}")
     click.echo(f"source:      {source}")
@@ -246,7 +268,7 @@ def upload_apikey_from_credentials_to_github(dry_run: bool, yes: bool) -> None:
     click.echo(f"target slot: {target_slot}")
     if target_slot in remote:
         click.echo(
-            f"remote slot: present (last updated {format_age(remote[target_slot])} ago)"
+            f"remote slot: present (last updated {backend.format_age(remote[target_slot])} ago)"
         )
     else:
         click.echo("remote slot: missing")
@@ -273,7 +295,7 @@ def upload_apikey_from_credentials_to_github(dry_run: bool, yes: bool) -> None:
     # public repo variable so future invocations can detect drift
     # without a CI roundtrip. Hash is irreversible; only the
     # fingerprint is exposed.
-    set_secret_with_sha_sidecar(repo, target_slot, local)
+    backend.set_secret_with_sha_sidecar(repo, target_slot, local)
     click.echo(f"rotated {target_slot} on {repo} (sha256 sidecar: {sha_var})")
 
 
@@ -322,44 +344,39 @@ def upload_credentials_to_github(dry_run: bool, yes: bool) -> None:
       $ sac dev upload-credentials-to-github --dry-run
       $ sac dev upload-credentials-to-github --yes
     """
-    _require_scitex_git()
+    backend = _require_scitex_git()
     if shutil.which("gh") is None:
         raise click.ClickException("'gh' CLI not found on PATH")
 
-    if not _CREDENTIALS_PATH.is_file():
-        raise click.ClickException(
-            f"{_CREDENTIALS_PATH} not found — run `claude /login` first."
-        )
-    content = _CREDENTIALS_PATH.read_text()
+    creds = _credentials_path()
+    if not creds.is_file():
+        raise click.ClickException(f"{creds} not found — run `claude /login` first.")
+    content = creds.read_text()
 
     # Quick sanity: the file should parse as JSON with the expected
     # OAuth shape, otherwise we'd silently push a bogus secret.
     try:
         payload = json.loads(content)
     except json.JSONDecodeError as exc:
-        raise click.ClickException(
-            f"{_CREDENTIALS_PATH} is not valid JSON: {exc}"
-        ) from exc
+        raise click.ClickException(f"{creds} is not valid JSON: {exc}") from exc
     if "claudeAiOauth" not in payload:
-        raise click.ClickException(
-            f"{_CREDENTIALS_PATH} has no .claudeAiOauth key — wrong format?"
-        )
+        raise click.ClickException(f"{creds} has no .claudeAiOauth key — wrong format?")
 
     repo = _detect_repo()
     sha_var = f"{_CREDENTIALS_SLOT}_SHA256"
-    remote = list_secrets(repo)
-    local_sha = sha256_hex(content)
-    remote_sha = get_variable(repo, sha_var)
+    remote = backend.list_secrets(repo)
+    local_sha = backend.sha256_hex(content)
+    remote_sha = backend.get_variable(repo, sha_var)
 
     click.echo(f"repo:        {repo}")
-    click.echo(f"source:      {_CREDENTIALS_PATH}")
+    click.echo(f"source:      {creds}")
     click.echo(f"local size:  {len(content)} bytes")
     click.echo(f"local sha256: {local_sha}")
     click.echo(f"target slot: {_CREDENTIALS_SLOT}")
     if _CREDENTIALS_SLOT in remote:
         click.echo(
             f"remote slot: present (last updated "
-            f"{format_age(remote[_CREDENTIALS_SLOT])} ago)"
+            f"{backend.format_age(remote[_CREDENTIALS_SLOT])} ago)"
         )
     else:
         click.echo("remote slot: missing")
@@ -382,7 +399,7 @@ def upload_credentials_to_github(dry_run: bool, yes: bool) -> None:
         )
         raise SystemExit(2)
 
-    set_secret_with_sha_sidecar(repo, _CREDENTIALS_SLOT, content)
+    backend.set_secret_with_sha_sidecar(repo, _CREDENTIALS_SLOT, content)
     click.echo(f"uploaded {_CREDENTIALS_SLOT} on {repo} (sha256 sidecar: {sha_var})")
 
 

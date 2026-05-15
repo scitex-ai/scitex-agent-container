@@ -1,6 +1,6 @@
 """Write an inline v3 Agent spec to the canonical install root.
 
-Used by ``POST /v1/sac/agents`` when the request body carries a
+Used by ``POST /agents`` when the request body carries a
 ``spec`` dict instead of (or alongside) a bare ``name``. Lets external
 orchestrators register-and-start agents in one HTTP call without
 staging YAML on the sac host out-of-band.

@@ -8,6 +8,8 @@ from __future__ import annotations
 import shlex
 from pathlib import Path
 
+import pytest
+
 from scitex_agent_container.config import AgentConfig
 from scitex_agent_container.config._types import ApptainerSpec
 from scitex_agent_container.runtimes._apptainer_preflight import PREFLIGHT_SCRIPT
@@ -29,73 +31,276 @@ def _inner_after_sif(argv: list[str], sif: Path) -> list[str]:
     return argv[argv.index(str(sif)) + 1 :]
 
 
-def test_preflight_wraps_inner_cmd_by_default(tmp_path: Path) -> None:
+# ---------------------------------------------------------------------------
+# Fixtures: default-wrapped invocation (preflight active)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def default_inner(tmp_path: Path) -> list[str]:
+    # Arrange
     rt = ApptainerContainerRuntime()
     sif = tmp_path / "x.sif"
     cfg = _cfg(tmp_path, startup_prompts=["go"])
+    # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=sif)
-    inner = _inner_after_sif(argv, sif)
-    # Wrapped: ["bash", "-c", "<preflight>\nexec <inner_quoted>"]
-    assert inner[0] == "bash"
-    assert inner[1] == "-c"
-    script = inner[2]
-    # D5 preflight signatures
-    assert '[ "$(id -u)" = "0" ]' in script
-    assert "/proc/self/uid_map" in script
-    assert 'test "$HOME" = "/home/agent"' in script
-    # Inner is exec'd so PID 1 is tini, not bash
-    assert "\nexec " in script
-    assert "/usr/bin/tini" in script
+    # Assert (handed to caller test)
+    return _inner_after_sif(argv, sif)
 
 
-def test_preflight_skipped_when_relaxed(tmp_path: Path) -> None:
+@pytest.fixture
+def default_script(default_inner: list[str]) -> str:
+    return default_inner[2]
+
+
+# ---------------------------------------------------------------------------
+# Default invocation is wrapped: ["bash", "-c", "<preflight>\nexec <inner>"]
+# ---------------------------------------------------------------------------
+
+
+def test_preflight_wrapper_invokes_bash(default_inner: list[str]) -> None:
+    # Arrange
+    inner = default_inner
+    # Act
+    program = inner[0]
+    # Assert
+    assert program == "bash"
+
+
+def test_preflight_wrapper_uses_dash_c_flag(default_inner: list[str]) -> None:
+    # Arrange
+    inner = default_inner
+    # Act
+    flag = inner[1]
+    # Assert
+    assert flag == "-c"
+
+
+def test_preflight_script_checks_root_uid(default_script: str) -> None:
+    # Arrange
+    script = default_script
+    # Act
+    has_uid_check = '[ "$(id -u)" = "0" ]' in script
+    # Assert
+    assert has_uid_check
+
+
+def test_preflight_script_reads_uid_map(default_script: str) -> None:
+    # Arrange
+    script = default_script
+    # Act
+    has_uid_map = "/proc/self/uid_map" in script
+    # Assert
+    assert has_uid_map
+
+
+def test_preflight_script_asserts_home_path(default_script: str) -> None:
+    # Arrange
+    script = default_script
+    # Act
+    has_home_assert = 'test "$HOME" = "/home/agent"' in script
+    # Assert
+    assert has_home_assert
+
+
+def test_preflight_script_execs_inner_so_pid1_is_tini(default_script: str) -> None:
+    # Arrange
+    script = default_script
+    # Act
+    exec_line_present = "\nexec " in script and "/usr/bin/tini" in script
+    # Assert
+    assert exec_line_present
+
+
+# ---------------------------------------------------------------------------
+# Relaxed mode: no preflight wrapper at all
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def relaxed_argv(tmp_path: Path) -> tuple[list[str], list[str]]:
+    # Arrange
     rt = ApptainerContainerRuntime()
     sif = tmp_path / "x.sif"
-    cfg = _cfg(tmp_path, apptainer=ApptainerSpec(relaxed=True), startup_prompts=["go"])
+    cfg = _cfg(
+        tmp_path,
+        apptainer=ApptainerSpec(relaxed=True),
+        startup_prompts=["go"],
+    )
+    # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=sif)
     inner = _inner_after_sif(argv, sif)
-    # No wrapper: inner starts directly with tini
-    assert inner[0] == "/usr/bin/tini"
-    # No preflight strings anywhere in argv
+    # Assert (handed to caller test)
+    return argv, inner
+
+
+def test_preflight_relaxed_inner_starts_with_tini(
+    relaxed_argv: tuple[list[str], list[str]],
+) -> None:
+    # Arrange
+    _argv, inner = relaxed_argv
+    # Act
+    first = inner[0]
+    # Assert
+    assert first == "/usr/bin/tini"
+
+
+def test_preflight_relaxed_omits_uid_map_check(
+    relaxed_argv: tuple[list[str], list[str]],
+) -> None:
+    # Arrange
+    argv, _inner = relaxed_argv
+    # Act
     joined = "\n".join(argv)
+    # Assert
     assert "/proc/self/uid_map" not in joined
+
+
+def test_preflight_relaxed_omits_home_check(
+    relaxed_argv: tuple[list[str], list[str]],
+) -> None:
+    # Arrange
+    argv, _inner = relaxed_argv
+    # Act
+    joined = "\n".join(argv)
+    # Assert
     assert 'test "$HOME" = "/home/agent"' not in joined
 
 
-def test_preflight_quotes_embedded_specials_safely(tmp_path: Path) -> None:
-    """Mission strings with quotes / spaces / $ / semicolons must round-trip
-    through the bash -c wrapper without breakage."""
+# ---------------------------------------------------------------------------
+# Quoting: tricky mission strings must round-trip through bash -c
+# ---------------------------------------------------------------------------
+
+
+TRICKY_MISSION = "hello 'world'; echo $PATH \"oops\""
+
+
+@pytest.fixture
+def tricky_inner(tmp_path: Path) -> list[str]:
+    # Arrange
     rt = ApptainerContainerRuntime()
     sif = tmp_path / "x.sif"
-    tricky = "hello 'world'; echo $PATH \"oops\""
-    cfg = _cfg(tmp_path, startup_prompts=[tricky])
+    cfg = _cfg(tmp_path, startup_prompts=[TRICKY_MISSION])
+    # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=sif)
-    inner = _inner_after_sif(argv, sif)
-    assert inner[0:2] == ["bash", "-c"]
-    script = inner[2]
+    # Assert (handed to caller test)
+    return _inner_after_sif(argv, sif)
+
+
+@pytest.fixture
+def tricky_exec_argv(tricky_inner: list[str]) -> list[str]:
+    script = tricky_inner[2]
     _, _, exec_line = script.rpartition("\nexec ")
-    parsed = shlex.split(exec_line)
-    # Mission must round-trip intact.
-    assert tricky in parsed
-    assert "/usr/bin/tini" in parsed
+    return shlex.split(exec_line)
 
 
-def test_preflight_constant_is_static() -> None:
-    """The preflight is a module constant (no operator-specific generation
-    — see ADR §D4: static = single sha256, verifiable by Clew)."""
-    assert isinstance(PREFLIGHT_SCRIPT, str)
-    assert 'test "$HOME" = "/home/agent"' in PREFLIGHT_SCRIPT
-    assert "/proc/self/uid_map" in PREFLIGHT_SCRIPT
-    assert "id -u" in PREFLIGHT_SCRIPT
+def test_preflight_quoting_wraps_with_bash_dash_c(tricky_inner: list[str]) -> None:
+    # Arrange
+    inner = tricky_inner
+    # Act
+    prefix = inner[0:2]
+    # Assert
+    assert prefix == ["bash", "-c"]
 
 
-def test_preflight_present_when_overlay_set(tmp_path: Path) -> None:
-    """Overlay doesn't disable preflight — only --writable-tmpfs is skipped."""
+def test_preflight_quoting_mission_round_trips_intact(
+    tricky_exec_argv: list[str],
+) -> None:
+    # Arrange
+    parsed = tricky_exec_argv
+    # Act
+    survived = TRICKY_MISSION in parsed
+    # Assert
+    assert survived
+
+
+def test_preflight_quoting_preserves_tini_in_exec_line(
+    tricky_exec_argv: list[str],
+) -> None:
+    # Arrange
+    parsed = tricky_exec_argv
+    # Act
+    has_tini = "/usr/bin/tini" in parsed
+    # Assert
+    assert has_tini
+
+
+# ---------------------------------------------------------------------------
+# Static module constant (ADR §D4 — single sha256, verifiable by Clew)
+# ---------------------------------------------------------------------------
+
+
+def test_preflight_constant_is_a_string() -> None:
+    # Arrange
+    constant = PREFLIGHT_SCRIPT
+    # Act
+    kind = type(constant)
+    # Assert
+    assert kind is str
+
+
+def test_preflight_constant_contains_home_assert() -> None:
+    # Arrange
+    constant = PREFLIGHT_SCRIPT
+    # Act
+    has_home_assert = 'test "$HOME" = "/home/agent"' in constant
+    # Assert
+    assert has_home_assert
+
+
+def test_preflight_constant_contains_uid_map_check() -> None:
+    # Arrange
+    constant = PREFLIGHT_SCRIPT
+    # Act
+    has_uid_map = "/proc/self/uid_map" in constant
+    # Assert
+    assert has_uid_map
+
+
+def test_preflight_constant_contains_root_uid_check() -> None:
+    # Arrange
+    constant = PREFLIGHT_SCRIPT
+    # Act
+    has_id_u = "id -u" in constant
+    # Assert
+    assert has_id_u
+
+
+# ---------------------------------------------------------------------------
+# Overlay does NOT disable preflight (only --writable-tmpfs is skipped)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def overlay_inner(tmp_path: Path) -> list[str]:
+    # Arrange
     rt = ApptainerContainerRuntime()
     sif = tmp_path / "x.sif"
     overlay = tmp_path / "ov.img"
     cfg = _cfg(tmp_path, apptainer=ApptainerSpec(overlay=str(overlay)))
+    # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=sif)
-    inner = _inner_after_sif(argv, sif)
-    assert inner[0:2] == ["bash", "-c"]
-    assert 'test "$HOME" = "/home/agent"' in inner[2]
+    # Assert (handed to caller test)
+    return _inner_after_sif(argv, sif)
+
+
+def test_preflight_with_overlay_still_wraps_with_bash_dash_c(
+    overlay_inner: list[str],
+) -> None:
+    # Arrange
+    inner = overlay_inner
+    # Act
+    prefix = inner[0:2]
+    # Assert
+    assert prefix == ["bash", "-c"]
+
+
+def test_preflight_with_overlay_still_asserts_home_path(
+    overlay_inner: list[str],
+) -> None:
+    # Arrange
+    script = overlay_inner[2]
+    # Act
+    has_home_assert = 'test "$HOME" = "/home/agent"' in script
+    # Assert
+    assert has_home_assert

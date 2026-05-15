@@ -25,3 +25,4 @@ logs/
 # Sphinx-generated AST cache — not part of the published HTML
 # (CI in docs.yml strips this before committing _sphinx_html/)
 _sphinx_html/.doctrees/
+.worktrees/

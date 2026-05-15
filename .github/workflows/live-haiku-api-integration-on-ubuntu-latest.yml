@@ -1,4 +1,4 @@
-name: Haiku integration tests
+name: haiku
 
 # End-to-end tests that spawn a real Claude Code agent backed by
 # haiku and run the nonce-probe + compact paths against it.
@@ -24,6 +24,7 @@ permissions:
 
 jobs:
   haiku-integration:
+    name: live-haiku-api-integration-on-ubuntu-latest
     # Skip on PRs (forks can't read the secret anyway, but be
     # explicit so internal PRs also skip unless manually dispatched).
     if: github.event_name != 'pull_request'

@@ -1,4 +1,10 @@
-"""Tests for the ``probe-network`` CLI command (todo#457)."""
+"""Tests for the ``probe-hub`` CLI command (todo#457).
+
+No-mocks pattern: ``run_and_log`` accepts an injected ``probes``
+callable + reads ``$SAC_PROBE_LOG_ROOT`` for the JSONL output dir.
+Tests pass real callables and real env values — no monkeypatch on
+production internals.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +14,7 @@ from pathlib import Path
 from click.testing import CliRunner
 
 from scitex_agent_container._network import probe as np
+from scitex_agent_container._network.probe import run_and_log
 from scitex_agent_container.cli import main
 
 
@@ -29,39 +36,87 @@ def _fake_dns_fail(**_kwargs):
     ]
 
 
+# ---------------------------------------------------------------------------
+# run_and_log() — the core, tested directly with injected probes.
+# ---------------------------------------------------------------------------
+
+
+def test_run_and_log_writes_summary_to_jsonl(tmp_path: Path):
+    # Arrange
+    agent = "test-agent"
+    # Act
+    run_and_log(
+        agent,
+        hub_host="hub.example",
+        hub_url="https://hub.example/",
+        root=tmp_path,
+        probes=_fake_all_ok,
+    )
+    # Assert
+    assert (tmp_path / f"{agent}.jsonl").is_file()
+
+
+def test_run_and_log_summary_ok_when_all_probes_pass(tmp_path: Path):
+    # Arrange
+    # Act
+    summary = run_and_log(
+        "a", hub_host="x", hub_url="https://x/", root=tmp_path, probes=_fake_all_ok
+    )
+    # Assert
+    assert summary["ok"] is True
+
+
+def test_run_and_log_summary_fails_when_any_probe_fails(tmp_path: Path):
+    # Arrange
+    # Act
+    summary = run_and_log(
+        "a", hub_host="x", hub_url="https://x/", root=tmp_path, probes=_fake_dns_fail
+    )
+    # Assert
+    assert summary["ok"] is False
+
+
+def test_run_and_log_jsonl_contains_four_probes(tmp_path: Path):
+    # Arrange
+    agent = "a"
+    # Act
+    run_and_log(
+        agent, hub_host="x", hub_url="https://x/", root=tmp_path, probes=_fake_all_ok
+    )
+    # Assert
+    payload = json.loads((tmp_path / f"{agent}.jsonl").read_text().strip())
+    assert len(payload["probes"]) == 4
+
+
+# ---------------------------------------------------------------------------
+# CLI surface — env override for log root, probes default to real.
+# Tests use a hub_url with an RFC2606-reserved domain (``hub.example``)
+# so the real probes naturally fail without any network.
+# ---------------------------------------------------------------------------
+
+
 class TestProbeNetworkCLI:
-    def test_all_ok_returns_zero(self, monkeypatch, tmp_path: Path):
-        monkeypatch.setattr(np, "run_all_probes", _fake_all_ok)
-        monkeypatch.setattr(np, "DEFAULT_LOG_ROOT", tmp_path)
-        monkeypatch.setenv("SAC_HUB_URL", "https://hub.example/")
-        runner = CliRunner()
-        result = runner.invoke(
-            main,
-            ["host", "probe-hub", "--agent", "test-agent", "--quiet"],
+    def test_env_override_redirects_log_root(self, tmp_path: Path, env_save_restore):
+        # Arrange
+        env_save_restore.set("SAC_PROBE_LOG_ROOT", str(tmp_path))
+        env_save_restore.set("SAC_HUB_URL", "https://hub.example/")
+        # Act
+        result = CliRunner().invoke(
+            main, ["host", "probe-hub", "--agent", "test-agent", "--quiet"]
         )
-        assert result.exit_code == 0, result.output
-        path = tmp_path / "test-agent.jsonl"
-        assert path.exists()
-        payload = json.loads(path.read_text().strip())
-        assert payload["ok"] is True
-        assert len(payload["probes"]) == 4
+        # Assert
+        # The probes will fail (RFC2606 host), but the JSONL must still be
+        # written to the redirected log root.
+        assert (tmp_path / "test-agent.jsonl").is_file(), result.output
 
-    def test_non_quiet_prints_json(self, monkeypatch, tmp_path: Path):
-        monkeypatch.setattr(np, "run_all_probes", _fake_all_ok)
-        monkeypatch.setattr(np, "DEFAULT_LOG_ROOT", tmp_path)
-        monkeypatch.setenv("SAC_HUB_URL", "https://hub.example/")
-        runner = CliRunner()
-        result = runner.invoke(main, ["host", "probe-hub", "--agent", "a"])
-        assert result.exit_code == 0
-        payload = json.loads(result.output)
-        assert payload["ok"] is True
-
-    def test_exit_nonzero_on_fail(self, monkeypatch, tmp_path: Path):
-        monkeypatch.setattr(np, "run_all_probes", _fake_dns_fail)
-        monkeypatch.setattr(np, "DEFAULT_LOG_ROOT", tmp_path)
-        monkeypatch.setenv("SAC_HUB_URL", "https://hub.example/")
-        runner = CliRunner()
-        result = runner.invoke(
+    def test_exit_nonzero_flag_propagates_failure(
+        self, tmp_path: Path, env_save_restore
+    ):
+        # Arrange
+        env_save_restore.set("SAC_PROBE_LOG_ROOT", str(tmp_path))
+        env_save_restore.set("SAC_HUB_URL", "https://hub.example/")
+        # Act
+        result = CliRunner().invoke(
             main,
             [
                 "host",
@@ -72,18 +127,73 @@ class TestProbeNetworkCLI:
                 "--exit-nonzero-on-fail",
             ],
         )
+        # Assert
+        # Probes fail against the RFC2606 example domain, exit code is 1.
         assert result.exit_code == 1
-        path = tmp_path / "a.jsonl"
-        assert path.exists()
-        payload = json.loads(path.read_text().strip())
-        assert payload["ok"] is False
 
-    def test_env_fallback_for_agent(self, monkeypatch, tmp_path: Path):
-        monkeypatch.setattr(np, "run_all_probes", _fake_all_ok)
-        monkeypatch.setattr(np, "DEFAULT_LOG_ROOT", tmp_path)
-        monkeypatch.setenv("SAC_HUB_URL", "https://hub.example/")
-        monkeypatch.setenv("CLAUDE_AGENT_ID", "head-ywata-note-win")
-        runner = CliRunner()
-        result = runner.invoke(main, ["host", "probe-hub", "--quiet"])
-        assert result.exit_code == 0
-        assert (tmp_path / "head-ywata-note-win.jsonl").exists()
+    def test_claude_agent_id_env_used_as_agent_name(
+        self, tmp_path: Path, env_save_restore
+    ):
+        # Arrange
+        env_save_restore.set("SAC_PROBE_LOG_ROOT", str(tmp_path))
+        env_save_restore.set("SAC_HUB_URL", "https://hub.example/")
+        env_save_restore.set("CLAUDE_AGENT_ID", "head-ywata-note-win")
+        # Act
+        CliRunner().invoke(main, ["host", "probe-hub", "--quiet"])
+        # Assert
+        assert (tmp_path / "head-ywata-note-win.jsonl").is_file()
+
+    def test_explicit_hub_url_skips_env_lookup(self, tmp_path: Path, env_save_restore):
+        # Arrange explicit --hub-url so the env-fallback branch is skipped.
+        env_save_restore.set("SAC_PROBE_LOG_ROOT", str(tmp_path))
+        env_save_restore.delete("SAC_HUB_URL")
+        env_save_restore.delete("SCITEX_AGENT_CONTAINER_HUB_URL")
+        # Act
+        result = CliRunner().invoke(
+            main,
+            [
+                "host",
+                "probe-hub",
+                "--agent",
+                "explicit-url",
+                "--hub-url",
+                "https://hub.example/",
+                "--quiet",
+            ],
+        )
+        # Assert JSONL written — flag bypassed env entirely.
+        assert (tmp_path / "explicit-url.jsonl").is_file(), result.output
+
+    def test_explicit_hub_host_skips_url_derivation(
+        self, tmp_path: Path, env_save_restore
+    ):
+        # Arrange explicit --hub-host AND --hub-url so derivation is skipped.
+        env_save_restore.set("SAC_PROBE_LOG_ROOT", str(tmp_path))
+        env_save_restore.delete("SAC_HUB_URL")
+        # Act
+        result = CliRunner().invoke(
+            main,
+            [
+                "host",
+                "probe-hub",
+                "--agent",
+                "both-flags",
+                "--hub-host",
+                "hub.example",
+                "--hub-url",
+                "https://hub.example/",
+                "--quiet",
+            ],
+        )
+        # Assert
+        assert (tmp_path / "both-flags.jsonl").is_file(), result.output
+
+    def test_missing_hub_config_exits_two(self, tmp_path: Path, env_save_restore):
+        # Arrange no hub-url, no env — hits 98->102 skip and error branch.
+        env_save_restore.set("SAC_PROBE_LOG_ROOT", str(tmp_path))
+        env_save_restore.set("SAC_HUB_URL", "")
+        env_save_restore.delete("SCITEX_AGENT_CONTAINER_HUB_URL")
+        # Act
+        result = CliRunner().invoke(main, ["host", "probe-hub", "--agent", "x"])
+        # Assert
+        assert result.exit_code == 2

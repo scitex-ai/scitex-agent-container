@@ -126,10 +126,8 @@ async def serve_inbound(
 
     # Per-agent sidecar routes — mirror sac listen's path shape so the
     # same URL works whether the client routes through the host control
-    # plane or POSTs directly to the agent's port. Both namespaces
-    # (canonical `/v1/sac/agents/...` and A2A-compat `/v1/a2a/agents/...`)
-    # point at the same handlers; the path ``{name}`` segment is ignored
-    # because the port already identifies the agent.
+    # plane or POSTs directly to the agent's port. The path ``{name}``
+    # segment is ignored because the port already identifies the agent.
     async def post_turn_named(request: Request) -> JSONResponse:
         # `{name}` is informational — port routing already pinned us
         # to one agent. Honor it as a sanity check; mismatch is 404.
@@ -141,26 +139,17 @@ async def serve_inbound(
             )
         return await post_turn(request)
 
-    # Per-agent sidecar routes — mirror sac listen's path shape so the
-    # same URL works whether the client routes through the host control
-    # plane or POSTs directly to the agent's port. Per the original
-    # sac/orochi contract: ``/v1/sac/...`` (canonical) and
-    # ``/v1/a2a/...`` (A2A-protocol-compat mirror) — symmetric, both
-    # serving identical data.
+    # Per-agent sidecar routes (ADR-0004 — A2A v1.0). The legacy
+    # ``/v1/a2a/...`` protocol-compat mirror was removed wholesale.
     routes = [
         # Bare shortcut — port already identifies the agent.
         Route("/v1/turn", post_turn, methods=["POST"]),
         # Canonical sac namespace.
-        Route("/v1/sac/agents/{name}/send", post_turn_named, methods=["POST"]),
-        Route("/v1/sac/agents/{name}/turn", post_turn_named, methods=["POST"]),
-        Route("/v1/sac/agents/{name}/card", get_agent_card, methods=["GET"]),
-        # A2A-protocol-compat mirror (same handlers).
-        Route("/v1/a2a/agents/{name}/send", post_turn_named, methods=["POST"]),
-        Route("/v1/a2a/agents/{name}/turn", post_turn_named, methods=["POST"]),
-        Route("/v1/a2a/agents/{name}/card", get_agent_card, methods=["GET"]),
-        # Discovery (A2A convention — both filenames are widely tried).
+        Route("/agents/{name}/send", post_turn_named, methods=["POST"]),
+        Route("/agents/{name}/turn", post_turn_named, methods=["POST"]),
+        Route("/agents/{name}/card", get_agent_card, methods=["GET"]),
+        # Discovery (A2A v1 convention).
         Route("/.well-known/agent-card.json", get_agent_card, methods=["GET"]),
-        Route("/.well-known/agent.json", get_agent_card, methods=["GET"]),
         Route("/health", get_health, methods=["GET"]),
     ]
     app = Starlette(routes=routes)

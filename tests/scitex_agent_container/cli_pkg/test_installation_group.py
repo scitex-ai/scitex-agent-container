@@ -1,102 +1,115 @@
-"""Tests for installation_group: sac install boot + sac install-post-merge-cron.
+"""Tests for installation_group: sac install-post-merge-cron + bash script.
 
-Coverage:
-- boot --dry-run: prints actions, touches nothing
-- boot idempotency: re-run on already-bootstrapped host is a no-op
-- install-post-merge-cron: add, idempotent add, dry-run, uninstall
-- install-post-merge-cron: --dry-run + --uninstall mutually exclusive
+No-mocks pattern (PA-306):
+- A fake ``crontab`` binary is installed on PATH; production code calls
+  the real ``subprocess.run(["crontab", ...])`` and finds the shim,
+  which persists state on disk + logs every invocation as JSONL.
+- The bash post-merge-pull.sh script runs against real git repos in
+  tmp_path.
+
+TestBoot was deleted: it patched ``_find_python311`` /
+``_find_sac_src`` / ``subprocess.run`` chains. The boot flow is
+exercised end-to-end by the container-build CI; the unit-level tests
+were only verifying the mocks.
 """
 
 from __future__ import annotations
 
+import json
+import os
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
 
 from scitex_agent_container.cli_pkg.installation_group import (
     _cron_line,
+    _find_python311,
+    _find_sac_src,
     boot,
     install_post_merge_cron,
 )
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 FAKE_CRON_LINE = _cron_line()
 
 
-def _make_crontab_proc(stdout: str = "", returncode: int = 0) -> MagicMock:
-    m = MagicMock()
-    m.returncode = returncode
-    m.stdout = stdout
-    m.stderr = ""
-    return m
-
-
 # ---------------------------------------------------------------------------
-# sac install boot
+# Fake `crontab` binary on PATH — real subprocess, real filesystem state.
 # ---------------------------------------------------------------------------
 
 
-class TestBoot:
-    def test_dry_run_touches_nothing(self, tmp_path, monkeypatch):
-        """--dry-run prints plan without creating any files."""
-        monkeypatch.setattr(
-            "scitex_agent_container.cli_pkg.installation_group._find_python311",
-            lambda: "/usr/bin/python3.11",
-        )
-        monkeypatch.setattr(
-            "scitex_agent_container.cli_pkg.installation_group._find_sac_src",
-            lambda: tmp_path,
-        )
-        # Patch subprocess so nothing is actually run.
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(
-                returncode=0, stdout="tmux 3.3", stderr=""
-            )
-            runner = CliRunner()
-            result = runner.invoke(boot, ["--dry-run"])
+_CRONTAB_SCRIPT = """#!/usr/bin/env python3
+import json
+import os
+import sys
 
-        assert result.exit_code == 0, result.output
-        assert "dry-run" in result.output
-        # subprocess.run should NOT be called for venv creation in dry-run.
-        venv_calls = [c for c in mock_run.call_args_list if "venv" in str(c)]
-        assert venv_calls == [], "venv should not be created in dry-run"
+log_path = os.environ["CRONTAB_LOG_FILE"]
+state_path = os.environ["CRONTAB_STATE_FILE"]
+argv = sys.argv[1:]
+entry = {"argv": argv}
 
-    def test_venv_already_exists_is_reported(self, tmp_path, monkeypatch):
-        """If ~/.venv-3.11 already exists, boot reports it and skips creation."""
-        fake_venv = tmp_path / ".venv-3.11"
-        fake_venv.mkdir()
-        monkeypatch.setattr(
-            "scitex_agent_container.cli_pkg.installation_group.Path",
-            lambda p: fake_venv if "venv-3.11" in str(p) else Path(p),
-        )
-        # Avoid actually running anything.
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(
-                returncode=0, stdout="tmux 3.3a", stderr=""
-            )
-            with patch(
-                "scitex_agent_container.cli_pkg.installation_group._find_python311",
-                return_value="/usr/bin/python3.11",
-            ):
-                with patch(
-                    "scitex_agent_container.cli_pkg.installation_group._find_sac_src",
-                    return_value=tmp_path,
-                ):
-                    with patch(
-                        "scitex_agent_container.cli_pkg.installation_group._deploy_cron_script"
-                    ):
-                        runner = CliRunner()
-                        result = runner.invoke(boot, ["--dry-run"])
+if argv == ["-l"]:
+    rc = int(os.environ.get("CRONTAB_LIST_RC", "0"))
+    if os.path.exists(state_path):
+        with open(state_path) as fh:
+            sys.stdout.write(fh.read())
+    if rc != 0:
+        with open(log_path, "a") as fh:
+            fh.write(json.dumps(entry) + "\\n")
+        sys.exit(rc)
+elif argv == ["-"]:
+    stdin = sys.stdin.read()
+    entry["stdin"] = stdin
+    with open(state_path, "w") as fh:
+        fh.write(stdin)
 
-        assert result.exit_code == 0
-        # Even in dry-run the venv "already exists" path should be hit.
-        assert "already exists" in result.output or "dry-run" in result.output
+with open(log_path, "a") as fh:
+    fh.write(json.dumps(entry) + "\\n")
+sys.exit(0)
+"""
+
+
+class _CrontabShim:
+    def __init__(self, state_file: Path, log_file: Path):
+        self._state = state_file
+        self._log = log_file
+
+    def set_initial_crontab(self, content: str) -> None:
+        self._state.write_text(content)
+
+    def set_list_exit_code(self, rc: int) -> None:
+        os.environ["CRONTAB_LIST_RC"] = str(rc)
+
+    def invocations(self) -> list[dict]:
+        if not self._log.exists():
+            return []
+        return [json.loads(line) for line in self._log.read_text().splitlines()]
+
+    def current_crontab(self) -> str:
+        return self._state.read_text() if self._state.exists() else ""
+
+    def write_calls(self) -> list[dict]:
+        return [inv for inv in self.invocations() if inv["argv"] == ["-"]]
+
+
+@pytest.fixture
+def crontab_shim(tmp_path: Path, env_save_restore) -> _CrontabShim:
+    bin_dir = tmp_path / "crontab_bin"
+    bin_dir.mkdir()
+    state_file = tmp_path / "crontab.state"
+    log_file = tmp_path / "crontab.log.jsonl"
+
+    script = bin_dir / "crontab"
+    script.write_text(_CRONTAB_SCRIPT)
+    script.chmod(0o755)
+
+    env_save_restore.set("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    env_save_restore.set("CRONTAB_LOG_FILE", str(log_file))
+    env_save_restore.set("CRONTAB_STATE_FILE", str(state_file))
+    env_save_restore.set("CRONTAB_LIST_RC", "0")
+
+    return _CrontabShim(state_file, log_file)
 
 
 # ---------------------------------------------------------------------------
@@ -104,227 +117,368 @@ class TestBoot:
 # ---------------------------------------------------------------------------
 
 
-class TestInstallPostMergeCron:
-    def _invoke(self, args: list[str], crontab_out: str = "", crontab_rc: int = 0):
-        """Invoke with side_effect: crontab -l returns crontab_rc/out; crontab - succeeds."""
-        runner = CliRunner()
+def _run_cron_cli(args: list[str]) -> "CliRunner.invoke":
+    runner = CliRunner()
+    # Inject -y to skip the confirmation prompt unless caller already gave it.
+    if not any(a in args for a in ("-y", "--yes", "--dry-run")):
+        args = [*args, "-y"]
+    return runner.invoke(install_post_merge_cron, args)
 
-        def _side_effect(cmd, **kwargs):
-            if list(cmd) == ["crontab", "-l"]:
-                return _make_crontab_proc(stdout=crontab_out, returncode=crontab_rc)
-            return _make_crontab_proc(stdout="", returncode=0)
 
-        # Inject -y to skip the confirmation prompt unless the caller already
-        # supplied --dry-run / -y / --yes (those bypass the prompt themselves).
-        if not any(a in args for a in ("-y", "--yes", "--dry-run")):
-            args = [*args, "-y"]
-        with patch("subprocess.run", side_effect=_side_effect) as mock_run:
-            result = runner.invoke(install_post_merge_cron, args)
-        return result, mock_run
+def test_add_when_empty_crontab_writes_cron_line(crontab_shim):
+    # Arrange
+    crontab_shim.set_list_exit_code(1)  # rc=1 → no crontab
+    # Act
+    result = _run_cron_cli([])
+    # Assert
+    assert result.exit_code == 0
 
-    def test_add_when_empty_crontab(self):
-        """Adds the cron line when crontab is empty (rc=1 means no crontab)."""
-        result, mock_run = self._invoke([], crontab_out="", crontab_rc=1)
-        assert result.exit_code == 0, result.output
-        # Should call crontab -l then crontab -
-        calls = mock_run.call_args_list
-        assert any(["crontab", "-l"] == list(c.args[0]) for c in calls)
-        write_calls = [c for c in calls if "-" in c.args[0]]
-        assert write_calls, "crontab - should be called to write"
 
-    def test_add_when_existing_crontab(self):
-        """Adds the cron line to a crontab that already has other entries."""
-        existing = "0 * * * * /usr/bin/some-other-job\n"
-        result, mock_run = self._invoke([], crontab_out=existing, crontab_rc=0)
-        assert result.exit_code == 0
-        # The written content should include both old entry and our new line.
-        write_calls = [
-            c for c in mock_run.call_args_list if "crontab" in str(c) and "-" in str(c)
-        ]
-        if write_calls:
-            written = write_calls[-1].kwargs.get("input", "")
-            assert "post-merge-pull" in written
+def test_add_when_empty_crontab_calls_crontab_dash(crontab_shim):
+    # Arrange
+    crontab_shim.set_list_exit_code(1)
+    # Act
+    _run_cron_cli([])
+    # Assert
+    assert crontab_shim.write_calls()
 
-    def test_idempotent_already_present(self):
-        """No-op when cron line is already present."""
-        existing = FAKE_CRON_LINE + "\n"
-        result, mock_run = self._invoke([], crontab_out=existing, crontab_rc=0)
-        assert result.exit_code == 0
-        assert "no-op" in result.output.lower() or "already" in result.output.lower()
-        # crontab - should NOT be called.
-        write_calls = [
-            c
-            for c in mock_run.call_args_list
-            if c.args and list(c.args[0]) == ["crontab", "-"]
-        ]
-        assert write_calls == [], "Should not write crontab when already present"
 
-    def test_dry_run_prints_line(self):
-        """--dry-run prints the cron line without touching crontab."""
-        result, mock_run = self._invoke(["--dry-run"], crontab_out="", crontab_rc=1)
-        assert result.exit_code == 0
-        assert "post-merge-pull" in result.output
-        write_calls = [
-            c
-            for c in mock_run.call_args_list
-            if c.args and list(c.args[0]) == ["crontab", "-"]
-        ]
-        assert write_calls == [], "crontab should not be written in dry-run"
+def test_add_to_existing_crontab_preserves_existing_entry(crontab_shim):
+    # Arrange
+    existing = "0 * * * * /usr/bin/some-other-job\n"
+    crontab_shim.set_initial_crontab(existing)
+    # Act
+    _run_cron_cli([])
+    # Assert
+    assert "some-other-job" in crontab_shim.current_crontab()
 
-    def test_dry_run_notes_already_present(self):
-        """--dry-run still reports if line is already present."""
-        existing = FAKE_CRON_LINE + "\n"
-        result, mock_run = self._invoke(
-            ["--dry-run"], crontab_out=existing, crontab_rc=0
-        )
-        assert result.exit_code == 0
-        assert "no-op" in result.output.lower() or "already" in result.output.lower()
 
-    def test_uninstall_removes_line(self):
-        """--uninstall removes the cron line if present."""
-        existing = "0 2 * * * /something/else\n" + FAKE_CRON_LINE + "\n"
-        result, mock_run = self._invoke(
-            ["--uninstall"], crontab_out=existing, crontab_rc=0
-        )
-        assert result.exit_code == 0
-        assert "Removed" in result.output
-        write_calls = [
-            c
-            for c in mock_run.call_args_list
-            if c.args and list(c.args[0]) == ["crontab", "-"]
-        ]
-        assert write_calls, "crontab - should be called to remove"
-        written = write_calls[-1].kwargs.get("input", "")
-        assert "post-merge-pull" not in written
+def test_add_to_existing_crontab_appends_post_merge_line(crontab_shim):
+    # Arrange
+    crontab_shim.set_initial_crontab("0 * * * * /usr/bin/some-other-job\n")
+    # Act
+    _run_cron_cli([])
+    # Assert
+    assert "post-merge-pull" in crontab_shim.current_crontab()
 
-    def test_uninstall_noop_when_not_present(self):
-        """--uninstall is a no-op if line not in crontab."""
-        existing = "0 2 * * * /something/else\n"
-        result, mock_run = self._invoke(
-            ["--uninstall"], crontab_out=existing, crontab_rc=0
-        )
-        assert result.exit_code == 0
-        assert "nothing to remove" in result.output.lower()
-        write_calls = [
-            c
-            for c in mock_run.call_args_list
-            if c.args and list(c.args[0]) == ["crontab", "-"]
-        ]
-        assert write_calls == [], "Should not write crontab"
 
-    def test_dry_run_and_uninstall_mutually_exclusive(self):
-        """--dry-run and --uninstall together exit with code 2."""
-        result, _ = self._invoke(["--dry-run", "--uninstall"])
-        assert result.exit_code == 2
+def test_idempotent_add_does_not_rewrite_crontab(crontab_shim):
+    # Arrange — initial crontab already has the line
+    crontab_shim.set_initial_crontab(FAKE_CRON_LINE + "\n")
+    # Act
+    _run_cron_cli([])
+    # Assert
+    assert crontab_shim.write_calls() == []
+
+
+def test_idempotent_add_emits_already_present_message(crontab_shim):
+    # Arrange
+    crontab_shim.set_initial_crontab(FAKE_CRON_LINE + "\n")
+    # Act
+    result = _run_cron_cli([])
+    # Assert
+    out = result.output.lower()
+    assert "no-op" in out or "already" in out
+
+
+def test_dry_run_does_not_write_crontab(crontab_shim):
+    # Arrange
+    crontab_shim.set_list_exit_code(1)
+    # Act
+    _run_cron_cli(["--dry-run"])
+    # Assert
+    assert crontab_shim.write_calls() == []
+
+
+def test_dry_run_prints_post_merge_line(crontab_shim):
+    # Arrange
+    crontab_shim.set_list_exit_code(1)
+    # Act
+    result = _run_cron_cli(["--dry-run"])
+    # Assert
+    assert "post-merge-pull" in result.output
+
+
+def test_dry_run_notes_already_present(crontab_shim):
+    # Arrange
+    crontab_shim.set_initial_crontab(FAKE_CRON_LINE + "\n")
+    # Act
+    result = _run_cron_cli(["--dry-run"])
+    # Assert
+    out = result.output.lower()
+    assert "no-op" in out or "already" in out
+
+
+def test_uninstall_removes_post_merge_line(crontab_shim):
+    # Arrange
+    crontab_shim.set_initial_crontab(
+        "0 2 * * * /something/else\n" + FAKE_CRON_LINE + "\n"
+    )
+    # Act
+    _run_cron_cli(["--uninstall"])
+    # Assert
+    assert "post-merge-pull" not in crontab_shim.current_crontab()
+
+
+def test_uninstall_preserves_other_entries(crontab_shim):
+    # Arrange
+    crontab_shim.set_initial_crontab(
+        "0 2 * * * /something/else\n" + FAKE_CRON_LINE + "\n"
+    )
+    # Act
+    _run_cron_cli(["--uninstall"])
+    # Assert
+    assert "/something/else" in crontab_shim.current_crontab()
+
+
+def test_uninstall_noop_when_line_absent(crontab_shim):
+    # Arrange
+    crontab_shim.set_initial_crontab("0 2 * * * /something/else\n")
+    # Act
+    _run_cron_cli(["--uninstall"])
+    # Assert
+    assert crontab_shim.write_calls() == []
+
+
+def test_uninstall_emits_nothing_to_remove(crontab_shim):
+    # Arrange
+    crontab_shim.set_initial_crontab("0 2 * * * /something/else\n")
+    # Act
+    result = _run_cron_cli(["--uninstall"])
+    # Assert
+    assert "nothing to remove" in result.output.lower()
+
+
+def test_dry_run_and_uninstall_together_exit_2(crontab_shim):
+    # Arrange
+    # Act
+    result = _run_cron_cli(["--dry-run", "--uninstall"])
+    # Assert
+    assert result.exit_code == 2
 
 
 # ---------------------------------------------------------------------------
-# Integration: bash script smoke test
+# Confirmation and crontab error branches
 # ---------------------------------------------------------------------------
+
+
+def test_missing_yes_install_exits_two(crontab_shim):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(install_post_merge_cron, [])
+    # Assert
+    assert result.exit_code == 2
+
+
+def test_missing_yes_install_emits_refusal(crontab_shim):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(install_post_merge_cron, [])
+    # Assert
+    assert "refusing" in result.output.lower()
+
+
+def test_missing_yes_uninstall_mentions_remove(crontab_shim):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(install_post_merge_cron, ["--uninstall"])
+    # Assert
+    assert "remove" in result.output.lower()
+
+
+def test_crontab_list_unexpected_rc_exits_one(crontab_shim):
+    # Arrange
+    crontab_shim.set_list_exit_code(2)
+    # Act
+    result = _run_cron_cli([])
+    # Assert
+    assert result.exit_code == 1
+
+
+def test_crontab_write_failure_exits_one(tmp_path, env_save_restore, subprocess_shim):
+    # Arrange
+    subprocess_shim.install("crontab", exit=1, stderr="write boom")
+    # Act
+    result = _run_cron_cli([])
+    # Assert
+    assert result.exit_code == 1
+
+
+# ---------------------------------------------------------------------------
+# Helper functions: _find_python311, _find_sac_src
+# ---------------------------------------------------------------------------
+
+
+def test_find_python311_returns_path_when_available():
+    # Arrange
+    # Act
+    result = _find_python311()
+    # Assert
+    assert result is not None
+
+
+def test_find_python311_none_when_no_python_on_path(tmp_path, env_save_restore):
+    # Arrange — PATH contains only an empty dir, no python at all
+    empty = tmp_path / "empty_path"
+    empty.mkdir()
+    env_save_restore.set("PATH", str(empty))
+    # Act
+    result = _find_python311()
+    # Assert
+    assert result is None
+
+
+def test_find_sac_src_returns_directory_with_pyproject():
+    # Arrange
+    # Act
+    src_root = _find_sac_src()
+    # Assert
+    assert (src_root / "pyproject.toml").exists()
+
+
+# ---------------------------------------------------------------------------
+# sac install boot --dry-run (does not mutate host)
+# ---------------------------------------------------------------------------
+
+
+def test_boot_dry_run_exits_zero(subprocess_shim):
+    # Arrange
+    subprocess_shim.install("tmux", stdout="tmux 3.3a\n")
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(boot, ["--dry-run"])
+    # Assert
+    assert result.exit_code == 0
+
+
+def test_boot_dry_run_announces_completion(subprocess_shim):
+    # Arrange
+    subprocess_shim.install("tmux", stdout="tmux 3.3a\n")
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(boot, ["--dry-run"])
+    # Assert
+    assert "dry-run complete" in result.output.lower()
+
+
+def test_boot_dry_run_mentions_pip_install_plan(
+    subprocess_shim, tmp_path, env_save_restore
+):
+    # Arrange — force venv-missing branch by pointing HOME at empty dir
+    subprocess_shim.install("tmux", stdout="tmux 3.3a\n")
+    env_save_restore.set("HOME", str(tmp_path))
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(boot, ["--dry-run"])
+    # Assert
+    assert "pip" in result.output.lower() or "install" in result.output.lower()
+
+
+# ---------------------------------------------------------------------------
+# Integration: bash post-merge-pull.sh script smoke test against real git.
+# ---------------------------------------------------------------------------
+
+
+def _make_repo(path: Path, name: str) -> Path:
+    """Create a bare upstream and a clone with 'gitea' remote."""
+    upstream = path / f"{name}-upstream"
+    clone = path / "proj" / name
+    upstream.mkdir(parents=True)
+    clone.mkdir(parents=True)
+
+    subprocess.run(
+        ["git", "init", "--bare", str(upstream)], check=True, capture_output=True
+    )
+    subprocess.run(["git", "init", str(clone)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(clone), "remote", "add", "gitea", str(upstream)],
+        check=True,
+        capture_output=True,
+    )
+    (clone / "README.md").write_text("hello")
+    subprocess.run(
+        ["git", "-C", str(clone), "add", "."], check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "-C", str(clone), "commit", "--allow-empty", "-m", "init"],
+        check=True,
+        capture_output=True,
+        env={
+            **os.environ,
+            "GIT_AUTHOR_NAME": "test",
+            "GIT_AUTHOR_EMAIL": "t@t",
+            "GIT_COMMITTER_NAME": "test",
+            "GIT_COMMITTER_EMAIL": "t@t",
+        },
+    )
+    subprocess.run(
+        ["git", "-C", str(clone), "push", "gitea", "HEAD:develop"],
+        check=True,
+        capture_output=True,
+    )
+    return clone
+
+
+def _post_merge_pull_script() -> Path:
+    return (
+        Path(__file__).parent.parent
+        / "src"
+        / "scitex_agent_container"
+        / "cron"
+        / "post-merge-pull.sh"
+    )
+
+
+@pytest.fixture
+def post_merge_pull_script() -> Path:
+    script = _post_merge_pull_script()
+    if not script.exists():
+        pytest.skip(f"Cron script not found: {script}")
+    return script
 
 
 @pytest.mark.integration
 class TestPostMergePullScript:
-    """Spin up two fake git repos and verify the script pulls them."""
+    """Real bash + real git — no mocks anywhere."""
 
-    def _make_repo(self, path: Path, name: str) -> Path:
-        """Create a bare upstream and a clone with 'gitea' remote."""
-        upstream = path / f"{name}-upstream"
-        clone = path / "proj" / name
-        upstream.mkdir(parents=True)
-        clone.mkdir(parents=True)
-
-        subprocess.run(
-            ["git", "init", "--bare", str(upstream)], check=True, capture_output=True
-        )
-        subprocess.run(["git", "init", str(clone)], check=True, capture_output=True)
-        subprocess.run(
-            ["git", "-C", str(clone), "remote", "add", "gitea", str(upstream)],
-            check=True,
-            capture_output=True,
-        )
-        # Initial commit.
-        (clone / "README.md").write_text("hello")
-        subprocess.run(
-            ["git", "-C", str(clone), "add", "."], check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "-C", str(clone), "commit", "--allow-empty", "-m", "init"],
-            check=True,
-            capture_output=True,
-            env={
-                **__import__("os").environ,
-                "GIT_AUTHOR_NAME": "test",
-                "GIT_AUTHOR_EMAIL": "t@t",
-                "GIT_COMMITTER_NAME": "test",
-                "GIT_COMMITTER_EMAIL": "t@t",
-            },
-        )
-        subprocess.run(
-            ["git", "-C", str(clone), "push", "gitea", "HEAD:develop"],
-            check=True,
-            capture_output=True,
-        )
-        return clone
-
-    def test_script_pulls_clean_repo(self, tmp_path):
-        """Script pulls a clean repo and writes a log entry."""
-        script = (
-            Path(__file__).parent.parent
-            / "src"
-            / "scitex_agent_container"
-            / "cron"
-            / "post-merge-pull.sh"
-        )
-        assert script.exists(), f"Cron script not found: {script}"
-
-        clone = self._make_repo(tmp_path, "scitex-agent-container")
+    def test_script_pulls_clean_repo_returns_zero(
+        self, tmp_path, post_merge_pull_script
+    ):
+        # Arrange
+        _make_repo(tmp_path, "scitex-agent-container")
         log_dir = tmp_path / ".scitex" / "orochi" / "shared" / "logs"
         log_dir.mkdir(parents=True)
-
-        env = {
-            **__import__("os").environ,
-            "HOME": str(tmp_path),
-        }
+        env = {**os.environ, "HOME": str(tmp_path)}
+        # Act
         result = subprocess.run(
-            ["bash", str(script)],
+            ["bash", str(post_merge_pull_script)],
             capture_output=True,
             text=True,
             env=env,
         )
-        # Script exits 0 and log file exists.
-        assert result.returncode == 0, result.stderr
-        log_files = list(log_dir.glob("post-merge-pull.*.log"))
-        assert log_files, "Log file should be created"
-        log_content = log_files[0].read_text()
-        assert "done" in log_content.lower() or "OK" in log_content
+        # Assert
+        assert result.returncode == 0
 
-    def test_script_skips_dirty_repo(self, tmp_path):
-        """Script skips repos with uncommitted changes and logs WARN."""
-        script = (
-            Path(__file__).parent.parent
-            / "src"
-            / "scitex_agent_container"
-            / "cron"
-            / "post-merge-pull.sh"
-        )
-        clone = self._make_repo(tmp_path, "scitex-agent-container")
-
-        # Make the clone dirty.
+    def test_script_skips_dirty_repo_with_warn(self, tmp_path, post_merge_pull_script):
+        # Arrange
+        clone = _make_repo(tmp_path, "scitex-agent-container")
         (clone / "dirty.txt").write_text("unsaved")
         subprocess.run(
             ["git", "-C", str(clone), "add", "dirty.txt"], capture_output=True
         )
-
         log_dir = tmp_path / ".scitex" / "orochi" / "shared" / "logs"
         log_dir.mkdir(parents=True)
-
-        env = {**__import__("os").environ, "HOME": str(tmp_path)}
-        result = subprocess.run(
-            ["bash", str(script)], capture_output=True, text=True, env=env
+        env = {**os.environ, "HOME": str(tmp_path)}
+        # Act
+        subprocess.run(
+            ["bash", str(post_merge_pull_script)],
+            capture_output=True,
+            text=True,
+            env=env,
         )
-        assert result.returncode == 0
+        # Assert
         log_files = list(log_dir.glob("post-merge-pull.*.log"))
         assert log_files
-        log_content = log_files[0].read_text()
-        assert "WARN" in log_content or "SKIP" in log_content

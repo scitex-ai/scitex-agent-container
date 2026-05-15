@@ -121,6 +121,8 @@ async def run_conversation(
     print_stream: bool = False,
     max_restarts: int = 0,
     restart_backoff_s: float = 1.0,
+    sdk_module: Any | None = None,
+    build_sdk_options_fn: Any | None = None,
 ) -> None:
     """Drive an inbox-driven conversation against ``ClaudeSDKClient``.
 
@@ -133,14 +135,14 @@ async def run_conversation(
     from ._session_inbox import ShutdownEnvelope, TurnEnvelope
 
     try:
-        from claude_agent_sdk import (
-            AssistantMessage,
-            ClaudeSDKClient,
-            HookMatcher,
-            ResultMessage,
-            TextBlock,
-            UserMessage,
-        )
+        if sdk_module is None:
+            import claude_agent_sdk as sdk_module  # type: ignore[no-redef]
+        AssistantMessage = sdk_module.AssistantMessage
+        ClaudeSDKClient = sdk_module.ClaudeSDKClient
+        HookMatcher = sdk_module.HookMatcher
+        ResultMessage = sdk_module.ResultMessage
+        TextBlock = sdk_module.TextBlock
+        UserMessage = sdk_module.UserMessage
     except Exception as exc:  # stx-allow: fallback (reason: optional dep import — record + drain rather than crash the runner)
         logger.error("claude-agent-sdk import failed: %s", exc)
         append_session_message(
@@ -159,6 +161,9 @@ async def run_conversation(
     from ..runtimes._sdk_common import SDKCommonError, build_sdk_options
     from ._session_hooks import build_event_log_hooks
 
+    if build_sdk_options_fn is None:
+        build_sdk_options_fn = build_sdk_options
+
     hooks = build_event_log_hooks(name, HookMatcher)
 
     attempt = 0
@@ -168,7 +173,7 @@ async def run_conversation(
         # against the most recent completed turn rather than the initial sid.
         current_sid = read_session_id(state_dir) or resume_session_id
         try:
-            options = build_sdk_options(
+            options = build_sdk_options_fn(
                 name,
                 permission_mode="bypassPermissions",
                 resume=current_sid,

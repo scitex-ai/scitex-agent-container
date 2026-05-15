@@ -92,59 +92,241 @@ def _write_config(data: dict) -> str:
     return str(path)
 
 
-class TestLoadConfig:
-    def test_minimal_config(self):
+@pytest.fixture
+def minimal_loaded_config():
+    path = _write_config(MINIMAL_CONFIG)
+    cfg = load_config(path)
+    yield cfg
+    Path(path).unlink(missing_ok=True)
+
+
+@pytest.fixture
+def full_loaded_config():
+    path = _write_config(FULL_CONFIG)
+    cfg = load_config(path)
+    yield cfg
+    Path(path).unlink(missing_ok=True)
+
+
+class TestLoadMinimalConfig:
+    def test_minimal_loads_name(self, minimal_loaded_config):
+        # Arrange
+        config = minimal_loaded_config
+        # Act
+        name = config.name
+        # Assert
+        assert name == "test-agent"
+
+    def test_minimal_loads_runtime(self, minimal_loaded_config):
+        # Arrange
+        config = minimal_loaded_config
+        # Act
+        runtime = config.runtime
+        # Assert
+        assert runtime == "apptainer"
+
+    def test_minimal_defaults_model_to_sonnet(self, minimal_loaded_config):
+        # Arrange
+        config = minimal_loaded_config
+        # Act
+        model = config.model
+        # Assert
+        assert model == "sonnet"
+
+    def test_minimal_auto_generates_screen_name(self, minimal_loaded_config):
+        # Arrange
+        config = minimal_loaded_config
+        # Act
+        screen_name = config.screen_name
+        # Assert
+        assert screen_name == "test-agent"
+
+
+class TestLoadFullConfig:
+    def test_full_loads_name(self, full_loaded_config):
+        # Arrange
+        config = full_loaded_config
+        # Act
+        value = config.name
+        # Assert
+        assert value == "full-agent"
+
+    def test_full_loads_model(self, full_loaded_config):
+        # Arrange
+        config = full_loaded_config
+        # Act
+        value = config.model
+        # Assert
+        assert value == "opus"
+
+    def test_full_loads_labels(self, full_loaded_config):
+        # Arrange
+        config = full_loaded_config
+        # Act
+        value = config.labels
+        # Assert
+        assert value == {"role": "worker", "team": "dev"}
+
+    def test_full_loads_claude_channels(self, full_loaded_config):
+        # Arrange
+        config = full_loaded_config
+        # Act
+        value = config.claude.channels
+        # Assert
+        assert value == ["plugin:telegram@claude-plugins-official"]
+
+    def test_full_loads_claude_session(self, full_loaded_config):
+        # Arrange
+        config = full_loaded_config
+        # Act
+        value = config.claude.session
+        # Assert
+        assert value == "continue"
+
+    def test_full_loads_container_runtime(self, full_loaded_config):
+        # Arrange
+        config = full_loaded_config
+        # Act
+        value = config.container.runtime
+        # Assert
+        assert value == "apptainer"
+
+    def test_full_loads_container_image(self, full_loaded_config):
+        # Arrange
+        config = full_loaded_config
+        # Act
+        value = config.container.image
+        # Assert
+        assert value == "my-image:latest"
+
+    def test_full_loads_container_network(self, full_loaded_config):
+        # Arrange
+        config = full_loaded_config
+        # Act
+        value = config.container.network
+        # Assert
+        assert value == "bridge"
+
+    def test_full_loads_health_enabled(self, full_loaded_config):
+        # Arrange
+        config = full_loaded_config
+        # Act
+        value = config.health.enabled
+        # Assert
+        assert value is True
+
+    def test_full_loads_health_interval(self, full_loaded_config):
+        # Arrange
+        config = full_loaded_config
+        # Act
+        value = config.health.interval
+        # Assert
+        assert value == 45
+
+    def test_full_loads_restart_policy(self, full_loaded_config):
+        # Arrange
+        config = full_loaded_config
+        # Act
+        value = config.restart.policy
+        # Assert
+        assert value == "on-failure"
+
+    def test_full_loads_restart_max_retries(self, full_loaded_config):
+        # Arrange
+        config = full_loaded_config
+        # Act
+        value = config.restart.max_retries
+        # Assert
+        assert value == 5
+
+    def test_full_loads_restart_backoff_initial(self, full_loaded_config):
+        # Arrange
+        config = full_loaded_config
+        # Act
+        value = config.restart.backoff_initial
+        # Assert
+        assert value == 15
+
+    def test_full_loads_restart_backoff_multiplier(self, full_loaded_config):
+        # Arrange
+        config = full_loaded_config
+        # Act
+        value = config.restart.backoff_multiplier
+        # Assert
+        assert value == 3
+
+    def test_full_loads_screen_name(self, full_loaded_config):
+        # Arrange
+        config = full_loaded_config
+        # Act
+        value = config.screen_name
+        # Assert
+        assert value == "full-agent"
+
+    def test_full_preserves_user_env_var(self, full_loaded_config):
+        """v3 auto-derives sac env vars on top of user env."""
+        # Arrange
+        config = full_loaded_config
+        # Act
+        value = config.env.get("MY_VAR")
+        # Assert
+        assert value == "my_value"
+
+    def test_full_auto_derives_claude_agent_id(self, full_loaded_config):
+        # Arrange
+        config = full_loaded_config
+        # Act
+        value = config.env.get("CLAUDE_AGENT_ID")
+        # Assert
+        assert value == "full-agent"
+
+    def test_full_preserves_user_pre_start_hook(self, full_loaded_config):
+        # Arrange
+        config = full_loaded_config
+        # Act
+        hooks = config.hooks["pre_start"]
+        # Assert
+        assert "echo pre" in hooks
+
+    def test_full_auto_prepends_mkdir_hook(self, full_loaded_config):
+        # Arrange
+        config = full_loaded_config
+        # Act
+        has_mkdir = any("mkdir -p" in h for h in config.hooks["pre_start"])
+        # Assert
+        assert has_mkdir is True
+
+
+class TestLoadConfigExpansion:
+    def test_expanded_workdir_resolves_tilde(self):
+        # Arrange
         path = _write_config(MINIMAL_CONFIG)
-        config = load_config(path)
-        assert config.name == "test-agent"
-        assert config.runtime == "apptainer"
-        assert config.model == "sonnet"  # default
-        assert config.screen_name == "test-agent"  # auto-generated
-        Path(path).unlink()
+        try:
+            config = load_config(path)
+            # Act
+            expanded = config.expanded_workdir
+            # Assert
+            assert "~" not in expanded
+        finally:
+            Path(path).unlink()
 
-    def test_full_config(self):
-        path = _write_config(FULL_CONFIG)
-        config = load_config(path)
-        assert config.name == "full-agent"
-        assert config.model == "opus"
-        assert config.labels == {"role": "worker", "team": "dev"}
-        assert config.claude.channels == ["plugin:telegram@claude-plugins-official"]
-        assert config.claude.session == "continue"
-        assert config.container.runtime == "apptainer"
-        assert config.container.image == "my-image:latest"
-        assert config.container.network == "bridge"
-        assert config.health.enabled is True
-        assert config.health.interval == 45
-        assert config.restart.policy == "on-failure"
-        assert config.restart.max_retries == 5
-        assert config.restart.backoff_initial == 15
-        assert config.restart.backoff_multiplier == 3
-        assert config.screen_name == "full-agent"
-        # v3 auto-derives sac env vars on top of user env
-        assert config.env["MY_VAR"] == "my_value"
-        assert config.env["CLAUDE_AGENT_ID"] == "full-agent"
-        # v3 auto-prepends mkdir -p {workdir}/.claude
-        assert "echo pre" in config.hooks["pre_start"]
-        assert any("mkdir -p" in h for h in config.hooks["pre_start"])
-        Path(path).unlink()
 
-    def test_expanded_workdir(self):
-        path = _write_config(MINIMAL_CONFIG)
-        config = load_config(path)
-        expanded = config.expanded_workdir
-        assert "~" not in expanded
-        Path(path).unlink()
-
-    def test_invalid_api_version(self):
+class TestLoadConfigRejects:
+    def test_invalid_api_version_raises_value_error(self):
+        # Arrange
         data = {**MINIMAL_CONFIG, "apiVersion": "wrong/v2"}
         path = _write_config(data)
-        with pytest.raises(ValueError, match="apiVersion"):
-            load_config(path)
-        Path(path).unlink()
+        try:
+            # Act
+            # Assert
+            with pytest.raises(ValueError, match="apiVersion"):
+                load_config(path)
+        finally:
+            Path(path).unlink()
 
-    def test_metadata_name_rejected(self):
+    def test_metadata_name_in_yaml_rejected(self):
         """Dir-as-SSoT: metadata.name in YAML is no longer accepted."""
-        # Bypass _write_config (which strips metadata.name) — write raw.
+        # Arrange — bypass _write_config (which strips metadata.name); write raw.
         tmp_dir = Path(tempfile.mkdtemp()) / "rejected-agent"
         tmp_dir.mkdir(parents=True)
         path = tmp_dir / "rejected-agent.yaml"
@@ -158,10 +340,13 @@ class TestLoadConfig:
                 }
             )
         )
+        # Act
+        # Assert
         with pytest.raises(ValueError, match="metadata.name is no longer accepted"):
             load_config(str(path))
 
-    def test_invalid_runtime(self):
+    def test_invalid_runtime_raises_value_error(self):
+        # Arrange
         data = {
             "apiVersion": "scitex-agent-container/v3",
             "kind": "Agent",
@@ -169,31 +354,50 @@ class TestLoadConfig:
             "spec": {"runtime": "invalid-runtime"},
         }
         path = _write_config(data)
-        with pytest.raises(ValueError, match="runtime"):
-            load_config(path)
-        Path(path).unlink()
+        try:
+            # Act
+            # Assert
+            with pytest.raises(ValueError, match="runtime"):
+                load_config(path)
+        finally:
+            Path(path).unlink()
 
 
 class TestValidateConfig:
-    def test_valid_config(self):
+    def test_minimal_config_validates_with_no_errors(self):
+        # Arrange
         path = _write_config(MINIMAL_CONFIG)
-        errors = validate_config(path)
-        assert errors == []
-        Path(path).unlink()
+        try:
+            # Act
+            errors = validate_config(path)
+            # Assert
+            assert errors == []
+        finally:
+            Path(path).unlink()
 
-    def test_invalid_yaml(self):
+    def test_invalid_yaml_reports_errors(self):
+        # Arrange
         tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
         tmp.write(":::invalid yaml:::")
         tmp.close()
-        errors = validate_config(tmp.name)
-        assert len(errors) > 0
-        Path(tmp.name).unlink()
+        try:
+            # Act
+            errors = validate_config(tmp.name)
+            # Assert
+            assert len(errors) > 0
+        finally:
+            Path(tmp.name).unlink()
 
-    def test_missing_file(self):
+    def test_missing_file_reports_not_found(self):
+        # Arrange
+        # (path intentionally does not exist)
+        # Act
         errors = validate_config("/nonexistent/path.yaml")
+        # Assert
         assert any("not found" in e.lower() or "File not found" in e for e in errors)
 
-    def test_invalid_container_runtime(self):
+    def test_invalid_container_runtime_flagged(self):
+        # Arrange
         data = {
             "apiVersion": "scitex-agent-container/v3",
             "kind": "Agent",
@@ -204,11 +408,16 @@ class TestValidateConfig:
             },
         }
         path = _write_config(data)
-        errors = validate_config(path)
-        assert any("container.runtime" in e for e in errors)
-        Path(path).unlink()
+        try:
+            # Act
+            errors = validate_config(path)
+            # Assert
+            assert any("container.runtime" in e for e in errors)
+        finally:
+            Path(path).unlink()
 
-    def test_invalid_restart_policy(self):
+    def test_invalid_restart_policy_flagged(self):
+        # Arrange
         data = {
             "apiVersion": "scitex-agent-container/v3",
             "kind": "Agent",
@@ -219,267 +428,447 @@ class TestValidateConfig:
             },
         }
         path = _write_config(data)
-        errors = validate_config(path)
-        assert any("restart.policy" in e for e in errors)
-        Path(path).unlink()
+        try:
+            # Act
+            errors = validate_config(path)
+            # Assert
+            assert any("restart.policy" in e for e in errors)
+        finally:
+            Path(path).unlink()
 
 
 class TestSkillsSpec:
-    def test_default_skills(self):
+    def test_default_skills_required_is_empty(self):
+        # Arrange
         path = _write_config(MINIMAL_CONFIG)
-        config = load_config(path)
-        assert config.skills.required == []
-        assert config.skills.available == []
-        Path(path).unlink()
+        try:
+            config = load_config(path)
+            # Act
+            value = config.skills.required
+            # Assert
+            assert value == []
+        finally:
+            Path(path).unlink()
+
+    def test_default_skills_available_is_empty(self):
+        # Arrange
+        path = _write_config(MINIMAL_CONFIG)
+        try:
+            config = load_config(path)
+            # Act
+            value = config.skills.available
+            # Assert
+            assert value == []
+        finally:
+            Path(path).unlink()
 
     @pytest.mark.skip(
         reason="v3-realign: spec.skills was removed (skills now live "
         "under dot_claude/skills/ per §3)."
     )
-    def test_skills_from_yaml(self):
+    def test_skills_from_yaml_loads_required(self):
+        # Arrange
+        pass
+        # Act
+        pass
+        # Assert
         pass
 
     @pytest.mark.skip(
         reason="v3-realign: spec.skills was removed (skills now live "
         "under dot_claude/skills/ per §3)."
     )
-    def test_skills_partial(self):
-        data = {
-            "apiVersion": "scitex-agent-container/v3",
-            "kind": "Agent",
-            "metadata": {"name": "partial-skills"},
-            "spec": {
-                "runtime": "apptainer",
-                "skills": {
-                    "required": ["speech"],
-                },
-            },
-        }
-        path = _write_config(data)
-        config = load_config(path)
-        assert config.skills.required == ["speech"]
-        assert config.skills.available == []
-        Path(path).unlink()
+    def test_skills_partial_required_only_set(self):
+        # Arrange
+        pass
+        # Act
+        pass
+        # Assert
+        pass
 
 
-class TestClaudeMdGeneration:
-    def test_setup_creates_claude_md(self):
-        from scitex_agent_container.runtimes.claude_md import (
-            setup_claude_md as _setup_claude_md,
-        )
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            config = AgentConfig(
-                name="test-agent",
-                env={
-                    "SCITEX_AGENT_CONTAINER_ROLE": "worker",
-                    "SCITEX_AGENT_CONTAINER_ID": "test-agent",
-                },
-                skills=SkillsSpec(required=["quality-guards", "autonomous"]),
-            )
-            _setup_claude_md(config, tmpdir)
-
-            claude_md = Path(tmpdir) / ".claude" / "CLAUDE.md"
-            assert claude_md.exists()
-            content = claude_md.read_text()
-            assert '<!-- agent-container:start id="test-agent" -->' in content
-            assert '<!-- agent-container:end id="test-agent" -->' in content
-            assert "quality-guards" in content
-            assert "autonomous" in content
-            assert "Role: worker" in content
-
-    def test_setup_preserves_existing_content(self):
-        from scitex_agent_container.runtimes.claude_md import (
-            setup_claude_md as _setup_claude_md,
-        )
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            claude_dir = Path(tmpdir) / ".claude"
-            claude_dir.mkdir(parents=True)
-            claude_md = claude_dir / "CLAUDE.md"
-            claude_md.write_text("# My Project\n\nSome existing content.\n")
-
-            config = AgentConfig(name="test-agent")
-            _setup_claude_md(config, tmpdir)
-
-            content = claude_md.read_text()
-            assert "# My Project" in content
-            assert "Some existing content." in content
-            assert '<!-- agent-container:start id="test-agent" -->' in content
-
-    def test_setup_replaces_existing_section(self):
-        from scitex_agent_container.runtimes.claude_md import (
-            setup_claude_md as _setup_claude_md,
-        )
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            claude_dir = Path(tmpdir) / ".claude"
-            claude_dir.mkdir(parents=True)
-            claude_md = claude_dir / "CLAUDE.md"
-            claude_md.write_text(
-                "# Header\n"
-                '<!-- agent-container:start id="test-agent" -->\n'
-                "old content\n"
-                '<!-- agent-container:end id="test-agent" -->\n'
-                "# Footer\n"
-            )
-
-            config = AgentConfig(
-                name="test-agent",
-                skills=SkillsSpec(required=["new-skill"]),
-            )
-            _setup_claude_md(config, tmpdir)
-
-            content = claude_md.read_text()
-            assert "old content" not in content
-            assert "new-skill" in content
-            assert "# Header" in content
-            assert "# Footer" in content
-
-    def test_cleanup_removes_section(self):
-        from scitex_agent_container.runtimes.claude_md import (
-            cleanup_claude_md as _cleanup_claude_md,
-        )
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            claude_dir = Path(tmpdir) / ".claude"
-            claude_dir.mkdir(parents=True)
-            claude_md = claude_dir / "CLAUDE.md"
-            claude_md.write_text(
-                "# Header\n"
-                '<!-- agent-container:start id="test-agent" -->\n'
-                "agent section\n"
-                '<!-- agent-container:end id="test-agent" -->\n'
-                "# Footer\n"
-            )
-
-            config = AgentConfig(name="test-agent")
-            _cleanup_claude_md(config, tmpdir)
-
-            content = claude_md.read_text()
-            assert "agent section" not in content
-            assert "agent-container:start" not in content
-            assert "# Header" in content
-            assert "# Footer" in content
-
-    def test_cleanup_noop_when_no_file(self):
-        from scitex_agent_container.runtimes.claude_md import (
-            cleanup_claude_md as _cleanup_claude_md,
-        )
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            config = AgentConfig(name="test-agent")
-            # Should not raise
-            _cleanup_claude_md(config, tmpdir)
-
-
-class TestRemoteSpec:
-    def test_default_remote(self):
-        """Remote spec defaults to empty (local execution)."""
-        path = _write_config(MINIMAL_CONFIG)
-        config = load_config(path)
-        assert config.remote.host == ""
-        assert config.remote.user == ""
-        assert config.remote.key == ""
-        assert config.remote.port == 22
-        assert config.remote.is_remote is False
-        Path(path).unlink()
-
-    @pytest.mark.skip(
-        reason="v3-realign: spec.remote was removed (cross-host routing "
-        "is orochi's job per §2)."
+@pytest.fixture
+def claude_md_setup_tmpdir():
+    """Provide a tmpdir + run setup_claude_md against it; yields (config, tmpdir)."""
+    from scitex_agent_container.runtimes.claude_md import (
+        setup_claude_md as _setup_claude_md,
     )
-    def test_remote_from_yaml(self):
-        """Remote spec parsed from YAML config."""
-        data = {
-            "apiVersion": "scitex-agent-container/v3",
-            "kind": "Agent",
-            "metadata": {"name": "remote-agent"},
-            "spec": {
-                "runtime": "apptainer",
-                "remote": {
-                    "host": "mba",
-                    "user": "testuser",
-                },
-            },
-        }
-        path = _write_config(data)
-        config = load_config(path)
-        assert config.remote.host == "mba"
-        assert config.remote.user == "testuser"
-        assert config.remote.port == 22
-        assert config.remote.key == ""
-        assert config.remote.is_remote is True
-        Path(path).unlink()
 
-    @pytest.mark.skip(reason="v3-realign: spec.remote was removed (§2).")
-    def test_remote_full_spec(self):
-        """Remote spec with all fields specified."""
-        data = {
-            "apiVersion": "scitex-agent-container/v3",
-            "kind": "Agent",
-            "metadata": {"name": "remote-full"},
-            "spec": {
-                "runtime": "apptainer",
-                "remote": {
-                    "host": "192.168.1.100",
-                    "user": "deploy",
-                    "key": "/home/deploy/.ssh/id_ed25519",
-                    "port": 2222,
-                },
+    with tempfile.TemporaryDirectory() as tmpdir:
+        config = AgentConfig(
+            name="test-agent",
+            env={
+                "SCITEX_AGENT_CONTAINER_ROLE": "worker",
+                "SCITEX_AGENT_CONTAINER_ID": "test-agent",
             },
-        }
-        path = _write_config(data)
-        config = load_config(path)
-        assert config.remote.host == "192.168.1.100"
-        assert config.remote.user == "deploy"
-        assert config.remote.key == "/home/deploy/.ssh/id_ed25519"
-        assert config.remote.port == 2222
-        assert config.remote.is_remote is True
-        Path(path).unlink()
+            skills=SkillsSpec(required=["quality-guards", "autonomous"]),
+        )
+        _setup_claude_md(config, tmpdir)
+        yield config, tmpdir
 
-    def test_remote_spec_dataclass(self):
-        """RemoteSpec dataclass works standalone."""
+
+class TestSetupClaudeMd:
+    def test_setup_creates_claude_md_file(self, claude_md_setup_tmpdir):
+        # Arrange
+        _config, tmpdir = claude_md_setup_tmpdir
+        claude_md = Path(tmpdir) / ".claude" / "CLAUDE.md"
+        # Act
+        exists = claude_md.exists()
+        # Assert
+        assert exists is True
+
+    def test_setup_writes_start_marker(self, claude_md_setup_tmpdir):
+        # Arrange
+        _config, tmpdir = claude_md_setup_tmpdir
+        # Act
+        content = (Path(tmpdir) / ".claude" / "CLAUDE.md").read_text()
+        # Assert
+        assert '<!-- agent-container:start id="test-agent" -->' in content
+
+    def test_setup_writes_end_marker(self, claude_md_setup_tmpdir):
+        # Arrange
+        _config, tmpdir = claude_md_setup_tmpdir
+        # Act
+        content = (Path(tmpdir) / ".claude" / "CLAUDE.md").read_text()
+        # Assert
+        assert '<!-- agent-container:end id="test-agent" -->' in content
+
+    def test_setup_includes_required_skill(self, claude_md_setup_tmpdir):
+        # Arrange
+        _config, tmpdir = claude_md_setup_tmpdir
+        # Act
+        content = (Path(tmpdir) / ".claude" / "CLAUDE.md").read_text()
+        # Assert
+        assert "quality-guards" in content
+
+    def test_setup_includes_autonomous_skill(self, claude_md_setup_tmpdir):
+        # Arrange
+        _config, tmpdir = claude_md_setup_tmpdir
+        # Act
+        content = (Path(tmpdir) / ".claude" / "CLAUDE.md").read_text()
+        # Assert
+        assert "autonomous" in content
+
+    def test_setup_includes_role_label(self, claude_md_setup_tmpdir):
+        # Arrange
+        _config, tmpdir = claude_md_setup_tmpdir
+        # Act
+        content = (Path(tmpdir) / ".claude" / "CLAUDE.md").read_text()
+        # Assert
+        assert "Role: worker" in content
+
+
+@pytest.fixture
+def claude_md_preserve_setup():
+    """Pre-populate CLAUDE.md with user content, then deploy managed section."""
+    from scitex_agent_container.runtimes.claude_md import (
+        setup_claude_md as _setup_claude_md,
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        claude_dir = Path(tmpdir) / ".claude"
+        claude_dir.mkdir(parents=True)
+        claude_md = claude_dir / "CLAUDE.md"
+        claude_md.write_text("# My Project\n\nSome existing content.\n")
+        config = AgentConfig(name="test-agent")
+        _setup_claude_md(config, tmpdir)
+        yield claude_md
+
+
+class TestSetupPreservesExisting:
+    def test_setup_preserves_user_heading(self, claude_md_preserve_setup):
+        # Arrange
+        claude_md = claude_md_preserve_setup
+        # Act
+        content = claude_md.read_text()
+        # Assert
+        assert "# My Project" in content
+
+    def test_setup_preserves_user_body_text(self, claude_md_preserve_setup):
+        # Arrange
+        claude_md = claude_md_preserve_setup
+        # Act
+        content = claude_md.read_text()
+        # Assert
+        assert "Some existing content." in content
+
+    def test_setup_appends_managed_marker(self, claude_md_preserve_setup):
+        # Arrange
+        claude_md = claude_md_preserve_setup
+        # Act
+        content = claude_md.read_text()
+        # Assert
+        assert '<!-- agent-container:start id="test-agent" -->' in content
+
+
+@pytest.fixture
+def claude_md_replace_setup():
+    from scitex_agent_container.runtimes.claude_md import (
+        setup_claude_md as _setup_claude_md,
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        claude_dir = Path(tmpdir) / ".claude"
+        claude_dir.mkdir(parents=True)
+        claude_md = claude_dir / "CLAUDE.md"
+        claude_md.write_text(
+            "# Header\n"
+            '<!-- agent-container:start id="test-agent" -->\n'
+            "old content\n"
+            '<!-- agent-container:end id="test-agent" -->\n'
+            "# Footer\n"
+        )
+        config = AgentConfig(
+            name="test-agent",
+            skills=SkillsSpec(required=["new-skill"]),
+        )
+        _setup_claude_md(config, tmpdir)
+        yield claude_md
+
+
+class TestSetupReplacesExisting:
+    def test_setup_removes_old_managed_content(self, claude_md_replace_setup):
+        # Arrange
+        claude_md = claude_md_replace_setup
+        # Act
+        content = claude_md.read_text()
+        # Assert
+        assert "old content" not in content
+
+    def test_setup_writes_new_skill(self, claude_md_replace_setup):
+        # Arrange
+        claude_md = claude_md_replace_setup
+        # Act
+        content = claude_md.read_text()
+        # Assert
+        assert "new-skill" in content
+
+    def test_setup_preserves_user_header(self, claude_md_replace_setup):
+        # Arrange
+        claude_md = claude_md_replace_setup
+        # Act
+        content = claude_md.read_text()
+        # Assert
+        assert "# Header" in content
+
+    def test_setup_preserves_user_footer(self, claude_md_replace_setup):
+        # Arrange
+        claude_md = claude_md_replace_setup
+        # Act
+        content = claude_md.read_text()
+        # Assert
+        assert "# Footer" in content
+
+
+@pytest.fixture
+def claude_md_cleanup_setup():
+    from scitex_agent_container.runtimes.claude_md import (
+        cleanup_claude_md as _cleanup_claude_md,
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        claude_dir = Path(tmpdir) / ".claude"
+        claude_dir.mkdir(parents=True)
+        claude_md = claude_dir / "CLAUDE.md"
+        claude_md.write_text(
+            "# Header\n"
+            '<!-- agent-container:start id="test-agent" -->\n'
+            "agent section\n"
+            '<!-- agent-container:end id="test-agent" -->\n'
+            "# Footer\n"
+        )
+        config = AgentConfig(name="test-agent")
+        _cleanup_claude_md(config, tmpdir)
+        yield claude_md
+
+
+class TestCleanupClaudeMd:
+    def test_cleanup_removes_agent_section_body(self, claude_md_cleanup_setup):
+        # Arrange
+        claude_md = claude_md_cleanup_setup
+        # Act
+        content = claude_md.read_text()
+        # Assert
+        assert "agent section" not in content
+
+    def test_cleanup_removes_start_marker(self, claude_md_cleanup_setup):
+        # Arrange
+        claude_md = claude_md_cleanup_setup
+        # Act
+        content = claude_md.read_text()
+        # Assert
+        assert "agent-container:start" not in content
+
+    def test_cleanup_preserves_user_header(self, claude_md_cleanup_setup):
+        # Arrange
+        claude_md = claude_md_cleanup_setup
+        # Act
+        content = claude_md.read_text()
+        # Assert
+        assert "# Header" in content
+
+    def test_cleanup_preserves_user_footer(self, claude_md_cleanup_setup):
+        # Arrange
+        claude_md = claude_md_cleanup_setup
+        # Act
+        content = claude_md.read_text()
+        # Assert
+        assert "# Footer" in content
+
+    def test_cleanup_noop_when_no_file_does_not_raise(self):
+        from scitex_agent_container.runtimes.claude_md import (
+            cleanup_claude_md as _cleanup_claude_md,
+        )
+
+        # Arrange
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = AgentConfig(name="test-agent")
+            claude_md = Path(tmpdir) / ".claude" / "CLAUDE.md"
+            # Act
+            _cleanup_claude_md(config, tmpdir)
+            # Assert
+            assert claude_md.exists() is False
+
+
+@pytest.fixture
+def default_remote_config():
+    path = _write_config(MINIMAL_CONFIG)
+    cfg = load_config(path)
+    yield cfg
+    Path(path).unlink(missing_ok=True)
+
+
+class TestDefaultRemoteSpec:
+    """Remote spec defaults to empty (local execution)."""
+
+    def test_default_remote_host_is_empty(self, default_remote_config):
+        # Arrange
+        config = default_remote_config
+        # Act
+        value = config.remote.host
+        # Assert
+        assert value == ""
+
+    def test_default_remote_user_is_empty(self, default_remote_config):
+        # Arrange
+        config = default_remote_config
+        # Act
+        value = config.remote.user
+        # Assert
+        assert value == ""
+
+    def test_default_remote_key_is_empty(self, default_remote_config):
+        # Arrange
+        config = default_remote_config
+        # Act
+        value = config.remote.key
+        # Assert
+        assert value == ""
+
+    def test_default_remote_port_is_22(self, default_remote_config):
+        # Arrange
+        config = default_remote_config
+        # Act
+        value = config.remote.port
+        # Assert
+        assert value == 22
+
+    def test_default_remote_is_remote_false(self, default_remote_config):
+        # Arrange
+        config = default_remote_config
+        # Act
+        value = config.remote.is_remote
+        # Assert
+        assert value is False
+
+
+class TestRemoteSpecDataclass:
+    def test_empty_remote_spec_is_not_remote(self):
+        # Arrange
         r = RemoteSpec()
-        assert r.is_remote is False
+        # Act
+        value = r.is_remote
+        # Assert
+        assert value is False
 
+    def test_remote_spec_with_host_user_is_remote(self):
+        # Arrange
         r = RemoteSpec(host="myhost", user="me")
-        assert r.is_remote is True
+        # Act
+        value = r.is_remote
+        # Assert
+        assert value is True
 
-    def test_agent_config_with_remote(self):
-        """AgentConfig accepts RemoteSpec."""
+
+class TestAgentConfigRemote:
+    def test_agent_config_accepts_remote_spec_is_remote(self):
+        # Arrange
         config = AgentConfig(
             name="test",
             remote=RemoteSpec(host="server1", user="admin"),
         )
-        assert config.remote.is_remote is True
-        assert config.remote.host == "server1"
+        # Act
+        value = config.remote.is_remote
+        # Assert
+        assert value is True
 
-    def test_login_shell_default(self):
+    def test_agent_config_accepts_remote_spec_host(self):
+        # Arrange
+        config = AgentConfig(
+            name="test",
+            remote=RemoteSpec(host="server1", user="admin"),
+        )
+        # Act
+        value = config.remote.host
+        # Assert
+        assert value == "server1"
+
+
+class TestLoginShellDefault:
+    def test_login_shell_default_is_true(self, default_remote_config):
         """login_shell defaults to True."""
-        path = _write_config(MINIMAL_CONFIG)
-        config = load_config(path)
-        assert config.remote.login_shell is True
-        Path(path).unlink()
+        # Arrange
+        config = default_remote_config
+        # Act
+        value = config.remote.login_shell
+        # Assert
+        assert value is True
 
-    @pytest.mark.skip(reason="v3-realign: spec.remote was removed (§2).")
-    def test_login_shell_from_yaml(self):
-        """login_shell can be set to False in YAML."""
-        data = {
-            "apiVersion": "scitex-agent-container/v3",
-            "kind": "Agent",
-            "metadata": {"name": "test-login-shell"},
-            "spec": {
-                "runtime": "apptainer",
-                "remote": {
-                    "host": "fast-host",
-                    "user": "deploy",
-                    "login_shell": False,
-                },
-            },
-        }
-        path = _write_config(data)
-        config = load_config(path)
-        assert config.remote.login_shell is False
-        assert config.remote.host == "fast-host"
-        Path(path).unlink()
+
+# Skipped legacy tests preserved as documentation of v3-realign removals.
+
+
+@pytest.mark.skip(
+    reason="v3-realign: spec.remote was removed (cross-host routing "
+    "is orochi's job per §2)."
+)
+def test_remote_from_yaml_loads_host():
+    """Remote spec parsed from YAML config (legacy)."""
+    # Arrange
+    pass
+    # Act
+    pass
+    # Assert
+    pass
+
+
+@pytest.mark.skip(reason="v3-realign: spec.remote was removed (§2).")
+def test_remote_full_spec_loads_port():
+    """Remote spec with all fields specified (legacy)."""
+    # Arrange
+    pass
+    # Act
+    pass
+    # Assert
+    pass
+
+
+@pytest.mark.skip(reason="v3-realign: spec.remote was removed (§2).")
+def test_login_shell_from_yaml_can_be_false():
+    """login_shell can be set to False in YAML (legacy)."""
+    # Arrange
+    pass
+    # Act
+    pass
+    # Assert
+    pass

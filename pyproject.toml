@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "scitex-agent-container"
-version = "0.15.0"
+version = "0.16.0"
 description = "Declarative YAML-based framework for defining, managing, and orchestrating AI coding agent instances"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -86,7 +86,18 @@ dev = [
     "pytest>=7.0.0,<9.0.0",
     "pytest-cov>=4.0.0",
     "pytest-xdist>=3.0.0",
+    # A2A v1.0 push-channel work (ADR-0001 commit 1) introduced async
+    # tests against the inbox broker. STRICT asyncio mode keeps the
+    # marker explicit per test, which matches the rest of the codebase
+    # (no implicit-async-on-conftest surprises).
+    "pytest-asyncio>=0.23",
     "pre-commit>=3.5.0",
+    # MCP test surface (tests/scitex_agent_container/_mcp/) imports
+    # fastmcp unconditionally; without it the entire _mcp/ suite is
+    # collection-skipped on dev boxes. Keeping fastmcp also as a [mcp]
+    # extra so runtime installs that only need the MCP server can
+    # opt-in without pulling the rest of [dev].
+    "fastmcp>=2.0",
 ]
 docs = [
     "sphinx>=7.0",
@@ -94,6 +105,16 @@ docs = [
     "myst-parser>=2.0",
     "sphinx-copybutton>=0.5",
     "sphinx-autodoc-typehints>=1.25",
+]
+# Convenience aggregate matching the README install hint
+# (`pip install scitex-agent-container[all]`). Mirrors the union of
+# every other extra so users don't have to memorise the matrix.
+all = [
+    "scitex-agent-container[mcp]",
+    "scitex-agent-container[telegram]",
+    "scitex-agent-container[slurm]",
+    "scitex-agent-container[dev]",
+    "scitex-agent-container[docs]",
 ]
 
 [project.scripts]
@@ -107,6 +128,9 @@ scitex-agent-container = "scitex_agent_container"
 [project.entry-points."scitex_dev.skills"]
 
 scitex-agent-container = "scitex_agent_container"
+
+[project.entry-points."scitex_dev.linter.plugins"]
+scitex-agent-container = "scitex_agent_container._linter_plugin:get_plugin"
 
 [project.urls]
 Homepage = "https://github.com/ywatanabe1989/scitex-agent-container"
@@ -128,6 +152,8 @@ markers = [
     "integration: slow end-to-end tests that spawn a real Claude Code agent (require claude CLI + tmux + ANTHROPIC_API_KEY or SAC_ANTHROPIC_API_KEY). Opt in with '-m integration'.",
     "docker_smoke: real-Docker smoke tests for DockerRuntime (build image, start/stop newbie-docker agent, exec claude -p). Skipped unless docker daemon reachable. Opt in with '-m docker_smoke'.",
     "slow: slow tests opted-in with '-m slow'.",
+    "e2e: end-to-end tests requiring real subsystems (set RUN_E2E=1 to enable)",
+    "smoke: fast (<60s total) user-facing happy-path tests verifying the installed `sac` binary still works end-to-end. Run on every PR.",
 ]
 
 [tool.ruff]
@@ -144,5 +170,6 @@ ignore = ["E501"]
 # tests/conftest.py force-set of COVERAGE_PROCESS_START + a .pth shim.
 # See ~/proj/scitex-dev/src/scitex_dev/_skills/general/05_development_06_subprocess-coverage.md.
 parallel = true
+branch = true
 source = ["scitex_agent_container"]
 concurrency = ["multiprocessing", "thread"]

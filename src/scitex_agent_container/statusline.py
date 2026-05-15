@@ -19,23 +19,31 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+
 from ._env import getenv as _sac_env
 
-_STATE_DIR = Path.home() / ".scitex" / "agent-container" / "statusline"
+
+def _state_dir() -> Path:
+    """Resolve the statusline persist dir at call time.
+
+    Honours ``$SAC_STATUSLINE_STATE_DIR`` as override (tests + ops);
+    otherwise ``~/.scitex/agent-container/statusline``.
+    """
+    override = os.environ.get("SAC_STATUSLINE_STATE_DIR")
+    if override:
+        return Path(override)
+    return Path.home() / ".scitex" / "agent-container" / "statusline"
 
 
 def _agent_name() -> str:
-    return (
-        _sac_env("AGENT")
-        or os.environ.get("CLAUDE_AGENT_ID")
-        or "unknown"
-    )
+    return _sac_env("AGENT") or os.environ.get("CLAUDE_AGENT_ID") or "unknown"
 
 
 def _persist(raw: bytes, agent: str) -> None:
-    _STATE_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = _STATE_DIR / f"{agent}.json.tmp"
-    out = _STATE_DIR / f"{agent}.json"
+    state_dir = _state_dir()
+    state_dir.mkdir(parents=True, exist_ok=True)
+    tmp = state_dir / f"{agent}.json.tmp"
+    out = state_dir / f"{agent}.json"
     # stx-allow: fallback (reason: disk-full or permission error must not crash
     # the Claude Code statusLine handler — missing persist is non-fatal)
     try:
@@ -65,9 +73,20 @@ def _fallback_display(raw: bytes) -> None:
         pass
 
 
-def main() -> None:
-    """Entry point for the sac-statusline command."""
-    raw = sys.stdin.buffer.read()
+def main(stdin=None, runner=None) -> None:
+    """Entry point for the sac-statusline command.
+
+    ``stdin`` / ``runner`` are injection seams: default to ``sys.stdin``
+    / ``subprocess.run`` so production callers are unchanged. Tests
+    pass a real bytes-stream and a hand-rolled runner.
+    """
+    if stdin is None:
+        stdin = sys.stdin
+    if runner is None:
+        runner = subprocess.run
+    raw = stdin.buffer.read() if hasattr(stdin, "buffer") else stdin.read()
+    if isinstance(raw, str):
+        raw = raw.encode()
     agent = _agent_name()
     _persist(raw, agent)
 
@@ -75,7 +94,7 @@ def main() -> None:
     # stx-allow: fallback (reason: claude-hud is an optional user-scope plugin;
     # FileNotFoundError means it is not installed — fall through to minimal echo)
     try:
-        result = subprocess.run(["claude-hud"], input=raw)
+        result = runner(["claude-hud"], input=raw)
         sys.exit(result.returncode)
     except FileNotFoundError:
         pass
@@ -89,7 +108,7 @@ def read_statusline_json(agent_name: str) -> dict | None:
     Returns ``None`` if no file exists or the file is unreadable/stale.
     Callers should treat ``None`` as "no authoritative data, fall back".
     """
-    path = _STATE_DIR / f"{agent_name}.json"
+    path = _state_dir() / f"{agent_name}.json"
     if not path.exists():
         return None
     # stx-allow: fallback (reason: corrupt or truncated JSON returns None so

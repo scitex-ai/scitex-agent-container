@@ -8,11 +8,11 @@ There is no legacy compat layer — sac speaks current A2A only.
 
 Routes (mirroring the spec):
 
-* ``GET /.well-known/agent.json`` — fleet AgentCard (sac dict shape).
-* ``GET /v1/sac/agents/`` — JSON list of agents.
-* ``GET /v1/sac/agents/<name>/.well-known/agent.json`` — per-agent AgentCard
+* ``GET /.well-known/agent-card.json`` — fleet AgentCard (sac dict shape).
+* ``GET /agents/`` — JSON list of agents.
+* ``GET /agents/<name>/.well-known/agent-card.json`` — per-agent AgentCard
   (sac dict shape; preserves the ``x-scitex-agent-container`` extension).
-* ``POST /v1/sac/agents/<name>`` — SDK JSON-RPC dispatcher.
+* ``POST /agents/<name>`` — SDK JSON-RPC dispatcher.
 
 Card projection: see :mod:`._card`. The HTTP ``.well-known`` route serves
 the dict projection (which keeps sac-extension fields). The SDK's
@@ -33,7 +33,6 @@ import socket
 from pathlib import Path
 from typing import Any
 
-import yaml
 from a2a.server.agent_execution import AgentExecutor
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import create_jsonrpc_routes
@@ -44,12 +43,14 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from scitex_agent_container.a2a._card import (
+    CardSchemaError,
     fleet_card,
     project_card,
     project_card_proto,
+    validate_card_v1,
 )
 from scitex_agent_container.a2a._handlers import HANDLERS
-from scitex_agent_container.a2a.executors import EXECUTORS, BaseSyncExecutor
+from scitex_agent_container.a2a._inbox_bus import Broker, mint_event
 
 log = logging.getLogger(__name__)
 
@@ -84,7 +85,7 @@ class _AgentDispatcher:
         # SDK JSON-RPC routes — current A2A spec only, no v0.3 compat.
         self.routes: list[Route] = create_jsonrpc_routes(
             request_handler=self.request_handler,
-            rpc_url=f"/_sdk/v1/sac/agents/{name}",
+            rpc_url=f"/_sdk/agents/{name}",
         )
 
     async def snapshot_active_tasks(self) -> list[dict[str, Any]]:
@@ -135,19 +136,51 @@ class _ServerCtx:
     ) -> None:
         self.yamls = yamls
         self.dispatchers = dispatchers
+        # One in-process broker per sac-listen — fans inbound POSTs out
+        # to every SSE subscriber on /agents/<name>/inbox/stream.
+        self.inbox = Broker()
 
 
 def _build_app(ctx: _ServerCtx) -> Starlette:
+    def _validated(card: dict[str, Any], label: str) -> Response:
+        try:
+            validate_card_v1(card)
+        except CardSchemaError as exc:
+            log.error("%s failed A2A v1 validation: %s", label, exc)
+            return JSONResponse(
+                {"error": f"{label} failed v1 validation", "detail": str(exc)},
+                status_code=500,
+            )
+        return JSONResponse(card)
+
     async def get_fleet_card(request: Request) -> Response:
         base = _base_url(request)
         agents = sorted(ctx.yamls.keys())
-        return JSONResponse(fleet_card(base, agents))
+        return _validated(fleet_card(base, agents), "fleet card")
 
     async def list_agents(request: Request) -> Response:
         base = _base_url(request)
         agents = sorted(ctx.yamls.keys())
+        # Each member entry mirrors the v1 AgentCard shape: binding URLs
+        # live under ``supportedInterfaces[]`` (ADR-0004 D11), not a
+        # top-level ``url`` (which v1 dropped).
         return JSONResponse(
-            {"agents": [{"name": n, "url": f"{base}/v1/sac/agents/{n}"} for n in agents]}
+            {
+                "agents": [
+                    {
+                        "name": n,
+                        "supportedInterfaces": [
+                            {
+                                "url": f"{base}/agents/{n}",
+                                "protocolBinding": "HTTP+JSON",
+                                "tenant": n,
+                                "protocolVersion": "1.0",
+                            }
+                        ],
+                    }
+                    for n in agents
+                ]
+            }
         )
 
     async def get_agent_card(request: Request) -> Response:
@@ -156,7 +189,7 @@ def _build_app(ctx: _ServerCtx) -> Starlette:
         if v3 is None:
             return JSONResponse({"error": f"unknown agent: {name}"}, status_code=404)
         base = _base_url(request)
-        return JSONResponse(project_card(name, v3, base))
+        return _validated(project_card(name, v3, base), f"agent card {name!r}")
 
     async def post_agent(request: Request) -> Response:
         name = request.path_params["name"]
@@ -164,16 +197,63 @@ def _build_app(ctx: _ServerCtx) -> Starlette:
             return JSONResponse({"error": f"unknown agent: {name}"}, status_code=404)
 
         try:
-            await request.json()
-        except (ValueError, json.JSONDecodeError) as exc:  # stx-allow: fallback (reason: malformed JSON tolerated)
+            body = await request.json()
+        except (
+            ValueError,
+            json.JSONDecodeError,
+        ) as exc:  # stx-allow: fallback (reason: malformed JSON tolerated)
             return JSONResponse({"error": f"bad JSON: {exc}"}, status_code=400)
+
+        # Channel fan-out: when the JSON-RPC payload is a message/send,
+        # mint a stable event and publish to all inbox subscribers.
+        # The SDK still owns the response path; this is purely the
+        # push-side bus that `sac mcp channel` (commit 2) consumes.
+        await _publish_channel_event(ctx, name, body)
 
         # Forward to SDK dispatcher (handles message/send, message/stream
         # → SSE, tasks/get, tasks/cancel, tasks/pushNotificationConfig/*,
         # tasks/resubscribe).
         dispatcher = ctx.dispatchers[name]
         sdk_route = dispatcher.routes[0]
+        # Restore the body so the SDK route can re-read it (request.json()
+        # caches but the SDK reads the raw stream).
+        request._body = json.dumps(body).encode("utf-8")  # type: ignore[attr-defined]
         return await sdk_route.endpoint(request)  # type: ignore[no-any-return]
+
+    async def get_inbox_stream(request: Request) -> Response:
+        """SSE: one frame per inbound POST to /agents/<name>.
+
+        Consumed by `sac mcp channel` (commit 2) inside the agent's
+        container — each frame turns into a notifications/claude/channel
+        push so Claude sees `<channel source="..." msg_id="..." ...>`
+        tags in real time. Plain SSE — non-sac A2A clients work too.
+        """
+        name = request.path_params["name"]
+        if name not in ctx.yamls:
+            return JSONResponse({"error": f"unknown agent: {name}"}, status_code=404)
+        from starlette.responses import StreamingResponse
+
+        queue = await ctx.inbox.subscribe(name)
+
+        async def stream():
+            try:
+                # Send a comment-only frame so HTTP clients see the
+                # connection open before any real event arrives.
+                yield b": sac-channel ready\n\n"
+                while True:
+                    if await request.is_disconnected():
+                        return
+                    event = await queue.get()
+                    data = json.dumps(event, ensure_ascii=False)
+                    yield f"event: message\ndata: {data}\n\n".encode("utf-8")
+            finally:
+                await ctx.inbox.unsubscribe(name, queue)
+
+        return StreamingResponse(
+            stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     async def get_active_tasks(request: Request) -> Response:
         """Sac-side observability: list every task currently in the
@@ -200,24 +280,93 @@ def _build_app(ctx: _ServerCtx) -> Starlette:
             )
         return JSONResponse({"tasks": tasks})
 
+    # ADR-0004: A2A v1.0 REST binding. /v1/ prefix is prohibited by the
+    # v1 spec; sac uses /agents/<name>/... as its multi-agent extension
+    # over the single-agent v1 REST endpoints.
     routes = [
-        Route("/.well-known/agent.json", get_fleet_card, methods=["GET"]),
-        Route("/v1/sac/agents/", list_agents, methods=["GET"]),
+        Route("/.well-known/agent-card.json", get_fleet_card, methods=["GET"]),
+        Route("/agents/", list_agents, methods=["GET"]),
         Route(
-            "/v1/sac/agents/{name}/.well-known/agent.json",
+            "/agents/{name}/.well-known/agent-card.json",
             get_agent_card,
             methods=["GET"],
         ),
-        Route("/v1/sac/agents/{name}", post_agent, methods=["POST"]),
-        Route("/v1/sac/agents/{name}/", post_agent, methods=["POST"]),
+        # A2A v1 REST binding: POST /message:send. sac prefixes per agent.
+        Route("/agents/{name}/message:send", post_agent, methods=["POST"]),
+        # sac extensions (not in A2A spec):
         Route(
-            "/v1/sac/agents/{name}/_active",
+            "/agents/{name}/inbox/stream",
+            get_inbox_stream,
+            methods=["GET"],
+        ),
+        Route(
+            "/agents/{name}/_active",
             get_active_tasks,
             methods=["GET"],
         ),
     ]
 
     return Starlette(routes=routes)
+
+
+async def _publish_channel_event(
+    ctx: _ServerCtx, name: str, body: dict[str, Any]
+) -> None:
+    """Extract a publishable event from a JSON-RPC ``message/send`` body
+    and fan it out to inbox subscribers.
+
+    The body shape sac accepts:
+      ``{"jsonrpc": "2.0", "method": "message/send", "params": {...}, ...}``
+    The params SHOULD carry the sac-channel meta (``from_agent``,
+    ``conversation_id``, ``in_reply_to``, ``priority``, ``requires_reply``)
+    in addition to the A2A-standard ``message`` field. Anything missing
+    falls back to safe defaults (``from_agent="unknown"``,
+    ``priority="normal"``, ``requires_reply=False``).
+
+    Non-``message/send`` payloads (``tasks/get``, ``tasks/cancel``, …)
+    do NOT fan out — they're protocol housekeeping, not new turns.
+    """
+    if not isinstance(body, dict):
+        return
+    # Accept both A2A method spellings:
+    #   * legacy slash form ``message/send`` (pre-v1)
+    #   * v1 gRPC-style ``SendMessage`` / ``SendStreamingMessage``
+    if body.get("method") not in (
+        "message/send",
+        "SendMessage",
+        "SendStreamingMessage",
+    ):
+        return
+    params = body.get("params") or {}
+    if not isinstance(params, dict):
+        return
+    # A2A ``message`` carries the actual content as parts[*].text.
+    message = params.get("message") or {}
+    parts = message.get("parts") if isinstance(message, dict) else None
+    text = ""
+    if isinstance(parts, list):
+        for p in parts:
+            if isinstance(p, dict) and isinstance(p.get("text"), str):
+                text += p["text"]
+    # sac-extension fields live in ``params.metadata`` per A2A v1
+    # (the SDK rejects unknown top-level params fields under strict
+    # proto validation). We also accept ``message.metadata`` as a
+    # secondary location since some clients prefer message-scoped
+    # metadata over request-scoped.
+    sac_meta: dict[str, Any] = {}
+    for src in (params.get("metadata"), message.get("metadata")):
+        if isinstance(src, dict):
+            sac_meta.update(src)
+    event = mint_event(
+        name,
+        content=text,
+        from_agent=sac_meta.get("from_agent"),
+        conversation_id=sac_meta.get("conversation_id"),
+        in_reply_to=sac_meta.get("in_reply_to"),
+        priority=str(sac_meta.get("priority", "normal")),
+        requires_reply=bool(sac_meta.get("requires_reply", False)),
+    )
+    await ctx.inbox.publish(name, event)
 
 
 def _base_url(request: Request) -> str:
@@ -227,40 +376,19 @@ def _base_url(request: Request) -> str:
     return f"{scheme}://{netloc}"
 
 
-# ---------------------------------------------------------------------
-# YAML loading + executor selection
-# ---------------------------------------------------------------------
-
-
-def _load_yaml(path: Path) -> dict[str, Any]:
-    return yaml.safe_load(path.read_text()) or {}
-
-
-def _agent_name_from_yaml(path: Path, v3: dict[str, Any]) -> str:
-    meta = v3.get("metadata") or {}
-    name = meta.get("name")
-    if isinstance(name, str) and name.strip():
-        return name.strip()
-    return path.stem
-
-
-def _select_handler_key(v3: dict[str, Any], default: str) -> str:
-    """Read ``spec.a2a.handler`` from v3 yaml (falling back to ``default``)."""
-    a2a_block = (v3.get("spec") or {}).get("a2a") or {}
-    key = a2a_block.get("handler")
-    if isinstance(key, str) and key.strip():
-        return key.strip()
-    return default
-
-
-def _build_executor(name: str, handler_key: str) -> BaseSyncExecutor:
-    cls = EXECUTORS.get(handler_key)
-    if cls is None:
-        raise ValueError(
-            f"unknown a2a handler {handler_key!r}; pick one of {sorted(EXECUTORS)}"
-        )
-    return cls(agent_name=name)
-
+# YAML loading + executor selection — extracted to ``_build.py``.
+from scitex_agent_container.a2a._build import (  # noqa: E402
+    agent_name_from_yaml as _agent_name_from_yaml,
+)
+from scitex_agent_container.a2a._build import (
+    build_executor as _build_executor,
+)
+from scitex_agent_container.a2a._build import (
+    load_yaml as _load_yaml,
+)
+from scitex_agent_container.a2a._build import (
+    select_handler_key as _select_handler_key,
+)
 
 # ---------------------------------------------------------------------
 # Public serve()
@@ -272,6 +400,7 @@ def build_app(
     *,
     default_handler: str = "echo",
     base_url: str = "http://localhost",
+    listen_port: int | None = None,
 ) -> Starlette:
     """Build the Starlette app for the given agent YAMLs.
 
@@ -281,6 +410,13 @@ def build_app(
     ``base_url`` is used only to seed the SDK's per-agent AgentCard
     (proto). Live requests build their own self-URL from the Host
     header.
+
+    ``listen_port`` is the port the server WILL listen on at boot
+    (which may differ from the yaml's declared ``spec.a2a.port`` when
+    the operator overrides via ``--port``). The sac MCP sidecar's
+    ``--listen-url`` is built from this so it always talks to the
+    SAME server that hosts ``/agents/<name>/inbox/stream``. If
+    omitted, falls back to the yaml's ``spec.a2a.port``.
     """
     yamls: dict[str, dict[str, Any]] = {}
     dispatchers: dict[str, _AgentDispatcher] = {}
@@ -295,7 +431,16 @@ def build_app(
                 f"agent {name!r}: unknown a2a handler {handler_key!r}; "
                 f"pick one of {sorted(HANDLERS)}"
             )
-        executor = _build_executor(name, handler_key)
+        # Prefer the runtime listen_port over the yaml's declared port.
+        # The sidecar MUST point at this process; using the yaml port
+        # breaks when --port differs (e.g., ephemeral ports in tests
+        # or port-conflict reallocation).
+        a2a_port = listen_port
+        if a2a_port is None:
+            yaml_port = ((v3.get("spec") or {}).get("a2a") or {}).get("port")
+            if isinstance(yaml_port, int):
+                a2a_port = yaml_port
+        executor = _build_executor(name, handler_key, v3, a2a_port)
         dispatchers[name] = _AgentDispatcher(name, v3, executor, base_url)
 
     if not yamls:
@@ -319,14 +464,22 @@ def serve(
     """
     try:
         import uvicorn
-    except ImportError as exc:  # pragma: no cover  # stx-allow: fallback (reason: optional dependency not installed)
+    except Exception as exc:  # pragma: no cover  # stx-allow: fallback (reason: optional dependency not installed)
+        # Broaden: uvicorn import can fail with non-ImportError if a
+        # transitive dep (httptools, websockets) is mis-built. Surface
+        # any such failure as an actionable ImportError.
         raise ImportError(
             "uvicorn is required to run 'sac a2a serve'; install with "
             "'pip install uvicorn'."
         ) from exc
 
     base_url = f"http://{host}:{port}"
-    app = build_app(agent_yamls, default_handler=handler, base_url=base_url)
+    app = build_app(
+        agent_yamls,
+        default_handler=handler,
+        base_url=base_url,
+        listen_port=port,
+    )
 
     log.info(
         "sac-a2a (a2a-sdk) listening on http://%s:%d (default handler: %s)",

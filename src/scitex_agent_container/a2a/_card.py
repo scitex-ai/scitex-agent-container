@@ -68,21 +68,77 @@ def project_card(name: str, v3: dict[str, Any], base_url: str) -> dict[str, Any]
     role = labels.get("role", "agent")
     function = labels.get("function", "")
 
+    agent_base = f"{base}/agents/{name}"
+
+    # ADR-0004 — surface sac MCP push channel on the v1 AgentCard.
+    # `spec.claude.channels: [server:sac]` means an in-session MCP push
+    # subscriber is attached (the `sac mcp channel` sidecar consuming
+    # `/agents/<name>/inbox/stream`). This is orthogonal to A2A's
+    # task-level pushNotifications (`tasks/pushNotificationConfig/*`)
+    # so we advertise it under `capabilities.extensions[]` per the
+    # v1 spec, not by overloading `pushNotifications`.
+    claude_block = spec.get("claude") or {}
+    declared_channels = list(claude_block.get("channels") or [])
+    has_sac_channel = any(
+        isinstance(c, str) and c.strip() == "server:sac" for c in declared_channels
+    )
+    extensions: list[dict[str, Any]] = []
+    if has_sac_channel:
+        extensions.append(
+            {
+                "uri": "https://scitex.ai/a2a/extensions/sac-push-channel/v1",
+                "description": (
+                    "In-session MCP push: `sac mcp channel` subscribes to "
+                    "`/agents/<name>/inbox/stream` and delivers events as "
+                    "`notifications/claude/channel` to the agent's Claude "
+                    "session."
+                ),
+                "required": False,
+                "params": {
+                    "sse_path": f"/agents/{name}/inbox/stream",
+                    "mcp_tools": [
+                        "a2a_send",
+                        "a2a_reply",
+                        "a2a_ack",
+                        "a2a_peers",
+                        "a2a_inbox",
+                    ],
+                },
+            }
+        )
+
     return {
         "name": name,
         "description": _read_description(name, v3),
         "version": v3.get("apiVersion", "scitex-agent-container/v3"),
-        "url": f"{base}/v1/sac/agents/{name}",
+        # ADR-0004 — match A2A v1 AgentCard (lf/a2a/v1 proto):
+        # supportedInterfaces[] is REQUIRED; protocolBinding values
+        # are "JSONRPC" | "GRPC" | "HTTP+JSON" (proto-canonical).
+        "supportedInterfaces": [
+            {
+                "url": agent_base,
+                "protocolBinding": "HTTP+JSON",
+                "tenant": name,
+                "protocolVersion": "1.0",
+            }
+        ],
         "provider": {
             "organization": labels.get("team", "scitex-agent-container"),
             "url": "https://scitex.ai",
         },
         "capabilities": {
-            "streaming": False,
-            "pushNotifications": False,
-            "stateTransitionHistory": False,
+            "streaming": True,
+            # ``pushNotifications`` reflects whether the agent provides a
+            # push mechanism AT ALL — true when sac MCP is wired (the
+            # SSE + MCP channel surfaced under ``extensions[]``). The
+            # specific flavor (sac SSE + MCP vs. A2A task-level webhook)
+            # is described by the extension entry; clients that need a
+            # particular mechanism should branch on that, not on this
+            # boolean alone.
+            "pushNotifications": has_sac_channel,
+            "extendedAgentCard": False,
+            "extensions": extensions,
         },
-        "authentication": {"schemes": ["none"]},
         "defaultInputModes": list(DEFAULT_INPUT_MODES),
         "defaultOutputModes": list(DEFAULT_OUTPUT_MODES),
         "skills": [
@@ -209,7 +265,7 @@ def project_card_proto(name: str, v3: dict[str, Any], base_url: str) -> AgentCar
 
     SDK 1.0.x's :class:`AgentCard` is a protobuf message (not pydantic),
     and only accepts a strict subset of the dict fields we serve at
-    ``/.well-known/agent.json``. This helper builds the proto card the
+    ``/.well-known/agent-card.json``. This helper builds the proto card the
     SDK's :class:`DefaultRequestHandler` requires.
 
     sac-only extension fields (``x-scitex-agent-container``) are dropped
@@ -247,35 +303,128 @@ def project_card_proto(name: str, v3: dict[str, Any], base_url: str) -> AgentCar
 def fleet_card(
     base_url: str, agents: list[str], description: str | None = None
 ) -> dict[str, Any]:
-    """Project a fleet-level AgentCard listing ``agents``."""
+    """Project a fleet-level v1.0-shaped AgentCard listing ``agents``.
+
+    A2A v1.0 doesn't define a multi-agent directory primitive — the
+    well-known is single-agent. We serve a v1-shaped card here anyway
+    so spec-strict clients don't reject it; the per-agent listing
+    lives under the sac extension namespace
+    (``x-scitex-agent-container.agents[]``). Spec-aware sac clients
+    walk that array to reach each member's
+    ``/agents/<name>/.well-known/agent-card.json``.
+    """
     base = base_url.rstrip("/")
     return {
         "name": "scitex-agent-container",
         "description": description
         or "scitex-agent-container fleet — A2A protocol surface.",
-        "version": "scitex-agent-container/1",
-        "url": base,
+        # Match the per-agent `version` convention (the YAML's
+        # ``apiVersion: scitex-agent-container/v3``) — both fleet and
+        # member cards now use the ``v<N>`` prefix so clients can parse
+        # them with the same regex.
+        "version": "scitex-agent-container/v1",
+        # v1: no top-level url; binding URLs live under supportedInterfaces[].
+        "supportedInterfaces": [
+            {
+                "url": base,
+                "protocolBinding": "HTTP+JSON",
+                "tenant": "scitex-agent-container",
+                "protocolVersion": "1.0",
+            }
+        ],
         "provider": {
             "organization": "scitex-agent-container",
             "url": "https://scitex.ai",
         },
+        # v1 capabilities — no stateTransitionHistory (v0.x removed).
         "capabilities": {
             "streaming": False,
             "pushNotifications": False,
-            "stateTransitionHistory": False,
+            "extendedAgentCard": False,
+            "extensions": [
+                {
+                    "uri": "https://scitex.ai/a2a/extensions/sac-fleet/v1",
+                    "description": (
+                        "sac multi-agent fleet listing. Members are "
+                        "advertised under `x-scitex-agent-container.agents[]`; "
+                        "each member has its own v1 AgentCard at "
+                        "/agents/<name>/.well-known/agent-card.json."
+                    ),
+                    "required": False,
+                    "params": {
+                        "members_path": "/agents/",
+                        "member_card_path": (
+                            "/agents/<name>/.well-known/agent-card.json"
+                        ),
+                    },
+                }
+            ],
         },
-        "authentication": {"schemes": ["none"]},
+        # v1 drops top-level `authentication`. We advertise no auth by
+        # simply omitting both `securitySchemes` and `securityRequirements`.
         "defaultInputModes": list(DEFAULT_INPUT_MODES),
         "defaultOutputModes": list(DEFAULT_OUTPUT_MODES),
         "skills": [
             {
                 "id": "sac.fleet",
                 "name": "fleet",
-                "description": ("sac-served fleet — see /v1/sac/agents/ for members."),
+                "description": ("sac-served fleet — see /agents/ for members."),
                 "tags": ["multi-agent", "scitex-agent-container"],
             }
         ],
         "x-scitex-agent-container": {
-            "agents": [{"name": n, "url": f"{base}/v1/sac/agents/{n}"} for n in agents],
+            # Each member entry mirrors the v1 AgentCard shape: binding
+            # URLs live under ``supportedInterfaces[]`` (ADR-0004 D11),
+            # not on a top-level ``url`` (which v1 dropped).
+            "agents": [
+                {
+                    "name": n,
+                    "supportedInterfaces": [
+                        {
+                            "url": f"{base}/agents/{n}",
+                            "protocolBinding": "HTTP+JSON",
+                            "tenant": n,
+                            "protocolVersion": "1.0",
+                        }
+                    ],
+                }
+                for n in agents
+            ],
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# v1 schema validator — every served card MUST pass.
+# ---------------------------------------------------------------------------
+
+
+class CardSchemaError(ValueError):
+    """A served AgentCard dict didn't match the A2A v1 proto schema.
+
+    Raised by :func:`validate_card_v1` and propagated by the route
+    handlers as a 500 with a clear server-log entry — we never serve a
+    silently-broken card.
+    """
+
+
+def validate_card_v1(card: dict[str, Any]) -> None:
+    """Validate ``card`` against the A2A v1 ``AgentCard`` proto.
+
+    sac extension keys (``x-*`` and ``x-scitex-agent-container``) are
+    stripped before the proto check — the proto rejects unknown fields
+    and our extension namespace is intentionally outside the proto. The
+    stripped subset must still parse cleanly; if not, that's a real
+    schema bug in our projection code.
+    """
+    sanitized = {
+        k: v
+        for k, v in card.items()
+        if not (k == "x-scitex-agent-container" or k.startswith("x-"))
+    }
+    try:
+        ParseDict(sanitized, AgentCard())
+    except Exception as exc:  # stx-allow: fallback (reason: surface every schema mismatch as a clear error rather than a silent malformed card)
+        raise CardSchemaError(
+            f"served AgentCard failed A2A v1 schema validation: {exc}"
+        ) from exc

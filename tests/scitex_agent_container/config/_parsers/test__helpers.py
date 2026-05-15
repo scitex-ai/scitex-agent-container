@@ -1,17 +1,23 @@
-"""Smoke tests for config._parsers._helpers."""
+"""Behavioural tests for ``config._parsers._helpers``.
+
+Covers the four public surfaces of the module:
+
+- ``HOOK_KEYS`` — the recognised lifecycle hook names.
+- ``MODEL_DISPLAY_NAMES`` — alias-to-display-name map.
+- ``get_nested`` — dotted-path dict accessor with a default.
+- ``interpolate_metadata`` — ``${metadata.*}`` placeholder substitution.
+- ``_parse_command_list`` — coerces a YAML command list into typed
+  ``Command(delay, command)`` records.
+
+Each test is single-assertion and AAA-marked so a failing CI line maps
+directly to one behavioural contract.
+"""
 
 from __future__ import annotations
 
 import importlib
 
-
-def test_module_importable():
-    importlib.import_module("scitex_agent_container.config._parsers._helpers")
-
-
-# ---------------------------------------------------------------------------
-# Merged from test__helpers_full.py (PS-204 orphan consolidation)
-# ---------------------------------------------------------------------------
+import pytest
 
 from scitex_agent_container.config._parsers._helpers import (
     HOOK_KEYS,
@@ -21,16 +27,63 @@ from scitex_agent_container.config._parsers._helpers import (
     interpolate_metadata,
 )
 
-
-def test_hook_keys_includes_known_lifecycle():
-    assert "pre_start" in HOOK_KEYS
-    assert "post_stop" in HOOK_KEYS
-    assert "on_compact" in HOOK_KEYS
+# ---------------------------------------------------------------------------
+# Module import
+# ---------------------------------------------------------------------------
 
 
-def test_model_display_names_known_aliases():
-    assert MODEL_DISPLAY_NAMES["opus[1m]"] == "Claude Opus (1M)"
-    assert "haiku" in MODEL_DISPLAY_NAMES
+def test_helpers_module_imports_without_side_effects():
+    # Arrange
+    module_name = "scitex_agent_container.config._parsers._helpers"
+    # Act
+    module = importlib.import_module(module_name)
+    # Assert
+    assert module.__name__ == module_name
+
+
+# ---------------------------------------------------------------------------
+# HOOK_KEYS — parametrize the known lifecycle keys
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "hook_key",
+    [
+        pytest.param("pre_start", id="pre_start"),
+        pytest.param("post_stop", id="post_stop"),
+        pytest.param("on_compact", id="on_compact"),
+    ],
+)
+def test_hook_keys_contains_known_lifecycle_hook(hook_key):
+    # Arrange
+    keys = HOOK_KEYS
+    # Act
+    present = hook_key in keys
+    # Assert
+    assert present is True
+
+
+# ---------------------------------------------------------------------------
+# MODEL_DISPLAY_NAMES
+# ---------------------------------------------------------------------------
+
+
+def test_model_display_names_resolves_opus_1m_alias_to_label():
+    # Arrange
+    alias = "opus[1m]"
+    # Act
+    label = MODEL_DISPLAY_NAMES[alias]
+    # Assert
+    assert label == "Claude Opus (1M)"
+
+
+def test_model_display_names_includes_haiku_alias_key():
+    # Arrange
+    aliases = MODEL_DISPLAY_NAMES
+    # Act
+    present = "haiku" in aliases
+    # Assert
+    assert present is True
 
 
 # ---------------------------------------------------------------------------
@@ -38,24 +91,49 @@ def test_model_display_names_known_aliases():
 # ---------------------------------------------------------------------------
 
 
-def test_get_nested_simple_key():
-    assert get_nested({"a": 1}, "a") == 1
+def test_get_nested_returns_value_for_simple_top_level_key():
+    # Arrange
+    data = {"a": 1}
+    # Act
+    result = get_nested(data, "a")
+    # Assert
+    assert result == 1
 
 
-def test_get_nested_dotted_path():
-    assert get_nested({"a": {"b": {"c": "deep"}}}, "a.b.c") == "deep"
+def test_get_nested_walks_dotted_path_through_nested_dicts():
+    # Arrange
+    data = {"a": {"b": {"c": "deep"}}}
+    # Act
+    result = get_nested(data, "a.b.c")
+    # Assert
+    assert result == "deep"
 
 
-def test_get_nested_missing_returns_default():
-    assert get_nested({"a": {}}, "a.b.c", default="X") == "X"
+def test_get_nested_returns_default_when_intermediate_key_missing():
+    # Arrange
+    data = {"a": {}}
+    # Act
+    result = get_nested(data, "a.b.c", default="X")
+    # Assert
+    assert result == "X"
 
 
-def test_get_nested_default_is_none_by_default():
-    assert get_nested({}, "x.y") is None
+def test_get_nested_returns_none_when_default_not_provided():
+    # Arrange
+    data: dict = {}
+    # Act
+    result = get_nested(data, "x.y")
+    # Assert
+    assert result is None
 
 
-def test_get_nested_intermediate_not_dict_returns_default():
-    assert get_nested({"a": "string"}, "a.b", default="d") == "d"
+def test_get_nested_returns_default_when_intermediate_value_not_dict():
+    # Arrange
+    data = {"a": "string"}
+    # Act
+    result = get_nested(data, "a.b", default="d")
+    # Assert
+    assert result == "d"
 
 
 # ---------------------------------------------------------------------------
@@ -63,47 +141,83 @@ def test_get_nested_intermediate_not_dict_returns_default():
 # ---------------------------------------------------------------------------
 
 
-def test_interpolate_metadata_name():
-    out = interpolate_metadata("hello ${metadata.name}", {"name": "agent-7"})
+def test_interpolate_metadata_substitutes_name_placeholder_with_value():
+    # Arrange
+    template = "hello ${metadata.name}"
+    metadata = {"name": "agent-7"}
+    # Act
+    out = interpolate_metadata(template, metadata)
+    # Assert
     assert out == "hello agent-7"
 
 
-def test_interpolate_metadata_label():
-    out = interpolate_metadata(
-        "tier=${metadata.labels.tier}", {"labels": {"tier": "edge"}}
-    )
+def test_interpolate_metadata_substitutes_label_placeholder_with_value():
+    # Arrange
+    template = "tier=${metadata.labels.tier}"
+    metadata = {"labels": {"tier": "edge"}}
+    # Act
+    out = interpolate_metadata(template, metadata)
+    # Assert
     assert out == "tier=edge"
 
 
-def test_interpolate_metadata_missing_name_keeps_placeholder():
-    out = interpolate_metadata("x=${metadata.name}", {})
+def test_interpolate_metadata_keeps_name_placeholder_when_name_missing():
+    # Arrange
+    template = "x=${metadata.name}"
+    metadata: dict = {}
+    # Act
+    out = interpolate_metadata(template, metadata)
+    # Assert
     assert out == "x=${metadata.name}"
 
 
-def test_interpolate_metadata_missing_label_keeps_placeholder():
-    out = interpolate_metadata("x=${metadata.labels.zz}", {"labels": {}})
+def test_interpolate_metadata_keeps_label_placeholder_when_label_missing():
+    # Arrange
+    template = "x=${metadata.labels.zz}"
+    metadata = {"labels": {}}
+    # Act
+    out = interpolate_metadata(template, metadata)
+    # Assert
     assert out == "x=${metadata.labels.zz}"
 
 
-def test_interpolate_metadata_labels_field_none_keeps_placeholder():
-    out = interpolate_metadata("x=${metadata.labels.zz}", {"labels": None})
+def test_interpolate_metadata_keeps_label_placeholder_when_labels_field_is_none():
+    # Arrange
+    template = "x=${metadata.labels.zz}"
+    metadata = {"labels": None}
+    # Act
+    out = interpolate_metadata(template, metadata)
+    # Assert
     assert out == "x=${metadata.labels.zz}"
 
 
-def test_interpolate_metadata_unknown_key_left_intact():
-    out = interpolate_metadata("${metadata.other.thing}", {"name": "a"})
+def test_interpolate_metadata_leaves_unknown_metadata_key_intact():
+    # Arrange
+    template = "${metadata.other.thing}"
+    metadata = {"name": "a"}
+    # Act
+    out = interpolate_metadata(template, metadata)
+    # Assert
     assert out == "${metadata.other.thing}"
 
 
-def test_interpolate_metadata_no_placeholders_unchanged():
-    assert interpolate_metadata("nothing here", {"name": "x"}) == "nothing here"
+def test_interpolate_metadata_returns_string_unchanged_when_no_placeholders():
+    # Arrange
+    template = "nothing here"
+    metadata = {"name": "x"}
+    # Act
+    out = interpolate_metadata(template, metadata)
+    # Assert
+    assert out == "nothing here"
 
 
-def test_interpolate_metadata_multiple_substitutions():
-    out = interpolate_metadata(
-        "n=${metadata.name} t=${metadata.labels.tier}",
-        {"name": "alpha", "labels": {"tier": "core"}},
-    )
+def test_interpolate_metadata_substitutes_multiple_placeholders_in_one_pass():
+    # Arrange
+    template = "n=${metadata.name} t=${metadata.labels.tier}"
+    metadata = {"name": "alpha", "labels": {"tier": "core"}}
+    # Act
+    out = interpolate_metadata(template, metadata)
+    # Assert
     assert out == "n=alpha t=core"
 
 
@@ -112,40 +226,80 @@ def test_interpolate_metadata_multiple_substitutions():
 # ---------------------------------------------------------------------------
 
 
-def test_parse_command_list_none_yields_empty():
-    assert _parse_command_list(None) == []
+@pytest.mark.parametrize(
+    "raw",
+    [
+        pytest.param(None, id="none"),
+        pytest.param([], id="empty-list"),
+    ],
+)
+def test_parse_command_list_returns_empty_for_falsy_input(raw):
+    # Arrange
+    payload = raw
+    # Act
+    result = _parse_command_list(payload)
+    # Assert
+    assert result == []
 
 
-def test_parse_command_list_empty_list_yields_empty():
-    assert _parse_command_list([]) == []
-
-
-def test_parse_command_list_strings_become_zero_delay_commands():
-    out = _parse_command_list(["echo a", "echo b"])
+def test_parse_command_list_converts_strings_to_zero_delay_records():
+    # Arrange
+    payload = ["echo a", "echo b"]
+    # Act
+    out = _parse_command_list(payload)
+    # Assert
     assert [(c.delay, c.command) for c in out] == [(0, "echo a"), (0, "echo b")]
 
 
-def test_parse_command_list_empty_string_skipped():
-    out = _parse_command_list(["", "echo go"])
+def test_parse_command_list_skips_empty_string_entries():
+    # Arrange
+    payload = ["", "echo go"]
+    # Act
+    out = _parse_command_list(payload)
+    # Assert
     assert [c.command for c in out] == ["echo go"]
 
 
-def test_parse_command_list_dict_with_delay():
-    out = _parse_command_list([{"command": "x", "delay": 7}])
+def test_parse_command_list_preserves_delay_from_dict_entry():
+    # Arrange
+    payload = [{"command": "x", "delay": 7}]
+    # Act
+    out = _parse_command_list(payload)
+    # Assert
     assert out[0].delay == 7
+
+
+def test_parse_command_list_preserves_command_text_from_dict_entry():
+    # Arrange
+    payload = [{"command": "x", "delay": 7}]
+    # Act
+    out = _parse_command_list(payload)
+    # Assert
     assert out[0].command == "x"
 
 
-def test_parse_command_list_dict_delay_invalid_falls_back_to_zero():
-    out = _parse_command_list([{"command": "x", "delay": "junk"}])
+def test_parse_command_list_falls_back_to_zero_delay_when_delay_invalid():
+    # Arrange
+    payload = [{"command": "x", "delay": "junk"}]
+    # Act
+    out = _parse_command_list(payload)
+    # Assert
     assert out[0].delay == 0
 
 
-def test_parse_command_list_dict_without_command_skipped():
-    out = _parse_command_list([{"delay": 5}, {"command": "ok"}])
+def test_parse_command_list_skips_dict_entry_missing_command_field():
+    # Arrange
+    payload = [{"delay": 5}, {"command": "ok"}]
+    # Act
+    out = _parse_command_list(payload)
+    # Assert
     assert [c.command for c in out] == ["ok"]
 
 
-def test_parse_command_list_mixed_skips_non_str_non_dict():
-    out = _parse_command_list(["echo", 42, None, {"command": "go"}])
+def test_parse_command_list_skips_entries_that_are_neither_str_nor_dict():
+    # Arrange
+    payload = ["echo", 42, None, {"command": "go"}]
+    # Act
+    out = _parse_command_list(payload)
+    # Assert
     assert [c.command for c in out] == ["echo", "go"]

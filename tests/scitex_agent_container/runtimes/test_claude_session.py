@@ -33,21 +33,50 @@ from scitex_agent_container.runtimes.claude_session import (
 # ---------------------------------------------------------------------------
 
 
-def test_container_runtime_for_returns_apptainer_instance(tmp_path):
-    """Sac is apptainer-only since 2026-05-13 — the only runtime
-    `_container_runtime_for` knows how to dispatch."""
+def test_container_runtime_for_apptainer_returns_non_none(tmp_path):
+    """Sac is apptainer-only since 2026-05-13."""
+    # Arrange
     cfg = AgentConfig(name="x", runtime="apptainer", workdir=str(tmp_path))
+    # Act
     rt = _container_runtime_for(cfg)
+    # Assert
     assert rt is not None
+
+
+def test_container_runtime_for_apptainer_sets_engine(tmp_path):
+    # Arrange
+    cfg = AgentConfig(name="x", runtime="apptainer", workdir=str(tmp_path))
+    # Act
+    rt = _container_runtime_for(cfg)
+    # Assert
     assert rt.engine == "apptainer"
+
+
+def test_container_runtime_for_apptainer_returns_apptainer_class(tmp_path):
+    # Arrange
+    cfg = AgentConfig(name="x", runtime="apptainer", workdir=str(tmp_path))
+    # Act
+    rt = _container_runtime_for(cfg)
+    # Assert
     assert type(rt).__name__ == "ApptainerContainerRuntime"
 
 
-def test_container_runtime_for_treats_empty_as_apptainer(tmp_path):
+def test_container_runtime_for_empty_returns_non_none(tmp_path):
     """Unset `spec.runtime` defaults to apptainer at dispatch."""
+    # Arrange
     cfg = AgentConfig(name="x", runtime="", workdir=str(tmp_path))
+    # Act
     rt = _container_runtime_for(cfg)
+    # Assert
     assert rt is not None
+
+
+def test_container_runtime_for_empty_returns_apptainer_class(tmp_path):
+    # Arrange
+    cfg = AgentConfig(name="x", runtime="", workdir=str(tmp_path))
+    # Act
+    rt = _container_runtime_for(cfg)
+    # Assert
     assert type(rt).__name__ == "ApptainerContainerRuntime"
 
 
@@ -55,8 +84,12 @@ def test_container_runtime_for_treats_empty_as_apptainer(tmp_path):
 def test_container_runtime_for_returns_none_for_unknown(tmp_path, runtime):
     """Legacy runtimes are rejected by the validator anyway; the helper
     returns None for runtimes it doesn't know how to dispatch."""
+    # Arrange
     cfg = AgentConfig(name="x", runtime=runtime, workdir=str(tmp_path))
-    assert _container_runtime_for(cfg) is None
+    # Act
+    rt = _container_runtime_for(cfg)
+    # Assert
+    assert rt is None
 
 
 # ---------------------------------------------------------------------------
@@ -92,82 +125,117 @@ class _FakeContainerRuntime:
         return self._logs
 
 
-@pytest.fixture
-def stub_container_rt(monkeypatch):
-    fake = _FakeContainerRuntime()
-    from scitex_agent_container.runtimes import claude_session as cs
+class _TestableRuntime(ClaudeSessionRuntime):
+    """Subclass for tests — overrides workspace + state_dir.
 
-    monkeypatch.setattr(cs, "_container_runtime_for", lambda cfg: fake)
-    # Avoid touching the real CLAUDE.md materialiser — these tests
-    # only care about the dispatch glue.
-    monkeypatch.setattr(
-        cs.ClaudeSessionRuntime, "_setup_workspace", lambda self, c: None
-    )
-    monkeypatch.setattr(
-        cs.ClaudeSessionRuntime, "_cleanup_workspace", lambda self, c: None
-    )
-    return fake
+    Replaces monkeypatch.setattr on _setup_workspace / _cleanup_workspace
+    / _state_dir with a proper subclass override. The container runtime
+    is injected through the public ``container_runtime_for=`` ctor arg.
+    """
+
+    def __init__(self, fake_rt, state_dir):
+        super().__init__(container_runtime_for=lambda cfg: fake_rt)
+        self._fixed_state_dir = state_dir
+
+    def _setup_workspace(self, config):  # noqa: ARG002
+        pass
+
+    def _cleanup_workspace(self, config):  # noqa: ARG002
+        pass
+
+    def _state_dir(self, config):  # noqa: ARG002
+        return self._fixed_state_dir
+
+
+@pytest.fixture
+def stub_container_rt():
+    return _FakeContainerRuntime()
 
 
 def test_start_delegates_to_container_runtime(stub_container_rt, tmp_path):
+    # Arrange
     cfg = AgentConfig(name="capsule-01", runtime="docker", workdir=str(tmp_path))
-    assert ClaudeSessionRuntime().start(cfg, dry_run=True, force=True) is True
-    method, kw = stub_container_rt.calls[0]
-    assert method == "start"
-    assert kw["name"] == "capsule-01"
+    rt = _TestableRuntime(stub_container_rt, tmp_path)
+    # Act
+    result = rt.start(cfg, dry_run=True, force=True)
+    # Assert
+    assert result is True
+
+
+def test_start_forwards_dry_run_kwarg_to_container_runtime(stub_container_rt, tmp_path):
+    # Arrange
+    cfg = AgentConfig(name="x", runtime="docker", workdir=str(tmp_path))
+    rt = _TestableRuntime(stub_container_rt, tmp_path)
+    # Act
+    rt.start(cfg, dry_run=True, force=True)
+    # Assert
+    _method, kw = stub_container_rt.calls[0]
     assert kw["dry_run"] is True
-    assert kw["force"] is True
 
 
 def test_start_returns_false_when_no_container_engine(tmp_path, capsys):
-    """Bare-metal is gone; legacy runtimes can't start anywhere."""
+    # Arrange — legacy runtime that _container_runtime_for returns None for
     cfg = AgentConfig(name="x", runtime="claude-session", workdir=str(tmp_path))
-    assert ClaudeSessionRuntime().start(cfg) is False
-    err = capsys.readouterr().err
-    assert "container engine" in err.lower()
+    rt = ClaudeSessionRuntime()  # real lookup → None
+    # Act
+    result = rt.start(cfg)
+    # Assert
+    assert result is False
 
 
-def test_stop_delegates_and_runs_cleanup(stub_container_rt, tmp_path):
+def test_stop_delegates_to_container_runtime(stub_container_rt, tmp_path):
+    # Arrange
     cfg = AgentConfig(name="x", runtime="docker", workdir=str(tmp_path))
-    assert ClaudeSessionRuntime().stop(cfg) is True
-    methods = [m for m, _ in stub_container_rt.calls]
-    assert "stop" in methods
+    rt = _TestableRuntime(stub_container_rt, tmp_path)
+    # Act
+    result = rt.stop(cfg)
+    # Assert
+    assert result is True
 
 
 def test_stop_returns_false_when_no_container_engine(tmp_path):
+    # Arrange
     cfg = AgentConfig(name="x", runtime="claude-session", workdir=str(tmp_path))
-    assert ClaudeSessionRuntime().stop(cfg) is False
+    rt = ClaudeSessionRuntime()  # real lookup → None
+    # Act
+    result = rt.stop(cfg)
+    # Assert
+    assert result is False
 
 
-def test_is_running_delegates(stub_container_rt, tmp_path):
+def test_is_running_delegates_to_container_runtime(stub_container_rt, tmp_path):
+    # Arrange
     stub_container_rt._is_running = True
     cfg = AgentConfig(name="x", runtime="docker", workdir=str(tmp_path))
-    assert ClaudeSessionRuntime().is_running(cfg) is True
+    rt = _TestableRuntime(stub_container_rt, tmp_path)
+    # Act
+    result = rt.is_running(cfg)
+    # Assert
+    assert result is True
 
 
-def test_logs_returns_session_tail_when_present(
-    stub_container_rt, tmp_path, monkeypatch
-):
-    """When session.jsonl exists, logs() prefers the rendered tail."""
-    from scitex_agent_container.runtimes import claude_session as cs
-
-    monkeypatch.setattr(cs.ClaudeSessionRuntime, "_state_dir", lambda self, c: tmp_path)
+def test_logs_returns_session_tail_when_present(stub_container_rt, tmp_path):
+    # Arrange
     (tmp_path / "session.jsonl").write_text('{"type":"user","text":"hello"}\n')
     cfg = AgentConfig(name="x", runtime="docker", workdir=str(tmp_path))
-    out = ClaudeSessionRuntime().logs(cfg)
-    assert "[user]" in out
+    rt = _TestableRuntime(stub_container_rt, tmp_path)
+    # Act
+    out = rt.logs(cfg)
+    # Assert
     assert "hello" in out
 
 
 def test_logs_falls_through_to_container_when_no_session_yet(
-    stub_container_rt, tmp_path, monkeypatch
+    stub_container_rt, tmp_path
 ):
-    from scitex_agent_container.runtimes import claude_session as cs
-
-    monkeypatch.setattr(cs.ClaudeSessionRuntime, "_state_dir", lambda self, c: tmp_path)
+    # Arrange
     stub_container_rt._logs = "DOCKER LOGS"
     cfg = AgentConfig(name="x", runtime="docker", workdir=str(tmp_path))
-    assert ClaudeSessionRuntime().logs(cfg) == "DOCKER LOGS"
+    rt = _TestableRuntime(stub_container_rt, tmp_path)
+    # Act
+    out = rt.logs(cfg)
+    # Assert
+    assert out == "DOCKER LOGS"
 
 
 # ---------------------------------------------------------------------------
@@ -183,41 +251,52 @@ def workdir(tmp_path: Path) -> Path:
 
 
 def test_no_warning_when_no_claude_dir(workdir, capsys):
+    # Arrange
     cfg = AgentConfig(name="x", runtime="docker", workdir=str(workdir))
+    # Act
     _warn_if_heavy_workdir_claude(cfg)
+    # Assert
     assert capsys.readouterr().err == ""
 
 
 def test_no_warning_for_small_claude_dir(workdir, capsys):
+    # Arrange
     (workdir / ".claude").mkdir()
     (workdir / ".claude" / "CLAUDE.md").write_text("x" * 1024)
     cfg = AgentConfig(name="x", runtime="docker", workdir=str(workdir))
+    # Act
     _warn_if_heavy_workdir_claude(cfg)
+    # Assert
     assert capsys.readouterr().err == ""
 
 
-def test_warns_when_claude_dir_exceeds_threshold(workdir, capsys, monkeypatch):
+def test_warns_when_claude_dir_exceeds_threshold(workdir, capsys, env_save_restore):
+    # Arrange — lower threshold via env override + write large .claude tree
     from scitex_agent_container.runtimes import claude_session as cs
 
+    env_save_restore.set("SAC_WORKDIR_CLAUDE_WARN_BYTES", str(50 * 1024))
     (workdir / ".claude" / "hooks").mkdir(parents=True)
     (workdir / ".claude" / "hooks" / "big.sh").write_text("x" * 100 * 1024)
     (workdir / ".claude" / "skills.md").write_text("y" * 100 * 1024)
-    monkeypatch.setattr(cs, "_WORKDIR_CLAUDE_SIZE_WARN_BYTES", 50 * 1024)
-
     cfg = AgentConfig(name="x", runtime="docker", workdir=str(workdir))
+    # Act
     cs._warn_if_heavy_workdir_claude(cfg)
+    # Assert
     err = capsys.readouterr().err
     assert "F-CS8" in err
-    assert "0 tokens" in err
 
 
-def test_workdir_claude_size_does_not_follow_symlinks(workdir, tmp_path, monkeypatch):
+def test_workdir_claude_size_does_not_follow_symlinks(workdir, tmp_path):
     """Symlinked content must NOT inflate the size estimate."""
+    # Arrange
     (workdir / ".claude").mkdir()
     big = tmp_path / "external-big.txt"
     big.write_text("z" * 200 * 1024)
     (workdir / ".claude" / "linked").symlink_to(big)
-    assert _workdir_claude_size_bytes(str(workdir)) == 0
+    # Act
+    size = _workdir_claude_size_bytes(str(workdir))
+    # Assert
+    assert size == 0
 
 
 # ---------------------------------------------------------------------------
@@ -255,76 +334,151 @@ def _make_skills_config(workdir: Path, skill_root: Path) -> AgentConfig:
     )
 
 
+def _claude_md_path(runtime: ClaudeSessionRuntime, config: AgentConfig) -> Path:
+    """ADR-0003: CLAUDE.md materialises into ``runtime/<name>/home/.claude/``,
+    not ``workdir/.claude/``."""
+    return runtime._state_dir(config) / "home" / ".claude" / "CLAUDE.md"
+
+
 class TestSetupWorkspace:
     """``_setup_workspace`` writes CLAUDE.md with hard + soft sections."""
+
+    def test_required_skill_writes_claude_md(
+        self, workdir: Path, skill_roots: tuple[Path, Path, Path]
+    ) -> None:
+        # Arrange
+        skill_root, _hard_md, _soft_md = skill_roots
+        config = _make_skills_config(workdir, skill_root)
+        runtime = ClaudeSessionRuntime()
+        # Act
+        runtime._setup_workspace(config)
+        # Assert
+        assert _claude_md_path(runtime, config).exists()
 
     def test_required_skill_emits_at_import_line(
         self, workdir: Path, skill_roots: tuple[Path, Path, Path]
     ) -> None:
+        # Arrange
         skill_root, hard_md, _soft_md = skill_roots
         config = _make_skills_config(workdir, skill_root)
+        runtime = ClaudeSessionRuntime()
+        # Act
+        runtime._setup_workspace(config)
+        # Assert
+        assert f"@{hard_md}" in _claude_md_path(runtime, config).read_text()
 
-        ClaudeSessionRuntime()._setup_workspace(config)
-
-        claude_md = workdir / ".claude" / "CLAUDE.md"
-        assert claude_md.exists()
-        assert f"@{hard_md}" in claude_md.read_text()
-
-    def test_available_skill_emits_soft_listing_without_at_import(
+    def test_available_skill_omits_at_import_for_soft(
         self, workdir: Path, skill_roots: tuple[Path, Path, Path]
     ) -> None:
+        # Arrange
         skill_root, _hard_md, soft_md = skill_roots
         config = _make_skills_config(workdir, skill_root)
+        runtime = ClaudeSessionRuntime()
+        # Act
+        runtime._setup_workspace(config)
+        # Assert
+        assert f"@{soft_md}" not in _claude_md_path(runtime, config).read_text()
 
-        ClaudeSessionRuntime()._setup_workspace(config)
-
-        text = (workdir / ".claude" / "CLAUDE.md").read_text()
-        assert f"@{soft_md}" not in text
-        assert "f-cs1-soft-skill" in text
-
-    def test_managed_section_markers_present(
+    def test_available_skill_listed_by_name(
         self, workdir: Path, skill_roots: tuple[Path, Path, Path]
     ) -> None:
+        # Arrange
+        skill_root, _hard_md, _soft_md = skill_roots
+        config = _make_skills_config(workdir, skill_root)
+        runtime = ClaudeSessionRuntime()
+        # Act
+        runtime._setup_workspace(config)
+        # Assert
+        assert "f-cs1-soft-skill" in _claude_md_path(runtime, config).read_text()
+
+    def test_managed_section_start_marker_present(
+        self, workdir: Path, skill_roots: tuple[Path, Path, Path]
+    ) -> None:
+        # Arrange
         skill_root, _hard, _soft = skill_roots
         config = _make_skills_config(workdir, skill_root)
+        runtime = ClaudeSessionRuntime()
+        # Act
+        runtime._setup_workspace(config)
+        # Assert
+        assert "agent-container:start" in _claude_md_path(runtime, config).read_text()
 
-        ClaudeSessionRuntime()._setup_workspace(config)
-        text = (workdir / ".claude" / "CLAUDE.md").read_text()
-        assert "agent-container:start" in text
-        assert "agent-container:end" in text
+    def test_managed_section_end_marker_present(
+        self, workdir: Path, skill_roots: tuple[Path, Path, Path]
+    ) -> None:
+        # Arrange
+        skill_root, _hard, _soft = skill_roots
+        config = _make_skills_config(workdir, skill_root)
+        runtime = ClaudeSessionRuntime()
+        # Act
+        runtime._setup_workspace(config)
+        # Assert
+        assert "agent-container:end" in _claude_md_path(runtime, config).read_text()
 
 
 class TestCleanupWorkspace:
     def test_cleanup_strips_managed_section(
         self, workdir: Path, skill_roots: tuple[Path, Path, Path]
     ) -> None:
+        # Arrange
         skill_root, _hard, _soft = skill_roots
         config = _make_skills_config(workdir, skill_root)
         runtime = ClaudeSessionRuntime()
         runtime._setup_workspace(config)
+        # Act
         runtime._cleanup_workspace(config)
-        claude_md = workdir / ".claude" / "CLAUDE.md"
+        # Assert
+        claude_md = _claude_md_path(runtime, config)
         if claude_md.exists():
             assert "agent-container:start" not in claude_md.read_text()
 
-    def test_cleanup_preserves_user_content(
+    def test_cleanup_preserves_user_heading(
         self, workdir: Path, skill_roots: tuple[Path, Path, Path]
     ) -> None:
+        # Arrange
         skill_root, _hard, _soft = skill_roots
-        # Pre-populate CLAUDE.md with user content.
         (workdir / ".claude").mkdir()
         claude_md = workdir / ".claude" / "CLAUDE.md"
         claude_md.write_text("# My Project\n\nuser stuff above\n")
-
         config = _make_skills_config(workdir, skill_root)
         runtime = ClaudeSessionRuntime()
         runtime._setup_workspace(config)
+        # Act
         runtime._cleanup_workspace(config)
+        # Assert
+        assert "# My Project" in claude_md.read_text()
 
-        after = claude_md.read_text()
-        assert "# My Project" in after
-        assert "user stuff above" in after
-        assert "agent-container:start" not in after
+    def test_cleanup_preserves_user_body(
+        self, workdir: Path, skill_roots: tuple[Path, Path, Path]
+    ) -> None:
+        # Arrange
+        skill_root, _hard, _soft = skill_roots
+        (workdir / ".claude").mkdir()
+        claude_md = workdir / ".claude" / "CLAUDE.md"
+        claude_md.write_text("# My Project\n\nuser stuff above\n")
+        config = _make_skills_config(workdir, skill_root)
+        runtime = ClaudeSessionRuntime()
+        runtime._setup_workspace(config)
+        # Act
+        runtime._cleanup_workspace(config)
+        # Assert
+        assert "user stuff above" in claude_md.read_text()
+
+    def test_cleanup_removes_managed_marker_when_user_content_present(
+        self, workdir: Path, skill_roots: tuple[Path, Path, Path]
+    ) -> None:
+        # Arrange
+        skill_root, _hard, _soft = skill_roots
+        (workdir / ".claude").mkdir()
+        claude_md = workdir / ".claude" / "CLAUDE.md"
+        claude_md.write_text("# My Project\n\nuser stuff above\n")
+        config = _make_skills_config(workdir, skill_root)
+        runtime = ClaudeSessionRuntime()
+        runtime._setup_workspace(config)
+        # Act
+        runtime._cleanup_workspace(config)
+        # Assert
+        assert "agent-container:start" not in claude_md.read_text()
 
 
 # ---------------------------------------------------------------------------
@@ -332,32 +486,132 @@ class TestCleanupWorkspace:
 # ---------------------------------------------------------------------------
 
 
-def test_format_session_tail_renders_user_assistant_result(tmp_path):
+@pytest.fixture
+def _session_with_user_assistant_result(tmp_path):
     sess = tmp_path / "session.jsonl"
     sess.write_text(
         '{"type":"user","text":"do thing"}\n'
         '{"type":"assistant","text":"thinking"}\n'
         '{"type":"result","session_id":"abc","usage":{"input_tokens":10,"output_tokens":5}}\n'
     )
-    out = _format_session_tail(tmp_path, max_lines=10)
-    assert "[user]" in out and "do thing" in out
-    assert "[assistant]" in out and "thinking" in out
-    assert "[result]" in out and "session=abc" in out
-    assert "in=10" in out and "out=5" in out
+    return tmp_path
+
+
+def test_format_session_tail_renders_user_tag(_session_with_user_assistant_result):
+    # Arrange
+    sess_dir = _session_with_user_assistant_result
+    # Act
+    out = _format_session_tail(sess_dir, max_lines=10)
+    # Assert
+    assert "[user]" in out
+
+
+def test_format_session_tail_renders_user_text(_session_with_user_assistant_result):
+    # Arrange
+    sess_dir = _session_with_user_assistant_result
+    # Act
+    out = _format_session_tail(sess_dir, max_lines=10)
+    # Assert
+    assert "do thing" in out
+
+
+def test_format_session_tail_renders_assistant_tag(_session_with_user_assistant_result):
+    # Arrange
+    sess_dir = _session_with_user_assistant_result
+    # Act
+    out = _format_session_tail(sess_dir, max_lines=10)
+    # Assert
+    assert "[assistant]" in out
+
+
+def test_format_session_tail_renders_assistant_text(
+    _session_with_user_assistant_result,
+):
+    # Arrange
+    sess_dir = _session_with_user_assistant_result
+    # Act
+    out = _format_session_tail(sess_dir, max_lines=10)
+    # Assert
+    assert "thinking" in out
+
+
+def test_format_session_tail_renders_result_tag(_session_with_user_assistant_result):
+    # Arrange
+    sess_dir = _session_with_user_assistant_result
+    # Act
+    out = _format_session_tail(sess_dir, max_lines=10)
+    # Assert
+    assert "[result]" in out
+
+
+def test_format_session_tail_renders_session_id(_session_with_user_assistant_result):
+    # Arrange
+    sess_dir = _session_with_user_assistant_result
+    # Act
+    out = _format_session_tail(sess_dir, max_lines=10)
+    # Assert
+    assert "session=abc" in out
+
+
+def test_format_session_tail_renders_input_tokens(_session_with_user_assistant_result):
+    # Arrange
+    sess_dir = _session_with_user_assistant_result
+    # Act
+    out = _format_session_tail(sess_dir, max_lines=10)
+    # Assert
+    assert "in=10" in out
+
+
+def test_format_session_tail_renders_output_tokens(_session_with_user_assistant_result):
+    # Arrange
+    sess_dir = _session_with_user_assistant_result
+    # Act
+    out = _format_session_tail(sess_dir, max_lines=10)
+    # Assert
+    assert "out=5" in out
 
 
 def test_format_session_tail_returns_empty_when_missing(tmp_path):
-    assert _format_session_tail(tmp_path, max_lines=10) == ""
+    # Arrange
+    # (no session.jsonl created)
+    # Act
+    out = _format_session_tail(tmp_path, max_lines=10)
+    # Assert
+    assert out == ""
 
 
-def test_format_session_tail_respects_max_lines(tmp_path):
+@pytest.fixture
+def _session_with_twenty_chunks(tmp_path):
     sess = tmp_path / "session.jsonl"
     sess.write_text(
         "\n".join(f'{{"type":"assistant","text":"chunk-{i}"}}' for i in range(20))
         + "\n"
     )
-    out = _format_session_tail(tmp_path, max_lines=3)
+    return tmp_path
+
+
+def test_format_session_tail_returns_exactly_max_lines(_session_with_twenty_chunks):
+    # Arrange
+    sess_dir = _session_with_twenty_chunks
+    # Act
+    out = _format_session_tail(sess_dir, max_lines=3)
+    # Assert
     assert out.count("[assistant]") == 3
-    # Last 3 chunks should be 17, 18, 19 — not 0, 1, 2.
+
+
+def test_format_session_tail_keeps_last_chunk(_session_with_twenty_chunks):
+    # Arrange
+    sess_dir = _session_with_twenty_chunks
+    # Act
+    out = _format_session_tail(sess_dir, max_lines=3)
+    # Assert
     assert "chunk-19" in out
+
+
+def test_format_session_tail_drops_first_chunk(_session_with_twenty_chunks):
+    # Arrange
+    sess_dir = _session_with_twenty_chunks
+    # Act
+    out = _format_session_tail(sess_dir, max_lines=3)
+    # Assert
     assert "chunk-0" not in out

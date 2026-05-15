@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import time
 import traceback
+from typing import Callable, Optional
 
 from .._state.registry import Registry
 from ..config import AgentConfig
 
 
-def health_check(config: AgentConfig) -> tuple[bool, str]:
+def health_check(
+    config: AgentConfig,
+    *,
+    runtime: object | None = None,
+) -> tuple[bool, str]:
     """Run a single health check. Returns (is_healthy, message).
 
     Two methods:
@@ -17,20 +22,38 @@ def health_check(config: AgentConfig) -> tuple[bool, str]:
         container/process is up.
       * ``a2a-card`` — probe the A2A AgentCard endpoint (higher
         fidelity, confirms the HTTP surface is actually serving).
+
+    Parameters
+    ----------
+    runtime:
+        Optional injected SDK runtime (real collaborator). Used by
+        ``sdk-alive``. Default ``None`` instantiates the real
+        ``ClaudeSessionRuntime`` lazily.
     """
     method = config.health.method or "sdk-alive"
     if method == "sdk-alive":
-        return _check_sdk_alive(config)
+        return _check_sdk_alive(config, runtime=runtime)
     if method == "a2a-card":
         return _check_a2a_card(config)
     return False, f"Unknown health method: {method}"
 
 
-def _check_sdk_alive(config: AgentConfig) -> tuple[bool, str]:
-    """Ask the SDK runtime whether the container/runner is up."""
-    from ..runtimes.claude_session import ClaudeSessionRuntime
+def _check_sdk_alive(
+    config: AgentConfig,
+    *,
+    runtime: object | None = None,
+) -> tuple[bool, str]:
+    """Ask the SDK runtime whether the container/runner is up.
 
-    if ClaudeSessionRuntime().is_running(config):
+    ``runtime`` is an injectable real collaborator (default: a freshly
+    instantiated ``ClaudeSessionRuntime``). It must expose
+    ``is_running(config) -> bool``.
+    """
+    if runtime is None:
+        from ..runtimes.claude_session import ClaudeSessionRuntime
+
+        runtime = ClaudeSessionRuntime()
+    if runtime.is_running(config):
         return True, "healthy"
     return False, "unhealthy: SDK runner not running"
 
@@ -39,7 +62,7 @@ def _check_a2a_card(config: AgentConfig) -> tuple[bool, str]:
     """Probe the agent's A2A AgentCard endpoint.
 
     Reads ``spec.a2a.{port,host}`` from the YAML and issues a GET to
-    ``http://<host>:<port>/v1/sac/agents/<name>/.well-known/agent.json``.
+    ``http://<host>:<port>/agents/<name>/.well-known/agent-card.json``.
     Healthy iff the endpoint returns 200 with ``name == config.name``.
     """
     import json
@@ -54,7 +77,7 @@ def _check_a2a_card(config: AgentConfig) -> tuple[bool, str]:
 
     host = str(a2a.get("host", "127.0.0.1"))
     port = int(a2a["port"])
-    url = f"http://{host}:{port}/v1/sac/agents/{config.name}/.well-known/agent.json"
+    url = f"http://{host}:{port}/agents/{config.name}/.well-known/agent-card.json"
     t0 = time.time()
     try:
         with urllib.request.urlopen(url, timeout=5) as resp:
@@ -88,6 +111,9 @@ def health_monitor(
     config: AgentConfig,
     registry: Registry,
     restart_fn=None,
+    *,
+    health_check_fn: Optional[Callable[[AgentConfig], tuple[bool, str]]] = None,
+    sleep_fn: Callable[[float], None] = time.sleep,
 ) -> None:
     """Background health monitor loop with restart support.
 
@@ -99,6 +125,11 @@ def health_monitor(
         config: Parsed agent config.
         registry: Registry instance for checking if agent was removed.
         restart_fn: Callable(config) -> bool to restart the agent.
+        health_check_fn: Injectable health-check callable. Default
+            ``None`` uses the module-level :func:`health_check` (real
+            collaborator). Tests pass a real callable that returns
+            scripted ``(bool, str)`` tuples.
+        sleep_fn: Injectable sleep (real callable; default ``time.sleep``).
     """
     interval = config.health.interval
     policy = config.restart.policy
@@ -107,17 +138,19 @@ def health_monitor(
     backoff_max = config.restart.backoff_max
     backoff_multiplier = config.restart.backoff_multiplier
 
+    check = health_check_fn or health_check
+
     retries = 0
     current_backoff = backoff_initial
 
     while True:
-        time.sleep(interval)
+        sleep_fn(interval)
 
         # Stop monitoring if agent was removed from registry
         if not registry.exists(name):
             return
 
-        is_healthy, message = health_check(config)
+        is_healthy, message = check(config)
         if is_healthy:
             retries = 0
             current_backoff = backoff_initial
@@ -131,7 +164,7 @@ def health_monitor(
             if retries >= max_retries:
                 return
 
-            time.sleep(current_backoff)
+            sleep_fn(current_backoff)
 
             if restart_fn is not None:
                 # stx-allow: fallback (reason: restart callback failure must not abort the health-monitor loop; error is printed and monitoring continues)

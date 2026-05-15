@@ -32,7 +32,11 @@ def _build_server():
     actionable message instead of crashing on import)."""
     try:
         from fastmcp import FastMCP
-    except ImportError as exc:
+    except Exception as exc:
+        # Broad catch: fastmcp pulls in heavy transitive deps that can
+        # raise non-ImportError errors at import-time on misconfigured
+        # environments (e.g. version-mismatched mcp / pydantic). Surface
+        # any failure as an actionable ImportError instead of crashing.
         raise ImportError(
             "fastmcp is required for the sac MCP server — "
             "install with `pip install scitex-agent-container[mcp]`"

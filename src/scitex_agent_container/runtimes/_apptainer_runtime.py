@@ -88,6 +88,12 @@ class ApptainerContainerRuntime(RuntimeBase):
 
         argv: list[str] = ["apptainer", "exec"]
         argv += compute_iso_prepend(config)
+        # ADR-0003 D6: runtime/<name>/home/ → /home/agent. dot_claude/
+        # materialises here (see _dot_claude.py) so SDK $HOME/.claude/
+        # discovery works without manual operator config.
+        home_host = state_dir.expanduser() / "home"
+        home_host.mkdir(parents=True, exist_ok=True)
+        argv += ["--bind", f"{home_host}:/home/agent"]
         argv += [
             # Bind-mounts: workdir → <container_workdir>, state_dir → /state/<name>.
             # apptainer accepts the docker syntax for src:dst:[options].
@@ -127,10 +133,23 @@ class ApptainerContainerRuntime(RuntimeBase):
         # v3-realign: spec.apptainer.binds (promoted from top-level
         # spec.mounts per §3). Strings already in `host:container[:mode]`
         # form — appended verbatim.
+        #
+        # ADR-0003 D6 follow-up: when the destination is under
+        # /home/agent/ (the host-side runtime/<name>/home/ bind), apptainer
+        # no longer scaffolds parent directories — the host dir IS the
+        # filesystem at /home/agent. We pre-create the parent on the
+        # host side so the bind has somewhere to land.
         ap_for_binds = getattr(config, "apptainer", None)
         if ap_for_binds is not None:
             for b in getattr(ap_for_binds, "binds", None) or []:
-                argv += ["--bind", str(b)]
+                bs = str(b)
+                if ":" in bs:
+                    _, _, rest = bs.partition(":")
+                    dst = rest.split(":", 1)[0]
+                    if dst.startswith("/home/agent/"):
+                        rel = dst[len("/home/agent/") :]
+                        (home_host / rel).mkdir(parents=True, exist_ok=True)
+                argv += ["--bind", bs]
 
         # GPU passthrough — apptainer's --nv binds the host CUDA libs
         # and devices into the container. --rocm does the same for AMD.

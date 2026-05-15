@@ -89,7 +89,7 @@ def listen_base_url() -> str:
     """Return the stable URL that reaches ``sac listen`` from outside.
 
     Shape: ``http://<host>:<port>`` (no trailing slash, no path
-    suffix). Combine with ``/v1/sac/agents/<name>`` to build a card's
+    suffix). Combine with ``/agents/<name>`` to build a card's
     ``url`` field that survives per-agent port churn.
     """
     return f"http://{listen_host()}:{listen_port()}"

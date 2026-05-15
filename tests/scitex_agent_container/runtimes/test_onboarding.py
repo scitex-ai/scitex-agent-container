@@ -5,11 +5,18 @@ onboarding wizard. We sandbox ``Path.home`` (autouse fixture pattern
 adopted from ``tests/scitex_agent_container/_state/test_account_store.py``)
 in addition to passing the ``home=`` override so a regression in
 either layer cannot pollute the operator's real ``~/.claude.json``.
+
+TQ cleanup: every test carries AAA markers (TQ002), descriptive names
+spell out the behaviour being verified (TQ003), and each test asserts
+exactly one fact (TQ007). Same-shape invariants collapse into
+``pytest.parametrize`` so the matrix stays declarative.
 """
 
 from __future__ import annotations
 
 import json
+import logging
+import os
 from pathlib import Path
 
 import pytest
@@ -19,65 +26,149 @@ from scitex_agent_container.runtimes.onboarding import (
     ensure_project_onboarding,
 )
 
+# ---------------------------------------------------------------------------
+# Shared fixtures
+# ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
-def _isolate_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+def _isolate_home(tmp_path: Path):
+    """PA-306: $HOME save/restore — Path.home() reads $HOME on Unix."""
+    saved = os.environ.get("HOME")
+    os.environ["HOME"] = str(tmp_path)
+    try:
+        yield
+    finally:
+        if saved is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = saved
 
 
 def _load(home: Path) -> dict:
     return json.loads((home / ".claude.json").read_text())
 
 
+@pytest.fixture
+def workdir(tmp_path: Path) -> Path:
+    """Workspace directory that exists on disk."""
+    wd = tmp_path / "ws"
+    wd.mkdir()
+    return wd
+
+
+@pytest.fixture
+def fresh_install_entry(tmp_path: Path, workdir: Path) -> dict:
+    """Run ensure_project_onboarding once on a fresh home and return the entry."""
+    ensure_project_onboarding(str(workdir), home=tmp_path)
+    return _load(tmp_path)["projects"][str(workdir.resolve())]
+
+
+# ---------------------------------------------------------------------------
+# Fresh install
+# ---------------------------------------------------------------------------
+
+
 class TestEnsureProjectOnboardingFreshInstall:
-    def test_creates_file_and_returns_true(self, tmp_path):
-        workdir = tmp_path / "ws"
-        workdir.mkdir()
-        assert ensure_project_onboarding(str(workdir), home=tmp_path) is True
-        data = _load(tmp_path)
-        entry = data["projects"][str(workdir.resolve())]
-        assert entry["hasCompletedProjectOnboarding"] is True
-        assert entry["hasTrustDialogAccepted"] is True
+    def test_fresh_install_returns_true_on_first_call(self, tmp_path, workdir):
+        # Arrange
+        workdir_str = str(workdir)
+        # Act
+        result = ensure_project_onboarding(workdir_str, home=tmp_path)
+        # Assert
+        assert result is True
 
-    def test_seed_fields_populated(self, tmp_path):
-        workdir = tmp_path / "ws"
-        workdir.mkdir()
-        ensure_project_onboarding(str(workdir), home=tmp_path)
-        entry = _load(tmp_path)["projects"][str(workdir.resolve())]
-        for key in _ONBOARDING_SEED:
-            assert key in entry
-
-    def test_uses_default_home_when_omitted(self, tmp_path):
-        # autouse _isolate_home points Path.home() → tmp_path
-        workdir = tmp_path / "ws"
-        workdir.mkdir()
-        assert ensure_project_onboarding(str(workdir)) is True
+    def test_fresh_install_creates_claude_json_file_on_disk(self, tmp_path, workdir):
+        # Arrange
+        workdir_str = str(workdir)
+        # Act
+        ensure_project_onboarding(workdir_str, home=tmp_path)
+        # Assert
         assert (tmp_path / ".claude.json").exists()
 
-    def test_nonexistent_workdir_uses_unresolved_path(self, tmp_path):
-        workdir = tmp_path / "does_not_exist"
-        result = ensure_project_onboarding(str(workdir), home=tmp_path)
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "hasCompletedProjectOnboarding",
+            "hasTrustDialogAccepted",
+        ],
+    )
+    def test_fresh_install_sets_critical_gate_flag_true(
+        self, fresh_install_entry, field
+    ):
+        # Arrange
+        entry = fresh_install_entry
+        # Act
+        value = entry[field]
+        # Assert
+        assert value is True
+
+    @pytest.mark.parametrize("seed_key", list(_ONBOARDING_SEED.keys()))
+    def test_fresh_install_populates_every_seed_field(
+        self, fresh_install_entry, seed_key
+    ):
+        # Arrange
+        entry = fresh_install_entry
+        # Act
+        present = seed_key in entry
+        # Assert
+        assert present
+
+    def test_fresh_install_uses_default_home_when_home_omitted(self, tmp_path, workdir):
+        # Arrange — autouse _isolate_home points Path.home() → tmp_path
+        # Act
+        result = ensure_project_onboarding(str(workdir))
+        # Assert
         assert result is True
-        data = _load(tmp_path)
-        # When workdir doesn't exist we keep the un-resolved expanded path
-        assert str(workdir) in data["projects"]
+
+    def test_default_home_writes_claude_json_at_isolated_home(self, tmp_path, workdir):
+        # Arrange
+        workdir_str = str(workdir)
+        # Act
+        ensure_project_onboarding(workdir_str)
+        # Assert
+        assert (tmp_path / ".claude.json").exists()
+
+    def test_nonexistent_workdir_returns_true(self, tmp_path):
+        # Arrange
+        missing = tmp_path / "does_not_exist"
+        # Act
+        result = ensure_project_onboarding(str(missing), home=tmp_path)
+        # Assert
+        assert result is True
+
+    def test_nonexistent_workdir_keeps_unresolved_expanded_path_as_key(self, tmp_path):
+        # Arrange
+        missing = tmp_path / "does_not_exist"
+        # Act
+        ensure_project_onboarding(str(missing), home=tmp_path)
+        # Assert
+        assert str(missing) in _load(tmp_path)["projects"]
+
+
+# ---------------------------------------------------------------------------
+# Idempotent / merge behaviour
+# ---------------------------------------------------------------------------
 
 
 class TestEnsureProjectOnboardingIdempotent:
-    def test_already_complete_returns_false(self, tmp_path):
-        workdir = tmp_path / "ws"
-        workdir.mkdir()
+    def test_second_call_on_already_complete_entry_returns_false(
+        self, tmp_path, workdir
+    ):
+        # Arrange
         ensure_project_onboarding(str(workdir), home=tmp_path)
-        # Second call should detect completion and bail out.
-        assert ensure_project_onboarding(str(workdir), home=tmp_path) is False
+        # Act
+        result = ensure_project_onboarding(str(workdir), home=tmp_path)
+        # Assert
+        assert result is False
 
-    def test_preserves_existing_keys(self, tmp_path):
-        workdir = tmp_path / "ws"
-        workdir.mkdir()
+    @pytest.fixture
+    def merged_entry_with_preexisting_live_stats(
+        self, tmp_path: Path, workdir: Path
+    ) -> dict:
+        """Seed partial entry + live stats, then run ensure once."""
         key = str(workdir.resolve())
-        claude_json = tmp_path / ".claude.json"
-        # Pre-seed with partial entry + live stats
-        claude_json.write_text(
+        (tmp_path / ".claude.json").write_text(
             json.dumps(
                 {
                     "projects": {
@@ -90,24 +181,61 @@ class TestEnsureProjectOnboardingIdempotent:
                 }
             )
         )
-        assert ensure_project_onboarding(str(workdir), home=tmp_path) is True
-        entry = _load(tmp_path)["projects"][key]
-        # Live stats preserved
-        assert entry["lastCost"] == 1.23
-        assert entry["lastSessionId"] == "abc"
-        # Existing allowedTools preserved (setdefault didn't overwrite)
-        assert entry["allowedTools"] == ["MyTool"]
-        # Critical fields set
-        assert entry["hasCompletedProjectOnboarding"] is True
-        assert entry["hasTrustDialogAccepted"] is True
-        assert entry["hasClaudeMdExternalIncludesApproved"] is True
+        ensure_project_onboarding(str(workdir), home=tmp_path)
+        return _load(tmp_path)["projects"][key]
 
-    def test_force_overrides_false_completion_flag(self, tmp_path):
-        workdir = tmp_path / "ws"
-        workdir.mkdir()
+    def test_merge_returns_true_when_completion_flag_missing(self, tmp_path, workdir):
+        # Arrange
         key = str(workdir.resolve())
-        claude_json = tmp_path / ".claude.json"
-        claude_json.write_text(
+        (tmp_path / ".claude.json").write_text(
+            json.dumps({"projects": {key: {"lastCost": 1.23}}})
+        )
+        # Act
+        result = ensure_project_onboarding(str(workdir), home=tmp_path)
+        # Assert
+        assert result is True
+
+    @pytest.mark.parametrize(
+        "field,expected",
+        [
+            ("lastCost", 1.23),
+            ("lastSessionId", "abc"),
+            ("allowedTools", ["MyTool"]),
+        ],
+    )
+    def test_merge_preserves_preexisting_field_value(
+        self, merged_entry_with_preexisting_live_stats, field, expected
+    ):
+        # Arrange
+        entry = merged_entry_with_preexisting_live_stats
+        # Act
+        value = entry[field]
+        # Assert
+        assert value == expected
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "hasCompletedProjectOnboarding",
+            "hasTrustDialogAccepted",
+            "hasClaudeMdExternalIncludesApproved",
+        ],
+    )
+    def test_merge_sets_critical_gate_flag_true(
+        self, merged_entry_with_preexisting_live_stats, field
+    ):
+        # Arrange
+        entry = merged_entry_with_preexisting_live_stats
+        # Act
+        value = entry[field]
+        # Assert
+        assert value is True
+
+    @pytest.fixture
+    def force_overridden_entry(self, tmp_path: Path, workdir: Path) -> dict:
+        """Seed entry with completion flags set to False, run ensure once."""
+        key = str(workdir.resolve())
+        (tmp_path / ".claude.json").write_text(
             json.dumps(
                 {
                     "projects": {
@@ -119,26 +247,54 @@ class TestEnsureProjectOnboardingIdempotent:
                 }
             )
         )
-        assert ensure_project_onboarding(str(workdir), home=tmp_path) is True
-        entry = _load(tmp_path)["projects"][key]
-        assert entry["hasCompletedProjectOnboarding"] is True
-        assert entry["hasTrustDialogAccepted"] is True
+        ensure_project_onboarding(str(workdir), home=tmp_path)
+        return _load(tmp_path)["projects"][key]
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "hasCompletedProjectOnboarding",
+            "hasTrustDialogAccepted",
+        ],
+    )
+    def test_force_overrides_false_completion_flag_to_true(
+        self, force_overridden_entry, field
+    ):
+        # Arrange
+        entry = force_overridden_entry
+        # Act
+        value = entry[field]
+        # Assert
+        assert value is True
+
+
+# ---------------------------------------------------------------------------
+# Error handling
+# ---------------------------------------------------------------------------
 
 
 class TestEnsureProjectOnboardingErrorHandling:
-    def test_malformed_json_returns_false(self, tmp_path, caplog):
+    def test_malformed_json_file_causes_function_to_return_false(self, tmp_path):
+        # Arrange
         (tmp_path / ".claude.json").write_text("{not json")
-        import logging
-
-        with caplog.at_level(logging.WARNING):
-            result = ensure_project_onboarding(str(tmp_path / "ws"), home=tmp_path)
+        # Act
+        result = ensure_project_onboarding(str(tmp_path / "ws"), home=tmp_path)
+        # Assert
         assert result is False
+
+    def test_malformed_json_file_emits_cannot_read_warning_log(self, tmp_path, caplog):
+        # Arrange
+        (tmp_path / ".claude.json").write_text("{not json")
+        # Act
+        with caplog.at_level(logging.WARNING):
+            ensure_project_onboarding(str(tmp_path / "ws"), home=tmp_path)
+        # Assert
         assert any("cannot read" in r.getMessage() for r in caplog.records)
 
-    def test_unreadable_file_returns_false(self, tmp_path, monkeypatch, caplog):
+    def test_unreadable_claude_json_causes_function_to_return_false(self, tmp_path):
+        # Arrange
         claude_json = tmp_path / ".claude.json"
         claude_json.write_text("{}")
-
         real_open = Path.open
 
         def _fake_open(self, *args, **kwargs):
@@ -148,35 +304,81 @@ class TestEnsureProjectOnboardingErrorHandling:
                 raise OSError("simulated read failure")
             return real_open(self, *args, **kwargs)
 
-        monkeypatch.setattr(Path, "open", _fake_open)
-        import logging
-
-        with caplog.at_level(logging.WARNING):
+        # PA-306: save/restore Path.open directly.
+        saved_open = Path.open
+        Path.open = _fake_open  # type: ignore[assignment]
+        try:
+            # Act
             result = ensure_project_onboarding(str(tmp_path / "ws"), home=tmp_path)
+        finally:
+            Path.open = saved_open  # type: ignore[assignment]
+        # Assert
         assert result is False
 
-    def test_write_failure_returns_false(self, tmp_path, monkeypatch, caplog):
+    def test_write_failure_causes_function_to_return_false(self, tmp_path):
+        # Arrange
         from scitex_agent_container.runtimes import onboarding as ob
 
         def _boom(src, dst):
             raise OSError("simulated replace failure")
 
-        monkeypatch.setattr(ob.os, "replace", _boom)
-        import logging
-
-        with caplog.at_level(logging.WARNING):
+        saved_replace = ob.os.replace
+        ob.os.replace = _boom  # type: ignore[assignment]
+        try:
+            # Act
             result = ensure_project_onboarding(str(tmp_path / "ws"), home=tmp_path)
+        finally:
+            ob.os.replace = saved_replace  # type: ignore[assignment]
+        # Assert
         assert result is False
+
+    def test_write_failure_emits_cannot_write_warning_log(self, tmp_path, caplog):
+        # Arrange
+        from scitex_agent_container.runtimes import onboarding as ob
+
+        def _boom(src, dst):
+            raise OSError("simulated replace failure")
+
+        saved_replace = ob.os.replace
+        ob.os.replace = _boom  # type: ignore[assignment]
+        try:
+            # Act
+            with caplog.at_level(logging.WARNING):
+                ensure_project_onboarding(str(tmp_path / "ws"), home=tmp_path)
+        finally:
+            ob.os.replace = saved_replace  # type: ignore[assignment]
+        # Assert
         assert any("cannot write" in r.getMessage() for r in caplog.records)
-        # tmp file should be cleaned up
+
+    def test_write_failure_cleans_up_temporary_dot_tmp_file(self, tmp_path):
+        # Arrange
+        from scitex_agent_container.runtimes import onboarding as ob
+
+        def _boom(src, dst):
+            raise OSError("simulated replace failure")
+
+        saved_replace = ob.os.replace
+        ob.os.replace = _boom  # type: ignore[assignment]
+        try:
+            # Act
+            ensure_project_onboarding(str(tmp_path / "ws"), home=tmp_path)
+        finally:
+            ob.os.replace = saved_replace  # type: ignore[assignment]
+        # Assert
         assert not (tmp_path / ".claude.json.tmp").exists()
 
 
-class TestPreservesOtherProjects:
-    def test_other_project_entries_unaffected(self, tmp_path):
+# ---------------------------------------------------------------------------
+# Preserves other projects + top-level keys
+# ---------------------------------------------------------------------------
+
+
+class TestEnsureProjectOnboardingPreservesOtherProjects:
+    @pytest.fixture
+    def state_after_seeding_other_project(self, tmp_path: Path, workdir: Path) -> dict:
+        """Seed unrelated project, run ensure on workdir, return loaded data."""
         other_key = "/some/other/workdir"
-        claude_json = tmp_path / ".claude.json"
-        claude_json.write_text(
+        (tmp_path / ".claude.json").write_text(
             json.dumps(
                 {
                     "projects": {
@@ -188,16 +390,33 @@ class TestPreservesOtherProjects:
                 }
             )
         )
-        workdir = tmp_path / "ws"
-        workdir.mkdir()
-        assert ensure_project_onboarding(str(workdir), home=tmp_path) is True
-        data = _load(tmp_path)
-        assert data["projects"][other_key]["lastCost"] == 9.99
-        assert str(workdir.resolve()) in data["projects"]
+        ensure_project_onboarding(str(workdir), home=tmp_path)
+        return _load(tmp_path)
 
-    def test_top_level_keys_preserved(self, tmp_path):
-        claude_json = tmp_path / ".claude.json"
-        claude_json.write_text(
+    def test_unrelated_project_entry_preserves_its_lastcost(
+        self, state_after_seeding_other_project
+    ):
+        # Arrange
+        data = state_after_seeding_other_project
+        # Act
+        last_cost = data["projects"]["/some/other/workdir"]["lastCost"]
+        # Assert
+        assert last_cost == 9.99
+
+    def test_target_workdir_entry_added_alongside_unrelated_project(
+        self, state_after_seeding_other_project, workdir
+    ):
+        # Arrange
+        data = state_after_seeding_other_project
+        # Act
+        keys = data["projects"].keys()
+        # Assert
+        assert str(workdir.resolve()) in keys
+
+    @pytest.fixture
+    def state_after_seeding_top_level_keys(self, tmp_path: Path, workdir: Path) -> dict:
+        """Seed top-level keys, run ensure, return loaded data."""
+        (tmp_path / ".claude.json").write_text(
             json.dumps(
                 {
                     "telemetry": {"enabled": False},
@@ -205,9 +424,22 @@ class TestPreservesOtherProjects:
                 }
             )
         )
-        workdir = tmp_path / "ws"
-        workdir.mkdir()
         ensure_project_onboarding(str(workdir), home=tmp_path)
-        data = _load(tmp_path)
-        assert data["telemetry"] == {"enabled": False}
-        assert data["version"] == "1.2.3"
+        return _load(tmp_path)
+
+    @pytest.mark.parametrize(
+        "field,expected",
+        [
+            ("telemetry", {"enabled": False}),
+            ("version", "1.2.3"),
+        ],
+    )
+    def test_top_level_field_preserved_after_ensure(
+        self, state_after_seeding_top_level_keys, field, expected
+    ):
+        # Arrange
+        data = state_after_seeding_top_level_keys
+        # Act
+        value = data[field]
+        # Assert
+        assert value == expected

@@ -12,9 +12,9 @@ ordered from external-friendliest to most internal:
 
 | Transport                                                                    | When to use                                                               | Auth            |
 |------------------------------------------------------------------------------|---------------------------------------------------------------------------|-----------------|
-| **A2A sidecar** — `POST /v1/sac/agents/<name>/turn` on the agent's own port  | External tools, browsers, curl, peer agents, A2A-spec consumers           | none (loopback) |
+| **A2A sidecar** — `POST /agents/<name>/turn` on the agent's own port  | External tools, browsers, curl, peer agents, A2A-spec consumers           | none (loopback) |
 | **CLI** — `sac agents send` / `tail`                                         | Scripted flows on the same host (the one running the agent)               | none            |
-| **`sac listen`** — `POST /v1/sac/agents/<name>/send` on the host port (7878) | Trusted orchestrators (e.g. orochi), cross-host via the existing SSH mesh | bearer token    |
+| **`sac listen`** — `POST /agents/<name>/send` on the host port (7878) | Trusted orchestrators (e.g. orochi), cross-host via the existing SSH mesh | bearer token    |
 
 All three end up dropping a `TurnEnvelope` on the runner's shared
 inbox, so the SDK conversation is identical regardless of which door
@@ -22,7 +22,7 @@ the prompt came through.
 
 ---
 
-## 1. A2A sidecar — `POST /v1/sac/agents/<name>/turn`
+## 1. A2A sidecar — `POST /agents/<name>/turn`
 
 Enable it by leaving `spec.a2a.port` at its default (`auto`) — sac
 claims a free port from `~/.scitex/agent-container/config.yaml`'s
@@ -52,9 +52,9 @@ serve identical handlers:
 
 | Method | Path                                          | Purpose                                              |
 |--------|-----------------------------------------------|------------------------------------------------------|
-| POST   | `/v1/sac/agents/<name>/turn`                  | **Canonical.** Drop a prompt onto the SDK session    |
-| POST   | `/v1/sac/agents/<name>/send`                  | Alias of `/turn` (matches `sac listen`'s verb)       |
-| GET    | `/v1/sac/agents/<name>/card`                  | This agent's AgentCard                               |
+| POST   | `/agents/<name>/turn`                  | **Canonical.** Drop a prompt onto the SDK session    |
+| POST   | `/agents/<name>/send`                  | Alias of `/turn` (matches `sac listen`'s verb)       |
+| GET    | `/agents/<name>/card`                  | This agent's AgentCard                               |
 | POST   | `/v1/a2a/agents/<name>/turn`                  | A2A-protocol-compat mirror of `/turn`                |
 | POST   | `/v1/a2a/agents/<name>/send`                  | A2A-protocol-compat mirror of `/send`                |
 | GET    | `/v1/a2a/agents/<name>/card`                  | A2A-protocol-compat mirror of `/card`                |
@@ -71,7 +71,7 @@ the request to one agent, so a name mismatch returns `404 {"error":
 
 ```bash
 curl -s --max-time 120 -X POST \
-  http://127.0.0.1:7901/v1/sac/agents/ecosystem-auditor/turn \
+  http://127.0.0.1:7901/agents/ecosystem-auditor/turn \
   -H 'Content-Type: application/json' \
   -d '{"text": "Which scitex packages currently have audit-all violations?"}'
 ```
@@ -105,7 +105,7 @@ read it directly:
 curl -s http://127.0.0.1:7901/.well-known/agent-card.json | python3 -m json.tool
 ```
 
-The card's `url` field advertises `<base>/v1/sac/agents/<name>` —
+The card's `url` field advertises `<base>/agents/<name>` —
 exactly the path the sidecar serves — so a client following the
 advertised URL hits a working endpoint.
 
@@ -155,7 +155,7 @@ sac listen &
 TOKEN=$(cat ~/.scitex/agent-container/tokens/listen-$(hostname).token)
 
 # Send a turn through the control plane
-curl -s -X POST http://127.0.0.1:7878/v1/sac/agents/ecosystem-auditor/send \
+curl -s -X POST http://127.0.0.1:7878/agents/ecosystem-auditor/send \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"type":"prompt","prompt":"Same question, via sac listen."}'
@@ -167,13 +167,13 @@ consumers):
 | Method | Path                                         | Purpose                                |
 |--------|----------------------------------------------|----------------------------------------|
 | GET    | `/v1/sac/health`                             | `{ok, version, host}`                  |
-| GET    | `/v1/sac/agents`                             | List all agents on this host           |
-| GET    | `/v1/sac/agents/<name>/status`               | Full agent state                       |
-| GET    | `/v1/sac/agents/<name>/tail?since=...&follow=...` | SSE stream of `session.jsonl`     |
-| POST   | `/v1/sac/agents/<name>/send`                 | Send prompt or interrupt key           |
-| GET    | `/v1/sac/agents/<name>/card`                 | AgentCard for this agent               |
-| POST   | `/v1/sac/agents`                             | Create + start from an inline spec     |
-| DELETE | `/v1/sac/agents/<name>`                      | Stop the agent                         |
+| GET    | `/agents`                             | List all agents on this host           |
+| GET    | `/agents/<name>/status`               | Full agent state                       |
+| GET    | `/agents/<name>/tail?since=...&follow=...` | SSE stream of `session.jsonl`     |
+| POST   | `/agents/<name>/send`                 | Send prompt or interrupt key           |
+| GET    | `/agents/<name>/card`                 | AgentCard for this agent               |
+| POST   | `/agents`                             | Create + start from an inline spec     |
+| DELETE | `/agents/<name>`                      | Stop the agent                         |
 
 `send` accepts both turn types:
 
@@ -233,10 +233,10 @@ for the full reference.
 
 ## Picking a transport
 
-- **A2A-spec client / browser / curl** → POST to the URL the AgentCard advertises (`<base>/v1/sac/agents/<name>/turn`). Loopback only; no auth.
+- **A2A-spec client / browser / curl** → POST to the URL the AgentCard advertises (`<base>/agents/<name>/turn`). Loopback only; no auth.
 - **Shell script on the same host** → `sac agents send` + `tail`. No port, no JSON, no token.
 - **Another agent, on the same host** → A2A sidecar; agents have `httpx` in the SIF. Use the canonical URL or the `/v1/turn` shortcut — both work.
-- **Orchestrator (orochi, custom)** → `sac listen` (port 7878) with the bearer token; same `/v1/sac/agents/<name>/...` path shape, cross-host via the existing SSH mesh.
+- **Orchestrator (orochi, custom)** → `sac listen` (port 7878) with the bearer token; same `/agents/<name>/...` path shape, cross-host via the existing SSH mesh.
 - **External A2A peer (hosted service, vendor)** → wrap as a [`kind: AgentProxy`](spec-reference.md#kind-agentproxy--http-forwarder-agents) agent so the rest of sac treats it the same.
 
 Pick the most external transport that meets your needs — every layer

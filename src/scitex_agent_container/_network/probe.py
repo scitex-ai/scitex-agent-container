@@ -62,12 +62,19 @@ DEFAULT_HUB_PORT = 443
 DEFAULT_HUB_URL = ""
 DEFAULT_TIMEOUT_S = 3.0
 
-DEFAULT_LOG_ROOT = (
-    Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".scitex")
-    / "agent-container"
-    / "logs"
-    / "network"
-)
+
+def _default_log_root() -> Path:
+    """Resolve the JSONL log root at call time.
+
+    Honours ``$SAC_PROBE_LOG_ROOT`` as an explicit override (test
+    isolation + ops override), then ``$XDG_DATA_HOME``, falling back to
+    ``~/.scitex/agent-container/logs/network``.
+    """
+    override = os.environ.get("SAC_PROBE_LOG_ROOT")
+    if override:
+        return Path(override)
+    base = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".scitex")
+    return base / "agent-container" / "logs" / "network"
 
 
 @dataclass
@@ -95,6 +102,7 @@ def probe_dns(
     host: str = DEFAULT_HUB_HOST,
     *,
     timeout: float = DEFAULT_TIMEOUT_S,
+    resolver=None,
 ) -> ProbeResult:
     """Resolve ``host`` to an IP address.
 
@@ -102,13 +110,19 @@ def probe_dns(
     returns AF_INET + AF_INET6 entries, so we see IPv4 and IPv6 both.
     We apply ``timeout`` indirectly by using a global ``setdefaulttimeout``
     around the call — there is no per-call resolver timeout in stdlib.
+
+    ``resolver`` is an injection seam (default ``socket.getaddrinfo``) so
+    tests can substitute a hand-rolled callable without monkeypatching
+    the ``socket`` module.
     """
+    if resolver is None:
+        resolver = socket.getaddrinfo
     start = time.monotonic()
     old = socket.getdefaulttimeout()
     # stx-allow: fallback (reason: DNS resolution can fail with timeout, NXDOMAIN, or no resolver; ProbeResult(ok=False) records the failure as diagnostic evidence without raising)
     try:
         socket.setdefaulttimeout(timeout)
-        infos = socket.getaddrinfo(host, None)
+        infos = resolver(host, None)
         addrs = sorted({sockaddr[0] for (_f, _t, _p, _c, sockaddr) in infos})
         latency_ms = (time.monotonic() - start) * 1000.0
         return ProbeResult(
@@ -134,17 +148,23 @@ def probe_tcp(
     port: int = DEFAULT_HUB_PORT,
     *,
     timeout: float = DEFAULT_TIMEOUT_S,
+    connector=None,
 ) -> ProbeResult:
     """Open a TCP connection to ``host:port``; close immediately.
 
     Does NOT speak TLS — we want to isolate "routing/firewall reachable"
     from "TLS/HTTP works". A captive portal returning a 200 OK to any
     request would pass ``probe_https`` but also passes this layer.
+
+    ``connector`` is an injection seam (default ``socket.create_connection``)
+    so tests can substitute a hand-rolled callable.
     """
+    if connector is None:
+        connector = socket.create_connection
     start = time.monotonic()
     # stx-allow: fallback (reason: TCP connect can fail with connection refused, timeout, or no route to host; ProbeResult(ok=False) captures the failure as connectivity evidence)
     try:
-        with socket.create_connection((host, port), timeout=timeout):
+        with connector((host, port), timeout=timeout):
             pass
         latency_ms = (time.monotonic() - start) * 1000.0
         return ProbeResult(name="tcp", ok=True, latency_ms=latency_ms)
@@ -163,6 +183,7 @@ def probe_https(
     *,
     timeout: float = DEFAULT_TIMEOUT_S,
     expected_status_prefix: str = "",
+    opener=None,
 ) -> ProbeResult:
     """GET ``url`` and record status + latency.
 
@@ -172,13 +193,21 @@ def probe_https(
 
     ``expected_status_prefix`` lets callers tighten (e.g. ``"2"``)
     if they actually need a 2xx.
+
+    ``opener`` is an injection seam (default ``urllib.request.urlopen``)
+    so tests can substitute a hand-rolled callable without monkeypatching
+    ``urllib.request``.
     """
     start = time.monotonic()
     # stx-allow: fallback (reason: HTTPS probe can fail with SSL errors, timeout, or captive portal disruption; ProbeResult(ok=False) records the transport failure without raising)
     try:
         ctx = ssl.create_default_context()
         req = urllib.request.Request(url, method="GET")
-        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+        if opener is None:
+            cm = urllib.request.urlopen(req, timeout=timeout, context=ctx)
+        else:
+            cm = opener(req, timeout=timeout, context=ctx)
+        with cm as resp:
             status = resp.status
             latency_ms = (time.monotonic() - start) * 1000.0
             ok = status < 500 and (
@@ -271,6 +300,7 @@ def probe_gateway(
     *,
     timeout: float = DEFAULT_TIMEOUT_S,
     ip_route_reader=_read_ip_route,
+    connector=None,
 ) -> ProbeResult:
     """Try a TCP SYN to the default gateway on port 53 (DNS).
 
@@ -292,9 +322,11 @@ def probe_gateway(
             latency_ms=latency_ms,
             err="no default route",
         )
+    if connector is None:
+        connector = socket.create_connection
     # stx-allow: fallback (reason: gateway TCP probe to port 53 can fail if the router filters the port or Wi-Fi is lost; ProbeResult(ok=False) provides LAN reachability evidence without raising)
     try:
-        with socket.create_connection((gw, 53), timeout=timeout):
+        with connector((gw, 53), timeout=timeout):
             pass
         latency_ms = (time.monotonic() - start) * 1000.0
         return ProbeResult(
@@ -404,7 +436,7 @@ def summarise(results: Iterable[ProbeResult]) -> dict[str, Any]:
 
 
 def _log_path(agent: str, root: Path | None = None) -> Path:
-    base = Path(root) if root else DEFAULT_LOG_ROOT
+    base = Path(root) if root else _default_log_root()
     base.mkdir(parents=True, exist_ok=True)
     safe = re.sub(r"[^a-zA-Z0-9_.\-]", "-", agent or "anonymous-agent")
     return base / f"{safe}.jsonl"
@@ -440,9 +472,17 @@ def run_and_log(
     hub_url: str = DEFAULT_HUB_URL,
     timeout: float = DEFAULT_TIMEOUT_S,
     root: Path | None = None,
+    probes=None,
 ) -> dict[str, Any]:
-    """One-shot convenience: run all probes, log, return the summary."""
-    results = run_all_probes(
+    """One-shot convenience: run all probes, log, return the summary.
+
+    ``probes`` is an injection seam — defaults to ``run_all_probes`` so
+    production callers are unchanged. Tests pass a hand-rolled callable
+    that returns a list of ``ProbeResult`` objects.
+    """
+    if probes is None:
+        probes = run_all_probes
+    results = probes(
         hub_host=hub_host,
         hub_port=hub_port,
         hub_url=hub_url,

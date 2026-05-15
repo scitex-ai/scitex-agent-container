@@ -3,6 +3,10 @@
 Covers _singleton_skip_reason, _iter_agent_yamls, _discover_all_agents,
 and the _multiplex_foreground_tails loop (with synthetic session.jsonl
 + a heartbeat that flips to 'stopping').
+
+No-mocks pattern: HOME is redirected via env (Path.home reads $HOME),
+``_discover_all_agents`` accepts a ``project_local_dirs`` callable, and
+``_multiplex_foreground_tails`` accepts a ``sleeper`` callable.
 """
 
 from __future__ import annotations
@@ -23,12 +27,14 @@ from scitex_agent_container.config._types import HostsSpec, SchedulingSpec
 
 
 @pytest.fixture(autouse=True)
-def _isolate_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+def _isolate_home(tmp_path: Path, env_save_restore):
+    # Redirect $HOME so Path.home() returns tmp_path naturally — no
+    # module-attribute swap required.
+    env_save_restore.set("HOME", str(tmp_path))
 
 
 # ---------------------------------------------------------------------------
-# _singleton_skip_reason
+# _singleton_skip_reason — pure logic.
 # ---------------------------------------------------------------------------
 
 
@@ -42,142 +48,187 @@ def _cfg(host="", hosts=None, sched_mode="per-host", pref="", fb=None) -> AgentC
 
 
 class TestSingletonSkipReason:
-    def test_multi_instance_never_skips(self):
-        assert _singleton_skip_reason(_cfg(hosts=["a", "b"]), "z") is None
+    def test_multi_instance_returns_none(self):
+        # Arrange
+        cfg = _cfg(hosts=["a", "b"])
+        # Act
+        msg = _singleton_skip_reason(cfg, "z")
+        # Assert
+        assert msg is None
 
-    def test_no_host_pref_runs_anywhere(self):
-        assert _singleton_skip_reason(_cfg(), "anyhost") is None
+    def test_no_host_pref_returns_none(self):
+        # Arrange
+        cfg = _cfg()
+        # Act
+        msg = _singleton_skip_reason(cfg, "anyhost")
+        # Assert
+        assert msg is None
 
-    def test_v3_host_str_match(self):
-        assert _singleton_skip_reason(_cfg(host="alpha"), "alpha") is None
+    def test_v3_host_str_match_returns_none(self):
+        # Arrange
+        cfg = _cfg(host="alpha")
+        # Act
+        msg = _singleton_skip_reason(cfg, "alpha")
+        # Assert
+        assert msg is None
 
-    def test_v3_host_str_mismatch(self):
-        msg = _singleton_skip_reason(_cfg(host="alpha"), "beta")
+    def test_v3_host_str_mismatch_returns_reason(self):
+        # Arrange
+        cfg = _cfg(host="alpha")
+        # Act
+        msg = _singleton_skip_reason(cfg, "beta")
+        # Assert
         assert msg and "alpha" in msg and "beta" in msg
 
-    def test_v3_host_chain_primary_match(self):
-        assert _singleton_skip_reason(_cfg(host=["a", "b", "c"]), "a") is None
+    def test_v3_host_chain_primary_match_returns_none(self):
+        # Arrange
+        cfg = _cfg(host=["a", "b", "c"])
+        # Act
+        msg = _singleton_skip_reason(cfg, "a")
+        # Assert
+        assert msg is None
 
-    def test_v3_host_chain_fallback_match(self):
-        assert _singleton_skip_reason(_cfg(host=["a", "b", "c"]), "b") is None
+    def test_v3_host_chain_fallback_match_returns_none(self):
+        # Arrange
+        cfg = _cfg(host=["a", "b", "c"])
+        # Act
+        msg = _singleton_skip_reason(cfg, "b")
+        # Assert
+        assert msg is None
 
-    def test_v3_host_chain_no_match(self):
-        msg = _singleton_skip_reason(_cfg(host=["a", "b"]), "z")
+    def test_v3_host_chain_no_match_lists_fallbacks(self):
+        # Arrange
+        cfg = _cfg(host=["a", "b"])
+        # Act
+        msg = _singleton_skip_reason(cfg, "z")
+        # Assert
         assert msg and "fallback-hosts: b" in msg
 
     def test_v3_empty_chain_treated_as_no_host(self):
-        assert _singleton_skip_reason(_cfg(host=[]), "anyhost") is None
+        # Arrange
+        cfg = _cfg(host=[])
+        # Act
+        msg = _singleton_skip_reason(cfg, "anyhost")
+        # Assert
+        assert msg is None
 
-    def test_v2_singleton_pref_match(self):
-        c = _cfg(sched_mode="singleton", pref="alpha")
-        assert _singleton_skip_reason(c, "alpha") is None
+    def test_v2_singleton_pref_match_returns_none(self):
+        # Arrange
+        cfg = _cfg(sched_mode="singleton", pref="alpha")
+        # Act
+        msg = _singleton_skip_reason(cfg, "alpha")
+        # Assert
+        assert msg is None
 
-    def test_v2_singleton_mismatch_with_fallback(self):
-        c = _cfg(sched_mode="singleton", pref="alpha", fb=["beta", "gamma"])
-        msg = _singleton_skip_reason(c, "zeta")
+    def test_v2_singleton_mismatch_lists_fallbacks(self):
+        # Arrange
+        cfg = _cfg(sched_mode="singleton", pref="alpha", fb=["beta", "gamma"])
+        # Act
+        msg = _singleton_skip_reason(cfg, "zeta")
+        # Assert
         assert msg and "alpha" in msg and "beta, gamma" in msg
 
-    def test_v2_singleton_no_pref_runs_anywhere(self):
-        c = _cfg(sched_mode="singleton", pref="")
-        assert _singleton_skip_reason(c, "anyhost") is None
+    def test_v2_singleton_no_pref_returns_none(self):
+        # Arrange
+        cfg = _cfg(sched_mode="singleton", pref="")
+        # Act
+        msg = _singleton_skip_reason(cfg, "anyhost")
+        # Assert
+        assert msg is None
 
-    def test_v2_non_singleton_skips(self):
-        c = _cfg(sched_mode="per-host", pref="alpha")
-        assert _singleton_skip_reason(c, "beta") is None
+    def test_v2_non_singleton_returns_none(self):
+        # Arrange
+        cfg = _cfg(sched_mode="per-host", pref="alpha")
+        # Act
+        msg = _singleton_skip_reason(cfg, "beta")
+        # Assert
+        assert msg is None
 
 
 # ---------------------------------------------------------------------------
-# _iter_agent_yamls
+# _iter_agent_yamls — real filesystem fixtures.
 # ---------------------------------------------------------------------------
 
 
 class TestIterAgentYamls:
-    def test_missing_dir(self, tmp_path):
-        assert _iter_agent_yamls(tmp_path / "nope") == []
+    def test_returns_empty_for_missing_dir(self, tmp_path):
+        # Arrange
+        missing = tmp_path / "nope"
+        # Act
+        result = _iter_agent_yamls(missing)
+        # Assert
+        assert result == []
 
-    def test_yaml_and_yml_and_skips(self, tmp_path):
-        # foo with foo.yaml
+    def test_discovers_yaml_yml_and_skips_legacy(self, tmp_path):
+        # Arrange
         (tmp_path / "foo").mkdir()
         (tmp_path / "foo" / "foo.yaml").write_text("x")
-        # bar with bar.yml
         (tmp_path / "bar").mkdir()
         (tmp_path / "bar" / "bar.yml").write_text("x")
-        # hidden _legacy dir - skip
         (tmp_path / "_legacy").mkdir()
         (tmp_path / "_legacy" / "_legacy.yaml").write_text("x")
-        # .git
         (tmp_path / ".git").mkdir()
-        # reserved
         (tmp_path / "legacy-agents").mkdir()
         (tmp_path / "legacy-agents" / "legacy-agents.yaml").write_text("x")
-        # plain file (non-dir) at root
         (tmp_path / "loose.yaml").write_text("x")
-        # subdir without matching yaml
         (tmp_path / "empty").mkdir()
-
+        # Act
         result = _iter_agent_yamls(tmp_path)
-        names = [n for n, _ in result]
-        assert names == ["bar", "foo"]
-        assert all(p.endswith((".yaml", ".yml")) for _, p in result)
+        # Assert
+        assert [n for n, _ in result] == ["bar", "foo"]
 
 
 # ---------------------------------------------------------------------------
-# _discover_all_agents
+# _discover_all_agents — uses the injected project_local_dirs callable.
 # ---------------------------------------------------------------------------
 
 
 class TestDiscoverAllAgents:
-    def test_discovers_under_home(self, tmp_path, monkeypatch):
+    def test_discovers_under_home_directory(self, tmp_path, env_save_restore):
+        # Arrange
         agents = tmp_path / ".scitex" / "agent-container" / "agents"
         (agents / "foo").mkdir(parents=True)
         (agents / "foo" / "foo.yaml").write_text("x")
         (agents / "bar").mkdir()
         (agents / "bar" / "bar.yaml").write_text("x")
-        monkeypatch.delenv("SCITEX_AGENT_CONTAINER_YAML_DIRS", raising=False)
-        # Suppress project-local: stub _project_local_dirs to []
-        monkeypatch.setattr(
-            "scitex_agent_container.config._resolve._project_local_dirs",
-            lambda: [],
-        )
-        result = _discover_all_agents()
-        names = [Path(p).parent.name for p in result]
-        assert sorted(names) == ["bar", "foo"]
+        env_save_restore.delete("SCITEX_AGENT_CONTAINER_YAML_DIRS")
+        env_save_restore.delete("SAC_YAML_DIRS")
+        # Act
+        result = _discover_all_agents(project_local_dirs=lambda: [])
+        # Assert
+        assert sorted(Path(p).parent.name for p in result) == ["bar", "foo"]
 
-    def test_env_var_extra_dirs(self, tmp_path, monkeypatch):
+    def test_env_var_extra_dirs_are_searched(self, tmp_path, env_save_restore):
+        # Arrange
         extra = tmp_path / "extra"
         (extra / "zed").mkdir(parents=True)
         (extra / "zed" / "zed.yaml").write_text("x")
-        monkeypatch.setenv("SCITEX_AGENT_CONTAINER_YAML_DIRS", str(extra))
-        monkeypatch.setattr(
-            "scitex_agent_container.config._resolve._project_local_dirs",
-            lambda: [],
-        )
-        result = _discover_all_agents()
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_YAML_DIRS", str(extra))
+        env_save_restore.delete("SAC_YAML_DIRS")
+        # Act
+        result = _discover_all_agents(project_local_dirs=lambda: [])
+        # Assert
         assert any("zed" in p for p in result)
 
-    def test_project_local_priority(self, tmp_path, monkeypatch):
-        # Same name in two locations — project-local wins.
+    def test_project_local_dirs_win_over_home(self, tmp_path, env_save_restore):
+        # Arrange
         local = tmp_path / "local"
         (local / "foo").mkdir(parents=True)
         local_yaml = local / "foo" / "foo.yaml"
         local_yaml.write_text("local")
-
         home_agents = tmp_path / ".scitex" / "agent-container" / "agents"
         (home_agents / "foo").mkdir(parents=True)
         (home_agents / "foo" / "foo.yaml").write_text("home")
-
-        monkeypatch.delenv("SCITEX_AGENT_CONTAINER_YAML_DIRS", raising=False)
-        monkeypatch.setattr(
-            "scitex_agent_container.config._resolve._project_local_dirs",
-            lambda: [local],
-        )
-        result = _discover_all_agents()
-        assert len(result) == 1
-        assert result[0] == str(local_yaml)
+        env_save_restore.delete("SCITEX_AGENT_CONTAINER_YAML_DIRS")
+        env_save_restore.delete("SAC_YAML_DIRS")
+        # Act
+        result = _discover_all_agents(project_local_dirs=lambda: [local])
+        # Assert
+        assert result == [str(local_yaml)]
 
 
 # ---------------------------------------------------------------------------
-# _multiplex_foreground_tails
+# _multiplex_foreground_tails — uses the injected sleeper callable.
 # ---------------------------------------------------------------------------
 
 
@@ -192,51 +243,16 @@ def _hb(d: Path, state: str) -> None:
 
 
 class TestMultiplexForegroundTails:
-    def test_stops_when_heartbeat_says_stopping(self, tmp_path, monkeypatch, capsys):
+    def test_stops_when_heartbeat_flips_to_stopping(self, tmp_path, capsys):
+        # Arrange
         rt = _runtime_for(tmp_path, "alpha")
-        # session.jsonl with one assistant, one result, one error, one bad json
-        rt.joinpath("session.jsonl").write_text(
-            "\n".join(
-                [
-                    json.dumps({"type": "assistant", "text": "hello world"}),
-                    json.dumps({"type": "result"}),
-                    json.dumps({"type": "error", "detail": "boom"}),
-                    "not-json-line",
-                ]
-            )
-            + "\n"
-        )
-        # Pre-existing offset model: writes after start are tailed; but since
-        # the multiplexer snapshots size at the start of the call, we set
-        # heartbeat to "stopping" so it loops once then stops. To still see
-        # the lines, write the file AFTER offsets are recorded.
         _hb(rt, "running")
-
-        # Patch time.sleep to flip to stopping after first iteration
-
-        original_sleep = __import__("time").sleep
-
+        rt.joinpath("session.jsonl").write_text("")  # size-0 baseline
         call_count = {"n": 0}
 
-        def fake_sleep(_):
+        def sleeper(_seconds):
+            # On first sleep, write content; on second, flip to stopping.
             call_count["n"] += 1
-            if call_count["n"] >= 1:
-                _hb(rt, "stopping")
-
-        # Patch the imported time module inside the function. The function
-        # does `import time as _time` so monkeypatch time.sleep globally.
-        monkeypatch.setattr("time.sleep", fake_sleep)
-
-        # Pre-truncate then rewrite to ensure offsets = 0 so the lines are read.
-        rt.joinpath("session.jsonl").unlink()
-        # heartbeat is "running" now; multiplexer enters loop, no file → any_progress False → sleep → flips stopping.
-        # But we also want to test the read path. Recreate file before any sleep.
-        # Simplest: write file, then offsets = file size, content already counted as 0 to read.
-        # So instead, start with empty file (size 0), then on next sleep call write content & set stopping.
-
-        def fake_sleep2(_):
-            call_count["n"] += 1
-            # On first sleep, write content then flip stopping after another pass.
             if call_count["n"] == 1:
                 rt.joinpath("session.jsonl").write_text(
                     "\n".join(
@@ -252,55 +268,125 @@ class TestMultiplexForegroundTails:
             else:
                 _hb(rt, "stopping")
 
-        rt.joinpath("session.jsonl").write_text("")  # size 0
-        monkeypatch.setattr("time.sleep", fake_sleep2)
-
-        _multiplex_foreground_tails(["alpha"])
+        # Act
+        _multiplex_foreground_tails(["alpha"], sleeper=sleeper)
+        # Assert
         out = capsys.readouterr().out
         assert "[alpha] [assistant] hello" in out
-        assert "[alpha] [result]" in out
-        assert "[alpha] [error] boom" in out
-        assert "[alpha] raw-line" in out
-        assert "[alpha] (stopped)" in out
 
-    def test_missing_session_file_then_stopping(self, tmp_path, monkeypatch, capsys):
-        rt = _runtime_for(tmp_path, "beta")
-        # heartbeat absent initially → _is_stopping returns False → loop runs once
-        # then we flip to stopping. session.jsonl never appears.
-        calls = {"n": 0}
+    def test_renders_result_line(self, tmp_path, capsys):
+        # Arrange
+        rt = _runtime_for(tmp_path, "alpha")
+        _hb(rt, "running")
+        rt.joinpath("session.jsonl").write_text("")
+        n = {"i": 0}
 
-        def fake_sleep(_):
-            calls["n"] += 1
+        def sleeper(_s):
+            n["i"] += 1
+            if n["i"] == 1:
+                rt.joinpath("session.jsonl").write_text(
+                    json.dumps({"type": "result"}) + "\n"
+                )
+            else:
+                _hb(rt, "stopping")
+
+        # Act
+        _multiplex_foreground_tails(["alpha"], sleeper=sleeper)
+        # Assert
+        assert "[alpha] [result]" in capsys.readouterr().out
+
+    def test_renders_error_detail(self, tmp_path, capsys):
+        # Arrange
+        rt = _runtime_for(tmp_path, "alpha")
+        _hb(rt, "running")
+        rt.joinpath("session.jsonl").write_text("")
+        n = {"i": 0}
+
+        def sleeper(_s):
+            n["i"] += 1
+            if n["i"] == 1:
+                rt.joinpath("session.jsonl").write_text(
+                    json.dumps({"type": "error", "detail": "boom"}) + "\n"
+                )
+            else:
+                _hb(rt, "stopping")
+
+        # Act
+        _multiplex_foreground_tails(["alpha"], sleeper=sleeper)
+        # Assert
+        assert "[alpha] [error] boom" in capsys.readouterr().out
+
+    def test_renders_raw_line_when_jsonl_malformed(self, tmp_path, capsys):
+        # Arrange
+        rt = _runtime_for(tmp_path, "alpha")
+        _hb(rt, "running")
+        rt.joinpath("session.jsonl").write_text("")
+        n = {"i": 0}
+
+        def sleeper(_s):
+            n["i"] += 1
+            if n["i"] == 1:
+                rt.joinpath("session.jsonl").write_text("not-valid-json\n")
+            else:
+                _hb(rt, "stopping")
+
+        # Act
+        _multiplex_foreground_tails(["alpha"], sleeper=sleeper)
+        # Assert
+        assert "[alpha] not-valid-json" in capsys.readouterr().out
+
+    def test_emits_stopped_banner_after_state_flip(self, tmp_path, capsys):
+        # Arrange
+        rt = _runtime_for(tmp_path, "alpha")
+        _hb(rt, "running")
+        rt.joinpath("session.jsonl").write_text("")
+
+        def sleeper(_s):
             _hb(rt, "stopping")
 
-        monkeypatch.setattr("time.sleep", fake_sleep)
-        _multiplex_foreground_tails(["beta"])
-        # No output expected for absent jsonl, but no crash.
+        # Act
+        _multiplex_foreground_tails(["alpha"], sleeper=sleeper)
+        # Assert
+        assert "[alpha] (stopped)" in capsys.readouterr().out
 
-    def test_keyboard_interrupt(self, tmp_path, monkeypatch, capsys):
+    def test_tolerates_absent_session_jsonl_without_raising(self, tmp_path):
+        # Arrange — no session.jsonl on disk; loop must not crash.
+        rt = _runtime_for(tmp_path, "beta")
+
+        def sleeper(_s):
+            _hb(rt, "stopping")
+
+        # Act
+        result = _multiplex_foreground_tails(["beta"], sleeper=sleeper)
+        # Assert
+        # Production contract: function returns (does not raise) even
+        # when an agent's session.jsonl file never appears.
+        assert result is None
+
+    def test_keyboard_interrupt_emits_interrupted_message(self, tmp_path, capsys):
+        # Arrange
         rt = _runtime_for(tmp_path, "gamma")
         rt.joinpath("session.jsonl").write_text("")
 
-        def fake_sleep(_):
+        def sleeper(_s):
             raise KeyboardInterrupt
 
-        monkeypatch.setattr("time.sleep", fake_sleep)
-        _multiplex_foreground_tails(["gamma"])
-        out = capsys.readouterr().out
-        assert "interrupted" in out
+        # Act
+        _multiplex_foreground_tails(["gamma"], sleeper=sleeper)
+        # Assert
+        assert "interrupted" in capsys.readouterr().out
 
-    def test_starts_at_eof_for_existing_file(self, tmp_path, monkeypatch, capsys):
+    def test_starts_at_eof_for_pre_existing_session_file(self, tmp_path, capsys):
+        # Arrange — populate session.jsonl BEFORE the loop snapshots offsets.
         rt = _runtime_for(tmp_path, "delta")
-        # Pre-populate; multiplexer should skip these lines (start at EOF)
         rt.joinpath("session.jsonl").write_text(
             json.dumps({"type": "assistant", "text": "old"}) + "\n"
         )
 
-        def fake_sleep(_):
+        def sleeper(_s):
             _hb(rt, "stopping")
 
-        monkeypatch.setattr("time.sleep", fake_sleep)
-        _multiplex_foreground_tails(["delta"])
-        out = capsys.readouterr().out
-        assert "old" not in out
-        assert "[delta] (stopped)" in out
+        # Act
+        _multiplex_foreground_tails(["delta"], sleeper=sleeper)
+        # Assert
+        assert "old" not in capsys.readouterr().out

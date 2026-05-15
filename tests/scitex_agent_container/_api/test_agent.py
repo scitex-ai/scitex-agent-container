@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 
 pytest.importorskip("fastmcp")
+pytest.importorskip("scitex_agent_container")
 
 import scitex_agent_container as sac  # noqa: E402
 
@@ -59,29 +60,33 @@ import scitex_agent_container as sac  # noqa: E402
 )
 def test_nested_verb_is_callable(submodule: str, verb: str) -> None:
     """Every CLI-tree verb is reachable + callable via the noun submodule."""
-    fn = getattr(getattr(sac, submodule), verb)
+    # Arrange
+    noun_module = getattr(sac, submodule)
+    # Act
+    fn = getattr(noun_module, verb)
+    # Assert
     assert callable(fn), f"sac.{submodule}.{verb} should be callable"
 
 
-def test_every_submodule_listed_in_package_all() -> None:
+@pytest.mark.parametrize(
+    "noun",
+    ["agent", "db", "host", "image", "template", "account", "skills", "mcp"],
+)
+def test_every_submodule_listed_in_package_all(noun: str) -> None:
     """The eight noun submodules must appear in ``sac.__all__`` so
     Sphinx + the linter discover them."""
-    for noun in (
-        "agent",
-        "db",
-        "host",
-        "image",
-        "template",
-        "account",
-        "skills",
-        "mcp",
-    ):
-        assert noun in sac.__all__, f"{noun!r} missing from sac.__all__"
+    # Arrange
+    all_names = sac.__all__
+    # Act
+    is_listed = noun in all_names
+    # Assert
+    assert is_listed, f"{noun!r} missing from sac.__all__"
 
 
 def test_no_flat_verb_duplicates_at_package_root() -> None:
     """We removed flat names like ``sac.agent_list`` in favour of the
     nested form. Guard against accidental re-exports creeping back in."""
+    # Arrange
     permitted = {
         "AgentConfig",
         "Registry",
@@ -98,11 +103,13 @@ def test_no_flat_verb_duplicates_at_package_root() -> None:
         "mcp",
         "__version__",
     }
+    # Act
     leaked = [
         name
         for name in sac.__all__
         if name not in permitted and "_" in name and not name.startswith("_")
     ]
+    # Assert
     assert leaked == [], (
         f"flat verb_noun duplicates leaked into sac.__all__: {leaked}. "
         f"Use the nested form (sac.<noun>.<verb>) instead."

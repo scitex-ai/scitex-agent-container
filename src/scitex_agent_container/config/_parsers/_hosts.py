@@ -51,7 +51,9 @@ def parse_scheduling(spec: dict) -> tuple[SchedulingSpec, bool]:
     """
     if "scheduling" not in spec:
         return SchedulingSpec(), False
-    raw = spec.get("scheduling") or {}
+    raw = spec.get("scheduling")
+    if raw is None:
+        raw = {}
     if not isinstance(raw, dict):
         raise ValueError(f"spec.scheduling must be a mapping, got {type(raw).__name__}")
     mode = raw.get("mode", "per-host") or "per-host"

@@ -65,8 +65,26 @@ spec:
 
 ### `metadata.labels` → AgentCard fields
 
+> **Note on naming — two "skills" concepts.** A2A's AgentCard has a
+> standard top-level `skills[]` array used to *advertise* capabilities
+> to peers (id / name / description / tags / examples). Anthropic's
+> Claude Code separately uses "skills" for *prompt-fragment* markdown
+> files under `<HOME>/.claude/skills/<name>/` that the SDK loads into
+> the agent's own context. Both share the English word but live at
+> orthogonal layers:
+>
+> | Layer | Drives | Effect |
+> |---|---|---|
+> | `metadata.labels.skills` (CSV) | A2A `skills[0].tags` + `x-scitex-agent-container.required_skills` | Advertises capabilities on the card; **no behaviour change inside the agent** |
+> | `spec.dot_claude/skills/<name>/SKILL.md` (files) | Materialised at `runtime/<name>/home/.claude/skills/` (ADR-0003) and surfaced via `spec.skills.required[]` `@`-imports in the auto-generated CLAUDE.md | Loaded into the agent's prompt by the Claude SDK |
+>
+> Also note A2A's separate top-level `capabilities` field is for
+> *transport* properties (`streaming`, `pushNotifications`, etc.) —
+> not a synonym for "what the agent can do". The "can do" surface is
+> always `skills[]`.
+
 The AgentCard at `GET /.well-known/agent-card.json` (per-agent sidecar
-when `spec.a2a.port` is set) and `GET /v1/sac/agents/<name>/card`
+when `spec.a2a.port` is set) and `GET /agents/<name>/card`
 (host-level `sac listen`) is built **entirely** from spec.yaml:
 
 | AgentCard field                       | spec.yaml source                                 |
@@ -74,7 +92,7 @@ when `spec.a2a.port` is set) and `GET /v1/sac/agents/<name>/card`
 | `name`                                | parent directory of `spec.yaml`                  |
 | `description`                         | `metadata.labels.description` (else auto)        |
 | `version`                             | `apiVersion`                                     |
-| `url`                                 | `<base>/v1/sac/agents/<name>`                        |
+| `url`                                 | `<base>/agents/<name>`                        |
 | `provider.organization`               | `metadata.labels.team`                           |
 | `skills[0].id` / `name`               | `metadata.labels.role`                           |
 | `skills[0].description`               | `metadata.labels.function`                       |
@@ -155,7 +173,7 @@ when `spec.a2a.port` is set) and `GET /v1/sac/agents/<name>/card`
 | `listen.port`| Override for the host-level `sac listen` server port (default 7878)                  |
 
 The per-agent sidecar binds the **same URL shape** as `sac listen`
-(`/v1/sac/agents/<name>/{turn,send,card}`, `/v1/a2a/agents/<name>/...`,
+(`/agents/<name>/{turn,send,card}`, `/v1/a2a/agents/<name>/...`,
 `/.well-known/agent-card.json`, `/health`), so the same client code
 works against either transport. Per-agent ports are an internal IPC
 mechanism between `sac listen` and the runner (different processes);
@@ -163,7 +181,7 @@ clients reach every agent through the **one stable host port** at
 `sac listen` (default `:7878`).
 
 The AgentCard's `url` field advertises the **sac listen** URL
-(`http://127.0.0.1:7878/v1/sac/agents/<name>`) regardless of which
+(`http://127.0.0.1:7878/agents/<name>`) regardless of which
 endpoint served the card, so external A2A clients caching the card
 get a URL that survives per-agent port churn.
 

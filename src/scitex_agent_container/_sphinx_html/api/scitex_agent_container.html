@@ -6,7 +6,7 @@
   <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>scitex_agent_container API Reference &mdash; scitex-agent-container v0.15.0</title>
+  <title>scitex_agent_container API Reference &mdash; scitex-agent-container v0.16.0</title>
       <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=9edc463e" />
       <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
@@ -14,7 +14,7 @@
   
       <script src="../_static/jquery.js?v=5d32c60e"></script>
       <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
-      <script src="../_static/documentation_options.js?v=ef97403f"></script>
+      <script src="../_static/documentation_options.js?v=7de89ed4"></script>
       <script src="../_static/doctools.js?v=fd6eb6e6"></script>
       <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
       <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -109,7 +109,7 @@
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="../talking-to-agents.html">Talking to a Running Agent</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="../talking-to-agents.html#a2a-sidecar-post-v1-sac-agents-name-turn">1. A2A sidecar — <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/v1/sac/agents/&lt;name&gt;/turn</span></code></a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../talking-to-agents.html#a2a-sidecar-post-agents-name-turn">1. A2A sidecar — <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/agents/&lt;name&gt;/turn</span></code></a><ul>
 <li class="toctree-l3"><a class="reference internal" href="../talking-to-agents.html#send-a-turn">Send a turn</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../talking-to-agents.html#discover-the-agent">Discover the agent</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../talking-to-agents.html#one-shot-vs-follow-up">One-shot vs follow-up</a></li>
@@ -1418,13 +1418,8 @@ are no longer accepted — sac is dir-as-SSoT.</p>
 
 <dl class="py function">
 <dt class="sig sig-object py" id="scitex_agent_container.config.resolve_hostname">
-<span class="sig-prename descclassname"><span class="pre">scitex_agent_container.config.</span></span><span class="sig-name descname"><span class="pre">resolve_hostname</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scitex_agent_container/config/_host.html#resolve_hostname"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scitex_agent_container.config.resolve_hostname" title="Link to this definition"></a></dt>
+<span class="sig-prename descclassname"><span class="pre">scitex_agent_container.config.</span></span><span class="sig-name descname"><span class="pre">resolve_hostname</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">gethostname</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">&lt;built-in</span> <span class="pre">function</span> <span class="pre">gethostname&gt;</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scitex_agent_container/config/_host.html#resolve_hostname"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scitex_agent_container.config.resolve_hostname" title="Link to this definition"></a></dt>
 <dd><p>Return the canonical host label for this machine.</p>
-<dl class="field-list simple">
-<dt class="field-odd">Return type<span class="colon">:</span></dt>
-<dd class="field-odd"><p><span class="sphinx_autodoc_typehints-type"><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><code class="xref py py-class docutils literal notranslate"><span class="pre">str</span></code></a></span></p>
-</dd>
-</dl>
 <dl class="simple">
 <dt>Resolution order (first non-empty wins):</dt><dd><ol class="arabic simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">SCITEX_AGENT_CONTAINER_HOSTNAME</span></code> env var (manual override).</p></li>
@@ -1436,11 +1431,19 @@ are no longer accepted — sac is dir-as-SSoT.</p>
 </dd>
 </dl>
 <dl class="field-list simple">
-<dt class="field-odd">Raises<span class="colon">:</span></dt>
-<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/exceptions.html#RuntimeError" title="(in Python v3.14)"><strong>RuntimeError</strong></a> – If none of the sources produces a non-empty value. This
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>gethostname</strong> (<span class="sphinx_autodoc_typehints-type">Callable[[], str]</span>) – Callable returning the raw OS hostname. Defaults to
+<code class="docutils literal notranslate"><span class="pre">socket.gethostname</span></code> (production). Tests inject a callable
+returning a fixed string instead of patching <code class="docutils literal notranslate"><span class="pre">socket</span></code>.</p>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.python.org/3/library/exceptions.html#RuntimeError" title="(in Python v3.14)"><strong>RuntimeError</strong></a> – If none of the sources produces a non-empty value. This
     should be practically impossible (<code class="docutils literal notranslate"><span class="pre">gethostname()</span></code> returns
     something on any configured box) but is handled loudly rather
     than returning the empty string.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><span class="sphinx_autodoc_typehints-type">str</span></p>
 </dd>
 </dl>
 </dd></dl>

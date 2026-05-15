@@ -1,4 +1,4 @@
-name: SDK runtime smoke
+name: sdk-smoke
 
 # End-to-end smoke test for the claude-session runtime.
 #
@@ -35,6 +35,7 @@ permissions:
 
 jobs:
   sdk-smoke:
+    name: sdk-runtime-smoke-on-ubuntu-latest
     # Forks can't read repo secrets — skip rather than fail with a
     # spurious "missing key" error message.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
