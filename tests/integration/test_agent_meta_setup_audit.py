@@ -14,6 +14,15 @@ statusline discussion (2026-04-17):
 3. The ``mcp_servers`` and ``installed_plugins`` lists must be
    structured (not raw JSON blobs) so the dashboard can render a
    setup-audit table.
+
+TQ cleanup: each test carries explicit Arrange / Act / Assert markers
+(TQ002), spells out the behaviour in its name (TQ003), asserts exactly
+one fact (TQ007), and collapses same-shape invariants into
+``pytest.parametrize`` cases (TQ001).
+
+STX-NM cleanup: no ``unittest.mock`` / monkeypatch. ``Path.home()`` is
+redirected by swapping ``$HOME`` (which is what ``Path.home`` reads on
+POSIX) through the shared ``env_save_restore`` fixture.
 """
 
 from __future__ import annotations
@@ -21,10 +30,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scitex_agent_container._state.agent_meta import _parse_mcp_servers
+import pytest
+
+from scitex_agent_container._state.agent_meta import (
+    _parse_mcp_servers,
+    collect_rich,
+)
 
 # ---------------------------------------------------------------------------
-# 1. MCP-server parser
+# Shared helpers / fixtures
 # ---------------------------------------------------------------------------
 
 
@@ -33,86 +47,15 @@ def _write_mcp(workdir: Path, body: dict) -> None:
     (workdir / ".mcp.json").write_text(json.dumps(body))
 
 
-def test_parse_mcp_stdio_server(tmp_path: Path) -> None:
-    _write_mcp(
-        tmp_path,
-        {
-            "mcpServers": {
-                "scitex-orochi": {
-                    "type": "stdio",
-                    "command": "bun",
-                    "args": ["/path/to/mcp/server.ts"],
-                }
-            }
-        },
-    )
-    out = _parse_mcp_servers(str(tmp_path))
-    assert len(out) == 1
-    e = out[0]
-    assert e["name"] == "scitex-orochi"
-    assert e["transport"] == "stdio"
-    assert e["command"] == "bun"
-    assert e["url_host"] is None
-
-
-def test_parse_mcp_http_server_extracts_host(tmp_path: Path) -> None:
-    _write_mcp(
-        tmp_path,
-        {
-            "mcpServers": {
-                "remote-hub": {
-                    "type": "http",
-                    "url": "https://scitex-orochi.com/mcp/sse?token=secret",
-                }
-            }
-        },
-    )
-    out = _parse_mcp_servers(str(tmp_path))
-    assert len(out) == 1
-    assert out[0]["url_host"] == "scitex-orochi.com"
-    # Regression: we extract host only, never the full URL (no secret
-    # in query string).
-    for v in out[0].values():
-        assert v is None or "secret" not in str(v)
-
-
-def test_parse_mcp_missing_file_returns_empty(tmp_path: Path) -> None:
-    assert _parse_mcp_servers(str(tmp_path)) == []
-
-
-def test_parse_mcp_malformed_json_returns_empty(tmp_path: Path) -> None:
-    (tmp_path / ".mcp.json").write_text("not json")
-    assert _parse_mcp_servers(str(tmp_path)) == []
-
-
-def test_parse_mcp_no_mcp_servers_key(tmp_path: Path) -> None:
-    _write_mcp(tmp_path, {"some_other_field": 1})
-    assert _parse_mcp_servers(str(tmp_path)) == []
-
-
-def test_parse_mcp_multi_servers(tmp_path: Path) -> None:
-    _write_mcp(
-        tmp_path,
-        {
-            "mcpServers": {
-                "a": {"type": "stdio", "command": "bun"},
-                "b": {"type": "http", "url": "https://example.com/mcp"},
-            }
-        },
-    )
-    out = _parse_mcp_servers(str(tmp_path))
-    names = sorted(e["name"] for e in out)
-    assert names == ["a", "b"]
-
-
-# ---------------------------------------------------------------------------
-# 2. Auth-rotation NDJSON log
-# ---------------------------------------------------------------------------
-
-
-def _setup_fake_home(tmp_path: Path, expires_at: int) -> Path:
-    home = tmp_path / "home"
-    home.mkdir()
+def _write_fake_home(
+    home: Path,
+    *,
+    expires_at: int,
+    access_token: str = "sk-ant-DO-NOT-LEAK",
+    rate_limit_tier: str = "default_claude_max_20x",
+    subscription_type: str = "max",
+) -> None:
+    home.mkdir(parents=True, exist_ok=True)
     (home / ".claude.json").write_text(
         json.dumps(
             {
@@ -126,50 +69,159 @@ def _setup_fake_home(tmp_path: Path, expires_at: int) -> Path:
         )
     )
     claude_dir = home / ".claude"
-    claude_dir.mkdir()
+    claude_dir.mkdir(exist_ok=True)
     (claude_dir / ".credentials.json").write_text(
         json.dumps(
             {
                 "claudeAiOauth": {
-                    "accessToken": "sk-ant-DO-NOT-LEAK",
+                    "accessToken": access_token,
                     "refreshToken": "REFRESH",
                     "expiresAt": expires_at,
-                    "subscriptionType": "max",
-                    "rateLimitTier": "default_claude_max_20x",
+                    "subscriptionType": subscription_type,
+                    "rateLimitTier": rate_limit_tier,
                 }
             }
         )
     )
-    return home
 
 
-def test_rotation_log_writes_one_line_per_change(
-    tmp_path: Path,
+# ---------------------------------------------------------------------------
+# 1. MCP-server parser
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def stdio_mcp_entry(tmp_path: Path) -> dict:
+    """One stdio entry parsed from a real ``.mcp.json`` on disk."""
+    # Arrange
+    _write_mcp(
+        tmp_path,
+        {
+            "mcpServers": {
+                "scitex-orochi": {
+                    "type": "stdio",
+                    "command": "bun",
+                    "args": ["/path/to/mcp/server.ts"],
+                }
+            }
+        },
+    )
+    # Act
+    out = _parse_mcp_servers(str(tmp_path))
+    # Assert (precondition for downstream one-fact tests)
+    assert len(out) == 1
+    return out[0]
+
+
+@pytest.mark.parametrize(
+    "key,expected",
+    [
+        ("name", "scitex-orochi"),
+        ("transport", "stdio"),
+        ("command", "bun"),
+        ("url_host", None),
+    ],
+)
+def test_parse_mcp_stdio_server_field(
+    stdio_mcp_entry: dict, key: str, expected
 ) -> None:
-    """Same expires_at twice -> one line. Different expires_at -> two lines."""
-    home = _setup_fake_home(tmp_path, expires_at=1_000_000_000_000)
-    # PA-306: $HOME save/restore (Path.home() reads $HOME on Unix).
-    import os as _os
+    # Arrange — fixture parsed the stdio entry.
+    # Act — fixture already invoked the parser.
+    # Assert
+    assert stdio_mcp_entry[key] == expected
 
-    _saved_home = _os.environ.get("HOME")
-    _os.environ["HOME"] = str(home)
-    _restore_home = lambda: (  # noqa: E731
-        _os.environ.pop("HOME", None)
-        if _saved_home is None
-        else _os.environ.__setitem__("HOME", _saved_home)
+
+@pytest.fixture
+def http_mcp_entry(tmp_path: Path) -> dict:
+    """One http entry parsed from a real ``.mcp.json`` on disk."""
+    # Arrange
+    _write_mcp(
+        tmp_path,
+        {
+            "mcpServers": {
+                "remote-hub": {
+                    "type": "http",
+                    "url": "https://scitex-orochi.com/mcp/sse?token=secret",
+                }
+            }
+        },
+    )
+    # Act
+    out = _parse_mcp_servers(str(tmp_path))
+    # Assert (precondition)
+    assert len(out) == 1
+    return out[0]
+
+
+def test_parse_mcp_http_server_extracts_only_host(http_mcp_entry: dict) -> None:
+    # Arrange — fixture parsed the http entry.
+    # Act — fixture already invoked the parser.
+    # Assert
+    assert http_mcp_entry["url_host"] == "scitex-orochi.com"
+
+
+def test_parse_mcp_http_server_strips_query_string_token(
+    http_mcp_entry: dict,
+) -> None:
+    """Regression: extract host only, never the secret-bearing query string."""
+    # Arrange — fixture parsed the http entry.
+    # Act — fixture already invoked the parser.
+    # Assert
+    assert not any(
+        v is not None and "secret" in str(v) for v in http_mcp_entry.values()
     )
 
-    # Use an empty workspace so the transcript-JSONL path is a no-op
-    # and we are really only testing the rotation-log branch.
-    workdir = tmp_path / "workspace"
-    workdir.mkdir()
 
-    from scitex_agent_container._state.agent_meta import collect_rich
+def test_parse_mcp_missing_file_returns_empty(tmp_path: Path) -> None:
+    # Arrange — directory has no ``.mcp.json``.
+    # Act
+    result = _parse_mcp_servers(str(tmp_path))
+    # Assert
+    assert result == []
 
-    collect_rich(name="agent-x", workdir=str(workdir), session="agent-x")
-    collect_rich(name="agent-x", workdir=str(workdir), session="agent-x")
 
-    rot_file = (
+def test_parse_mcp_malformed_json_returns_empty(tmp_path: Path) -> None:
+    # Arrange
+    (tmp_path / ".mcp.json").write_text("not json")
+    # Act
+    result = _parse_mcp_servers(str(tmp_path))
+    # Assert
+    assert result == []
+
+
+def test_parse_mcp_no_mcp_servers_key_returns_empty(tmp_path: Path) -> None:
+    # Arrange
+    _write_mcp(tmp_path, {"some_other_field": 1})
+    # Act
+    result = _parse_mcp_servers(str(tmp_path))
+    # Assert
+    assert result == []
+
+
+def test_parse_mcp_multi_servers_returns_all_names(tmp_path: Path) -> None:
+    # Arrange
+    _write_mcp(
+        tmp_path,
+        {
+            "mcpServers": {
+                "a": {"type": "stdio", "command": "bun"},
+                "b": {"type": "http", "url": "https://example.com/mcp"},
+            }
+        },
+    )
+    # Act
+    out = _parse_mcp_servers(str(tmp_path))
+    # Assert
+    assert sorted(e["name"] for e in out) == ["a", "b"]
+
+
+# ---------------------------------------------------------------------------
+# 2. Auth-rotation NDJSON log
+# ---------------------------------------------------------------------------
+
+
+def _rotation_file(home: Path) -> Path:
+    return (
         home
         / ".scitex"
         / "agent-container"
@@ -177,11 +229,57 @@ def test_rotation_log_writes_one_line_per_change(
         / "_rotations"
         / "rotator@example.com.ndjson"
     )
-    assert rot_file.is_file()
-    lines = [l for l in rot_file.read_text().splitlines() if l.strip()]
-    assert len(lines) == 1, f"expected idempotent single entry, got {lines}"
 
-    # Now rotate the token and collect again.
+
+def _nonempty_lines(path: Path) -> list[str]:
+    return [l for l in path.read_text().splitlines() if l.strip()]
+
+
+@pytest.fixture
+def rotation_home_after_idempotent_collect(tmp_path: Path, env_save_restore) -> Path:
+    """Run ``collect_rich`` twice with the SAME credentials and return $HOME."""
+    # Arrange
+    home = tmp_path / "home"
+    _write_fake_home(home, expires_at=1_000_000_000_000)
+    env_save_restore.set("HOME", str(home))
+
+    workdir = tmp_path / "workspace"
+    workdir.mkdir()
+    # Act — same credentials twice should still produce one entry.
+    collect_rich(name="agent-x", workdir=str(workdir), session="agent-x")
+    collect_rich(name="agent-x", workdir=str(workdir), session="agent-x")
+    return home
+
+
+def test_rotation_log_file_is_created_when_email_known(
+    rotation_home_after_idempotent_collect: Path,
+) -> None:
+    # Arrange — fixture collected twice.
+    # Act — already done.
+    # Assert
+    assert _rotation_file(rotation_home_after_idempotent_collect).is_file()
+
+
+def test_rotation_log_is_idempotent_for_unchanged_expires_at(
+    rotation_home_after_idempotent_collect: Path,
+) -> None:
+    """Same ``expiresAt`` seen twice → still exactly one line on disk."""
+    # Arrange — fixture collected twice with same credentials.
+    # Act — already done.
+    # Assert
+    assert (
+        len(_nonempty_lines(_rotation_file(rotation_home_after_idempotent_collect)))
+        == 1
+    )
+
+
+@pytest.fixture
+def rotation_home_after_token_rotation(
+    rotation_home_after_idempotent_collect: Path, tmp_path: Path
+) -> Path:
+    """Rotate the token (new expiresAt + new accessToken) and re-collect."""
+    home = rotation_home_after_idempotent_collect
+    # Arrange — write a *new* expiresAt.
     (home / ".claude" / ".credentials.json").write_text(
         json.dumps(
             {
@@ -195,26 +293,63 @@ def test_rotation_log_writes_one_line_per_change(
             }
         )
     )
+    workdir = tmp_path / "workspace"
+    # Act
     collect_rich(name="agent-x", workdir=str(workdir), session="agent-x")
+    return home
 
-    lines = [l for l in rot_file.read_text().splitlines() if l.strip()]
-    assert len(lines) == 2
-    new_entry = json.loads(lines[-1])
-    assert new_entry["oauth_expires_at"] == 2_000_000_000_000
-    assert new_entry["email"] == "rotator@example.com"
-    assert new_entry["plan_label"] == "Max 20x"
-    # No token material in the NDJSON.
-    blob = rot_file.read_text().lower()
+
+def test_rotation_log_appends_one_line_per_observed_change(
+    rotation_home_after_token_rotation: Path,
+) -> None:
+    # Arrange — fixture rotated then re-collected.
+    # Act — already done.
+    # Assert
+    assert len(_nonempty_lines(_rotation_file(rotation_home_after_token_rotation))) == 2
+
+
+@pytest.fixture
+def last_rotation_entry(rotation_home_after_token_rotation: Path) -> dict:
+    return json.loads(
+        _nonempty_lines(_rotation_file(rotation_home_after_token_rotation))[-1]
+    )
+
+
+@pytest.mark.parametrize(
+    "key,expected",
+    [
+        ("oauth_expires_at", 2_000_000_000_000),
+        ("email", "rotator@example.com"),
+        ("plan_label", "Max 20x"),
+    ],
+)
+def test_rotation_log_entry_records_field(
+    last_rotation_entry: dict, key: str, expected
+) -> None:
+    # Arrange — fixture loaded the last NDJSON line.
+    # Act — already parsed.
+    # Assert
+    assert last_rotation_entry[key] == expected
+
+
+def test_rotation_log_does_not_leak_access_token_material(
+    rotation_home_after_token_rotation: Path,
+) -> None:
+    """No ``sk-ant`` prefix anywhere in the NDJSON blob."""
+    # Arrange — fixture wrote rotation log.
+    # Act
+    blob = _rotation_file(rotation_home_after_token_rotation).read_text().lower()
+    # Assert
     assert "sk-ant" not in blob
 
 
-def test_rotation_log_skipped_without_email(
-    tmp_path: Path,
+def test_rotation_log_directory_is_not_created_without_email(
+    tmp_path: Path, env_save_restore
 ) -> None:
-    """No oauthAccount.emailAddress -> no rotation log is written."""
+    """No ``oauthAccount.emailAddress`` → no rotation log written at all."""
+    # Arrange — credentials present, but ``.claude.json`` has no oauthAccount.
     home = tmp_path / "home"
     (home / ".claude").mkdir(parents=True)
-    # Credentials present but .claude.json has no oauthAccount.
     (home / ".claude.json").write_text(json.dumps({}))
     (home / ".claude" / ".credentials.json").write_text(
         json.dumps(
@@ -228,25 +363,12 @@ def test_rotation_log_skipped_without_email(
             }
         )
     )
-    # PA-306: $HOME save/restore (Path.home() reads $HOME on Unix).
-    import os as _os
-
-    _saved_home = _os.environ.get("HOME")
-    _os.environ["HOME"] = str(home)
-    _restore_home = lambda: (  # noqa: E731
-        _os.environ.pop("HOME", None)
-        if _saved_home is None
-        else _os.environ.__setitem__("HOME", _saved_home)
-    )
-
+    env_save_restore.set("HOME", str(home))
     workdir = tmp_path / "workspace"
     workdir.mkdir()
-
-    from scitex_agent_container._state.agent_meta import collect_rich
-
+    # Act
     collect_rich(name="agent-y", workdir=str(workdir), session="agent-y")
-
-    # The rotations directory should not have been created.
+    # Assert
     rot_dir = home / ".scitex" / "agent-container" / "accounts" / "_rotations"
     assert not rot_dir.exists()
 
@@ -256,11 +378,14 @@ def test_rotation_log_skipped_without_email(
 # ---------------------------------------------------------------------------
 
 
-def test_collect_rich_exposes_plan_and_plugins(
-    tmp_path: Path,
-) -> None:
-    home = _setup_fake_home(tmp_path, expires_at=1234)
-    # Add plugins file.
+@pytest.fixture
+def rich_payload_with_plugins_and_mcp(tmp_path: Path, env_save_restore) -> dict:
+    """A ``collect_rich`` result built against a fake $HOME with a plugin
+    file and a workspace that has a stdio MCP server registered.
+    """
+    # Arrange
+    home = tmp_path / "home"
+    _write_fake_home(home, expires_at=1_234)
     plugins_dir = home / ".claude" / "plugins"
     plugins_dir.mkdir()
     (plugins_dir / "installed_plugins.json").write_text(
@@ -272,37 +397,54 @@ def test_collect_rich_exposes_plan_and_plugins(
             }
         )
     )
-    # PA-306: $HOME save/restore (Path.home() reads $HOME on Unix).
-    import os as _os
-
-    _saved_home = _os.environ.get("HOME")
-    _os.environ["HOME"] = str(home)
-    _restore_home = lambda: (  # noqa: E731
-        _os.environ.pop("HOME", None)
-        if _saved_home is None
-        else _os.environ.__setitem__("HOME", _saved_home)
-    )
+    env_save_restore.set("HOME", str(home))
 
     workdir = tmp_path / "workspace"
     _write_mcp(
         workdir,
         {"mcpServers": {"scitex-orochi": {"type": "stdio", "command": "bun"}}},
     )
+    # Act
+    return collect_rich(name="agent-z", workdir=str(workdir), session="agent-z")
 
-    from scitex_agent_container._state.agent_meta import collect_rich
 
-    payload = collect_rich(name="agent-z", workdir=str(workdir), session="agent-z")
+@pytest.mark.parametrize(
+    "key,expected",
+    [
+        ("account_email", "rotator@example.com"),
+        ("account_plan_label", "Max 20x"),
+        ("account_subscription_type", "max"),
+        ("account_rate_limit_tier", "default_claude_max_20x"),
+        ("oauth_expires_at", 1_234),
+    ],
+)
+def test_collect_rich_exposes_account_field(
+    rich_payload_with_plugins_and_mcp: dict, key: str, expected
+) -> None:
+    # Arrange — fixture built the payload.
+    # Act — already collected.
+    # Assert
+    assert rich_payload_with_plugins_and_mcp[key] == expected
 
-    assert payload["account_email"] == "rotator@example.com"
-    assert payload["account_plan_label"] == "Max 20x"
-    assert payload["account_subscription_type"] == "max"
-    assert payload["account_rate_limit_tier"] == "default_claude_max_20x"
-    assert payload["oauth_expires_at"] == 1234
-    assert (
-        payload["installed_plugins"]
-        and payload["installed_plugins"][0]["name"] == "claude-hud@claude-hud"
-    )
-    assert payload["mcp_servers"] == [
+
+def test_collect_rich_lists_installed_plugin_by_name(
+    rich_payload_with_plugins_and_mcp: dict,
+) -> None:
+    # Arrange — fixture built the payload.
+    # Act
+    plugins = rich_payload_with_plugins_and_mcp["installed_plugins"]
+    # Assert
+    assert plugins and plugins[0]["name"] == "claude-hud@claude-hud"
+
+
+def test_collect_rich_emits_structured_mcp_servers_entry(
+    rich_payload_with_plugins_and_mcp: dict,
+) -> None:
+    """``mcp_servers`` is a structured list (not a raw JSON blob)."""
+    # Arrange — fixture built the payload.
+    # Act — already collected.
+    # Assert
+    assert rich_payload_with_plugins_and_mcp["mcp_servers"] == [
         {
             "name": "scitex-orochi",
             "transport": "stdio",
