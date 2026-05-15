@@ -38,33 +38,102 @@ def cfg_path(tmp_path: Path):
 
 
 class TestListenBaseURL:
-    def test_defaults_when_no_config(self, cfg_path: Path) -> None:
-        # File doesn't exist → built-in defaults.
-        assert listen_cfg.listen_host() == "127.0.0.1"
-        assert listen_cfg.listen_port() == 7878
-        assert listen_cfg.listen_base_url() == "http://127.0.0.1:7878"
+    # ------------------------------------------------------------------
+    # Defaults when no config file exists.
+    # ------------------------------------------------------------------
+    def test_default_host_when_no_config(self, cfg_path: Path) -> None:
+        # Arrange: cfg_path file is not created → no config on disk.
+        # Act
+        host = listen_cfg.listen_host()
+        # Assert
+        assert host == "127.0.0.1"
 
+    def test_default_port_when_no_config(self, cfg_path: Path) -> None:
+        # Arrange: cfg_path file is not created → no config on disk.
+        # Act
+        port = listen_cfg.listen_port()
+        # Assert
+        assert port == 7878
+
+    def test_default_base_url_when_no_config(self, cfg_path: Path) -> None:
+        # Arrange: cfg_path file is not created → no config on disk.
+        # Act
+        base_url = listen_cfg.listen_base_url()
+        # Assert
+        assert base_url == "http://127.0.0.1:7878"
+
+    # ------------------------------------------------------------------
+    # ``listen.port`` from YAML.
+    # ------------------------------------------------------------------
     def test_reads_listen_port_from_config(self, cfg_path: Path) -> None:
+        # Arrange
         cfg_path.write_text("listen:\n  port: 9090\n")
-        assert listen_cfg.listen_port() == 9090
-        assert listen_cfg.listen_base_url() == "http://127.0.0.1:9090"
+        # Act
+        port = listen_cfg.listen_port()
+        # Assert
+        assert port == 9090
 
+    def test_base_url_uses_port_from_config(self, cfg_path: Path) -> None:
+        # Arrange
+        cfg_path.write_text("listen:\n  port: 9090\n")
+        # Act
+        base_url = listen_cfg.listen_base_url()
+        # Assert
+        assert base_url == "http://127.0.0.1:9090"
+
+    # ------------------------------------------------------------------
+    # ``listen.host`` from YAML.
+    # ------------------------------------------------------------------
     def test_reads_listen_host_from_config(self, cfg_path: Path) -> None:
+        # Arrange
         cfg_path.write_text("listen:\n  host: 100.64.1.2\n  port: 7878\n")
-        assert listen_cfg.listen_host() == "100.64.1.2"
-        assert listen_cfg.listen_base_url() == "http://100.64.1.2:7878"
+        # Act
+        host = listen_cfg.listen_host()
+        # Assert
+        assert host == "100.64.1.2"
 
-    def test_string_port_coerced(self, cfg_path: Path) -> None:
-        # YAML quirk: an unquoted operator-typed port may end up a str.
+    def test_base_url_uses_host_from_config(self, cfg_path: Path) -> None:
+        # Arrange
+        cfg_path.write_text("listen:\n  host: 100.64.1.2\n  port: 7878\n")
+        # Act
+        base_url = listen_cfg.listen_base_url()
+        # Assert
+        assert base_url == "http://100.64.1.2:7878"
+
+    # ------------------------------------------------------------------
+    # String → int coercion for YAML-quoted ports.
+    # ------------------------------------------------------------------
+    def test_string_port_coerced_to_int(self, cfg_path: Path) -> None:
+        # Arrange: YAML quirk — quoted port arrives as a str.
         cfg_path.write_text('listen:\n  port: "7901"\n')
-        assert listen_cfg.listen_port() == 7901
+        # Act
+        port = listen_cfg.listen_port()
+        # Assert
+        assert port == 7901
 
-    def test_malformed_yaml_falls_back(self, cfg_path: Path) -> None:
+    # ------------------------------------------------------------------
+    # Malformed YAML / out-of-range ports fall back to defaults.
+    # ------------------------------------------------------------------
+    def test_malformed_listen_block_port_falls_back(self, cfg_path: Path) -> None:
+        # Arrange: non-mapping ``listen`` block.
         cfg_path.write_text("listen: not_a_mapping\n")
-        # Non-mapping listen block → defaults.
-        assert listen_cfg.listen_port() == 7878
-        assert listen_cfg.listen_base_url() == "http://127.0.0.1:7878"
+        # Act
+        port = listen_cfg.listen_port()
+        # Assert
+        assert port == 7878
 
-    def test_negative_port_ignored(self, cfg_path: Path) -> None:
+    def test_malformed_listen_block_base_url_falls_back(self, cfg_path: Path) -> None:
+        # Arrange: non-mapping ``listen`` block.
+        cfg_path.write_text("listen: not_a_mapping\n")
+        # Act
+        base_url = listen_cfg.listen_base_url()
+        # Assert
+        assert base_url == "http://127.0.0.1:7878"
+
+    def test_negative_port_falls_back_to_default(self, cfg_path: Path) -> None:
+        # Arrange
         cfg_path.write_text("listen:\n  port: -1\n")
-        assert listen_cfg.listen_port() == 7878
+        # Act
+        port = listen_cfg.listen_port()
+        # Assert
+        assert port == 7878
