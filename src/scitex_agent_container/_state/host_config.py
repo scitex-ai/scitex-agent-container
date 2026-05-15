@@ -221,7 +221,7 @@ def build_ssh_argv(
 def host_interfaces() -> list[dict]:
     """Best-effort inventory of local network interfaces.
 
-    Surfaced by ``sac host show`` and (eventually) recorded in
+    Surfaced by ``sac host list`` and (eventually) recorded in
     ``state.db.host_interfaces``. Tailscale / wireguard / ssh-tunnel
     detection is heuristic — parses ``ip -j addr`` when available,
     falls back to a single ``hostname -I`` summary on failure.

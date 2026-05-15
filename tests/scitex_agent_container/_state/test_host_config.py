@@ -4,7 +4,7 @@ Covers:
 - ``load`` reads config.yaml or returns sensible defaults on missing file.
 - ``Config.canonical_host`` resolution chain: env > config > alias > hostname.
 - ``Config.validate`` flags via-references to unknown peers and bad fallbacks.
-- ``sac host show`` / ``host list`` / ``host validate`` end-to-end.
+- ``sac host list`` / ``host validate`` end-to-end.
 
 No-mocks pattern (PA-306):
 - Env mutations go through the shared ``env_save_restore`` fixture.
@@ -247,19 +247,8 @@ peers:
 
 
 # ---------------------------------------------------------------------------
-# CLI surface (sac host show / list / validate)
+# CLI surface (sac host list / validate)
 # ---------------------------------------------------------------------------
-
-
-def test_host_show_renders_canonical_from_env(cfg_path: Path, env_save_restore):
-    # Arrange
-    env_save_restore.set("SAC_HOST", "smoke-host")
-    from scitex_agent_container.cli_pkg.host_group import host_show
-
-    # Act
-    result = CliRunner().invoke(host_show, ["--json"])
-    # Assert
-    assert json.loads(result.output)["local"]["name"] == "smoke-host"
 
 
 def test_host_list_returns_empty_peers_with_no_config(cfg_path: Path):
@@ -454,9 +443,14 @@ def test_host_probe_reports_reachable_with_remote_canonical(
 
 
 def test_host_probe_surfaces_parsed_remote_canonical(cfg_path: Path, subprocess_shim):
-    # Arrange
+    # Arrange — remote now runs `host list --json`, which puts the
+    # canonical hostname under `local.name`.
     cfg_path.write_text("peers:\n  mba: { ssh: ywatanabe@mba.local }\n")
-    subprocess_shim.install("ssh", stdout=json.dumps({"canonical": "mba"}), exit=0)
+    subprocess_shim.install(
+        "ssh",
+        stdout=json.dumps({"local": {"name": "mba"}, "peers": []}),
+        exit=0,
+    )
     from scitex_agent_container.cli_pkg.host_group import host_probe
 
     # Act

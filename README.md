@@ -196,7 +196,7 @@ sac image snapshot [-o env.json]          # reproducibility capsule
 sac account list / save / delete / switch / watch-quota
 
 # Network / peers
-sac host show / list / probe / exec / validate
+sac host list / add / remove / set / probe / exec / validate
 sac peer post-turn AGENT TEXT             # A2A outbound
 sac a2a serve <yamls...>                  # A2A inbound for non-SDK runtimes
 

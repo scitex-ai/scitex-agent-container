@@ -28,7 +28,6 @@
 #   ~/.scitex/agent-container/hosts.yaml (or per-project override).
 #   Each peer entry has an ssh target and per-host paths. Inspect:
 #     sac host list
-#     sac host show gpu-box
 #     sac host probe gpu-box       # round-trip ssh + sac --version
 #
 # Cross-host dispatch — the `--on` global flag:
