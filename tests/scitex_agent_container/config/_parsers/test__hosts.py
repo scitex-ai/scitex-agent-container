@@ -1,4 +1,10 @@
-"""Tests for config._parsers._hosts: parse_hosts_spec + parse_scheduling."""
+"""Tests for ``config._parsers._hosts`` (parse_hosts_spec + parse_scheduling).
+
+TQ cleanup: each test is named for the specific behaviour it verifies
+(TQ003), carries the AAA marker triple (TQ002), and asserts exactly one
+fact (TQ007). Shared-setup invariants collapse into
+``pytest.parametrize`` so the matrix stays declarative.
+"""
 
 from __future__ import annotations
 
@@ -14,44 +20,49 @@ from scitex_agent_container.config._parsers._hosts import (
 # ---------------------------------------------------------------------------
 
 
-def test_hosts_neither_field_yields_empty():
-    h = parse_hosts_spec({})
-    assert h.host == ""
-    assert h.hosts == ""
+@pytest.mark.parametrize(
+    "spec,field,expected",
+    [
+        # Empty spec → both fields empty strings.
+        ({}, "host", ""),
+        ({}, "hosts", ""),
+        # ``host`` as scalar string → host=str, hosts="".
+        ({"host": "alpha"}, "host", "alpha"),
+        ({"host": "alpha"}, "hosts", ""),
+        # ``host`` explicitly None → treated as empty (local singleton).
+        ({"host": None}, "host", ""),
+        ({"host": None}, "hosts", ""),
+        # ``hosts: "all"`` keyword → host="", hosts="all".
+        ({"hosts": "all"}, "host", ""),
+        ({"hosts": "all"}, "hosts", "all"),
+        # Unsupported scalar type for ``host`` → normalized to empty.
+        ({"host": 42}, "host", ""),
+    ],
+)
+def test_parse_hosts_spec_returns_expected_field_for_spec(spec, field, expected):
+    # Arrange — input dict provided by parametrize.
+    # Act
+    parsed = parse_hosts_spec(spec)
+    # Assert
+    assert getattr(parsed, field) == expected
 
 
-def test_hosts_host_string():
-    h = parse_hosts_spec({"host": "alpha"})
-    assert h.host == "alpha"
-    assert h.hosts == ""
+def test_parse_hosts_spec_normalises_host_list_entries_to_strings():
+    # Arrange — mixed-type list under ``host``.
+    spec = {"host": ["a", 1, "b"]}
+    # Act
+    parsed = parse_hosts_spec(spec)
+    # Assert — every entry stringified, order preserved.
+    assert parsed.host == ["a", "1", "b"]
 
 
-def test_hosts_host_list_normalised_to_str():
-    h = parse_hosts_spec({"host": ["a", 1, "b"]})
-    assert h.host == ["a", "1", "b"]
-
-
-def test_hosts_host_explicit_none_yields_empty():
-    h = parse_hosts_spec({"host": None})
-    assert h.host == ""
-    assert h.hosts == ""
-
-
-def test_hosts_hosts_all_keyword():
-    h = parse_hosts_spec({"hosts": "all"})
-    assert h.host == ""
-    assert h.hosts == "all"
-
-
-def test_hosts_hosts_list():
-    h = parse_hosts_spec({"hosts": ["x", "y"]})
-    assert h.hosts == ["x", "y"]
-
-
-def test_hosts_unsupported_host_type_treated_as_empty():
-    # int gets validator-rejected elsewhere; parser just normalises to empty
-    h = parse_hosts_spec({"host": 42})
-    assert h.host == ""
+def test_parse_hosts_spec_returns_list_for_hosts_list_input():
+    # Arrange
+    spec = {"hosts": ["x", "y"]}
+    # Act
+    parsed = parse_hosts_spec(spec)
+    # Assert
+    assert parsed.hosts == ["x", "y"]
 
 
 # ---------------------------------------------------------------------------
@@ -59,64 +70,166 @@ def test_hosts_unsupported_host_type_treated_as_empty():
 # ---------------------------------------------------------------------------
 
 
-def test_scheduling_absent_returns_default_implicit():
-    sched, explicit = parse_scheduling({})
+def test_parse_scheduling_absent_key_returns_explicit_false_flag():
+    # Arrange — spec has no ``scheduling`` key.
+    spec: dict = {}
+    # Act
+    _, explicit = parse_scheduling(spec)
+    # Assert
     assert explicit is False
-    assert sched.mode == "per-host"  # SchedulingSpec default
-    assert sched.preferred_host == ""
-    assert sched.fallback_hosts == []
 
 
-def test_scheduling_present_marks_explicit():
-    sched, explicit = parse_scheduling({"scheduling": {"mode": "singleton"}})
-    assert explicit is True
-    assert sched.mode == "singleton"
-
-
-def test_scheduling_default_mode_when_block_empty():
-    sched, explicit = parse_scheduling({"scheduling": {}})
-    assert explicit is True
+def test_parse_scheduling_absent_key_uses_default_per_host_mode():
+    # Arrange
+    spec: dict = {}
+    # Act
+    sched, _ = parse_scheduling(spec)
+    # Assert
     assert sched.mode == "per-host"
 
 
-def test_scheduling_invalid_mode_raises():
+def test_parse_scheduling_absent_key_uses_empty_preferred_host():
+    # Arrange
+    spec: dict = {}
+    # Act
+    sched, _ = parse_scheduling(spec)
+    # Assert
+    assert sched.preferred_host == ""
+
+
+def test_parse_scheduling_absent_key_uses_empty_fallback_hosts_list():
+    # Arrange
+    spec: dict = {}
+    # Act
+    sched, _ = parse_scheduling(spec)
+    # Assert
+    assert sched.fallback_hosts == []
+
+
+def test_parse_scheduling_present_block_marks_explicit_flag_true():
+    # Arrange — scheduling block present, mode set.
+    spec = {"scheduling": {"mode": "singleton"}}
+    # Act
+    _, explicit = parse_scheduling(spec)
+    # Assert
+    assert explicit is True
+
+
+def test_parse_scheduling_present_block_uses_caller_supplied_mode():
+    # Arrange
+    spec = {"scheduling": {"mode": "singleton"}}
+    # Act
+    sched, _ = parse_scheduling(spec)
+    # Assert
+    assert sched.mode == "singleton"
+
+
+def test_parse_scheduling_empty_block_marks_explicit_flag_true():
+    # Arrange — empty mapping under ``scheduling``.
+    spec: dict = {"scheduling": {}}
+    # Act
+    _, explicit = parse_scheduling(spec)
+    # Assert
+    assert explicit is True
+
+
+def test_parse_scheduling_empty_block_defaults_mode_to_per_host():
+    # Arrange
+    spec: dict = {"scheduling": {}}
+    # Act
+    sched, _ = parse_scheduling(spec)
+    # Assert
+    assert sched.mode == "per-host"
+
+
+def test_parse_scheduling_invalid_mode_value_raises_value_error():
+    # Arrange — ``swarm`` is not a recognized scheduling mode.
+    spec = {"scheduling": {"mode": "swarm"}}
+    # Act
+    call = lambda: parse_scheduling(spec)
+    # Assert
     with pytest.raises(ValueError, match="mode"):
-        parse_scheduling({"scheduling": {"mode": "swarm"}})
+        call()
 
 
-def test_scheduling_non_dict_block_raises():
+def test_parse_scheduling_non_mapping_block_raises_value_error():
+    # Arrange — list is not a mapping.
+    spec = {"scheduling": ["a"]}
+    # Act
+    call = lambda: parse_scheduling(spec)
+    # Assert
     with pytest.raises(ValueError, match="mapping"):
-        parse_scheduling({"scheduling": ["a"]})
+        call()
 
 
-def test_scheduling_preferred_host_hyphen_form():
-    sched, _ = parse_scheduling(
-        {"scheduling": {"preferred-host": "node1", "fallback-hosts": ["n2", "n3"]}}
-    )
+def test_parse_scheduling_hyphen_form_extracts_preferred_host_value():
+    # Arrange — hyphen-cased keys (YAML-native form).
+    spec = {"scheduling": {"preferred-host": "node1", "fallback-hosts": ["n2", "n3"]}}
+    # Act
+    sched, _ = parse_scheduling(spec)
+    # Assert
     assert sched.preferred_host == "node1"
+
+
+def test_parse_scheduling_hyphen_form_extracts_fallback_hosts_list():
+    # Arrange
+    spec = {"scheduling": {"preferred-host": "node1", "fallback-hosts": ["n2", "n3"]}}
+    # Act
+    sched, _ = parse_scheduling(spec)
+    # Assert
     assert sched.fallback_hosts == ["n2", "n3"]
 
 
-def test_scheduling_preferred_host_underscore_form():
-    sched, _ = parse_scheduling(
-        {
-            "scheduling": {
-                "preferred_host": "node-u",
-                "fallback_hosts": "single-fallback",
-            }
+def test_parse_scheduling_underscore_form_extracts_preferred_host_value():
+    # Arrange — underscore-cased keys (Python-native form).
+    spec = {
+        "scheduling": {
+            "preferred_host": "node-u",
+            "fallback_hosts": "single-fallback",
         }
-    )
+    }
+    # Act
+    sched, _ = parse_scheduling(spec)
+    # Assert
     assert sched.preferred_host == "node-u"
-    # Single string lifted into a list.
+
+
+def test_parse_scheduling_underscore_form_lifts_string_fallback_into_list():
+    # Arrange — bare string under ``fallback_hosts``.
+    spec = {
+        "scheduling": {
+            "preferred_host": "node-u",
+            "fallback_hosts": "single-fallback",
+        }
+    }
+    # Act
+    sched, _ = parse_scheduling(spec)
+    # Assert — single string lifted into a one-element list.
     assert sched.fallback_hosts == ["single-fallback"]
 
 
-def test_scheduling_fallback_hosts_coerced_to_str():
-    sched, _ = parse_scheduling({"scheduling": {"fallback_hosts": [1, "two", 3.0]}})
+def test_parse_scheduling_coerces_fallback_host_entries_to_strings():
+    # Arrange — mixed-type list of fallback hosts.
+    spec = {"scheduling": {"fallback_hosts": [1, "two", 3.0]}}
+    # Act
+    sched, _ = parse_scheduling(spec)
+    # Assert
     assert sched.fallback_hosts == ["1", "two", "3.0"]
 
 
-def test_scheduling_none_block_treated_as_empty_dict():
-    sched, explicit = parse_scheduling({"scheduling": None})
+def test_parse_scheduling_none_block_marks_explicit_flag_true():
+    # Arrange — ``scheduling: null`` in YAML lands as None here.
+    spec = {"scheduling": None}
+    # Act
+    _, explicit = parse_scheduling(spec)
+    # Assert
     assert explicit is True
+
+
+def test_parse_scheduling_none_block_defaults_mode_to_per_host():
+    # Arrange
+    spec = {"scheduling": None}
+    # Act
+    sched, _ = parse_scheduling(spec)
+    # Assert
     assert sched.mode == "per-host"
