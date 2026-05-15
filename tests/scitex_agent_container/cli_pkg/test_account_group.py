@@ -644,3 +644,65 @@ def test_watch_quota_dry_run_emits_bracketed_action(sandbox_home, cmd, argv):
     result = runner.invoke(cmd, argv)
     # Assert
     assert result.output.startswith("[")
+
+
+# ---------------------------------------------------------------------------
+# Branch coverage closure — account list active-credentials block printed
+# ---------------------------------------------------------------------------
+
+
+def test_account_list_prints_blank_line_after_active_credentials_block(sandbox_home):
+    # Arrange — seed an active oauth email so _format_claude_account_block
+    # yields a non-empty list and the post-block blank line fires.
+    _seed_active_credentials(sandbox_home, email="active@example.com")
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(account, ["list"])
+    # Assert — header from the rendered block proves the truthy branch fired.
+    assert "Claude Code account" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Branch coverage closure — watch-quota survival-mode echo
+# ---------------------------------------------------------------------------
+
+
+def _seed_usage_cache(home: Path, *, used_pct_5h: float) -> None:
+    """Seed the real claude_usage cache to drive survival_mode_check=True.
+
+    fetch_usage reads ``~/.scitex/cache/claude_usage.json`` first; entries
+    younger than 5min short-circuit the network call. Writing a fresh
+    cache row with used_pct_5h above SURVIVAL_THRESHOLD lets us drive the
+    real survival_mode_check into its True branch without any mocking.
+    """
+    from datetime import datetime, timezone
+
+    cache_dir = home / ".scitex" / "cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "used_tokens_5h": 9999,
+        "limit_tokens_5h": 10000,
+        "used_pct_5h": used_pct_5h,
+        "reset_at_5h": None,
+        "used_tokens_7d": None,
+        "limit_tokens_7d": None,
+        "used_pct_7d": None,
+        "reset_at_7d": None,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "from_cache": False,
+        "error": None,
+    }
+    (cache_dir / "claude_usage.json").write_text(json.dumps(payload))
+
+
+def test_watch_quota_once_echoes_survival_banner_when_single_account_over_threshold(
+    sandbox_home,
+):
+    # Arrange — exactly one stored account + cached quota above threshold.
+    save_account("only", {"email_address": "o@example.com"}, home=sandbox_home)
+    _seed_usage_cache(sandbox_home, used_pct_5h=99.5)
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(account, ["watch-quota", "--once"])
+    # Assert
+    assert "[SURVIVAL]" in result.output
