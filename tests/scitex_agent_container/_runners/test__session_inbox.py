@@ -122,100 +122,168 @@ def _swap_sdk(fake_client: _FakeSDKClient) -> Iterator[None]:
                 setattr(claude_agent_sdk, k, v)
 
 
-class TestInboxDrain:
-    def test_turn_envelope_resolves_with_assistant_text(self, state_root: Path) -> None:
-        client = _FakeSDKClient()
-        client.scripts = [
-            [
-                _FakeAssistantMsg("Hello ", "world"),
-                _FakeResultMsg("sess-1", {"input_tokens": 5, "output_tokens": 7}),
-            ]
+# ---------------------------------------------------------------------------
+# Scenario fixtures — each fixture runs one full async scenario once,
+# returning a dict the per-behaviour tests assert against.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def single_turn_scenario(state_root: Path) -> dict:
+    client = _FakeSDKClient()
+    client.scripts = [
+        [
+            _FakeAssistantMsg("Hello ", "world"),
+            _FakeResultMsg("sess-1", {"input_tokens": 5, "output_tokens": 7}),
         ]
+    ]
 
-        async def _scenario() -> str:
-            inbox = make_inbox()
-            stop = asyncio.Event()
-            loop = asyncio.get_running_loop()
-            env = TurnEnvelope(text="hi", response=loop.create_future())
-            await inbox.put(env)
-            await inbox.put(ShutdownEnvelope())
-            with _swap_sdk(client):
-                await runner._run_conversation(
-                    "alpha",
-                    state_root / "alpha",
-                    pid=1234,
-                    inbox=inbox,
-                    resume_session_id=None,
-                    stop=stop,
-                )
-            return await env.response
-
-        reply = asyncio.run(_scenario())
-        assert reply == "Hello world"
-        assert client.queries == ["hi"]
-
-    def test_multiple_turns_processed_serially(self, state_root: Path) -> None:
-        client = _FakeSDKClient()
-        client.scripts = [
-            [_FakeAssistantMsg("first"), _FakeResultMsg("sess-2", {})],
-            [_FakeAssistantMsg("second"), _FakeResultMsg("sess-2", {})],
-        ]
-
-        async def _scenario():
-            inbox = make_inbox()
-            stop = asyncio.Event()
-            loop = asyncio.get_running_loop()
-            e1 = TurnEnvelope(text="q1", response=loop.create_future())
-            e2 = TurnEnvelope(text="q2", response=loop.create_future())
-            for env in (e1, e2):
-                await inbox.put(env)
-            await inbox.put(ShutdownEnvelope())
-            with _swap_sdk(client):
-                await runner._run_conversation(
-                    "beta",
-                    state_root / "beta",
-                    pid=2,
-                    inbox=inbox,
-                    resume_session_id=None,
-                    stop=stop,
-                )
-            return await e1.response, await e2.response
-
-        r1, r2 = asyncio.run(_scenario())
-        assert r1 == "first"
-        assert r2 == "second"
-        assert client.queries == ["q1", "q2"]
-
-    def test_exit_after_sets_stop(self, state_root: Path) -> None:
-        client = _FakeSDKClient()
-
-        async def _scenario():
-            inbox = make_inbox()
-            stop = asyncio.Event()
-            loop = asyncio.get_running_loop()
-            env = TurnEnvelope(
-                text="bye", response=loop.create_future(), exit_after=True
+    async def _scenario() -> str:
+        inbox = make_inbox()
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        env = TurnEnvelope(text="hi", response=loop.create_future())
+        await inbox.put(env)
+        await inbox.put(ShutdownEnvelope())
+        with _swap_sdk(client):
+            await runner._run_conversation(
+                "alpha",
+                state_root / "alpha",
+                pid=1_234,
+                inbox=inbox,
+                resume_session_id=None,
+                stop=stop,
             )
-            await inbox.put(env)
-            with _swap_sdk(client):
-                await runner._run_conversation(
-                    "gamma",
-                    state_root / "gamma",
-                    pid=3,
-                    inbox=inbox,
-                    resume_session_id=None,
-                    stop=stop,
-                )
-            return stop.is_set()
+        return await env.response
 
-        assert asyncio.run(_scenario()) is True
+    reply = asyncio.run(_scenario())
+    return {"reply": reply, "queries": client.queries}
+
+
+@pytest.fixture
+def multi_turn_scenario(state_root: Path) -> dict:
+    client = _FakeSDKClient()
+    client.scripts = [
+        [_FakeAssistantMsg("first"), _FakeResultMsg("sess-2", {})],
+        [_FakeAssistantMsg("second"), _FakeResultMsg("sess-2", {})],
+    ]
+
+    async def _scenario():
+        inbox = make_inbox()
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        e1 = TurnEnvelope(text="q1", response=loop.create_future())
+        e2 = TurnEnvelope(text="q2", response=loop.create_future())
+        for env in (e1, e2):
+            await inbox.put(env)
+        await inbox.put(ShutdownEnvelope())
+        with _swap_sdk(client):
+            await runner._run_conversation(
+                "beta",
+                state_root / "beta",
+                pid=2,
+                inbox=inbox,
+                resume_session_id=None,
+                stop=stop,
+            )
+        return await e1.response, await e2.response
+
+    r1, r2 = asyncio.run(_scenario())
+    return {"r1": r1, "r2": r2, "queries": client.queries}
+
+
+@pytest.fixture
+def exit_after_scenario(state_root: Path) -> dict:
+    client = _FakeSDKClient()
+
+    async def _scenario():
+        inbox = make_inbox()
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        env = TurnEnvelope(text="bye", response=loop.create_future(), exit_after=True)
+        await inbox.put(env)
+        with _swap_sdk(client):
+            await runner._run_conversation(
+                "gamma",
+                state_root / "gamma",
+                pid=3,
+                inbox=inbox,
+                resume_session_id=None,
+                stop=stop,
+            )
+        return stop.is_set()
+
+    return {"stop_set": asyncio.run(_scenario())}
+
+
+class TestInboxDrain:
+    def test_turn_envelope_resolves_with_concatenated_assistant_text(
+        self, single_turn_scenario: dict
+    ) -> None:
+        # Arrange
+        result = single_turn_scenario
+        # Act
+        reply = result["reply"]
+        # Assert
+        assert reply == "Hello world"
+
+    def test_turn_envelope_forwards_text_into_sdk_query(
+        self, single_turn_scenario: dict
+    ) -> None:
+        # Arrange
+        result = single_turn_scenario
+        # Act
+        queries = result["queries"]
+        # Assert
+        assert queries == ["hi"]
+
+    def test_multiple_turns_first_response_matches_first_script(
+        self, multi_turn_scenario: dict
+    ) -> None:
+        # Arrange
+        result = multi_turn_scenario
+        # Act
+        r1 = result["r1"]
+        # Assert
+        assert r1 == "first"
+
+    def test_multiple_turns_second_response_matches_second_script(
+        self, multi_turn_scenario: dict
+    ) -> None:
+        # Arrange
+        result = multi_turn_scenario
+        # Act
+        r2 = result["r2"]
+        # Assert
+        assert r2 == "second"
+
+    def test_multiple_turns_queries_recorded_in_submission_order(
+        self, multi_turn_scenario: dict
+    ) -> None:
+        # Arrange
+        result = multi_turn_scenario
+        # Act
+        queries = result["queries"]
+        # Assert
+        assert queries == ["q1", "q2"]
+
+    def test_exit_after_envelope_sets_stop_event(
+        self, exit_after_scenario: dict
+    ) -> None:
+        # Arrange
+        result = exit_after_scenario
+        # Act
+        stop_set = result["stop_set"]
+        # Assert
+        assert stop_set is True
 
 
 class TestDrainFailedInbox:
-    def test_pending_futures_get_exception(self) -> None:
+    def test_pending_turn_futures_receive_init_failure_exception(self) -> None:
         """If SDK init fails, queued turn futures are resolved with
         the failure so producers don't hang."""
 
+        # Arrange
         async def _scenario():
             inbox = make_inbox()
             loop = asyncio.get_running_loop()
@@ -229,7 +297,10 @@ class TestDrainFailedInbox:
             except RuntimeError as exc:
                 return str(exc)
 
-        assert asyncio.run(_scenario()) == "boom"
+        # Act
+        observed = asyncio.run(_scenario())
+        # Assert
+        assert observed == "boom"
 
 
 # Keep ``ExitStack`` referenced even though our new pattern uses
