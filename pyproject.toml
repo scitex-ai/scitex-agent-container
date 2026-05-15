@@ -136,6 +136,8 @@ markers = [
     "integration: slow end-to-end tests that spawn a real Claude Code agent (require claude CLI + tmux + ANTHROPIC_API_KEY or SAC_ANTHROPIC_API_KEY). Opt in with '-m integration'.",
     "docker_smoke: real-Docker smoke tests for DockerRuntime (build image, start/stop newbie-docker agent, exec claude -p). Skipped unless docker daemon reachable. Opt in with '-m docker_smoke'.",
     "slow: slow tests opted-in with '-m slow'.",
+    "e2e: end-to-end tests requiring real subsystems (set RUN_E2E=1 to enable)",
+    "smoke: fast (<60s total) user-facing happy-path tests verifying the installed `sac` binary still works end-to-end. Run on every PR.",
 ]
 
 [tool.ruff]
