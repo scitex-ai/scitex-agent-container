@@ -313,8 +313,18 @@ async def run(
     a2a_host: str = "127.0.0.1",
     a2a_port: int | None = None,
     a2a_card_yaml: str = "",
+    stop_event: asyncio.Event | None = None,
 ) -> int:
-    """Run the proxy daemon until SIGTERM / SIGINT."""
+    """Run the proxy daemon until SIGTERM / SIGINT (or ``stop_event``).
+
+    ``stop_event``: optional, in-process shutdown signal. When set,
+    ``run()`` shuts down identically to receiving SIGTERM but without
+    requiring the caller to send the signal. In-process drivers
+    (tests, supervisor harnesses) should prefer this over
+    ``os.kill(getpid(), SIGTERM)`` — the latter triggers global signal
+    handlers (e.g. uvicorn's ``handle_exit``) whose side effects leak
+    into whatever runs after this coroutine returns.
+    """
     del a2a_card_yaml  # reserved for future per-agent card overrides
 
     redact = list(redact or [])
@@ -325,7 +335,7 @@ async def run(
     write_pid(state_dir, pid)
     write_heartbeat(state_dir, pid=pid, state=STATE_STARTING)
 
-    stop = asyncio.Event()
+    stop = stop_event if stop_event is not None else asyncio.Event()
     loop = asyncio.get_running_loop()
 
     def _on_signal(signum: int) -> None:
@@ -333,12 +343,20 @@ async def run(
         write_heartbeat(state_dir, pid=pid, state=STATE_STOPPING)
         stop.set()
 
+    # Track which signals we touched so the finally-block can restore
+    # them. Without this, ``run()`` leaks SIGTERM/SIGINT dispositions
+    # into whatever runs after — important for in-process callers
+    # (tests, supervisor harnesses) that drive run() and continue.
+    asyncio_handlers: list[int] = []
+    fallback_handlers: dict[int, Any] = {}
     for sig in (signal.SIGTERM, signal.SIGINT):
         try:
             loop.add_signal_handler(sig, _on_signal, sig)
+            asyncio_handlers.append(sig)
         except (
             NotImplementedError
         ):  # stx-allow: fallback (reason: Windows / no asyncio signal support)
+            fallback_handlers[sig] = signal.getsignal(sig)
             signal.signal(sig, lambda s, _f: _on_signal(s))
 
     hb_task = asyncio.create_task(
@@ -374,6 +392,16 @@ async def run(
                 lifespan="off",
             )
             server = uvicorn.Server(config)
+            # Suppress uvicorn's own signal handlers: it installs
+            # signal.signal(SIGTERM/SIGINT) via ``Server.install_signal_handlers``,
+            # which (a) shadows the asyncio-level handlers we
+            # registered above and (b) is never restored on shutdown.
+            # The latter leaks process-global signal dispositions
+            # into whatever runs after ``run()`` returns — observed:
+            # subsequent Starlette TestClient SSE streams produce
+            # empty bodies because httpx's stream reader is
+            # interrupted by the dangling handler.
+            server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
             serve_task = asyncio.create_task(server.serve())
 
     try:
@@ -393,6 +421,21 @@ async def run(
             await hb_task
         except asyncio.CancelledError:
             pass
+        # Restore the signal handlers we installed so this runner
+        # leaves the process in the same state it found it. Critical
+        # for in-process callers (tests, supervisor harnesses) — see
+        # the asyncio_handlers/fallback_handlers comment above.
+        for sig in asyncio_handlers:
+            try:
+                loop.remove_signal_handler(sig)
+            except (
+                NotImplementedError,
+                ValueError,
+            ):  # stx-allow: fallback (reason: handler already gone)
+                pass
+        for sig, prev in fallback_handlers.items():
+            if prev is not None:
+                signal.signal(sig, prev)
         write_heartbeat(state_dir, pid=pid, state=STATE_STOPPING)
     return 0
 

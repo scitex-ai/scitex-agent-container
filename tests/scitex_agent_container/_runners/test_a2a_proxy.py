@@ -1340,8 +1340,6 @@ def test_main_writes_pid_under_state_root(
 def run_with_bound_port(tmp_path: Any, real_upstream_server: Any) -> dict[str, Any]:
     # Arrange
     import asyncio as _asyncio
-    import os
-    import signal
 
     from scitex_agent_container._runners import a2a_proxy as _mod
 
@@ -1351,6 +1349,13 @@ def run_with_bound_port(tmp_path: Any, real_upstream_server: Any) -> dict[str, A
     health_status: dict[str, Any] = {"code": None}
 
     async def _drive() -> int:
+        # Use the in-process ``stop_event`` instead of
+        # ``os.kill(getpid(), SIGTERM)``: the SIGTERM path triggers
+        # uvicorn's process-global ``handle_exit`` signal handler,
+        # whose installation leaks into subsequent unrelated tests
+        # (observed: Starlette TestClient SSE streams return empty
+        # bodies after this fixture's SIGTERM is consumed).
+        stop_event = _asyncio.Event()
         task = _asyncio.create_task(
             _mod.run(
                 "px-bound",
@@ -1362,6 +1367,7 @@ def run_with_bound_port(tmp_path: Any, real_upstream_server: Any) -> dict[str, A
                 tick_seconds=0.05,
                 a2a_host="127.0.0.1",
                 a2a_port=proxy_port,
+                stop_event=stop_event,
             )
         )
         # Wait for the proxy to be ready by hitting /health.
@@ -1377,7 +1383,7 @@ def run_with_bound_port(tmp_path: Any, real_upstream_server: Any) -> dict[str, A
                 ):  # stx-allow: fallback (reason: server still booting)
                     pass
                 await _asyncio.sleep(0.05)
-        os.kill(os.getpid(), signal.SIGTERM)
+        stop_event.set()
         return await _asyncio.wait_for(task, timeout=5.0)
 
     # Act
