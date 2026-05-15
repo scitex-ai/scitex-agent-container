@@ -60,26 +60,25 @@ STALE_PATTERNS = (
 # ---------------------------------------------------------------------------
 
 
-def _script_parses(script: Path) -> None:
-    """``bash -n`` must accept the script."""
-    result = subprocess.run(
+def _probe_parses(script: Path) -> subprocess.CompletedProcess:
+    """Run ``bash -n`` and return the completed process for inspection."""
+    return subprocess.run(
         ["bash", "-n", str(script)],
         capture_output=True,
         text=True,
         timeout=30,
     )
-    assert result.returncode == 0, f"bash -n failed for {script.name}:\n{result.stderr}"
 
 
-def _script_runs_readonly(script: Path, tmp_path: Path) -> None:
-    """Running the script without --apply must exit 0 under a tmp HOME."""
+def _probe_runs_readonly(script: Path, tmp_path: Path) -> subprocess.CompletedProcess:
+    """Execute the script under a tmp ``HOME`` and return the result."""
     env = {
         "HOME": str(tmp_path),
         "PATH": os.environ.get("PATH", ""),
         # Preserve TERM so coloured-output libs don't crash on missing tty.
         "TERM": os.environ.get("TERM", "dumb"),
     }
-    result = subprocess.run(
+    return subprocess.run(
         ["bash", str(script)],
         capture_output=True,
         text=True,
@@ -87,6 +86,23 @@ def _script_runs_readonly(script: Path, tmp_path: Path) -> None:
         env=env,
         cwd=str(tmp_path),
     )
+
+
+def _probe_stale_cli_offenders(script: Path) -> list[str]:
+    """Return the list of stale-CLI substrings present in the script."""
+    text = script.read_text()
+    return [pat for pat in STALE_PATTERNS if pat in text]
+
+
+def _script_parses(script: Path) -> None:
+    """``bash -n`` must accept the script."""
+    result = _probe_parses(script)
+    assert result.returncode == 0, f"bash -n failed for {script.name}:\n{result.stderr}"
+
+
+def _script_runs_readonly(script: Path, tmp_path: Path) -> None:
+    """Running the script without --apply must exit 0 under a tmp HOME."""
+    result = _probe_runs_readonly(script, tmp_path)
     assert result.returncode == 0, (
         f"{script.name} exited {result.returncode}\n"
         f"--- stdout ---\n{result.stdout}\n"
@@ -96,8 +112,7 @@ def _script_runs_readonly(script: Path, tmp_path: Path) -> None:
 
 def _script_has_no_stale_cli(script: Path) -> None:
     """No tutorial script may reference legacy CLI surface."""
-    text = script.read_text()
-    offenders = [pat for pat in STALE_PATTERNS if pat in text]
+    offenders = _probe_stale_cli_offenders(script)
     assert not offenders, f"{script.name} contains stale CLI strings: {offenders}"
 
 
