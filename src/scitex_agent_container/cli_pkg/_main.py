@@ -18,10 +18,17 @@ import click
 from ._lazy_group import LazyGroup
 
 
-def _pkg_version() -> str:
-    """Return the installed package version, or 'dev' off-tree."""
+def _pkg_version(lookup=_pkg_version_lookup) -> str:
+    """Return the installed package version, or 'dev' off-tree.
+
+    ``lookup`` is the ``importlib.metadata.version``-shaped callable
+    used to read the dist version; it's a parameter (not a hard import
+    reference) so tests can pass a real callable that raises
+    ``PackageNotFoundError`` to exercise the off-tree fallback without
+    monkey-patching module state.
+    """
     try:
-        return _pkg_version_lookup("scitex-agent-container")
+        return lookup("scitex-agent-container")
     except PackageNotFoundError:
         return "dev"
 
@@ -132,15 +139,6 @@ class _MainGroup(LazyGroup):
         if cmd is None:
             return
 
-        # Primary: sac-owned, under runtime/ per local-state-directories spec §4b.
-        SAC_CACHE_DIR = (
-            Path.home() / ".scitex" / "agent-container" / "runtime" / "completion"
-        )
-        # Secondary: XDG bash-completion dir (where third-party tooling
-        # auto-discovers); kept as a symlink to the sac-owned file so
-        # both paths point at the same content.
-        XDG_CACHE_DIR = Path.home() / ".local" / "share" / "bash-completion" / "scitex"
-
         BINARIES = (
             ("scitex-agent-container", "_SCITEX_AGENT_CONTAINER_COMPLETE"),
             ("sac", "_SAC_COMPLETE"),
@@ -148,6 +146,20 @@ class _MainGroup(LazyGroup):
         SOURCE_MAP = {"bash": "bash_source", "zsh": "zsh_source"}
 
         def install_cached(*args, **kwargs):
+            # Re-resolve Path.home() each call (not at attach time) so
+            # $HOME changes between invocations are honoured (matters for
+            # tests under tmp_path, and for users who run with a custom
+            # HOME via env-prefix).
+            # Primary: sac-owned, under runtime/ per local-state-directories spec §4b.
+            SAC_CACHE_DIR = (
+                Path.home() / ".scitex" / "agent-container" / "runtime" / "completion"
+            )
+            # Secondary: XDG bash-completion dir (where third-party tooling
+            # auto-discovers); kept as a symlink to the sac-owned file so
+            # both paths point at the same content.
+            XDG_CACHE_DIR = (
+                Path.home() / ".local" / "share" / "bash-completion" / "scitex"
+            )
             shell = kwargs.get("shell", "bash")
             dry_run = kwargs.get("dry_run", False)
             if shell not in SOURCE_MAP:
