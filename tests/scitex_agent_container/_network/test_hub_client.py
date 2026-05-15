@@ -264,3 +264,30 @@ def test_fetch_owner_url_error_returns_empty_healthy_map(hub_env):
     out = hub_client.fetch_owner("lead", opener=opener)
     # Assert
     assert out["healthy"] == {}
+
+
+# ---------------------------------------------------------------------------
+# _request default-opener and short-circuit branches
+# ---------------------------------------------------------------------------
+
+
+def test_request_returns_none_when_hub_url_unset(env_save_restore):
+    # Arrange no SAC_HUB_URL — _request must short-circuit before opener.
+    env_save_restore.set("SAC_HUB_URL", "")
+    env_save_restore.set("SAC_HUB_TOKEN", "wks_t")
+    env_save_restore.delete("SCITEX_AGENT_CONTAINER_HUB_URL")
+    env_save_restore.delete("SCITEX_AGENT_CONTAINER_HUB_TOKEN")
+    # Act default-opener path: opener=None must not crash because we
+    # return before any urlopen call.
+    out = hub_client._request("GET", "/api/agents/x/snapshot/latest/")
+    # Assert
+    assert out is None
+
+
+def test_request_returns_empty_dict_on_empty_response_body(hub_env):
+    # Arrange a 200 with no body — _request must return {} sentinel.
+    opener, _ = _opener_returning(b"")
+    # Act
+    out = hub_client._request("GET", "/api/agents/x/owner/", opener=opener)
+    # Assert
+    assert out == {}
