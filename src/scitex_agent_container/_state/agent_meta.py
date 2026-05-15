@@ -171,26 +171,9 @@ def _capture_pane(session: str, multiplexer: str, max_chars: int = 10000) -> str
     return out
 
 
-_SECRET_PATTERNS = [
-    re.compile(r"(sk-ant-[A-Za-z0-9_-]+)"),
-    re.compile(r"(wks_[A-Za-z0-9]+)"),
-    re.compile(
-        r"((?:token|secret|api[_-]?key|password|bearer)\s*[=:]\s*)(\S+)",
-        re.IGNORECASE,
-    ),
-]
-
-
-def _redact_secrets(text: str) -> str:
-    if not text:
-        return ""
-    s = text
-    for pat in _SECRET_PATTERNS:
-        if pat.groups == 2:
-            s = pat.sub(lambda m: m.group(1) + "***REDACTED***", s)
-        else:
-            s = pat.sub("***REDACTED***", s)
-    return s
+# Secret redaction lives in ``_meta/secrets.py``; re-exported here to
+# preserve the ``agent_meta._redact_secrets`` access path used by tests.
+from ._meta.secrets import _SECRET_PATTERNS, _redact_secrets  # noqa: F401
 
 
 def _classify_pane_state(pane_text: str) -> tuple[str, str]:
