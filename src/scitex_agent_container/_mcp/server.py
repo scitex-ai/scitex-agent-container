@@ -23,9 +23,35 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 from typing import Any
 
 from ._tools import register_all_tools
+
+
+def _ensure_stderr_logging() -> None:
+    """Attach a stderr StreamHandler to the package logger so INFO-level
+    diagnostic lines (telegram bridge POST/OK/FAIL, session capture, …)
+    appear in claude-code's MCP debug log. Without this, Python's default
+    config discards INFO and we only see the WARN that fires once at boot,
+    leaving channel-push debugging blind.
+
+    Idempotent — re-running attaches at most one handler.
+    """
+    root = logging.getLogger("scitex_agent_container")
+    if any(getattr(h, "_sac_stderr", False) for h in root.handlers):
+        return
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setLevel(logging.INFO)
+    handler.setFormatter(
+        logging.Formatter("[%(asctime)s] [%(levelname)s] %(name)s: %(message)s")
+    )
+    handler._sac_stderr = True  # type: ignore[attr-defined]
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)
+
+
+_ensure_stderr_logging()
 
 log = logging.getLogger(__name__)
 
