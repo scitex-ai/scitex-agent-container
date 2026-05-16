@@ -37,7 +37,7 @@ def _pkg_version(lookup=_pkg_version_lookup) -> str:
 # Help categories — clean noun-group surface
 # ---------------------------------------------------------------------------
 COMMAND_CATEGORIES = [
-    ("Agent", ["agents"]),
+    ("Agent", ["agents", "subagent"]),
     ("Lifecycle (multiplexer)", ["auto-accept"]),
     ("Account", ["accounts"]),
     (
@@ -61,6 +61,7 @@ class _MainGroup(LazyGroup):
     LAZY_COMMANDS = {
         # Noun groups
         "agents": f"{_PKG}.agent_group:agent_group",
+        "subagent": f"{_PKG}.subagent_group:subagent_group",
         "db": f"{_PKG}.db_group:db_group",
         "dev": f"{_PKG}.dev_group:dev_group",
         "host": f"{_PKG}.host_group:host_group",
