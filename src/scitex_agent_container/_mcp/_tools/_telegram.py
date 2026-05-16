@@ -24,7 +24,7 @@ from typing import Any
 from ..._telegram._runtime import get_auth_token, get_bridge
 
 FEATURE_FLAG_ENV = "SCITEX_AGENT_CONTAINER_TELEGRAM_FOLD"
-LEAD_AUTH_TOKEN_ENV = "LEAD_TELEGRAM_AUTH_TOKEN"
+LEAD_AUTH_TOKEN_ENV = "SCITEX_LEAD_TELEGRAM_AUTH_TOKEN"
 
 # Error payloads — structured rather than raised so the MCP tool's caller
 # always receives a JSON-RPC ``result``. Raising would surface as an

@@ -42,7 +42,8 @@ from ._runtime import set_bridge
 
 log = logging.getLogger("scitex_agent_container.telegram")
 
-LEAD_AUTH_TOKEN_ENV = "LEAD_TELEGRAM_AUTH_TOKEN"
+LEAD_AUTH_TOKEN_ENV = "SCITEX_LEAD_TELEGRAM_AUTH_TOKEN"
+LEAD_BOT_TOKEN_ENV = "SCITEX_LEAD_TELEGRAM_BOT_TOKEN"
 
 
 @dataclass
@@ -91,36 +92,50 @@ def maybe_start_bridge(
     tools can find it without the host plumbing through a handle.
     """
     coerced = _coerce_spec(spec) or _SpecLike(
-        bot_token_env="SCITEX_AGENT_CONTAINER_TELEGRAM_BOT_TOKEN",
+        bot_token_env=LEAD_BOT_TOKEN_ENV,
         allowed_users=[],
         auto_connect=True,
     )
 
+    log.info("telegram[startup]: validating bridge preconditions...")
+
     if not coerced.auto_connect:
-        log.info("telegram: auto_connect=false; bridge will not start")
+        log.info("telegram[startup]: auto_connect=false; bridge will not start")
         return None
 
     auth_token = os.environ.get(LEAD_AUTH_TOKEN_ENV)
     if not auth_token:
-        log.info(
-            "telegram: %s unset — this process is not the lead, bridge "
-            "will not start (subagent / non-lead container)",
+        log.warning(
+            "telegram[startup] FAIL: %s unset — bridge will not start "
+            "(this process is not the lead, or .env wasn't sourced)",
             LEAD_AUTH_TOKEN_ENV,
         )
         return None
+    log.info(
+        "telegram[startup] OK: %s present (len=%d)",
+        LEAD_AUTH_TOKEN_ENV,
+        len(auth_token),
+    )
 
-    # Resolve the bot token. Honour both prefixed forms by stripping the
-    # known prefix on the configured env var if present.
+    # Resolve the bot token. Try the configured env var first, then fall
+    # back to the canonical SCITEX_LEAD_TELEGRAM_BOT_TOKEN.
     bot_token: Optional[str] = os.environ.get(coerced.bot_token_env)
+    if not bot_token and coerced.bot_token_env != LEAD_BOT_TOKEN_ENV:
+        bot_token = os.environ.get(LEAD_BOT_TOKEN_ENV)
     if not bot_token:
-        # Fall back to the sac dual-prefix lookup
+        # Last-resort: honour legacy prefix-stripping behaviour
         if coerced.bot_token_env.startswith("SAC_"):
             bot_token = getenv(coerced.bot_token_env[len("SAC_") :])
         elif coerced.bot_token_env.startswith("SCITEX_AGENT_CONTAINER_"):
             bot_token = getenv(coerced.bot_token_env[len("SCITEX_AGENT_CONTAINER_") :])
     if not bot_token:
-        log.warning("telegram: %s unset; cannot start bridge", coerced.bot_token_env)
+        log.warning(
+            "telegram[startup] FAIL: bot token unset (tried %s, %s); cannot start bridge",
+            coerced.bot_token_env,
+            LEAD_BOT_TOKEN_ENV,
+        )
         return None
+    log.info("telegram[startup] OK: bot token present (len=%d)", len(bot_token))
 
     # WARN: launcher dependency on --dangerously-load-development-channels
     log.warning(

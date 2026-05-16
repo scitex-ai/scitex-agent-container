@@ -466,14 +466,17 @@ class TelegramBridge:
         method: str,
         params: dict[str, Any] | None = None,
     ) -> Any:
-        """POST ``params`` to ``method`` on the Bot API; return ``result``."""
-        if self._session is None:
-            return None
+        """POST to the Bot API; lazily create session if start() not run; log every path."""
         try:
             import aiohttp
         except ImportError:  # pragma: no cover
+            log.error("telegram %s: aiohttp not installed", method)
             return None
+        if self._session is None:
+            log.info("telegram %s: opening lazy aiohttp session", method)
+            self._session = aiohttp.ClientSession()
         url = TELEGRAM_API.format(token=self._token, method=method)
+        log.info("telegram %s POST keys=%s", method, list((params or {}).keys()))
         try:
             timeout = aiohttp.ClientTimeout(total=self._poll_timeout + 10)
             async with self._session.post(
@@ -481,15 +484,20 @@ class TelegramBridge:
             ) as resp:
                 data = await resp.json()
                 if not data.get("ok"):
-                    desc = data.get("description", "")
-                    log.error("telegram %s failed: %s", method, desc)
+                    log.error(
+                        "telegram %s FAIL http=%s code=%s desc=%s",
+                        method,
+                        resp.status,
+                        data.get("error_code"),
+                        data.get("description", ""),
+                    )
                     if data.get("error_code") == 409 and method == "getUpdates":
                         log.info(
-                            "telegram 409 Conflict on getUpdates — waiting %ds",
-                            self._poll_timeout,
+                            "telegram 409 on getUpdates — wait %ds", self._poll_timeout
                         )
                         await asyncio.sleep(self._poll_timeout)
                     return None
+                log.info("telegram %s OK", method)
                 return data.get("result")
         except asyncio.TimeoutError:
             log.warning("telegram %s timed out", method)
