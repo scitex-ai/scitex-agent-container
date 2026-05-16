@@ -65,11 +65,20 @@ def _default_config_path() -> Path:
 
 @dataclass(frozen=True)
 class PeerSpec:
-    """One peer entry from ``peers:`` in config.yaml."""
+    """One peer entry from ``peers:`` in config.yaml.
+
+    ``env_preamble`` is an optional sequence of shell snippets that must
+    run on the remote *before* the dispatched command — used for hosts
+    that gate tools (apptainer, conda, ...) behind Lmod and friends.
+    Spartan is the canonical example: ``apptainer`` is only on $PATH
+    after two separate ``module load`` calls (see the Spartan host
+    skill doc for the rationale).
+    """
 
     name: str
     ssh: str  # 'user@host[:port]' or just 'host' (assumes ~/.ssh/config)
     via: tuple[str, ...] = ()  # ssh ProxyJump chain by peer name
+    env_preamble: tuple[str, ...] = ()  # remote shell snippets joined by &&
 
     def jump_chain(self, peers: dict[str, "PeerSpec"]) -> list[str]:
         """Resolve ``via`` peer names into their ssh targets in order.
@@ -80,6 +89,15 @@ class PeerSpec:
         loudly elsewhere (see ``Config.validate``).
         """
         return [peers[name].ssh for name in self.via if name in peers]
+
+    def joined_preamble(self) -> str:
+        """Return ``env_preamble`` lines joined by ``&&`` (empty if unset).
+
+        ``&&`` rather than ``;`` so a failed ``module load`` short-circuits
+        the dispatched command — surfaces config breakage as a clear
+        non-zero exit instead of silently running with an unbound PATH.
+        """
+        return " && ".join(line for line in self.env_preamble if line.strip())
 
 
 @dataclass(frozen=True)
@@ -170,9 +188,47 @@ def load(path: Path | None = None) -> Config:
             name=str(name),
             ssh=str(spec.get("ssh") or ""),
             via=tuple(str(x) for x in via_raw),
+            env_preamble=_parse_env_preamble(name, spec.get("env_preamble")),
         )
 
     return Config(host=host, peers=peers, source_path=p)
+
+
+def _parse_env_preamble(name: str, raw) -> tuple[str, ...]:
+    """Normalize a peer's ``env_preamble:`` YAML field into a tuple.
+
+    Accepts three shapes:
+
+    * Missing / ``None`` → ``()``.
+    * A scalar string (possibly multi-line via YAML's ``|`` literal block).
+      Split on newlines; blank lines and ``#``-only lines are dropped.
+    * A list of strings — each element is one shell snippet.
+
+    Any other shape (dict, list-of-non-strings, ...) raises ``ValueError``
+    with the peer name so the operator's typo surfaces at config-load
+    time, not as an opaque ssh failure mid-dispatch.
+    """
+    if raw is None:
+        return ()
+    if isinstance(raw, str):
+        lines = [line.strip() for line in raw.splitlines()]
+        return tuple(line for line in lines if line and not line.startswith("#"))
+    if isinstance(raw, list):
+        out: list[str] = []
+        for item in raw:
+            if not isinstance(item, str):
+                raise ValueError(
+                    f"config.yaml: peer '{name}' env_preamble entries must "
+                    f"be strings, got {type(item).__name__}"
+                )
+            stripped = item.strip()
+            if stripped and not stripped.startswith("#"):
+                out.append(stripped)
+        return tuple(out)
+    raise ValueError(
+        f"config.yaml: peer '{name}' env_preamble must be a string or list "
+        f"of strings, got {type(raw).__name__}"
+    )
 
 
 def build_ssh_argv(
@@ -194,9 +250,22 @@ def build_ssh_argv(
     (probe-friendly), and ``-o ServerAliveInterval=15`` (keepalive
     so a wedged middle-hop is detectable).
 
+    When the peer carries an ``env_preamble`` (e.g. Spartan, where
+    ``apptainer`` is only on $PATH after two ``module load`` calls),
+    the dispatched command is wrapped in ``bash -lc '<preamble> &&
+    <quoted-cmd>'`` so the modules are loaded in a fresh login shell
+    before the real command runs. The entire wrapper collapses into a
+    single argv element (ssh joins everything after the host with
+    spaces and re-parses it via the remote login shell, so the wrapper
+    must be one pre-quoted token to survive that round-trip).  Peers
+    without an ``env_preamble`` keep the byte-identical pre-existing
+    argv shape — mba / nas invocations are unchanged.
+
     Returns the argv list ready for ``subprocess.run``. Raises
     ``KeyError`` when ``peer_name`` isn't in ``peers``.
     """
+    import shlex
+
     peer = peers[peer_name]
     argv: list[str] = [ssh_binary]
     if peer.via:
@@ -214,7 +283,21 @@ def build_ssh_argv(
     if extra_opts:
         argv += list(extra_opts)
     argv += [peer.ssh, "--"]
-    argv += list(command)
+    preamble = peer.joined_preamble()
+    if preamble:
+        # OpenSSH joins every token after the host with spaces and feeds
+        # the result to the remote user's login shell, which re-parses
+        # it. To get the remote shell to launch `bash -lc 'CMD'` we
+        # therefore must collapse the wrapping into a single argv
+        # element whose contents are pre-quoted at *both* layers: the
+        # inner CMD (preamble && user-cmd) is shlex-quoted so the
+        # `bash -lc` parse sees one token, and the resulting string is
+        # appended whole so ssh's word-join preserves it. .bashrc is
+        # sourced via `-l` so Lmod's `module` function is in scope.
+        inner = f"{preamble} && {shlex.join(list(command))}"
+        argv.append(f"bash -lc {shlex.quote(inner)}")
+    else:
+        argv += list(command)
     return argv
 
 
