@@ -440,6 +440,11 @@ def start(
                 one_shot=one_shot,
             )
             if as_json:
+                # a2a_port + started_at: peer-side --json output
+                # consumed by lead's step-4 dispatcher.
+                from ..._state.state_db import now_iso as _now_iso
+
+                _raw_port = getattr(getattr(config, "a2a", None), "port", None)
                 _emit(
                     {
                         "name": config.name,
@@ -448,6 +453,8 @@ def start(
                         "host_workdir": host_workdir,
                         "container_workdir": container_workdir,
                         "dry_run": dry_run,
+                        "a2a_port": _raw_port if isinstance(_raw_port, int) else None,
+                        "started_at": None if dry_run else _now_iso(),
                     }
                 )
             else:

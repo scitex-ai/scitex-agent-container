@@ -488,3 +488,20 @@ class TestDispatchBranch:
         result = runner.invoke(start, [str(yaml_path)])
         # Assert
         assert "NotImplementedError" not in result.output
+
+    def test_no_redispatch_flag_skips_dispatch_branch(self, tmp_path, env_save_restore):
+        # Arrange — spec.host names a known remote peer; --no-redispatch
+        # must skip the dispatch branch (peer-side invocation contract
+        # — prevents ssh recursion). Singleton skip still fires
+        # because spec.host != current host.
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        env_save_restore.set("HOME", str(tmp_path))
+        cfg = _write_peer_config(tmp_path, "remote-host")
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg))
+        yaml_path = _write_singleton_yaml(tmp_path, "mini", "remote-host")
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, [str(yaml_path), "--no-redispatch"])
+        # Assert — dispatcher's FileNotFoundError (its first action when
+        # spec dir is absent) MUST NOT appear; the branch never fired.
+        assert "FileNotFoundError" not in result.output
