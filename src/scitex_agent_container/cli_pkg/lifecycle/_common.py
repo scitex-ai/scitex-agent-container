@@ -9,13 +9,39 @@ and the foreground-tail multiplexer.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 
 from ...config import AgentConfig
 
+if TYPE_CHECKING:
+    from ..._state.host_config import PeerSpec
+
 _SKIP_DIR_NAMES = {"legacy-agents", "shared", "GITIGNORED"}
+
+
+def _resolve_dispatch_peer(
+    target_host: str | None,
+    current_host: str,
+    peers: Mapping[str, "PeerSpec"],
+) -> str | None:
+    """Return the peer name to dispatch to, or None for local execution.
+
+    Pure resolver — never raises, never logs, never reads files. Returns
+    a peer name only when ``target_host`` names a known peer that is not
+    the current host. An unknown ``target_host`` yields ``None`` so the
+    caller can decide whether to skip locally or escalate the mismatch.
+    """
+    if target_host is None:
+        return None
+    if target_host == current_host:
+        return None
+    if target_host not in peers:
+        return None
+    return target_host
 
 
 def _singleton_skip_reason(config: AgentConfig, hostname: str) -> str | None:
@@ -213,6 +239,7 @@ def _multiplex_foreground_tails(names, sleeper=None):
 
 __all__ = [
     "_SKIP_DIR_NAMES",
+    "_resolve_dispatch_peer",
     "_singleton_skip_reason",
     "_iter_agent_yamls",
     "_discover_all_agents",
