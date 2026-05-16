@@ -19,14 +19,32 @@ follow-up diff.
 
 from __future__ import annotations
 
+import shlex
+import subprocess
 from collections.abc import Mapping
+from pathlib import Path
 from typing import TYPE_CHECKING
+
+import click
 
 from ...config import AgentConfig
 from ._common import _resolve_dispatch_peer
 
 if TYPE_CHECKING:
     from ..._state.host_config import PeerSpec
+
+
+def _is_first_launch_line(line: str) -> bool:
+    """Return True when an rsync ``--itemize-changes`` row is a pure-new
+    entry (head contains only ``+`` markers, no ``*`` deletion flag).
+
+    Itemized format: ``YXcstpoguax <name>`` — the leading 11-char head
+    is everything before the first space. First-launch markers are
+    ``>f+++++++++`` / ``cd+++++++++``; drift uses letters like
+    ``c.st....``; deletes use ``*deleting``.
+    """
+    head = line.split(" ", 1)[0]
+    return "+++++++++" in head and "*" not in head
 
 
 def _dispatch_remote_start(
@@ -38,21 +56,142 @@ def _dispatch_remote_start(
 ) -> int:
     """Dispatch ``sac agents start <name>`` to a remote ``peer``.
 
-    Step 2 lands only the routing branch in ``_start.py``; the actual
-    drift check, rsync, ssh invocation, JSON parse, and lead-side
-    registry-row write arrive in steps 3-6. Until then this helper
-    refuses to run — a deliberate loud failure so the dispatch branch
-    can't silently look-successful on a half-built code path.
+    Step 3b implementation: locate the local spec dir, drift-check via
+    ``rsync --dry-run --itemize-changes`` (content-checksum mode), and
+    perform the real rsync when the drift gate allows it. The remote
+    ``sac agents start`` invocation, JSON parse, and lead-side
+    instances-row write are step 4 — this helper still raises
+    ``NotImplementedError`` after rsync to keep the dispatch branch
+    loudly half-built per the no-silent-stubs rule.
+
+    Args:
+        name: Agent name (used as both spec-dir basename and remote
+            ``sac agents start`` argument).
+        peer: ssh alias resolved from ``~/.ssh/config``. The matching
+            ``ssh:`` field in ``~/.scitex/agent-container/config.yaml``
+            is the source of this alias.
+        dry_run: When True, print the planned change count and return
+            0 without performing the actual rsync.
+        force: When True, override the drift gate and rsync anyway.
+
+    Note:
+        The ``env_preamble`` peer field is NOT yet honoured by rsync —
+        rsync uses the bare ``peer:path`` form and inherits the
+        ``~/.ssh/config`` route. Module-load preambles become relevant
+        in step 4 when ssh-hopped ``sac agents start`` lands.
 
     Raises:
-        NotImplementedError: always, until step 3 lands.
+        FileNotFoundError: When the local spec dir for ``name`` does
+            not exist under ``~/.scitex/agent-container/agents/``.
+        RuntimeError: When ``rsync --dry-run`` fails, when drift is
+            detected without ``--force``, or when the real rsync fails.
+        NotImplementedError: After a successful rsync — step 4
+            (remote ``sac agents start`` invocation) is the next
+            wiring step.
     """
+    # 1. Locate the local spec dir.
+    src_dir = Path.home() / ".scitex" / "agent-container" / "agents" / name
+    if not src_dir.is_dir():
+        raise FileNotFoundError(
+            f"Spec dir for {name!r} not found on lead at {src_dir!s}. "
+            f"Create the spec locally before dispatching to {peer!r}."
+        )
+
+    # 2. rsync --dry-run --itemize-changes (content-checksum mode).
+    remote_target = f"{peer}:.scitex/agent-container/agents/{name}/"
+    exclude_args = [
+        "--exclude=runtime/",
+        "--exclude=__pycache__/",
+        "--exclude=.pytest_cache/",
+        "--exclude=_sphinx_html/",
+    ]
+    rsync_dry_argv = [
+        "rsync",
+        "-acvn",  # archive + checksum + verbose + dry-run
+        "--itemize-changes",
+        "--delete",
+        *exclude_args,
+        f"{src_dir!s}/",
+        remote_target,
+    ]
+    rsync_dry = subprocess.run(
+        rsync_dry_argv,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if rsync_dry.returncode != 0:
+        raise RuntimeError(
+            f"rsync --dry-run failed against {peer!r} (rc={rsync_dry.returncode}):\n"
+            f"argv: {' '.join(shlex.quote(a) for a in rsync_dry_argv)}\n"
+            f"stderr:\n{rsync_dry.stderr}"
+        )
+
+    # 3. Parse itemized output. Itemized rows have an 11-char "YXcstpoguax"
+    # head; first-launch rows are all-plus; drift rows use letters; deletes
+    # start with "*deleting". Filter the summary trailers that rsync emits.
+    itemized = [
+        line
+        for line in rsync_dry.stdout.splitlines()
+        if line and not line.startswith((" ", "sending", "sent", "total"))
+    ]
+    changes = [line for line in itemized if line and len(line) > 11]
+    first_launch = bool(changes) and all(_is_first_launch_line(c) for c in changes)
+    drift = bool(changes) and not first_launch
+
+    # 4. Drift gate — error unless --force was passed.
+    if drift and not force:
+        raise RuntimeError(
+            f"Spec drift between lead and {peer!r} for agent {name!r}:\n"
+            + "\n".join(f"  {c}" for c in changes)
+            + "\n\nResolve manually then re-run, "
+            + "or pass --force to overwrite peer-side from lead. "
+            + "See ~/proj/scitex-lead/GITIGNORED/WORKING/remote-agent-pipeline.md."
+        )
+
+    # 5. Dry-run mode: report the plan and return without rsyncing.
+    if dry_run:
+        if not changes:
+            status = "no drift"
+        elif first_launch:
+            status = "first launch"
+        else:
+            status = "drift overridden by --force"
+        click.echo(
+            f"[dispatch] dry-run for {name!r} -> {peer!r}: "
+            f"{status}; {len(changes)} file change(s) planned."
+        )
+        return 0
+
+    # 6. Actual rsync (no --dry-run).
+    rsync_real_argv = [
+        "rsync",
+        "-acv",
+        "--delete",
+        *exclude_args,
+        f"{src_dir!s}/",
+        remote_target,
+    ]
+    rsync_real = subprocess.run(
+        rsync_real_argv,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if rsync_real.returncode != 0:
+        raise RuntimeError(
+            f"rsync failed against {peer!r} (rc={rsync_real.returncode}):\n"
+            f"argv: {' '.join(shlex.quote(a) for a in rsync_real_argv)}\n"
+            f"stderr:\n{rsync_real.stderr}"
+        )
+
+    # 7. Step 4 stops here — ssh + remote sac start + JSON parse + lead-side
+    # instances row is the next step. Loud failure preserves the no-silent-
+    # stubs rule from feedback_no_silent_stubs memory.
     raise NotImplementedError(
-        f"_dispatch_remote_start(name={name!r}, peer={peer!r}, "
-        f"dry_run={dry_run}, force={force}) is not yet implemented. "
-        f"Step 3 adds the drift check and rsync; see "
-        f"~/proj/scitex-lead/GITIGNORED/WORKING/remote-agent-pipeline.md "
-        f"for the implementation plan."
+        f"_dispatch_remote_start: rsync to {peer!r} complete for {name!r}, "
+        f"but the remote `sac agents start {name}` invocation is step 4. "
+        f"See ~/proj/scitex-lead/GITIGNORED/WORKING/remote-agent-pipeline.md."
     )
 
 

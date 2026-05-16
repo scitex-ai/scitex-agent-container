@@ -346,13 +346,19 @@ class TestResumeAndForeground:
 
 # ---------------------------------------------------------------------------
 # Cross-host dispatch routing branch — drives the real Click command with a
-# real config.yaml on disk and the real ``_resolve_dispatch_peer``. The stub
-# ``_dispatch_remote_start`` raises ``NotImplementedError`` (no silent stub).
-# The per-target loop in ``_start.py`` has a catch-all that turns the
-# exception into a printed traceback + ``sys.exit(1)``, so the observable
-# signal lives in ``result.output``: the ``NotImplementedError`` class name +
-# the dispatcher's signature line prove the routing branch reached the
-# dispatcher; absence means the branch fell through. See feedback_no_silent_stubs.
+# real config.yaml on disk and the real ``_resolve_dispatch_peer``. Step 3b
+# replaced the unconditional ``NotImplementedError`` stub with a drift-check
+# / rsync body that fails early on a missing local spec dir (``FileNotFoundError``)
+# when ``~/.scitex/agent-container/agents/<name>/`` does not exist. The
+# per-target loop in ``_start.py`` has a catch-all that turns the exception
+# into a printed traceback + ``sys.exit(1)``, so the observable signal lives
+# in ``result.output``: ``FileNotFoundError`` + the peer name prove the
+# routing branch reached the dispatcher; absence means the branch fell
+# through. See feedback_no_silent_stubs.
+#
+# Flag-propagation (``--dry-run`` / ``--force``) is proven directly by the
+# unit tests in ``test__dispatch.py``, which call ``_dispatch_remote_start``
+# with ``dry_run=True`` / ``force=True`` and observe distinct branches.
 # ---------------------------------------------------------------------------
 
 
@@ -371,8 +377,10 @@ class TestDispatchBranch:
         self, tmp_path, env_save_restore
     ):
         # Arrange — spec.host is a known remote peer; routing branch must
-        # reach the dispatcher, which raises NotImplementedError.
+        # reach the dispatcher, which raises FileNotFoundError because no
+        # local spec dir exists under ``~/.scitex/agent-container/agents/``.
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        env_save_restore.set("HOME", str(tmp_path))
         cfg = _write_peer_config(tmp_path, "remote-host")
         env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg))
         yaml_path = _write_singleton_yaml(tmp_path, "mini", "remote-host")
@@ -380,7 +388,7 @@ class TestDispatchBranch:
         # Act
         result = runner.invoke(start, [str(yaml_path)])
         # Assert
-        assert "NotImplementedError" in result.output
+        assert "FileNotFoundError" in result.output
 
     def test_dispatch_branch_exception_message_names_target_peer(
         self, tmp_path, env_save_restore
@@ -388,6 +396,7 @@ class TestDispatchBranch:
         # Arrange — dispatcher's traceback must echo the peer name so we
         # know the routing branch handed off the resolved peer.
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        env_save_restore.set("HOME", str(tmp_path))
         cfg = _write_peer_config(tmp_path, "remote-host")
         env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg))
         yaml_path = _write_singleton_yaml(tmp_path, "mini", "remote-host")
@@ -395,14 +404,33 @@ class TestDispatchBranch:
         # Act
         result = runner.invoke(start, [str(yaml_path)])
         # Assert
-        assert "peer='remote-host'" in result.output
+        assert "remote-host" in result.output
 
-    def test_dispatch_branch_propagates_dry_run_flag_to_dispatcher(
+    def test_dispatch_branch_propagates_agent_name_to_dispatcher(
         self, tmp_path, env_save_restore
     ):
-        # Arrange — --dry-run must reach the dispatcher's kwargs; the
-        # traceback echoes ``dry_run=True``.
+        # Arrange — the dispatcher's exception must name the spec it tried
+        # to dispatch, proving the agent name flowed through the routing
+        # branch.
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        env_save_restore.set("HOME", str(tmp_path))
+        cfg = _write_peer_config(tmp_path, "remote-host")
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg))
+        yaml_path = _write_singleton_yaml(tmp_path, "mini", "remote-host")
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, [str(yaml_path)])
+        # Assert
+        assert "Spec dir for 'mini'" in result.output
+
+    def test_dispatch_branch_exits_nonzero_when_dispatcher_raises(
+        self, tmp_path, env_save_restore
+    ):
+        # Arrange — the routing branch must fire and the dispatcher's
+        # FileNotFoundError must propagate to a nonzero exit, not be
+        # silently swallowed.
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        env_save_restore.set("HOME", str(tmp_path))
         cfg = _write_peer_config(tmp_path, "remote-host")
         env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg))
         yaml_path = _write_singleton_yaml(tmp_path, "mini", "remote-host")
@@ -410,22 +438,7 @@ class TestDispatchBranch:
         # Act
         result = runner.invoke(start, [str(yaml_path), "--dry-run", "--force"])
         # Assert
-        assert "dry_run=True" in result.output
-
-    def test_dispatch_branch_propagates_force_flag_to_dispatcher(
-        self, tmp_path, env_save_restore
-    ):
-        # Arrange — --force must reach the dispatcher's kwargs; the
-        # traceback echoes ``force=True``.
-        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
-        cfg = _write_peer_config(tmp_path, "remote-host")
-        env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg))
-        yaml_path = _write_singleton_yaml(tmp_path, "mini", "remote-host")
-        runner = CliRunner()
-        # Act
-        result = runner.invoke(start, [str(yaml_path), "--dry-run", "--force"])
-        # Assert
-        assert "force=True" in result.output
+        assert result.exit_code != 0
 
     def test_dispatch_branch_quiet_when_spec_host_equals_current_host(
         self, tmp_path, env_save_restore
