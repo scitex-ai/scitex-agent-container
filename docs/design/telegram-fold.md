@@ -1,7 +1,78 @@
-# Telegram fold into sac MCP — design (Phase 1)
+# Telegram fold into sac MCP — design
 
-Status: design + scaffolding landed; transport stubs feature-flagged off.
+Status: **Phase 2 + Phase 3 complete** — bridge ported from orochi, allowed-
+users filter enforced, flock singleton with stale-PID recovery in place, six
+transport tools backed by the in-process bridge, default-on registration
+(`SCITEX_AGENT_CONTAINER_TELEGRAM_FOLD=0` to opt out). Phase 1 scaffolding
+landed at commit `c877354` on develop; Phase 2+3 in
+`feature/telegram-fold-phase2`.
 Audit reference: `/home/ywatanabe/proj/lead/GITIGNORED/dev/05_sac-mcp-telegram.md`.
+
+## Launcher dependency (READ THIS FIRST)
+
+The inbound side relies on the Claude Code launcher being invoked with
+`--dangerously-load-development-channels server:scitex-agent-container`.
+Without that flag, Claude silently drops every `notifications/claude/channel`
+emission the bridge produces. The bridge logs a WARN at startup
+(`telegram: bridge starting. NOTE: inbound channel notifications require the
+Claude Code launcher to be invoked with …`) so a misconfigured launcher is
+loud — but Claude will not surface the failure on its own.
+
+The lead repo's launcher script owns that flag; a separate subagent ships
+the launcher change.
+
+## How to enable
+
+1. Set `LEAD_TELEGRAM_AUTH_TOKEN` in the lead's `~/.scitex/lead/.env`. Any
+   strong random string works (the launcher mints one if absent).
+2. Set `SCITEX_AGENT_CONTAINER_TELEGRAM_BOT_TOKEN` (or
+   `SAC_TELEGRAM_BOT_TOKEN`) in the same env to the Telegram BotFather token.
+3. Add an agent spec with `spec.telegram.allowed_users: ["<your-tg-user-id>"]`.
+4. Make sure the launcher passes
+   `--dangerously-load-development-channels server:scitex-agent-container`.
+5. Start the lead's Claude session. The bridge boots inside the
+   `scitex-agent-container` MCP server (the FastMCP process Claude spawns),
+   acquires the per-token flock, and begins long-polling.
+
+## How to disable
+
+* Per-session: set `SCITEX_AGENT_CONTAINER_TELEGRAM_FOLD=0` in the lead's
+  env. The tools de-register; the bridge still boots but its outbound
+  surface is unreachable from Claude.
+* Per-spec: set `spec.telegram.auto_connect: false`. The bridge does not
+  start; outbound tools return `{"error": "telegram bridge is not
+  initialised on this host"}`.
+* Globally: unset `LEAD_TELEGRAM_AUTH_TOKEN`. The startup hook short-
+  circuits and the bridge is never constructed.
+
+## Phase 2 + Phase 3 — what shipped
+
+* **TelegramBridge** (`src/scitex_agent_container/_telegram/_bridge.py`):
+  aiohttp-backed long-poll, allowed-users filter, channel-notifier
+  injection point, lock-acquire-before-IO startup, graceful shutdown.
+* **TelegramBridgeLock** (`_telegram/_lock.py`): per-bot-token `flock` at
+  `~/.scitex/agent-container/runtime/telegram/<token-hash>.lock`; reclaims
+  the lock when the recorded PID is dead (`kill(pid, 0)` → `ESRCH`).
+* **Startup hook** (`_telegram/_startup.py`): `maybe_start_bridge(spec, …)`
+  returns a constructed bridge when `LEAD_TELEGRAM_AUTH_TOKEN` +
+  bot-token env are present and `spec.telegram.auto_connect=true`; logs
+  the launcher-flag WARN; registers the instance in the runtime
+  singleton so the MCP tools can find it.
+* **Runtime singleton** (`_telegram/_runtime.py`): `set_bridge` /
+  `get_bridge` / `clear_bridge` + the bridge's auth token shared with
+  the tools layer.
+* **MCP tools** (`_mcp/_tools/_telegram.py`): six transport tools, each
+  gated by the auth token (caller's `LEAD_TELEGRAM_AUTH_TOKEN` env must
+  match the bridge's). Subagents inherit a sanitised env, so they get a
+  structured `{"error": "telegram tools are lead-only; ..."}` response
+  instead of touching the bridge.
+* **MCP server boot** (`_mcp/server.py`): `_build_server()` now calls
+  `_maybe_boot_telegram_bridge(server)` after `register_all_tools`.
+  Bridge runs in the same process as the FastMCP server, which is the
+  process spawned by Claude Code when it loads the lead's
+  `scitex-agent-container` MCP server.
+* **Feature-flag flip**: `SCITEX_AGENT_CONTAINER_TELEGRAM_FOLD` now
+  defaults to ON. Set to `0` / `false` / `off` / `no` to opt out.
 
 ## Goal
 

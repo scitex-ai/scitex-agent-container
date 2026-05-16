@@ -30,6 +30,34 @@ versioning follows [SemVer](https://semver.org/).
   historical reference only.
 
 ### Added
+- **telegram fold (Phase 2 + Phase 3)** — the Telegram fold is now a
+  first-class sac feature. `TelegramBridge` is fully ported from orochi
+  (`_telegram/_bridge.py`): aiohttp long-poll against the Telegram Bot
+  API, `allowed_users` filter enforced on inbound updates (empty list
+  fails closed), and graceful shutdown that closes the API session and
+  releases the singleton lock. The per-bot-token `flock`
+  (`_telegram/_lock.py`) lives at
+  `~/.scitex/agent-container/runtime/telegram/<token-hash>.lock` and
+  reclaims the lock when the recorded PID is dead — the failure mode
+  that the standalone telegrammer hits and that previously required a
+  manual `rm`. The bridge boots from `_mcp/server.py` via
+  `_maybe_boot_telegram_bridge`, which only fires when
+  `LEAD_TELEGRAM_AUTH_TOKEN` is set in the env (i.e. only on the lead
+  session — subagents inherit a sanitised env and get a structured
+  `{"error": ...}` response from the tools). The six transport tools
+  (`telegram_send`, `telegram_reply`, `telegram_react`,
+  `telegram_edit_message`, `telegram_download_attachment`,
+  `telegram_send_document`) are wired to the in-process bridge and
+  registered by default — opt out via
+  `SCITEX_AGENT_CONTAINER_TELEGRAM_FOLD=0` (previously opt-in via
+  `=1`). New `sac.telegram` Python API submodule re-exports the verbs
+  for §6 parity. Inbound messages emit `notifications/claude/channel`
+  payloads shaped `{"content": ..., "meta": {"source": "telegram",
+  "chat_id": ..., "message_id": ..., "user_id": ..., "username": ...,
+  ...}}`; these only render when the Claude Code launcher is invoked
+  with `--dangerously-load-development-channels
+  server:scitex-agent-container` — see `docs/design/telegram-fold.md`
+  for the launcher dependency note + WARN-log signal.
 - **telegram fold (Phase 1)** — design + scaffolding for folding
   claude-code-telegrammer's transport tools into sac MCP (Option A from
   `GITIGNORED/dev/05_sac-mcp-telegram.md`). New `_telegram/` package with a
