@@ -434,3 +434,99 @@ def test_send_document_errors_on_missing_file(tmp_path) -> None:
 
     # Assert
     assert "no such file" in out.get("error", "")
+
+
+# --- channel-push payload shape ------------------------------------------
+#
+# Pin the shape that ``_process_update`` emits, since that payload becomes
+# the body of a ``notifications/claude/channel`` push. A silent rename of
+# any of these meta fields would break the receiver wiring without any
+# obvious test failure elsewhere.
+
+
+def _build_bridge_with_sink() -> tuple[TelegramBridge, list[dict[str, Any]]]:
+    bridge = TelegramBridge(bot_token="t", allowed_users=["1"], target_agent="master")
+    sink: list[dict[str, Any]] = []
+
+    async def notifier(payload: dict[str, Any]) -> None:
+        sink.append(payload)
+
+    bridge._notifier = notifier  # type: ignore[assignment]
+    return bridge, sink
+
+
+def _golden_channel_update() -> dict[str, Any]:
+    return {
+        "update_id": 99,
+        "message": {
+            "message_id": 444,
+            "date": 1700000000,
+            "from": {"id": 1, "username": "yu", "first_name": "Yu"},
+            "chat": {"id": -10042},
+            "text": "ping",
+        },
+    }
+
+
+def test_channel_push_top_level_keys() -> None:
+    # Arrange
+    bridge, sink = _build_bridge_with_sink()
+
+    # Act
+    asyncio.run(bridge._process_update(_golden_channel_update()))
+
+    # Assert
+    assert set(sink[0].keys()) == {"content", "meta"}
+
+
+def test_channel_push_content_is_message_text() -> None:
+    # Arrange
+    bridge, sink = _build_bridge_with_sink()
+
+    # Act
+    asyncio.run(bridge._process_update(_golden_channel_update()))
+
+    # Assert
+    assert sink[0]["content"] == "ping"
+
+
+def test_channel_push_meta_source_is_telegram() -> None:
+    # Arrange
+    bridge, sink = _build_bridge_with_sink()
+
+    # Act
+    asyncio.run(bridge._process_update(_golden_channel_update()))
+
+    # Assert
+    assert sink[0]["meta"]["source"] == "telegram"
+
+
+def test_channel_push_meta_required_fields_present() -> None:
+    # Arrange
+    bridge, sink = _build_bridge_with_sink()
+    required = {
+        "source",
+        "chat_id",
+        "message_id",
+        "user_id",
+        "username",
+        "display_name",
+        "ts",
+    }
+
+    # Act
+    asyncio.run(bridge._process_update(_golden_channel_update()))
+
+    # Assert
+    assert required.issubset(set(sink[0]["meta"].keys()))
+
+
+def test_channel_push_meta_ts_is_string() -> None:
+    # Arrange
+    bridge, sink = _build_bridge_with_sink()
+
+    # Act
+    asyncio.run(bridge._process_update(_golden_channel_update()))
+
+    # Assert
+    assert isinstance(sink[0]["meta"]["ts"], str)
