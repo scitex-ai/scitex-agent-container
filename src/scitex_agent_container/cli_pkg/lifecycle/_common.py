@@ -23,33 +23,6 @@ if TYPE_CHECKING:
 _SKIP_DIR_NAMES = {"legacy-agents", "shared", "GITIGNORED"}
 
 
-def _dispatch_remote_start(
-    name: str,
-    peer: str,
-    *,
-    dry_run: bool = False,
-    force: bool = False,
-) -> int:
-    """Dispatch ``sac agents start <name>`` to a remote ``peer``.
-
-    Step 2 lands only the routing branch in ``_start.py``; the actual
-    drift check, rsync, ssh invocation, JSON parse, and lead-side
-    registry-row write arrive in steps 3-6. Until then this helper
-    refuses to run — a deliberate loud failure so the dispatch branch
-    can't silently look-successful on a half-built code path.
-
-    Raises:
-        NotImplementedError: always, until step 3 lands.
-    """
-    raise NotImplementedError(
-        f"_dispatch_remote_start(name={name!r}, peer={peer!r}, "
-        f"dry_run={dry_run}, force={force}) is not yet implemented. "
-        f"Step 3 adds the drift check and rsync; see "
-        f"~/proj/scitex-lead/GITIGNORED/WORKING/remote-agent-pipeline.md "
-        f"for the implementation plan."
-    )
-
-
 def _resolve_dispatch_peer(
     target_host: str | None,
     current_host: str,
@@ -266,7 +239,6 @@ def _multiplex_foreground_tails(names, sleeper=None):
 
 __all__ = [
     "_SKIP_DIR_NAMES",
-    "_dispatch_remote_start",
     "_resolve_dispatch_peer",
     "_singleton_skip_reason",
     "_iter_agent_yamls",
