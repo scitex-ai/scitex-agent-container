@@ -83,11 +83,62 @@ def _build_server():
             "install with `pip install scitex-agent-container[mcp]`"
         ) from exc
 
-    server = FastMCP(name="scitex-agent-container", instructions=_INSTRUCTIONS)
+    server = FastMCP(
+        name="scitex-agent-container",
+        instructions=_INSTRUCTIONS,
+        lifespan=_telegram_lifespan,
+    )
     register_all_tools(server)
     _declare_channel_capability(server)
     _maybe_boot_telegram_bridge(server)
     return server
+
+
+from contextlib import asynccontextmanager  # noqa: E402
+
+
+@asynccontextmanager
+async def _telegram_lifespan(server):  # type: ignore[no-untyped-def]
+    """FastMCP lifespan context manager. Awaits ``bridge.start()`` at
+    server-up time and ``bridge.stop()`` at server-down time, so the
+    bridge poll task is owned by the long-lived MCP lifetime instead of
+    being a fire-and-forget that anyio cancels.
+
+    The previous design ``loop.create_task(bridge.start())`` inside the
+    ServerSession.__init__ monkey-patch was getting cancelled (proven via
+    a done_callback that logged ``bridge.start() was cancelled``). The
+    lifespan approach awaits start() inside the same task group, so it
+    is part of the supervised lifetime rather than a sibling that can be
+    GC'd or cancelled.
+    """
+    try:
+        from .._telegram._runtime import get_bridge
+    except Exception:  # stx-allow: fallback (reason: telegram optional)
+        yield {}
+        return
+    bridge = get_bridge()
+    if bridge is None:
+        log.info("telegram-lifespan: no bridge registered; nothing to start")
+        yield {}
+        return
+    try:
+        log.info("telegram-lifespan: awaiting bridge.start()")
+        await bridge.start()
+        log.info("telegram-lifespan: bridge.start() returned, poll loop running")
+    except (
+        Exception
+    ):  # stx-allow: fallback (reason: bridge optional; never block MCP server)
+        log.exception(
+            "telegram-lifespan: bridge.start() raised; continuing without poll"
+        )
+    try:
+        yield {}
+    finally:
+        try:
+            log.info("telegram-lifespan: stopping bridge")
+            await bridge.stop()
+        except Exception:  # stx-allow: fallback (reason: shutdown best-effort)
+            log.exception("telegram-lifespan: bridge.stop() raised")
 
 
 def _declare_channel_capability(server: Any) -> None:
