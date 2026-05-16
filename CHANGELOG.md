@@ -6,6 +6,29 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **docs/spec-reference.md** — verified field-by-field against
+  `config/_parsers/` + `config/_validation.py`; corrected
+  `spec.runtime` (REQUIRED → optional with default), `spec.dot_claude`
+  (no auto-discover), `spec.startup_commands[]` (list of dicts not
+  strings), `spec.listen` (LIST of port-declarations, not host-listen
+  override), `spec.telegram.*` (field names: `bot_token_env` /
+  `allowed_users` / `auto_connect` / `greeting`, not `enabled` /
+  `chat_id`), and apptainer `image` (REQUIRED → optional). Flagged
+  `spec.apptainer.relaxed` / `fakeroot` as `(DESIGN — not yet
+  implemented in parser)` and noted that `spec.multiplexer` /
+  `spec.env-file` are parsed but currently missing from
+  `_KNOWN_SPEC_KEYS` (parser/validator drift to fix in a follow-up).
+  Companion audit at `docs/spec-reference.audit.md`.
+
+### Removed
+- **docs/agent-spec-schema.yaml** moved to
+  `docs/legacy/agent-spec-schema-cld-v1.yaml`. It documented the
+  pre-v3 `cld-agent/v1` schema (`metadata.name`, `runtime: claude-code
+  | slurm | slurm-tenant`, `container:` block, `orochi:` block) which
+  is now rejected at load time. Kept under `docs/legacy/` for
+  historical reference only.
+
 ### Added
 - **telegram fold (Phase 1)** — design + scaffolding for folding
   claude-code-telegrammer's transport tools into sac MCP (Option A from
