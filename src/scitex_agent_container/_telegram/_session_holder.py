@@ -105,7 +105,22 @@ def schedule_bridge_autostart(bridge: Any) -> None:
         log.info(
             "session-holder: scheduling bridge.start() via running loop %s", id(loop)
         )
-        loop.create_task(bridge.start())
+        task = loop.create_task(bridge.start())
+
+        def _on_done(t):  # type: ignore[no-untyped-def]
+            # Without this hook, exceptions raised by bridge.start() vanish
+            # into the void (fire-and-forget task). Log them so the
+            # debug.log captures the real failure.
+            if t.cancelled():
+                log.warning("session-holder: bridge.start() was cancelled")
+                return
+            exc = t.exception()
+            if exc is not None:
+                log.exception("session-holder: bridge.start() raised", exc_info=exc)
+            else:
+                log.info("session-holder: bridge.start() completed cleanly")
+
+        task.add_done_callback(_on_done)
 
     on_session_captured(_starter)
 
