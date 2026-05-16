@@ -51,18 +51,38 @@ def _authorize() -> dict[str, Any] | None:
 def _run(coro: Any) -> Any:
     """Run a coroutine to completion regardless of caller context.
 
-    MCP tool callables are sometimes invoked from inside a running loop
-    (FastMCP awaits sync tools in a thread pool). We detect that and
-    schedule onto a fresh loop in a worker thread to avoid
-    ``RuntimeError: cannot be called from a running event loop``.
+    The bridge's aiohttp ClientSession is bound to the MCP server's
+    main asyncio loop. FastMCP schedules sync tools onto a worker
+    thread, so we cannot simply ``asyncio.run(coro)`` here — that would
+    create a NEW loop, and aiohttp would refuse to reuse the session
+    (returning None silently, which the tool wrapped as ``{}``).
+
+    Instead, look up the bridge's owning loop and submit the coroutine
+    onto it via ``run_coroutine_threadsafe``. The blocking ``.result()``
+    waits for the coroutine to complete on the proper loop.
     """
+    import concurrent.futures
+
+    from ..._telegram._runtime import get_bridge
+
+    # Try to find the bridge's owning loop. It was stored when the
+    # bridge.start() opened the aiohttp session in the lifespan task.
+    bridge = get_bridge()
+    bridge_loop = None
+    if bridge is not None:
+        # The session was created on the loop that ran bridge.start().
+        sess = getattr(bridge, "_session", None)
+        if sess is not None:
+            # aiohttp.ClientSession stashes its loop on `_loop`.
+            bridge_loop = getattr(sess, "_loop", None)
+    if bridge_loop is not None and bridge_loop.is_running():
+        fut = asyncio.run_coroutine_threadsafe(coro, bridge_loop)
+        return fut.result(timeout=30)
+    # No bridge loop available — fall back to fresh loop.
     try:
         asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(coro)
-    # Inside a running loop — push to a dedicated thread.
-    import concurrent.futures
-
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
         return ex.submit(asyncio.run, coro).result()
 
