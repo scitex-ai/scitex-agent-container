@@ -166,7 +166,7 @@ def _maybe_boot_telegram_bridge(server: Any) -> None:
     back to a log-only mode so the rest of the MCP surface still works.
     """
     try:
-        from .._telegram._session_holder import install
+        from .._telegram._session_holder import install, schedule_bridge_autostart
         from .._telegram._startup import maybe_start_bridge
     except Exception as exc:  # stx-allow: fallback (reason: telegram module is optional; never fail MCP boot)
         log.debug("telegram: bridge module unavailable (%s)", exc)
@@ -180,11 +180,14 @@ def _maybe_boot_telegram_bridge(server: Any) -> None:
     if bridge is None:
         return
 
-    # Schedule the actual long-poll only when we already have an event
-    # loop. The MCP stdio transport runs ``server.run()`` which spins
-    # one up internally — at that point we hook via FastMCP lifespan if
-    # available; otherwise we let the bridge sit idle (constructed +
-    # registered) until the operator calls ``start()`` explicitly.
+    # Schedule bridge.start() to fire as soon as the FastMCP server's
+    # ServerSession is constructed (= an asyncio loop is guaranteed
+    # running). Without this, the poll loop never spawns and inbound
+    # Telegram messages never reach the channel push.
+    schedule_bridge_autostart(bridge)
+
+    # Best-effort: also try to start now in case a loop is already
+    # running (e.g. tests / hot-reload). Idempotent inside bridge.start().
     try:
         loop = asyncio.get_event_loop()
         if loop.is_running():

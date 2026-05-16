@@ -76,10 +76,15 @@ def test_returns_none_when_bot_token_missing() -> None:
     # Arrange
     spec = _SpecStub(bot_token_env="SCITEX_AGENT_CONTAINER_TELEGRAM_BOT_TOKEN")
 
-    # Act
+    # Act — both the spec-configured env name AND the canonical lead env
+    # name must be unset for the bridge to abort. Without clearing the
+    # lead env var, the fallback would pick up whatever the host shell
+    # exports (.env on dev machines).
     with (
         _env(LEAD_AUTH_TOKEN_ENV, "tok"),
         _env("SCITEX_AGENT_CONTAINER_TELEGRAM_BOT_TOKEN", None),
+        _env("SCITEX_LEAD_TELEGRAM_BOT_TOKEN", None),
+        _env("TELEGRAM_BOT_TOKEN", None),
     ):
         bridge = maybe_start_bridge(spec)
 

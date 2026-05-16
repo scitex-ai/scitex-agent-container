@@ -19,33 +19,35 @@ only observes session construction. The patch is idempotent: calling
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 log = logging.getLogger(__name__)
 
 
 _active_session: Optional[Any] = None
 _patched: bool = False
+_on_session_captured: list[Callable[[Any], None]] = []
 
 
 def get_active_session() -> Optional[Any]:
-    """Return the most recently constructed ServerSession, or None.
-
-    The returned type is ``Any`` to avoid forcing callers to import
-    ``mcp.server.session.ServerSession`` at module load — the bridge
-    uses duck typing on ``send_message``.
-    """
+    """Return the most recently constructed ServerSession, or None."""
     return _active_session
+
+
+def on_session_captured(cb: Callable[[Any], None]) -> None:
+    """Register a callback fired immediately after each ServerSession is
+    constructed. Runs synchronously inside ``ServerSession.__init__``,
+    so callbacks must be cheap (schedule async work via
+    ``asyncio.create_task`` rather than awaiting).
+    """
+    _on_session_captured.append(cb)
 
 
 def install() -> bool:
     """Idempotently patch ``ServerSession.__init__`` to register every
-    instance in the module-level holder.
-
-    Returns ``True`` if the patch was installed (or already installed),
-    ``False`` if the MCP library couldn't be imported (degrade silently
-    so the MCP server still boots).
+    instance in the module-level holder and fire registered callbacks.
     """
     global _patched
     if _patched:
@@ -62,19 +64,52 @@ def install() -> bool:
         global _active_session
         _orig_init(self, *args, **kwargs)
         _active_session = self
-        log.debug("session-holder: captured ServerSession %s", id(self))
+        log.info("session-holder: captured ServerSession %s", id(self))
+        for cb in list(_on_session_captured):
+            try:
+                cb(self)
+            except Exception:  # stx-allow: fallback (reason: callback failure must not break session init)
+                log.exception("session-holder: callback %s raised", cb)
 
     ServerSession.__init__ = _capturing_init  # type: ignore[method-assign]
     _patched = True
-    log.debug("session-holder: ServerSession.__init__ patched")
+    log.info(
+        "session-holder: ServerSession.__init__ patched (+%d callback(s))",
+        len(_on_session_captured),
+    )
     return True
 
 
+def schedule_bridge_autostart(bridge: Any) -> None:
+    """Register a callback that schedules ``bridge.start()`` the next
+    time a ServerSession is constructed. Idempotent: a second call
+    while the bridge is already running will be a no-op inside
+    ``bridge.start()``.
+    """
+
+    def _starter(_session: Any) -> None:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            log.info("session-holder: scheduling bridge.start()")
+            loop.create_task(bridge.start())
+        else:
+            log.warning(
+                "session-holder: bridge.start() not scheduled (no running loop)"
+            )
+
+    on_session_captured(_starter)
+
+
 def _reset_for_tests() -> None:
-    """Clear the active-session holder. Test-only — not part of the
-    public API."""
+    """Clear the active-session holder + callbacks. Test-only."""
     global _active_session
     _active_session = None
+    _on_session_captured.clear()
 
 
-__all__ = ["get_active_session", "install"]
+__all__ = [
+    "get_active_session",
+    "install",
+    "on_session_captured",
+    "schedule_bridge_autostart",
+]
