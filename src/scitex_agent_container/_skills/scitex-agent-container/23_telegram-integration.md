@@ -1,3 +1,15 @@
+---
+description: |
+  [TOPIC] Telegram fold — sac MCP transport tools + channel-push inbound.
+  [DETAILS] Phase 2+3 wiring: TelegramBridge runs in the sac MCP server,
+  long-polls Telegram, emits notifications/claude/channel on inbound,
+  and backs the six telegram_* MCP tools on outbound. Covers the
+  launcher dependency on --dangerously-load-development-channels, the
+  per-bot-token flock with stale-PID recovery, and the lead-only auth
+  gate via LEAD_TELEGRAM_AUTH_TOKEN.
+tags: [scitex-agent-container-telegram-integration]
+---
+
 # Telegram integration (Phase 2 + 3)
 
 The `_telegram/` package folds claude-code-telegrammer's transport surface
