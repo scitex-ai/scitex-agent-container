@@ -59,8 +59,37 @@ def _build_server():
 
     server = FastMCP(name="scitex-agent-container", instructions=_INSTRUCTIONS)
     register_all_tools(server)
+    _declare_channel_capability(server)
     _maybe_boot_telegram_bridge(server)
     return server
+
+
+def _declare_channel_capability(server: Any) -> None:
+    """Declare ``claude/channel`` as an experimental capability so
+    claude-code's MCP client accepts our ``notifications/claude/channel``
+    emissions. Without this declaration the client logs
+    "Channel notifications skipped: server did not declare claude/channel
+    capability" and drops every notification we send.
+
+    FastMCP doesn't expose ``experimental_capabilities`` directly, so we
+    wrap the underlying ``Server.create_initialization_options`` to
+    inject the key on every call.
+    """
+    try:
+        ll = server._mcp_server  # type: ignore[attr-defined]
+    except AttributeError:  # pragma: no cover
+        log.warning("FastMCP server has no _mcp_server; cannot declare claude/channel")
+        return
+    _orig = ll.create_initialization_options
+
+    def _with_channel(*args, **kwargs):  # type: ignore[no-untyped-def]
+        ec = kwargs.get("experimental_capabilities") or {}
+        ec = {**ec, "claude/channel": {}}
+        kwargs["experimental_capabilities"] = ec
+        return _orig(*args, **kwargs)
+
+    ll.create_initialization_options = _with_channel  # type: ignore[method-assign]
+    log.info("declared experimental capability: claude/channel")
 
 
 def _resolve_telegram_spec():
