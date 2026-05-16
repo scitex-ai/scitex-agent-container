@@ -102,6 +102,12 @@ def resolve_peer_url(agent_name: str) -> str:
     fleet dirs), reads ``spec.a2a.{host,port}`` and ``spec.remote.host``,
     and returns the URL the caller should POST to.
 
+    When the YAML pins ``spec.a2a.port: auto`` the actual bound port
+    isn't in the YAML — it lives in ``state.db``'s ``a2a_ports`` table
+    where the port allocator persists the claim at agent_start.  We
+    consult that table by ``agent_name`` to discover the real port.
+    See foundation-polish bug 1.
+
     For **remote** agents (``spec.remote.host`` set) the returned URL is
     a synthetic ``ssh://<host>:<port>/v1/turn`` form that
     :func:`post_turn_to_url` recognises and dispatches via
@@ -119,6 +125,13 @@ def resolve_peer_url(agent_name: str) -> str:
 
     a2a_host, a2a_port, remote_host = _read_yaml_endpoints(yaml_path)
     if a2a_port is None:
+        a2a_port = _lookup_bound_port(agent_name)
+    if a2a_port is None:
+        if _yaml_port_is_auto(yaml_path):
+            raise PeerError(
+                f"agent {agent_name!r} has port: auto and no bound port "
+                "recorded in registry; is the agent running?"
+            )
         raise PeerError(
             f"agent {agent_name!r} has no spec.a2a.port — add a port to "
             "its YAML to enable inbound /v1/turn"
@@ -129,6 +142,51 @@ def resolve_peer_url(agent_name: str) -> str:
     # Local agent
     host = a2a_host or "127.0.0.1"
     return f"http://{host}:{a2a_port}/v1/turn"
+
+
+def _lookup_bound_port(agent_name: str) -> int | None:
+    """Return the port the allocator persisted for ``agent_name``, else None.
+
+    The YAML may say ``spec.a2a.port: auto`` (or omit ``port`` entirely)
+    when the spec author wants the runtime to pick a free port. The
+    actual port is recorded in the ``a2a_ports`` table in ``state.db``
+    by :func:`_state.port_allocator.claim_port` at agent_start. The
+    peer client consults the same table so it can talk to an
+    auto-port agent without having to re-parse + reproduce the
+    allocator's logic.
+
+    Failure modes (registry missing, schema not yet created, sqlite
+    locked) degrade to ``None`` so the caller raises the same "no
+    port recorded" PeerError it would for a static-port misconfig.
+    """
+    try:
+        from .._state.port_allocator import get_port
+
+        return get_port(agent_name)
+    except Exception:  # stx-allow: fallback (reason: best-effort lookup — caller raises a clear PeerError when None)
+        return None
+
+
+def _yaml_port_is_auto(yaml_path: str) -> bool:
+    """Return True iff ``spec.a2a.port`` is the literal string ``"auto"``.
+
+    Used to decide which PeerError to raise when no bound port is
+    available: an auto-port spec with no registry entry means "agent
+    isn't running", while a missing port means "the spec is incomplete".
+    Best-effort — any IO / parse failure returns False.
+    """
+    try:
+        from pathlib import Path
+
+        import yaml as _yaml
+
+        raw = _yaml.safe_load(Path(yaml_path).read_text(encoding="utf-8")) or {}
+    except Exception:  # stx-allow: fallback (reason: best-effort detection; falls through to generic no-port error)
+        return False
+    spec = (raw.get("spec") or {}) if isinstance(raw, dict) else {}
+    a2a = spec.get("a2a") or {}
+    port = a2a.get("port") if isinstance(a2a, dict) else None
+    return isinstance(port, str) and port.strip().lower() == "auto"
 
 
 def post_turn(
