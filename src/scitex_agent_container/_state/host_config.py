@@ -252,14 +252,20 @@ def build_ssh_argv(
 
     When the peer carries an ``env_preamble`` (e.g. Spartan, where
     ``apptainer`` is only on $PATH after two ``module load`` calls),
-    the dispatched command is wrapped in ``bash -lc '<preamble> &&
-    <quoted-cmd>'`` so the modules are loaded in a fresh login shell
-    before the real command runs. The entire wrapper collapses into a
-    single argv element (ssh joins everything after the host with
-    spaces and re-parses it via the remote login shell, so the wrapper
-    must be one pre-quoted token to survive that round-trip).  Peers
-    without an ``env_preamble`` keep the byte-identical pre-existing
-    argv shape — mba / nas invocations are unchanged.
+    the dispatched command is wrapped in ``bash -c '<preamble> &&
+    <quoted-cmd>'`` so the preamble runs before the real command. The
+    wrapper deliberately uses ``-c`` (NOT ``-lc``) to skip the full
+    login profile — sourcing ``.bashrc`` on some HPC compute nodes
+    (verified 2026-05-17 on spartan-bm152) triggers cgroup/PAM
+    process kills during user-init scripts (e.g. ``gh config`` from
+    ``~/.bash.d/``), aborting the login before the real command runs.
+    The cost: ``module`` is no longer auto-defined; the peer's
+    ``env_preamble`` must source the Lmod init script explicitly
+    (e.g. ``source /usr/share/lmod/lmod/init/bash`` as its first
+    line on Spartan).  The wrapper collapses into a single argv
+    element so ssh's post-host word-join preserves the inner quoting.
+    Peers without an ``env_preamble`` keep the byte-identical
+    pre-existing argv shape — mba / nas invocations are unchanged.
 
     Returns the argv list ready for ``subprocess.run``. Raises
     ``KeyError`` when ``peer_name`` isn't in ``peers``.
@@ -287,15 +293,18 @@ def build_ssh_argv(
     if preamble:
         # OpenSSH joins every token after the host with spaces and feeds
         # the result to the remote user's login shell, which re-parses
-        # it. To get the remote shell to launch `bash -lc 'CMD'` we
+        # it. To get the remote shell to launch `bash -c 'CMD'` we
         # therefore must collapse the wrapping into a single argv
         # element whose contents are pre-quoted at *both* layers: the
         # inner CMD (preamble && user-cmd) is shlex-quoted so the
-        # `bash -lc` parse sees one token, and the resulting string is
-        # appended whole so ssh's word-join preserves it. .bashrc is
-        # sourced via `-l` so Lmod's `module` function is in scope.
+        # `bash -c` parse sees one token, and the resulting string is
+        # appended whole so ssh's word-join preserves it. Note the
+        # *lack* of `-l` — bypassing the login profile avoids HPC
+        # compute-node bashrc kills (see docstring). The preamble is
+        # responsible for sourcing Lmod (or any other env layer) on
+        # its own.
         inner = f"{preamble} && {shlex.join(list(command))}"
-        argv.append(f"bash -lc {shlex.quote(inner)}")
+        argv.append(f"bash -c {shlex.quote(inner)}")
     else:
         argv += list(command)
     return argv

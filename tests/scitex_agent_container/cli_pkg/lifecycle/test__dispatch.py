@@ -479,7 +479,7 @@ class TestDispatchSshArgv:
         self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
     ):
         # Arrange — peer with env_preamble; build_ssh_argv wraps in
-        # `bash -lc '<preamble> && <cmd>'`.
+        # `bash -c '<preamble> && <cmd>'`.
         _write_peer_config(fake_home, env_save_restore, env_preamble=_LMOD_PREAMBLE)
         # Act
         _act_dispatch(shim_bin, capsys, rsync_kwargs=_RK_OK, ssh_kwargs=_SK_OK)
@@ -491,9 +491,9 @@ class TestDispatchSshArgv:
     def test_dispatch_env_preamble_wrapper_uses_bash_lc(
         self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
     ):
-        # Arrange — bash -lc wrapper is the explicit env_preamble shape.
+        # Arrange — bash -c wrapper is the explicit env_preamble shape.
         _write_peer_config(fake_home, env_save_restore, env_preamble=_LMOD_PREAMBLE)
         # Act
         _act_dispatch(shim_bin, capsys, rsync_kwargs=_RK_OK, ssh_kwargs=_SK_OK)
         # Assert
-        assert any("bash -lc" in tok for tok in _ssh_invocations(shim_bin)[-1])
+        assert any("bash -c" in tok for tok in _ssh_invocations(shim_bin)[-1])

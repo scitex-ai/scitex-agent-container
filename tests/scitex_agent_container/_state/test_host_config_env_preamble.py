@@ -10,7 +10,7 @@ Covers:
   field stay byte-identical to the pre-preamble shape.
 - ``load`` parses the YAML scalar (``|`` literal block) form, the list
   form, and tolerates absence.
-- ``build_ssh_argv`` wraps the dispatched command in ``bash -lc
+- ``build_ssh_argv`` wraps the dispatched command in ``bash -c
   '<preamble> && <cmd>'`` when the peer carries a preamble, and is
   byte-identical to the pre-preamble shape when it doesn't.
 - Backwards compat: a multi-hop peer without a preamble still emits
@@ -230,10 +230,10 @@ def test_build_ssh_argv_appends_single_bash_lc_token_when_preamble_present(
 ):
     # Arrange: fixture builds the argv for a Spartan-style peer.
     argv = spartan_argv
-    # Act: read the last argv token (the collapsed `bash -lc '...'` blob).
+    # Act: read the last argv token (the collapsed `bash -c '...'` blob).
     final = argv[-1]
     # Assert
-    assert final.startswith("bash -lc '")
+    assert final.startswith("bash -c '")
 
 
 def test_build_ssh_argv_inner_string_starts_with_full_preamble(
@@ -241,7 +241,7 @@ def test_build_ssh_argv_inner_string_starts_with_full_preamble(
 ):
     # Arrange: fixture builds the argv for a Spartan-style peer.
     argv = spartan_argv
-    # Act: read the last argv token (the collapsed `bash -lc '...'` blob).
+    # Act: read the last argv token (the collapsed `bash -c '...'` blob).
     final = argv[-1]
     # Assert
     assert "module load GCCcore/11.3.0 && module load Apptainer/1.3.3 && " in final
@@ -252,7 +252,7 @@ def test_build_ssh_argv_inner_string_appends_user_command_after_preamble(
 ):
     # Arrange: fixture builds the argv for a Spartan-style peer.
     argv = spartan_argv
-    # Act: read the last argv token (the collapsed `bash -lc '...'` blob).
+    # Act: read the last argv token (the collapsed `bash -c '...'` blob).
     final = argv[-1]
     # Assert
     assert final.endswith("which apptainer'")
@@ -260,7 +260,7 @@ def test_build_ssh_argv_inner_string_appends_user_command_after_preamble(
 
 def test_build_ssh_argv_shell_quotes_command_inside_bash_wrapper():
     # Arrange: a command argument with whitespace must survive the
-    # `bash -lc '<...>'` round-trip exactly, not reflow the parser.
+    # `bash -c '<...>'` round-trip exactly, not reflow the parser.
     peers = {
         "spartan-bm152": PeerSpec(
             name="spartan-bm152",
@@ -276,10 +276,10 @@ def test_build_ssh_argv_shell_quotes_command_inside_bash_wrapper():
     )
     # Assert: shlex.join keeps `hello world` as one token in the inner
     # CMD, and the outer shlex.quote wraps the whole blob for ssh's
-    # word-join. The remote login shell sees `bash -lc 'CMD'` with
+    # word-join. The remote login shell sees `bash -c 'CMD'` with
     # CMD = `module load Apptainer/1.3.3 && echo 'hello world'`.
     assert argv[-1] == (
-        "bash -lc 'module load Apptainer/1.3.3 && echo '\"'\"'hello world'\"'\"''"
+        "bash -c 'module load Apptainer/1.3.3 && echo '\"'\"'hello world'\"'\"''"
     )
 
 
@@ -331,10 +331,10 @@ def test_build_ssh_argv_multihop_with_preamble_still_wraps_inner_command(
 ):
     # Arrange: fixture builds the argv for a multi-hop preamble peer.
     argv = multihop_preamble_argv
-    # Act: read the collapsed `bash -lc '...'` blob at the tail of argv.
+    # Act: read the collapsed `bash -c '...'` blob at the tail of argv.
     final = argv[-1]
     # Assert
-    assert final.startswith("bash -lc 'module load Apptainer/1.3.3 && ")
+    assert final.startswith("bash -c 'module load Apptainer/1.3.3 && ")
 
 
 @pytest.fixture
