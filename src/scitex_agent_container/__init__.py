@@ -45,6 +45,7 @@ if TYPE_CHECKING:
         image,
         mcp,
         skills,
+        telegram,
         template,
     )
     from scitex_agent_container._network import peer  # noqa: F401
@@ -90,6 +91,7 @@ __all__ = [
     "account",
     "skills",
     "mcp",
+    "telegram",
     # Networking submodule (own surface — see _network/peer.py).
     "peer",
 ]
@@ -97,7 +99,17 @@ __all__ = [
 # Lazy imports via PEP 562 __getattr__ — keeps CLI startup under the 500 ms
 # budget (importing _api → _mcp.server alone costs ~20 ms; config._types costs
 # ~16 ms; pulling all of them at import time pushed `sac --help` to ~670 ms).
-_API_NAMES = {"account", "agent", "db", "host", "image", "mcp", "skills", "template"}
+_API_NAMES = {
+    "account",
+    "agent",
+    "db",
+    "host",
+    "image",
+    "mcp",
+    "skills",
+    "telegram",
+    "template",
+}
 _LAZY: dict = {}
 
 

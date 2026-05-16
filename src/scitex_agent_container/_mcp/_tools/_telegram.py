@@ -1,24 +1,70 @@
-"""``telegram_*`` MCP tools — Phase 1 stubs only.
+"""``telegram_*`` MCP tools — Phase 3 implementations.
 
-These functions are the final tool surface for the Telegram fold (audit:
-``/home/ywatanabe/proj/lead/GITIGNORED/dev/05_sac-mcp-telegram.md`` — Option
-A). They will be wired to ``scitex_agent_container._telegram.TelegramBridge``
-in Phase 3.
+Each tool is a thin wrapper that:
 
-Phase 1: each function raises ``NotImplementedError`` with a message naming
-the port target (``claude-code-telegrammer/ts/telegram-server.ts``).
-Registration is feature-flagged off (``SCITEX_AGENT_CONTAINER_TELEGRAM_FOLD=1``
-to opt-in) so this scaffolding does not change sac's user-visible behaviour.
+1. Verifies the caller's env carries ``LEAD_TELEGRAM_AUTH_TOKEN``
+   matching the value the bridge was initialised with at lead-session
+   startup. Subagents inherit a sanitised env without the token, so they
+   always fail this check (returning a structured ``{"error": ...}``
+   instead of pretending to send).
+2. Resolves the in-process :class:`TelegramBridge` instance.
+3. Delegates to the matching bridge method, returning its dict result
+   verbatim.
+
+Registration is gated by ``SCITEX_AGENT_CONTAINER_TELEGRAM_FOLD``. Default
+flipped to ON in Phase 3 (set to ``"0"`` to opt-out).
 """
 
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import Any
 
-_STUB_MSG = "Phase 2: port from claude-code-telegrammer/ts/telegram-server.ts"
+from ..._telegram._runtime import get_auth_token, get_bridge
 
 FEATURE_FLAG_ENV = "SCITEX_AGENT_CONTAINER_TELEGRAM_FOLD"
+LEAD_AUTH_TOKEN_ENV = "LEAD_TELEGRAM_AUTH_TOKEN"
+
+# Error payloads — structured rather than raised so the MCP tool's caller
+# always receives a JSON-RPC ``result``. Raising would surface as an
+# ``error`` envelope which Claude renders as a tool failure.
+_ERR_NO_BRIDGE = {"error": "telegram bridge is not initialised on this host"}
+_ERR_AUTH = {
+    "error": (
+        "telegram tools are lead-only; LEAD_TELEGRAM_AUTH_TOKEN missing or mismatched"
+    )
+}
+
+
+def _authorize() -> dict[str, Any] | None:
+    """Return None when the caller is allowed; an error dict otherwise."""
+    bridge_token = get_auth_token()
+    caller_token = os.environ.get(LEAD_AUTH_TOKEN_ENV)
+    if bridge_token is None:
+        return _ERR_NO_BRIDGE
+    if not caller_token or caller_token != bridge_token:
+        return _ERR_AUTH
+    return None
+
+
+def _run(coro: Any) -> Any:
+    """Run a coroutine to completion regardless of caller context.
+
+    MCP tool callables are sometimes invoked from inside a running loop
+    (FastMCP awaits sync tools in a thread pool). We detect that and
+    schedule onto a fresh loop in a worker thread to avoid
+    ``RuntimeError: cannot be called from a running event loop``.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    # Inside a running loop — push to a dedicated thread.
+    import concurrent.futures
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+        return ex.submit(asyncio.run, coro).result()
 
 
 def telegram_send(
@@ -26,11 +72,13 @@ def telegram_send(
     text: str,
     reply_to: int | None = None,
 ) -> dict[str, Any]:
-    """Send a new Telegram message (or threaded reply via ``reply_to``).
-
-    Phase 3 implements. See ``docs/design/telegram-fold.md``.
-    """
-    raise NotImplementedError(_STUB_MSG)
+    """Send a new Telegram message (or threaded reply via ``reply_to``)."""
+    err = _authorize()
+    if err is not None:
+        return err
+    bridge = get_bridge()
+    assert bridge is not None  # _authorize guaranteed
+    return _run(bridge.send_message(chat_id, text, reply_to=reply_to))
 
 
 def telegram_reply(
@@ -42,10 +90,17 @@ def telegram_reply(
 ) -> dict[str, Any]:
     """Reply to an inbound Telegram message (telegrammer-shaped).
 
-    Carries ``row_id`` + ``mark_read`` semantics from
-    ``claude-code-telegrammer``. Phase 3 implements.
+    ``row_id`` + ``mark_read`` carry over from the standalone telegrammer
+    surface. The sac bridge does not own a SQLite persistence layer, so
+    ``row_id`` is accepted but unused (kept for shape compatibility with
+    callers that target both surfaces) and ``mark_read`` is a no-op.
     """
-    raise NotImplementedError(_STUB_MSG)
+    err = _authorize()
+    if err is not None:
+        return err
+    bridge = get_bridge()
+    assert bridge is not None
+    return _run(bridge.send_message(chat_id, text, reply_to=reply_to))
 
 
 def telegram_react(
@@ -53,8 +108,13 @@ def telegram_react(
     message_id: int,
     emoji: str,
 ) -> dict[str, Any]:
-    """Set an emoji reaction on a Telegram message. Phase 3 implements."""
-    raise NotImplementedError(_STUB_MSG)
+    """Set an emoji reaction on a Telegram message."""
+    err = _authorize()
+    if err is not None:
+        return err
+    bridge = get_bridge()
+    assert bridge is not None
+    return _run(bridge.react(chat_id, message_id, emoji))
 
 
 def telegram_edit_message(
@@ -62,19 +122,26 @@ def telegram_edit_message(
     message_id: int,
     text: str,
 ) -> dict[str, Any]:
-    """Edit a prior bot message. Phase 3 implements."""
-    raise NotImplementedError(_STUB_MSG)
+    """Edit a prior bot message."""
+    err = _authorize()
+    if err is not None:
+        return err
+    bridge = get_bridge()
+    assert bridge is not None
+    return _run(bridge.edit_message(chat_id, message_id, text))
 
 
 def telegram_download_attachment(
     file_id: str,
     dest_dir: str | None = None,
 ) -> dict[str, Any]:
-    """Resolve a Telegram file_id, download the bytes, return local path.
-
-    Phase 3 implements.
-    """
-    raise NotImplementedError(_STUB_MSG)
+    """Resolve a Telegram file_id, download the bytes, return local path."""
+    err = _authorize()
+    if err is not None:
+        return err
+    bridge = get_bridge()
+    assert bridge is not None
+    return _run(bridge.download_attachment(file_id, dest_dir))
 
 
 def telegram_send_document(
@@ -82,8 +149,13 @@ def telegram_send_document(
     path: str,
     caption: str | None = None,
 ) -> dict[str, Any]:
-    """Upload a local file as a Telegram document. Phase 3 implements."""
-    raise NotImplementedError(_STUB_MSG)
+    """Upload a local file as a Telegram document."""
+    err = _authorize()
+    if err is not None:
+        return err
+    bridge = get_bridge()
+    assert bridge is not None
+    return _run(bridge.send_document(chat_id, path, caption=caption))
 
 
 _TELEGRAM_TOOLS = (
@@ -96,14 +168,17 @@ _TELEGRAM_TOOLS = (
 )
 
 
-def register_telegram_tools(mcp) -> None:
-    """Register telegram_* MCP tools.
+def _feature_flag_enabled() -> bool:
+    """Phase 3 flip: default ON. Set ``=0`` to opt out."""
+    val = os.getenv(FEATURE_FLAG_ENV)
+    if val is None:
+        return True
+    return val.strip().lower() not in ("0", "false", "off", "no")
 
-    Phase 1: only registers when ``SCITEX_AGENT_CONTAINER_TELEGRAM_FOLD=1``
-    so the scaffolding stays invisible to existing users. Phase 3 flips the
-    default on once the transport is real.
-    """
-    if os.getenv(FEATURE_FLAG_ENV) != "1":
+
+def register_telegram_tools(mcp) -> None:
+    """Register telegram_* MCP tools when the feature flag is on (default)."""
+    if not _feature_flag_enabled():
         return
     for fn in _TELEGRAM_TOOLS:
         mcp.tool()(fn)
@@ -118,4 +193,5 @@ __all__ = [
     "telegram_send_document",
     "register_telegram_tools",
     "FEATURE_FLAG_ENV",
+    "LEAD_AUTH_TOKEN_ENV",
 ]
