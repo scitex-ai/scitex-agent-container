@@ -125,14 +125,24 @@ def _dispatch_remote_start(
         )
 
     # 3. Parse itemized output. Itemized rows have an 11-char "YXcstpoguax"
-    # head; first-launch rows are all-plus; drift rows use letters; deletes
-    # start with "*deleting". Filter the summary trailers that rsync emits.
-    itemized = [
-        line
-        for line in rsync_dry.stdout.splitlines()
-        if line and not line.startswith((" ", "sending", "sent", "total"))
-    ]
-    changes = [line for line in itemized if line and len(line) > 11]
+    # head (position 0 is one of "<>ch*."; position 1 is one of "fdLD");
+    # first-launch rows are all-plus; drift rows use letters; deletes start
+    # with "*deleting".  rsync also emits informational lines that are NOT
+    # itemize records — "sending incremental file list" (header), "created
+    # directory <path>" (top-level dir creation notice), "sent N bytes ..."
+    # (footer), "total size is ..." (footer).  We must keep only true
+    # itemize records.
+    _ITEMIZE_OP_CHARS = set("<>ch*.")
+    itemized = []
+    for line in rsync_dry.stdout.splitlines():
+        if not line or line.startswith((" ", "sending", "sent", "total", "created")):
+            continue
+        # A true itemize record starts with one of <>ch*. — informational
+        # lines (e.g. "Number of files: ...") will not match.
+        if len(line) < 11 or line[0] not in _ITEMIZE_OP_CHARS:
+            continue
+        itemized.append(line)
+    changes = itemized
     first_launch = bool(changes) and all(_is_first_launch_line(c) for c in changes)
     drift = bool(changes) and not first_launch
 
