@@ -117,25 +117,36 @@ def maybe_start_bridge(
         len(auth_token),
     )
 
-    # Resolve the bot token. Try the configured env var first, then fall
-    # back to the canonical SCITEX_LEAD_TELEGRAM_BOT_TOKEN.
-    bot_token: Optional[str] = os.environ.get(coerced.bot_token_env)
-    if not bot_token and coerced.bot_token_env != LEAD_BOT_TOKEN_ENV:
-        bot_token = os.environ.get(LEAD_BOT_TOKEN_ENV)
+    # Resolve the bot token. SCITEX_LEAD_TELEGRAM_BOT_TOKEN wins so the
+    # lead's bot is always used, even when SCITEX_AGENT_CONTAINER_TELEGRAM_BOT_TOKEN
+    # leaks in from the parent shell (e.g. an orochi token from
+    # ~/.bash.d/secrets) — claude-code's MCP env block ADDS to the parent
+    # env, it doesn't replace, so without this precedence the lead bridge
+    # would silently end up using the wrong bot identity.
+    bot_token: Optional[str] = os.environ.get(LEAD_BOT_TOKEN_ENV)
+    bot_token_source = LEAD_BOT_TOKEN_ENV
+    if not bot_token:
+        bot_token = os.environ.get(coerced.bot_token_env)
+        bot_token_source = coerced.bot_token_env
     if not bot_token:
         # Last-resort: honour legacy prefix-stripping behaviour
         if coerced.bot_token_env.startswith("SAC_"):
             bot_token = getenv(coerced.bot_token_env[len("SAC_") :])
         elif coerced.bot_token_env.startswith("SCITEX_AGENT_CONTAINER_"):
             bot_token = getenv(coerced.bot_token_env[len("SCITEX_AGENT_CONTAINER_") :])
+        bot_token_source = f"{coerced.bot_token_env}(stripped-prefix)"
     if not bot_token:
         log.warning(
             "telegram[startup] FAIL: bot token unset (tried %s, %s); cannot start bridge",
-            coerced.bot_token_env,
             LEAD_BOT_TOKEN_ENV,
+            coerced.bot_token_env,
         )
         return None
-    log.info("telegram[startup] OK: bot token present (len=%d)", len(bot_token))
+    log.info(
+        "telegram[startup] OK: bot token present from %s (len=%d)",
+        bot_token_source,
+        len(bot_token),
+    )
 
     # WARN: launcher dependency on --dangerously-load-development-channels
     log.warning(
