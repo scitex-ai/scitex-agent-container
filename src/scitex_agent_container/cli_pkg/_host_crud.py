@@ -62,8 +62,32 @@ def _load_round_trip(path: Path):
     return yaml_rt, data
 
 
+def _resolve_write_target(path: Path) -> Path:
+    """Return the effective write target for ``path``.
+
+    When ``path`` is a symlink (typical in orochi-shared layouts where
+    ``~/.scitex/agent-container/config.yaml`` is symlinked to
+    ``~/.scitex/orochi/shared/config.yaml``), we follow the link and
+    write through to the resolved target. Opening the symlink path
+    directly for writing would replace the symlink with a regular file
+    and silently break the shared-config relationship — see PA-foundation
+    bug 3.
+    """
+    if path.is_symlink():
+        return path.resolve()
+    return path
+
+
 def _dump_round_trip(yaml_rt, data, path: Path) -> None:
-    with path.open("w") as fh:
+    """Round-trip-dump ``data`` to ``path``, following symlinks.
+
+    The write goes to ``path.resolve()`` when ``path`` is a symlink so
+    that shared-config setups (one shared file referenced from each
+    machine's config dir) keep the symlink intact. Writing to the
+    symlink path directly would replace the link with a regular file.
+    """
+    target = _resolve_write_target(path)
+    with target.open("w") as fh:
         yaml_rt.dump(data, fh)
 
 
@@ -106,7 +130,9 @@ def _validate_or_revert(path: Path, original_text: str | None) -> list[str]:
             except FileNotFoundError:  # stx-allow: fallback (reason: race-safe cleanup)
                 pass
         else:
-            path.write_text(original_text)
+            # Write through any symlink — see _resolve_write_target for
+            # why we never want to replace the link with a regular file.
+            _resolve_write_target(path).write_text(original_text)
     return errors
 
 

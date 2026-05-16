@@ -192,3 +192,72 @@ def test_host_add_exits_nonzero_when_validation_fails(cfg_path: Path):
     result = runner.invoke(host_add, ["new-peer", "--ssh", "x", "--via", "ghost"])
     # Assert
     assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# symlink-safety: shared-config layouts (orochi-shared) symlink
+# ~/.scitex/agent-container/config.yaml to a shared file. Writing the
+# symlink path directly would replace the link with a regular file and
+# silently break the shared relationship. See foundation-polish bug 3.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def symlinked_cfg(tmp_path: Path, env_save_restore) -> tuple[Path, Path]:
+    """Return ``(link_path, target_path)`` where ``link_path`` is a symlink to ``target_path``.
+
+    The CLI is pointed at ``link_path`` via the env override; the target
+    holds the actual YAML bytes (mimicking orochi-shared layout).
+    """
+    target = tmp_path / "shared" / "config.yaml"
+    target.parent.mkdir(parents=True)
+    target.write_text("peers: {}\n")
+    link = tmp_path / "agent-container" / "config.yaml"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(target)
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(link))
+    return link, target
+
+
+def test_host_add_preserves_symlink_after_write(symlinked_cfg):
+    # Arrange
+    link, _target = symlinked_cfg
+    runner = CliRunner()
+    # Act
+    runner.invoke(host_add, ["gpu-box", "--ssh", "u@gpu.lan"])
+    # Assert — symlink invariant must hold: the link is still a link.
+    assert link.is_symlink(), (
+        "host add must not replace the symlink with a regular file"
+    )
+
+
+def test_host_add_writes_through_symlink_to_target(symlinked_cfg):
+    # Arrange
+    _link, target = symlinked_cfg
+    runner = CliRunner()
+    # Act
+    runner.invoke(host_add, ["gpu-box", "--ssh", "u@gpu.lan"])
+    # Assert — content lands on the resolved target.
+    assert "gpu-box" in target.read_text()
+
+
+def test_host_remove_preserves_symlink_after_write(symlinked_cfg):
+    # Arrange
+    link, target = symlinked_cfg
+    target.write_text("peers:\n  gpu-box: {ssh: u@gpu}\n")
+    runner = CliRunner()
+    # Act
+    runner.invoke(host_remove, ["gpu-box"])
+    # Assert
+    assert link.is_symlink()
+
+
+def test_host_set_preserves_symlink_after_write(symlinked_cfg):
+    # Arrange
+    link, target = symlinked_cfg
+    target.write_text("peers:\n  gpu-box: {ssh: old@gpu}\n")
+    runner = CliRunner()
+    # Act
+    runner.invoke(host_set, ["gpu-box", "--ssh", "new@gpu"])
+    # Assert
+    assert link.is_symlink()
