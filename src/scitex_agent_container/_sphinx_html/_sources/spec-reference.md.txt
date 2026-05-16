@@ -33,12 +33,12 @@ metadata:
     cardinality: singleton               # → AgentCard.x-scitex-agent-container.cardinality
 
 spec:
-  runtime: apptainer                     # REQUIRED — only value accepted since 2026-05-13
+  runtime: apptainer                     # optional; only `apptainer` accepted; empty defaults to `apptainer` (since 2026-05-13)
   workdir: ~/proj                        # mounted rw at /work
-  dot_claude: ./dot_claude               # merged into <workdir>/.claude/ at start
+  dot_claude: ./dot_claude               # merged into <workdir>/.claude/ at start (no auto-discover; default "")
   python-venv: auto                      # string or list — fallback chain
-  env-file: .env                         # string or list of dotenv paths
-  multiplexer: tmux                      # tmux | screen
+  env-file: .env                         # string or list of dotenv paths   (VERIFY: validator currently rejects — must be added to _KNOWN_SPEC_KEYS)
+  multiplexer: tmux                      # tmux | screen                    (VERIFY: validator currently rejects — must be added to _KNOWN_SPEC_KEYS)
 
   apptainer:    { ... }
   claude:       { ... }
@@ -46,16 +46,34 @@ spec:
   health:       { ... }
   restart:      { ... }
   autonomous:   { ... }
-  a2a:          { port: 7901 }
+  a2a:          { host: 127.0.0.1, port: auto }    # port: auto | <int> | null (disable)
   proxy:        { upstream: https://peer/, trust: untrusted }   # kind: AgentProxy only
-  listen:       { port: 7878 }
-  skills:       { required: [...] }
-  telegram:     { ... }
-  hooks:        { pre_start: [...], post_start: [...], pre_stop: [...] }
+  listen:                                # LIST of side-port DECLARATIONS (no binding):
+    - { port: 9000, proto: tcp, name: api, owner: app }
+    - { proto: unix, path: /tmp/x.sock, name: ipc }
+  # NOTE: the host-level `sac listen` server port lives in
+  # ~/.scitex/agent-container/config.yaml (listen.port, default 7878),
+  # NOT in agent spec.yaml.
+  startup:                               # (optional) ready-pattern gating block (todo#291)
+    commands: [...]                      # shadows top-level startup_commands when set
+    ready_patterns: [...]                # regex strings (or { regex: "..." } dicts)
+    ready_idle_ticks: 3
+    ready_poll_interval_seconds: 0.5
+    ready_timeout_seconds: 60
+    on_timeout: capture_and_proceed      # capture_and_proceed | capture_and_fail
+  context_management:                    # context auto-management (compact/restart/noop)
+    trigger_at_percent: 70
+    strategy: noop                       # compact | restart | noop
+    warn_before_n_checks: 0
+    check_interval_seconds: 300
+  telegram:     { bot_token_env: ..., allowed_users: [...], auto_connect: true, greeting: ... }
+  hooks:        { pre_start: [...], post_start: [...], pre_stop: [...], post_stop: [...] }
   extensions:   { ... }                  # opaque per-deployment dict
 
-  startup_commands: [...]                # SHELL before claude starts
+  startup_commands:                      # SHELL before claude starts (list of {delay, command} dicts)
+    - { delay: 0, command: "echo hi" }
   startup_prompts:  [...]                # TEXT fed to claude as first user msg
+  session: continue                      # top-level shortcut overriding spec.claude.session
 
   host:  gpu-box                         # mutually exclusive: singleton on one peer
   hosts: [laptop, gpu-box, nas]          # OR multi-instance, one per peer
@@ -109,29 +127,33 @@ when `spec.a2a.port` is set) and `GET /agents/<name>/card`
 
 | Field                | Type                       | Description                                                              |
 |----------------------|----------------------------|--------------------------------------------------------------------------|
-| `runtime`            | `apptainer` (REQUIRED)     | Only value accepted; docker/podman were dropped 2026-05-13               |
+| `runtime`            | `apptainer` (optional)     | Empty/unset defaults to `apptainer`; any other value is rejected. docker/podman were dropped 2026-05-13 |
 | `workdir`            | path                       | Mounted rw at `/work` (default: `~/.scitex/agent-container/runtime/agents/<name>/`) |
-| `dot_claude`         | path                       | Materialized into `<workdir>/.claude/` (default: auto-discover sibling)  |
+| `dot_claude`         | path                       | Materialized into `<workdir>/.claude/`. Default is empty string — no auto-discovery of a sibling directory; operators must set the path explicitly if they want a `dot_claude/` merged in. |
 | `python-venv`        | string \| list             | Pre-activated for startup_commands; `auto` probes `~/.venv-3.11`, `~/.venv` |
-| `env-file`           | string \| list             | dotenv paths sourced at start                                            |
-| `user`               | string                     | Container user override                                                  |
-| `multiplexer`        | `tmux` \| `screen`         | Long-lived session host                                                  |
-| `host` / `hosts`     | string / list of strings   | Singleton on one peer / multi-instance one-per-peer (mutually exclusive) |
-| `startup_commands[]` | list of shell commands     | Run **before** Claude starts                                             |
+| `env-file`           | string \| list             | dotenv paths sourced at start. **(VERIFY: parsed by the loader but currently rejected by `_validation._KNOWN_SPEC_KEYS` — known parser/validator drift.)** |
+| `user`               | `""` \| `"host"` \| `"<uid>:<gid>"` | Container user override; empty = image default. |
+| `multiplexer`        | `tmux` \| `screen`         | Long-lived session host (default `tmux`). **(VERIFY: parsed by the loader but currently rejected by `_validation._KNOWN_SPEC_KEYS` — known parser/validator drift.)** |
+| `host` / `hosts`     | string / list of strings   | Singleton on one peer / multi-instance one-per-peer (mutually exclusive). `hosts: "all"` = every fleet host. |
+| `session`            | string                     | Top-level shortcut overriding `spec.claude.session`; legacy aliases accepted (`continue-or-new`, `new`). |
+| `screen.name`        | string                     | Legacy metadata (agent display name in `sac fleet`). Default = agent name. Does NOT drive a multiplexer. |
+| `startup_commands[]` | list of `{delay, command}` | Run **before** Claude starts. Each item is a dict with optional `delay` (int seconds, default 0) and required `command` (string); bare strings are not accepted. |
 | `startup_prompts[]`  | list of strings            | Fed to Claude as first user message(s)                                   |
 
 ### `spec.apptainer` — engine knobs
 
 | Field         | Type                          | Description                                                |
 |---------------|-------------------------------|------------------------------------------------------------|
-| `image`       | path to `.sif` (REQUIRED)     | `sac-scitex.sif` (full stack) or `sac-base.sif` (minimal)  |
+| `image`       | path to `.sif`                | `sac-scitex.sif` (full stack) or `sac-base.sif` (minimal). Optional; empty falls back to the sac default SIF at dispatch. |
 | `overlay`     | path                          | Writable rw layer above the SIF                            |
-| `binds[]`     | `host:container[:ro\|rw]`     | Bind mounts. Source side supports `~` / `$VAR` (sac expands before calling apptainer). Destination MUST be absolute (apptainer rejects relative / `~` / `$VAR`); conventional roots are `/home/agent/...` (D5 canonical HOME), `/srv/`, `/work/`, `/opt/`, `/data/`. Under hardened defaults (`relaxed: false`) nothing is auto-bound. |
+| `binds[]`     | `host:container[:ro\|rw]` (or legacy `{src,dst,mode}` dict) | Bind mounts. Source side supports `~` / `$VAR` (sac expands before calling apptainer). Destination MUST be absolute (apptainer rejects relative / `~` / `$VAR`); conventional roots are `/home/agent/...` (D5 canonical HOME), `/srv/`, `/work/`, `/opt/`, `/data/`. The legacy `{src, dst, mode}` dict form is still accepted by the parser and normalized to the string form. |
 | `env`         | key-value dict                | Env vars exported into the container                       |
-| `nv` / `rocm` | bool                          | Forward host NVIDIA / AMD ROCm libs (mutually exclusive)   |
+| `container_workdir` | path (default `/work`)  | Working directory inside the container.                    |
+| `nv` / `rocm` | bool                          | Forward host NVIDIA / AMD ROCm libs. (DESIGN — mutual exclusion not currently enforced by the parser.) |
 | `raw_args[]`  | list of strings               | **Escape hatch** — appended verbatim to `apptainer exec`   |
-| `relaxed`     | bool (default `false`)        | Opt OUT of hardened-by-default isolation. When `false` (default), sac auto-prepends `--containall` / `--cleanenv` / `--writable-tmpfs` / `--home /home/agent`. Set `true` to disable; see [`docs/isolation.md`](isolation.md) + [`docs/adr/0001-isolation-hardening.md`](adr/0001-isolation-hardening.md). |
-| `fakeroot`    | bool (default `false`)        | Apptainer `--fakeroot` — uid 0 inside via user-namespace remap; host uid unchanged. D5 preflight detects userns-fakeroot via `/proc/self/uid_map` and accepts uid 0 only when remapped. |
+| `post` / `environment` / `def_file` | string / KV dict / path | Apptainer `%post` shell snippet, `%environment` KV map, and override `.def` path for `apptainer build`. Empty / missing → no build extension. |
+| `relaxed`     | bool (default `false`)        | **(DESIGN — not yet implemented in the parser.)** Intent: opt OUT of hardened-by-default isolation. When `false` (default), sac auto-prepends `--containall` / `--cleanenv` / `--writable-tmpfs` / `--home /home/agent`. Set `true` to disable; see [`docs/isolation.md`](isolation.md) + [`docs/adr/0001-isolation-hardening.md`](adr/0001-isolation-hardening.md). TODO: wire into `ApptainerSpec`. |
+| `fakeroot`    | bool (default `false`)        | **(DESIGN — not yet implemented in the parser.)** Intent: apptainer `--fakeroot` — uid 0 inside via user-namespace remap; host uid unchanged. D5 preflight detects userns-fakeroot via `/proc/self/uid_map` and accepts uid 0 only when remapped. TODO: wire into `ApptainerSpec`. |
 
 ### `spec.claude` — SDK knobs
 
@@ -143,7 +165,7 @@ when `spec.a2a.port` is set) and `GET /agents/<name>/card`
 | `continue_max_age_minutes`  | int                                   | Only resume if session.jsonl is newer than N minutes              |
 | `flags[]`                   | list of strings                       | Extra flags appended to `claude` invocation                       |
 | `channels[]`                | `server:<name>` / `plugin:<id>@<v>`   | MCP push channels (passed as `claude --channels`)                 |
-| `auto_accept`               | bool                                  | Auto-confirm permission prompts in the TUI                        |
+| `auto_accept`               | bool (default `True`)                 | Auto-confirm permission prompts in the TUI                        |
 | `raw_options`               | dict                                  | **Escape hatch** — splatted into `ClaudeAgentOptions(**raw_options)` |
 
 ### `spec.health` / `spec.restart` / `spec.watchdog` / `spec.autonomous`
@@ -153,7 +175,8 @@ when `spec.a2a.port` is set) and `GET /agents/<name>/card`
 | `health.enabled`            | bool — enable periodic liveness probe                                                    |
 | `health.interval`           | seconds between probes                                                                   |
 | `health.timeout`            | per-probe timeout                                                                        |
-| `health.method`             | `sdk-alive` (only currently supported)                                                   |
+| `health.method`             | `sdk-alive` (only value accepted by the validator). NOTE: the parser default is the legacy string `multiplexer-alive`; with the validator pin in place, any explicit value other than `sdk-alive` is rejected at load time. |
+| `autonomous.idle_kick_after_s` | int seconds — nudge cadence when no tool activity (default 120)                       |
 | `restart.policy`            | `never` \| `on-failure` \| `always`                                                      |
 | `restart.max_retries`       | int                                                                                      |
 | `restart.backoff.initial`   | seconds before first retry                                                               |
@@ -169,8 +192,9 @@ when `spec.a2a.port` is set) and `GET /agents/<name>/card`
 
 | Field        | Description                                                                          |
 |--------------|--------------------------------------------------------------------------------------|
+| `a2a.host`   | Bind interface for the per-agent A2A sidecar (default `127.0.0.1`).                  |
 | `a2a.port`   | `auto` (default) — sac claims a free port from `~/.scitex/agent-container/config.yaml`'s `a2a.port_range` (default 19000-19999), persists in `state.db`, surfaces via `sac agents list`. Set an explicit int (e.g. `7901`) to pin for a stable external URL. Set `null` to disable the sidecar entirely. **Most operators never touch this** — auto is the right default. |
-| `listen.port`| Override for the host-level `sac listen` server port (default 7878)                  |
+| `listen[]`   | LIST of side-port DECLARATIONS (NOT a single port override). Each item: `{port, proto, path, name, owner}`. `proto`: `tcp` (default) / `udp` / `unix`. Entries that fail validation (`tcp`/`udp` needs `port>0`; `unix` needs `path`) are silently dropped. **The container does NOT bind these — declarations only**, surfaced on the AgentCard for peers. The host-level `sac listen` server port (default 7878) is configured in `~/.scitex/agent-container/config.yaml` under `listen.port`, NOT here. |
 
 The per-agent sidecar binds the **same URL shape** as `sac listen`
 (`/agents/<name>/{turn,send,card}`, `/v1/a2a/agents/<name>/...`,
@@ -217,14 +241,17 @@ the `.mcp.json` shape directly. Use this OR drop a `.mcp.json` into
 
 ### `spec.telegram` / `spec.hooks` / `spec.extensions`
 
-| Field                | Description                                                                  |
-|----------------------|------------------------------------------------------------------------------|
-| `telegram.enabled`   | bool — enable alerting bridge (consumed by claude-code-telegrammer)          |
-| `telegram.chat_id`   | Telegram chat ID                                                             |
-| `hooks.pre_start[]`  | Shell commands before `apptainer exec` (a `mkdir -p <workdir>/.claude` is auto-prepended) |
-| `hooks.post_start[]` | Shell commands after the runner reports ready                                |
-| `hooks.pre_stop[]`   | Shell commands before SIGTERM                                                |
-| `extensions`         | Opaque dict — read by downstream tooling (priority, owner, etc.)             |
+| Field                  | Description                                                                |
+|------------------------|----------------------------------------------------------------------------|
+| `telegram.bot_token_env`| Env var name holding the bot token (default `SCITEX_AGENT_CONTAINER_TELEGRAM_BOT_TOKEN`) |
+| `telegram.allowed_users`| List of Telegram user IDs (strings) allowed to talk to this bridge        |
+| `telegram.auto_connect`| bool (default `true`) — auto-attach the bridge at agent start              |
+| `telegram.greeting`    | Optional greeting string posted on connect                                 |
+| `hooks.pre_start[]`    | Shell commands before `apptainer exec` (a `mkdir -p <workdir>/.claude` is auto-prepended) |
+| `hooks.post_start[]`   | Shell commands after the runner reports ready                              |
+| `hooks.pre_stop[]`     | Shell commands before SIGTERM                                              |
+| `hooks.post_stop[]`    | Shell commands after the runner exits                                      |
+| `extensions`           | Opaque dict — read by downstream tooling (priority, owner, etc.)           |
 
 ## Lifetime / session selection
 

@@ -477,12 +477,12 @@ no <code class="docutils literal notranslate"><span class="pre">metadata.name</s
 <span class="w">    </span><span class="nt">cardinality</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">singleton</span><span class="w">               </span><span class="c1"># → AgentCard.x-scitex-agent-container.cardinality</span>
 
 <span class="nt">spec</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">runtime</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">apptainer</span><span class="w">                     </span><span class="c1"># REQUIRED — only value accepted since 2026-05-13</span>
+<span class="w">  </span><span class="nt">runtime</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">apptainer</span><span class="w">                     </span><span class="c1"># optional; only `apptainer` accepted; empty defaults to `apptainer` (since 2026-05-13)</span>
 <span class="w">  </span><span class="nt">workdir</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">~/proj</span><span class="w">                        </span><span class="c1"># mounted rw at /work</span>
-<span class="w">  </span><span class="nt">dot_claude</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">./dot_claude</span><span class="w">               </span><span class="c1"># merged into &lt;workdir&gt;/.claude/ at start</span>
+<span class="w">  </span><span class="nt">dot_claude</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">./dot_claude</span><span class="w">               </span><span class="c1"># merged into &lt;workdir&gt;/.claude/ at start (no auto-discover; default &quot;&quot;)</span>
 <span class="w">  </span><span class="nt">python-venv</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">auto</span><span class="w">                      </span><span class="c1"># string or list — fallback chain</span>
-<span class="w">  </span><span class="nt">env-file</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">.env</span><span class="w">                         </span><span class="c1"># string or list of dotenv paths</span>
-<span class="w">  </span><span class="nt">multiplexer</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tmux</span><span class="w">                      </span><span class="c1"># tmux | screen</span>
+<span class="w">  </span><span class="nt">env-file</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">.env</span><span class="w">                         </span><span class="c1"># string or list of dotenv paths   (VERIFY: validator currently rejects — must be added to _KNOWN_SPEC_KEYS)</span>
+<span class="w">  </span><span class="nt">multiplexer</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tmux</span><span class="w">                      </span><span class="c1"># tmux | screen                    (VERIFY: validator currently rejects — must be added to _KNOWN_SPEC_KEYS)</span>
 
 <span class="w">  </span><span class="nt">apptainer</span><span class="p">:</span><span class="w">    </span><span class="p p-Indicator">{</span><span class="w"> </span><span class="nv">...</span><span class="w"> </span><span class="p p-Indicator">}</span>
 <span class="w">  </span><span class="nt">claude</span><span class="p">:</span><span class="w">       </span><span class="p p-Indicator">{</span><span class="w"> </span><span class="nv">...</span><span class="w"> </span><span class="p p-Indicator">}</span>
@@ -490,16 +490,34 @@ no <code class="docutils literal notranslate"><span class="pre">metadata.name</s
 <span class="w">  </span><span class="nt">health</span><span class="p">:</span><span class="w">       </span><span class="p p-Indicator">{</span><span class="w"> </span><span class="nv">...</span><span class="w"> </span><span class="p p-Indicator">}</span>
 <span class="w">  </span><span class="nt">restart</span><span class="p">:</span><span class="w">      </span><span class="p p-Indicator">{</span><span class="w"> </span><span class="nv">...</span><span class="w"> </span><span class="p p-Indicator">}</span>
 <span class="w">  </span><span class="nt">autonomous</span><span class="p">:</span><span class="w">   </span><span class="p p-Indicator">{</span><span class="w"> </span><span class="nv">...</span><span class="w"> </span><span class="p p-Indicator">}</span>
-<span class="w">  </span><span class="nt">a2a</span><span class="p">:</span><span class="w">          </span><span class="p p-Indicator">{</span><span class="nt"> port</span><span class="p">:</span><span class="w"> </span><span class="nv">7901</span><span class="w"> </span><span class="p p-Indicator">}</span>
+<span class="w">  </span><span class="nt">a2a</span><span class="p">:</span><span class="w">          </span><span class="p p-Indicator">{</span><span class="nt"> host</span><span class="p">:</span><span class="w"> </span><span class="nv">127.0.0.1</span><span class="p p-Indicator">,</span><span class="nt"> port</span><span class="p">:</span><span class="w"> </span><span class="nv">auto</span><span class="w"> </span><span class="p p-Indicator">}</span><span class="w">    </span><span class="c1"># port: auto | &lt;int&gt; | null (disable)</span>
 <span class="w">  </span><span class="nt">proxy</span><span class="p">:</span><span class="w">        </span><span class="p p-Indicator">{</span><span class="nt"> upstream</span><span class="p">:</span><span class="w"> </span><span class="nv">https</span><span class="p p-Indicator">:</span><span class="nv">//peer/</span><span class="p p-Indicator">,</span><span class="nt"> trust</span><span class="p">:</span><span class="w"> </span><span class="nv">untrusted</span><span class="w"> </span><span class="p p-Indicator">}</span><span class="w">   </span><span class="c1"># kind: AgentProxy only</span>
-<span class="w">  </span><span class="nt">listen</span><span class="p">:</span><span class="w">       </span><span class="p p-Indicator">{</span><span class="nt"> port</span><span class="p">:</span><span class="w"> </span><span class="nv">7878</span><span class="w"> </span><span class="p p-Indicator">}</span>
-<span class="w">  </span><span class="nt">skills</span><span class="p">:</span><span class="w">       </span><span class="p p-Indicator">{</span><span class="nt"> required</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">...</span><span class="p p-Indicator">]</span><span class="w"> </span><span class="p p-Indicator">}</span>
-<span class="w">  </span><span class="nt">telegram</span><span class="p">:</span><span class="w">     </span><span class="p p-Indicator">{</span><span class="w"> </span><span class="nv">...</span><span class="w"> </span><span class="p p-Indicator">}</span>
-<span class="w">  </span><span class="nt">hooks</span><span class="p">:</span><span class="w">        </span><span class="p p-Indicator">{</span><span class="nt"> pre_start</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">...</span><span class="p p-Indicator">],</span><span class="nt"> post_start</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">...</span><span class="p p-Indicator">],</span><span class="nt"> pre_stop</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">...</span><span class="p p-Indicator">]</span><span class="w"> </span><span class="p p-Indicator">}</span>
+<span class="w">  </span><span class="nt">listen</span><span class="p">:</span><span class="w">                                </span><span class="c1"># LIST of side-port DECLARATIONS (no binding):</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt"> port</span><span class="p">:</span><span class="w"> </span><span class="nv">9000</span><span class="p p-Indicator">,</span><span class="nt"> proto</span><span class="p">:</span><span class="w"> </span><span class="nv">tcp</span><span class="p p-Indicator">,</span><span class="nt"> name</span><span class="p">:</span><span class="w"> </span><span class="nv">api</span><span class="p p-Indicator">,</span><span class="nt"> owner</span><span class="p">:</span><span class="w"> </span><span class="nv">app</span><span class="w"> </span><span class="p p-Indicator">}</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt"> proto</span><span class="p">:</span><span class="w"> </span><span class="nv">unix</span><span class="p p-Indicator">,</span><span class="nt"> path</span><span class="p">:</span><span class="w"> </span><span class="nv">/tmp/x.sock</span><span class="p p-Indicator">,</span><span class="nt"> name</span><span class="p">:</span><span class="w"> </span><span class="nv">ipc</span><span class="w"> </span><span class="p p-Indicator">}</span>
+<span class="w">  </span><span class="c1"># NOTE: the host-level `sac listen` server port lives in</span>
+<span class="w">  </span><span class="c1"># ~/.scitex/agent-container/config.yaml (listen.port, default 7878),</span>
+<span class="w">  </span><span class="c1"># NOT in agent spec.yaml.</span>
+<span class="w">  </span><span class="nt">startup</span><span class="p">:</span><span class="w">                               </span><span class="c1"># (optional) ready-pattern gating block (todo#291)</span>
+<span class="w">    </span><span class="nt">commands</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">...</span><span class="p p-Indicator">]</span><span class="w">                      </span><span class="c1"># shadows top-level startup_commands when set</span>
+<span class="w">    </span><span class="nt">ready_patterns</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">...</span><span class="p p-Indicator">]</span><span class="w">                </span><span class="c1"># regex strings (or { regex: &quot;...&quot; } dicts)</span>
+<span class="w">    </span><span class="nt">ready_idle_ticks</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3</span>
+<span class="w">    </span><span class="nt">ready_poll_interval_seconds</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.5</span>
+<span class="w">    </span><span class="nt">ready_timeout_seconds</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">60</span>
+<span class="w">    </span><span class="nt">on_timeout</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">capture_and_proceed</span><span class="w">      </span><span class="c1"># capture_and_proceed | capture_and_fail</span>
+<span class="w">  </span><span class="nt">context_management</span><span class="p">:</span><span class="w">                    </span><span class="c1"># context auto-management (compact/restart/noop)</span>
+<span class="w">    </span><span class="nt">trigger_at_percent</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">70</span>
+<span class="w">    </span><span class="nt">strategy</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">noop</span><span class="w">                       </span><span class="c1"># compact | restart | noop</span>
+<span class="w">    </span><span class="nt">warn_before_n_checks</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span>
+<span class="w">    </span><span class="nt">check_interval_seconds</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">300</span>
+<span class="w">  </span><span class="nt">telegram</span><span class="p">:</span><span class="w">     </span><span class="p p-Indicator">{</span><span class="nt"> bot_token_env</span><span class="p">:</span><span class="w"> </span><span class="nv">...</span><span class="p p-Indicator">,</span><span class="nt"> allowed_users</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">...</span><span class="p p-Indicator">],</span><span class="nt"> auto_connect</span><span class="p">:</span><span class="w"> </span><span class="nv">true</span><span class="p p-Indicator">,</span><span class="nt"> greeting</span><span class="p">:</span><span class="w"> </span><span class="nv">...</span><span class="w"> </span><span class="p p-Indicator">}</span>
+<span class="w">  </span><span class="nt">hooks</span><span class="p">:</span><span class="w">        </span><span class="p p-Indicator">{</span><span class="nt"> pre_start</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">...</span><span class="p p-Indicator">],</span><span class="nt"> post_start</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">...</span><span class="p p-Indicator">],</span><span class="nt"> pre_stop</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">...</span><span class="p p-Indicator">],</span><span class="nt"> post_stop</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">...</span><span class="p p-Indicator">]</span><span class="w"> </span><span class="p p-Indicator">}</span>
 <span class="w">  </span><span class="nt">extensions</span><span class="p">:</span><span class="w">   </span><span class="p p-Indicator">{</span><span class="w"> </span><span class="nv">...</span><span class="w"> </span><span class="p p-Indicator">}</span><span class="w">                  </span><span class="c1"># opaque per-deployment dict</span>
 
-<span class="w">  </span><span class="nt">startup_commands</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">...</span><span class="p p-Indicator">]</span><span class="w">                </span><span class="c1"># SHELL before claude starts</span>
+<span class="w">  </span><span class="nt">startup_commands</span><span class="p">:</span><span class="w">                      </span><span class="c1"># SHELL before claude starts (list of {delay, command} dicts)</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt"> delay</span><span class="p">:</span><span class="w"> </span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="nt"> command</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;echo</span><span class="nv"> </span><span class="s">hi&quot;</span><span class="w"> </span><span class="p p-Indicator">}</span>
 <span class="w">  </span><span class="nt">startup_prompts</span><span class="p">:</span><span class="w">  </span><span class="p p-Indicator">[</span><span class="nv">...</span><span class="p p-Indicator">]</span><span class="w">                </span><span class="c1"># TEXT fed to claude as first user msg</span>
+<span class="w">  </span><span class="nt">session</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">continue</span><span class="w">                      </span><span class="c1"># top-level shortcut overriding spec.claude.session</span>
 
 <span class="w">  </span><span class="nt">host</span><span class="p">:</span><span class="w">  </span><span class="l l-Scalar l-Scalar-Plain">gpu-box</span><span class="w">                         </span><span class="c1"># mutually exclusive: singleton on one peer</span>
 <span class="w">  </span><span class="nt">hosts</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">laptop</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">gpu-box</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">nas</span><span class="p p-Indicator">]</span><span class="w">          </span><span class="c1"># OR multi-instance, one per peer</span>
@@ -610,8 +628,8 @@ when <code class="docutils literal notranslate"><span class="pre">spec.a2a.port<
 </thead>
 <tbody>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">runtime</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">apptainer</span></code> (REQUIRED)</p></td>
-<td><p>Only value accepted; docker/podman were dropped 2026-05-13</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">apptainer</span></code> (optional)</p></td>
+<td><p>Empty/unset defaults to <code class="docutils literal notranslate"><span class="pre">apptainer</span></code>; any other value is rejected. docker/podman were dropped 2026-05-13</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">workdir</span></code></p></td>
 <td><p>path</p></td>
@@ -619,7 +637,7 @@ when <code class="docutils literal notranslate"><span class="pre">spec.a2a.port<
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">dot_claude</span></code></p></td>
 <td><p>path</p></td>
-<td><p>Materialized into <code class="docutils literal notranslate"><span class="pre">&lt;workdir&gt;/.claude/</span></code> (default: auto-discover sibling)</p></td>
+<td><p>Materialized into <code class="docutils literal notranslate"><span class="pre">&lt;workdir&gt;/.claude/</span></code>. Default is empty string — no auto-discovery of a sibling directory; operators must set the path explicitly if they want a <code class="docutils literal notranslate"><span class="pre">dot_claude/</span></code> merged in.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">python-venv</span></code></p></td>
 <td><p>string | list</p></td>
@@ -627,23 +645,31 @@ when <code class="docutils literal notranslate"><span class="pre">spec.a2a.port<
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">env-file</span></code></p></td>
 <td><p>string | list</p></td>
-<td><p>dotenv paths sourced at start</p></td>
+<td><p>dotenv paths sourced at start. <strong>(VERIFY: parsed by the loader but currently rejected by <code class="docutils literal notranslate"><span class="pre">_validation._KNOWN_SPEC_KEYS</span></code> — known parser/validator drift.)</strong></p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">user</span></code></p></td>
-<td><p>string</p></td>
-<td><p>Container user override</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">&quot;&quot;</span></code> | <code class="docutils literal notranslate"><span class="pre">&quot;host&quot;</span></code> | <code class="docutils literal notranslate"><span class="pre">&quot;&lt;uid&gt;:&lt;gid&gt;&quot;</span></code></p></td>
+<td><p>Container user override; empty = image default.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">multiplexer</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">tmux</span></code> | <code class="docutils literal notranslate"><span class="pre">screen</span></code></p></td>
-<td><p>Long-lived session host</p></td>
+<td><p>Long-lived session host (default <code class="docutils literal notranslate"><span class="pre">tmux</span></code>). <strong>(VERIFY: parsed by the loader but currently rejected by <code class="docutils literal notranslate"><span class="pre">_validation._KNOWN_SPEC_KEYS</span></code> — known parser/validator drift.)</strong></p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">host</span></code> / <code class="docutils literal notranslate"><span class="pre">hosts</span></code></p></td>
 <td><p>string / list of strings</p></td>
-<td><p>Singleton on one peer / multi-instance one-per-peer (mutually exclusive)</p></td>
+<td><p>Singleton on one peer / multi-instance one-per-peer (mutually exclusive). <code class="docutils literal notranslate"><span class="pre">hosts:</span> <span class="pre">&quot;all&quot;</span></code> = every fleet host.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">session</span></code></p></td>
+<td><p>string</p></td>
+<td><p>Top-level shortcut overriding <code class="docutils literal notranslate"><span class="pre">spec.claude.session</span></code>; legacy aliases accepted (<code class="docutils literal notranslate"><span class="pre">continue-or-new</span></code>, <code class="docutils literal notranslate"><span class="pre">new</span></code>).</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">screen.name</span></code></p></td>
+<td><p>string</p></td>
+<td><p>Legacy metadata (agent display name in <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">fleet</span></code>). Default = agent name. Does NOT drive a multiplexer.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">startup_commands[]</span></code></p></td>
-<td><p>list of shell commands</p></td>
-<td><p>Run <strong>before</strong> Claude starts</p></td>
+<td><p>list of <code class="docutils literal notranslate"><span class="pre">{delay,</span> <span class="pre">command}</span></code></p></td>
+<td><p>Run <strong>before</strong> Claude starts. Each item is a dict with optional <code class="docutils literal notranslate"><span class="pre">delay</span></code> (int seconds, default 0) and required <code class="docutils literal notranslate"><span class="pre">command</span></code> (string); bare strings are not accepted.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">startup_prompts[]</span></code></p></td>
 <td><p>list of strings</p></td>
@@ -663,36 +689,44 @@ when <code class="docutils literal notranslate"><span class="pre">spec.a2a.port<
 </thead>
 <tbody>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">image</span></code></p></td>
-<td><p>path to <code class="docutils literal notranslate"><span class="pre">.sif</span></code> (REQUIRED)</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">sac-scitex.sif</span></code> (full stack) or <code class="docutils literal notranslate"><span class="pre">sac-base.sif</span></code> (minimal)</p></td>
+<td><p>path to <code class="docutils literal notranslate"><span class="pre">.sif</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">sac-scitex.sif</span></code> (full stack) or <code class="docutils literal notranslate"><span class="pre">sac-base.sif</span></code> (minimal). Optional; empty falls back to the sac default SIF at dispatch.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">overlay</span></code></p></td>
 <td><p>path</p></td>
 <td><p>Writable rw layer above the SIF</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">binds[]</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">host:container[:ro|rw]</span></code></p></td>
-<td><p>Bind mounts. Source side supports <code class="docutils literal notranslate"><span class="pre">~</span></code> / <code class="docutils literal notranslate"><span class="pre">$VAR</span></code> (sac expands before calling apptainer). Destination MUST be absolute (apptainer rejects relative / <code class="docutils literal notranslate"><span class="pre">~</span></code> / <code class="docutils literal notranslate"><span class="pre">$VAR</span></code>); conventional roots are <code class="docutils literal notranslate"><span class="pre">/home/agent/...</span></code> (D5 canonical HOME), <code class="docutils literal notranslate"><span class="pre">/srv/</span></code>, <code class="docutils literal notranslate"><span class="pre">/work/</span></code>, <code class="docutils literal notranslate"><span class="pre">/opt/</span></code>, <code class="docutils literal notranslate"><span class="pre">/data/</span></code>. Under hardened defaults (<code class="docutils literal notranslate"><span class="pre">relaxed:</span> <span class="pre">false</span></code>) nothing is auto-bound.</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">host:container[:ro|rw]</span></code> (or legacy <code class="docutils literal notranslate"><span class="pre">{src,dst,mode}</span></code> dict)</p></td>
+<td><p>Bind mounts. Source side supports <code class="docutils literal notranslate"><span class="pre">~</span></code> / <code class="docutils literal notranslate"><span class="pre">$VAR</span></code> (sac expands before calling apptainer). Destination MUST be absolute (apptainer rejects relative / <code class="docutils literal notranslate"><span class="pre">~</span></code> / <code class="docutils literal notranslate"><span class="pre">$VAR</span></code>); conventional roots are <code class="docutils literal notranslate"><span class="pre">/home/agent/...</span></code> (D5 canonical HOME), <code class="docutils literal notranslate"><span class="pre">/srv/</span></code>, <code class="docutils literal notranslate"><span class="pre">/work/</span></code>, <code class="docutils literal notranslate"><span class="pre">/opt/</span></code>, <code class="docutils literal notranslate"><span class="pre">/data/</span></code>. The legacy <code class="docutils literal notranslate"><span class="pre">{src,</span> <span class="pre">dst,</span> <span class="pre">mode}</span></code> dict form is still accepted by the parser and normalized to the string form.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">env</span></code></p></td>
 <td><p>key-value dict</p></td>
 <td><p>Env vars exported into the container</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">nv</span></code> / <code class="docutils literal notranslate"><span class="pre">rocm</span></code></p></td>
-<td><p>bool</p></td>
-<td><p>Forward host NVIDIA / AMD ROCm libs (mutually exclusive)</p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">container_workdir</span></code></p></td>
+<td><p>path (default <code class="docutils literal notranslate"><span class="pre">/work</span></code>)</p></td>
+<td><p>Working directory inside the container.</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">raw_args[]</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">nv</span></code> / <code class="docutils literal notranslate"><span class="pre">rocm</span></code></p></td>
+<td><p>bool</p></td>
+<td><p>Forward host NVIDIA / AMD ROCm libs. (DESIGN — mutual exclusion not currently enforced by the parser.)</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">raw_args[]</span></code></p></td>
 <td><p>list of strings</p></td>
 <td><p><strong>Escape hatch</strong> — appended verbatim to <code class="docutils literal notranslate"><span class="pre">apptainer</span> <span class="pre">exec</span></code></p></td>
 </tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">post</span></code> / <code class="docutils literal notranslate"><span class="pre">environment</span></code> / <code class="docutils literal notranslate"><span class="pre">def_file</span></code></p></td>
+<td><p>string / KV dict / path</p></td>
+<td><p>Apptainer <code class="docutils literal notranslate"><span class="pre">%post</span></code> shell snippet, <code class="docutils literal notranslate"><span class="pre">%environment</span></code> KV map, and override <code class="docutils literal notranslate"><span class="pre">.def</span></code> path for <code class="docutils literal notranslate"><span class="pre">apptainer</span> <span class="pre">build</span></code>. Empty / missing → no build extension.</p></td>
+</tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">relaxed</span></code></p></td>
 <td><p>bool (default <code class="docutils literal notranslate"><span class="pre">false</span></code>)</p></td>
-<td><p>Opt OUT of hardened-by-default isolation. When <code class="docutils literal notranslate"><span class="pre">false</span></code> (default), sac auto-prepends <code class="docutils literal notranslate"><span class="pre">--containall</span></code> / <code class="docutils literal notranslate"><span class="pre">--cleanenv</span></code> / <code class="docutils literal notranslate"><span class="pre">--writable-tmpfs</span></code> / <code class="docutils literal notranslate"><span class="pre">--home</span> <span class="pre">/home/agent</span></code>. Set <code class="docutils literal notranslate"><span class="pre">true</span></code> to disable; see <span class="xref myst"><code class="docutils literal notranslate"><span class="pre">docs/isolation.md</span></code></span> + <a class="reference internal" href="#adr/0001-isolation-hardening.md"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">docs/adr/0001-isolation-hardening.md</span></code></span></a>.</p></td>
+<td><p><strong>(DESIGN — not yet implemented in the parser.)</strong> Intent: opt OUT of hardened-by-default isolation. When <code class="docutils literal notranslate"><span class="pre">false</span></code> (default), sac auto-prepends <code class="docutils literal notranslate"><span class="pre">--containall</span></code> / <code class="docutils literal notranslate"><span class="pre">--cleanenv</span></code> / <code class="docutils literal notranslate"><span class="pre">--writable-tmpfs</span></code> / <code class="docutils literal notranslate"><span class="pre">--home</span> <span class="pre">/home/agent</span></code>. Set <code class="docutils literal notranslate"><span class="pre">true</span></code> to disable; see <span class="xref myst"><code class="docutils literal notranslate"><span class="pre">docs/isolation.md</span></code></span> + <a class="reference internal" href="#adr/0001-isolation-hardening.md"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">docs/adr/0001-isolation-hardening.md</span></code></span></a>. TODO: wire into <code class="docutils literal notranslate"><span class="pre">ApptainerSpec</span></code>.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">fakeroot</span></code></p></td>
 <td><p>bool (default <code class="docutils literal notranslate"><span class="pre">false</span></code>)</p></td>
-<td><p>Apptainer <code class="docutils literal notranslate"><span class="pre">--fakeroot</span></code> — uid 0 inside via user-namespace remap; host uid unchanged. D5 preflight detects userns-fakeroot via <code class="docutils literal notranslate"><span class="pre">/proc/self/uid_map</span></code> and accepts uid 0 only when remapped.</p></td>
+<td><p><strong>(DESIGN — not yet implemented in the parser.)</strong> Intent: apptainer <code class="docutils literal notranslate"><span class="pre">--fakeroot</span></code> — uid 0 inside via user-namespace remap; host uid unchanged. D5 preflight detects userns-fakeroot via <code class="docutils literal notranslate"><span class="pre">/proc/self/uid_map</span></code> and accepts uid 0 only when remapped. TODO: wire into <code class="docutils literal notranslate"><span class="pre">ApptainerSpec</span></code>.</p></td>
 </tr>
 </tbody>
 </table>
@@ -732,7 +766,7 @@ when <code class="docutils literal notranslate"><span class="pre">spec.a2a.port<
 <td><p>MCP push channels (passed as <code class="docutils literal notranslate"><span class="pre">claude</span> <span class="pre">--channels</span></code>)</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">auto_accept</span></code></p></td>
-<td><p>bool</p></td>
+<td><p>bool (default <code class="docutils literal notranslate"><span class="pre">True</span></code>)</p></td>
 <td><p>Auto-confirm permission prompts in the TUI</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">raw_options</span></code></p></td>
@@ -761,36 +795,39 @@ when <code class="docutils literal notranslate"><span class="pre">spec.a2a.port<
 <td><p>per-probe timeout</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">health.method</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">sdk-alive</span></code> (only currently supported)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">sdk-alive</span></code> (only value accepted by the validator). NOTE: the parser default is the legacy string <code class="docutils literal notranslate"><span class="pre">multiplexer-alive</span></code>; with the validator pin in place, any explicit value other than <code class="docutils literal notranslate"><span class="pre">sdk-alive</span></code> is rejected at load time.</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">restart.policy</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">autonomous.idle_kick_after_s</span></code></p></td>
+<td><p>int seconds — nudge cadence when no tool activity (default 120)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">restart.policy</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">never</span></code> | <code class="docutils literal notranslate"><span class="pre">on-failure</span></code> | <code class="docutils literal notranslate"><span class="pre">always</span></code></p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">restart.max_retries</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">restart.max_retries</span></code></p></td>
 <td><p>int</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">restart.backoff.initial</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">restart.backoff.initial</span></code></p></td>
 <td><p>seconds before first retry</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">restart.backoff.max</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">restart.backoff.max</span></code></p></td>
 <td><p>cap on backoff</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">restart.backoff.multiplier</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">restart.backoff.multiplier</span></code></p></td>
 <td><p>exponential factor</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">watchdog.enabled</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">watchdog.enabled</span></code></p></td>
 <td><p>parsed for back-compat; lifecycle managed via hooks</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">autonomous.enabled</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">autonomous.enabled</span></code></p></td>
 <td><p>drive turns until <code class="docutils literal notranslate"><span class="pre">drive_until</span></code> token or <code class="docutils literal notranslate"><span class="pre">max_turns</span></code></p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">autonomous.drive_until</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">autonomous.drive_until</span></code></p></td>
 <td><p>string token Claude prints when done (default <code class="docutils literal notranslate"><span class="pre">DONE</span></code>)</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">autonomous.max_turns</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">autonomous.max_turns</span></code></p></td>
 <td><p>int</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">autonomous.kick_text</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">autonomous.kick_text</span></code></p></td>
 <td><p>nudge sent when Claude pauses</p></td>
 </tr>
 </tbody>
@@ -805,11 +842,14 @@ when <code class="docutils literal notranslate"><span class="pre">spec.a2a.port<
 </tr>
 </thead>
 <tbody>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">a2a.port</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">a2a.host</span></code></p></td>
+<td><p>Bind interface for the per-agent A2A sidecar (default <code class="docutils literal notranslate"><span class="pre">127.0.0.1</span></code>).</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">a2a.port</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">auto</span></code> (default) — sac claims a free port from <code class="docutils literal notranslate"><span class="pre">~/.scitex/agent-container/config.yaml</span></code>’s <code class="docutils literal notranslate"><span class="pre">a2a.port_range</span></code> (default 19000-19999), persists in <code class="docutils literal notranslate"><span class="pre">state.db</span></code>, surfaces via <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agents</span> <span class="pre">list</span></code>. Set an explicit int (e.g. <code class="docutils literal notranslate"><span class="pre">7901</span></code>) to pin for a stable external URL. Set <code class="docutils literal notranslate"><span class="pre">null</span></code> to disable the sidecar entirely. <strong>Most operators never touch this</strong> — auto is the right default.</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">listen.port</span></code></p></td>
-<td><p>Override for the host-level <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code> server port (default 7878)</p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">listen[]</span></code></p></td>
+<td><p>LIST of side-port DECLARATIONS (NOT a single port override). Each item: <code class="docutils literal notranslate"><span class="pre">{port,</span> <span class="pre">proto,</span> <span class="pre">path,</span> <span class="pre">name,</span> <span class="pre">owner}</span></code>. <code class="docutils literal notranslate"><span class="pre">proto</span></code>: <code class="docutils literal notranslate"><span class="pre">tcp</span></code> (default) / <code class="docutils literal notranslate"><span class="pre">udp</span></code> / <code class="docutils literal notranslate"><span class="pre">unix</span></code>. Entries that fail validation (<code class="docutils literal notranslate"><span class="pre">tcp</span></code>/<code class="docutils literal notranslate"><span class="pre">udp</span></code> needs <code class="docutils literal notranslate"><span class="pre">port&gt;0</span></code>; <code class="docutils literal notranslate"><span class="pre">unix</span></code> needs <code class="docutils literal notranslate"><span class="pre">path</span></code>) are silently dropped. <strong>The container does NOT bind these — declarations only</strong>, surfaced on the AgentCard for peers. The host-level <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code> server port (default 7878) is configured in <code class="docutils literal notranslate"><span class="pre">~/.scitex/agent-container/config.yaml</span></code> under <code class="docutils literal notranslate"><span class="pre">listen.port</span></code>, NOT here.</p></td>
 </tr>
 </tbody>
 </table>
@@ -862,11 +902,17 @@ the <code class="docutils literal notranslate"><span class="pre">.mcp.json</span
 </tr>
 </thead>
 <tbody>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">telegram.enabled</span></code></p></td>
-<td><p>bool — enable alerting bridge (consumed by claude-code-telegrammer)</p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">telegram.bot_token_env</span></code></p></td>
+<td><p>Env var name holding the bot token (default <code class="docutils literal notranslate"><span class="pre">SCITEX_AGENT_CONTAINER_TELEGRAM_BOT_TOKEN</span></code>)</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">telegram.chat_id</span></code></p></td>
-<td><p>Telegram chat ID</p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">telegram.allowed_users</span></code></p></td>
+<td><p>List of Telegram user IDs (strings) allowed to talk to this bridge</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">telegram.auto_connect</span></code></p></td>
+<td><p>bool (default <code class="docutils literal notranslate"><span class="pre">true</span></code>) — auto-attach the bridge at agent start</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">telegram.greeting</span></code></p></td>
+<td><p>Optional greeting string posted on connect</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">hooks.pre_start[]</span></code></p></td>
 <td><p>Shell commands before <code class="docutils literal notranslate"><span class="pre">apptainer</span> <span class="pre">exec</span></code> (a <code class="docutils literal notranslate"><span class="pre">mkdir</span> <span class="pre">-p</span> <span class="pre">&lt;workdir&gt;/.claude</span></code> is auto-prepended)</p></td>
@@ -877,7 +923,10 @@ the <code class="docutils literal notranslate"><span class="pre">.mcp.json</span
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">hooks.pre_stop[]</span></code></p></td>
 <td><p>Shell commands before SIGTERM</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">extensions</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">hooks.post_stop[]</span></code></p></td>
+<td><p>Shell commands after the runner exits</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">extensions</span></code></p></td>
 <td><p>Opaque dict — read by downstream tooling (priority, owner, etc.)</p></td>
 </tr>
 </tbody>
