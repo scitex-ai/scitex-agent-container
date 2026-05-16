@@ -78,6 +78,7 @@ rich non-agentic status surface.
 - [20_env-vars.md](20_env-vars.md) — `SCITEX_*` env vars read at runtime
 - [21_cli-startup-budget.md](21_cli-startup-budget.md) — keep `sac --help` < 500 ms via LazyGroup
 - [22_host-passthrough.md](22_host-passthrough.md) — `spec.mounts` + `spec.user` + `spec.env` for SDK agents that need host filesystem / git / gh
+- [23_telegram-integration.md](23_telegram-integration.md) — Telegram fold (Phase 2+3): `_telegram/` bridge, six `telegram_*` MCP tools, channel-push inbound, lead-only auth gate, per-bot-token flock singleton
 
 ## 30-second start
 

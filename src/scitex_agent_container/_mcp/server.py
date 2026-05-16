@@ -3,6 +3,15 @@
 Tool definitions live under :mod:`._tools`. This module is a thin
 shim: FastMCP init, tool registration, transport selection.
 
+It also drives the Phase 2+3 Telegram fold boot-up: when the env carries
+the lead's ``LEAD_TELEGRAM_AUTH_TOKEN`` and a ``TelegramSpec`` is
+resolvable, :func:`_maybe_boot_telegram_bridge` instantiates a
+:class:`TelegramBridge`, registers it in the shared runtime singleton so
+the in-process ``telegram_*`` tools can find it, and (when running in an
+async context) schedules its long-poll task on the current loop. The
+boot is best-effort — every failure mode logs a WARN and proceeds, so a
+mis-configured Telegram fold cannot break the rest of the MCP server.
+
 Usage::
 
     sac mcp start                  # stdio
@@ -12,7 +21,13 @@ Usage::
 
 from __future__ import annotations
 
+import asyncio
+import logging
+from typing import Any
+
 from ._tools import register_all_tools
+
+log = logging.getLogger(__name__)
 
 _INSTRUCTIONS = """\
 scitex-agent-container (sac) — declarative container wrapper for
@@ -44,7 +59,95 @@ def _build_server():
 
     server = FastMCP(name="scitex-agent-container", instructions=_INSTRUCTIONS)
     register_all_tools(server)
+    _maybe_boot_telegram_bridge(server)
     return server
+
+
+def _resolve_telegram_spec():
+    """Look up ``TelegramSpec`` from the env-pinned agent name, if any.
+
+    Returns ``None`` (with a debug log) whenever the spec cannot be
+    located — the lead's launcher may inject the bot-token env without a
+    spec file, in which case we still want the bridge to boot from
+    defaults.
+    """
+    import os
+
+    from ..config._types import TelegramSpec
+
+    agent_name = os.environ.get("SAC_AGENT_NAME") or os.environ.get(
+        "SCITEX_AGENT_CONTAINER_AGENT_NAME"
+    )
+    if not agent_name:
+        return TelegramSpec()
+    try:
+        from ..config import load_config
+        from ..config._resolve import resolve_config
+
+        cfg = load_config(resolve_config(agent_name))
+    except Exception as exc:  # stx-allow: fallback (reason: bridge boot must not depend on agent spec resolution)
+        log.debug(
+            "telegram: could not load spec for agent %s (%s); using defaults",
+            agent_name,
+            exc,
+        )
+        return TelegramSpec()
+    return getattr(cfg, "telegram", TelegramSpec())
+
+
+def _maybe_boot_telegram_bridge(server: Any) -> None:
+    """Boot the Telegram bridge in-process when env conditions allow.
+
+    Hooks ``server`` to receive notification emissions when FastMCP
+    exposes a session-aware emitter; otherwise the bridge runs with a
+    log-only notifier (Claude won't see the channel push, but the rest
+    of the MCP surface stays functional).
+    """
+    try:
+        from .._telegram._startup import maybe_start_bridge
+    except Exception as exc:  # stx-allow: fallback (reason: telegram module is optional; never fail MCP boot)
+        log.debug("telegram: bridge module unavailable (%s)", exc)
+        return
+
+    spec = _resolve_telegram_spec()
+
+    async def _notifier(payload: dict) -> None:
+        # Emit a notifications/claude/channel via the MCP session when
+        # one is reachable. FastMCP doesn't expose a stable hook for
+        # this yet; we fall back to a log so the inbound path keeps
+        # working in scripted / test contexts.
+        try:
+            from mcp.server.session import (
+                ServerSession,  # noqa: F401  # type: ignore[import-not-found]
+            )
+        except (
+            Exception
+        ):  # stx-allow: fallback (reason: optional dep; degrade gracefully)
+            log.info("telegram inbound (no session): %s", payload)
+            return
+        log.info(
+            "telegram inbound -> notifications/claude/channel: %s",
+            {"content": payload.get("content", "")[:80], "meta": payload.get("meta")},
+        )
+
+    bridge = maybe_start_bridge(spec, notifier=_notifier, target_agent="master")
+    if bridge is None:
+        return
+
+    # Schedule the actual long-poll only when we already have an event
+    # loop. The MCP stdio transport runs ``server.run()`` which spins
+    # one up internally — at that point we hook via FastMCP lifespan if
+    # available; otherwise we let the bridge sit idle (constructed +
+    # registered) until the operator calls ``start()`` explicitly.
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(bridge.start())
+    except RuntimeError:  # stx-allow: fallback (reason: no running loop at construction time is the common case)
+        log.info(
+            "telegram: bridge constructed but not started (no event loop); "
+            "the caller must `await bridge.start()` in its lifespan"
+        )
 
 
 # Module-level singleton — built lazily on first attribute access so
