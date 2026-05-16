@@ -73,7 +73,6 @@ _KNOWN_SPEC_KEYS = frozenset(
         "watchdog",
         "restart",
         "hooks",
-        "telegram",
         "startup_commands",
         "startup_prompts",  # v3-realign: separate from startup_commands (§3)
         "startup",

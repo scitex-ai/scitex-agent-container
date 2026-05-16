@@ -32,7 +32,6 @@ from ._remote import parse_remote
 from ._restart import parse_restart
 from ._skills import parse_skills
 from ._startup import parse_startup, parse_startup_commands
-from ._telegram import parse_telegram
 from ._watchdog import parse_watchdog
 
 __all__ = [
@@ -59,6 +58,5 @@ __all__ = [
     "parse_skills",
     "parse_startup",
     "parse_startup_commands",
-    "parse_telegram",
     "parse_watchdog",
 ]

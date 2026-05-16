@@ -206,15 +206,6 @@ class A2ASpec:
         return self.port is None
 
 
-# Telegram setup is managed externally via hooks.
-@dataclass
-class TelegramSpec:
-    bot_token_env: str = "SCITEX_AGENT_CONTAINER_TELEGRAM_BOT_TOKEN"
-    allowed_users: list[str] = field(default_factory=list)
-    auto_connect: bool = True
-    greeting: str = ""
-
-
 @dataclass
 class RemoteSpec:
     # Chain-based remote: list of SSH config aliases (new format).
@@ -439,7 +430,6 @@ class AgentConfig:
     hooks: dict[str, list[str]] = field(default_factory=dict)
     listen: list[ListenPort] = field(default_factory=list)
     extensions: Dict[str, Any] = field(default_factory=dict)
-    telegram: TelegramSpec = field(default_factory=TelegramSpec)
     remote: RemoteSpec = field(default_factory=RemoteSpec)
     skills: SkillsSpec = field(default_factory=SkillsSpec)
     context_management: ContextManagementConfig = field(

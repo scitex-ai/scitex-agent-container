@@ -34,7 +34,6 @@ if TYPE_CHECKING:
         image,
         mcp,
         skills,
-        telegram,
         template,
     )
 
@@ -47,7 +46,6 @@ __all__ = [
     "skills",
     "mcp",
     "template",
-    "telegram",
 ]
 
 

@@ -24,7 +24,6 @@ from ._parsers import (
     parse_skills,
     parse_startup,
     parse_startup_commands,
-    parse_telegram,
     parse_watchdog,
 )
 from ._types import AgentConfig, HostsSpec
@@ -283,7 +282,6 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         autonomous=parse_autonomous(spec),
         apptainer=apptainer_spec,
         hooks=hooks,
-        telegram=parse_telegram(spec),
         skills=parse_skills(spec),
         startup_commands=parse_startup_commands(spec),
         startup_prompts=startup_prompts,

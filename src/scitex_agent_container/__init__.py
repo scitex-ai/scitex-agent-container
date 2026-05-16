@@ -45,7 +45,6 @@ if TYPE_CHECKING:
         image,
         mcp,
         skills,
-        telegram,
         template,
     )
     from scitex_agent_container._network import peer  # noqa: F401
@@ -91,7 +90,6 @@ __all__ = [
     "account",
     "skills",
     "mcp",
-    "telegram",
     # Networking submodule (own surface — see _network/peer.py).
     "peer",
 ]
@@ -107,7 +105,6 @@ _API_NAMES = {
     "image",
     "mcp",
     "skills",
-    "telegram",
     "template",
 }
 _LAZY: dict = {}
