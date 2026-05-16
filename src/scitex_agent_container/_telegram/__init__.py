@@ -1,14 +1,33 @@
-"""sac Telegram bridge package (Phase 1 scaffolding).
+"""sac Telegram bridge package.
 
-Empty package. Phase 2 will port the bridge implementation from
-``/home/ywatanabe/proj/scitex-orochi/src/scitex_orochi/_telegram_bridge.py``
-to sit on sac's per-agent SSE inbox bus instead of an Orochi channel.
+Phase 2+3 complete: the bridge ports the orochi implementation onto sac's
+channel-notification surface, the singleton lock prevents the dual-poller
+409 trap, and the six ``telegram_*`` MCP tools speak directly to the
+in-process bridge.
 
 See ``docs/design/telegram-fold.md`` for the full plan.
 """
 
 from __future__ import annotations
 
-from ._bridge import TelegramBridge
+from ._bridge import ChannelNotifier, TelegramBridge
+from ._lock import TelegramBridgeLock, TelegramLockError
+from ._runtime import (
+    clear_bridge,
+    get_auth_token,
+    get_bridge,
+    set_bridge,
+)
+from ._startup import maybe_start_bridge
 
-__all__ = ["TelegramBridge"]
+__all__ = [
+    "TelegramBridge",
+    "TelegramBridgeLock",
+    "TelegramLockError",
+    "ChannelNotifier",
+    "set_bridge",
+    "clear_bridge",
+    "get_bridge",
+    "get_auth_token",
+    "maybe_start_bridge",
+]
