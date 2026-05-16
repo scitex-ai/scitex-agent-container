@@ -21,8 +21,10 @@ from ...config._host import resolve_hostname
 from ...config._resolve import resolve_with_prefix
 from .._helpers import agent_name_complete, console, system_msg
 from ._common import (
+    _dispatch_remote_start,
     _iter_agent_yamls,
     _multiplex_foreground_tails,
+    _resolve_dispatch_peer,
     _singleton_skip_reason,
 )
 
@@ -149,6 +151,17 @@ from ._common import (
     default=False,
     help="Replace existing materialised yamls under --params-out.",
 )
+@click.option(
+    "--no-redispatch",
+    "no_redispatch",
+    is_flag=True,
+    default=False,
+    hidden=True,
+    help=(
+        "Skip the remote-dispatch branch (used by the peer-side invocation "
+        "to prevent recursion). Internal use mostly."
+    ),
+)
 def start(
     targets: tuple[str, ...],
     no_preflight: bool,
@@ -163,6 +176,7 @@ def start(
     params_file: Path | None,
     params_out: Path | None,
     params_overwrite: bool,
+    no_redispatch: bool,
 ) -> None:
     """Start one or more agents from YAML definitions.
 
@@ -336,6 +350,37 @@ def start(
                 RuntimeError
             ):  # stx-allow: fallback (reason: runtime state error — handled gracefully)
                 current_host = ""
+            # Cross-host dispatch branch (step 2 of 6 — routing only; the
+            # actual rsync / ssh / drift-check / registry-row work lands
+            # in steps 3-6). Skipped entirely when --no-redispatch is
+            # passed (peer-side invocation uses this to prevent
+            # recursion). Source of ``target_host`` is still
+            # ``spec.host`` per the architectural decision — the
+            # ``--on <host>`` CLI arg arrives in a later step.
+            if not no_redispatch:
+                spec_host = config.hosts_spec.host
+                if isinstance(spec_host, list):
+                    target_host = spec_host[0] if spec_host else None
+                else:
+                    target_host = spec_host or None
+                from ..._state.host_config import load as _load_host_config
+
+                peers = _load_host_config().peers
+                dispatch_peer = _resolve_dispatch_peer(
+                    target_host=target_host,
+                    current_host=current_host,
+                    peers=peers,
+                )
+                if dispatch_peer is not None:
+                    rc = _dispatch_remote_start(
+                        name=config.name,
+                        peer=dispatch_peer,
+                        dry_run=dry_run,
+                        force=force,
+                    )
+                    if rc != 0:
+                        any_error = True
+                    continue
             skip = _singleton_skip_reason(config, current_host)
             if skip:
                 if as_json:

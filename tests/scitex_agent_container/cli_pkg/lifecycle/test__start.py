@@ -345,10 +345,133 @@ class TestResumeAndForeground:
 
 
 # ---------------------------------------------------------------------------
-# NB: every other previously-present test required substituting
-# ``agent_start`` / ``load_config`` / ``resolve_hostname`` etc. at
-# the module namespace. Driving them honestly demands materialising
-# a real apptainer workspace + running Claude Code, which is
-# out-of-scope for a unit test. Those tests are deleted rather
-# than re-greened with a renamed ``monkeypatch`` shim.
+# Cross-host dispatch routing branch — drives the real Click command with a
+# real config.yaml on disk and the real ``_resolve_dispatch_peer``. The stub
+# ``_dispatch_remote_start`` raises ``NotImplementedError`` (no silent stub).
+# The per-target loop in ``_start.py`` has a catch-all that turns the
+# exception into a printed traceback + ``sys.exit(1)``, so the observable
+# signal lives in ``result.output``: the ``NotImplementedError`` class name +
+# the dispatcher's signature line prove the routing branch reached the
+# dispatcher; absence means the branch fell through. See feedback_no_silent_stubs.
 # ---------------------------------------------------------------------------
+
+
+def _write_peer_config(parent: Path, peer_name: str) -> Path:
+    """Write a real ``config.yaml`` with a single peer entry; return its path."""
+    cfg = parent / "config.yaml"
+    cfg.write_text(
+        "host:\n  fallback: hostname-short\npeers:\n"
+        f"  {peer_name}:\n    ssh: {peer_name}\n"
+    )
+    return cfg
+
+
+class TestDispatchBranch:
+    def test_dispatch_branch_fires_when_spec_host_names_known_peer(
+        self, tmp_path, env_save_restore
+    ):
+        # Arrange — spec.host is a known remote peer; routing branch must
+        # reach the dispatcher, which raises NotImplementedError.
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        cfg = _write_peer_config(tmp_path, "remote-host")
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg))
+        yaml_path = _write_singleton_yaml(tmp_path, "mini", "remote-host")
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, [str(yaml_path)])
+        # Assert
+        assert "NotImplementedError" in result.output
+
+    def test_dispatch_branch_exception_message_names_target_peer(
+        self, tmp_path, env_save_restore
+    ):
+        # Arrange — dispatcher's traceback must echo the peer name so we
+        # know the routing branch handed off the resolved peer.
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        cfg = _write_peer_config(tmp_path, "remote-host")
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg))
+        yaml_path = _write_singleton_yaml(tmp_path, "mini", "remote-host")
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, [str(yaml_path)])
+        # Assert
+        assert "peer='remote-host'" in result.output
+
+    def test_dispatch_branch_propagates_dry_run_flag_to_dispatcher(
+        self, tmp_path, env_save_restore
+    ):
+        # Arrange — --dry-run must reach the dispatcher's kwargs; the
+        # traceback echoes ``dry_run=True``.
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        cfg = _write_peer_config(tmp_path, "remote-host")
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg))
+        yaml_path = _write_singleton_yaml(tmp_path, "mini", "remote-host")
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, [str(yaml_path), "--dry-run", "--force"])
+        # Assert
+        assert "dry_run=True" in result.output
+
+    def test_dispatch_branch_propagates_force_flag_to_dispatcher(
+        self, tmp_path, env_save_restore
+    ):
+        # Arrange — --force must reach the dispatcher's kwargs; the
+        # traceback echoes ``force=True``.
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        cfg = _write_peer_config(tmp_path, "remote-host")
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg))
+        yaml_path = _write_singleton_yaml(tmp_path, "mini", "remote-host")
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, [str(yaml_path), "--dry-run", "--force"])
+        # Assert
+        assert "force=True" in result.output
+
+    def test_dispatch_branch_quiet_when_spec_host_equals_current_host(
+        self, tmp_path, env_save_restore
+    ):
+        # Arrange — current host equals spec.host; resolver returns None,
+        # routing branch must NOT fire. Downstream local-start may fail
+        # (no real apptainer image), but the dispatcher's traceback MUST
+        # NOT appear.
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        cfg = _write_peer_config(tmp_path, "this-host")
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg))
+        yaml_path = _write_singleton_yaml(tmp_path, "mini", "this-host")
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, [str(yaml_path), "--dry-run"])
+        # Assert
+        assert "NotImplementedError" not in result.output
+
+    def test_singleton_skip_still_fires_when_spec_host_is_unknown(
+        self, tmp_path, env_save_restore
+    ):
+        # Arrange — spec.host is NOT in the peer registry AND NOT the
+        # current host. Resolver returns None ("caller decides"), the
+        # routing branch falls through, and singleton-skip emits the
+        # ``Skipping 'mini'`` line.
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        cfg = _write_peer_config(tmp_path, "remote-host")
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg))
+        yaml_path = _write_singleton_yaml(tmp_path, "mini", "unknown-host")
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, [str(yaml_path)])
+        # Assert
+        assert "Skipping 'mini'" in result.output
+
+    def test_dispatch_branch_quiet_when_spec_host_is_unknown(
+        self, tmp_path, env_save_restore
+    ):
+        # Arrange — same setup; complementary assertion that the
+        # dispatcher did NOT raise (the branch fell through).
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        cfg = _write_peer_config(tmp_path, "remote-host")
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg))
+        yaml_path = _write_singleton_yaml(tmp_path, "mini", "unknown-host")
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, [str(yaml_path)])
+        # Assert
+        assert "NotImplementedError" not in result.output
