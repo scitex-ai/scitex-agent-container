@@ -95,42 +95,88 @@ def _resolve_telegram_spec():
     return getattr(cfg, "telegram", TelegramSpec())
 
 
+async def _emit_channel_notification(session: Any, payload: dict) -> None:
+    """Emit a ``notifications/claude/channel`` event over a live MCP
+    session.
+
+    The session is duck-typed: any object exposing
+    :py:meth:`send_message` accepting a :class:`SessionMessage` works
+    (the real implementation is :class:`mcp.server.session.ServerSession`).
+    Failures are logged at WARN level so a transient send error never
+    crashes the calling background task.
+    """
+    try:
+        from mcp.shared.message import SessionMessage
+        from mcp.types import JSONRPCMessage, JSONRPCNotification
+    except (
+        Exception
+    ) as exc:  # stx-allow: fallback (reason: optional dep; degrade gracefully)
+        log.warning(
+            "telegram: mcp types unavailable (%s); cannot emit channel notification",
+            exc,
+        )
+        return
+    msg = JSONRPCMessage(
+        JSONRPCNotification(
+            jsonrpc="2.0",
+            method="notifications/claude/channel",
+            params={
+                "content": payload.get("content", ""),
+                "meta": payload.get("meta", {}),
+            },
+        )
+    )
+    try:
+        await session.send_message(SessionMessage(msg))
+        log.info(
+            "telegram -> claude channel push delivered (chat_id=%s)",
+            payload.get("meta", {}).get("chat_id"),
+        )
+    except Exception as exc:  # stx-allow: fallback (reason: a transient send failure must not crash bridge)
+        log.warning("telegram: channel send_message failed: %s", exc)
+
+
+def _make_telegram_notifier():
+    """Build the bridge notifier closure. Exposed for unit-testing the
+    "session present" and "session absent" branches independently."""
+    from .._telegram._session_holder import get_active_session
+
+    async def _notifier(payload: dict) -> None:
+        session = get_active_session()
+        if session is None:
+            log.info(
+                "telegram inbound (no session yet): %s",
+                {
+                    "content": payload.get("content", "")[:80],
+                    "meta": payload.get("meta"),
+                },
+            )
+            return
+        await _emit_channel_notification(session, payload)
+
+    return _notifier
+
+
 def _maybe_boot_telegram_bridge(server: Any) -> None:
     """Boot the Telegram bridge in-process when env conditions allow.
 
-    Hooks ``server`` to receive notification emissions when FastMCP
-    exposes a session-aware emitter; otherwise the bridge runs with a
-    log-only notifier (Claude won't see the channel push, but the rest
-    of the MCP surface stays functional).
+    Installs a ServerSession-capture patch so the bridge can emit
+    ``notifications/claude/channel`` from its background poll task. If
+    the patch can't be installed (mcp lib missing) the notifier falls
+    back to a log-only mode so the rest of the MCP surface still works.
     """
     try:
+        from .._telegram._session_holder import install
         from .._telegram._startup import maybe_start_bridge
     except Exception as exc:  # stx-allow: fallback (reason: telegram module is optional; never fail MCP boot)
         log.debug("telegram: bridge module unavailable (%s)", exc)
         return
 
     spec = _resolve_telegram_spec()
-
-    async def _notifier(payload: dict) -> None:
-        # Emit a notifications/claude/channel via the MCP session when
-        # one is reachable. FastMCP doesn't expose a stable hook for
-        # this yet; we fall back to a log so the inbound path keeps
-        # working in scripted / test contexts.
-        try:
-            from mcp.server.session import (
-                ServerSession,  # noqa: F401  # type: ignore[import-not-found]
-            )
-        except (
-            Exception
-        ):  # stx-allow: fallback (reason: optional dep; degrade gracefully)
-            log.info("telegram inbound (no session): %s", payload)
-            return
-        log.info(
-            "telegram inbound -> notifications/claude/channel: %s",
-            {"content": payload.get("content", "")[:80], "meta": payload.get("meta")},
-        )
-
-    bridge = maybe_start_bridge(spec, notifier=_notifier, target_agent="master")
+    install()
+    bridge = maybe_start_bridge(
+        spec, notifier=_make_telegram_notifier(), target_agent="master"
+    )
     if bridge is None:
         return
 
