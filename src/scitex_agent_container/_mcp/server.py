@@ -242,11 +242,14 @@ def _maybe_boot_telegram_bridge(server: Any) -> None:
     schedule_bridge_autostart(bridge)
 
     # Best-effort: also try to start now in case a loop is already
-    # running (e.g. tests / hot-reload). Idempotent inside bridge.start().
+    # running (e.g. tests / hot-reload). Use get_running_loop() — the
+    # deprecated get_event_loop() returns a fresh non-running loop when
+    # called from a sync frame on Py3.10+, masking the "no loop" case
+    # as "loop not running" and skipping the schedule. The real start
+    # path is the session-holder callback; this branch is fallback.
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            loop.create_task(bridge.start())
+        loop = asyncio.get_running_loop()
+        loop.create_task(bridge.start())
     except RuntimeError:  # stx-allow: fallback (reason: no running loop at construction time is the common case)
         log.info(
             "telegram: bridge constructed but not started (no event loop); "

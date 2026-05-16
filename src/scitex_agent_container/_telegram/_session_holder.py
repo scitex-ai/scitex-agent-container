@@ -88,14 +88,24 @@ def schedule_bridge_autostart(bridge: Any) -> None:
     """
 
     def _starter(_session: Any) -> None:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            log.info("session-holder: scheduling bridge.start()")
-            loop.create_task(bridge.start())
-        else:
+        # Use get_running_loop(), not get_event_loop(): the latter is
+        # deprecated and on Py3.10+ returns a fresh non-running loop when
+        # called from a synchronous frame inside an async stack, which
+        # makes ``loop.is_running()`` falsely False and silently skips
+        # ``bridge.start()``. get_running_loop() raises if there's none,
+        # which is what we want.
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
             log.warning(
-                "session-holder: bridge.start() not scheduled (no running loop)"
+                "session-holder: no running loop at ServerSession init; "
+                "cannot schedule bridge.start()"
             )
+            return
+        log.info(
+            "session-holder: scheduling bridge.start() via running loop %s", id(loop)
+        )
+        loop.create_task(bridge.start())
 
     on_session_captured(_starter)
 
