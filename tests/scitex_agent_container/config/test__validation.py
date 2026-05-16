@@ -567,3 +567,53 @@ def test_image_round_trips_into_top_level_image_alias(_loaded_config_with_image)
     value = cfg.image
     # Assert — v3: AgentConfig.image mirrors spec.apptainer.image.
     assert value == "~/.scitex/agent-container/containers/sac-scitex.sif"
+
+
+# ---------------------------------------------------------------------------
+# spec.remote — rejection error message must point at spec.host (not orochi)
+# ---------------------------------------------------------------------------
+
+
+def _remote_errors():
+    """Validate a spec with the removed ``spec.remote`` field; return errors."""
+    raw = {
+        "apiVersion": "scitex-agent-container/v3",
+        "kind": "Agent",
+        "spec": {"runtime": "apptainer", "remote": {"host": "nas"}},
+    }
+    errors = validate_raw(raw, path="<test>")
+    return [e for e in errors if "spec.remote" in e or "remote" in e.lower()]
+
+
+def test_spec_remote_rejection_mentions_spec_host():
+    # Arrange
+    bad = _remote_errors()
+    # Act
+    message = bad[0] if bad else ""
+    # Assert — the rejection redirects users to the v3 replacement field.
+    assert "spec.host" in message, (
+        f"spec.remote rejection must redirect to spec.host; got {message!r}"
+    )
+
+
+def test_spec_remote_rejection_does_not_blame_orochi():
+    # Arrange
+    bad = _remote_errors()
+    # Act
+    message = bad[0] if bad else ""
+    # Assert — sac v3 supports cross-host natively; the error must not
+    # send users to orochi.
+    assert "orochi" not in message.lower(), (
+        f"spec.remote rejection must not mention orochi; got {message!r}"
+    )
+
+
+def test_spec_remote_rejection_drops_stale_section_reference():
+    # Arrange
+    bad = _remote_errors()
+    # Act
+    message = bad[0] if bad else ""
+    # Assert — the old "§2" pointer is stale and should not appear.
+    assert "§2" not in message, (
+        f"spec.remote rejection must not cite stale §2; got {message!r}"
+    )

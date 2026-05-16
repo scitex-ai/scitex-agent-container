@@ -115,8 +115,10 @@ _V3_REMOVED_FIELDS: dict[str, str] = {
         "dot_claude/skills/ (§3 Removed)."
     ),
     "remote": (
-        "spec.remote is no longer accepted; cross-host routing is orochi's "
-        "job (§2). Use orochi's peer registry instead."
+        "spec.remote is no longer accepted in scitex-agent-container/v3. "
+        "Use spec.host: <peer> (singleton on one peer) or "
+        "spec.hosts: [peer1, peer2] (multi-instance). "
+        'See docs/spec-reference.md "Top-level shape" for the cross-host fields.'
     ),
 }
 
