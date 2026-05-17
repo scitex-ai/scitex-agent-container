@@ -416,13 +416,13 @@ class TestAgentsStartValidation:
         assert resp.status_code == 400
 
 
-# --- GET /agents/<name>/card ---------------------------------------------
+# --- GET /agents/<name>/.well-known/agent-card.json ----------------------
 
 
 class TestAgentCard:
     def test_unknown_agent_returns_404(self, client, auth_headers):
         # Arrange
-        url = "/agents/no-such/card"
+        url = "/agents/no-such/.well-known/agent-card.json"
         # Act
         resp = client.get(url, headers=auth_headers)
         # Assert
@@ -432,7 +432,9 @@ class TestAgentCard:
         # Arrange
         _write_spec(isolated_env, "zeta")
         # Act
-        resp = client.get("/agents/zeta/card", headers=auth_headers)
+        resp = client.get(
+            "/agents/zeta/.well-known/agent-card.json", headers=auth_headers
+        )
         # Assert
         assert resp.status_code == 200
 
@@ -440,7 +442,9 @@ class TestAgentCard:
         # Arrange
         _write_spec(isolated_env, "zeta")
         # Act
-        body = client.get("/agents/zeta/card", headers=auth_headers).json()
+        body = client.get(
+            "/agents/zeta/.well-known/agent-card.json", headers=auth_headers
+        ).json()
         # Assert
         assert isinstance(body, dict)
 

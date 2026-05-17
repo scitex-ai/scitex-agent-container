@@ -5,13 +5,20 @@ The legacy ``/v1/sac/`` paths and ``/v1/a2a/`` protocol-compat mirror
 were dropped wholesale per D13 (no backward compat). v1 endpoints:
 
     GET    /v1/health
+    GET    /.well-known/agent-card.json  (A2A v1 fleet AgentCard)
     GET    /agents                       (list)
     POST   /agents                       (create/start from spec)
     GET    /agents/<name>/status
     GET    /agents/<name>/tail           (SSE stream of session.jsonl)
     POST   /agents/<name>/send           (prompt or key)
-    GET    /agents/<name>/card           (A2A-compatible card)
+    GET    /agents/<name>/.well-known/agent-card.json
+                                         (A2A v1 per-agent AgentCard)
     DELETE /agents/<name>
+
+The agent-card paths follow A2A v1.0's canonical well-known location
+(``/.well-known/agent-card.json``) — same as the ``a2a/_server.py``
+surface. The pre-v1 ``/agents/<name>/card`` route was dropped per
+ADR-0004 (no backward compat).
 """
 
 from __future__ import annotations
@@ -340,9 +347,11 @@ async def agents_start(request: Request) -> JSONResponse:
 
 
 async def agent_card(request: Request) -> JSONResponse:
-    """GET /agents/<name>/card (mirrored at /v1/a2a/agents/<name>/card).
+    """GET /agents/<name>/.well-known/agent-card.json.
 
-    Returns an A2A-compatible AgentCard built from the agent's v3 spec.
+    A2A v1.0 canonical per-agent AgentCard built from the agent's v3
+    spec. The pre-v1 ``/agents/<name>/card`` route was dropped per
+    ADR-0004 (no backward compat).
     """
     import yaml
 
@@ -361,6 +370,27 @@ async def agent_card(request: Request) -> JSONResponse:
 
     base_url = str(request.base_url).rstrip("/")
     card = project_card(name, v3, base_url)
+    return JSONResponse(card)
+
+
+async def fleet_card_handler(request: Request) -> JSONResponse:
+    """GET /.well-known/agent-card.json.
+
+    A2A v1.0 canonical fleet AgentCard. Lists every agent currently
+    known to the local ``Registry`` under the
+    ``x-scitex-agent-container.agents[]`` extension namespace; per-agent
+    cards live at ``/agents/<name>/.well-known/agent-card.json``.
+    """
+    from ..a2a._card import fleet_card
+
+    try:
+        reg = Registry()
+        rows = reg.list_all()
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    agents = sorted(r["name"] for r in rows if isinstance(r, dict) and "name" in r)
+    base_url = str(request.base_url).rstrip("/")
+    card = fleet_card(base_url, agents)
     return JSONResponse(card)
 
 
@@ -390,14 +420,21 @@ def _v1_agent_routes(prefix: str) -> list[Route]:
         Route(f"{prefix}/{{name}}/status", agent_status, methods=["GET"]),
         Route(f"{prefix}/{{name}}/tail", agent_tail, methods=["GET"]),
         Route(f"{prefix}/{{name}}/send", agent_send, methods=["POST"]),
-        Route(f"{prefix}/{{name}}/card", agent_card, methods=["GET"]),
+        Route(
+            f"{prefix}/{{name}}/.well-known/agent-card.json",
+            agent_card,
+            methods=["GET"],
+        ),
         Route(f"{prefix}/{{name}}", agent_delete, methods=["DELETE"]),
     ]
 
 
 def create_app(*, token: str) -> Starlette:
     """Build the Starlette app with bearer auth (ADR-0004 — ``/agents`` only)."""
-    routes: list[Route] = [Route("/v1/health", health, methods=["GET"])]
+    routes: list[Route] = [
+        Route("/v1/health", health, methods=["GET"]),
+        Route("/.well-known/agent-card.json", fleet_card_handler, methods=["GET"]),
+    ]
     routes += _v1_agent_routes("/agents")
     app = Starlette(routes=routes)
     app.add_middleware(BearerAuthMiddleware, token=token)
