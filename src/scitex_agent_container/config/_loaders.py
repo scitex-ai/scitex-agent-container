@@ -296,4 +296,8 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         kind=kind,
         proxy=proxy_spec,
         dot_claude=str(spec.get("dot_claude", "")),
+        # ADR-0006: default to ``./to_home`` when the key is absent so a
+        # ``to_home/`` dir next to spec.yaml auto-discovers. An empty
+        # string in YAML keeps the same default behaviour.
+        to_home=str(spec.get("to_home", "./to_home") or "./to_home"),
     )

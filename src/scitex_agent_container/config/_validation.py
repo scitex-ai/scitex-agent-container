@@ -89,7 +89,8 @@ _KNOWN_SPEC_KEYS = frozenset(
         "autonomous",  # F-CS3 — drive-until-done block
         "apptainer",  # F-CS18 — apptainer-specific build extension
         "user",  # container user: "host" | "uid:gid" | "" (image default)
-        "dot_claude",  # F-DC1 — directory merged into workspace/.claude/
+        "dot_claude",  # F-DC1 — directory merged into workspace/.claude/ (DEPRECATED — see to_home)
+        "to_home",  # ADR-0006 — directory mirrored into container $HOME
         # v3 removed (rejected explicitly below with relocation hints):
         # image (→ spec.apptainer.image), mounts (→ spec.apptainer.binds),
         # env (→ spec.apptainer.env), model (→ spec.claude.model),
