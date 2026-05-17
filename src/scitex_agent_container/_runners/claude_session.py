@@ -205,17 +205,27 @@ async def run(
     state_dir.mkdir(parents=True, exist_ok=True)
 
     pid = os.getpid()
-    write_pid(state_dir, pid)
-    write_heartbeat(state_dir, pid=pid, state=STATE_STARTING)
+    # Resolve canonical host once so every diary write (heartbeat /
+    # turn / error) tags the same hostname. _resolve_host falls back
+    # to hostname -s when config.yaml is malformed, so this never
+    # raises.
+    from .._state.state_db import _resolve_host
+
+    host = _resolve_host(None)
 
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
 
     def _on_signal(signum: int) -> None:
         logger.info("runner %s received signal %d, stopping", name, signum)
-        write_heartbeat(state_dir, pid=pid, state=STATE_STOPPING)
+        write_heartbeat(state_dir, pid=pid, state=STATE_STOPPING, name=name, host=host)
         stop.set()
 
+    # Register signal handlers BEFORE the first heartbeat write. The
+    # initial write_heartbeat now also runs init_schema on state.db
+    # (diary tables); on a fresh DB this can take long enough that a
+    # racing SIGTERM from a fast test fixture would kill the process
+    # before handlers were installed, producing exit -15 instead of 0.
     for sig in (signal.SIGTERM, signal.SIGINT):
         try:
             loop.add_signal_handler(sig, _on_signal, sig)
@@ -224,8 +234,18 @@ async def run(
         ):  # stx-allow: fallback (reason: Windows / no asyncio signal support)
             signal.signal(sig, lambda s, _f: _on_signal(s))
 
+    write_pid(state_dir, pid)
+    write_heartbeat(state_dir, pid=pid, state=STATE_STARTING, name=name, host=host)
+
     hb_task = asyncio.create_task(
-        _heartbeat_loop(state_dir, pid=pid, tick_seconds=tick_seconds, stop=stop),
+        _heartbeat_loop(
+            state_dir,
+            pid=pid,
+            tick_seconds=tick_seconds,
+            stop=stop,
+            name=name,
+            host=host,
+        ),
     )
 
     from ._session_inbox import ShutdownEnvelope, TurnEnvelope, make_inbox
@@ -282,6 +302,7 @@ async def run(
                 print_stream=print_stream,
                 max_restarts=max_restarts,
                 restart_backoff_s=restart_backoff_s,
+                host=host,
             )
         )
         if mission and autonomous_enabled:
@@ -309,7 +330,13 @@ async def run(
                     await hb_task
                 except asyncio.CancelledError:
                     pass
-                write_heartbeat(state_dir, pid=pid, state=STATE_STOPPING)
+                write_heartbeat(
+                    state_dir,
+                    pid=pid,
+                    state=STATE_STOPPING,
+                    name=name,
+                    host=host,
+                )
             return 0
 
     try:
@@ -361,7 +388,7 @@ async def run(
         except asyncio.CancelledError:
             pass
         # Final heartbeat so consumers see the clean stop.
-        write_heartbeat(state_dir, pid=pid, state=STATE_STOPPING)
+        write_heartbeat(state_dir, pid=pid, state=STATE_STOPPING, name=name, host=host)
     return 0
 
 

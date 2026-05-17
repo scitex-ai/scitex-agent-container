@@ -26,6 +26,8 @@ from ._session_state import (
     accumulate_quota,
     append_session_message,
     read_session_id,
+    record_turn_transition,
+    report_sdk_error,
     write_heartbeat,
     write_session_id,
 )
@@ -61,14 +63,44 @@ async def _drive_turn(
     stop: asyncio.Event,
     print_stream: bool,
     sdk_types: dict,
+    name: str | None = None,
+    host: str | None = None,
+    db_writer=None,
 ) -> None:
     AssistantMessage = sdk_types["AssistantMessage"]
     TextBlock = sdk_types["TextBlock"]
     UserMessage = sdk_types["UserMessage"]
     ResultMessage = sdk_types["ResultMessage"]
 
-    write_heartbeat(state_dir, pid=pid, state=STATE_WORKING)
+    write_heartbeat(
+        state_dir,
+        pid=pid,
+        state=STATE_WORKING,
+        name=name,
+        host=host,
+        db_writer=db_writer,
+    )
     append_session_message(state_dir, {"type": "user", "text": env.text})
+    # Tag a turn_id on the envelope so the diary's four
+    # state-transition rows share an identity. ``record_turn_transition``
+    # is a no-op when name/host/turn_id are unset (legacy callers).
+    turn_id = getattr(env, "turn_id", None)
+    if turn_id and name and host:
+        record_turn_transition(
+            turn_id=turn_id,
+            name=name,
+            host=host,
+            status="delivered",
+            prompt_text=env.text,
+            db_writer=db_writer,
+        )
+        record_turn_transition(
+            turn_id=turn_id,
+            name=name,
+            host=host,
+            status="read",
+            db_writer=db_writer,
+        )
     chunks: list[str] = []
     try:
         await client.query(env.text)
@@ -111,8 +143,25 @@ async def _drive_turn(
     finally:
         if not env.response.done():
             env.response.set_result("".join(chunks))
+        if turn_id and name and host:
+            record_turn_transition(
+                turn_id=turn_id,
+                name=name,
+                host=host,
+                status="responded",
+                response_text="".join(chunks),
+                session_id=getattr(env, "session_id", None),
+                db_writer=db_writer,
+            )
         if not stop.is_set():
-            write_heartbeat(state_dir, pid=pid, state=STATE_IDLE)
+            write_heartbeat(
+                state_dir,
+                pid=pid,
+                state=STATE_IDLE,
+                name=name,
+                host=host,
+                db_writer=db_writer,
+            )
 
 
 async def run_conversation(
@@ -128,6 +177,8 @@ async def run_conversation(
     restart_backoff_s: float = 1.0,
     sdk_module: Any | None = None,
     build_sdk_options_fn: Any | None = None,
+    host: str | None = None,
+    db_writer=None,
 ) -> None:
     """Drive an inbox-driven conversation against ``ClaudeSDKClient``.
 
@@ -153,6 +204,14 @@ async def run_conversation(
         append_session_message(
             state_dir, {"type": "error", "kind": "sdk_missing", "detail": str(exc)}
         )
+        if host:
+            report_sdk_error(
+                name=name,
+                host=host,
+                cause="sdk-missing",
+                detail=str(exc),
+                db_writer=db_writer,
+            )
         _drain_failed_inbox(inbox, RuntimeError(f"sdk import: {exc}"))
         return
 
@@ -189,6 +248,14 @@ async def run_conversation(
             append_session_message(
                 state_dir, {"type": "error", "kind": "options", "detail": str(exc)}
             )
+            if host:
+                report_sdk_error(
+                    name=name,
+                    host=host,
+                    cause="sdk-options",
+                    detail=str(exc),
+                    db_writer=db_writer,
+                )
             _drain_failed_inbox(inbox, exc)
             return
 
@@ -208,6 +275,9 @@ async def run_conversation(
                         stop=stop,
                         print_stream=print_stream,
                         sdk_types=sdk_types,
+                        name=name,
+                        host=host,
+                        db_writer=db_writer,
                     )
                     if env.exit_after:
                         stop.set()
@@ -226,6 +296,14 @@ async def run_conversation(
                     "attempt": attempt,
                 },
             )
+            if host:
+                report_sdk_error(
+                    name=name,
+                    host=host,
+                    cause="sdk-crash",
+                    detail=str(exc),
+                    db_writer=db_writer,
+                )
             if attempt >= max_restarts or stop.is_set():
                 _drain_failed_inbox(inbox, exc)
                 return

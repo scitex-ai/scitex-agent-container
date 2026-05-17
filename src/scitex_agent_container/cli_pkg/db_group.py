@@ -107,9 +107,12 @@ def db_query(
     order_by = {
         "instances": "started_at DESC",
         "definitions": "first_seen_at DESC",
+        "instance_heartbeats": "ts DESC",
         "heartbeats": "ts DESC",
         "events": "ts DESC",
         "attempts": "ts DESC",
+        "turns": "ts DESC",
+        "errors": "ts DESC",
     }.get(table)
     if order_by:
         sql += f" ORDER BY {order_by}"

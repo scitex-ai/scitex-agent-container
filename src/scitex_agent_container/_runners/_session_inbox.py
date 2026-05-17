@@ -27,12 +27,19 @@ class TurnEnvelope:
     sidecar) read it AFTER the ``response`` future resolves to surface
     the SDK session id in their reply body. It stays ``None`` until then
     so a still-running turn cannot leak a stale id.
+
+    ``turn_id`` is an optional caller-supplied uuid that ties together
+    the four state-transition rows (``queued`` / ``delivered`` /
+    ``read`` / ``responded``) the runner writes into the
+    ``state.db.turns`` diary table. ``None`` means the diary is not
+    tracking this envelope (legacy / test-only producers).
     """
 
     text: str
     response: asyncio.Future = field(repr=False)
     exit_after: bool = False
     session_id: str | None = None
+    turn_id: str | None = None
 
 
 @dataclass
