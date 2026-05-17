@@ -1,13 +1,15 @@
 ---
 description: |
   [TOPIC] A2A protocol — native sac surface
-  [DETAILS] A2A protocol — native sac surface — see file body for details..
+  [DETAILS] CLI (`sac a2a serve` / `doctor`), auto-launch via `spec.a2a`, SDK 1.x methods, handler env vars, orochi boundary. AgentCard extension fields live in the sibling leaf.
 tags: [scitex-agent-container-a2a-protocol]
 ---
 
 # A2A protocol — native sac surface
 
 [A2A](https://a2a-protocol.org/) is an open agent-to-agent JSON-RPC protocol. sac speaks it directly, with **zero fleet dependencies**: no orochi, no Cloudflare tunnel, no Gitea identity. A single agent YAML can expose its own A2A endpoint with one command.
+
+The per-card `x-scitex-agent-container.*` extension fields and a full JSON example live in [`07_a2a-protocol-extension-fields.md`](07_a2a-protocol-extension-fields.md).
 
 ## Why sac knows A2A but not orochi
 
@@ -53,7 +55,7 @@ Disabled by default — the sidecar only starts when `spec.a2a` is present. Side
 | `claude_cli` | runs `claude --print` and forwards stdout | real LLM agent; needs `claude` on PATH |
 | `exec` | runs `$SAC_A2A_EXEC_COMMAND`, pipes user text on stdin, returns stdout | wire in any custom handler script |
 
-The server exposes the standard A2A routes:
+## HTTP routes
 
 | Method | Path | Returns |
 | --- | --- | --- |
@@ -64,11 +66,9 @@ The server exposes the standard A2A routes:
 | GET | `/agents/<name>/inbox/stream` | sac extension — SSE stream of inbound events (consumed by `sac mcp channel`) |
 | GET | `/agents/<name>/_active` | sac extension — observability snapshot of in-memory tasks |
 
-A2A v1.0 renamed the well-known file from `agent.json` (v0.x) to
-`agent-card.json`. sac serves the v1 path only; the v0 path is **not**
-backed by a compatibility shim. See [ADR-0004](../../../../docs/adr/0004-a2a-v1-compliance.md).
+A2A v1.0 renamed the well-known file from `agent.json` (v0.x) to `agent-card.json`. sac serves the v1 path only; the v0 path is **not** backed by a compatibility shim. See [ADR-0004](../../../../docs/adr/0004-a2a-v1-compliance.md).
 
-### SDK 1.x methods (gRPC-style names)
+## SDK 1.x methods (gRPC-style names)
 
 Pure `a2a-sdk>=1.0.2` — no v0.3 compat. Method names are gRPC-style:
 
@@ -110,143 +110,6 @@ curl -N -X POST http://127.0.0.1:8888/agents/<name>/message:send \
                             "parts":[{"text":"long-running"}]}}}'
 ```
 
-## v3 YAML — what gets projected
-
-Any v3 sac YAML works. The projection reads:
-
-| Field | Mapped to AgentCard |
-| --- | --- |
-| `metadata.name` (or filename stem) | `name` |
-| `metadata.labels.capabilities` (CSV) | first item → `description`; all items → `skills[0].tags` |
-| `metadata.labels.team` | `provider.organization` |
-| `metadata.labels.role` | `skills[0].name`, `x-scitex-agent-container.role_class` |
-| `metadata.labels.function` (CSV) | `skills[0].description` |
-| `metadata.labels.skills` (CSV) | `skills[0].tags` ∪ `x-scitex-agent-container.required_skills` |
-| `spec.host` / `spec.hosts` | `x-scitex-agent-container.scheduling` |
-| `spec.runtime` / `claude.model` / `multiplexer` | `x-scitex-agent-container.runtime` / `.model` / `.multiplexer` |
-| `spec.apptainer.*` | `x-scitex-agent-container.isolation.*` (D3 attestation block) |
-| `spec.claude.channels: [server:sac]` | `capabilities.extensions[]` (sac-push-channel/v1) |
-
-## sac extension namespace (`x-scitex-agent-container.*`)
-
-A2A v1.0 reserves the AgentCard top level for spec-defined fields and funnels vendor data into a namespaced extension block. **sac uses exactly one namespace key: `x-scitex-agent-container`.** Every sac-specific datum lives under that key, never at the top level, never under another vendor namespace (e.g. `x-orochi` is owned by the orochi fleet hub, not by sac).
-
-This contract is what makes sac-served cards forward-compatible with vendor-neutral A2A clients — strict v1 validators (`ParseDict(AgentCard)`) ignore the `x-*` namespace; sac-aware clients walk into it. See [ADR-0004](../../../../docs/adr/0004-a2a-v1-compliance.md) for the rule.
-
-### Per-agent card fields
-
-Emitted by `a2a/_card.py::project_card`. Every per-agent card served at `GET /agents/<name>/.well-known/agent-card.json` carries:
-
-| Field | Source | Description |
-| --- | --- | --- |
-| `x-scitex-agent-container.role_class` | `metadata.labels.role` | Operator-declared role taxonomy (e.g. `worker-telegrammer`). Mirrors `skills[0].name`. |
-| `x-scitex-agent-container.cardinality` | `metadata.labels.cardinality` | `singleton` / `multi-instance` hint for fleet schedulers. |
-| `x-scitex-agent-container.scheduling` | `spec.host` / `spec.hosts` | `{mode, priority|hosts}` placement hint. |
-| `x-scitex-agent-container.runtime` | `spec.runtime` | Runtime kind (`claude-code`, `agent-proxy`, etc.). |
-| `x-scitex-agent-container.model` | `spec.claude.model` ∨ `spec.model` (legacy) | LLM model identifier. |
-| `x-scitex-agent-container.multiplexer` | `spec.multiplexer` | tmux / zellij / none. |
-| `x-scitex-agent-container.required_skills` | `metadata.labels.skills` ∪ `spec.skills.required` | Skill IDs the agent loads at boot. |
-| `x-scitex-agent-container.isolation` | derived from `spec.apptainer.*` | D3 attestation block — `{level, containall, cleanenv, writable_tmpfs, preflight_passed, preflight_allowed, binds_count, binds_writable_count}`. External attestation surfaces (Clew, orochi) read these booleans. |
-
-### Per-agent `capabilities.extensions[]` entries
-
-The A2A v1 spec-defined `capabilities.extensions[]` array advertises sac extensions by URI (distinct from `x-scitex-agent-container`):
-
-| URI | Emitted when | Purpose |
-| --- | --- | --- |
-| `https://scitex.ai/a2a/extensions/sac-push-channel/v1` | `spec.claude.channels` contains `server:sac` | In-session MCP push: `sac mcp channel` SSE-subscribes to `/agents/<name>/inbox/stream` and forwards events as `notifications/claude/channel` to the agent's Claude session. `params.sse_path` + `params.mcp_tools` enumerate wire details. |
-
-### Fleet card fields
-
-Emitted by `a2a/_card.py::fleet_card` at `GET /.well-known/agent-card.json`:
-
-| Field | Type | Description |
-| --- | --- | --- |
-| `x-scitex-agent-container.agents` | list[object] | Member directory. Each entry has `name` + `supportedInterfaces[]`. Spec-aware clients walk this array to fetch each member's per-agent card. |
-
-Plus the fleet-level `capabilities.extensions[]`:
-
-| URI | Purpose |
-| --- | --- |
-| `https://scitex.ai/a2a/extensions/sac-fleet/v1` | Declares the multi-agent directory shape. `params.members_path` + `params.member_card_path` tell vendor-neutral clients how to walk the fleet. |
-
-### AgentProxy overlay (`kind: AgentProxy`)
-
-Emitted by `_runners/a2a_proxy.py::splice_card` when an AgentProxy runner serves its card:
-
-| Field | Source | Description |
-| --- | --- | --- |
-| `x-scitex-agent-container.kind` | runner constant | `"AgentProxy"` — distinguishes a proxy from a native sac runtime. |
-| `x-scitex-agent-container.upstream` | `--upstream` CLI arg | Upstream A2A URL the proxy forwards to. |
-| `x-scitex-agent-container.trust` | `--trust` CLI arg | Trust tier (`trusted` / `untrusted`). |
-| `x-scitex-agent-container.upstream_card_fetch_error` | runtime | Present only when boot-time fetch of the upstream card failed. |
-
-### Concrete example
-
-Per-agent card served at `GET /agents/my-agent/.well-known/agent-card.json`:
-
-```json
-{
-  "name": "my-agent",
-  "description": "sac agent: my-agent (worker-telegrammer)",
-  "version": "scitex-agent-container/v3",
-  "supportedInterfaces": [
-    {
-      "url": "http://127.0.0.1:8888/agents/my-agent",
-      "protocolBinding": "HTTP+JSON",
-      "tenant": "my-agent",
-      "protocolVersion": "1.0"
-    }
-  ],
-  "provider": {"organization": "scitex-agent-container", "url": "https://scitex.ai"},
-  "capabilities": {
-    "streaming": true,
-    "pushNotifications": true,
-    "extendedAgentCard": false,
-    "extensions": [
-      {
-        "uri": "https://scitex.ai/a2a/extensions/sac-push-channel/v1",
-        "description": "In-session MCP push: sac mcp channel subscribes ...",
-        "required": false,
-        "params": {
-          "sse_path": "/agents/my-agent/inbox/stream",
-          "mcp_tools": ["a2a_send", "a2a_reply", "a2a_ack", "a2a_peers", "a2a_inbox"]
-        }
-      }
-    ]
-  },
-  "defaultInputModes": ["text/plain", "application/json"],
-  "defaultOutputModes": ["text/plain", "application/json"],
-  "skills": [
-    {
-      "id": "my-agent.worker-telegrammer",
-      "name": "worker-telegrammer",
-      "description": "relays telegram messages",
-      "tags": ["a2a", "telegram"]
-    }
-  ],
-  "x-scitex-agent-container": {
-    "role_class": "worker-telegrammer",
-    "cardinality": "singleton",
-    "scheduling": {"mode": "singleton", "priority": ["ywata-note-win"]},
-    "runtime": "claude-code",
-    "model": "claude-opus-4-7",
-    "multiplexer": "tmux",
-    "required_skills": ["quality-guards", "autonomous", "speech", "scitex"],
-    "isolation": {
-      "level": "hardened",
-      "containall": true,
-      "cleanenv": true,
-      "writable_tmpfs": true,
-      "preflight_passed": ["uid-nonzero", "no-host-home"],
-      "preflight_allowed": [],
-      "binds_count": 3,
-      "binds_writable_count": 1
-    }
-  }
-}
-```
-
 ## Handler env vars
 
 | Env var | Default | Read by |
@@ -276,7 +139,7 @@ If you want a fleet, use orochi. If you want one agent on a laptop, use `sac a2a
 
 ## Cross-references
 
-- [ADR-0004](../../../../docs/adr/0004-a2a-v1-compliance.md) — A2A v1.0 compliance + the authoritative `x-scitex-agent-container.*` field enumeration this doc mirrors
+- [`07_a2a-protocol-extension-fields.md`](07_a2a-protocol-extension-fields.md) — `x-scitex-agent-container.*` per-agent / fleet / proxy field enumeration + full JSON card example
+- [ADR-0004](../../../../docs/adr/0004-a2a-v1-compliance.md) — A2A v1.0 compliance
 - [`06_env-injection-ports.md`](06_env-injection-ports.md) — the four env-injection ports (yaml.env / dot_claude/.mcp.json env / dot_claude/.env / hooks)
 - [scitex-orochi `docs/a2a-protocol.md`](https://github.com/ywatanabe1989/scitex-orochi/blob/develop/docs/a2a-protocol.md) — fleet-side architecture (Tier 3 dispatch bridge)
-- Implementation source of truth: `a2a/_card.py::project_card`, `a2a/_card.py::fleet_card`, `_runners/a2a_proxy.py::splice_card`

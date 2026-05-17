@@ -426,6 +426,26 @@ class TestDispatchSshSuccessPath:
         # Assert
         assert "a2a_port=47213" in scen.captured_stdout
 
+    def test_dispatch_ssh_success_propagates_a2a_port_none_when_spec_omits_it(
+        self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
+    ):
+        # Arrange — when peer JSON has ``a2a_port: null`` (sidecar
+        # disabled), lead MUST write NULL into the instances row
+        # rather than substituting a default. Covers the cross-host
+        # null-propagation seam.
+        _write_peer_config(fake_home, env_save_restore)
+        sk_null = dict(
+            stdout='{"a2a_port": null, "started_at": "2026-05-17T00:00:00Z"}',
+            exit=0,
+        )
+        # Act
+        _act_dispatch(shim_bin, capsys, rsync_kwargs=_RK_OK, ssh_kwargs=sk_null)
+        # Assert
+        from scitex_agent_container._state.state_db import list_active_instances
+
+        rows = [r for r in list_active_instances() if r["name"] == "alpha"]
+        assert rows[0]["a2a_port"] is None
+
 
 class TestDispatchSshFailurePaths:
     def test_dispatch_ssh_failure_raises_runtime_error(

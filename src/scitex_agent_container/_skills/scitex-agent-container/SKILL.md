@@ -53,6 +53,7 @@ rich non-agentic status surface.
 - [05_resource-heartbeat.md](05_resource-heartbeat.md) — Resource heartbeat
 - [06_env-injection-ports.md](06_env-injection-ports.md) — Four env-injection ports + decision tree
 - [07_a2a-protocol.md](07_a2a-protocol.md) — Native A2A protocol (`sac a2a serve`)
+- [07_a2a-protocol-extension-fields.md](07_a2a-protocol-extension-fields.md) — `x-scitex-agent-container.*` AgentCard extension fields + JSON example
 - [08_templates.md](08_templates.md) — Six pattern templates + real-world examples
 - [09_slurm-tenant.md](09_slurm-tenant.md) — `runtime: slurm-tenant` for shared HPC allocations
 - [15_claude-session.md](15_claude-session.md) — `runtime: claude-session` SDK-native runtime + `POST /v1/turn` inbound endpoint

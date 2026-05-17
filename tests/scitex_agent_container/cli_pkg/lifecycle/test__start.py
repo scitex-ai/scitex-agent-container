@@ -563,3 +563,154 @@ class TestDispatchBranch:
         # Assert — dispatcher's FileNotFoundError (its first action when
         # spec dir is absent) MUST NOT appear; the branch never fired.
         assert "FileNotFoundError" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# Peer-side ``sac agents start --no-redispatch --json`` output contract.
+#
+# Background: before the cross-host a2a_port fix the peer-side JSON read
+# ``config.a2a.port`` directly. When the spec said ``port: auto`` the
+# literal string ``"auto"`` flunked the ``isinstance(_, int)`` check and
+# the JSON emitted ``null`` — even though the runner had ALREADY claimed
+# an int via ``resolve_a2a_port``. The lead then wrote NULL into its
+# instances row, breaking ``sac agents send <name>`` ("state.db records
+# no a2a_port for it"). These tests pin the JSON-emission seam: with an
+# allocator row in place (simulating ``resolve_a2a_port``'s side effect),
+# the ``--no-redispatch --json`` payload MUST report the resolved int.
+#
+# No-mocks / no-monkeypatch: hand-rolled context-manager attribute swap
+# for fake ``agent_start`` (same pattern as ``test__a2a_port.py``).
+# ---------------------------------------------------------------------------
+
+
+from contextlib import contextmanager
+from typing import Any, Iterator
+
+
+@contextmanager
+def _swap_attr(module: Any, name: str, replacement: Any) -> Iterator[None]:
+    saved = getattr(module, name)
+    setattr(module, name, replacement)
+    try:
+        yield
+    finally:
+        setattr(module, name, saved)
+
+
+def _write_local_spec_with_a2a(home: Path, name: str, *, a2a_port: Any) -> Path:
+    """Materialise a minimal spec yaml at ``~/.scitex/agent-container/agents/<name>``.
+
+    The spec uses runtime ``apptainer`` (the default sac runtime). We
+    never actually invoke the runner — ``agent_start`` is swapped for a
+    no-op — so the spec only needs to load cleanly.
+    """
+    agents_dir = home / ".scitex" / "agent-container" / "agents" / name
+    agents_dir.mkdir(parents=True)
+    yaml_path = agents_dir / f"{name}.yaml"
+    port_line = "null" if a2a_port is None else json.dumps(a2a_port)
+    yaml_path.write_text(
+        "apiVersion: scitex-agent-container/v3\n"
+        "kind: Agent\n"
+        "metadata: {}\n"
+        "spec:\n"
+        "  runtime: apptainer\n"
+        f"  a2a:\n    port: {port_line}\n"
+    )
+    return yaml_path
+
+
+def _run_start_no_redispatch_json(
+    name: str, yaml_path: Path, *, preclaim_port: int | None
+) -> dict:
+    """Drive ``sac agents start <yaml> --no-redispatch --json`` with a
+    no-op fake ``agent_start`` and (optionally) a pre-claimed allocator
+    row. Returns the parsed JSON object emitted on stdout.
+
+    Pre-claiming substitutes for what the real ``agent_start`` would do
+    via ``resolve_a2a_port`` — keeping the test focused on the JSON
+    emission seam without spinning real apptainer.
+    """
+    from scitex_agent_container._state import port_allocator
+
+    if preclaim_port is not None:
+        port_allocator.claim_port(name, explicit=preclaim_port)
+
+    from scitex_agent_container.cli_pkg.lifecycle import _start as start_mod
+
+    def _fake_agent_start(*args: Any, **kwargs: Any) -> bool:
+        return True
+
+    runner = CliRunner()
+    with _swap_attr(start_mod, "agent_start", _fake_agent_start):
+        result = runner.invoke(
+            start_mod.start,
+            [str(yaml_path), "--no-redispatch", "--json"],
+            catch_exceptions=False,
+        )
+    stdout_lines = [
+        ln for ln in result.output.splitlines() if ln.strip().startswith("{")
+    ]
+    assert stdout_lines, (
+        f"no JSON line in stdout. exit={result.exit_code}, output={result.output!r}"
+    )
+    return json.loads(stdout_lines[-1])
+
+
+class TestStartNoRedispatchJsonA2aPort:
+    def test_start_no_redispatch_json_includes_resolved_a2a_port(
+        self, tmp_path, env_save_restore
+    ):
+        """``port: auto`` spec → JSON ``a2a_port`` is an int (resolved by allocator)."""
+        # Arrange — redirect HOME + state.db so the allocator + spec dir
+        # operate in tmp. ``state_db`` and ``port_allocator`` cache the
+        # default path at import time, so we reload them after env mutation.
+        import importlib
+
+        env_save_restore.set("HOME", str(tmp_path))
+        env_save_restore.set(
+            "SCITEX_AGENT_CONTAINER_STATE_DB", str(tmp_path / "state.db")
+        )
+        import scitex_agent_container._state.port_allocator as _pa
+        import scitex_agent_container._state.state_db as _sdb
+
+        importlib.reload(_sdb)
+        importlib.reload(_pa)
+        try:
+            yaml_path = _write_local_spec_with_a2a(tmp_path, "alpha", a2a_port="auto")
+            # Act — pre-claim port 19_200 to simulate resolve_a2a_port's effect.
+            payload = _run_start_no_redispatch_json(
+                "alpha", yaml_path, preclaim_port=19_200
+            )
+            # Assert
+            assert payload["a2a_port"] == 19_200
+        finally:
+            importlib.reload(_sdb)
+            importlib.reload(_pa)
+
+    def test_start_no_redispatch_json_includes_a2a_port_when_explicit_int(
+        self, tmp_path, env_save_restore
+    ):
+        """``port: 19_500`` spec → JSON ``a2a_port`` is exactly that int."""
+        # Arrange
+        import importlib
+
+        env_save_restore.set("HOME", str(tmp_path))
+        env_save_restore.set(
+            "SCITEX_AGENT_CONTAINER_STATE_DB", str(tmp_path / "state.db")
+        )
+        import scitex_agent_container._state.port_allocator as _pa
+        import scitex_agent_container._state.state_db as _sdb
+
+        importlib.reload(_sdb)
+        importlib.reload(_pa)
+        try:
+            yaml_path = _write_local_spec_with_a2a(tmp_path, "alpha", a2a_port=19_500)
+            # Act
+            payload = _run_start_no_redispatch_json(
+                "alpha", yaml_path, preclaim_port=19_500
+            )
+            # Assert
+            assert payload["a2a_port"] == 19_500
+        finally:
+            importlib.reload(_sdb)
+            importlib.reload(_pa)
