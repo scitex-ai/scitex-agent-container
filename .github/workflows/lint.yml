@@ -1,0 +1,41 @@
+name: lint
+
+# Mirror of the local pre-push lint gate (.githooks/pre-push). Both run
+# ruff strictly (no --fix), so a push that bypassed the local hook
+# (--no-verify, missing ruff, fresh clone w/o scripts/install-pre-push-hook.sh)
+# still fails on the remote.
+#
+# Scope: --select F401,F811 only (unused-import + redefinition). The
+# broader pyproject.toml ruleset ([E, F, W, I]) has ~100 pre-existing
+# violations across the tree — flipping it on wholesale would block
+# every push. Tighten the --select set once those are triaged. The
+# motivating risk (F401 slip-through after the edit-hook stopped
+# autofixing imports) is fully covered here.
+#
+# --extend-per-file-ignores excludes __init__.py re-export shims (the
+# standard idiom — imports there *are* the public surface, not dead code).
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+jobs:
+  ruff:
+    name: ruff-on-ubuntu-latest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install ruff
+        run: pip install ruff
+      - name: Ruff check
+        run: |
+          ruff check \
+            --select F401,F811 \
+            --extend-per-file-ignores '**/__init__.py:F401' \
+            src/ tests/

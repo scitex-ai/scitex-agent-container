@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Pre-push lint gate.
+#
+# Local edit hook (~/.claude/hooks/post-tool-use/run_lint.sh) no longer
+# auto-strips unused imports (rule F401) so subagent multi-step edits
+# don't get sabotaged mid-flight. Side effect: a genuinely-unused import
+# can slip into a push. This hook runs `ruff check` strictly (no --fix)
+# on src/ and tests/ to catch that before it hits the remote.
+#
+# Scope note (deviation from original spec): we currently --select only
+# the unused-name family (F401 unused-import, F811 redefinition). The
+# broader ruleset configured in pyproject.toml ([E, F, W, I]) has ~100
+# pre-existing violations across the tree — flipping it on wholesale
+# would block every push. Tighten the --select set once those are
+# triaged. The stated F401-slip-through risk is fully covered here.
+#
+# Install once per clone with:  scripts/install-pre-push-hook.sh
+# Skip in true emergencies with: git push --no-verify
+set -euo pipefail
+
+# Run from repo root.
+cd "$(git rev-parse --show-toplevel)"
+
+# Locate ruff. Prefer the repo's .venv (matches what `pip install -e .[dev]`
+# produces), fall back to whatever ruff is on PATH.
+RUFF=""
+if [ -x ".venv/bin/ruff" ]; then
+  RUFF=".venv/bin/ruff"
+elif command -v ruff >/dev/null 2>&1; then
+  RUFF="$(command -v ruff)"
+fi
+
+if [ -z "$RUFF" ]; then
+  echo "WARN: ruff not found; skipping pre-push lint gate." >&2
+  echo "      pip install -e .[dev] to enable it." >&2
+  exit 0
+fi
+
+# Strict check (no autofix). Narrow --select keeps the gate focused on
+# the unused-import slip-through that motivated this hook.
+# --extend-per-file-ignores excludes __init__.py re-export shims (the
+# standard idiom — imports there *are* the public surface, not dead code).
+if ! "$RUFF" check \
+      --select F401,F811 \
+      --extend-per-file-ignores "**/__init__.py:F401" \
+      src/ tests/; then
+  echo "" >&2
+  echo "PRE-PUSH BLOCKED: ruff found unused-import / redefinition errors." >&2
+  echo "Fix with:" >&2
+  echo "  $RUFF check --select F401,F811 --extend-per-file-ignores '**/__init__.py:F401' --fix src/ tests/" >&2
+  echo "Or skip the hook (only when truly needed) with --no-verify." >&2
+  exit 1
+fi
