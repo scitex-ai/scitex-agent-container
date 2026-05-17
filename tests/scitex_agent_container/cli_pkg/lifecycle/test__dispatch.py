@@ -146,23 +146,36 @@ def shim_bin(tmp_path: Path, env_save_restore) -> Path:
 
 
 @pytest.fixture
-def state_db(fake_home: Path, env_save_restore) -> Path:
+def state_db(fake_home: Path) -> Path:
     """Redirect state.db to a tmp path under fake_home.
 
     DEFAULT_DB_PATH is module-level and reads the env var at import
     time, so we reload the module after setting the env var. Tests
     that mutate state.db rely on this to stay isolated; without the
     reload each test would write to the user's real state.db.
+
+    Both env-var manipulation and module reload are managed locally
+    (no env_save_restore) so the teardown order is unambiguous: we
+    first reset the env, THEN reload, so DEFAULT_DB_PATH lands back
+    on the real path the user expects after the fixture exits.
     """
     import importlib
+    import os as _os
 
     db = fake_home / "state.db"
-    env_save_restore.set("SCITEX_AGENT_CONTAINER_STATE_DB", str(db))
+    saved = _os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
+    _os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
     import scitex_agent_container._state.state_db as _state_db_mod
 
     importlib.reload(_state_db_mod)
-    yield db
-    importlib.reload(_state_db_mod)
+    try:
+        yield db
+    finally:
+        if saved is None:
+            _os.environ.pop("SCITEX_AGENT_CONTAINER_STATE_DB", None)
+        else:
+            _os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = saved
+        importlib.reload(_state_db_mod)
 
 
 def _write_peer_config(
