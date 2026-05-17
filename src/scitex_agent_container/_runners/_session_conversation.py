@@ -96,6 +96,11 @@ async def _drive_turn(
                 sid = getattr(msg, "session_id", None)
                 if sid:
                     write_session_id(state_dir, sid)
+                    # Tag the envelope so the HTTP sidecar can echo the
+                    # SDK session id back to the caller. Set BEFORE the
+                    # future resolves (in the finally block below) so
+                    # the awaiter sees a consistent (text, session_id).
+                    env.session_id = sid
                 usage = getattr(msg, "usage", None)
                 accumulate_quota(state_dir, usage)
                 append_session_message(
