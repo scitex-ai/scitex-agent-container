@@ -189,6 +189,27 @@ def read_session_id(state_dir: Path) -> str | None:
         return None
 
 
+def clear_session_id(state_dir: Path) -> bool:
+    """Remove the persisted ``session_id`` resume marker.
+
+    Used by ``agent_start(force=True)`` so a stale session id left over
+    from a previous run can't make the SDK try to resume a conversation
+    the server has already aged out (symptom: ``ProcessError: Command
+    failed with exit code 1`` ~90s into the first turn).
+
+    Returns True if a file was removed, False if there was nothing to
+    remove. Never raises FileNotFoundError; never silently swallows
+    other ``OSError``s (callers want a loud failure if e.g. the runtime
+    dir is unreadable due to permissions).
+    """
+    p = state_dir / "session_id"
+    try:
+        p.unlink()
+        return True
+    except FileNotFoundError:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # state.db instance id (F-CS11 phase 3)
 #
