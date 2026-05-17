@@ -492,7 +492,8 @@ def test_update_heartbeat_collapses_two_same_second_beats_into_one_row(
     update_heartbeat(iid, iter=2, input_tokens=30, output_tokens=40)
     with open_db() as conn:
         n = conn.execute(
-            "SELECT count(*) AS n FROM heartbeats WHERE instance_id=?", (iid,)
+            "SELECT count(*) AS n FROM instance_heartbeats WHERE instance_id=?",
+            (iid,),
         ).fetchone()["n"]
     # Assert — single row thanks to ON CONFLICT (instance_id, ts@1-sec).
     assert n == 1
@@ -519,7 +520,8 @@ def test_update_heartbeat_merged_row_advances_to_latest_value(
     with open_db() as conn:
         hb_row = dict(
             conn.execute(
-                "SELECT * FROM heartbeats WHERE instance_id=?", (iid,)
+                "SELECT * FROM instance_heartbeats WHERE instance_id=?",
+                (iid,),
             ).fetchone()
         )
     # Assert
