@@ -64,6 +64,33 @@ def _default_config_path() -> Path:
 
 
 @dataclass(frozen=True)
+class ResolveSpec:
+    """Dispatch-time peer-target resolution descriptor (Phase 1 schema).
+
+    Carried on a :class:`PeerSpec` via the ``resolve`` field. When set,
+    the peer's live ``ssh`` target is to be filled in at dispatch time
+    by querying ``source`` (currently only ``"scitex-hpc"``) instead of
+    being pinned statically in ``peers.yaml``. Phase 1 of the
+    label-style-peer migration only *parses and validates* this field —
+    no resolver code runs. Phase 2 will wire the lookup into
+    ``try_dispatch``. Full plan in the lead's planning doc
+    ``sac-dispatch-time-node-resolution.md``.
+
+    Fields:
+      source: backend identifier. Phase 1 accepts only ``"scitex-hpc"``;
+        any other value raises ``ValueError`` at config-load time so
+        operator typos surface immediately, not at dispatch.
+      reservation: the scitex-hpc reservation name (used when
+        ``source == "scitex-hpc"``). Optional at the schema level so
+        future backends can omit it; Phase 2's resolver will enforce
+        presence at resolve time for scitex-hpc.
+    """
+
+    source: str
+    reservation: str | None = None
+
+
+@dataclass(frozen=True)
 class PeerSpec:
     """One peer entry from ``peers:`` in config.yaml.
 
@@ -73,12 +100,46 @@ class PeerSpec:
     Spartan is the canonical example: ``apptainer`` is only on $PATH
     after two separate ``module load`` calls (see the Spartan host
     skill doc for the rationale).
+
+    ``resolve`` (Phase 1 schema only — no resolver behavior yet) marks
+    the peer as a *label* whose real ssh target is computed at dispatch
+    time. When ``resolve`` is set, ``ssh`` may be left empty and will
+    be populated by the Phase 2 resolver. When both ``resolve`` and
+    ``ssh`` are present, the explicit ``ssh`` is retained verbatim as a
+    static fallback — Phase 2 will decide the precedence rule. See
+    :class:`ResolveSpec` for the field shape.
     """
 
     name: str
     ssh: str  # 'user@host[:port]' or just 'host' (assumes ~/.ssh/config)
     via: tuple[str, ...] = ()  # ssh ProxyJump chain by peer name
     env_preamble: tuple[str, ...] = ()  # remote shell snippets joined by &&
+    resolve: ResolveSpec | None = None  # dispatch-time target resolution
+
+    @classmethod
+    def from_dict(cls, spec: dict, *, name: str = "<anonymous>") -> "PeerSpec":
+        """Build a :class:`PeerSpec` from one ``peers:`` YAML mapping.
+
+        Mirrors the per-peer parsing that :func:`load` does inline, so
+        unit tests can exercise the schema without needing a config
+        file on disk. Raises ``ValueError`` for malformed shapes (same
+        rules as ``load``).
+        """
+        if not isinstance(spec, dict):
+            raise ValueError(
+                f"peer '{name}': expected a mapping with ssh:/via:/..., "
+                f"got {type(spec).__name__}"
+            )
+        via_raw = spec.get("via") or []
+        if not isinstance(via_raw, list):
+            raise ValueError(f"peer '{name}': via: must be a list")
+        return cls(
+            name=name,
+            ssh=str(spec.get("ssh") or ""),
+            via=tuple(str(x) for x in via_raw),
+            env_preamble=_parse_env_preamble(name, spec.get("env_preamble")),
+            resolve=_parse_resolve(name, spec.get("resolve")),
+        )
 
     def jump_chain(self, peers: dict[str, "PeerSpec"]) -> list[str]:
         """Resolve ``via`` peer names into their ssh targets in order.
@@ -131,7 +192,12 @@ class Config:
         return self.peers.get(name)
 
     def validate(self) -> list[str]:
-        """Return a list of human-readable errors. Empty = valid."""
+        """Return a list of human-readable errors. Empty = valid.
+
+        Peers with a ``resolve:`` block are allowed to leave ``ssh:``
+        empty — Phase 2's resolver will populate it at dispatch time.
+        Peers without ``resolve:`` still require an explicit ``ssh:``.
+        """
         errors: list[str] = []
         for pname, p in self.peers.items():
             for hop in p.via:
@@ -140,8 +206,11 @@ class Config:
                         f"peer '{pname}': via=[..., '{hop}', ...] references "
                         f"an unknown peer (define '{hop}' under peers:)"
                     )
-            if not p.ssh:
-                errors.append(f"peer '{pname}': ssh: is required")
+            if not p.ssh and p.resolve is None:
+                errors.append(
+                    f"peer '{pname}': ssh: is required (or set resolve: to "
+                    f"populate it at dispatch time)"
+                )
         valid_fallbacks = {"hostname-short", "hostname-fqdn"}
         if self.host.fallback not in valid_fallbacks:
             errors.append(
@@ -189,9 +258,58 @@ def load(path: Path | None = None) -> Config:
             ssh=str(spec.get("ssh") or ""),
             via=tuple(str(x) for x in via_raw),
             env_preamble=_parse_env_preamble(name, spec.get("env_preamble")),
+            resolve=_parse_resolve(name, spec.get("resolve")),
         )
 
     return Config(host=host, peers=peers, source_path=p)
+
+
+_RESOLVE_ALLOWED_SOURCES = ("scitex-hpc",)
+
+
+def _parse_resolve(name: str, raw) -> ResolveSpec | None:
+    """Normalize a peer's ``resolve:`` YAML field into a :class:`ResolveSpec`.
+
+    Phase 1 of the dispatch-time-resolution architecture (full plan at
+    ``~/proj/scitex-lead/GITIGNORED/FUTURE/sac-dispatch-time-node-resolution.md``).
+    This helper only *parses* the field; no network / scitex-hpc lookup
+    happens here.
+
+    Accepted shapes:
+
+    * Missing / ``None`` → returns ``None`` (peer has no resolver).
+    * A mapping with at minimum ``source:``. Phase 1 accepts only
+      ``source: scitex-hpc``; any other value raises ``ValueError``
+      naming the peer, so operator typos surface at config-load time
+      rather than at dispatch.
+
+    Any other shape (scalar, list, ...) raises ``ValueError``.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"config.yaml: peer '{name}' resolve: must be a mapping with "
+            f"source: (and source-specific keys), got {type(raw).__name__}"
+        )
+    source = raw.get("source")
+    if not isinstance(source, str) or not source.strip():
+        raise ValueError(
+            f"config.yaml: peer '{name}' resolve.source is required and "
+            f"must be a non-empty string"
+        )
+    if source not in _RESOLVE_ALLOWED_SOURCES:
+        raise ValueError(
+            f"config.yaml: peer '{name}' resolve.source={source!r} is "
+            f"unknown; allowed values: {list(_RESOLVE_ALLOWED_SOURCES)}"
+        )
+    reservation = raw.get("reservation")
+    if reservation is not None and not isinstance(reservation, str):
+        raise ValueError(
+            f"config.yaml: peer '{name}' resolve.reservation must be a "
+            f"string if set, got {type(reservation).__name__}"
+        )
+    return ResolveSpec(source=source, reservation=reservation)
 
 
 def _parse_env_preamble(name: str, raw) -> tuple[str, ...]:
