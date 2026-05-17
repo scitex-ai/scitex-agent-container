@@ -459,7 +459,22 @@ class AgentConfig:
     # the agent's workdir at start (replaces the legacy ``src_*`` siblings).
     # Empty = auto-discover ``./dot_claude`` next to spec.yaml; otherwise an
     # absolute path or a path relative to spec.yaml's directory.
+    #
+    # DEPRECATED — superseded by ``spec.to_home`` (see ADR-0006). Specs
+    # carrying a ``dot_claude/`` dir emit a DeprecationWarning on agent
+    # start; the path is retained for one release while existing specs
+    # migrate. A spec MUST NOT carry both layouts at once — the runtime
+    # raises if both ``dot_claude/`` and ``to_home/`` exist next to
+    # ``spec.yaml`` (no silent merge).
     dot_claude: str = ""
+    # ADR-0006: spec.to_home — directory whose contents are mirrored
+    # into the agent's container ``$HOME`` (= ``runtime/<name>/home/``
+    # on the host) on every start. Replaces the leaf-vs-mirror
+    # fragmentation of ``dot_claude/``: every path under ``to_home/``
+    # lands at the same relative path inside ``$HOME``.
+    # Default: ``./to_home`` next to ``spec.yaml`` (auto-discovered
+    # when this field is empty).
+    to_home: str = "./to_home"
 
     def __post_init__(self) -> None:
         if not self.screen_name:

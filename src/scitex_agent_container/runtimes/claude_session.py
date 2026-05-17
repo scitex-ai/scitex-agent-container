@@ -20,14 +20,67 @@ and cross-host work goes through ``sac --on <peer>`` (F-CS12).
 from __future__ import annotations
 
 import sys
+import warnings
 from pathlib import Path
 
 from ..config import AgentConfig
 from ._dot_claude import cleanup_dot_claude, deploy_dot_claude
+from ._to_home import deploy_to_home, resolve_to_home_dir
 from .base import RuntimeBase
 from .claude_md import cleanup_claude_md, setup_claude_md
 
 __all__ = ["ClaudeSessionRuntime"]
+
+
+def _spec_dir_for(config: AgentConfig) -> Path | None:
+    cp = getattr(config, "config_path", "")
+    if not cp:
+        return None
+    return Path(cp).parent
+
+
+def _materialize_home_layouts(config: AgentConfig, home_dir: str) -> None:
+    """Run the to_home / dot_claude materialization pair.
+
+    ADR-0006 transition: ``to_home/`` is the new layout; ``dot_claude/``
+    is deprecated and kept alive for one release. A spec MUST NOT
+    carry both — surfacing the ambiguity loudly avoids the
+    silent-merge data-loss pattern.
+
+    Order:
+      1. If a ``to_home/`` dir is present: deploy it.
+      2. If a ``dot_claude/`` dir is present and ``to_home/`` is NOT:
+         deploy dot_claude (legacy path) and emit a DeprecationWarning.
+      3. If both are present: raise — operator must pick one.
+    """
+    spec_dir = _spec_dir_for(config)
+    to_home_dir = resolve_to_home_dir(config)
+    legacy_dir = None
+    if spec_dir is not None and (spec_dir / "dot_claude").is_dir():
+        legacy_dir = spec_dir / "dot_claude"
+
+    if to_home_dir is not None and legacy_dir is not None:
+        raise RuntimeError(
+            f"Spec {getattr(config, 'config_path', '<unknown>')!r} carries "
+            f"BOTH 'to_home/' and 'dot_claude/' next to spec.yaml. "
+            "Pick one — refusing to silently merge two materialization "
+            "layouts (data-loss risk). dot_claude/ is deprecated; "
+            "see ADR-0006 for the migration guide."
+        )
+
+    if to_home_dir is not None:
+        deploy_to_home(config, home_dir)
+        return
+
+    if legacy_dir is not None:
+        warnings.warn(
+            "dot_claude/ is deprecated; switch to to_home/ "
+            "(see ADR-0006). The legacy path will be removed in a "
+            "future release.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        deploy_dot_claude(config, home_dir)
 
 
 # F-CS8 — silent SDK failure on heavy workdir/.claude/ trees.
@@ -153,7 +206,7 @@ class ClaudeSessionRuntime(RuntimeBase):
         home_dir = str(self._state_dir(config) / "home")
         Path(home_dir).mkdir(parents=True, exist_ok=True)
         setup_claude_md(config, home_dir)
-        deploy_dot_claude(config, home_dir)
+        _materialize_home_layouts(config, home_dir)
 
     def _cleanup_workspace(self, config: AgentConfig) -> None:
         """Remove the agent-container CLAUDE.md section on stop."""
