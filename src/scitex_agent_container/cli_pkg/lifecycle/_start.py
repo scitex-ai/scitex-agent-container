@@ -275,6 +275,38 @@ def start(
     if resume_id and session_mode is None:
         session_mode = "resume"
 
+    # Preflight OAuth credential expiry. Lazy / one-shot:
+    #   * Runs only when we're about to actually dispatch (NOT on
+    #     pure argument-validation exits, which short-circuit above
+    #     at exit code 2 — preserving their CLI contract).
+    #   * Runs once per `sac agents start` invocation regardless of
+    #     how many targets are in the loop (a fleet of 50 agents
+    #     does not need 50 file reads).
+    #   * Skipped on the --no-redispatch peer-recursion branch (the
+    #     peer holds its own credentials; the lead already gated this
+    #     invocation before scp/ssh'ing to the peer).
+    #   * Skipped when ANTHROPIC_API_KEY / SAC_ANTHROPIC_API_KEY is
+    #     set (api-key auth path; the OAuth credentials.json is
+    #     irrelevant — see provision_anthropic_auth in
+    #     runtimes/_sdk_common.py).
+    # On any failure (missing file, malformed JSON, expired token,
+    # token within 5 min of expiry), exit 1 with the helper's message
+    # on stderr — no traceback.
+    _preflight_ran = False
+
+    def _run_preflight_once() -> None:
+        nonlocal _preflight_ran
+        if _preflight_ran or no_redispatch:
+            return
+        _preflight_ran = True
+        from ..._state._preflight_creds import check_oauth_token_expiry
+
+        try:
+            check_oauth_token_expiry()
+        except (FileNotFoundError, ValueError, RuntimeError) as exc:
+            click.echo(f"Error: {exc}", err=True)
+            sys.exit(1)
+
     # Bulk path: directory targets.
     if bulk_yamls_from_dirs:
         yamls = bulk_yamls_from_dirs
@@ -292,6 +324,7 @@ def start(
                     err=True,
                 )
                 raise SystemExit(2)
+            _run_preflight_once()
             if True:
                 try:
                     current_host = resolve_hostname()
@@ -334,6 +367,8 @@ def start(
             return
 
     # Per-target single-start loop.
+    if single_targets:
+        _run_preflight_once()
     any_error = False
     for target_idx, raw_target in enumerate(single_targets):
         if target_idx > 0 and not as_json:
