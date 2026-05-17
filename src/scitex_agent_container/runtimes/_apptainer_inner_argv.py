@@ -8,6 +8,7 @@ cap. Each builder returns the full ``[tini, --, python3, -m, MODULE,
 
 from __future__ import annotations
 
+import shlex
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -21,41 +22,67 @@ RUNNER_MODULE_PROXY = "scitex_agent_container._runners.a2a_proxy"
 _TINI_PREFIX = ["/usr/bin/tini", "-s", "--", "python3", "-m"]
 
 
-def build_inner_argv(config: "AgentConfig", *, one_shot: bool = False) -> list[str]:
-    """Return ``[tini, --, python3, -m, RUNNER_MODULE, *runner_argv]``.
+def _format_shell_steps(cmds: list) -> list[str]:
+    # list[StartupCommand] -> shell statement list. `set -e` so any
+    # failing step aborts launch loudly; delay=N becomes `sleep N`.
+    steps: list[str] = []
+    has_real = False
+    for c in cmds:
+        cmd = (getattr(c, "command", "") or "").strip()
+        if not cmd:
+            continue
+        if not has_real:
+            steps.append("set -e")
+            has_real = True
+        delay = int(getattr(c, "delay", 0) or 0)
+        if delay > 0:
+            steps.append(f"sleep {delay}")
+        steps.append(cmd)
+    return steps
 
-    Dispatches on ``config.kind``:
-      * ``Agent`` (default)  → claude_session runner argv.
-      * ``AgentProxy``       → a2a_proxy runner argv.
+
+def build_inner_argv(config: "AgentConfig", *, one_shot: bool = False) -> list[str]:
+    """Return the apptainer-inner argv. Dispatches on ``config.kind``.
+
+    When ``spec.startup_commands`` is non-empty, the argv is wrapped
+    in ``[/bin/bash, -lc, "set -e; <cmd1>; sleep N; <cmd2>; exec <tini ...>"]``
+    so the commands run as container-internal shell BEFORE the claude
+    SDK process starts. ``exec`` replaces bash with tini, keeping PID 1
+    clean. NOT a claude prompt — see ``spec.startup_prompts``.
     """
     kind = getattr(config, "kind", "Agent")
     if kind == "AgentProxy":
-        return _TINI_PREFIX + [RUNNER_MODULE_PROXY] + _proxy_runner_argv(config)
-    return (
-        _TINI_PREFIX
-        + [RUNNER_MODULE_AGENT]
-        + _agent_runner_argv(config, one_shot=one_shot)
-    )
+        runner_tail = _TINI_PREFIX + [RUNNER_MODULE_PROXY] + _proxy_runner_argv(config)
+    else:
+        runner_tail = (
+            _TINI_PREFIX
+            + [RUNNER_MODULE_AGENT]
+            + _agent_runner_argv(config, one_shot=one_shot)
+        )
+
+    startup_cmds = list(getattr(config, "startup_commands", []) or [])
+    shell_steps = _format_shell_steps(startup_cmds)
+    if not shell_steps:
+        return runner_tail
+
+    quoted_runner = " ".join(shlex.quote(p) for p in runner_tail)
+    inline = "; ".join(shell_steps + [f"exec {quoted_runner}"])
+    return ["/bin/bash", "-lc", inline]
 
 
 def _agent_runner_argv(config: "AgentConfig", *, one_shot: bool) -> list[str]:
-    """Argv tail for ``kind: Agent`` (claude_session) — unchanged from v3 wiring."""
+    """Argv tail for ``kind: Agent`` (claude_session)."""
     runner_argv: list[str] = [
         "--name",
         config.name,
         "--state-root",
         "/state",
     ]
-    # startup_prompts (v3) override startup_commands (legacy) for the
-    # mission turn — the runner's --mission flag drives ONE SDK turn.
-    mission = ""
+    # startup_prompts -> claude SDK mission via --mission. NO fallback
+    # from startup_commands; that field is shell-exec only (see
+    # build_inner_argv wrapper).
     prompts = list(getattr(config, "startup_prompts", []) or [])
-    if prompts:
-        mission = str(prompts[0]).strip()
-    else:
-        cmds = list(getattr(config, "startup_commands", []) or [])
-        if cmds and getattr(cmds[0], "command", ""):
-            mission = cmds[0].command
+    mission = str(prompts[0]).strip() if prompts else ""
     if mission:
         runner_argv += ["--mission", mission]
         if one_shot:

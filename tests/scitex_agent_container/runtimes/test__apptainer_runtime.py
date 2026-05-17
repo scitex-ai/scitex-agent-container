@@ -32,7 +32,6 @@ from scitex_agent_container.config._types import (
     ApptainerSpec,
     AutonomousSpec,
     ContainerSpec,
-    StartupCommand,
 )
 from scitex_agent_container.runtimes import _apptainer_runtime as mod
 from scitex_agent_container.runtimes._apptainer_inner_argv import (
@@ -266,9 +265,12 @@ def test_argv_does_not_emit_user_flag(tmp_path: Path) -> None:
 
 
 def test_argv_runs_runner_module_via_tini(tmp_path: Path) -> None:
-    # Arrange
+    # Arrange — use startup_prompts (claude mission). startup_commands
+    # now wraps the inner argv in bash -lc, so the runner is no longer
+    # at argv[0] of the inner — see test__apptainer_inner_argv.py for
+    # the shell-wrapping behavior.
     rt = ApptainerContainerRuntime()
-    cfg = _config(tmp_path, startup_commands=[StartupCommand(command="say hi")])
+    cfg = _config(tmp_path, startup_prompts=["say hi"])
     # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
     inner = _extract_inner_argv(argv)
@@ -279,7 +281,7 @@ def test_argv_runs_runner_module_via_tini(tmp_path: Path) -> None:
 def test_argv_inner_invokes_claude_session_module(tmp_path: Path) -> None:
     # Arrange
     rt = ApptainerContainerRuntime()
-    cfg = _config(tmp_path, startup_commands=[StartupCommand(command="say hi")])
+    cfg = _config(tmp_path, startup_prompts=["say hi"])
     # Act
     inner = _extract_inner_argv(
         rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
@@ -288,10 +290,11 @@ def test_argv_inner_invokes_claude_session_module(tmp_path: Path) -> None:
     assert "scitex_agent_container._runners.claude_session" in inner
 
 
-def test_argv_inner_carries_mission_from_startup_command(tmp_path: Path) -> None:
-    # Arrange
+def test_argv_inner_carries_mission_from_startup_prompt(tmp_path: Path) -> None:
+    # Arrange — startup_prompts is the mission source (no fallback
+    # from startup_commands after 2026-05-17 refactor).
     rt = ApptainerContainerRuntime()
-    cfg = _config(tmp_path, startup_commands=[StartupCommand(command="say hi")])
+    cfg = _config(tmp_path, startup_prompts=["say hi"])
     # Act
     inner = _extract_inner_argv(
         rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
@@ -345,11 +348,11 @@ def test_argv_omits_nv_flag_by_default(tmp_path: Path) -> None:
 
 
 def test_argv_forwards_autonomous_enabled_flag(tmp_path: Path) -> None:
-    # Arrange
+    # Arrange — use startup_prompts so the inner argv is not bash-wrapped.
     rt = ApptainerContainerRuntime()
     cfg = _config(
         tmp_path,
-        startup_commands=[StartupCommand(command="seed")],
+        startup_prompts=["seed"],
         autonomous=AutonomousSpec(enabled=True, drive_until="OK", max_turns=7),
     )
     # Act
@@ -365,7 +368,7 @@ def test_argv_forwards_autonomous_drive_until_value(tmp_path: Path) -> None:
     rt = ApptainerContainerRuntime()
     cfg = _config(
         tmp_path,
-        startup_commands=[StartupCommand(command="seed")],
+        startup_prompts=["seed"],
         autonomous=AutonomousSpec(enabled=True, drive_until="OK", max_turns=7),
     )
     # Act
@@ -381,7 +384,7 @@ def test_argv_forwards_autonomous_max_turns_value(tmp_path: Path) -> None:
     rt = ApptainerContainerRuntime()
     cfg = _config(
         tmp_path,
-        startup_commands=[StartupCommand(command="seed")],
+        startup_prompts=["seed"],
         autonomous=AutonomousSpec(enabled=True, drive_until="OK", max_turns=7),
     )
     # Act
@@ -1000,14 +1003,14 @@ def test_argv_forwards_arbitrary_env_dict(tmp_path: Path) -> None:
     assert "FOO=bar" in argv
 
 
-def test_argv_prefers_startup_prompts_over_legacy_commands(tmp_path: Path) -> None:
-    # Arrange
+def test_argv_startup_prompts_populates_mission(tmp_path: Path) -> None:
+    # Arrange — after 2026-05-17 refactor, startup_commands and
+    # startup_prompts go to two different destinations with no
+    # fallback between them. This test verifies startup_prompts
+    # populates --mission. The shell-exec behavior of
+    # startup_commands lives in test__apptainer_inner_argv.py.
     rt = ApptainerContainerRuntime()
-    cfg = _config(
-        tmp_path,
-        startup_prompts=["hello-world"],
-        startup_commands=[StartupCommand(command="ignored")],
-    )
+    cfg = _config(tmp_path, startup_prompts=["hello-world"])
     # Act
     inner = _extract_inner_argv(
         rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
