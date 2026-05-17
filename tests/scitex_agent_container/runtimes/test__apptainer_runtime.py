@@ -653,8 +653,12 @@ def test_argv_appends_apptainer_raw_args(tmp_path: Path) -> None:
 
 
 def test_argv_overlay_relative_resolves_against_workdir(tmp_path: Path) -> None:
-    # Arrange
+    # Arrange — overlay file must exist on disk (auto-create skipped
+    # when overlay_size is unset, but the existence check still passes
+    # because we pre-create the file).
     workdir = tmp_path / "wd"
+    workdir.mkdir()
+    (workdir / "overlay.img").write_bytes(b"")
     rt = ApptainerContainerRuntime()
     cfg = _config(workdir, apptainer=ApptainerSpec(overlay="overlay.img"))
     # Act
@@ -664,14 +668,283 @@ def test_argv_overlay_relative_resolves_against_workdir(tmp_path: Path) -> None:
 
 
 def test_argv_overlay_absolute_used_unchanged(tmp_path: Path) -> None:
-    # Arrange
+    # Arrange — same as above, pre-create the overlay so existence
+    # check passes without exercising auto-create.
     rt = ApptainerContainerRuntime()
     abs_overlay = tmp_path / "ov.img"
+    abs_overlay.write_bytes(b"")
     cfg = _config(tmp_path, apptainer=ApptainerSpec(overlay=str(abs_overlay)))
     # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
     # Assert
     assert argv[argv.index("--overlay") + 1] == str(abs_overlay)
+
+
+# ---------------------------------------------------------------------------
+# Declarative overlay auto-create (overlay_size + overlay_create_if_missing)
+#
+# We use the subprocess_shim — a real fake-binary on $PATH — rather than
+# rewriting production's subprocess.run. The shim records every call and
+# (for `overlay create`) materialises the output file so production's
+# existence checks stay honest.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def apptainer_overlay_shim(subprocess_shim) -> Path:
+    """Install a fake ``apptainer`` on ``$PATH`` that, when invoked as
+    ``apptainer overlay create --size <MB> <path>``, materialises the
+    target file (zero bytes). All argvs are recorded in
+    ``subprocess_shim`` so tests can read them back. Non-overlay
+    subcommands also record but are no-ops.
+
+    This replaces ``monkeypatch.setattr(subprocess, "run", ...)`` —
+    production calls the real ``subprocess.run`` which finds the fake
+    on PATH.
+    """
+    bin_dir = subprocess_shim._bin
+    script = bin_dir / "apptainer"
+    body = (
+        f"#!{sys.executable}\n"
+        "import json, sys\n"
+        "from pathlib import Path\n"
+        f"with open({_q(str(bin_dir / 'apptainer.argv.jsonl'))}, 'a') as fh:\n"
+        "    fh.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+        # overlay create --size <MB> <path>: touch the path so the next
+        # existence check passes.
+        "if len(sys.argv) >= 6 and sys.argv[1:5] == ['overlay', 'create', '--size'] + [sys.argv[3]]:\n"
+        "    Path(sys.argv[5]).write_bytes(b'')\n"
+        "sys.exit(0)\n"
+    )
+    script.write_text(body)
+    script.chmod(0o755)
+    subprocess_shim._logs["apptainer"] = bin_dir / "apptainer.argv.jsonl"
+    return script
+
+
+@pytest.fixture
+def apptainer_overlay_shim_fail(subprocess_shim) -> Path:
+    """Like ``apptainer_overlay_shim`` but exits 1 with ``out of disk``
+    on stderr — drives the RuntimeError path."""
+    bin_dir = subprocess_shim._bin
+    script = bin_dir / "apptainer"
+    body = (
+        f"#!{sys.executable}\n"
+        "import json, sys\n"
+        f"with open({_q(str(bin_dir / 'apptainer.argv.jsonl'))}, 'a') as fh:\n"
+        "    fh.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+        "sys.stderr.write('out of disk')\n"
+        "sys.exit(1)\n"
+    )
+    script.write_text(body)
+    script.chmod(0o755)
+    subprocess_shim._logs["apptainer"] = bin_dir / "apptainer.argv.jsonl"
+    return script
+
+
+def test_overlay_auto_create_when_missing_invokes_apptainer_overlay_create(
+    tmp_path: Path, apptainer_overlay_shim: Path, subprocess_shim
+) -> None:
+    # Arrange — overlay file does not exist; overlay_size is set; the
+    # default overlay_create_if_missing=True triggers _create_overlay_image.
+    overlay = tmp_path / "ov.img"
+    rt = ApptainerContainerRuntime()
+    cfg = _config(
+        tmp_path,
+        apptainer=ApptainerSpec(overlay=str(overlay), overlay_size="100M"),
+    )
+    # Act
+    rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    # Assert — the shim recorded exactly one apptainer overlay create call.
+    assert subprocess_shim.invocations("apptainer") == [
+        ["overlay", "create", "--size", "100", str(overlay)]
+    ]
+
+
+def test_overlay_auto_create_emits_overlay_flag_in_argv(
+    tmp_path: Path, apptainer_overlay_shim: Path
+) -> None:
+    # Arrange — same setup; verify the post-create argv carries --overlay.
+    overlay = tmp_path / "ov.img"
+    rt = ApptainerContainerRuntime()
+    cfg = _config(
+        tmp_path,
+        apptainer=ApptainerSpec(overlay=str(overlay), overlay_size="100M"),
+    )
+    # Act
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    # Assert
+    assert argv[argv.index("--overlay") + 1] == str(overlay)
+
+
+def test_overlay_missing_without_size_raises_filenotfound(tmp_path: Path) -> None:
+    # Arrange — overlay missing, no overlay_size → must fail loudly.
+    rt = ApptainerContainerRuntime()
+    overlay = tmp_path / "missing.img"
+    cfg = _config(tmp_path, apptainer=ApptainerSpec(overlay=str(overlay)))
+    # Act
+    # Assert
+    with pytest.raises(FileNotFoundError, match="overlay_size"):
+        rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+
+
+def test_overlay_create_disabled_raises_filenotfound(
+    tmp_path: Path, apptainer_overlay_shim: Path
+) -> None:
+    # Arrange — overlay missing, overlay_size set, but
+    # overlay_create_if_missing=False → must raise (different message).
+    overlay = tmp_path / "no-create.img"
+    rt = ApptainerContainerRuntime()
+    cfg = _config(
+        tmp_path,
+        apptainer=ApptainerSpec(
+            overlay=str(overlay),
+            overlay_size="5G",
+            overlay_create_if_missing=False,
+        ),
+    )
+    # Act
+    # Assert
+    with pytest.raises(FileNotFoundError, match="overlay_create_if_missing=false"):
+        rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+
+
+@pytest.fixture
+def _disabled_create_run(
+    tmp_path: Path, apptainer_overlay_shim: Path, subprocess_shim
+) -> int:
+    """Invoke build_run_argv with overlay missing + create disabled,
+    swallow the FileNotFoundError (verified by sibling test), and yield
+    the post-call apptainer call count so the assertion test can pin
+    exactly one fact."""
+    overlay = tmp_path / "no-create.img"
+    rt = ApptainerContainerRuntime()
+    cfg = _config(
+        tmp_path,
+        apptainer=ApptainerSpec(
+            overlay=str(overlay),
+            overlay_size="5G",
+            overlay_create_if_missing=False,
+        ),
+    )
+    try:
+        rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    except FileNotFoundError:
+        pass
+    return subprocess_shim.call_count("apptainer")
+
+
+def test_overlay_create_disabled_does_not_invoke_apptainer(
+    _disabled_create_run: int,
+) -> None:
+    # Arrange
+    call_count = _disabled_create_run
+    # Act
+    # Assert
+    assert call_count == 0
+
+
+def test_overlay_exists_does_not_invoke_apptainer(
+    tmp_path: Path, apptainer_overlay_shim: Path, subprocess_shim
+) -> None:
+    # Arrange — overlay file already on disk → no subprocess call.
+    overlay = tmp_path / "ov.img"
+    overlay.write_bytes(b"")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(
+        tmp_path,
+        apptainer=ApptainerSpec(overlay=str(overlay), overlay_size="5G"),
+    )
+    # Act
+    rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    # Assert
+    assert subprocess_shim.call_count("apptainer") == 0
+
+
+def test_overlay_exists_still_emits_overlay_flag(
+    tmp_path: Path, apptainer_overlay_shim: Path
+) -> None:
+    # Arrange — verify --overlay still lands in argv when file exists.
+    overlay = tmp_path / "ov.img"
+    overlay.write_bytes(b"")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(
+        tmp_path,
+        apptainer=ApptainerSpec(overlay=str(overlay), overlay_size="5G"),
+    )
+    # Act
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    # Assert
+    assert argv[argv.index("--overlay") + 1] == str(overlay)
+
+
+# ---------------------------------------------------------------------------
+# _create_overlay_image — size parsing + subprocess result handling
+# ---------------------------------------------------------------------------
+
+
+def test_overlay_size_5G_parses_to_5120_megabytes(
+    tmp_path: Path, apptainer_overlay_shim: Path, subprocess_shim
+) -> None:
+    # Arrange
+    path = tmp_path / "ov.img"
+    # Act
+    mod._create_overlay_image(path, "5G")
+    # Assert — 5G → 5120 MB.
+    assert subprocess_shim.argv_for("apptainer") == [
+        "overlay",
+        "create",
+        "--size",
+        "5120",
+        str(path),
+    ]
+
+
+def test_overlay_size_500M_parses_to_500_megabytes(
+    tmp_path: Path, apptainer_overlay_shim: Path, subprocess_shim
+) -> None:
+    # Arrange
+    path = tmp_path / "ov.img"
+    # Act
+    mod._create_overlay_image(path, "500M")
+    # Assert
+    assert subprocess_shim.argv_for("apptainer") == [
+        "overlay",
+        "create",
+        "--size",
+        "500",
+        str(path),
+    ]
+
+
+def test_overlay_size_unparseable_raises_valueerror(tmp_path: Path) -> None:
+    # Arrange — unparseable size; no shim required because production
+    # must reject before invoking apptainer.
+    path = tmp_path / "ov.img"
+    # Act
+    # Assert
+    with pytest.raises(ValueError, match="unparseable"):
+        mod._create_overlay_image(path, "abc")
+
+
+def test_overlay_size_kilobytes_rejected_as_valueerror(tmp_path: Path) -> None:
+    # Arrange — K/KB units are unsupported (apptainer --size takes int MB).
+    path = tmp_path / "ov.img"
+    # Act
+    # Assert
+    with pytest.raises(ValueError, match="unparseable"):
+        mod._create_overlay_image(path, "100K")
+
+
+def test_overlay_subprocess_failure_raises_runtimeerror(
+    tmp_path: Path, apptainer_overlay_shim_fail: Path
+) -> None:
+    # Arrange — fail-shim exits 1 with 'out of disk' on stderr.
+    path = tmp_path / "ov.img"
+    # Act
+    # Assert
+    with pytest.raises(RuntimeError, match="out of disk"):
+        mod._create_overlay_image(path, "5G")
 
 
 def test_argv_emits_rocm_flag_when_requested(tmp_path: Path) -> None:
@@ -1638,6 +1911,7 @@ def test_writable_tmpfs_absent_when_overlay_configured(tmp_path: Path) -> None:
     # Arrange — apptainer rejects --writable-tmpfs + --overlay together.
     rt = ApptainerContainerRuntime()
     overlay = tmp_path / "ov.img"
+    overlay.write_bytes(b"")
     cfg = _config(tmp_path, apptainer=ApptainerSpec(overlay=str(overlay)))
     # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
@@ -1649,6 +1923,7 @@ def test_overlay_still_emitted_alongside_no_writable_tmpfs(tmp_path: Path) -> No
     # Arrange
     rt = ApptainerContainerRuntime()
     overlay = tmp_path / "ov.img"
+    overlay.write_bytes(b"")
     cfg = _config(tmp_path, apptainer=ApptainerSpec(overlay=str(overlay)))
     # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
