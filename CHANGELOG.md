@@ -6,6 +6,22 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **feat(apptainer): declarative overlay auto-create via
+  `spec.apptainer.overlay_size`** — operators no longer have to run
+  `apptainer overlay create --size N proj-<peer>.overlay.img` by hand
+  for every new peer. Set `spec.apptainer.overlay_size: "5G"` (units
+  M/MB/G/GB) alongside `spec.apptainer.overlay: <path>` and sac
+  creates the overlay image on first launch if it's missing. Gated by
+  the new `overlay_create_if_missing` flag (default `true`); set to
+  `false` to keep "operator must pre-create" semantics. When
+  `overlay_size` is empty AND the overlay is missing, sac now fails
+  earlier with a clear `FileNotFoundError` ("set
+  `spec.apptainer.overlay_size` for auto-create, or pre-create with
+  `apptainer overlay create`") instead of letting apptainer error out
+  cryptically at exec time. Behaviour for specs with existing overlay
+  files is unchanged. See `docs/isolation.md` §7.
+
 ### Changed
 - **docs/spec-reference.md** — verified field-by-field against
   `config/_parsers/` + `config/_validation.py`; corrected

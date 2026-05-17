@@ -155,6 +155,23 @@ class ApptainerSpec:
     no overlay (tmpfs writable layer). Non-absolute paths resolve
     against ``spec.workdir``. See ``docs/isolation.md`` §7."""
 
+    overlay_size: str = ""
+    """When set together with ``overlay``, sac auto-creates the overlay
+    image with the given size if it doesn't exist before launching.
+    Accepts apptainer-style sizes with units M/MB/G/GB only (e.g.
+    ``"5G"``, ``"500M"``, ``"1024MB"``). K/KB are explicitly rejected —
+    apptainer's ``overlay create --size`` takes integer MB so sub-MB
+    granularity makes no sense. Empty = no auto-create (default;
+    missing overlay raises FileNotFoundError at launch with a clear
+    message). See ``docs/isolation.md`` §7."""
+
+    overlay_create_if_missing: bool = True
+    """When True (default) AND ``overlay_size`` is set AND the overlay
+    path does not exist, sac runs ``apptainer overlay create --size
+    <MB> <path>`` before launching. When False, sac never creates
+    overlays even if size is given (operator must pre-create — sac
+    raises FileNotFoundError instead). See ``docs/isolation.md`` §7."""
+
     relaxed: bool = False
     """Opt out of sac's hardened defaults (auto-prepended
     ``--containall``/``--cleanenv``/``--writable-tmpfs``/``--home``).

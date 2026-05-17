@@ -146,6 +146,8 @@ when `spec.a2a.port` is set) and `GET /agents/<name>/card`
 |---------------|-------------------------------|------------------------------------------------------------|
 | `image`       | path to `.sif`                | `sac-scitex.sif` (full stack) or `sac-base.sif` (minimal). Optional; empty falls back to the sac default SIF at dispatch. |
 | `overlay`     | path                          | Writable rw layer above the SIF                            |
+| `overlay_size` | size string (e.g. `"5G"`, `"500M"`) | When set together with `overlay`, sac auto-creates the overlay image at that path with the given size if it doesn't exist (declarative — no manual `apptainer overlay create` step). Units: M/MB/G/GB only (K/KB rejected). Empty = no auto-create (missing overlay raises a clear FileNotFoundError at launch). |
+| `overlay_create_if_missing` | bool (default `true`) | Gate for the auto-create behaviour above. When `false` AND the overlay is missing, sac raises FileNotFoundError without attempting creation (operator must pre-create with `apptainer overlay create`). |
 | `binds[]`     | `host:container[:ro\|rw]` (or legacy `{src,dst,mode}` dict) | Bind mounts. Source side supports `~` / `$VAR` (sac expands before calling apptainer). Destination MUST be absolute (apptainer rejects relative / `~` / `$VAR`); conventional roots are `/home/agent/...` (D5 canonical HOME), `/srv/`, `/work/`, `/opt/`, `/data/`. The legacy `{src, dst, mode}` dict form is still accepted by the parser and normalized to the string form. |
 | `env`         | key-value dict                | Env vars exported into the container                       |
 | `container_workdir` | path (default `/work`)  | Working directory inside the container.                    |
