@@ -479,3 +479,99 @@ def test_double_dash_forwards_extra_arg_to_argv(isolated_env, passthrough_arg):
     captured = invoke()
     # Assert
     assert passthrough_arg in captured["argv"]
+
+
+# ---------------------------------------------------------------------------
+# Cross-host send: state.db row on peer → ssh://peer:port/v1/turn POST.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def remote_send_env(tmp_path):
+    """State.db redirect + peer config so cross-host send fires."""
+    import importlib
+
+    saved_db = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
+    saved_host = os.environ.get("SAC_HOST")
+    saved_cfg = os.environ.get("SCITEX_AGENT_CONTAINER_CONFIG")
+    db = tmp_path / "state.db"
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "host:\n  fallback: hostname-short\npeers:\n  peer-x:\n    ssh: peer-x\n"
+    )
+    os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
+    os.environ["SAC_HOST"] = "lead-host"
+    os.environ["SCITEX_AGENT_CONTAINER_CONFIG"] = str(cfg)
+    import scitex_agent_container._state.state_db as _state_db_mod
+
+    importlib.reload(_state_db_mod)
+    try:
+        yield tmp_path
+    finally:
+        for k, v in (
+            ("SCITEX_AGENT_CONTAINER_STATE_DB", saved_db),
+            ("SAC_HOST", saved_host),
+            ("SCITEX_AGENT_CONTAINER_CONFIG", saved_cfg),
+        ):
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        importlib.reload(_state_db_mod)
+
+
+def test_remote_send_without_a2a_port_raises_typed_error(remote_send_env):
+    # Arrange — seed a row with NO a2a_port (the proj-scitex-stats case).
+    from scitex_agent_container._state.state_db import record_instance_start
+
+    record_instance_start(name="zeta", host="peer-x", a2a_port=None)
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(send, ["zeta", "hi"])
+    # Assert
+    assert "did not register an A2A port" in result.output
+
+
+def test_remote_send_with_a2a_port_dispatches_to_post_turn_to_url(remote_send_env):
+    # Arrange — seed remote row + stub post_turn_to_url collaborator.
+    from scitex_agent_container._state.state_db import record_instance_start
+
+    record_instance_start(name="zeta", host="peer-x", a2a_port=18888)
+    captured: dict = {}
+
+    def fake_post(url, text, *, exit_after=False, timeout_s=600.0):
+        captured["url"] = url
+        captured["text"] = text
+        return "REMOTE-REPLY"
+
+    import scitex_agent_container._network.peer as _peer_mod
+
+    saved = _peer_mod.post_turn_to_url
+    _peer_mod.post_turn_to_url = fake_post  # type: ignore[assignment]
+    try:
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(send, ["zeta", "hi"])
+    finally:
+        _peer_mod.post_turn_to_url = saved  # type: ignore[assignment]
+    # Assert
+    assert captured.get("url") == "ssh://peer-x:18888/v1/turn"
+
+
+def test_remote_send_prints_reply_from_peer(remote_send_env):
+    # Arrange
+    from scitex_agent_container._state.state_db import record_instance_start
+
+    record_instance_start(name="zeta", host="peer-x", a2a_port=18888)
+    import scitex_agent_container._network.peer as _peer_mod
+
+    saved = _peer_mod.post_turn_to_url
+    _peer_mod.post_turn_to_url = lambda *a, **kw: "REMOTE-REPLY"  # type: ignore[assignment]
+    try:
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(send, ["zeta", "hi"])
+    finally:
+        _peer_mod.post_turn_to_url = saved  # type: ignore[assignment]
+    # Assert
+    assert "REMOTE-REPLY" in result.output
