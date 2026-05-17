@@ -389,33 +389,6 @@ class StartupCommand:
 
 
 @dataclass
-class ReadyPattern:
-    """A single regex the pane content must match for the agent to be ready."""
-
-    regex: str = ""
-
-
-@dataclass
-class StartupSpec:
-    """Opt-in ready-state gate for startup commands (todo#291).
-
-    When ``ready_patterns`` is empty, legacy fire-and-hope behavior is
-    preserved. Otherwise ``agent_start`` polls the tmux pane content and
-    only dispatches ``commands`` once all patterns match against the tail
-    of the capture AND the pane has been byte-identical for
-    ``ready_idle_ticks`` consecutive polls.
-    """
-
-    ready_patterns: list[ReadyPattern] = field(default_factory=list)
-    ready_idle_ticks: int = 3
-    ready_poll_interval_seconds: float = 0.5
-    ready_timeout_seconds: float = 60.0
-    # "capture_and_fail" | "capture_and_proceed"
-    on_timeout: str = "capture_and_proceed"
-    commands: list[StartupCommand] = field(default_factory=list)
-
-
-@dataclass
 class AgentConfig:
     """Parsed agent configuration from a YAML definition file."""
 
@@ -452,12 +425,14 @@ class AgentConfig:
     context_management: ContextManagementConfig = field(
         default_factory=ContextManagementConfig
     )
+    # startup_commands run as SHELL commands inside the container before
+    # the claude SDK starts. startup_prompts (separate field) carries
+    # the claude mission. No fallback between the two.
     startup_commands: list[StartupCommand] = field(default_factory=list)
     # v3-realign: ``startup_prompts`` is separate from ``startup_commands``
     # (§3). startup_commands are SHELL commands run BEFORE claude starts;
     # startup_prompts are TEXT fed to claude as the first user message(s).
     startup_prompts: list[str] = field(default_factory=list)
-    startup: "StartupSpec" = field(default_factory=lambda: StartupSpec())
     mcp_servers: dict[str, dict] = field(default_factory=dict)
     multiplexer: str = "tmux"  # "tmux" (default) or "screen"
     hosts_spec: HostsSpec = field(default_factory=HostsSpec)

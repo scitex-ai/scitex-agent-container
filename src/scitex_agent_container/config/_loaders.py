@@ -22,7 +22,6 @@ from ._parsers import (
     parse_proxy,
     parse_restart,
     parse_skills,
-    parse_startup,
     parse_startup_commands,
     parse_watchdog,
 )
@@ -285,7 +284,6 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         skills=parse_skills(spec),
         startup_commands=parse_startup_commands(spec),
         startup_prompts=startup_prompts,
-        startup=parse_startup(spec),
         context_management=parse_context_management(spec),
         listen=parse_listen(spec),
         extensions=parse_extensions(spec),
