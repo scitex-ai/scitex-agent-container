@@ -13,7 +13,7 @@ Public surface — CLI-tree-shaped noun submodules::
     sac.agent.list()                  # `sac agent list`
     sac.agent.start("head-nas")       # `sac agent start head-nas`
     sac.db.query(table="instances")   # `sac db query --table=instances`
-    sac.host.show()                   # `sac host show`
+    sac.host.list()                   # `sac host list`
     sac.skills.get("02_quick-start")  # `sac skills get 02_quick-start`
 
 Each noun submodule (`agent`, `db`, `host`, `image`, `template`,
@@ -97,7 +97,16 @@ __all__ = [
 # Lazy imports via PEP 562 __getattr__ — keeps CLI startup under the 500 ms
 # budget (importing _api → _mcp.server alone costs ~20 ms; config._types costs
 # ~16 ms; pulling all of them at import time pushed `sac --help` to ~670 ms).
-_API_NAMES = {"account", "agent", "db", "host", "image", "mcp", "skills", "template"}
+_API_NAMES = {
+    "account",
+    "agent",
+    "db",
+    "host",
+    "image",
+    "mcp",
+    "skills",
+    "template",
+}
 _LAZY: dict = {}
 
 

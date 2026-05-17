@@ -149,6 +149,30 @@ leak vector (previous-run state contaminates the next run):
 - Persistent overlay: include the overlay hash in the verification chain
 - One agent ↔ one overlay; never share
 
+**Declarative auto-create (sac).** sac drives overlay provisioning
+from the spec so new peers don't require a manual
+`apptainer overlay create` setup step:
+
+```yaml
+spec:
+  apptainer:
+    overlay: proj-<peer>.overlay.img   # path (workdir-relative ok)
+    overlay_size: "5G"                  # units: M/MB/G/GB only
+    overlay_create_if_missing: true     # default; set false to gate off
+```
+
+Semantics:
+- `overlay_size` set + overlay path missing + `overlay_create_if_missing`
+  true (default) → sac runs
+  `apptainer overlay create --size <MB> <path>` before launch.
+- `overlay_size` set but `overlay_create_if_missing: false` → sac raises
+  `FileNotFoundError` (operator must pre-create).
+- `overlay_size` empty + overlay missing → sac raises
+  `FileNotFoundError` early with a helpful message instead of letting
+  apptainer fail cryptically at exec time.
+- K/KB units are explicitly rejected — apptainer's
+  `overlay create --size` takes integer MB.
+
 ### 8. `--writable` vs `--writable-tmpfs` confusion
 
 - `--writable` — modifies the SIF itself. Destroys SIF immutability.

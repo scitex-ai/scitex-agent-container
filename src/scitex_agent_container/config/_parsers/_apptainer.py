@@ -115,4 +115,7 @@ def parse_apptainer(spec: dict):
         nv=bool(raw.get("nv", False)),
         rocm=bool(raw.get("rocm", False)),
         overlay=str(raw.get("overlay", "") or ""),
+        overlay_size=str(raw.get("overlay_size", "") or ""),
+        overlay_create_if_missing=bool(raw.get("overlay_create_if_missing", True)),
+        relaxed=bool(raw.get("relaxed", False)),
     )

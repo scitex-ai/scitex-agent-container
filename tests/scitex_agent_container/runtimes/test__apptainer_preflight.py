@@ -273,10 +273,12 @@ def test_preflight_constant_contains_root_uid_check() -> None:
 
 @pytest.fixture
 def overlay_inner(tmp_path: Path) -> list[str]:
-    # Arrange
+    # Arrange — pre-create the overlay file so the existence check in
+    # build_run_argv passes without exercising auto-create.
     rt = ApptainerContainerRuntime()
     sif = tmp_path / "x.sif"
     overlay = tmp_path / "ov.img"
+    overlay.write_bytes(b"")
     cfg = _cfg(tmp_path, apptainer=ApptainerSpec(overlay=str(overlay)))
     # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=sif)

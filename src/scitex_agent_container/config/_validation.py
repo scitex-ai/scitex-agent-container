@@ -73,7 +73,6 @@ _KNOWN_SPEC_KEYS = frozenset(
         "watchdog",
         "restart",
         "hooks",
-        "telegram",
         "startup_commands",
         "startup_prompts",  # v3-realign: separate from startup_commands (§3)
         "startup",
@@ -90,7 +89,8 @@ _KNOWN_SPEC_KEYS = frozenset(
         "autonomous",  # F-CS3 — drive-until-done block
         "apptainer",  # F-CS18 — apptainer-specific build extension
         "user",  # container user: "host" | "uid:gid" | "" (image default)
-        "dot_claude",  # F-DC1 — directory merged into workspace/.claude/
+        "dot_claude",  # F-DC1 — directory merged into workspace/.claude/ (DEPRECATED — see to_home)
+        "to_home",  # ADR-0006 — directory mirrored into container $HOME
         # v3 removed (rejected explicitly below with relocation hints):
         # image (→ spec.apptainer.image), mounts (→ spec.apptainer.binds),
         # env (→ spec.apptainer.env), model (→ spec.claude.model),
@@ -115,8 +115,10 @@ _V3_REMOVED_FIELDS: dict[str, str] = {
         "dot_claude/skills/ (§3 Removed)."
     ),
     "remote": (
-        "spec.remote is no longer accepted; cross-host routing is orochi's "
-        "job (§2). Use orochi's peer registry instead."
+        "spec.remote is no longer accepted in scitex-agent-container/v3. "
+        "Use spec.host: <peer> (singleton on one peer) or "
+        "spec.hosts: [peer1, peer2] (multi-instance). "
+        'See docs/spec-reference.md "Top-level shape" for the cross-host fields.'
     ),
 }
 

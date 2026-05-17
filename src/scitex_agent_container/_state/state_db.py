@@ -1,31 +1,39 @@
-"""SQLite-backed state for scitex-agent-container (F-CS11).
+"""SQLite-backed state for scitex-agent-container (F-CS11 + diary tables).
 
 Replaces the per-agent JSON files under
 ``~/.scitex/agent-container/runtime/registry/`` with a single ``state.db``
-holding four tables:
+holding tables in three groups:
 
-  * ``definitions`` — yaml on disk (one row per ``(yaml_path, sha256)``
-    pair). Surfaces a stable id even when the yaml is renamed.
-  * ``instances`` — each call to ``sac agent start`` writes a row.
-    ``instances.id`` is a uuid7 generated at start time and is THE
-    identity (not pid). ``host`` is the canonical alias-resolved
-    hostname so cross-host queries don't collide.
-  * ``heartbeats`` — append-only time series. Prunable.
-  * ``events`` — audit log spanning definitions + instances.
+  * F-CS11 registry — ``definitions``, ``instances``, ``events``.
+  * F-CS11 phase 2 — ``instance_heartbeats`` (the legacy
+    ``heartbeats`` time series, tied to an ``instances.id``).
+  * Diary (2026-05-17) — ``turns``, ``errors``, ``heartbeats``. Each
+    agent writes here continuously, like a journal; the lead reads
+    + filters when it wants cross-host visibility. ``heartbeats``
+    promotes the per-agent ``heartbeat.json`` file into a queryable
+    table keyed by ``(name, host, pid, state, ts)``.
 
 The single-file layout makes backup/sync trivial (one ``cp``) and
 keeps the existing ``actions.db`` table (``attempts``) co-located so
 queries can join across action history and instance lifecycle.
 
-Background: F-CS12 (multi-host) reads ``instances.host``;
-F-CS14 (orochi consumption) walks ``instances`` and ``heartbeats``
-via ``sac db export --since <ts>``. Schema is forward-compatible
-with both.
+NOTE: The original F-CS11 ``heartbeats`` table (instance-tied time
+series) is renamed to ``instance_heartbeats`` on first open so the
+diary-style ``heartbeats`` (per-agent state ping, no instance_id
+required) can own the canonical name. The rename happens in
+``init_schema`` when an old layout is detected and is idempotent.
 
-This module is **additive**. Existing reads/writes against
-``registry/*.json`` continue to work; ``sac db migrate`` lifts the
-JSON shards into ``instances`` rows in one shot. Phase 2 will switch
-hot paths over and retire the directory.
+Large helper groups live in sibling modules:
+
+  * :mod:`state_db_export` — export_state / import_state /
+    import_legacy_registry.
+  * :mod:`state_db_gc` — gc_dead_instances / _proc_btime.
+  * :mod:`state_db_diary` — record_turn / record_error /
+    record_heartbeat / latest_heartbeats_per_name.
+
+All three are re-exported from THIS module so existing
+``from scitex_agent_container._state.state_db import X`` imports
+keep working.
 """
 
 from __future__ import annotations
@@ -49,10 +57,10 @@ DEFAULT_DB_PATH = Path(
 )
 
 
-# Schema is split into two groups: registry tables (added by F-CS11)
-# and the legacy ``attempts`` table (already present in actions.db
-# under sac < F-CS11). The migration helper attaches the existing
-# actions.db file or copies its rows so everything lives in state.db.
+# Registry tables (F-CS11) — definitions, instances, events.
+# The legacy ``heartbeats`` table (instance_id, ts, ...) is now
+# created under the name ``instance_heartbeats``. See _SCHEMA_DIARY
+# below for the new diary-style ``heartbeats``.
 _SCHEMA_REGISTRY = """
 CREATE TABLE IF NOT EXISTS definitions (
     id              TEXT PRIMARY KEY,
@@ -91,7 +99,7 @@ CREATE INDEX IF NOT EXISTS idx_instances_active
 CREATE INDEX IF NOT EXISTS idx_instances_host
     ON instances(host);
 
-CREATE TABLE IF NOT EXISTS heartbeats (
+CREATE TABLE IF NOT EXISTS instance_heartbeats (
     instance_id     TEXT NOT NULL REFERENCES instances(id),
     ts              TEXT NOT NULL,
     iter            INTEGER,
@@ -115,9 +123,8 @@ CREATE INDEX IF NOT EXISTS idx_events_instance
     ON events(instance_id, ts);
 """
 
-# The ``attempts`` table predates state.db (it lived in actions.db).
-# Including the schema makes state.db self-contained on a fresh host
-# and lets ``sac db migrate`` pull the rows over without an ATTACH.
+# Attempts predates state.db (lived in actions.db). Bundled here so
+# state.db is self-contained on a fresh host.
 _SCHEMA_ATTEMPTS = """
 CREATE TABLE IF NOT EXISTS attempts (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -134,10 +141,59 @@ CREATE INDEX IF NOT EXISTS idx_attempts_ts ON attempts(ts);
 CREATE INDEX IF NOT EXISTS idx_attempts_agent_action ON attempts(agent, action);
 """
 
+# Diary tables (2026-05-17): turns / errors / heartbeats. Each
+# agent appends rows like a journal; the lead reads + filters.
+_SCHEMA_DIARY = """
+CREATE TABLE IF NOT EXISTS turns (
+    turn_id        TEXT NOT NULL,
+    name           TEXT NOT NULL,
+    host           TEXT NOT NULL,
+    status         TEXT NOT NULL,
+    prompt_text    TEXT,
+    response_text  TEXT,
+    ts             REAL NOT NULL,
+    session_id     TEXT,
+    input_tokens   INTEGER,
+    output_tokens  INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_turns_turn_id ON turns(turn_id);
+CREATE INDEX IF NOT EXISTS idx_turns_name_ts ON turns(name, ts);
+
+CREATE TABLE IF NOT EXISTS errors (
+    error_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL,
+    host       TEXT NOT NULL,
+    cause      TEXT NOT NULL,
+    detail     TEXT,
+    ts         REAL NOT NULL,
+    turn_id    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_errors_name_ts ON errors(name, ts);
+CREATE INDEX IF NOT EXISTS idx_errors_cause ON errors(cause);
+
+CREATE TABLE IF NOT EXISTS heartbeats (
+    heartbeat_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+    name          TEXT NOT NULL,
+    host          TEXT NOT NULL,
+    pid           INTEGER,
+    state         TEXT NOT NULL,
+    ts            REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_heartbeats_name_ts ON heartbeats(name, ts);
+"""
+
 # Tables exposed by `sac db query --table=<t>`. Whitelisted so users
-# can't pass arbitrary identifiers through Python's str-format SQL
-# (sqlite parameter substitution doesn't support table names).
-KNOWN_TABLES = ("definitions", "instances", "heartbeats", "events", "attempts")
+# can't pass arbitrary identifiers through str-format SQL.
+KNOWN_TABLES = (
+    "definitions",
+    "instances",
+    "instance_heartbeats",
+    "events",
+    "attempts",
+    "turns",
+    "errors",
+    "heartbeats",
+)
 
 
 def now_iso() -> str:
@@ -149,9 +205,7 @@ def new_uuid7() -> str:
     """Return a uuid7 string (time-ordered, sortable by start time).
 
     Falls back to uuid4 if uuid.uuid7 is unavailable on the runtime
-    Python (added in 3.14). uuid4 is acceptable: collision risk is
-    negligible at our scale and ``started_at`` already gives time
-    ordering for queries.
+    Python (added in 3.14).
     """
     if hasattr(uuid, "uuid7"):
         return str(uuid.uuid7())  # type: ignore[attr-defined]
@@ -159,11 +213,7 @@ def new_uuid7() -> str:
 
 
 def _default_connector(db_path: Path) -> sqlite3.Connection:
-    """Default sqlite3 connection factory.
-
-    Extracted so tests can inject a hand-rolled connection that
-    simulates lock contention without relying on monkeypatch.
-    """
+    """Default sqlite3 connection factory (test seam)."""
     return sqlite3.connect(db_path, timeout=30.0)
 
 
@@ -172,38 +222,11 @@ def _connect(
     connector=_default_connector,
 ) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    # ``timeout`` (sqlite3 ``busy_timeout``) governs how long the
-    # driver waits for a peer to release the write-lock before
-    # returning ``OperationalError: database is locked``. The default
-    # (5s) is plenty for the single-host workload but bursts of
-    # concurrent ``claim_port`` calls have been observed to lose a
-    # writer in ~13% of 8-way races — see
-    # tests/scitex_agent_container/_state/test_port_allocator.py
-    # ``test_threaded_contention_*``. Bumping to 30s plus the
-    # PRAGMA below removes the flake without changing semantics.
     conn = connector(db_path)
     conn.row_factory = sqlite3.Row
-    # busy_timeout must be set BEFORE any other statement so it
-    # covers the journal_mode change below — switching journal_mode
-    # acquires an exclusive lock and SQLite's pre-PRAGMA default
-    # timeout would otherwise return "database is locked" immediately
-    # when two threads open a fresh state.db concurrently.
     conn.execute("PRAGMA busy_timeout = 30000")
-    # WAL: better write concurrency, smaller commit fsync cost. Safe
-    # for the single-host workload sac runs today; the file stays
-    # SQLite-compatible for ssh-cp. ``journal_mode`` is persisted in
-    # the file header — only the first connection on a fresh DB
-    # needs to mutate it. Skipping the SET when the file is already
-    # in WAL avoids the exclusive-lock contention that busy_timeout
-    # cannot cover for journal-mode changes (observed: ~10% flake
-    # rate on 8-way concurrent first opens of a fresh state.db).
     current_mode = conn.execute("PRAGMA journal_mode").fetchone()
     if current_mode and str(current_mode[0]).lower() != "wal":
-        # The journal_mode switch needs a file-exclusive lock that
-        # busy_timeout does not always cover (other openers in their
-        # own ``PRAGMA journal_mode`` call hold a shared read-lock
-        # for a brief window). Bounded retry with a short backoff
-        # serialises the racing first-openers cleanly.
         import time
 
         for attempt in range(50):
@@ -218,6 +241,36 @@ def _connect(
     return conn
 
 
+def _migrate_legacy_heartbeats(conn: sqlite3.Connection) -> None:
+    """Rename the legacy F-CS11 ``heartbeats`` table → ``instance_heartbeats``.
+
+    Detection: legacy schema has an ``instance_id`` column (NOT NULL,
+    REFERENCES instances). The diary schema has no such column. We
+    only rename when:
+
+      * a table called ``heartbeats`` exists, AND
+      * that table has an ``instance_id`` column, AND
+      * ``instance_heartbeats`` does NOT already exist.
+
+    Idempotent: re-running on an already-migrated DB is a no-op.
+    """
+    existing = {
+        r[0]
+        for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    if "heartbeats" not in existing:
+        return
+    if "instance_heartbeats" in existing:
+        return
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(heartbeats)").fetchall()}
+    if "instance_id" not in cols:
+        # Already the diary schema (no rename needed).
+        return
+    conn.execute("ALTER TABLE heartbeats RENAME TO instance_heartbeats")
+
+
 def init_schema(db_path: Path | None = None) -> Path:
     """Create state.db with all tables if missing. Idempotent.
 
@@ -225,8 +278,11 @@ def init_schema(db_path: Path | None = None) -> Path:
     """
     path = Path(db_path) if db_path else DEFAULT_DB_PATH
     with _connect(path) as conn:
+        _migrate_legacy_heartbeats(conn)
         conn.executescript(_SCHEMA_REGISTRY)
         conn.executescript(_SCHEMA_ATTEMPTS)
+        conn.executescript(_SCHEMA_DIARY)
+        conn.commit()
     return path
 
 
@@ -246,10 +302,7 @@ def open_db(db_path: Path | None = None) -> Iterator[sqlite3.Connection]:
 
 
 def table_counts(db_path: Path | None = None) -> dict[str, int]:
-    """Return ``{table_name: row_count}`` for every known table.
-
-    Used by ``sac db show`` to give the operator a quick health check.
-    """
+    """Return ``{table_name: row_count}`` for every known table."""
     counts: dict[str, int] = {}
     with open_db(db_path) as conn:
         for table in KNOWN_TABLES:
@@ -264,19 +317,12 @@ def _resolve_host(host: str | None) -> str:
     Resolution chain (F-CS12):
         1. ``host`` arg (explicit override)
         2. ``$SAC_HOST`` env var
-        3. ``host.canonical`` from config.yaml (when not the placeholder)
+        3. ``host.canonical`` from config.yaml
         4. ``host.aliases[$(hostname -s)]`` from config.yaml
         5. ``$(hostname -s)`` (or fqdn when fallback=hostname-fqdn)
-
-    Defers to ``_state.host_config.Config.canonical_host`` so the
-    chain stays in one place; callers that pass ``host`` skip the
-    config load entirely.
     """
     if host:
         return host
-    # Local import to avoid a circular dependency: host_config does
-    # not depend on state_db, but importing it at module load adds
-    # a yaml.safe_load on every state.db open which is wasteful.
     from . import host_config
 
     # stx-allow: fallback (reason: a malformed config.yaml must not block
@@ -304,12 +350,8 @@ def record_instance_start(
 ) -> str:
     """Insert an ``instances`` row for a freshly-started agent.
 
-    Returns the new ``instance_id`` (uuid7). Caller is expected to
-    persist this id alongside the runner's PID file so subsequent
-    heartbeat / stop calls can target the right row.
-
-    Also appends a ``kind='start'`` row to ``events`` so the audit
-    log captures the lifecycle transition.
+    Returns the new ``instance_id`` (uuid7). Also appends a
+    ``kind='start'`` row to ``events``.
     """
     instance_id = new_uuid7()
     started_at = now_iso()
@@ -352,8 +394,7 @@ def record_instance_stop(
 ) -> bool:
     """Mark an instance as ended. Returns True iff a row was updated.
 
-    Idempotent: stopping an already-stopped row is a no-op (the
-    update touches only rows where ``ended_at IS NULL``).
+    Idempotent: stopping an already-stopped row is a no-op.
     """
     ended_at = now_iso()
     with open_db(db_path) as conn:
@@ -381,35 +422,27 @@ def update_heartbeat(
     pane_state: str | None = None,
     db_path: Path | None = None,
 ) -> None:
-    """Append a heartbeat row + bump the rolling fields on the instance.
+    """Append an instance-heartbeat row + bump the rolling cache.
 
-    The duplicated state on ``instances`` (``last_heartbeat_at``,
-    ``iter_count``, ``input_tokens``, ``output_tokens``) lets ``sac
-    agent status`` answer 'is this agent still doing work?' without
-    a JOIN — the heartbeats table is the authoritative time series,
-    the columns on ``instances`` are a cache for the hot read.
+    The duplicated state on ``instances`` lets ``sac agent status``
+    answer 'is this agent still doing work?' without a JOIN.
     """
     ts = now_iso()
     with open_db(db_path) as conn:
-        # Tolerate same-second collisions (the (instance_id, ts) PK
-        # rejects rapid duplicates at 1-second resolution; merge the
-        # latest-known fields onto the existing row instead of failing).
         conn.execute(
             """
-            INSERT INTO heartbeats (
+            INSERT INTO instance_heartbeats (
                 instance_id, ts, iter, input_tokens, output_tokens, pane_state
             )
             VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(instance_id, ts) DO UPDATE SET
-                iter          = COALESCE(excluded.iter, heartbeats.iter),
-                input_tokens  = COALESCE(excluded.input_tokens, heartbeats.input_tokens),
-                output_tokens = COALESCE(excluded.output_tokens, heartbeats.output_tokens),
-                pane_state    = COALESCE(excluded.pane_state, heartbeats.pane_state)
+                iter          = COALESCE(excluded.iter, instance_heartbeats.iter),
+                input_tokens  = COALESCE(excluded.input_tokens, instance_heartbeats.input_tokens),
+                output_tokens = COALESCE(excluded.output_tokens, instance_heartbeats.output_tokens),
+                pane_state    = COALESCE(excluded.pane_state, instance_heartbeats.pane_state)
             """,
             (instance_id, ts, iter, input_tokens, output_tokens, pane_state),
         )
-        # Bump rolling cache. COALESCE keeps the previous value when
-        # the caller didn't pass that field this turn.
         conn.execute(
             """
             UPDATE instances
@@ -443,342 +476,35 @@ def list_active_instances(
         return [dict(r) for r in cur.fetchall()]
 
 
-def _proc_btime() -> str | None:
-    """Return Linux boot time as ISO-8601 UTC, or None on non-Linux.
-
-    Used by ``gc_dead_instances`` to mark every instance whose
-    ``started_at`` predates the current boot as ``reboot-swept``.
-    No /proc/stat → no boot detection (we silently skip the sweep).
-    """
-    # stx-allow: fallback (reason: /proc/stat is Linux-specific; macOS
-    # has no equivalent and the reboot-sweep degrades gracefully)
-    try:
-        with open("/proc/stat") as f:
-            for line in f:
-                if line.startswith("btime "):
-                    btime = int(line.split()[1])
-                    return datetime.fromtimestamp(btime, timezone.utc).strftime(
-                        "%Y-%m-%dT%H:%M:%SZ"
-                    )
-    except OSError:  # stx-allow: fallback (reason: see inline comment)
-        pass
-    return None
-
-
-def gc_dead_instances(
-    *,
-    db_path: Path | None = None,
-    heartbeat_stale_seconds: int = 300,
-    dry_run: bool = False,
-) -> dict[str, int]:
-    """Sweep instances whose runner is gone. Returns counters.
-
-    Three heuristics, applied in order:
-
-    1. **Boot-epoch check** — every active row whose ``started_at``
-       precedes the current ``/proc/stat btime`` is marked
-       ``exit_reason='reboot-swept'``.
-    2. **PID liveness** — for the host's own active rows, ``kill -0
-       pid`` failures mark the row ``exit_reason='crashed'``.
-    3. **Heartbeat staleness** — if ``last_heartbeat_at`` exists and
-       is older than ``heartbeat_stale_seconds``, mark
-       ``exit_reason='gc-stale'``.
-
-    Cross-host instances are NOT swept (we have no liveness signal
-    for them; F-CS12 will add ssh-based probing).
-
-    ``dry_run=True`` runs all three checks but emits zero UPDATE
-    statements — counters reflect what *would* be swept.
-    """
-    import socket
-
-    counters = {"reboot_swept": 0, "crashed": 0, "gc_stale": 0}
-    boot = _proc_btime()
-    canonical_host = _resolve_host(None)
-    now_ts = now_iso()
-    stale_cutoff = datetime.now(timezone.utc).timestamp() - heartbeat_stale_seconds
-
-    with open_db(db_path) as conn:
-        # 1. boot-epoch — applies to all hosts; if a row's started_at
-        # precedes the current boot, the runner can't possibly be alive.
-        if boot is not None:
-            if dry_run:
-                cur = conn.execute(
-                    "SELECT COUNT(*) AS n FROM instances "
-                    "WHERE ended_at IS NULL AND host=? AND started_at < ?",
-                    (canonical_host, boot),
-                ).fetchone()
-                counters["reboot_swept"] = int(cur["n"]) if cur else 0
-            else:
-                cur = conn.execute(
-                    "UPDATE instances SET ended_at=?, exit_reason='reboot-swept' "
-                    "WHERE ended_at IS NULL AND host=? AND started_at < ?",
-                    (boot, canonical_host, boot),
-                )
-                counters["reboot_swept"] = cur.rowcount
-
-        # 2. pid liveness — local rows only; remote requires ssh (F-CS12).
-        rows = conn.execute(
-            "SELECT id, pid FROM instances WHERE ended_at IS NULL AND host=?",
-            (canonical_host,),
-        ).fetchall()
-        for row in rows:
-            pid = row["pid"]
-            if pid is None or pid <= 0:
-                continue
-            # stx-allow: fallback (reason: kill -0 errors when pid is dead OR
-            # not ours; both cases mean 'not alive from our POV')
-            try:
-                os.kill(pid, 0)
-            except (
-                OSError,
-                ProcessLookupError,
-            ):  # stx-allow: fallback (reason: see inline comment)
-                if not dry_run:
-                    conn.execute(
-                        "UPDATE instances SET ended_at=?, exit_reason='crashed' WHERE id=?",
-                        (now_ts, row["id"]),
-                    )
-                counters["crashed"] += 1
-
-        # 3. heartbeat staleness — anything with a heartbeat_at older
-        # than the cutoff is presumed wedged.
-        cur = conn.execute(
-            "SELECT id, last_heartbeat_at FROM instances "
-            "WHERE ended_at IS NULL AND last_heartbeat_at IS NOT NULL"
-        ).fetchall()
-        for row in cur:
-            try:
-                hb = (
-                    datetime.strptime(row["last_heartbeat_at"], "%Y-%m-%dT%H:%M:%SZ")
-                    .replace(tzinfo=timezone.utc)
-                    .timestamp()
-                )
-            except (
-                ValueError,
-                TypeError,
-            ):  # stx-allow: fallback (reason: malformed timestamp tolerated)
-                continue
-            if hb < stale_cutoff:
-                if not dry_run:
-                    conn.execute(
-                        "UPDATE instances SET ended_at=?, exit_reason='gc-stale' "
-                        "WHERE id=?",
-                        (now_ts, row["id"]),
-                    )
-                counters["gc_stale"] += 1
-
-    # Suppress shadowing the canonical hostname helper.
-    _ = socket
-    return counters
-
-
-# ---------------------------------------------------------------------------
-# Cross-host export / import (F-CS14)
-#
-# Each host writes locally; orochi (a separate concern) pulls deltas
-# via ssh and aggregates them. sac never reaches out — orochi-agnostic
-# by design.
-#
-#   ssh <peer> sac db export --since <ts> --format json
-#
-# Wire format:
-#   {
-#     "schema": 1,
-#     "exported_at": "<iso>",
-#     "since": "<iso>" | null,
-#     "host": "<canonical>",   # the host that produced the dump
-#     "tables": {
-#       "definitions": [ {row}, ... ],
-#       "instances":   [ {row}, ... ],
-#       "heartbeats":  [ {row}, ... ],
-#       "events":      [ {row}, ... ],
-#       "attempts":    [ {row}, ... ]
-#     }
-#   }
-#
-# Filtering: each table picks a sensible "advance" column and emits
-# only rows where that column >= since (or all rows when since is None).
-# instances and definitions emit when *either* their start/seen
-# timestamp OR end timestamp is >= since — orochi needs both halves
-# of the lifecycle.
-# ---------------------------------------------------------------------------
-
-EXPORT_SCHEMA_VERSION = 1
+# Re-export the helpers that used to live in this file but moved
+# into sibling modules under the per-file line cap. Existing callers
+# keep importing them from :mod:`state_db`.
+from .state_db_diary import (  # noqa: E402,F401
+    latest_heartbeats_per_name,
+    record_error,
+    record_heartbeat,
+    record_turn,
+)
+from .state_db_export import (  # noqa: E402,F401
+    EXPORT_SCHEMA_VERSION,
+    export_state,
+    import_legacy_registry,
+    import_state,
+)
+from .state_db_export import (
+    _table_filter_clauses as _table_filter_clauses_impl,
+)
+from .state_db_gc import (  # noqa: E402,F401
+    _proc_btime,
+    gc_dead_instances,
+)
 
 
 def _table_filter_clauses(since: str | None) -> dict[str, tuple[str, tuple]]:
     """Per-table SQL fragments + params for ``--since`` filtering.
 
-    Returns ``{table: (sql_fragment, params)}``. Empty fragment means
-    "no filter; emit everything".
+    Thin wrapper over ``state_db_export._table_filter_clauses`` so the
+    original module-level signature stays compatible with callers that
+    only pass ``since``.
     """
-    if since is None:
-        return {t: ("", ()) for t in KNOWN_TABLES}
-    return {
-        "definitions": ("WHERE first_seen_at >= ?", (since,)),
-        "instances": (
-            "WHERE started_at >= ? OR ended_at >= ?",
-            (since, since),
-        ),
-        "heartbeats": ("WHERE ts >= ?", (since,)),
-        "events": ("WHERE ts >= ?", (since,)),
-        "attempts": ("WHERE ts >= ?", (since,)),
-    }
-
-
-def export_state(
-    since: str | None = None,
-    db_path: Path | None = None,
-    host: str | None = None,
-) -> dict:
-    """Dump the registry tables (and ``attempts``) into a JSON-able dict.
-
-    Used by ``sac db export``; orochi consumes the result via
-    ``sac db import`` (or its own importer).
-
-    Args:
-        since: Optional ISO-8601 timestamp. Rows with their advance
-            column < since are omitted. ``None`` means full dump.
-        db_path: Override the state.db location (mostly for tests).
-        host: Canonical hostname to stamp into the dump header.
-            Defaults to ``_resolve_host(None)``.
-
-    Returns:
-        A dict matching the wire format documented above.
-    """
-    canonical_host = _resolve_host(host)
-    filters = _table_filter_clauses(since)
-    tables: dict[str, list[dict]] = {}
-    with open_db(db_path) as conn:
-        for table in KNOWN_TABLES:
-            where, params = filters[table]
-            sql = f"SELECT * FROM {table} {where}".strip()
-            rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
-            tables[table] = rows
-    return {
-        "schema": EXPORT_SCHEMA_VERSION,
-        "exported_at": now_iso(),
-        "since": since,
-        "host": canonical_host,
-        "tables": tables,
-    }
-
-
-def import_state(payload: dict, db_path: Path | None = None) -> dict[str, int]:
-    """Ingest a dict produced by :func:`export_state`.
-
-    Idempotent: rows are inserted with ``OR IGNORE`` on their PK
-    (uuid for definitions/instances; ``(instance_id, ts)`` for
-    heartbeats; integer rowid for events/attempts → events and
-    attempts use ``OR IGNORE`` keyed by their auto-id, so re-import
-    of an already-pulled delta is a no-op only if the source's
-    rowids haven't been recycled).
-
-    Returns ``{table: rows_inserted}``.
-    """
-    if not isinstance(payload, dict) or "tables" not in payload:
-        raise ValueError("import_state: payload missing 'tables' key")
-    schema = payload.get("schema")
-    if schema != EXPORT_SCHEMA_VERSION:
-        raise ValueError(
-            f"import_state: unsupported schema version {schema!r} "
-            f"(expected {EXPORT_SCHEMA_VERSION})"
-        )
-    tables = payload["tables"]
-    inserted: dict[str, int] = {t: 0 for t in KNOWN_TABLES}
-    with open_db(db_path) as conn:
-        for table in KNOWN_TABLES:
-            rows = tables.get(table, [])
-            if not rows:
-                continue
-            cols = list(rows[0].keys())
-            placeholders = ",".join("?" for _ in cols)
-            col_list = ",".join(cols)
-            sql = f"INSERT OR IGNORE INTO {table} ({col_list}) VALUES ({placeholders})"
-            for row in rows:
-                cur = conn.execute(sql, tuple(row.get(c) for c in cols))
-                inserted[table] += cur.rowcount
-    return inserted
-
-
-def import_legacy_registry(
-    registry_dir: Path,
-    db_path: Path | None = None,
-    host: str | None = None,
-) -> dict[str, int]:
-    """Lift the JSON files under ``registry_dir`` into ``instances``.
-
-    Each JSON shard becomes one ``instances`` row marked
-    ``exit_reason='reboot-swept'`` with ``ended_at`` = now (post-import
-    they're definitionally not running). Idempotent: existing rows
-    matched by ``(name, host, started_at)`` are skipped.
-
-    Args:
-        registry_dir: Path to the legacy ``registry/`` directory.
-        db_path: Override the state.db location (mostly for tests).
-        host: Canonical hostname for the imported rows. Defaults to
-            ``$SAC_HOST`` else ``hostname -s``. Stored verbatim;
-            full alias resolution lands in F-CS12.
-
-    Returns:
-        ``{"imported": N, "skipped": M}``.
-    """
-    import json
-    import socket
-
-    if host is None:
-        host = _sac_env("HOST") or socket.gethostname().split(".")[0]
-
-    imported = 0
-    skipped = 0
-    if not registry_dir.exists():
-        return {"imported": 0, "skipped": 0}
-
-    swept_at = now_iso()
-    with open_db(db_path) as conn:
-        for path in sorted(registry_dir.glob("*.json")):
-            try:
-                data = json.loads(path.read_text())
-            except (
-                json.JSONDecodeError,
-                OSError,
-            ):  # stx-allow: fallback (reason: malformed shard tolerated)
-                skipped += 1
-                continue
-            name = data.get("name")
-            started_at = data.get("started_at")
-            if not (name and started_at):
-                skipped += 1
-                continue
-            # Skip if this exact (name, host, started_at) is already there.
-            existing = conn.execute(
-                "SELECT id FROM instances WHERE name=? AND host=? AND started_at=?",
-                (name, host, started_at),
-            ).fetchone()
-            if existing:
-                skipped += 1
-                continue
-            conn.execute(
-                """
-                INSERT INTO instances (
-                    id, name, host, scope, pid, screen, workdir,
-                    started_at, ended_at, exit_reason
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    new_uuid7(),
-                    name,
-                    host,
-                    "global",
-                    data.get("pid"),
-                    data.get("screen"),
-                    data.get("workdir"),
-                    started_at,
-                    swept_at,
-                    "reboot-swept",
-                ),
-            )
-            imported += 1
-    return {"imported": imported, "skipped": skipped}
+    return _table_filter_clauses_impl(since, KNOWN_TABLES)

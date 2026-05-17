@@ -240,7 +240,7 @@ def build_app(
         try:
             payload = resp.json()
         except ValueError:
-            payload = {"reply": resp.text}
+            payload = {"text": resp.text}
         return JSONResponse(payload, status_code=resp.status_code)
 
     async def get_health(request: Request) -> JSONResponse:

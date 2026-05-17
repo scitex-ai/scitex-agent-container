@@ -66,20 +66,22 @@ def peer_post_turn(
     Examples:
         sac peer post-turn worker "summarize today's commits"
         sac peer post-turn head-mba "..." --exit-after
-        sac peer post-turn worker "ping" --json | jq -r .reply
+        sac peer post-turn worker "ping" --json | jq -r .text
     """
     from scitex_agent_container._network.peer import PeerError, post_turn
 
     try:
-        reply = post_turn(agent_name, text, exit_after=exit_after, timeout_s=timeout_s)
+        text_out = post_turn(
+            agent_name, text, exit_after=exit_after, timeout_s=timeout_s
+        )
     except PeerError as exc:
         click.echo(f"peer error: {exc}", err=True)
         sys.exit(2)
 
     if as_json:
-        click.echo(json.dumps({"reply": reply, "exit_after": exit_after}))
+        click.echo(json.dumps({"text": text_out, "exit_after": exit_after}))
     else:
-        click.echo(reply)
+        click.echo(text_out)
 
 
 @peer_group.command(name="resolve-url")

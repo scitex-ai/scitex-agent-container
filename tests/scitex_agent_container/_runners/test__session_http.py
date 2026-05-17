@@ -147,8 +147,8 @@ class TestServeInbound:
         # Assert
         assert status == 200
 
-    def test_post_v1_turn_returns_reply_from_consumer(self) -> None:
-        """Response body's ``reply`` is the value the consumer resolved with."""
+    def test_post_v1_turn_returns_text_from_consumer(self) -> None:
+        """Response body's ``text`` is the value the consumer resolved with."""
         # Arrange
         port = _free_port()
         reply_map = {"hello": "world"}
@@ -163,7 +163,7 @@ class TestServeInbound:
             _run_sidecar(port=port, reply_map=reply_map, client_coro=_client)
         )
         # Assert
-        assert body["reply"] == "world"
+        assert body["text"] == "world"
 
     def test_post_v1_turn_returns_exit_after_false_by_default(self) -> None:
         """``exit_after`` defaults to False when the request omits the flag."""

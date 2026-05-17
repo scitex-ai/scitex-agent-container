@@ -250,8 +250,40 @@ def test_read_csv_rows_preserves_value_whitespace_verbatim(
 
 
 @pytest.fixture
-def cli_dry_run_result(tmp_path: Path):
-    """Invoke ``sac agent start --params-file --dry-run`` once."""
+def cli_dry_run_result(tmp_path: Path, env_save_restore):
+    """Invoke ``sac agent start --params-file --dry-run`` once.
+
+    The ``start`` command's preflight reads ``$HOME/.claude/.credentials.json``
+    on the actual-dispatch path; ``--dry-run`` still ends up exercising
+    that branch via the per-target loop, so we pin ``$HOME`` at the
+    test's ``tmp_path`` and install a fresh OAuth credentials file there
+    so CI runners (which have no such file) don't short-circuit before
+    the materialisation step we care about.
+    """
+    import json
+    import time
+
+    env_save_restore.set("HOME", str(tmp_path))
+    env_save_restore.delete("ANTHROPIC_API_KEY")
+    env_save_restore.delete("SAC_ANTHROPIC_API_KEY")
+    claude_dir = tmp_path / ".claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
+    expires_at_ms = int((time.time() + 3600) * 1000)
+    (claude_dir / ".credentials.json").write_text(
+        json.dumps(
+            {
+                "claudeAiOauth": {
+                    "accessToken": "sk-ant-oat-fake",
+                    "refreshToken": "sk-ant-ort-fake",
+                    "expiresAt": expires_at_ms,
+                    "scopes": ["user:inference"],
+                    "subscriptionType": "max",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
     template = tmp_path / "template.yaml"
     csv_file = tmp_path / "fleet.csv"
     _write(

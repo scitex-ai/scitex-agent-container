@@ -3,7 +3,7 @@
 Public API:
     AgentConfig, load_config, validate_config, resolve_config
     ContainerSpec, ClaudeSpec, HealthSpec, WatchdogSpec, RestartSpec,
-    TelegramSpec, RemoteSpec, SkillsSpec, StartupCommand
+    RemoteSpec, SkillsSpec, StartupCommand
 """
 
 from __future__ import annotations
@@ -25,14 +25,11 @@ from ._types import (
     HookSpec,
     HostsSpec,
     ListenPort,
-    ReadyPattern,
     RemoteSpec,
     RestartSpec,
     SchedulingSpec,
     SkillsSpec,
     StartupCommand,
-    StartupSpec,
-    TelegramSpec,
     WatchdogSpec,
 )
 from ._validation import validate_config, validate_raw
@@ -47,14 +44,11 @@ __all__ = [
     "HostsSpec",
     "ListenPort",
     "ProxySpec",
-    "ReadyPattern",
     "RemoteSpec",
     "RestartSpec",
     "SchedulingSpec",
     "SkillsSpec",
     "StartupCommand",
-    "StartupSpec",
-    "TelegramSpec",
     "WatchdogSpec",
     "compose_effective_name",
     "load_config",

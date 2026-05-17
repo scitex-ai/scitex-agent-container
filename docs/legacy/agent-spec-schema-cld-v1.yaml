@@ -1,3 +1,9 @@
+# LEGACY — pre-v3 schema (cld-agent/v1).
+# Superseded by docs/spec-reference.md (scitex-agent-container/v3).
+# Kept for historical reference only. Do NOT use for new agents.
+# Loud validation errors are raised at load time for apiVersion: cld-agent/v1.
+# Moved from docs/agent-spec-schema.yaml on 2026-05-16.
+#
 # cld-agent/v1 Agent YAML Schema Reference
 #
 # This file documents the structure of agent definition files.

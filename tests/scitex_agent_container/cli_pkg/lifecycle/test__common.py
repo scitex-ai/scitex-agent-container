@@ -16,10 +16,12 @@ from pathlib import Path
 
 import pytest
 
+from scitex_agent_container._state.host_config import PeerSpec
 from scitex_agent_container.cli_pkg.lifecycle._common import (
     _discover_all_agents,
     _iter_agent_yamls,
     _multiplex_foreground_tails,
+    _resolve_dispatch_peer,
     _singleton_skip_reason,
 )
 from scitex_agent_container.config import AgentConfig
@@ -390,3 +392,77 @@ class TestMultiplexForegroundTails:
         _multiplex_foreground_tails(["delta"], sleeper=sleeper)
         # Assert
         assert "old" not in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# _resolve_dispatch_peer — pure resolver: never raises, never logs, never
+# reads files. Covers the documented behaviour table plus case + whitespace
+# edge cases (peer keys are taken verbatim from YAML, no folding).
+# ---------------------------------------------------------------------------
+
+
+def _peers_with_spartan() -> dict[str, PeerSpec]:
+    """Build a single-peer registry; minimal fixture for the behaviour table."""
+    return {
+        "spartan-bm152": PeerSpec(name="spartan-bm152", ssh="spartan-bm152"),
+    }
+
+
+class TestResolveDispatchPeer:
+    def test_target_none_returns_none_for_local_execution(self):
+        # Arrange
+        peers = _peers_with_spartan()
+        # Act
+        out = _resolve_dispatch_peer(None, "ywata-note-win", peers)
+        # Assert
+        assert out is None
+
+    def test_target_matches_current_host_returns_none_when_peer_exists(self):
+        # Arrange — peer registry knows about the current host too.
+        peers = {
+            "ywata-note-win": PeerSpec(name="ywata-note-win", ssh="ywata-note-win"),
+        }
+        # Act
+        out = _resolve_dispatch_peer("ywata-note-win", "ywata-note-win", peers)
+        # Assert
+        assert out is None
+
+    def test_target_matches_current_host_returns_none_when_peer_missing(self):
+        # Arrange — peer registry does NOT list the current host.
+        peers = _peers_with_spartan()
+        # Act
+        out = _resolve_dispatch_peer("ywata-note-win", "ywata-note-win", peers)
+        # Assert
+        assert out is None
+
+    def test_unknown_target_returns_none_for_caller_to_decide(self):
+        # Arrange
+        peers = _peers_with_spartan()
+        # Act
+        out = _resolve_dispatch_peer("unknown-host", "ywata-note-win", peers)
+        # Assert
+        assert out is None
+
+    def test_known_peer_distinct_from_current_returns_peer_name(self):
+        # Arrange
+        peers = _peers_with_spartan()
+        # Act
+        out = _resolve_dispatch_peer("spartan-bm152", "ywata-note-win", peers)
+        # Assert
+        assert out == "spartan-bm152"
+
+    def test_target_host_lookup_is_case_sensitive(self):
+        # Arrange — uppercase target with lowercase peer key must NOT match.
+        peers = _peers_with_spartan()
+        # Act
+        out = _resolve_dispatch_peer("SPARTAN-BM152", "ywata-note-win", peers)
+        # Assert
+        assert out is None
+
+    def test_target_host_whitespace_padding_is_not_stripped(self):
+        # Arrange — literal string compare; config drift surfaces as a miss.
+        peers = _peers_with_spartan()
+        # Act
+        out = _resolve_dispatch_peer(" spartan-bm152 ", "ywata-note-win", peers)
+        # Assert
+        assert out is None

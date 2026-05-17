@@ -1482,6 +1482,7 @@ def _make_drain_convo(drained: list[str]):
         print_stream=False,
         max_restarts=0,
         restart_backoff_s=1.0,
+        **_kwargs,
     ) -> None:
         while True:
             env = await inbox.get()
@@ -1537,6 +1538,7 @@ def test_run_print_stream_foreground_returns_after_convo(tmp_path: Path) -> None
         print_stream=False,
         max_restarts=0,
         restart_backoff_s=1.0,
+        **_kwargs,
     ) -> None:
         env = await inbox.get()
         if hasattr(env, "response") and not env.response.done():
@@ -1571,6 +1573,7 @@ def test_run_print_stream_writes_stopping_heartbeat(tmp_path: Path) -> None:
         print_stream=False,
         max_restarts=0,
         restart_backoff_s=1.0,
+        **_kwargs,
     ) -> None:
         env = await inbox.get()
         if hasattr(env, "response") and not env.response.done():
@@ -1611,6 +1614,7 @@ def test_run_autonomous_drives_until_match_returns_zero(tmp_path: Path) -> None:
         print_stream=False,
         max_restarts=0,
         restart_backoff_s=1.0,
+        **_kwargs,
     ) -> None:
         replies = iter(["nope", "nope", "DONE here"])
         while True:

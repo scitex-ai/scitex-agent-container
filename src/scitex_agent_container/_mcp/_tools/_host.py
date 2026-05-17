@@ -7,12 +7,6 @@ from typing import Any
 from ._helpers import invoke_cli_json, invoke_cli_text
 
 
-def host_show() -> dict[str, Any]:
-    """Print the current host's identity (hostname, interfaces,
-    Tailscale state). Mirrors ``sac host show --json``."""
-    return invoke_cli_json(["host", "show", "--json"])
-
-
 def host_list() -> dict[str, Any]:
     """List configured peers (~/.scitex/agent-container/config.yaml).
     Mirrors ``sac host list --json``."""
@@ -38,12 +32,11 @@ def host_exec(peer: str, command: list[str]) -> dict[str, Any]:
 
 
 def register_host_tools(mcp) -> None:
-    for fn in (host_show, host_list, host_validate, host_probe, host_exec):
+    for fn in (host_list, host_validate, host_probe, host_exec):
         mcp.tool()(fn)
 
 
 __all__ = [
-    "host_show",
     "host_list",
     "host_validate",
     "host_probe",

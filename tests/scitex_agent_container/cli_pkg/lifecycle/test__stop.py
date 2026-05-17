@@ -335,3 +335,153 @@ def test_single_failure_exits_nonzero_prints_error(single_failure_result):
     out = result.output
     # Assert
     assert "nope" in out
+
+
+# ---------------------------------------------------------------------------
+# Cross-host dispatch: state.db row on a peer → ssh + remote sac stop.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def cross_host_state_db(tmp_path):
+    """Per-test state.db at tmp_path; SCITEX_AGENT_CONTAINER_STATE_DB +
+    module reload so the env override actually takes effect.
+    """
+    import importlib
+
+    db = tmp_path / "state.db"
+    saved_db_env = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
+    saved_host_env = os.environ.get("SAC_HOST")
+    saved_cfg_env = os.environ.get("SCITEX_AGENT_CONTAINER_CONFIG")
+    os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
+    os.environ["SAC_HOST"] = "lead-host"
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "host:\n  fallback: hostname-short\npeers:\n  peer-x:\n    ssh: peer-x\n"
+    )
+    os.environ["SCITEX_AGENT_CONTAINER_CONFIG"] = str(cfg)
+    import scitex_agent_container._state.state_db as _state_db_mod
+
+    importlib.reload(_state_db_mod)
+    try:
+        yield tmp_path
+    finally:
+        for k, v in (
+            ("SCITEX_AGENT_CONTAINER_STATE_DB", saved_db_env),
+            ("SAC_HOST", saved_host_env),
+            ("SCITEX_AGENT_CONTAINER_CONFIG", saved_cfg_env),
+        ):
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        importlib.reload(_state_db_mod)
+
+
+@pytest.fixture
+def remote_row_for_zeta(cross_host_state_db):
+    """Seed an active row for agent ``zeta`` on peer ``peer-x``."""
+    from scitex_agent_container._state.state_db import record_instance_start
+
+    iid = record_instance_start(name="zeta", host="peer-x", a2a_port=18888)
+    return iid
+
+
+@pytest.fixture
+def ssh_shim(tmp_path):
+    """PATH-prepended fake ssh that emits a stop JSON envelope and rc=0."""
+    import json
+    import sys
+
+    bin_dir = tmp_path / "_shim_bin"
+    bin_dir.mkdir(exist_ok=True)
+    log = bin_dir / "ssh.argv.jsonl"
+    payload = '{"name":"zeta","stopped":true,"exit_reason":"stopped","ended_at":"2026-05-16T01:00:00Z"}'
+    script = bin_dir / "ssh"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import json, sys\n"
+        f"with open({json.dumps(str(log))}, 'a') as fh:\n"
+        "    fh.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+        f"sys.stdout.write({json.dumps(payload)})\n"
+        "sys.exit(0)\n"
+    )
+    script.chmod(0o755)
+    saved_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = f"{bin_dir}{os.pathsep}{saved_path}"
+    try:
+        yield bin_dir
+    finally:
+        os.environ["PATH"] = saved_path
+
+
+def _ssh_invocations(bin_dir):
+    import json as _json
+
+    log = bin_dir / "ssh.argv.jsonl"
+    if not log.exists():
+        return []
+    return [_json.loads(ln) for ln in log.read_text().splitlines() if ln.strip()]
+
+
+def test_cross_host_stop_dispatches_via_ssh(remote_row_for_zeta, ssh_shim):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(stop, ["zeta"])
+    # Assert
+    assert result.exit_code == 0, result.output
+
+
+def test_cross_host_stop_ssh_argv_targets_peer(remote_row_for_zeta, ssh_shim):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    runner.invoke(stop, ["zeta"])
+    argv = _ssh_invocations(ssh_shim)[-1]
+    # Assert
+    assert "peer-x" in argv
+
+
+def test_cross_host_stop_ssh_argv_carries_stop_verb(remote_row_for_zeta, ssh_shim):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    runner.invoke(stop, ["zeta"])
+    argv = " ".join(_ssh_invocations(ssh_shim)[-1])
+    # Assert
+    assert "sac agents stop zeta" in argv
+
+
+def test_cross_host_stop_ssh_argv_includes_json_flag(remote_row_for_zeta, ssh_shim):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    runner.invoke(stop, ["zeta"])
+    argv = _ssh_invocations(ssh_shim)[-1]
+    # Assert
+    assert "--json" in argv
+
+
+def test_cross_host_stop_updates_lead_side_row(remote_row_for_zeta, ssh_shim):
+    # Arrange
+    from scitex_agent_container._state.state_db import list_active_instances
+
+    runner = CliRunner()
+    # Act
+    runner.invoke(stop, ["zeta"])
+    rows = [r for r in list_active_instances() if r["name"] == "zeta"]
+    # Assert — row was closed (no longer in active list).
+    assert rows == []
+
+
+def test_cross_host_stop_json_envelope_marks_dispatched(remote_row_for_zeta, ssh_shim):
+    import json as _json
+
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(stop, ["zeta", "--json"])
+    envelope = _json.loads(result.output.strip().splitlines()[-1])
+    # Assert
+    assert envelope.get("dispatched") is True

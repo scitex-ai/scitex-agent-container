@@ -76,7 +76,7 @@ sac image switch X
 
 | Command | Purpose |
 |---|---|
-| `sac host show / list / probe / exec / validate` | Local hostname + peer machine routing (ssh round-trip / exec on PEER). |
+| `sac host list / add / remove / set / probe / exec / validate` | Local hostname + peer machine routing (ssh round-trip / exec on PEER). |
 | `sac peer post-turn AGENT TEXT` | Outbound A2A — POST a turn to another agent's `/v1/turn`. |
 | `sac peer resolve-url AGENT` | Print the URL `peer post-turn` would target. |
 | `sac a2a serve <yamls...>` | A2A inbound HTTP server (sidecar mode for non-SDK runtimes). For `runtime: apptainer` agents the runner hosts `POST /v1/turn` itself. |

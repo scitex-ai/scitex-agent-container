@@ -22,9 +22,7 @@ from ._parsers import (
     parse_proxy,
     parse_restart,
     parse_skills,
-    parse_startup,
     parse_startup_commands,
-    parse_telegram,
     parse_watchdog,
 )
 from ._types import AgentConfig, HostsSpec
@@ -283,11 +281,9 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         autonomous=parse_autonomous(spec),
         apptainer=apptainer_spec,
         hooks=hooks,
-        telegram=parse_telegram(spec),
         skills=parse_skills(spec),
         startup_commands=parse_startup_commands(spec),
         startup_prompts=startup_prompts,
-        startup=parse_startup(spec),
         context_management=parse_context_management(spec),
         listen=parse_listen(spec),
         extensions=parse_extensions(spec),
@@ -300,4 +296,8 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         kind=kind,
         proxy=proxy_spec,
         dot_claude=str(spec.get("dot_claude", "")),
+        # ADR-0006: default to ``./to_home`` when the key is absent so a
+        # ``to_home/`` dir next to spec.yaml auto-discovers. An empty
+        # string in YAML keeps the same default behaviour.
+        to_home=str(spec.get("to_home", "./to_home") or "./to_home"),
     )

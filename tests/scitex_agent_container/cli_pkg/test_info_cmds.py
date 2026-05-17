@@ -313,6 +313,116 @@ def test_tail_session_aggregates_exit_status_to_one(tmp_registry):
 
 
 # ===========================================================================
+# Cross-host tail dispatch (state.db row on a peer → ssh + remote tail)
+# ===========================================================================
+
+
+@pytest.fixture
+def remote_tail_env(tmp_path):
+    """State.db redirect + peer config + SAC_HOST for cross-host tail."""
+    import importlib
+    import sys
+
+    db = tmp_path / "state.db"
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "host:\n  fallback: hostname-short\npeers:\n  peer-x:\n    ssh: peer-x\n"
+    )
+    saved_db = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
+    saved_host = os.environ.get("SAC_HOST")
+    saved_cfg = os.environ.get("SCITEX_AGENT_CONTAINER_CONFIG")
+    saved_path = os.environ.get("PATH", "")
+    os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
+    os.environ["SAC_HOST"] = "lead-host"
+    os.environ["SCITEX_AGENT_CONTAINER_CONFIG"] = str(cfg)
+    # ssh shim
+    bin_dir = tmp_path / "_shim_bin"
+    bin_dir.mkdir(exist_ok=True)
+    log = bin_dir / "ssh.argv.jsonl"
+    payload = "REMOTE_TRANSCRIPT_LINE_1\nREMOTE_TRANSCRIPT_LINE_2\n"
+    script = bin_dir / "ssh"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import json, sys\n"
+        f"with open({json.dumps(str(log))}, 'a') as fh:\n"
+        "    fh.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+        f"sys.stdout.write({json.dumps(payload)})\n"
+        "sys.exit(0)\n"
+    )
+    script.chmod(0o755)
+    os.environ["PATH"] = f"{bin_dir}{os.pathsep}{saved_path}"
+    import scitex_agent_container._state.state_db as _state_db_mod
+
+    importlib.reload(_state_db_mod)
+    from scitex_agent_container._state.state_db import record_instance_start
+
+    record_instance_start(name="zeta", host="peer-x", a2a_port=18888)
+    try:
+        yield {"tmp": tmp_path, "bin": bin_dir, "log": log}
+    finally:
+        for k, v in (
+            ("SCITEX_AGENT_CONTAINER_STATE_DB", saved_db),
+            ("SAC_HOST", saved_host),
+            ("SCITEX_AGENT_CONTAINER_CONFIG", saved_cfg),
+        ):
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        os.environ["PATH"] = saved_path
+        importlib.reload(_state_db_mod)
+
+
+def _ssh_invocations(log):
+    if not log.exists():
+        return []
+    return [json.loads(ln) for ln in log.read_text().splitlines() if ln.strip()]
+
+
+def test_cross_host_tail_returns_true(remote_tail_env):
+    # Arrange
+    from scitex_agent_container.cli_pkg.info_cmds import _tail_one
+
+    # Act
+    ok = _tail_one("zeta", lines=5, show_tools=False, as_json=False, prefix=False)
+    # Assert
+    assert ok is True
+
+
+def test_cross_host_tail_ssh_argv_targets_peer(remote_tail_env, capsys):
+    # Arrange
+    from scitex_agent_container.cli_pkg.info_cmds import _tail_one
+
+    # Act
+    _tail_one("zeta", lines=5, show_tools=False, as_json=False, prefix=False)
+    argv = _ssh_invocations(remote_tail_env["log"])[-1]
+    # Assert
+    assert "peer-x" in argv
+
+
+def test_cross_host_tail_ssh_argv_carries_tail_verb(remote_tail_env, capsys):
+    # Arrange
+    from scitex_agent_container.cli_pkg.info_cmds import _tail_one
+
+    # Act
+    _tail_one("zeta", lines=5, show_tools=False, as_json=False, prefix=False)
+    argv = " ".join(_ssh_invocations(remote_tail_env["log"])[-1])
+    # Assert
+    assert "sac agents tail zeta" in argv
+
+
+def test_cross_host_tail_prints_peer_output(remote_tail_env, capsys):
+    # Arrange
+    from scitex_agent_container.cli_pkg.info_cmds import _tail_one
+
+    # Act
+    _tail_one("zeta", lines=5, show_tools=False, as_json=False, prefix=False)
+    captured = capsys.readouterr()
+    # Assert
+    assert "REMOTE_TRANSCRIPT_LINE_1" in captured.out
+
+
+# ===========================================================================
 # list-python-apis -- runs against the REAL scitex_agent_container module
 # ===========================================================================
 

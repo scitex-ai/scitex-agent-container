@@ -5,7 +5,7 @@ group, so users can write::
 
     sac.agent.list()
     sac.db.query(table="instances")
-    sac.host.show()
+    sac.host.list()
 
 …instead of the flat ``sac.agent_list()`` form. Both shapes work;
 the flat names are kept for §6 MCP parity and ecosystem
@@ -26,7 +26,16 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from . import account, agent, db, host, image, mcp, skills, template  # noqa: F401
+    from . import (  # noqa: F401
+        account,
+        agent,
+        db,
+        host,
+        image,
+        mcp,
+        skills,
+        template,
+    )
 
 __all__ = [
     "agent",

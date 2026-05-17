@@ -40,6 +40,8 @@ from scitex_agent_container.config._parsers._apptainer import parse_apptainer
         ("nv", False),
         ("rocm", False),
         ("overlay", ""),
+        ("overlay_size", ""),
+        ("overlay_create_if_missing", True),
     ],
 )
 def test_missing_block_yields_default_field(attr, expected):
@@ -250,3 +252,50 @@ def test_apptainer_scalar_flag_is_passed_through(attr, expected):
     result = parse_apptainer(spec)
     # Assert
     assert getattr(result, attr) == expected
+
+
+# ---------------------------------------------------------------------------
+# Declarative overlay auto-create — overlay_size + overlay_create_if_missing
+# ---------------------------------------------------------------------------
+
+
+def test_overlay_size_field_is_round_tripped_from_spec():
+    # Arrange
+    spec = {"apptainer": {"overlay": "/o.img", "overlay_size": "5G"}}
+    # Act
+    result = parse_apptainer(spec)
+    # Assert
+    assert result.overlay_size == "5G"
+
+
+def test_overlay_size_defaults_to_empty_when_omitted():
+    # Arrange
+    spec = {"apptainer": {"overlay": "/o.img"}}
+    # Act
+    result = parse_apptainer(spec)
+    # Assert
+    assert result.overlay_size == ""
+
+
+def test_overlay_create_if_missing_defaults_to_true_when_omitted():
+    # Arrange
+    spec = {"apptainer": {"overlay": "/o.img", "overlay_size": "5G"}}
+    # Act
+    result = parse_apptainer(spec)
+    # Assert
+    assert result.overlay_create_if_missing is True
+
+
+def test_overlay_create_if_missing_round_trips_false():
+    # Arrange
+    spec = {
+        "apptainer": {
+            "overlay": "/o.img",
+            "overlay_size": "5G",
+            "overlay_create_if_missing": False,
+        }
+    }
+    # Act
+    result = parse_apptainer(spec)
+    # Assert
+    assert result.overlay_create_if_missing is False

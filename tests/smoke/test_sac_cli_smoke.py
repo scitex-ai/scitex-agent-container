@@ -14,13 +14,44 @@ assert, ≥3-word test names, ``pytest.mark.smoke``.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
 
 pytestmark = pytest.mark.smoke
+
+
+def _install_fresh_creds(home: Path) -> Path:
+    """Write a non-expired OAuth credentials file under ``$home/.claude/``.
+
+    The ``agents start`` preflight reads ``$HOME/.claude/.credentials.json``;
+    CI runners don't have one, so the smoke subprocess exits 1 before the
+    --dry-run path ever runs. Mirrors the same helper in
+    ``tests/scitex_agent_container/cli_pkg/lifecycle/test__start.py``.
+    """
+    claude_dir = home / ".claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
+    creds = claude_dir / ".credentials.json"
+    expires_at_ms = int((time.time() + 3600) * 1000)
+    creds.write_text(
+        json.dumps(
+            {
+                "claudeAiOauth": {
+                    "accessToken": "sk-ant-oat-fake",
+                    "refreshToken": "sk-ant-ort-fake",
+                    "expiresAt": expires_at_ms,
+                    "scopes": ["user:inference"],
+                    "subscriptionType": "max",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    return creds
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +157,7 @@ def test_sac_agents_start_dry_run_against_real_spec_yaml(tmp_path, env_save_rest
     home = tmp_path / "home"
     home.mkdir()
     env_save_restore.set("HOME", str(home))
+    _install_fresh_creds(home)
     spec = tmp_path / "smoke-agent" / "spec.yaml"
     spec.parent.mkdir()
     spec.write_text(_MINIMAL_V3_SPEC)

@@ -1,13 +1,15 @@
 ---
 description: |
   [TOPIC] A2A protocol — native sac surface
-  [DETAILS] A2A protocol — native sac surface — see file body for details..
+  [DETAILS] CLI (`sac a2a serve` / `doctor`), auto-launch via `spec.a2a`, SDK 1.x methods, handler env vars, orochi boundary. AgentCard extension fields live in the sibling leaf.
 tags: [scitex-agent-container-a2a-protocol]
 ---
 
 # A2A protocol — native sac surface
 
 [A2A](https://a2a-protocol.org/) is an open agent-to-agent JSON-RPC protocol. sac speaks it directly, with **zero fleet dependencies**: no orochi, no Cloudflare tunnel, no Gitea identity. A single agent YAML can expose its own A2A endpoint with one command.
+
+The per-card `x-scitex-agent-container.*` extension fields and a full JSON example live in [`07_a2a-protocol-extension-fields.md`](07_a2a-protocol-extension-fields.md).
 
 ## Why sac knows A2A but not orochi
 
@@ -53,16 +55,20 @@ Disabled by default — the sidecar only starts when `spec.a2a` is present. Side
 | `claude_cli` | runs `claude --print` and forwards stdout | real LLM agent; needs `claude` on PATH |
 | `exec` | runs `$SAC_A2A_EXEC_COMMAND`, pipes user text on stdin, returns stdout | wire in any custom handler script |
 
-The server exposes the standard A2A routes:
+## HTTP routes
 
 | Method | Path | Returns |
 | --- | --- | --- |
-| GET | `/.well-known/agent.json` | fleet AgentCard listing all agents in this server |
+| GET | `/.well-known/agent-card.json` | fleet AgentCard listing all agents in this server |
 | GET | `/agents/` | JSON list of agents |
-| GET | `/agents/<name>/.well-known/agent.json` | per-agent AgentCard (protobuf via `_card.project_card_proto`) |
-| POST | `/agents/<name>` | JSON-RPC SDK 1.x methods (see below) |
+| GET | `/agents/<name>/.well-known/agent-card.json` | per-agent AgentCard (sac dict shape; `x-scitex-agent-container` extension preserved) |
+| POST | `/agents/<name>/message:send` | A2A v1 REST binding — JSON-RPC SDK 1.x methods (see below) |
+| GET | `/agents/<name>/inbox/stream` | sac extension — SSE stream of inbound events (consumed by `sac mcp channel`) |
+| GET | `/agents/<name>/_active` | sac extension — observability snapshot of in-memory tasks |
 
-### SDK 1.x methods (gRPC-style names)
+A2A v1.0 renamed the well-known file from `agent.json` (v0.x) to `agent-card.json`. sac serves the v1 path only; the v0 path is **not** backed by a compatibility shim. See [ADR-0004](../../../../docs/adr/0004-a2a-v1-compliance.md).
+
+## SDK 1.x methods (gRPC-style names)
 
 Pure `a2a-sdk>=1.0.2` — no v0.3 compat. Method names are gRPC-style:
 
@@ -82,11 +88,11 @@ Clients MUST set `A2A-Version: 1.0` header. Params use proto **snake_case** (`me
 # Boot a standalone echo agent
 sac a2a serve my-agent.yaml --port 8888 &
 
-# Discovery
-curl http://127.0.0.1:8888/.well-known/agent.json | jq .name
+# Discovery (v1 path; agent.json is v0.x and no longer served)
+curl http://127.0.0.1:8888/.well-known/agent-card.json | jq .name
 
-# JSON-RPC SendMessage (SDK 1.x)
-curl -s -X POST http://127.0.0.1:8888/agents/<name>/ \
+# JSON-RPC SendMessage (SDK 1.x) — POSTed to the A2A v1 REST binding
+curl -s -X POST http://127.0.0.1:8888/agents/<name>/message:send \
   -H 'Content-Type: application/json' \
   -H 'A2A-Version: 1.0' \
   -d '{"jsonrpc":"2.0","id":"t","method":"SendMessage",
@@ -95,7 +101,7 @@ curl -s -X POST http://127.0.0.1:8888/agents/<name>/ \
   | jq '.result.task | {state: .status.state, reply: .status.message.parts[0].text}'
 
 # SSE streaming
-curl -N -X POST http://127.0.0.1:8888/agents/<name>/ \
+curl -N -X POST http://127.0.0.1:8888/agents/<name>/message:send \
   -H 'Content-Type: application/json' \
   -H 'A2A-Version: 1.0' \
   -H 'Accept: text/event-stream' \
@@ -103,23 +109,6 @@ curl -N -X POST http://127.0.0.1:8888/agents/<name>/ \
        "params":{"message":{"message_id":"m1","role":"ROLE_USER",
                             "parts":[{"text":"long-running"}]}}}'
 ```
-
-## v3 YAML — what gets projected
-
-Any v3 sac YAML works. The projection reads:
-
-| Field | Mapped to AgentCard |
-| --- | --- |
-| `metadata.name` (or filename stem) | `name` |
-| `metadata.labels.capabilities` (CSV) | first item → `description`; all items → `skills[0].tags` |
-| `metadata.labels.team` | `provider.organization` |
-| `metadata.labels.role` | `skills[0].name`, `x-scitex-agent-container.role_class` |
-| `metadata.labels.function` (CSV) | `skills[0].description` |
-| `spec.skills.required` | `skills[0].tags` (merged with capabilities) |
-| `spec.host` / `spec.hosts` | `x-scitex-agent-container.scheduling` |
-| `spec.runtime` / `model` / `multiplexer` | `x-scitex-agent-container.*` |
-
-sac-specific extensions live under **`x-scitex-agent-container`**, NOT `x-orochi`. The orochi extension namespace is owned by that project and would couple sac to it; keeping them separate is the whole point.
 
 ## Handler env vars
 
@@ -140,7 +129,7 @@ sac uses the official Python `a2a-sdk[http-server]>=1.0.2`. Handlers are `AgentE
 
 - **`protobuf<7` required**: a2a-sdk 1.0.2 reads `FieldDescriptor.label` which protobuf 7.x removed. Pinned in deps.
 - **`uvicorn ws="none"`**: A2A is HTTP+SSE only — uvicorn 0.27's WS protocol auto-loader breaks on websockets 15.x (`websockets.legacy` removed). Sac passes `ws="none"` so the sidecar boots cleanly.
-- **AgentCard is protobuf**: SDK 1.x expects a protobuf `AgentCard`, not pydantic dict. `_card.project_card_proto()` is the adapter; the dict form (`project_card()`) is still served at `/.well-known/agent.json`.
+- **AgentCard is protobuf**: SDK 1.x expects a protobuf `AgentCard`, not pydantic dict. `_card.project_card_proto()` is the adapter; the dict form (`project_card()`) is what gets served at `/.well-known/agent-card.json` (v1 name).
 
 ## Boundary with orochi
 
@@ -150,5 +139,7 @@ If you want a fleet, use orochi. If you want one agent on a laptop, use `sac a2a
 
 ## Cross-references
 
+- [`07_a2a-protocol-extension-fields.md`](07_a2a-protocol-extension-fields.md) — `x-scitex-agent-container.*` per-agent / fleet / proxy field enumeration + full JSON card example
+- [ADR-0004](../../../../docs/adr/0004-a2a-v1-compliance.md) — A2A v1.0 compliance
 - [`06_env-injection-ports.md`](06_env-injection-ports.md) — the four env-injection ports (yaml.env / dot_claude/.mcp.json env / dot_claude/.env / hooks)
 - [scitex-orochi `docs/a2a-protocol.md`](https://github.com/ywatanabe1989/scitex-orochi/blob/develop/docs/a2a-protocol.md) — fleet-side architecture (Tier 3 dispatch bridge)

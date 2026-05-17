@@ -149,11 +149,22 @@ def _tail_one(
 ) -> bool:
     """Render one agent's transcript. Returns True on success, False if
     the agent is missing or has no transcript. Multi-name caller sets
-    prefix=True so each line carries ``[<name>]`` for disambiguation."""
+    prefix=True so each line carries ``[<name>]`` for disambiguation.
+
+    Cross-host: when the active ``state.db.instances`` row for ``name``
+    records ``host != current_host``, the call ssh's to the peer and
+    streams ``sac agents tail <name> ...`` line-by-line. Falls back to
+    the local read path otherwise.
+    """
     import json as _json
     from pathlib import Path
 
     from .._state.registry import Registry
+
+    # Cross-host first — if the agent's row lives on a peer, ssh there
+    # rather than trying to read the (non-existent) local session.jsonl.
+    if _tail_one_remote(name, lines, show_tools, as_json, prefix):
+        return True
 
     entry = Registry().get(name)
     if entry is None:
@@ -212,6 +223,72 @@ def _tail_one(
             out.append(f"{tag}[error] {str(r)[:300]}")
     for line in out[-lines:]:
         console.print(line, markup=False, highlight=False)
+    return True
+
+
+def _tail_one_remote(
+    name: str,
+    lines: int,
+    show_tools: bool,
+    as_json: bool,
+    prefix: bool,
+) -> bool:
+    """SSH to the peer that owns ``name`` and stream the remote tail.
+
+    Returns:
+        * ``True`` when the dispatch happened (caller short-circuits).
+        * ``False`` when no remote row exists (caller proceeds locally).
+
+    Raises ``RuntimeError`` when the remote sac call itself fails — the
+    no-silent-fallback rule applies: a missing row falls back to local,
+    but a broken ssh connection surfaces.
+    """
+    import shlex
+    import subprocess
+
+    from .._state.host_config import build_ssh_argv
+    from .._state.host_config import load as _load_host_config
+    from .lifecycle._dispatch import lookup_remote_peer
+
+    found = lookup_remote_peer(name)
+    if found is None:
+        return False
+    peer, _row = found
+    peers = _load_host_config().peers
+    if peer not in peers:
+        raise RuntimeError(
+            f"Agent {name!r} active on peer {peer!r} per state.db, but "
+            f"{peer!r} is NOT in ~/.scitex/agent-container/config.yaml's "
+            f"peers: section. Cannot tail cross-host. Add the peer entry."
+        )
+    cmd: list[str] = ["sac", "agents", "tail", name, "--lines", str(lines)]
+    if show_tools:
+        cmd.append("--tools")
+    if as_json:
+        cmd.append("--json")
+    ssh_argv = build_ssh_argv(peer, cmd, peers)
+    # Popen+line-iter so the user sees output as the peer emits it,
+    # rather than buffering the entire transcript before printing.
+    proc = subprocess.Popen(
+        ssh_argv,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+    )
+    tag = f"[{name}] " if prefix else ""
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        click.echo(f"{tag}{line.rstrip()}")
+    rc = proc.wait()
+    if rc != 0:
+        err = (proc.stderr.read() if proc.stderr else "") or ""
+        raise RuntimeError(
+            f"Remote `sac agents tail {name}` failed on {peer!r} "
+            f"(rc={rc}):\n"
+            f"argv: {' '.join(shlex.quote(a) for a in ssh_argv)}\n"
+            f"stderr:\n{err}"
+        )
     return True
 
 

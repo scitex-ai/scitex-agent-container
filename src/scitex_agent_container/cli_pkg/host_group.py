@@ -2,8 +2,8 @@
 
 Phase 1 surface (read-only inspection):
 
-  * ``sac host show`` — canonical name + aliases + interfaces
-  * ``sac host list`` — configured peers with their ssh routes
+  * ``sac host list`` — local host row + configured peers with their ssh routes
+  * ``sac host add / remove / set`` — peer CRUD against config.yaml
 
 Phase 2 (deferred): ``sac host probe <peer>``, ``sac host exec
 <peer> -- <args>``, the ``--on <peer>`` global flag, and fold-ins
@@ -17,7 +17,11 @@ import subprocess
 
 import click
 
-from .._state.host_config import build_ssh_argv, host_interfaces, load
+from .._state.host_config import (
+    build_ssh_argv,
+    host_interfaces,
+    load,
+)
 from ._helpers import _json_flag, console
 
 
@@ -30,7 +34,6 @@ def host_group() -> None:
 
     \b
     Examples:
-      $ sac host show
       $ sac host list
     """
 
@@ -125,18 +128,6 @@ def host_list(ctx: click.Context, all_interfaces: bool, as_json: bool) -> None:
             console.print(f"  {r['name']:<11} ssh={r['ssh']}{via}")
     else:
         console.print("[dim](no peers configured)[/dim]")
-
-
-# ``sac host show`` was a separate command that overlapped ``list``
-# (both printed canonical hostname + interfaces). Folded into ``list``
-# as the local row; keep ``show`` as a thin alias for muscle memory.
-@host_group.command("show", hidden=True)
-@click.option("--all-interfaces", is_flag=True, default=False)
-@click.option("--json", "as_json", is_flag=True)
-@click.pass_context
-def host_show(ctx: click.Context, all_interfaces: bool, as_json: bool) -> None:
-    """[DEPRECATED] Alias of ``sac host list`` — folded together."""
-    ctx.invoke(host_list, all_interfaces=all_interfaces, as_json=as_json)
 
 
 @host_group.command("validate")
@@ -271,9 +262,9 @@ def host_probe(ctx: click.Context, peer: str, timeout: int, as_json: bool) -> No
     """One ssh round-trip to PEER; report reachability + remote canonical hostname.
 
     Cheap liveness check used by orchestrators (and eventually by
-    F-CS14's pull cron). Runs ``sac host show --json`` on the remote
-    so the report contains the peer's reported canonical name plus
-    a measured round-trip duration.
+    F-CS14's pull cron). Runs ``sac host list --json`` on the remote
+    so the report contains the peer's reported canonical name (from
+    the local block) plus a measured round-trip duration.
 
     \b
     Example:
@@ -291,7 +282,7 @@ def host_probe(ctx: click.Context, peer: str, timeout: int, as_json: bool) -> No
             click.echo(f"[red]error:[/red] {msg}", err=True)
         raise SystemExit(2)
 
-    remote_argv = ["sac", "host", "show", "--json"]
+    remote_argv = ["sac", "host", "list", "--json"]
     ssh_argv = build_ssh_argv(
         peer,
         remote_argv,
@@ -305,7 +296,7 @@ def host_probe(ctx: click.Context, peer: str, timeout: int, as_json: bool) -> No
     remote_canonical: str | None = None
     if reachable:
         try:
-            remote_canonical = json.loads(proc.stdout).get("canonical")
+            remote_canonical = json.loads(proc.stdout).get("local", {}).get("name")
         except (
             ValueError,
             KeyError,
@@ -348,3 +339,11 @@ host_group.add_command(
         epilog=_probe_hub_impl.epilog,
     )
 )
+
+
+# Peer CRUD verbs (add / remove / set). Split into ``_host_crud`` so
+# ``host_group`` stays under the project line-budget; registered here
+# so they show up in ``sac host --help`` alongside ``list`` / ``probe``.
+from ._host_crud import register as _register_host_crud  # noqa: E402
+
+_register_host_crud(host_group)

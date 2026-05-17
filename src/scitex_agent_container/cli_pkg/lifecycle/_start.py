@@ -25,6 +25,7 @@ from ._common import (
     _multiplex_foreground_tails,
     _singleton_skip_reason,
 )
+from ._dispatch import try_dispatch
 
 
 @click.command()
@@ -149,6 +150,17 @@ from ._common import (
     default=False,
     help="Replace existing materialised yamls under --params-out.",
 )
+@click.option(
+    "--no-redispatch",
+    "no_redispatch",
+    is_flag=True,
+    default=False,
+    hidden=True,
+    help=(
+        "Skip the remote-dispatch branch (used by the peer-side invocation "
+        "to prevent recursion). Internal use mostly."
+    ),
+)
 def start(
     targets: tuple[str, ...],
     no_preflight: bool,
@@ -163,6 +175,7 @@ def start(
     params_file: Path | None,
     params_out: Path | None,
     params_overwrite: bool,
+    no_redispatch: bool,
 ) -> None:
     """Start one or more agents from YAML definitions.
 
@@ -182,11 +195,9 @@ def start(
     def _emit_json(payload: dict) -> None:
         click.echo(_json.dumps(payload, ensure_ascii=False))
 
-    # F-CS2: --params-file expands a single template + CSV into N
-    # materialised yamls. The materialised paths replace ``targets``
-    # for the rest of the function so every downstream code path
-    # (preflight, singleton check, runtime dispatch, JSON report)
-    # treats them identically to ordinary multi-target invocations.
+    # F-CS2: --params-file expands a template + CSV into N materialised
+    # yamls; the resulting paths replace ``targets`` so downstream code
+    # (preflight, singleton check, JSON report) treats them identically.
     if params_file is not None:
         if len(targets) != 1:
             click.echo(
@@ -262,7 +273,30 @@ def start(
     if resume_id and session_mode is None:
         session_mode = "resume"
 
-    # Bulk path: directory targets.
+    # Preflight OAuth credential expiry. Lazy / one-shot: runs only
+    # when we're about to dispatch (skips pure-validation exits), once
+    # per invocation, skipped on --no-redispatch and when an
+    # ANTHROPIC_API_KEY / SAC_ANTHROPIC_API_KEY is set (api-key path —
+    # see provision_anthropic_auth in runtimes/_sdk_common.py). On
+    # failure: exit 1 with the helper's message on stderr, no
+    # traceback.
+    _preflight_ran = False
+
+    def _run_preflight_once() -> None:
+        nonlocal _preflight_ran
+        if _preflight_ran or no_redispatch:
+            return
+        _preflight_ran = True
+        from ..._state._preflight_creds import check_oauth_token_expiry
+
+        try:
+            check_oauth_token_expiry()
+        except (FileNotFoundError, ValueError, RuntimeError) as exc:
+            click.echo(f"Error: {exc}", err=True)
+            sys.exit(1)
+
+    # Bulk path: directory targets. Body lives in ``_start_bulk`` to
+    # keep the click entry under the per-file line cap.
     if bulk_yamls_from_dirs:
         yamls = bulk_yamls_from_dirs
         if not yamls:
@@ -273,54 +307,22 @@ def start(
             if not single_targets:
                 return
         else:
-            if not yes:
-                click.echo(
-                    f"Refusing to start {len(yamls)} agents without --yes/-y.",
-                    err=True,
-                )
-                raise SystemExit(2)
-            if True:
-                try:
-                    current_host = resolve_hostname()
-                except RuntimeError:  # stx-allow: fallback (reason: runtime state error — handled gracefully)
-                    current_host = ""
-                console.print(f"=== [blue]Starting {len(yamls)} agents...[/blue] ===")
-                for yaml_path in yamls:
-                    # stx-allow: fallback (reason: one agent's config parse or launch failure must not abort the remaining agents in a bulk start; printing FAILED and continuing is the correct bulk-safe behavior)
-                    try:
-                        config = load_config(yaml_path)
-                        skip = _singleton_skip_reason(config, current_host)
-                        if skip:
-                            console.print(
-                                f"  [yellow]SKIP[/yellow] {config.name}: {skip}"
-                            )
-                            continue
-                        location = (
-                            f"REMOTE: {config.remote.host}"
-                            if config.remote.is_remote
-                            else "LOCAL"
-                        )
-                        console.print(
-                            f"  [blue]{config.name}[/blue] ({location})...",
-                            end=" ",
-                        )
-                        agent_start(
-                            yaml_path,
-                            no_preflight=no_preflight,
-                            force=force,
-                            dry_run=dry_run,
-                        )
-                        console.print(
-                            "[green]DRY-RUN OK[/green]"
-                            if dry_run
-                            else "[green]OK[/green]"
-                        )
-                    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-                        console.print(f"[red]FAILED: {exc}[/red]")
+            from ._start_bulk import run_bulk_path
+
+            run_bulk_path(
+                yamls,
+                yes=yes,
+                no_preflight=no_preflight,
+                force=force,
+                dry_run=dry_run,
+                preflight_runner=_run_preflight_once,
+            )
         if not single_targets:
             return
 
     # Per-target single-start loop.
+    if single_targets:
+        _run_preflight_once()
     any_error = False
     for target_idx, raw_target in enumerate(single_targets):
         if target_idx > 0 and not as_json:
@@ -336,6 +338,25 @@ def start(
                 RuntimeError
             ):  # stx-allow: fallback (reason: runtime state error — handled gracefully)
                 current_host = ""
+            # Cross-host dispatch branch (step 2 of 6 — routing only; the
+            # actual rsync / ssh / drift-check / registry-row work lands
+            # in steps 3-6). Skipped entirely when --no-redispatch is
+            # passed (peer-side invocation uses this to prevent
+            # recursion). Source of ``target_host`` is still
+            # ``spec.host`` per the architectural decision — the
+            # ``--on <host>`` CLI arg arrives in a later step.
+            if not no_redispatch:
+                from ..._state.host_config import load as _load_host_config
+
+                peers = _load_host_config().peers
+                if try_dispatch(
+                    config,
+                    current_host,
+                    peers,
+                    dry_run=dry_run,
+                    force=force,
+                ):
+                    continue
             skip = _singleton_skip_reason(config, current_host)
             if skip:
                 if as_json:
@@ -408,6 +429,20 @@ def start(
                 one_shot=one_shot,
             )
             if as_json:
+                # a2a_port: read the RESOLVED claim from port_allocator
+                # (populated by resolve_a2a_port inside agent_start).
+                # The local config here is a separate AgentConfig from
+                # the one agent_start mutated, so its a2a.port is still
+                # the raw spec value ("auto" / int / None). Lead's
+                # cross-host dispatcher writes this directly into
+                # instances.a2a_port — must be the resolved int.
+                from ..._state.port_allocator import get_port as _get_port
+                from ..._state.state_db import now_iso as _now_iso
+
+                _raw_port = getattr(getattr(config, "a2a", None), "port", None)
+                _resolved_port: int | None = (
+                    None if (dry_run or _raw_port is None) else _get_port(config.name)
+                )
                 _emit(
                     {
                         "name": config.name,
@@ -416,6 +451,8 @@ def start(
                         "host_workdir": host_workdir,
                         "container_workdir": container_workdir,
                         "dry_run": dry_run,
+                        "a2a_port": _resolved_port,
+                        "started_at": None if dry_run else _now_iso(),
                     }
                 )
             else:

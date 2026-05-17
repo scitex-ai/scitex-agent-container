@@ -25,11 +25,46 @@ smoke tests.
 
 from __future__ import annotations
 
+import json
+import time
 from pathlib import Path
 
 from click.testing import CliRunner
 
 from scitex_agent_container.cli_pkg.lifecycle._start import start
+
+
+def _install_fresh_creds(home: Path) -> Path:
+    """Write a non-expired OAuth credentials file under ``$home/.claude/``.
+
+    The start command's preflight (``_state._preflight_creds.check_oauth_token_expiry``)
+    reads ``$HOME/.claude/.credentials.json`` whenever an actual dispatch
+    is about to fire — CI runners don't have one, so the preflight
+    short-circuits with ``FileNotFoundError`` before the test's
+    singleton-skip / multiplex / dispatch branch ever executes. Tests
+    that pin ``$HOME`` to ``tmp_path`` and call this helper get a
+    deterministic fresh-token preflight on any host.
+    """
+    claude_dir = home / ".claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
+    creds = claude_dir / ".credentials.json"
+    expires_at_ms = int((time.time() + 3600) * 1000)
+    creds.write_text(
+        json.dumps(
+            {
+                "claudeAiOauth": {
+                    "accessToken": "sk-ant-oat-fake",
+                    "refreshToken": "sk-ant-ort-fake",
+                    "expiresAt": expires_at_ms,
+                    "scopes": ["user:inference"],
+                    "subscriptionType": "max",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    return creds
+
 
 # ---------------------------------------------------------------------------
 # Argument-level validation — no collaborator is invoked; click parses,
@@ -221,6 +256,8 @@ class TestSingletonHostSkip:
     def test_single_target_singleton_skip_exits_clean(self, tmp_path, env_save_restore):
         # Arrange
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        env_save_restore.set("HOME", str(tmp_path))
+        _install_fresh_creds(tmp_path)
         yaml_path = _write_singleton_yaml(tmp_path, "mini", "nowhere-host")
         runner = CliRunner()
         # Act
@@ -233,6 +270,8 @@ class TestSingletonHostSkip:
     ):
         # Arrange
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        env_save_restore.set("HOME", str(tmp_path))
+        _install_fresh_creds(tmp_path)
         yaml_path = _write_singleton_yaml(tmp_path, "mini", "nowhere-host")
         runner = CliRunner()
         # Act
@@ -245,6 +284,8 @@ class TestSingletonHostSkip:
     ):
         # Arrange
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        env_save_restore.set("HOME", str(tmp_path))
+        _install_fresh_creds(tmp_path)
         yaml_path = _write_singleton_yaml(tmp_path, "mini", "nowhere-host")
         runner = CliRunner()
         # Act
@@ -257,6 +298,8 @@ class TestSingletonHostSkip:
     ):
         # Arrange
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        env_save_restore.set("HOME", str(tmp_path))
+        _install_fresh_creds(tmp_path)
         agents_dir = tmp_path / "agents"
         _write_singleton_yaml(agents_dir, "aa", "nowhere-host")
         _write_singleton_yaml(agents_dir, "bb", "nowhere-host")
@@ -269,6 +312,8 @@ class TestSingletonHostSkip:
     def test_bulk_directory_singleton_skip_exits_zero(self, tmp_path, env_save_restore):
         # Arrange
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        env_save_restore.set("HOME", str(tmp_path))
+        _install_fresh_creds(tmp_path)
         agents_dir = tmp_path / "agents"
         _write_singleton_yaml(agents_dir, "aa", "nowhere-host")
         _write_singleton_yaml(agents_dir, "bb", "nowhere-host")
@@ -290,6 +335,8 @@ class TestResumeAndForeground:
         # Arrange — --resume without --session must default session_mode to
         # "resume" rather than rejecting the invocation.
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        env_save_restore.set("HOME", str(tmp_path))
+        _install_fresh_creds(tmp_path)
         yaml_path = _write_singleton_yaml(tmp_path, "mini", "nowhere-host")
         runner = CliRunner()
         # Act
@@ -302,6 +349,8 @@ class TestResumeAndForeground:
     ):
         # Arrange
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        env_save_restore.set("HOME", str(tmp_path))
+        _install_fresh_creds(tmp_path)
         yaml_path = _write_singleton_yaml(tmp_path, "mini", "nowhere-host")
         runner = CliRunner()
         # Act
@@ -319,6 +368,8 @@ class TestResumeAndForeground:
         # multiplex call; we just exercise the branch where foreground gets
         # demoted from True -> False.
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        env_save_restore.set("HOME", str(tmp_path))
+        _install_fresh_creds(tmp_path)
         y1 = _write_singleton_yaml(tmp_path, "mini1", "nowhere-host")
         y2 = _write_singleton_yaml(tmp_path, "mini2", "nowhere-host")
         runner = CliRunner()
@@ -332,6 +383,8 @@ class TestResumeAndForeground:
     ):
         # Arrange
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        env_save_restore.set("HOME", str(tmp_path))
+        _install_fresh_creds(tmp_path)
         agents_dir = tmp_path / "agents"
         _write_singleton_yaml(agents_dir, "aa", "nowhere-host")
         _write_singleton_yaml(agents_dir, "bb", "nowhere-host")
@@ -345,10 +398,319 @@ class TestResumeAndForeground:
 
 
 # ---------------------------------------------------------------------------
-# NB: every other previously-present test required substituting
-# ``agent_start`` / ``load_config`` / ``resolve_hostname`` etc. at
-# the module namespace. Driving them honestly demands materialising
-# a real apptainer workspace + running Claude Code, which is
-# out-of-scope for a unit test. Those tests are deleted rather
-# than re-greened with a renamed ``monkeypatch`` shim.
+# Cross-host dispatch routing branch — drives the real Click command with a
+# real config.yaml on disk and the real ``_resolve_dispatch_peer``. Step 3b
+# replaced the unconditional ``NotImplementedError`` stub with a drift-check
+# / rsync body that fails early on a missing local spec dir (``FileNotFoundError``)
+# when ``~/.scitex/agent-container/agents/<name>/`` does not exist. The
+# per-target loop in ``_start.py`` has a catch-all that turns the exception
+# into a printed traceback + ``sys.exit(1)``, so the observable signal lives
+# in ``result.output``: ``FileNotFoundError`` + the peer name prove the
+# routing branch reached the dispatcher; absence means the branch fell
+# through. See feedback_no_silent_stubs.
+#
+# Flag-propagation (``--dry-run`` / ``--force``) is proven directly by the
+# unit tests in ``test__dispatch.py``, which call ``_dispatch_remote_start``
+# with ``dry_run=True`` / ``force=True`` and observe distinct branches.
 # ---------------------------------------------------------------------------
+
+
+def _write_peer_config(parent: Path, peer_name: str) -> Path:
+    """Write a real ``config.yaml`` with a single peer entry; return its path."""
+    cfg = parent / "config.yaml"
+    cfg.write_text(
+        "host:\n  fallback: hostname-short\npeers:\n"
+        f"  {peer_name}:\n    ssh: {peer_name}\n"
+    )
+    return cfg
+
+
+class TestDispatchBranch:
+    def test_dispatch_branch_fires_when_spec_host_names_known_peer(
+        self, tmp_path, env_save_restore
+    ):
+        # Arrange — spec.host is a known remote peer; routing branch must
+        # reach the dispatcher, which raises FileNotFoundError because no
+        # local spec dir exists under ``~/.scitex/agent-container/agents/``.
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        env_save_restore.set("HOME", str(tmp_path))
+        _install_fresh_creds(tmp_path)
+        cfg = _write_peer_config(tmp_path, "remote-host")
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg))
+        yaml_path = _write_singleton_yaml(tmp_path, "mini", "remote-host")
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, [str(yaml_path)])
+        # Assert
+        assert "FileNotFoundError" in result.output
+
+    def test_dispatch_branch_exception_message_names_target_peer(
+        self, tmp_path, env_save_restore
+    ):
+        # Arrange — dispatcher's traceback must echo the peer name so we
+        # know the routing branch handed off the resolved peer.
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        env_save_restore.set("HOME", str(tmp_path))
+        _install_fresh_creds(tmp_path)
+        cfg = _write_peer_config(tmp_path, "remote-host")
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg))
+        yaml_path = _write_singleton_yaml(tmp_path, "mini", "remote-host")
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, [str(yaml_path)])
+        # Assert
+        assert "remote-host" in result.output
+
+    def test_dispatch_branch_propagates_agent_name_to_dispatcher(
+        self, tmp_path, env_save_restore
+    ):
+        # Arrange — the dispatcher's exception must name the spec it tried
+        # to dispatch, proving the agent name flowed through the routing
+        # branch.
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        env_save_restore.set("HOME", str(tmp_path))
+        _install_fresh_creds(tmp_path)
+        cfg = _write_peer_config(tmp_path, "remote-host")
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg))
+        yaml_path = _write_singleton_yaml(tmp_path, "mini", "remote-host")
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, [str(yaml_path)])
+        # Assert
+        assert "Spec dir for 'mini'" in result.output
+
+    def test_dispatch_branch_exits_nonzero_when_dispatcher_raises(
+        self, tmp_path, env_save_restore
+    ):
+        # Arrange — the routing branch must fire and the dispatcher's
+        # FileNotFoundError must propagate to a nonzero exit, not be
+        # silently swallowed.
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        env_save_restore.set("HOME", str(tmp_path))
+        cfg = _write_peer_config(tmp_path, "remote-host")
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg))
+        yaml_path = _write_singleton_yaml(tmp_path, "mini", "remote-host")
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, [str(yaml_path), "--dry-run", "--force"])
+        # Assert
+        assert result.exit_code != 0
+
+    def test_dispatch_branch_quiet_when_spec_host_equals_current_host(
+        self, tmp_path, env_save_restore
+    ):
+        # Arrange — current host equals spec.host; resolver returns None,
+        # routing branch must NOT fire. Downstream local-start may fail
+        # (no real apptainer image), but the dispatcher's traceback MUST
+        # NOT appear.
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        cfg = _write_peer_config(tmp_path, "this-host")
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg))
+        yaml_path = _write_singleton_yaml(tmp_path, "mini", "this-host")
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, [str(yaml_path), "--dry-run"])
+        # Assert
+        assert "NotImplementedError" not in result.output
+
+    def test_singleton_skip_still_fires_when_spec_host_is_unknown(
+        self, tmp_path, env_save_restore
+    ):
+        # Arrange — spec.host is NOT in the peer registry AND NOT the
+        # current host. Resolver returns None ("caller decides"), the
+        # routing branch falls through, and singleton-skip emits the
+        # ``Skipping 'mini'`` line.
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        env_save_restore.set("HOME", str(tmp_path))
+        _install_fresh_creds(tmp_path)
+        cfg = _write_peer_config(tmp_path, "remote-host")
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg))
+        yaml_path = _write_singleton_yaml(tmp_path, "mini", "unknown-host")
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, [str(yaml_path)])
+        # Assert
+        assert "Skipping 'mini'" in result.output
+
+    def test_dispatch_branch_quiet_when_spec_host_is_unknown(
+        self, tmp_path, env_save_restore
+    ):
+        # Arrange — same setup; complementary assertion that the
+        # dispatcher did NOT raise (the branch fell through).
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        cfg = _write_peer_config(tmp_path, "remote-host")
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg))
+        yaml_path = _write_singleton_yaml(tmp_path, "mini", "unknown-host")
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, [str(yaml_path)])
+        # Assert
+        assert "NotImplementedError" not in result.output
+
+    def test_no_redispatch_flag_skips_dispatch_branch(self, tmp_path, env_save_restore):
+        # Arrange — spec.host names a known remote peer; --no-redispatch
+        # must skip the dispatch branch (peer-side invocation contract
+        # — prevents ssh recursion). Singleton skip still fires
+        # because spec.host != current host.
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        env_save_restore.set("HOME", str(tmp_path))
+        cfg = _write_peer_config(tmp_path, "remote-host")
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg))
+        yaml_path = _write_singleton_yaml(tmp_path, "mini", "remote-host")
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, [str(yaml_path), "--no-redispatch"])
+        # Assert — dispatcher's FileNotFoundError (its first action when
+        # spec dir is absent) MUST NOT appear; the branch never fired.
+        assert "FileNotFoundError" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# Peer-side ``sac agents start --no-redispatch --json`` output contract.
+#
+# Background: before the cross-host a2a_port fix the peer-side JSON read
+# ``config.a2a.port`` directly. When the spec said ``port: auto`` the
+# literal string ``"auto"`` flunked the ``isinstance(_, int)`` check and
+# the JSON emitted ``null`` — even though the runner had ALREADY claimed
+# an int via ``resolve_a2a_port``. The lead then wrote NULL into its
+# instances row, breaking ``sac agents send <name>`` ("state.db records
+# no a2a_port for it"). These tests pin the JSON-emission seam: with an
+# allocator row in place (simulating ``resolve_a2a_port``'s side effect),
+# the ``--no-redispatch --json`` payload MUST report the resolved int.
+#
+# No-mocks / no-monkeypatch: hand-rolled context-manager attribute swap
+# for fake ``agent_start`` (same pattern as ``test__a2a_port.py``).
+# ---------------------------------------------------------------------------
+
+
+from contextlib import contextmanager
+from typing import Any, Iterator
+
+
+@contextmanager
+def _swap_attr(module: Any, name: str, replacement: Any) -> Iterator[None]:
+    saved = getattr(module, name)
+    setattr(module, name, replacement)
+    try:
+        yield
+    finally:
+        setattr(module, name, saved)
+
+
+def _write_local_spec_with_a2a(home: Path, name: str, *, a2a_port: Any) -> Path:
+    """Materialise a minimal spec yaml at ``~/.scitex/agent-container/agents/<name>``.
+
+    The spec uses runtime ``apptainer`` (the default sac runtime). We
+    never actually invoke the runner — ``agent_start`` is swapped for a
+    no-op — so the spec only needs to load cleanly.
+    """
+    agents_dir = home / ".scitex" / "agent-container" / "agents" / name
+    agents_dir.mkdir(parents=True)
+    yaml_path = agents_dir / f"{name}.yaml"
+    port_line = "null" if a2a_port is None else json.dumps(a2a_port)
+    yaml_path.write_text(
+        "apiVersion: scitex-agent-container/v3\n"
+        "kind: Agent\n"
+        "metadata: {}\n"
+        "spec:\n"
+        "  runtime: apptainer\n"
+        f"  a2a:\n    port: {port_line}\n"
+    )
+    return yaml_path
+
+
+def _run_start_no_redispatch_json(
+    name: str, yaml_path: Path, *, preclaim_port: int | None
+) -> dict:
+    """Drive ``sac agents start <yaml> --no-redispatch --json`` with a
+    no-op fake ``agent_start`` and (optionally) a pre-claimed allocator
+    row. Returns the parsed JSON object emitted on stdout.
+
+    Pre-claiming substitutes for what the real ``agent_start`` would do
+    via ``resolve_a2a_port`` — keeping the test focused on the JSON
+    emission seam without spinning real apptainer.
+    """
+    from scitex_agent_container._state import port_allocator
+
+    if preclaim_port is not None:
+        port_allocator.claim_port(name, explicit=preclaim_port)
+
+    from scitex_agent_container.cli_pkg.lifecycle import _start as start_mod
+
+    def _fake_agent_start(*args: Any, **kwargs: Any) -> bool:
+        return True
+
+    runner = CliRunner()
+    with _swap_attr(start_mod, "agent_start", _fake_agent_start):
+        result = runner.invoke(
+            start_mod.start,
+            [str(yaml_path), "--no-redispatch", "--json"],
+            catch_exceptions=False,
+        )
+    stdout_lines = [
+        ln for ln in result.output.splitlines() if ln.strip().startswith("{")
+    ]
+    assert stdout_lines, (
+        f"no JSON line in stdout. exit={result.exit_code}, output={result.output!r}"
+    )
+    return json.loads(stdout_lines[-1])
+
+
+class TestStartNoRedispatchJsonA2aPort:
+    def test_start_no_redispatch_json_includes_resolved_a2a_port(
+        self, tmp_path, env_save_restore
+    ):
+        """``port: auto`` spec → JSON ``a2a_port`` is an int (resolved by allocator)."""
+        # Arrange — redirect HOME + state.db so the allocator + spec dir
+        # operate in tmp. ``state_db`` and ``port_allocator`` cache the
+        # default path at import time, so we reload them after env mutation.
+        import importlib
+
+        env_save_restore.set("HOME", str(tmp_path))
+        env_save_restore.set(
+            "SCITEX_AGENT_CONTAINER_STATE_DB", str(tmp_path / "state.db")
+        )
+        import scitex_agent_container._state.port_allocator as _pa
+        import scitex_agent_container._state.state_db as _sdb
+
+        importlib.reload(_sdb)
+        importlib.reload(_pa)
+        try:
+            yaml_path = _write_local_spec_with_a2a(tmp_path, "alpha", a2a_port="auto")
+            # Act — pre-claim port 19_200 to simulate resolve_a2a_port's effect.
+            payload = _run_start_no_redispatch_json(
+                "alpha", yaml_path, preclaim_port=19_200
+            )
+            # Assert
+            assert payload["a2a_port"] == 19_200
+        finally:
+            importlib.reload(_sdb)
+            importlib.reload(_pa)
+
+    def test_start_no_redispatch_json_includes_a2a_port_when_explicit_int(
+        self, tmp_path, env_save_restore
+    ):
+        """``port: 19_500`` spec → JSON ``a2a_port`` is exactly that int."""
+        # Arrange
+        import importlib
+
+        env_save_restore.set("HOME", str(tmp_path))
+        env_save_restore.set(
+            "SCITEX_AGENT_CONTAINER_STATE_DB", str(tmp_path / "state.db")
+        )
+        import scitex_agent_container._state.port_allocator as _pa
+        import scitex_agent_container._state.state_db as _sdb
+
+        importlib.reload(_sdb)
+        importlib.reload(_pa)
+        try:
+            yaml_path = _write_local_spec_with_a2a(tmp_path, "alpha", a2a_port=19_500)
+            # Act
+            payload = _run_start_no_redispatch_json(
+                "alpha", yaml_path, preclaim_port=19_500
+            )
+            # Assert
+            assert payload["a2a_port"] == 19_500
+        finally:
+            importlib.reload(_sdb)
+            importlib.reload(_pa)

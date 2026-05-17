@@ -71,24 +71,23 @@ class TestReadYamlEndpoints:
         # Assert
         assert result == ("0.0.0.0", 18888, None)
 
-    def test_remote_dict_form_extracts_remote_host(self, tmp_path: Path) -> None:
-        # Arrange
+    def test_spec_host_string_form_used_as_destination(self, tmp_path: Path) -> None:
+        # Arrange — spec.host is the single source of truth for peer
+        # destination (the same field cross-host dispatch consults).
         y = tmp_path / "b.yaml"
         y.write_text(
             "apiVersion: scitex-agent-container/v3\n"
             "kind: Agent\n"
             "spec:\n"
             "  a2a: {port: 19000, host: 0.0.0.0}\n"
-            "  remote: {host: mba, user: ywatanabe}\n"
+            "  host: mba\n"
         )
         # Act
         result = _read_yaml_endpoints(str(y))
         # Assert
         assert result == ("0.0.0.0", 19000, "mba")
 
-    def test_remote_string_form_used_directly_as_remote_host(
-        self, tmp_path: Path
-    ) -> None:
+    def test_spec_host_alias_string_extracted_directly(self, tmp_path: Path) -> None:
         # Arrange
         y = tmp_path / "c.yaml"
         y.write_text(
@@ -96,7 +95,7 @@ class TestReadYamlEndpoints:
             "kind: Agent\n"
             "spec:\n"
             "  a2a: {port: 20000}\n"
-            "  remote: head-spartan\n"
+            "  host: head-spartan\n"
         )
         # Act
         result = _read_yaml_endpoints(str(y))
@@ -150,7 +149,7 @@ class TestResolvePeerUrl:
             "spec:\n"
             "  runtime: apptainer\n"
             "  a2a: {port: 19000}\n"
-            "  remote: {host: mba}\n"
+            "  host: mba\n"
         )
         resolve_yaml_to(agent_yaml)
         # Act
@@ -218,7 +217,7 @@ class TestPostTurnToUrl:
                 self.wfile.write(
                     json.dumps(
                         {
-                            "reply": f"echo:{body.get('text', '')}",
+                            "text": f"echo:{body.get('text', '')}",
                             "exit_after": body.get("exit_after", False),
                         }
                     ).encode("utf-8")
@@ -393,7 +392,7 @@ class TestPostTurnEndToEnd:
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(
-                    _json.dumps({"reply": f"ack:{body['text']}"}).encode("utf-8")
+                    _json.dumps({"text": f"ack:{body['text']}"}).encode("utf-8")
                 )
 
             def log_message(self, *a, **kw):
@@ -430,7 +429,7 @@ class TestPostTurnViaSsh:
         # Arrange — fake ssh prints a JSON envelope to stdout.
         import json as _json
 
-        stdout = _json.dumps({"reply": "remote-ack"}) + "\n"
+        stdout = _json.dumps({"text": "remote-ack"}) + "\n"
         subprocess_shim.install("ssh", stdout=stdout, exit=0)
         # Act
         reply = post_turn_to_url("ssh://mba:18888/v1/turn", "hi", timeout_s=2.0)
@@ -441,7 +440,7 @@ class TestPostTurnViaSsh:
         # Arrange
         import json as _json
 
-        stdout = _json.dumps({"reply": "ok"}) + "\n"
+        stdout = _json.dumps({"text": "ok"}) + "\n"
         subprocess_shim.install("ssh", stdout=stdout, exit=0)
         # Act
         post_turn_to_url("ssh://my-host:19000/v1/turn", "hi", timeout_s=2.0)
@@ -455,7 +454,7 @@ class TestPostTurnViaSsh:
 
         stdout = (
             "Welcome to remote host\n"
-            "Last login: yesterday\n" + _json.dumps({"reply": "after-banner"}) + "\n"
+            "Last login: yesterday\n" + _json.dumps({"text": "after-banner"}) + "\n"
         )
         subprocess_shim.install("ssh", stdout=stdout, exit=0)
         # Act
@@ -527,15 +526,15 @@ class TestPostTurnViaSsh:
 
 
 class TestReadYamlEndpointsExtras:
-    def test_remote_list_form_uses_last_alias(self, tmp_path: Path) -> None:
-        # Arrange — chain form: list of alias hops, destination is last.
+    def test_spec_host_list_form_uses_last_alias(self, tmp_path: Path) -> None:
+        # Arrange — chain form: priority list of hosts, route to the last.
         y = tmp_path / "chain.yaml"
         y.write_text(
             "apiVersion: scitex-agent-container/v3\n"
             "kind: Agent\n"
             "spec:\n"
             "  a2a: {port: 22000}\n"
-            "  remote: [bastion, intermediate, final-host]\n"
+            "  host: [bastion, intermediate, final-host]\n"
         )
         # Act
         result = _read_yaml_endpoints(str(y))

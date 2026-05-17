@@ -12,7 +12,31 @@ Usage::
 
 from __future__ import annotations
 
+import logging
+import sys
+
 from ._tools import register_all_tools
+
+
+def _ensure_stderr_logging() -> None:
+    """Attach a stderr StreamHandler so INFO-level diagnostic lines appear in
+    claude-code's MCP debug log. Idempotent."""
+    root = logging.getLogger("scitex_agent_container")
+    if any(getattr(h, "_sac_stderr", False) for h in root.handlers):
+        return
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setLevel(logging.INFO)
+    handler.setFormatter(
+        logging.Formatter("[%(asctime)s] [%(levelname)s] %(name)s: %(message)s")
+    )
+    handler._sac_stderr = True  # type: ignore[attr-defined]
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)
+
+
+_ensure_stderr_logging()
+
+log = logging.getLogger(__name__)
 
 _INSTRUCTIONS = """\
 scitex-agent-container (sac) — declarative container wrapper for
@@ -33,10 +57,6 @@ def _build_server():
     try:
         from fastmcp import FastMCP
     except Exception as exc:
-        # Broad catch: fastmcp pulls in heavy transitive deps that can
-        # raise non-ImportError errors at import-time on misconfigured
-        # environments (e.g. version-mismatched mcp / pydantic). Surface
-        # any failure as an actionable ImportError instead of crashing.
         raise ImportError(
             "fastmcp is required for the sac MCP server — "
             "install with `pip install scitex-agent-container[mcp]`"

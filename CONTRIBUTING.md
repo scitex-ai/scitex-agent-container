@@ -16,6 +16,7 @@ pip install -e ".[dev]"     # pulls fastmcp + pytest-asyncio so the full
 # Need every optional surface (telegram + slurm + docs as well)?
 #   pip install -e ".[all]"
 pytest tests/
+scripts/install-pre-push-hook.sh   # one-time: enables ruff pre-push gate
 ```
 
 ## Branch model
@@ -44,8 +45,20 @@ has a matching `tests/scitex_agent_container/<path>/test_<file>.py`. The
 ## Linting and audits
 
 ```bash
+ruff check src/ tests/                          # local edit-time lint
 scitex-dev ecosystem audit-all scitex-agent-container
 ```
+
+A narrower **`ruff check --select F401,F811`** also runs as a pre-push
+gate (`.githooks/pre-push`, installed by
+`scripts/install-pre-push-hook.sh`) and as a CI job
+(`.github/workflows/lint.yml`) on PRs + pushes to `develop`/`main`.
+Scope is intentionally narrow (unused-import + redefinition only) — the
+local edit hook stopped autofixing F401 so subagent multi-step edits
+aren't sabotaged mid-flight; the pre-push + CI gates are what catch a
+genuinely-unused import before it lands. Tighten the `--select` set
+once the broader pyproject.toml ruleset baseline (~100 pre-existing
+E/F/W/I violations) is triaged.
 
 Covers CLI hygiene (mutating verbs need `--dry-run`/`--yes`; help blocks
 must include `Example:`), MCP tool naming, project structure (CHANGELOG,

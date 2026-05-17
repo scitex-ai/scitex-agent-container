@@ -82,6 +82,6 @@ async def forward_to_live_runner(
         {
             "name": name,
             "route": "live-runner",
-            "reply": _json.loads(payload.decode("utf-8")).get("reply"),
+            "text": _json.loads(payload.decode("utf-8"))["text"],
         }
     )

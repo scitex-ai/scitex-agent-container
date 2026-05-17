@@ -155,6 +155,23 @@ class ApptainerSpec:
     no overlay (tmpfs writable layer). Non-absolute paths resolve
     against ``spec.workdir``. See ``docs/isolation.md`` §7."""
 
+    overlay_size: str = ""
+    """When set together with ``overlay``, sac auto-creates the overlay
+    image with the given size if it doesn't exist before launching.
+    Accepts apptainer-style sizes with units M/MB/G/GB only (e.g.
+    ``"5G"``, ``"500M"``, ``"1024MB"``). K/KB are explicitly rejected —
+    apptainer's ``overlay create --size`` takes integer MB so sub-MB
+    granularity makes no sense. Empty = no auto-create (default;
+    missing overlay raises FileNotFoundError at launch with a clear
+    message). See ``docs/isolation.md`` §7."""
+
+    overlay_create_if_missing: bool = True
+    """When True (default) AND ``overlay_size`` is set AND the overlay
+    path does not exist, sac runs ``apptainer overlay create --size
+    <MB> <path>`` before launching. When False, sac never creates
+    overlays even if size is given (operator must pre-create — sac
+    raises FileNotFoundError instead). See ``docs/isolation.md`` §7."""
+
     relaxed: bool = False
     """Opt out of sac's hardened defaults (auto-prepended
     ``--containall``/``--cleanenv``/``--writable-tmpfs``/``--home``).
@@ -204,15 +221,6 @@ class A2ASpec:
     @property
     def is_disabled(self) -> bool:
         return self.port is None
-
-
-# Telegram setup is managed externally via hooks.
-@dataclass
-class TelegramSpec:
-    bot_token_env: str = "SCITEX_AGENT_CONTAINER_TELEGRAM_BOT_TOKEN"
-    allowed_users: list[str] = field(default_factory=list)
-    auto_connect: bool = True
-    greeting: str = ""
 
 
 @dataclass
@@ -381,33 +389,6 @@ class StartupCommand:
 
 
 @dataclass
-class ReadyPattern:
-    """A single regex the pane content must match for the agent to be ready."""
-
-    regex: str = ""
-
-
-@dataclass
-class StartupSpec:
-    """Opt-in ready-state gate for startup commands (todo#291).
-
-    When ``ready_patterns`` is empty, legacy fire-and-hope behavior is
-    preserved. Otherwise ``agent_start`` polls the tmux pane content and
-    only dispatches ``commands`` once all patterns match against the tail
-    of the capture AND the pane has been byte-identical for
-    ``ready_idle_ticks`` consecutive polls.
-    """
-
-    ready_patterns: list[ReadyPattern] = field(default_factory=list)
-    ready_idle_ticks: int = 3
-    ready_poll_interval_seconds: float = 0.5
-    ready_timeout_seconds: float = 60.0
-    # "capture_and_fail" | "capture_and_proceed"
-    on_timeout: str = "capture_and_proceed"
-    commands: list[StartupCommand] = field(default_factory=list)
-
-
-@dataclass
 class AgentConfig:
     """Parsed agent configuration from a YAML definition file."""
 
@@ -439,18 +420,19 @@ class AgentConfig:
     hooks: dict[str, list[str]] = field(default_factory=dict)
     listen: list[ListenPort] = field(default_factory=list)
     extensions: Dict[str, Any] = field(default_factory=dict)
-    telegram: TelegramSpec = field(default_factory=TelegramSpec)
     remote: RemoteSpec = field(default_factory=RemoteSpec)
     skills: SkillsSpec = field(default_factory=SkillsSpec)
     context_management: ContextManagementConfig = field(
         default_factory=ContextManagementConfig
     )
+    # startup_commands run as SHELL commands inside the container before
+    # the claude SDK starts. startup_prompts (separate field) carries
+    # the claude mission. No fallback between the two.
     startup_commands: list[StartupCommand] = field(default_factory=list)
     # v3-realign: ``startup_prompts`` is separate from ``startup_commands``
     # (§3). startup_commands are SHELL commands run BEFORE claude starts;
     # startup_prompts are TEXT fed to claude as the first user message(s).
     startup_prompts: list[str] = field(default_factory=list)
-    startup: "StartupSpec" = field(default_factory=lambda: StartupSpec())
     mcp_servers: dict[str, dict] = field(default_factory=dict)
     multiplexer: str = "tmux"  # "tmux" (default) or "screen"
     hosts_spec: HostsSpec = field(default_factory=HostsSpec)
@@ -477,7 +459,22 @@ class AgentConfig:
     # the agent's workdir at start (replaces the legacy ``src_*`` siblings).
     # Empty = auto-discover ``./dot_claude`` next to spec.yaml; otherwise an
     # absolute path or a path relative to spec.yaml's directory.
+    #
+    # DEPRECATED — superseded by ``spec.to_home`` (see ADR-0006). Specs
+    # carrying a ``dot_claude/`` dir emit a DeprecationWarning on agent
+    # start; the path is retained for one release while existing specs
+    # migrate. A spec MUST NOT carry both layouts at once — the runtime
+    # raises if both ``dot_claude/`` and ``to_home/`` exist next to
+    # ``spec.yaml`` (no silent merge).
     dot_claude: str = ""
+    # ADR-0006: spec.to_home — directory whose contents are mirrored
+    # into the agent's container ``$HOME`` (= ``runtime/<name>/home/``
+    # on the host) on every start. Replaces the leaf-vs-mirror
+    # fragmentation of ``dot_claude/``: every path under ``to_home/``
+    # lands at the same relative path inside ``$HOME``.
+    # Default: ``./to_home`` next to ``spec.yaml`` (auto-discovered
+    # when this field is empty).
+    to_home: str = "./to_home"
 
     def __post_init__(self) -> None:
         if not self.screen_name:

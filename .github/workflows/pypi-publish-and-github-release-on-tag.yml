@@ -95,7 +95,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${GITHUB_REF#refs/tags/}" \\
-            --title "v${{ steps.notes.outputs.version }}" \\
-            --notes-file release-notes.md \\
+          gh release create "${GITHUB_REF#refs/tags/}" \
+            --title "v${{ steps.notes.outputs.version }}" \
+            --notes-file release-notes.md \
             dist/*

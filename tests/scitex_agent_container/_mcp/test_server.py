@@ -115,7 +115,6 @@ _REQUIRED_TOOL_NAMES = [
     "agent_stop",
     "db_show",
     "db_query",
-    "host_show",
     "host_list",
     "image_build",
     "template_render_contributor_spec",

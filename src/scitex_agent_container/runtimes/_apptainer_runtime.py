@@ -166,11 +166,38 @@ class ApptainerContainerRuntime(RuntimeBase):
             # caches and persist state while the base SIF stays
             # immutable. Resolution: absolute path used as-is; relative
             # paths are interpreted against the workdir.
+            #
+            # Declarative auto-create (see docs/isolation.md §7):
+            # ``spec.apptainer.overlay_size`` + the default
+            # ``overlay_create_if_missing=True`` flag drives
+            # ``apptainer overlay create --size <MB> <path>`` when the
+            # overlay file is missing. Without ``overlay_size`` we fail
+            # loudly here (FileNotFoundError) instead of letting
+            # apptainer error cryptically at exec time.
             overlay = getattr(ap, "overlay", "") or ""
             if overlay:
                 overlay_p = Path(overlay).expanduser()
                 if not overlay_p.is_absolute():
                     overlay_p = Path(config.workdir).expanduser() / overlay_p
+                if not overlay_p.exists():
+                    overlay_size = getattr(ap, "overlay_size", "") or ""
+                    create_ok = getattr(ap, "overlay_create_if_missing", True)
+                    if overlay_size and create_ok:
+                        _create_overlay_image(overlay_p, overlay_size)
+                    elif overlay_size:
+                        raise FileNotFoundError(
+                            f"overlay {overlay_p} missing and "
+                            "overlay_create_if_missing=false; pre-create with "
+                            "`apptainer overlay create --size <MB> <path>` or "
+                            "flip overlay_create_if_missing back to true."
+                        )
+                    else:
+                        raise FileNotFoundError(
+                            f"overlay {overlay_p} missing; set "
+                            "spec.apptainer.overlay_size (e.g. '5G') for "
+                            "declarative auto-create, or pre-create with "
+                            "`apptainer overlay create`."
+                        )
                 argv += ["--overlay", str(overlay_p)]
 
         # Forward Anthropic auth (mirrors container.py). Order matters:
@@ -185,17 +212,25 @@ class ApptainerContainerRuntime(RuntimeBase):
             if val:
                 argv += ["--env", f"{auth_env}={val}"]
 
-        # Mount operator's Pro/Max credentials when present (read-only).
+        # Mount operator's Pro/Max credentials when present.
         # Target lives under /tmp/ (writable tmpfs / overlay) rather
         # than $HOME — the D2 preflight requires $HOME to be empty, and
         # binding under $HOME would scaffold a host-mirroring directory.
         # CLAUDE_CONFIG_DIR points the SDK at this dir so it finds the
         # credentials file without needing $HOME pollution.
+        #
+        # Mounted RW (no ``:ro``) so the in-container Claude CLI can
+        # refresh the OAuth ``accessToken`` in place when the host's
+        # token expires (~1h cadence). Without RW the bind-mounted file
+        # is frozen and every container 401s after token-expiry, forcing
+        # a manual scp-from-lead dance to re-seed peers. The CLI's
+        # refresh code-path itself is responsible for any concurrency
+        # locking — the bind is just a file passthrough.
         cred_file = Path.home() / ".claude" / ".credentials.json"
         if cred_file.is_file():
             argv += [
                 "--bind",
-                f"{cred_file}:/tmp/sac-claude/.credentials.json:ro",
+                f"{cred_file}:/tmp/sac-claude/.credentials.json:rw",
                 "--env",
                 "CLAUDE_CONFIG_DIR=/tmp/sac-claude",
             ]
@@ -468,6 +503,50 @@ def _safe_image_tag(reference: str) -> str:
     """
     digest = hashlib.sha1(reference.encode("utf-8")).hexdigest()[:16]
     return digest
+
+
+def _create_overlay_image(path: Path, size: str) -> None:
+    """Create an apptainer overlay image at ``path`` with the given size.
+
+    Size string accepts apptainer-style units with **M/MB/G/GB only**:
+    ``"5G"``, ``"500M"``, ``"1024MB"`` etc. K/KB are explicitly
+    rejected — ``apptainer overlay create --size`` takes integer MB so
+    sub-MB granularity is unrepresentable. Parent dir is created if
+    missing. Raises ``ValueError`` for unparseable / unsupported sizes
+    and ``RuntimeError`` if the apptainer call itself fails.
+    """
+    import re
+
+    m = re.match(r"^\s*(\d+)\s*([MG]B?)\s*$", size, re.IGNORECASE)
+    if not m:
+        raise ValueError(
+            f"overlay_size {size!r} unparseable; use '5G', '500M', '1024MB' "
+            "etc. (units M/MB/G/GB only — K/KB rejected because apptainer "
+            "overlay create takes integer MB)."
+        )
+    n = int(m.group(1))
+    unit = m.group(2).upper()
+    # apptainer overlay create --size expects integer MB.
+    multipliers = {"M": 1, "MB": 1, "G": 1024, "GB": 1024}
+    if unit not in multipliers:
+        # Defensive: regex already constrains to M/MB/G/GB, but if
+        # someone ever broadens it without updating multipliers we
+        # want a clear error, not a KeyError.
+        raise ValueError(f"overlay_size unit {unit!r} unsupported")
+    mb = int(n * multipliers[unit])
+    if mb < 1:
+        raise ValueError(f"overlay_size {size!r} resolves to <1MB")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    result = subprocess.run(
+        ["apptainer", "overlay", "create", "--size", str(mb), str(path)],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"apptainer overlay create failed (rc={result.returncode}): "
+            f"{result.stderr.strip()}"
+        )
 
 
 def _build_sif_from_uri(sif_path: Path, uri: str) -> bool:

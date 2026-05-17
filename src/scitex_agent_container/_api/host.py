@@ -10,10 +10,7 @@ from .._mcp._tools._host import (
     host_probe as probe,
 )
 from .._mcp._tools._host import (
-    host_show as show,
-)
-from .._mcp._tools._host import (
     host_validate as validate,
 )
 
-__all__ = ["show", "list", "validate", "probe", "exec"]
+__all__ = ["list", "validate", "probe", "exec"]

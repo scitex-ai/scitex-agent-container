@@ -1,7 +1,7 @@
 """CLI commands for account and quota management.
 
-Provides the ``account`` subcommand group (save/list/delete/switch) and
-the top-level ``quota-watch`` command.
+Provides the ``account`` subcommand group (save/list/delete/switch/status)
+and the top-level ``quota-watch`` command.
 """
 
 from __future__ import annotations
@@ -287,6 +287,61 @@ def account_watch_quota(
         daemon=daemon,
         log_path=log_path,
     )
+
+
+# ---------------------------------------------------------------------------
+# status — one-shot quota snapshot, optionally over ssh to a peer.
+# ---------------------------------------------------------------------------
+
+
+@account.command("status")
+@click.option(
+    "--host",
+    "host",
+    default=None,
+    help=(
+        "Peer name from ~/.scitex/agent-container/config.yaml. When set, "
+        "ssh to that peer and run `sac accounts status --json` there."
+    ),
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Emit a JSON object instead of human prose.",
+)
+def account_status(host: str | None, as_json: bool) -> None:
+    """One-shot quota snapshot (5h%, 7d%, account email + tier).
+
+    \b
+    Examples:
+      $ sac accounts status
+      $ sac accounts status --json
+      $ sac accounts status --host spartan
+    """
+    import json as _json
+
+    from ._account_status import (
+        StatusError,
+        collect_status,
+        collect_status_remote,
+        format_status_prose,
+    )
+
+    try:
+        if host is not None:
+            snapshot = collect_status_remote(host)
+        else:
+            snapshot = collect_status()
+    except StatusError as exc:
+        click.echo(f"error: {exc}", err=True)
+        raise SystemExit(1)
+
+    if as_json:
+        click.echo(_json.dumps(snapshot, ensure_ascii=False, indent=2))
+    else:
+        click.echo(format_status_prose(snapshot))
 
 
 @click.command("watch-quota")

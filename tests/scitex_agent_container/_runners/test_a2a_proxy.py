@@ -32,7 +32,7 @@ def _make_upstream(
     async def post_turn(request: Request) -> JSONResponse:
         if turn_handler is None:
             body = await request.json()
-            return JSONResponse({"reply": f"echo:{body.get('text', '')}"})
+            return JSONResponse({"text": f"echo:{body.get('text', '')}"})
         return await turn_handler(request)
 
     async def get_card(request: Request) -> JSONResponse:
@@ -265,7 +265,7 @@ def test_post_v1_turn_forward_returns_status_200(
     assert status == 200
 
 
-def test_post_v1_turn_forward_returns_upstream_reply_body(
+def test_post_v1_turn_forward_returns_upstream_text_body(
     forward_roundtrip_response: httpx.Response,
 ) -> None:
     # Arrange
@@ -273,7 +273,7 @@ def test_post_v1_turn_forward_returns_upstream_reply_body(
     # Act
     body = r.json()
     # Assert
-    assert body == {"reply": "echo:hello"}
+    assert body == {"text": "echo:hello"}
 
 
 # ---------------------------------------------------------------------------
@@ -386,7 +386,7 @@ def redacted_prompt_run() -> tuple[httpx.Response, dict[str, bool]]:
 
     async def handler(request: Request) -> Response:
         called["forwarded"] = True
-        return JSONResponse({"reply": "should-not-see-this"})
+        return JSONResponse({"text": "should-not-see-this"})
 
     upstream = _make_upstream(turn_handler=handler)
     client = _client_for_upstream(upstream)
@@ -874,7 +874,7 @@ def upstream_non_json_response() -> httpx.Response:
         return tc.post("/v1/turn", json={"text": "hi"})
 
 
-def test_upstream_non_json_wraps_text_as_reply_field(
+def test_upstream_non_json_wraps_text_as_text_field(
     upstream_non_json_response: httpx.Response,
 ) -> None:
     # Arrange
@@ -882,7 +882,7 @@ def test_upstream_non_json_wraps_text_as_reply_field(
     # Act
     body = r.json()
     # Assert
-    assert body == {"reply": "plain-text-reply"}
+    assert body == {"text": "plain-text-reply"}
 
 
 # ---------------------------------------------------------------------------
@@ -917,7 +917,7 @@ def real_upstream_server() -> Any:
     async def post_turn(request: Request) -> JSONResponse:
         recorder["hits"] += 1
         body = await request.json()
-        return JSONResponse({"reply": f"echo:{body.get('text', '')}"})
+        return JSONResponse({"text": f"echo:{body.get('text', '')}"})
 
     async def get_card(request: Request) -> JSONResponse:
         return JSONResponse({"name": "real-peer", "skills": []})
@@ -1036,7 +1036,7 @@ def test_fresh_client_post_returns_echo_body(
     # Act
     body = r.json()
     # Assert
-    assert body == {"reply": "echo:hi"}
+    assert body == {"text": "echo:hi"}
 
 
 # ---------------------------------------------------------------------------
