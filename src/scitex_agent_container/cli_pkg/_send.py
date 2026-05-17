@@ -10,6 +10,7 @@ Failure surfaces are sharp — no silent fallbacks:
 
   * Agent has no active state.db row     -> status="error", agent not running
   * Row has no a2a_port                  -> status="error", no a2a_port
+  * Lead or peer creds expired           -> status="creds-expired" (loud)
   * Transport timeout                    -> status="timeout", informative msg
   * Sidecar returns non-200              -> status="error", HTTP code + body
   * Sidecar returns malformed JSON       -> status="error", malformed body
@@ -17,12 +18,16 @@ Failure surfaces are sharp — no silent fallbacks:
 
 For unit testing without hitting the OS network stack, callers can
 swap :data:`_post_turn` for a fake at the module level — the helper
-resolves the symbol at call time, so the swap takes effect.
+resolves the symbol at call time, so the swap takes effect. The
+preflight creds check accepts an explicit ``ssh_runner=`` callable so
+the peer probe path is testable without an actual ssh subprocess.
 """
 
 from __future__ import annotations
 
 from typing import Any
+
+from ._send_preflight import SshRunner, preflight_send_creds
 
 __all__ = ["send_to_agent"]
 
@@ -56,6 +61,8 @@ def send_to_agent(
     timeout_seconds: int = 120,
     model: str | None = None,
     max_turns: int | None = None,
+    ssh_runner: SshRunner | None = None,
+    lead_creds_path: Any = None,
 ) -> dict[str, Any]:
     """Send a turn to ``name``'s live A2A sidecar; return a structured dict.
 
@@ -65,8 +72,22 @@ def send_to_agent(
         ``{"status": "error", "error": "..."}`` when the agent isn't
         running, the row has no a2a_port, transport fails, or the
         sidecar returns non-200;
+        ``{"status": "creds-expired", "error": "...", "agent": str}``
+        when the lead's OAuth token (or the peer's, via ssh probe) is
+        expired / near-expiry. Refuses to dispatch.
         ``{"status": "timeout", "error": "no response in <N>s"}`` when
         the sidecar doesn't reply within ``timeout_seconds``.
+
+    Args:
+        ssh_runner: Optional injection seam for the peer-side OAuth
+            probe. Defaults to :func:`_send_preflight.default_ssh_runner`
+            (real ssh). Tests pass a fake that returns a
+            ``CompletedProcess`` with the desired ``returncode``.
+        lead_creds_path: Optional override for the lead-local
+            credentials path. Defaults to
+            ``~/.claude/.credentials.json`` inside the preflight helper.
+            Tests pass a ``tmp_path`` so the operator's real file is
+            never read.
 
     Raises:
         ValueError: When ``prompt`` and ``key`` are both passed (or
@@ -120,6 +141,20 @@ def send_to_agent(
         metadata_extras["model"] = model
     if max_turns is not None:
         metadata_extras["max_turns"] = int(max_turns)
+
+    # Preflight: refuse to dispatch on stale OAuth so a 401 doesn't
+    # silently land in the in-container session.jsonl. Lead-local
+    # creds are always probed; cross-host adds an ssh probe of the
+    # peer's ~/.claude/.credentials.json.
+    preflight_result = preflight_send_creds(
+        name,
+        peer_host=peer_host or current_host,
+        current_host=current_host,
+        lead_creds_path=lead_creds_path,
+        ssh_runner=ssh_runner,
+    )
+    if preflight_result is not None:
+        return preflight_result
 
     try:
         reply, body = _post_turn(url, text, timeout_s=float(timeout_seconds))
