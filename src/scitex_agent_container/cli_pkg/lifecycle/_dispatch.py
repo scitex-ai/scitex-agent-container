@@ -290,4 +290,101 @@ def try_dispatch(
     return True
 
 
-__all__ = ["_dispatch_remote_start", "try_dispatch"]
+def lookup_remote_peer(name: str) -> tuple[str, dict] | None:
+    """Look up the active instance row for ``name``; return (peer, row) when remote.
+
+    Returns:
+        * ``None`` when no active row exists, or the row lives on the
+          current host (caller proceeds locally).
+        * ``(peer_name, row_dict)`` when the row's ``host`` differs from
+          the current canonical hostname — the verb-specific caller is
+          expected to dispatch via ssh to ``peer_name``.
+
+    The row dict mirrors the ``instances`` table columns (id, name,
+    host, a2a_port, started_at, ended_at, ...). Callers care about
+    ``host`` and ``a2a_port`` mostly.
+
+    Resolution chain for current_host matches ``state_db._resolve_host``
+    (env override → ``host.canonical`` → ``host.aliases`` → ``hostname -s``),
+    so a row written under one alias is matched when the same alias is
+    set on this run.
+
+    Failure modes (state.db missing, schema not yet created) raise
+    ``RuntimeError`` rather than degrading silently — a missing
+    instances row is a legitimate "not running" signal, but a missing
+    database when one was expected is a configuration error.
+    """
+    from ..._state.state_db import _resolve_host, list_active_instances
+
+    rows = list_active_instances()
+    matching = [r for r in rows if r.get("name") == name]
+    if not matching:
+        return None
+    # Latest row wins (started_at DESC order from list_active_instances).
+    row = matching[0]
+    peer = str(row.get("host") or "")
+    if not peer:
+        return None
+    current_host = _resolve_host(None)
+    if peer == current_host:
+        return None
+    return peer, row
+
+
+def try_dispatch_remote(
+    name: str,
+    verb: str,
+    peers: Mapping[str, "PeerSpec"],
+    *,
+    handler,
+) -> bool:
+    """Generic cross-host dispatcher driven by ``state.db.instances``.
+
+    Used by ``stop`` / ``tail`` / ``send`` / ``delete`` to route a
+    lifecycle command to the peer that holds the agent's active
+    instance row. ``start`` uses the sibling :func:`try_dispatch`
+    helper because its routing is driven by ``spec.host`` (the row
+    doesn't exist yet at start time).
+
+    Args:
+        name: Agent name to look up in ``state.db.instances``.
+        verb: Human-readable verb used in error messages (e.g. ``"stop"``).
+        peers: Result of ``host_config.load().peers``. The looked-up
+            peer name MUST appear in this mapping; otherwise the
+            handoff fails loudly (operator's ``peers.yaml`` is missing
+            an entry).
+        handler: Callable ``handler(peer_name, row_dict, peers)`` that
+            performs the actual ssh / HTTP work. Called only when the
+            row is remote; raises propagate.
+
+    Returns:
+        * ``False`` when no active row exists for ``name`` OR the row
+          lives on the current host — caller proceeds with local
+          handling.
+        * ``True`` when ``handler`` was dispatched successfully.
+
+    Raises:
+        RuntimeError: When the resolved peer is not in ``peers``
+            (the lead's peers.yaml needs the entry).
+    """
+    found = lookup_remote_peer(name)
+    if found is None:
+        return False
+    peer, row = found
+    if peer not in peers:
+        raise RuntimeError(
+            f"Agent {name!r} active on peer {peer!r} per state.db, but "
+            f"{peer!r} is NOT in ~/.scitex/agent-container/config.yaml's "
+            f"peers: section. Cannot {verb} cross-host without an ssh "
+            f"target. Add the peer entry and retry."
+        )
+    handler(peer, row, peers)
+    return True
+
+
+__all__ = [
+    "_dispatch_remote_start",
+    "lookup_remote_peer",
+    "try_dispatch",
+    "try_dispatch_remote",
+]

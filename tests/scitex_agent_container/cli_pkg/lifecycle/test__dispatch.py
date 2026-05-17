@@ -23,6 +23,8 @@ import pytest
 
 from scitex_agent_container.cli_pkg.lifecycle._dispatch import (
     _dispatch_remote_start,
+    lookup_remote_peer,
+    try_dispatch_remote,
 )
 
 # ---------------------------------------------------------------------------
@@ -145,10 +147,22 @@ def shim_bin(tmp_path: Path, env_save_restore) -> Path:
 
 @pytest.fixture
 def state_db(fake_home: Path, env_save_restore) -> Path:
-    """Redirect state.db to a tmp path under fake_home."""
+    """Redirect state.db to a tmp path under fake_home.
+
+    DEFAULT_DB_PATH is module-level and reads the env var at import
+    time, so we reload the module after setting the env var. Tests
+    that mutate state.db rely on this to stay isolated; without the
+    reload each test would write to the user's real state.db.
+    """
+    import importlib
+
     db = fake_home / "state.db"
     env_save_restore.set("SCITEX_AGENT_CONTAINER_STATE_DB", str(db))
-    return db
+    import scitex_agent_container._state.state_db as _state_db_mod
+
+    importlib.reload(_state_db_mod)
+    yield db
+    importlib.reload(_state_db_mod)
 
 
 def _write_peer_config(
@@ -497,3 +511,110 @@ class TestDispatchSshArgv:
         _act_dispatch(shim_bin, capsys, rsync_kwargs=_RK_OK, ssh_kwargs=_SK_OK)
         # Assert
         assert any("bash -c" in tok for tok in _ssh_invocations(shim_bin)[-1])
+
+
+# ---------------------------------------------------------------------------
+# lookup_remote_peer + try_dispatch_remote: state.db-driven routing.
+# ---------------------------------------------------------------------------
+
+
+class TestLookupRemotePeer:
+    def test_no_active_row_returns_none(self, fake_home, state_db, env_save_restore):
+        # Arrange — fresh state.db with no instances row for "alpha".
+        from scitex_agent_container._state.state_db import init_schema
+
+        init_schema()
+        # Act
+        result = lookup_remote_peer("alpha")
+        # Assert
+        assert result is None
+
+    def test_local_active_row_returns_none(self, fake_home, state_db, env_save_restore):
+        # Arrange — write a row whose host matches the current_host (so
+        # ``state_db._resolve_host`` will collapse to the same value).
+        env_save_restore.set("SAC_HOST", "local-host-x")
+        from scitex_agent_container._state.state_db import record_instance_start
+
+        record_instance_start(name="alpha", host="local-host-x")
+        # Act
+        result = lookup_remote_peer("alpha")
+        # Assert
+        assert result is None
+
+    def test_remote_active_row_returns_peer_and_row(
+        self, fake_home, state_db, env_save_restore
+    ):
+        # Arrange — row's host differs from this run's current_host.
+        env_save_restore.set("SAC_HOST", "lead-host")
+        from scitex_agent_container._state.state_db import record_instance_start
+
+        record_instance_start(name="alpha", host="peer-host", a2a_port=18888)
+        # Act
+        peer, row = lookup_remote_peer("alpha")  # type: ignore[misc]
+        # Assert
+        assert (peer, row["a2a_port"]) == ("peer-host", 18888)
+
+
+class TestTryDispatchRemote:
+    def _peers_with(self, *names):
+        from scitex_agent_container._state.host_config import PeerSpec
+
+        return {n: PeerSpec(name=n, ssh=n) for n in names}
+
+    def test_no_active_row_returns_false(self, fake_home, state_db, env_save_restore):
+        # Arrange — no row; caller proceeds local.
+        from scitex_agent_container._state.state_db import init_schema
+
+        init_schema()
+        calls: list = []
+        # Act
+        dispatched = try_dispatch_remote(
+            "ghost",
+            "stop",
+            self._peers_with("peer-host"),
+            handler=lambda p, r, ps: calls.append((p, r)),
+        )
+        # Assert
+        assert dispatched is False
+
+    def test_remote_row_calls_handler_returns_true(
+        self, fake_home, state_db, env_save_restore
+    ):
+        # Arrange
+        env_save_restore.set("SAC_HOST", "lead-host")
+        from scitex_agent_container._state.state_db import record_instance_start
+
+        record_instance_start(name="alpha", host="peer-host", a2a_port=18888)
+        calls: list = []
+        # Act
+        dispatched = try_dispatch_remote(
+            "alpha",
+            "stop",
+            self._peers_with("peer-host"),
+            handler=lambda p, r, ps: calls.append((p, r["a2a_port"])),
+        )
+        # Assert
+        assert dispatched is True and calls == [("peer-host", 18888)]
+
+    def test_remote_peer_not_in_peers_raises_runtime_error(
+        self, fake_home, state_db, env_save_restore
+    ):
+        # Arrange — row points at a peer that the lead's config.yaml
+        # does NOT define. Must surface, not silently skip.
+        env_save_restore.set("SAC_HOST", "lead-host")
+        from scitex_agent_container._state.state_db import record_instance_start
+
+        record_instance_start(name="alpha", host="unknown-peer")
+
+        # Act
+        def _do() -> None:
+            try_dispatch_remote(
+                "alpha",
+                "stop",
+                self._peers_with("other-peer"),
+                handler=lambda p, r, ps: None,
+            )
+
+        # Assert
+        with pytest.raises(RuntimeError, match="NOT in"):
+            _do()
