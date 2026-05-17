@@ -212,9 +212,9 @@
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.skills</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.context_management"><code class="docutils literal notranslate"><span class="pre">AgentConfig.context_management</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_commands"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_commands</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_prompts"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_prompts</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.mcp_servers"><code class="docutils literal notranslate"><span class="pre">AgentConfig.mcp_servers</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.multiplexer"><code class="docutils literal notranslate"><span class="pre">AgentConfig.multiplexer</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hosts_spec"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hosts_spec</span></code></a></li>
@@ -715,6 +715,29 @@ leak vector (previous-run state contaminates the next run):</p>
 <li><p>Clew experiments: ephemeral overlay (create on start, destroy on stop)</p></li>
 <li><p>Persistent overlay: include the overlay hash in the verification chain</p></li>
 <li><p>One agent ↔ one overlay; never share</p></li>
+</ul>
+<p><strong>Declarative auto-create (sac).</strong> sac drives overlay provisioning
+from the spec so new peers don’t require a manual
+<code class="docutils literal notranslate"><span class="pre">apptainer</span> <span class="pre">overlay</span> <span class="pre">create</span></code> setup step:</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">apptainer</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">overlay</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">proj-&lt;peer&gt;.overlay.img</span><span class="w">   </span><span class="c1"># path (workdir-relative ok)</span>
+<span class="w">    </span><span class="nt">overlay_size</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;5G&quot;</span><span class="w">                  </span><span class="c1"># units: M/MB/G/GB only</span>
+<span class="w">    </span><span class="nt">overlay_create_if_missing</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">     </span><span class="c1"># default; set false to gate off</span>
+</pre></div>
+</div>
+<p>Semantics:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">overlay_size</span></code> set + overlay path missing + <code class="docutils literal notranslate"><span class="pre">overlay_create_if_missing</span></code>
+true (default) → sac runs
+<code class="docutils literal notranslate"><span class="pre">apptainer</span> <span class="pre">overlay</span> <span class="pre">create</span> <span class="pre">--size</span> <span class="pre">&lt;MB&gt;</span> <span class="pre">&lt;path&gt;</span></code> before launch.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">overlay_size</span></code> set but <code class="docutils literal notranslate"><span class="pre">overlay_create_if_missing:</span> <span class="pre">false</span></code> → sac raises
+<code class="docutils literal notranslate"><span class="pre">FileNotFoundError</span></code> (operator must pre-create).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">overlay_size</span></code> empty + overlay missing → sac raises
+<code class="docutils literal notranslate"><span class="pre">FileNotFoundError</span></code> early with a helpful message instead of letting
+apptainer fail cryptically at exec time.</p></li>
+<li><p>K/KB units are explicitly rejected — apptainer’s
+<code class="docutils literal notranslate"><span class="pre">overlay</span> <span class="pre">create</span> <span class="pre">--size</span></code> takes integer MB.</p></li>
 </ul>
 </section>
 <section id="writable-vs-writable-tmpfs-confusion">

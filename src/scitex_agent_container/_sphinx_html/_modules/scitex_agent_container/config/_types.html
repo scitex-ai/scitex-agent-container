@@ -209,9 +209,9 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.skills</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.context_management"><code class="docutils literal notranslate"><span class="pre">AgentConfig.context_management</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_commands"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_commands</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_prompts"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_prompts</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.mcp_servers"><code class="docutils literal notranslate"><span class="pre">AgentConfig.mcp_servers</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.multiplexer"><code class="docutils literal notranslate"><span class="pre">AgentConfig.multiplexer</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hosts_spec"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hosts_spec</span></code></a></li>
@@ -601,6 +601,23 @@
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Writable apptainer overlay image (``--overlay &lt;file&gt;``). Empty =</span>
 <span class="sd">    no overlay (tmpfs writable layer). Non-absolute paths resolve</span>
 <span class="sd">    against ``spec.workdir``. See ``docs/isolation.md`` §7.&quot;&quot;&quot;</span>
+
+    <span class="n">overlay_size</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;When set together with ``overlay``, sac auto-creates the overlay</span>
+<span class="sd">    image with the given size if it doesn&#39;t exist before launching.</span>
+<span class="sd">    Accepts apptainer-style sizes with units M/MB/G/GB only (e.g.</span>
+<span class="sd">    ``&quot;5G&quot;``, ``&quot;500M&quot;``, ``&quot;1024MB&quot;``). K/KB are explicitly rejected —</span>
+<span class="sd">    apptainer&#39;s ``overlay create --size`` takes integer MB so sub-MB</span>
+<span class="sd">    granularity makes no sense. Empty = no auto-create (default;</span>
+<span class="sd">    missing overlay raises FileNotFoundError at launch with a clear</span>
+<span class="sd">    message). See ``docs/isolation.md`` §7.&quot;&quot;&quot;</span>
+
+    <span class="n">overlay_create_if_missing</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;When True (default) AND ``overlay_size`` is set AND the overlay</span>
+<span class="sd">    path does not exist, sac runs ``apptainer overlay create --size</span>
+<span class="sd">    &lt;MB&gt; &lt;path&gt;`` before launching. When False, sac never creates</span>
+<span class="sd">    overlays even if size is given (operator must pre-create — sac</span>
+<span class="sd">    raises FileNotFoundError instead). See ``docs/isolation.md`` §7.&quot;&quot;&quot;</span>
 
     <span class="n">relaxed</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Opt out of sac&#39;s hardened defaults (auto-prepended</span>
