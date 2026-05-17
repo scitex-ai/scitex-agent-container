@@ -973,9 +973,27 @@ def test_argv_mounts_credentials_file_when_present(
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
     # Assert
     assert any(
-        a.startswith(str(creds)) and "/tmp/sac-claude/.credentials.json:ro" in a
+        a.startswith(str(creds)) and "/tmp/sac-claude/.credentials.json:rw" in a
         for a in argv
     )
+
+
+def test_argv_credentials_bind_is_read_write(
+    tmp_path: Path, home_redirect: Path
+) -> None:
+    # Arrange — RW lets the in-container CLI refresh the OAuth
+    # accessToken in place when it expires (~1h cadence), avoiding the
+    # manual scp-from-lead dance to re-seed expired peers.
+    creds = home_redirect / ".claude" / ".credentials.json"
+    creds.parent.mkdir(parents=True, exist_ok=True)
+    creds.write_text("{}")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path)
+    # Act
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    creds_arg = next(a for a in argv if "/tmp/sac-claude/.credentials.json" in a)
+    # Assert
+    assert ":ro" not in creds_arg
 
 
 def test_argv_sets_claude_config_dir_when_credentials_present(

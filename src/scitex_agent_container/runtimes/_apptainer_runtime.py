@@ -212,17 +212,25 @@ class ApptainerContainerRuntime(RuntimeBase):
             if val:
                 argv += ["--env", f"{auth_env}={val}"]
 
-        # Mount operator's Pro/Max credentials when present (read-only).
+        # Mount operator's Pro/Max credentials when present.
         # Target lives under /tmp/ (writable tmpfs / overlay) rather
         # than $HOME — the D2 preflight requires $HOME to be empty, and
         # binding under $HOME would scaffold a host-mirroring directory.
         # CLAUDE_CONFIG_DIR points the SDK at this dir so it finds the
         # credentials file without needing $HOME pollution.
+        #
+        # Mounted RW (no ``:ro``) so the in-container Claude CLI can
+        # refresh the OAuth ``accessToken`` in place when the host's
+        # token expires (~1h cadence). Without RW the bind-mounted file
+        # is frozen and every container 401s after token-expiry, forcing
+        # a manual scp-from-lead dance to re-seed peers. The CLI's
+        # refresh code-path itself is responsible for any concurrency
+        # locking — the bind is just a file passthrough.
         cred_file = Path.home() / ".claude" / ".credentials.json"
         if cred_file.is_file():
             argv += [
                 "--bind",
-                f"{cred_file}:/tmp/sac-claude/.credentials.json:ro",
+                f"{cred_file}:/tmp/sac-claude/.credentials.json:rw",
                 "--env",
                 "CLAUDE_CONFIG_DIR=/tmp/sac-claude",
             ]
