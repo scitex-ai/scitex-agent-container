@@ -36,6 +36,9 @@ from .._mcp._tools._agent import (
     agent_restart as restart,
 )
 from .._mcp._tools._agent import (
+    agent_send as send,
+)
+from .._mcp._tools._agent import (
     agent_start as start,
 )
 from .._mcp._tools._agent import (
@@ -67,4 +70,5 @@ __all__ = [
     "start",
     "stop",
     "restart",
+    "send",
 ]
