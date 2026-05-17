@@ -57,9 +57,9 @@ The server exposes the standard A2A routes:
 
 | Method | Path | Returns |
 | --- | --- | --- |
-| GET | `/.well-known/agent.json` | fleet AgentCard listing all agents in this server |
+| GET | `/.well-known/agent-card.json` | fleet AgentCard listing all agents in this server |
 | GET | `/agents/` | JSON list of agents |
-| GET | `/agents/<name>/.well-known/agent.json` | per-agent AgentCard (protobuf via `_card.project_card_proto`) |
+| GET | `/agents/<name>/.well-known/agent-card.json` | per-agent AgentCard (protobuf via `_card.project_card_proto`) |
 | POST | `/agents/<name>` | JSON-RPC SDK 1.x methods (see below) |
 
 ### SDK 1.x methods (gRPC-style names)
@@ -83,7 +83,7 @@ Clients MUST set `A2A-Version: 1.0` header. Params use proto **snake_case** (`me
 sac a2a serve my-agent.yaml --port 8888 &
 
 # Discovery
-curl http://127.0.0.1:8888/.well-known/agent.json | jq .name
+curl http://127.0.0.1:8888/.well-known/agent-card.json | jq .name
 
 # JSON-RPC SendMessage (SDK 1.x)
 curl -s -X POST http://127.0.0.1:8888/agents/<name>/ \
@@ -140,7 +140,7 @@ sac uses the official Python `a2a-sdk[http-server]>=1.0.2`. Handlers are `AgentE
 
 - **`protobuf<7` required**: a2a-sdk 1.0.2 reads `FieldDescriptor.label` which protobuf 7.x removed. Pinned in deps.
 - **`uvicorn ws="none"`**: A2A is HTTP+SSE only — uvicorn 0.27's WS protocol auto-loader breaks on websockets 15.x (`websockets.legacy` removed). Sac passes `ws="none"` so the sidecar boots cleanly.
-- **AgentCard is protobuf**: SDK 1.x expects a protobuf `AgentCard`, not pydantic dict. `_card.project_card_proto()` is the adapter; the dict form (`project_card()`) is still served at `/.well-known/agent.json`.
+- **AgentCard is protobuf**: SDK 1.x expects a protobuf `AgentCard`, not pydantic dict. `_card.project_card_proto()` is the adapter; the dict form (`project_card()`) is still served at `/.well-known/agent-card.json`.
 
 ## Boundary with orochi
 
