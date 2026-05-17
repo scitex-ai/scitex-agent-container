@@ -99,7 +99,7 @@ def resolve_peer_url(agent_name: str) -> str:
 
     Looks up the agent's YAML via the standard discovery chain
     (project-local → ``~/.scitex/agent-container/agents/`` → env →
-    fleet dirs), reads ``spec.a2a.{host,port}`` and ``spec.remote.host``,
+    fleet dirs), reads ``spec.a2a.{host,port}`` and ``spec.host``,
     and returns the URL the caller should POST to.
 
     When the YAML pins ``spec.a2a.port: auto`` the actual bound port
@@ -108,13 +108,18 @@ def resolve_peer_url(agent_name: str) -> str:
     consult that table by ``agent_name`` to discover the real port.
     See foundation-polish bug 1.
 
-    For **remote** agents (``spec.remote.host`` set) the returned URL is
-    a synthetic ``ssh://<host>:<port>/v1/turn`` form that
-    :func:`post_turn_to_url` recognises and dispatches via
+    For **cross-host** agents (``spec.host`` is set to a non-local peer
+    name) the returned URL is a synthetic ``ssh://<host>:<port>/v1/turn``
+    form that :func:`post_turn_to_url` recognises and dispatches via
     ``ssh <host> curl http://127.0.0.1:<port>/...``. This way the agent
     can keep ``spec.a2a.host: 127.0.0.1`` (more secure) and remote
     callers still reach it through the ssh control plane — no LAN
     exposure required, no DNS resolution needed for ssh aliases.
+
+    The same ``spec.host`` field is consulted by ``sac start`` for
+    dispatch, so post-turn cannot disagree about where the agent
+    lives. ``spec.remote.host`` is no longer consulted (legacy spec
+    files with ``spec.remote.host`` set should migrate to ``spec.host``).
     """
     from ..config._resolve import resolve_config
 
@@ -123,7 +128,7 @@ def resolve_peer_url(agent_name: str) -> str:
     except FileNotFoundError as exc:
         raise PeerError(str(exc)) from exc
 
-    a2a_host, a2a_port, remote_host = _read_yaml_endpoints(yaml_path)
+    a2a_host, a2a_port, dest_host = _read_yaml_endpoints(yaml_path)
     if a2a_port is None:
         a2a_port = _lookup_bound_port(agent_name)
     if a2a_port is None:
@@ -136,12 +141,27 @@ def resolve_peer_url(agent_name: str) -> str:
             f"agent {agent_name!r} has no spec.a2a.port — add a port to "
             "its YAML to enable inbound /v1/turn"
         )
-    if remote_host:
+    if dest_host and not _is_local_host(dest_host):
         # Tunnel via ssh — agent's a2a.host can stay loopback (default).
-        return f"ssh://{remote_host}:{a2a_port}/v1/turn"
-    # Local agent
+        return f"ssh://{dest_host}:{a2a_port}/v1/turn"
+    # Local agent (spec.host empty or pointing at this machine).
     host = a2a_host or "127.0.0.1"
     return f"http://{host}:{a2a_port}/v1/turn"
+
+
+def _is_local_host(dest_host: str) -> bool:
+    """Return True iff ``dest_host`` names the current machine.
+
+    Consults host_config's canonical hostname so an agent pinned to
+    its own host is reached via http://127.0.0.1, not via ssh-to-self.
+    Any resolution failure raises — we do not silently treat unknown
+    hosts as local (would mask config drift).
+    """
+    from .._state.host_config import load as load_host_config
+
+    cfg = load_host_config()
+    canonical = cfg.canonical_host()
+    return dest_host == canonical or dest_host in cfg.host.aliases
 
 
 def _lookup_bound_port(agent_name: str) -> int | None:
@@ -283,7 +303,13 @@ def _post_turn_via_ssh(
 
 
 def _read_yaml_endpoints(yaml_path: str) -> tuple[str | None, int | None, str | None]:
-    """Return ``(a2a_host, a2a_port, remote_host)`` from a v3 YAML file.
+    """Return ``(a2a_host, a2a_port, dest_host)`` from a v3 YAML file.
+
+    ``dest_host`` is the agent's destination peer name (the value of
+    ``spec.host``). It is the same lookup key used by cross-host
+    dispatch, so peer routing and start dispatch agree on a single
+    field. SSH alias resolution happens at the SSH layer
+    (``~/.ssh/config``), not here.
 
     Best-effort: any IO / parse failure produces ``(None, None, None)``.
     """
@@ -297,24 +323,21 @@ def _read_yaml_endpoints(yaml_path: str) -> tuple[str | None, int | None, str | 
         return (None, None, None)
     spec = (v3.get("spec") or {}) if isinstance(v3, dict) else {}
     a2a: dict[str, Any] = spec.get("a2a") or {}
-    remote: dict[str, Any] = spec.get("remote") or {}
     a2a_port = a2a.get("port")
     if not isinstance(a2a_port, int) or a2a_port <= 0:
         a2a_port = None
     a2a_host = a2a.get("host")
     if not isinstance(a2a_host, str) or not a2a_host.strip():
         a2a_host = None
-    # spec.remote can be a dict, a string ("ssh-alias"), or a list (chain).
-    remote_host: str | None = None
-    if isinstance(remote, dict):
-        rh = remote.get("host")
-        if isinstance(rh, str) and rh.strip():
-            remote_host = rh
-    elif isinstance(remote, str) and remote.strip():
-        remote_host = remote
-    elif isinstance(remote, list) and remote:
-        # Chain form: last alias is the destination.
-        last = remote[-1]
+    # spec.host (HostsSpec) is the single source of truth for the
+    # destination peer. Can be empty (local), a string (one host),
+    # or a list (priority chain — last entry wins for routing).
+    raw_host = spec.get("host")
+    dest_host: str | None = None
+    if isinstance(raw_host, str) and raw_host.strip():
+        dest_host = raw_host.strip()
+    elif isinstance(raw_host, list) and raw_host:
+        last = raw_host[-1]
         if isinstance(last, str) and last.strip():
-            remote_host = last
-    return (a2a_host, a2a_port, remote_host)
+            dest_host = last.strip()
+    return (a2a_host, a2a_port, dest_host)
