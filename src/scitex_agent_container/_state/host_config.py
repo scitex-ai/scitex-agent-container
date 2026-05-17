@@ -37,6 +37,8 @@ via ``hostname -s``.
 
 from __future__ import annotations
 
+import dataclasses
+import fnmatch
 import os
 import socket
 from dataclasses import dataclass, field
@@ -200,13 +202,16 @@ class Config:
         """
         errors: list[str] = []
         for pname, p in self.peers.items():
+            # Skip glob-pattern keys — their ssh is synthesized per-query
+            # from the matched hostname (see PeersMap.__getitem__).
+            is_pattern = any(c in pname for c in "*?[")
             for hop in p.via:
                 if hop not in self.peers:
                     errors.append(
                         f"peer '{pname}': via=[..., '{hop}', ...] references "
                         f"an unknown peer (define '{hop}' under peers:)"
                     )
-            if not p.ssh and p.resolve is None:
+            if not p.ssh and p.resolve is None and not is_pattern:
                 errors.append(
                     f"peer '{pname}': ssh: is required (or set resolve: to "
                     f"populate it at dispatch time)"
@@ -218,6 +223,52 @@ class Config:
                 f"got {self.host.fallback!r}"
             )
         return errors
+
+
+class PeersMap(dict):
+    """Dict of ``name -> PeerSpec`` with glob-pattern fallback on lookup.
+
+    Keys may include fnmatch metacharacters (``*``, ``?``, ``[...]``).
+    On ``__getitem__``/``__contains__``/``get``, an exact match wins;
+    otherwise pattern keys are tried in insertion order and the first
+    match returns a synthesized :class:`PeerSpec` carrying the queried
+    name (not the pattern) and the pattern's other fields. The
+    synthesized peer's ``ssh`` falls back to the queried name when the
+    pattern entry left ``ssh`` blank — so ``spartan*: { via: [spartan],
+    env_preamble: ... }`` resolves ``spartan-bm043`` to a peer with
+    ``ssh=spartan-bm043`` and the shared env_preamble.
+
+    Iteration (``items()``, ``keys()``, ``len()``) is unchanged — it
+    enumerates the literal config entries, including pattern keys.
+    """
+
+    def _glob_match(self, key):
+        if not isinstance(key, str):
+            return None
+        for pattern in self.keys():
+            if any(c in pattern for c in "*?[") and fnmatch.fnmatchcase(key, pattern):
+                spec = dict.__getitem__(self, pattern)
+                return dataclasses.replace(spec, name=key, ssh=(spec.ssh or key))
+        return None
+
+    def __getitem__(self, key):
+        if dict.__contains__(self, key):
+            return dict.__getitem__(self, key)
+        matched = self._glob_match(key)
+        if matched is not None:
+            return matched
+        raise KeyError(key)
+
+    def __contains__(self, key):
+        if dict.__contains__(self, key):
+            return True
+        return self._glob_match(key) is not None
+
+    def get(self, key, default=None):
+        try:
+            return self[key]
+        except KeyError:
+            return default
 
 
 def load(path: Path | None = None) -> Config:
@@ -244,7 +295,7 @@ def load(path: Path | None = None) -> Config:
     peers_raw = raw.get("peers") or {}
     if not isinstance(peers_raw, dict):
         raise ValueError(f"config.yaml: 'peers' must be a mapping: {p}")
-    peers: dict[str, PeerSpec] = {}
+    peers: PeersMap = PeersMap()
     for name, spec in peers_raw.items():
         if not isinstance(spec, dict):
             raise ValueError(
