@@ -153,7 +153,7 @@ def test_post_turn_json_emits_full_envelope() -> None:
     # Act
     result = invoke()
     # Assert
-    assert json.loads(result.output) == {"reply": "ok", "exit_after": False}
+    assert json.loads(result.output) == {"text": "ok", "exit_after": False}
 
 
 # ---------------------------------------------------------------------------
