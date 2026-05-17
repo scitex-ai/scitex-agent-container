@@ -426,3 +426,126 @@ def test_missing_spec_yaml_still_exits_with_zero_status_code(tmp_path):
         result = runner.invoke(delete, ["alpha"])
     # Assert
     assert result.exit_code == 0
+
+
+# ---------------------------------------------------------------------------
+# Cross-host delete: state.db row on peer → ssh stop + rm + close row.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def cross_host_delete_env(tmp_path):
+    """State.db redirect + peer config + ssh shim for cross-host delete."""
+    import importlib
+    import json
+    import sys
+
+    db = tmp_path / "state.db"
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "host:\n  fallback: hostname-short\npeers:\n  peer-x:\n    ssh: peer-x\n"
+    )
+    saved_db = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
+    saved_host = os.environ.get("SAC_HOST")
+    saved_cfg = os.environ.get("SCITEX_AGENT_CONTAINER_CONFIG")
+    saved_path = os.environ.get("PATH", "")
+    os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
+    os.environ["SAC_HOST"] = "lead-host"
+    os.environ["SCITEX_AGENT_CONTAINER_CONFIG"] = str(cfg)
+    bin_dir = tmp_path / "_shim_bin"
+    bin_dir.mkdir(exist_ok=True)
+    log = bin_dir / "ssh.argv.jsonl"
+    script = bin_dir / "ssh"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import json, sys\n"
+        f"with open({json.dumps(str(log))}, 'a') as fh:\n"
+        "    fh.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+        "sys.exit(0)\n"
+    )
+    script.chmod(0o755)
+    os.environ["PATH"] = f"{bin_dir}{os.pathsep}{saved_path}"
+    import scitex_agent_container._state.state_db as _state_db_mod
+
+    importlib.reload(_state_db_mod)
+    from scitex_agent_container._state.state_db import record_instance_start
+
+    record_instance_start(name="zeta", host="peer-x", a2a_port=18888)
+    try:
+        yield {"tmp": tmp_path, "bin": bin_dir, "log": log}
+    finally:
+        for k, v in (
+            ("SCITEX_AGENT_CONTAINER_STATE_DB", saved_db),
+            ("SAC_HOST", saved_host),
+            ("SCITEX_AGENT_CONTAINER_CONFIG", saved_cfg),
+        ):
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        os.environ["PATH"] = saved_path
+        importlib.reload(_state_db_mod)
+
+
+def _ssh_invocations_delete(log):
+    import json as _json
+
+    if not log.exists():
+        return []
+    return [_json.loads(ln) for ln in log.read_text().splitlines() if ln.strip()]
+
+
+def test_cross_host_delete_exits_zero(cross_host_delete_env):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _swap_registry(_FakeRegistry(exists=False)):
+        result = runner.invoke(delete, ["zeta"])
+    # Assert
+    assert result.exit_code == 0, result.output
+
+
+def test_cross_host_delete_ssh_includes_stop_and_rm(cross_host_delete_env):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _swap_registry(_FakeRegistry(exists=False)):
+        runner.invoke(delete, ["zeta"])
+    flat = [" ".join(a) for a in _ssh_invocations_delete(cross_host_delete_env["log"])]
+    # Assert
+    assert any("sac agents stop zeta" in ln for ln in flat) and any(
+        "rm -rf" in ln for ln in flat
+    )
+
+
+def test_cross_host_delete_closes_lead_side_row(cross_host_delete_env):
+    # Arrange
+    from scitex_agent_container._state.state_db import list_active_instances
+
+    runner = CliRunner()
+    # Act
+    with _swap_registry(_FakeRegistry(exists=False)):
+        runner.invoke(delete, ["zeta"])
+    rows = [r for r in list_active_instances() if r["name"] == "zeta"]
+    # Assert — row closed (exit_reason=deleted, not in active list).
+    assert rows == []
+
+
+def test_cross_host_delete_emits_remote_marker(cross_host_delete_env):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _swap_registry(_FakeRegistry(exists=False)):
+        result = runner.invoke(delete, ["zeta"])
+    # Assert
+    assert "removed 'zeta' on peer 'peer-x'" in result.output
+
+
+def test_cross_host_delete_dry_run_does_not_invoke_ssh(cross_host_delete_env):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _swap_registry(_FakeRegistry(exists=False)):
+        runner.invoke(delete, ["zeta", "--dry-run"])
+    # Assert
+    assert _ssh_invocations_delete(cross_host_delete_env["log"]) == []
