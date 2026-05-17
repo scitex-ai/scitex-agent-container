@@ -131,6 +131,45 @@ def agent_restart(name: str) -> dict[str, Any]:
     return invoke_cli_text(["agent", "restart", name])
 
 
+def agent_send(
+    name: str,
+    prompt: str | None = None,
+    timeout_seconds: int = 120,
+    key: str | None = None,
+    model: str | None = None,
+    max_turns: int | None = None,
+) -> dict[str, Any]:
+    """Send one prompt (or control key) to ``name``'s live session via /v1/turn.
+
+    Library-grade dispatch to the agent's A2A sidecar. Unlike the
+    other ``agent_*`` tools this does NOT go through the CLI runner
+    surface — it calls
+    :func:`scitex_agent_container.cli_pkg._send.send_to_agent` directly
+    so the structured ``{status, response_text, response_metadata}``
+    payload survives MCP transport intact (the CLI prints the reply as
+    free text, which would lose the metadata).
+
+    Returns the helper's dict verbatim. ``status`` is one of:
+
+      * ``"ok"`` — reply received; ``response_text`` populated
+      * ``"error"`` — agent not running / no a2a_port / HTTP failure
+      * ``"timeout"`` — no response in ``timeout_seconds``
+
+    ``prompt`` and ``key`` are mutually exclusive; passing both raises
+    ``ValueError`` (surfaced to the MCP host as a tool-input error).
+    """
+    from ...cli_pkg._send import send_to_agent
+
+    return send_to_agent(
+        name,
+        prompt=prompt,
+        key=key,
+        timeout_seconds=timeout_seconds,
+        model=model,
+        max_turns=max_turns,
+    )
+
+
 def register_agent_tools(mcp) -> None:
     """Attach ``@mcp.tool()`` to every public function in this module."""
     for fn in (
@@ -149,6 +188,7 @@ def register_agent_tools(mcp) -> None:
         agent_start,
         agent_stop,
         agent_restart,
+        agent_send,
     ):
         mcp.tool()(fn)
 
@@ -169,5 +209,6 @@ __all__ = [
     "agent_start",
     "agent_stop",
     "agent_restart",
+    "agent_send",
     "register_agent_tools",
 ]
