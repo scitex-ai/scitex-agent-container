@@ -21,8 +21,11 @@ carries Arrange / Act / Assert markers.
 from __future__ import annotations
 
 import importlib
+import json
 import os
+import time
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Iterator
 
 import pytest
@@ -44,6 +47,50 @@ def _swap_post_turn(fn) -> Iterator[None]:
         yield
     finally:
         _send_mod._post_turn = saved  # type: ignore[assignment]
+
+
+# ---------------------------------------------------------------------------
+# Fresh OAuth credentials fixture
+#
+# PR #114 wired ``preflight_send_creds`` into ``send_to_agent`` so a stale
+# ``~/.claude/.credentials.json`` short-circuits dispatch with
+# ``status="creds-expired"`` BEFORE the test's mocked ``_post_turn`` ever
+# runs. CI runners don't have the operator's credentials file at all,
+# which fires the same short-circuit (``FileNotFoundError`` → mapped to
+# ``creds-expired``).
+#
+# The production helper accepts ``lead_creds_path=`` as an explicit
+# injection seam (see ``_send.send_to_agent`` docstring) — tests that
+# need to exercise the post-preflight code path pass an explicit tmp
+# creds file so the preflight passes deterministically on any host.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def fresh_lead_creds_path(tmp_path) -> Path:
+    """Return a path to a fresh, non-expired OAuth credentials JSON.
+
+    Matches the shape ``_state._preflight_creds.check_oauth_token_expiry``
+    reads: ``{"claudeAiOauth": {"expiresAt": <unix-millis>, ...}}`` with
+    expiry one hour in the future (well beyond the 5-minute skew window).
+    """
+    creds = tmp_path / ".credentials.json"
+    expires_at_ms = int((time.time() + 3600) * 1000)
+    creds.write_text(
+        json.dumps(
+            {
+                "claudeAiOauth": {
+                    "accessToken": "sk-ant-oat-fake",
+                    "refreshToken": "sk-ant-ort-fake",
+                    "expiresAt": expires_at_ms,
+                    "scopes": ["user:inference"],
+                    "subscriptionType": "max",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    return creds
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +141,7 @@ def _seed_remote(name: str, peer: str, a2a_port: int) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_agent_send_returns_dict_with_status_field(state_db_env):
+def test_agent_send_returns_dict_with_status_field(state_db_env, fresh_lead_creds_path):
     # Arrange
     _seed_local("alpha", a2a_port=12345)
 
@@ -103,12 +150,14 @@ def test_agent_send_returns_dict_with_status_field(state_db_env):
 
     # Act
     with _swap_post_turn(fake_post):
-        result = send_to_agent("alpha", "hi")
+        result = send_to_agent("alpha", "hi", lead_creds_path=fresh_lead_creds_path)
     # Assert
     assert "status" in result
 
 
-def test_agent_send_status_ok_on_successful_response(state_db_env):
+def test_agent_send_status_ok_on_successful_response(
+    state_db_env, fresh_lead_creds_path
+):
     # Arrange
     _seed_local("alpha", a2a_port=12345)
 
@@ -117,12 +166,14 @@ def test_agent_send_status_ok_on_successful_response(state_db_env):
 
     # Act
     with _swap_post_turn(fake_post):
-        result = send_to_agent("alpha", "hi")
+        result = send_to_agent("alpha", "hi", lead_creds_path=fresh_lead_creds_path)
     # Assert
     assert result["status"] == "ok"
 
 
-def test_agent_send_returns_response_text_field_on_success(state_db_env):
+def test_agent_send_returns_response_text_field_on_success(
+    state_db_env, fresh_lead_creds_path
+):
     # Arrange
     _seed_local("alpha", a2a_port=12345)
 
@@ -131,7 +182,7 @@ def test_agent_send_returns_response_text_field_on_success(state_db_env):
 
     # Act
     with _swap_post_turn(fake_post):
-        result = send_to_agent("alpha", "hi")
+        result = send_to_agent("alpha", "hi", lead_creds_path=fresh_lead_creds_path)
     # Assert
     assert result["response_text"] == "the reply"
 
@@ -162,7 +213,7 @@ def test_agent_send_error_message_when_agent_not_running(state_db_env):
 # ---------------------------------------------------------------------------
 
 
-def test_agent_send_status_timeout_on_slow_sidecar(state_db_env):
+def test_agent_send_status_timeout_on_slow_sidecar(state_db_env, fresh_lead_creds_path):
     # Arrange
     _seed_local("alpha", a2a_port=12345)
     from scitex_agent_container._network.peer import PeerError
@@ -172,12 +223,16 @@ def test_agent_send_status_timeout_on_slow_sidecar(state_db_env):
 
     # Act
     with _swap_post_turn(fake_post):
-        result = send_to_agent("alpha", "hi", timeout_seconds=2)
+        result = send_to_agent(
+            "alpha", "hi", timeout_seconds=2, lead_creds_path=fresh_lead_creds_path
+        )
     # Assert
     assert result["status"] == "timeout"
 
 
-def test_agent_send_timeout_error_message_quotes_timeout_value(state_db_env):
+def test_agent_send_timeout_error_message_quotes_timeout_value(
+    state_db_env, fresh_lead_creds_path
+):
     # Arrange
     _seed_local("alpha", a2a_port=12345)
     from scitex_agent_container._network.peer import PeerError
@@ -187,7 +242,9 @@ def test_agent_send_timeout_error_message_quotes_timeout_value(state_db_env):
 
     # Act
     with _swap_post_turn(fake_post):
-        result = send_to_agent("alpha", "hi", timeout_seconds=2)
+        result = send_to_agent(
+            "alpha", "hi", timeout_seconds=2, lead_creds_path=fresh_lead_creds_path
+        )
     # Assert
     assert "2s" in result["error"]
 
@@ -228,7 +285,7 @@ def test_agent_send_neither_prompt_nor_key_raises_value_error(state_db_env):
 # ---------------------------------------------------------------------------
 
 
-def test_agent_send_cross_host_routes_through_ssh(state_db_env):
+def test_agent_send_cross_host_routes_through_ssh(state_db_env, fresh_lead_creds_path):
     # Arrange
     _seed_remote("beta", peer="peer-x", a2a_port=18888)
     captured: dict = {}
@@ -237,14 +294,27 @@ def test_agent_send_cross_host_routes_through_ssh(state_db_env):
         captured["url"] = url
         return ("ok", {})
 
+    # Cross-host preflight also ssh-probes the peer; inject a stub
+    # runner that returns rc=0 so the preflight passes without invoking
+    # real ssh. (Lead-local probe is satisfied by ``fresh_lead_creds_path``.)
+    import subprocess
+
+    def fake_ssh_runner(peer_host, remote_creds_path):
+        return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
     # Act
     with _swap_post_turn(fake_post):
-        send_to_agent("beta", "hi")
+        send_to_agent(
+            "beta",
+            "hi",
+            lead_creds_path=fresh_lead_creds_path,
+            ssh_runner=fake_ssh_runner,
+        )
     # Assert
     assert captured["url"] == "ssh://peer-x:18888/v1/turn"
 
 
-def test_agent_send_local_host_uses_loopback_url(state_db_env):
+def test_agent_send_local_host_uses_loopback_url(state_db_env, fresh_lead_creds_path):
     # Arrange
     _seed_local("alpha", a2a_port=12345)
     captured: dict = {}
@@ -255,7 +325,7 @@ def test_agent_send_local_host_uses_loopback_url(state_db_env):
 
     # Act
     with _swap_post_turn(fake_post):
-        send_to_agent("alpha", "hi")
+        send_to_agent("alpha", "hi", lead_creds_path=fresh_lead_creds_path)
     # Assert
     assert captured["url"] == "http://127.0.0.1:12345/v1/turn"
 
@@ -265,7 +335,9 @@ def test_agent_send_local_host_uses_loopback_url(state_db_env):
 # ---------------------------------------------------------------------------
 
 
-def test_agent_send_includes_response_metadata_on_success(state_db_env):
+def test_agent_send_includes_response_metadata_on_success(
+    state_db_env, fresh_lead_creds_path
+):
     # Arrange
     _seed_local("alpha", a2a_port=12345)
 
@@ -274,7 +346,7 @@ def test_agent_send_includes_response_metadata_on_success(state_db_env):
 
     # Act
     with _swap_post_turn(fake_post):
-        result = send_to_agent("alpha", "hi")
+        result = send_to_agent("alpha", "hi", lead_creds_path=fresh_lead_creds_path)
     # Assert
     assert result["response_metadata"]["name"] == "alpha"
 
@@ -290,7 +362,9 @@ def test_agent_send_error_when_row_has_no_a2a_port(state_db_env):
     assert result["status"] == "error"
 
 
-def test_agent_send_error_when_sidecar_returns_non_200(state_db_env):
+def test_agent_send_error_when_sidecar_returns_non_200(
+    state_db_env, fresh_lead_creds_path
+):
     # Arrange
     _seed_local("alpha", a2a_port=12345)
     from scitex_agent_container._network.peer import PeerError
@@ -300,6 +374,8 @@ def test_agent_send_error_when_sidecar_returns_non_200(state_db_env):
 
     # Act
     with _swap_post_turn(fake_post):
-        result = send_to_agent("alpha", "hi", timeout_seconds=2)
+        result = send_to_agent(
+            "alpha", "hi", timeout_seconds=2, lead_creds_path=fresh_lead_creds_path
+        )
     # Assert
     assert result["status"] == "error"

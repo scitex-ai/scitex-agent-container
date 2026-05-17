@@ -25,11 +25,46 @@ smoke tests.
 
 from __future__ import annotations
 
+import json
+import time
 from pathlib import Path
 
 from click.testing import CliRunner
 
 from scitex_agent_container.cli_pkg.lifecycle._start import start
+
+
+def _install_fresh_creds(home: Path) -> Path:
+    """Write a non-expired OAuth credentials file under ``$home/.claude/``.
+
+    The start command's preflight (``_state._preflight_creds.check_oauth_token_expiry``)
+    reads ``$HOME/.claude/.credentials.json`` whenever an actual dispatch
+    is about to fire — CI runners don't have one, so the preflight
+    short-circuits with ``FileNotFoundError`` before the test's
+    singleton-skip / multiplex / dispatch branch ever executes. Tests
+    that pin ``$HOME`` to ``tmp_path`` and call this helper get a
+    deterministic fresh-token preflight on any host.
+    """
+    claude_dir = home / ".claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
+    creds = claude_dir / ".credentials.json"
+    expires_at_ms = int((time.time() + 3600) * 1000)
+    creds.write_text(
+        json.dumps(
+            {
+                "claudeAiOauth": {
+                    "accessToken": "sk-ant-oat-fake",
+                    "refreshToken": "sk-ant-ort-fake",
+                    "expiresAt": expires_at_ms,
+                    "scopes": ["user:inference"],
+                    "subscriptionType": "max",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    return creds
+
 
 # ---------------------------------------------------------------------------
 # Argument-level validation — no collaborator is invoked; click parses,
@@ -221,6 +256,8 @@ class TestSingletonHostSkip:
     def test_single_target_singleton_skip_exits_clean(self, tmp_path, env_save_restore):
         # Arrange
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        env_save_restore.set("HOME", str(tmp_path))
+        _install_fresh_creds(tmp_path)
         yaml_path = _write_singleton_yaml(tmp_path, "mini", "nowhere-host")
         runner = CliRunner()
         # Act
@@ -233,6 +270,8 @@ class TestSingletonHostSkip:
     ):
         # Arrange
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        env_save_restore.set("HOME", str(tmp_path))
+        _install_fresh_creds(tmp_path)
         yaml_path = _write_singleton_yaml(tmp_path, "mini", "nowhere-host")
         runner = CliRunner()
         # Act
@@ -245,6 +284,8 @@ class TestSingletonHostSkip:
     ):
         # Arrange
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        env_save_restore.set("HOME", str(tmp_path))
+        _install_fresh_creds(tmp_path)
         yaml_path = _write_singleton_yaml(tmp_path, "mini", "nowhere-host")
         runner = CliRunner()
         # Act
@@ -257,6 +298,8 @@ class TestSingletonHostSkip:
     ):
         # Arrange
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        env_save_restore.set("HOME", str(tmp_path))
+        _install_fresh_creds(tmp_path)
         agents_dir = tmp_path / "agents"
         _write_singleton_yaml(agents_dir, "aa", "nowhere-host")
         _write_singleton_yaml(agents_dir, "bb", "nowhere-host")
@@ -269,6 +312,8 @@ class TestSingletonHostSkip:
     def test_bulk_directory_singleton_skip_exits_zero(self, tmp_path, env_save_restore):
         # Arrange
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        env_save_restore.set("HOME", str(tmp_path))
+        _install_fresh_creds(tmp_path)
         agents_dir = tmp_path / "agents"
         _write_singleton_yaml(agents_dir, "aa", "nowhere-host")
         _write_singleton_yaml(agents_dir, "bb", "nowhere-host")
@@ -290,6 +335,8 @@ class TestResumeAndForeground:
         # Arrange — --resume without --session must default session_mode to
         # "resume" rather than rejecting the invocation.
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        env_save_restore.set("HOME", str(tmp_path))
+        _install_fresh_creds(tmp_path)
         yaml_path = _write_singleton_yaml(tmp_path, "mini", "nowhere-host")
         runner = CliRunner()
         # Act
@@ -302,6 +349,8 @@ class TestResumeAndForeground:
     ):
         # Arrange
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        env_save_restore.set("HOME", str(tmp_path))
+        _install_fresh_creds(tmp_path)
         yaml_path = _write_singleton_yaml(tmp_path, "mini", "nowhere-host")
         runner = CliRunner()
         # Act
@@ -319,6 +368,8 @@ class TestResumeAndForeground:
         # multiplex call; we just exercise the branch where foreground gets
         # demoted from True -> False.
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        env_save_restore.set("HOME", str(tmp_path))
+        _install_fresh_creds(tmp_path)
         y1 = _write_singleton_yaml(tmp_path, "mini1", "nowhere-host")
         y2 = _write_singleton_yaml(tmp_path, "mini2", "nowhere-host")
         runner = CliRunner()
@@ -332,6 +383,8 @@ class TestResumeAndForeground:
     ):
         # Arrange
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        env_save_restore.set("HOME", str(tmp_path))
+        _install_fresh_creds(tmp_path)
         agents_dir = tmp_path / "agents"
         _write_singleton_yaml(agents_dir, "aa", "nowhere-host")
         _write_singleton_yaml(agents_dir, "bb", "nowhere-host")
@@ -381,6 +434,7 @@ class TestDispatchBranch:
         # local spec dir exists under ``~/.scitex/agent-container/agents/``.
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
         env_save_restore.set("HOME", str(tmp_path))
+        _install_fresh_creds(tmp_path)
         cfg = _write_peer_config(tmp_path, "remote-host")
         env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg))
         yaml_path = _write_singleton_yaml(tmp_path, "mini", "remote-host")
@@ -397,6 +451,7 @@ class TestDispatchBranch:
         # know the routing branch handed off the resolved peer.
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
         env_save_restore.set("HOME", str(tmp_path))
+        _install_fresh_creds(tmp_path)
         cfg = _write_peer_config(tmp_path, "remote-host")
         env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg))
         yaml_path = _write_singleton_yaml(tmp_path, "mini", "remote-host")
@@ -414,6 +469,7 @@ class TestDispatchBranch:
         # branch.
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
         env_save_restore.set("HOME", str(tmp_path))
+        _install_fresh_creds(tmp_path)
         cfg = _write_peer_config(tmp_path, "remote-host")
         env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg))
         yaml_path = _write_singleton_yaml(tmp_path, "mini", "remote-host")
@@ -465,6 +521,8 @@ class TestDispatchBranch:
         # routing branch falls through, and singleton-skip emits the
         # ``Skipping 'mini'`` line.
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        env_save_restore.set("HOME", str(tmp_path))
+        _install_fresh_creds(tmp_path)
         cfg = _write_peer_config(tmp_path, "remote-host")
         env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg))
         yaml_path = _write_singleton_yaml(tmp_path, "mini", "unknown-host")
