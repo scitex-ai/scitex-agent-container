@@ -91,8 +91,9 @@ From: ubuntu:24.04
         | sh -s -- -y --profile minimal --no-modify-path
     export PATH=/opt/cargo/bin:$PATH
     curl --proto '=https' --tlsv1.2 -sSfL \
-        https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh \
-        | bash
+        https://github.com/cargo-bins/cargo-binstall/releases/latest/download/cargo-binstall-x86_64-unknown-linux-musl.tgz \
+        | tar xz -C /opt/cargo/bin/
+    chmod +x /opt/cargo/bin/cargo-binstall
     cargo binstall --no-confirm --force fd-find bat eza ripgrep
     rm -rf /opt/cargo/registry /opt/cargo/git
 
