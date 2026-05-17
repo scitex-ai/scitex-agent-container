@@ -218,7 +218,7 @@ class TestPostTurnToUrl:
                 self.wfile.write(
                     json.dumps(
                         {
-                            "reply": f"echo:{body.get('text', '')}",
+                            "text": f"echo:{body.get('text', '')}",
                             "exit_after": body.get("exit_after", False),
                         }
                     ).encode("utf-8")
@@ -393,7 +393,7 @@ class TestPostTurnEndToEnd:
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(
-                    _json.dumps({"reply": f"ack:{body['text']}"}).encode("utf-8")
+                    _json.dumps({"text": f"ack:{body['text']}"}).encode("utf-8")
                 )
 
             def log_message(self, *a, **kw):
@@ -430,7 +430,7 @@ class TestPostTurnViaSsh:
         # Arrange — fake ssh prints a JSON envelope to stdout.
         import json as _json
 
-        stdout = _json.dumps({"reply": "remote-ack"}) + "\n"
+        stdout = _json.dumps({"text": "remote-ack"}) + "\n"
         subprocess_shim.install("ssh", stdout=stdout, exit=0)
         # Act
         reply = post_turn_to_url("ssh://mba:18888/v1/turn", "hi", timeout_s=2.0)
@@ -441,7 +441,7 @@ class TestPostTurnViaSsh:
         # Arrange
         import json as _json
 
-        stdout = _json.dumps({"reply": "ok"}) + "\n"
+        stdout = _json.dumps({"text": "ok"}) + "\n"
         subprocess_shim.install("ssh", stdout=stdout, exit=0)
         # Act
         post_turn_to_url("ssh://my-host:19000/v1/turn", "hi", timeout_s=2.0)
@@ -455,7 +455,7 @@ class TestPostTurnViaSsh:
 
         stdout = (
             "Welcome to remote host\n"
-            "Last login: yesterday\n" + _json.dumps({"reply": "after-banner"}) + "\n"
+            "Last login: yesterday\n" + _json.dumps({"text": "after-banner"}) + "\n"
         )
         subprocess_shim.install("ssh", stdout=stdout, exit=0)
         # Act

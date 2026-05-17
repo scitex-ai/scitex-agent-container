@@ -177,7 +177,7 @@ def test_explicit_port_from_cfg_reaches_live_runner(isolated_state_db):
     from scitex_agent_container._listen import _forward
 
     async def _run() -> object:
-        body = json.dumps({"reply": "hello-back"}).encode()
+        body = json.dumps({"text": "hello-back"}).encode()
         async with _LoopbackHTTP(200, body) as srv:
             cfg = _Cfg(a2a=_A2A(host="127.0.0.1", port=srv.port))
             return await _forward.forward_to_live_runner(
@@ -190,12 +190,12 @@ def test_explicit_port_from_cfg_reaches_live_runner(isolated_state_db):
     assert response is not None and response.status_code == 200
 
 
-def test_successful_reply_payload_is_unwrapped(isolated_state_db):
+def test_successful_text_payload_is_unwrapped(isolated_state_db):
     # Arrange
     from scitex_agent_container._listen import _forward
 
     async def _run() -> object:
-        body = json.dumps({"reply": "unwrapped-text"}).encode()
+        body = json.dumps({"text": "unwrapped-text"}).encode()
         async with _LoopbackHTTP(200, body) as srv:
             cfg = _Cfg(a2a=_A2A(host="127.0.0.1", port=srv.port))
             return await _forward.forward_to_live_runner(
@@ -205,7 +205,7 @@ def test_successful_reply_payload_is_unwrapped(isolated_state_db):
     # Act
     response = asyncio.run(_run())
     # Assert
-    assert json.loads(response.body)["reply"] == "unwrapped-text"
+    assert json.loads(response.body)["text"] == "unwrapped-text"
 
 
 def test_prompt_is_posted_as_text_field(isolated_state_db):
@@ -215,7 +215,7 @@ def test_prompt_is_posted_as_text_field(isolated_state_db):
     captured: dict[str, bytes] = {}
 
     async def _run() -> None:
-        body = json.dumps({"reply": "ok"}).encode()
+        body = json.dumps({"text": "ok"}).encode()
         async with _LoopbackHTTP(200, body) as srv:
             cfg = _Cfg(a2a=_A2A(host="127.0.0.1", port=srv.port))
             await _forward.forward_to_live_runner(
@@ -236,7 +236,7 @@ def test_post_targets_v1_turn_endpoint(isolated_state_db):
     captured: dict[str, str | None] = {}
 
     async def _run() -> None:
-        body = json.dumps({"reply": "ok"}).encode()
+        body = json.dumps({"text": "ok"}).encode()
         async with _LoopbackHTTP(200, body) as srv:
             cfg = _Cfg(a2a=_A2A(host="127.0.0.1", port=srv.port))
             await _forward.forward_to_live_runner(cfg, "agent-x", "hi", {}, timeout=5.0)
@@ -288,7 +288,7 @@ def test_allocator_claim_takes_precedence_over_cfg(isolated_state_db):
     from scitex_agent_container._state import port_allocator
 
     async def _run() -> object:
-        body = json.dumps({"reply": "from-allocator"}).encode()
+        body = json.dumps({"text": "from-allocator"}).encode()
         async with _LoopbackHTTP(200, body) as srv:
             port_allocator.claim_port("agent-y", explicit=srv.port)
             cfg = _Cfg(a2a=_A2A(host="127.0.0.1", port=_free_port()))
@@ -299,7 +299,7 @@ def test_allocator_claim_takes_precedence_over_cfg(isolated_state_db):
     # Act
     response = asyncio.run(_run())
     # Assert
-    assert json.loads(response.body)["reply"] == "from-allocator"
+    assert json.loads(response.body)["text"] == "from-allocator"
 
 
 def test_default_host_is_loopback_when_cfg_omits_host(isolated_state_db):
@@ -307,7 +307,7 @@ def test_default_host_is_loopback_when_cfg_omits_host(isolated_state_db):
     from scitex_agent_container._listen import _forward
 
     async def _run() -> object:
-        body = json.dumps({"reply": "ok"}).encode()
+        body = json.dumps({"text": "ok"}).encode()
         async with _LoopbackHTTP(200, body) as srv:
             cfg = _Cfg(a2a=_A2A(host=None, port=srv.port))
             return await _forward.forward_to_live_runner(

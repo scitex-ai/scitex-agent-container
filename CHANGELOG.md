@@ -6,6 +6,23 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+- **refactor(api): drop ``reply`` field; ``text`` is the single canonical
+  field** — the A2A sidecar's ``POST /v1/turn`` response now returns
+  ``{"text", "session_id", "exit_after", "metadata"}`` only; the
+  back-compat ``reply`` alias (introduced alongside the bounded-timeout
+  fix in 63deaee) is removed. Affects all consumers:
+  - ``sac peer post-turn --json`` now emits ``{"text", "exit_after"}``
+    (was ``{"reply", "exit_after"}``). Pipe consumers using
+    ``jq -r .reply`` must update to ``jq -r .text``.
+  - ``sac listen``'s live-runner forward response carries ``text``
+    instead of ``reply``.
+  - ``a2a_proxy`` runner's non-JSON upstream fallback wraps the
+    upstream body under ``text`` instead of ``reply``.
+  - The Python ``_network.peer.post_turn_to_url`` parses ``payload["text"]``
+    explicitly; a missing key now raises ``PeerError`` (no silent
+    ``.get`` fallback). Callers must adapt.
+
 ### Added
 - **feat(mcp): expose `agent_send` tool** — the MCP server now ships
   37 tools (up from 36); the new `agent_send` lets a lead drive

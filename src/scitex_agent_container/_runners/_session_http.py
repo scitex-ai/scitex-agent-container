@@ -21,7 +21,6 @@ is loud, not a hang. Use ``text`` end-to-end.
     200 OK
     {
       "text": "<final assistant text>",
-      "reply": "<same as text — back-compat alias>",
       "session_id": "<sdk session id or null>",
       "exit_after": false,
       "metadata": {"timeout_s": 120.0}
@@ -165,15 +164,13 @@ async def serve_inbound(
         except Exception as exc:  # stx-allow: fallback (reason: surface SDK errors as 502 instead of crashing the server)
             logger.warning("inbound turn failed: %s", exc)
             return JSONResponse({"error": f"turn failed: {exc}"}, status_code=502)
-        # A2A v1.0-style response: ``text`` is the canonical field;
-        # ``reply`` is preserved for back-compat with existing sac
-        # clients that already key off it. ``session_id`` lets the
-        # caller resume / correlate; ``metadata.timeout_s`` records
-        # the cap that was in force when this turn ran.
+        # A2A v1.0 response: ``text`` is the single canonical field.
+        # ``session_id`` lets the caller resume / correlate;
+        # ``metadata.timeout_s`` records the cap that was in force
+        # when this turn ran.
         return JSONResponse(
             {
                 "text": reply,
-                "reply": reply,
                 "session_id": env.session_id,
                 "exit_after": exit_after,
                 "metadata": {"timeout_s": effective_turn_timeout_s},

@@ -10,7 +10,7 @@ Two surfaces:
 
 * ``post_turn_to_url(url, text, *, exit_after=False, timeout_s=600.0)``
   — low-level. Posts the JSON envelope to a known URL, returns the
-  ``reply`` string.
+  response ``text`` string.
 
 * ``post_turn(agent_name, text, *, exit_after=False, timeout_s=600.0)``
   — high-level. Resolves the target agent's YAML via the project +
@@ -53,7 +53,7 @@ def post_turn_to_url(
     exit_after: bool = False,
     timeout_s: float = 600.0,
 ) -> str:
-    """POST a single turn to a known ``/v1/turn`` URL; return the reply.
+    """POST a single turn to a known ``/v1/turn`` URL; return the ``text`` string.
 
     Raises ``PeerError`` on transport failure or non-200 status with the
     server's error message included.
@@ -89,9 +89,9 @@ def post_turn_to_url(
         raise PeerError(f"peer unreachable at {url}: {exc.reason}") from exc
     except TimeoutError as exc:
         raise PeerError(f"peer timeout at {url} after {timeout_s:.0f}s") from exc
-    if not isinstance(payload, dict) or "reply" not in payload:
+    if not isinstance(payload, dict) or "text" not in payload:
         raise PeerError(f"peer returned malformed body: {payload!r}")
-    return str(payload["reply"])
+    return str(payload["text"])
 
 
 def resolve_peer_url(agent_name: str) -> str:
@@ -196,7 +196,7 @@ def post_turn(
     exit_after: bool = False,
     timeout_s: float = 600.0,
 ) -> str:
-    """Send a turn to a peer agent by name; return the reply.
+    """Send a turn to a peer agent by name; return the response ``text``.
 
     Convenience wrapper that combines :func:`resolve_peer_url` and
     :func:`post_turn_to_url`. Use this from one running agent to drive
@@ -218,7 +218,7 @@ def _post_turn_via_ssh(
     exit_after: bool,
     timeout_s: float,
 ) -> str:
-    """Dispatch a turn via ``ssh <host> curl ...`` and parse the reply.
+    """Dispatch a turn via ``ssh <host> curl ...`` and parse the response.
 
     Parses ``ssh://host:port/v1/turn``, builds a curl that POSTs to
     ``127.0.0.1:port`` *on the remote*, and pipes the JSON envelope
@@ -277,9 +277,9 @@ def _post_turn_via_ssh(
         raise PeerError(
             f"ssh+curl to {host}:{port} returned non-JSON: {(proc.stdout or '')[:300]}"
         ) from exc
-    if not isinstance(payload, dict) or "reply" not in payload:
+    if not isinstance(payload, dict) or "text" not in payload:
         raise PeerError(f"peer returned malformed body: {payload!r}")
-    return str(payload["reply"])
+    return str(payload["text"])
 
 
 def _read_yaml_endpoints(yaml_path: str) -> tuple[str | None, int | None, str | None]:
