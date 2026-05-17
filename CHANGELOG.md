@@ -7,6 +7,15 @@ versioning follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **feat(mcp): expose `agent_send` tool** — the MCP server now ships
+  37 tools (up from 36); the new `agent_send` lets a lead drive
+  another agent via a prompt instead of shelling out to `sac agents
+  send`. Returns a structured `{status, response_text,
+  response_metadata}` dict (status one of `"ok"`, `"error"`,
+  `"timeout"`); cross-host agents route through the same ssh+curl
+  control plane the CLI uses. Library-facing helper lives at
+  `cli_pkg/_send.py::send_to_agent` so the HTTP / ssh logic isn't
+  duplicated.
 - **feat(apptainer): declarative overlay auto-create via
   `spec.apptainer.overlay_size`** — operators no longer have to run
   `apptainer overlay create --size N proj-<peer>.overlay.img` by hand

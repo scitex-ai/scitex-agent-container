@@ -9,6 +9,13 @@ before shelling out so claude's per-project session lookup resolves.
 v1 scope: bare-CLI passthrough. The follow-up implementation order in
 ``GITIGNORED/SAC_OROCHI_SCOPES.md`` then exposes this through
 ``sac listen`` + ``POST /agents/<name>/send``.
+
+For programmatic callers that need a structured ``{status,
+response_text, response_metadata}`` payload (e.g. the MCP
+``agent_send`` tool), use
+:func:`scitex_agent_container.cli_pkg._send.send_to_agent` — the
+library-facing sibling helper that returns a dict instead of writing
+to stdout.
 """
 
 from __future__ import annotations
