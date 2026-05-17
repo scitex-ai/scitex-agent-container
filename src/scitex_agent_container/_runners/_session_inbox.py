@@ -20,11 +20,19 @@ from typing import Union
 
 @dataclass
 class TurnEnvelope:
-    """One user turn to feed into the runner's persistent SDK client."""
+    """One user turn to feed into the runner's persistent SDK client.
+
+    ``session_id`` is set by the conversation task once the SDK emits a
+    ``ResultMessage`` with the resume id. Consumers (e.g. the HTTP
+    sidecar) read it AFTER the ``response`` future resolves to surface
+    the SDK session id in their reply body. It stays ``None`` until then
+    so a still-running turn cannot leak a stale id.
+    """
 
     text: str
     response: asyncio.Future = field(repr=False)
     exit_after: bool = False
+    session_id: str | None = None
 
 
 @dataclass

@@ -7,14 +7,43 @@ The endpoint accepts POST requests with a JSON body and enqueues a
 calls ``client.query()``, and resolves the future with the assistant's
 reply. The HTTP handler awaits the future and returns the reply as JSON.
 
-Wire format (PR2-min — A2A JSON-RPC compat lands later):
+Wire format:
 
     POST /v1/turn
     Content-Type: application/json
     {"text": "your message", "exit_after": false}
 
+The request field is ``text`` — that's the sac sidecar shape. Callers
+sending ``{"prompt": "..."}`` (e.g. some early lead helpers) get a
+``400`` with ``"missing or empty 'text' field"`` so the schema mismatch
+is loud, not a hang. Use ``text`` end-to-end.
+
     200 OK
-    {"reply": "...", "exit_after": false}
+    {
+      "text": "<final assistant text>",
+      "reply": "<same as text — back-compat alias>",
+      "session_id": "<sdk session id or null>",
+      "exit_after": false,
+      "metadata": {"timeout_s": 120.0}
+    }
+
+    504 Gateway Timeout
+    {
+      "error": "turn exceeded <N>s timeout",
+      "timeout_s": <N>,
+      "session_id": "<sdk session id if known or null>"
+    }
+
+A2A v1.0 ``/agents/<name>/send`` / ``.../turn`` use the same body shape
+via :func:`post_turn_named`.
+
+Per-turn timeout: ``turn_timeout_s`` is the BOUNDED wait the handler
+imposes on the SDK envelope's future. Default is 120 s, overridable
+process-wide via ``SAC_A2A_TURN_TIMEOUT_S``. When the SDK keeps
+yielding past the deadline the handler returns a 504 (loud failure)
+rather than hanging the HTTP request indefinitely — the long-form
+session.jsonl trail still records what the SDK produced, but the
+HTTP caller is no longer left waiting on a never-arriving response.
 
 Bound to ``127.0.0.1`` by default — operators who want LAN exposure can
 set ``host`` explicitly via the runner's ``--a2a-host`` flag (added
@@ -25,6 +54,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -33,13 +63,45 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# Default bounded wait for the SDK to drain one turn. Sized to outlast
+# normal multi-tool turns (file reads, MCP calls) but bounded enough
+# that a wedged turn surfaces as a 504 within a couple of minutes
+# rather than the 60 s curl default (or worse, a 10-minute ssh hang).
+DEFAULT_TURN_TIMEOUT_S: float = 120.0
+
+# Env override used by both ``serve_inbound`` and operators who want
+# to tune the cap without redeploying the runner. Parsed once per call,
+# not at import time, so a test can poke it before spinning the sidecar.
+TURN_TIMEOUT_ENV_VAR: str = "SAC_A2A_TURN_TIMEOUT_S"
+
+
+def _resolve_turn_timeout(explicit: float | None) -> float:
+    """Pick the effective turn timeout (explicit > env > default).
+
+    Loud on a malformed env value — a silent default-substitution here
+    would let an operator think they'd configured a longer cap when in
+    fact the typo got swallowed. STX hard-rule "no silent fallbacks".
+    """
+    if explicit is not None:
+        return float(explicit)
+    raw = os.environ.get(TURN_TIMEOUT_ENV_VAR, "").strip()
+    if not raw:
+        return DEFAULT_TURN_TIMEOUT_S
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"{TURN_TIMEOUT_ENV_VAR}={raw!r} is not a valid float seconds value"
+        ) from exc
+
+
 async def serve_inbound(
     inbox: "asyncio.Queue[Envelope]",
     *,
     host: str,
     port: int,
     stop: asyncio.Event,
-    turn_timeout_s: float = 600.0,
+    turn_timeout_s: float | None = None,
     agent_name: str = "",
     spec_yaml_path: str = "",
 ) -> None:
@@ -59,6 +121,11 @@ async def serve_inbound(
 
     from ._session_inbox import TurnEnvelope
 
+    # Resolve the effective bounded-wait once per serve_inbound() call.
+    # Per-request override via env would be racy and rarely useful — the
+    # operator either trusts the agent for long turns or doesn't.
+    effective_turn_timeout_s = _resolve_turn_timeout(turn_timeout_s)
+
     async def post_turn(request: Request) -> JSONResponse:
         try:
             body = await request.json()
@@ -77,15 +144,41 @@ async def serve_inbound(
         )
         await inbox.put(env)
         try:
-            reply = await asyncio.wait_for(env.response, timeout=turn_timeout_s)
+            reply = await asyncio.wait_for(
+                env.response, timeout=effective_turn_timeout_s
+            )
         except asyncio.TimeoutError:
+            # 504: BOUNDED wait elapsed before the SDK finished draining.
+            # Include the timeout value and (if known) the session_id so
+            # the caller can either retry, raise the cap, or follow up via
+            # session.jsonl. ``env.session_id`` is only populated if the
+            # SDK already streamed a ResultMessage before we tripped the
+            # timeout, which on a true hang will normally be ``None``.
             return JSONResponse(
-                {"error": f"turn timeout after {turn_timeout_s:.0f}s"}, status_code=504
+                {
+                    "error": (f"turn exceeded {effective_turn_timeout_s:.0f}s timeout"),
+                    "timeout_s": effective_turn_timeout_s,
+                    "session_id": env.session_id,
+                },
+                status_code=504,
             )
         except Exception as exc:  # stx-allow: fallback (reason: surface SDK errors as 502 instead of crashing the server)
             logger.warning("inbound turn failed: %s", exc)
             return JSONResponse({"error": f"turn failed: {exc}"}, status_code=502)
-        return JSONResponse({"reply": reply, "exit_after": exit_after})
+        # A2A v1.0-style response: ``text`` is the canonical field;
+        # ``reply`` is preserved for back-compat with existing sac
+        # clients that already key off it. ``session_id`` lets the
+        # caller resume / correlate; ``metadata.timeout_s`` records
+        # the cap that was in force when this turn ran.
+        return JSONResponse(
+            {
+                "text": reply,
+                "reply": reply,
+                "session_id": env.session_id,
+                "exit_after": exit_after,
+                "metadata": {"timeout_s": effective_turn_timeout_s},
+            }
+        )
 
     async def get_health(request: Request) -> JSONResponse:
         return JSONResponse({"status": "ok"})
