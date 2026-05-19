@@ -12,9 +12,10 @@ paths, this module is a thin shim:
 
 Anything that used to spawn a host-side ``subprocess.Popen`` for
 ``runtime: claude-session`` (the bare-metal Python runner), or hand-
-roll SSH dispatch for ``spec.remote.host`` agents, is gone — sac
-is a container wrapper now (per the F-CS16-DESIGN.md agreement),
-and cross-host work goes through ``sac --on <peer>`` (F-CS12).
+roll SSH dispatch for the legacy ``spec.remote`` block (deleted in
+WI-6, handoff §6, 2026-05-20), is gone — sac is a container wrapper
+now (per the F-CS16-DESIGN.md agreement), and cross-host work goes
+through ``sac --on <peer>`` (F-CS12) and ``spec.host`` pinning.
 """
 
 from __future__ import annotations

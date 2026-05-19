@@ -224,26 +224,6 @@ class A2ASpec:
 
 
 @dataclass
-class RemoteSpec:
-    # Chain-based remote: list of SSH config aliases (new format).
-    # Populated when spec.remote is a str or list[str].
-    # Empty when using legacy dict format.
-    hops: list = field(default_factory=list)
-    host: str = ""  # SSH host (hostname or IP)
-    user: str = ""  # SSH user
-    key: str = ""  # Path to SSH key (optional)
-    port: int = 22  # SSH port
-    timeout: int = 60  # SSH command timeout in seconds
-    login_shell: bool = True  # Use bash -l -c (needed for PATH on most hosts)
-    no_preflight: bool = False  # Skip preflight checks (HPC with module loads)
-
-    @property
-    def is_remote(self) -> bool:
-        """Return True if this agent should be deployed via SSH."""
-        return bool(self.hops or self.host)
-
-
-@dataclass
 class ContextManagementConfig:
     """Context-lifecycle policy for an agent.
 
@@ -420,7 +400,10 @@ class AgentConfig:
     hooks: dict[str, list[str]] = field(default_factory=dict)
     listen: list[ListenPort] = field(default_factory=list)
     extensions: Dict[str, Any] = field(default_factory=dict)
-    remote: RemoteSpec = field(default_factory=RemoteSpec)
+    # ``RemoteSpec`` deleted in WI-6 (handoff §6, 2026-05-20). spec.host
+    # is now the only mechanism for cross-host placement; SSH dispatch
+    # via the old ``spec.remote.{host,hops,user,key,...}`` block has
+    # been retired together with ``runtimes/ssh_remote.py``.
     skills: SkillsSpec = field(default_factory=SkillsSpec)
     context_management: ContextManagementConfig = field(
         default_factory=ContextManagementConfig
