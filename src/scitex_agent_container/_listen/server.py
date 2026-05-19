@@ -43,6 +43,12 @@ from .._state.registry import Registry
 from ..a2a._inbox_bus import mint_event
 from ..config import load_config
 from ..config._resolve import resolve_config
+from ._acl import (
+    NodeAuthMiddleware,
+    check_send_acl,
+    check_spawn,
+    deny_response,
+)
 from ._inline_spec import materialize_inline_spec
 from ._nodes import Broker, NodeRegistry
 from .auth import BearerAuthMiddleware
@@ -300,16 +306,28 @@ async def agents_start(request: Request) -> JSONResponse:
     Body shapes:
 
         # Start a pre-registered spec (existing on disk):
-        {"name": "<existing-spec-name>"}
+        {"name": "<existing-spec-name>", "caller": "<sender-name>"}
 
         # Register-and-start an ad-hoc spec in one call:
         {
             "name": "<name>",
+            "caller": "<sender-name>",
             "spec": {"apiVersion": "scitex-agent-container/v3",
                      "kind": "Agent",
                      "spec": {...}},
             "overwrite": false   # optional; default false → 409 on clash
         }
+
+    WI-2 spawn-permission gate (limited scope per lead 2026-05-20):
+    the optional ``caller`` field carries the spawning node's name
+    (same self-claimed-identity caveat as ``message:send``'s
+    ``metadata.from_agent``). The gate is **root-only** today —
+    a node with no parent in the ``lineage`` table may spawn; a
+    child gets a clear 403. ``caller`` omitted = administrative /
+    human-operator path → allowed.
+
+    On allow, the parent → child edge is recorded in ``lineage``
+    so the new agent inherits the spawner's group.
     """
     try:
         body = await request.json()
@@ -323,6 +341,16 @@ async def agents_start(request: Request) -> JSONResponse:
             {"error": "missing or empty 'name' string"}, status_code=400
         )
 
+    # WI-2 spawn-permission gate.
+    caller = body.get("caller")
+    if caller is not None and not isinstance(caller, str):
+        return JSONResponse(
+            {"error": "'caller' must be a string if present"}, status_code=400
+        )
+    decision, reason = check_spawn(caller=caller)
+    if decision == "deny":
+        return deny_response(reason or "spawn denied")
+
     inline_spec = body.get("spec")
     if inline_spec is not None:
         err = materialize_inline_spec(
@@ -330,6 +358,19 @@ async def agents_start(request: Request) -> JSONResponse:
         )
         if err is not None:
             return err
+
+    # Record lineage on allowed-spawn so the new child inherits the
+    # caller's group. ``caller=None`` → no lineage record (admin /
+    # operator path; the new agent starts as a root).
+    if caller:
+        from .._state.state_db_nodes import record_lineage as _record_lineage
+
+        try:
+            _record_lineage(child=name, parent=caller)
+        except ValueError as exc:
+            # Idempotent same-parent re-record is fine; a re-parent
+            # to a different caller is loudly rejected.
+            return JSONResponse({"error": str(exc)}, status_code=409)
 
     sac_bin = shutil.which("sac") or "sac"
     proc = await asyncio.to_thread(
@@ -444,8 +485,25 @@ async def node_message_send(request: Request) -> Response:
     lookup. The publish is **always loud** — a malformed body returns
     400, never a silent drop (handoff §0 Hard rules).
 
-    No ACL gating yet — that lands in WI-2. Bearer auth (outer
-    perimeter) still applies via :class:`BearerAuthMiddleware`.
+    WI-2 ACL gate: every send is checked by
+    :func:`_acl.check_send_acl` before publish:
+
+    * **Per-node bearer** pins identity — ``metadata.from_agent``
+      must match the resolved name, else 403 "identity spoof"
+      (handoff §4 acceptance).
+    * **Cross-group** is denied by default; intra-group
+      (parent↔child and sibling↔sibling) is allowed.
+    * **Explicit cross-group grants** (``comms_grants`` table) flip
+      a deny to an allow.
+    * **Self-send** is always allowed.
+    * The **host-wide bearer** is the administrative / cross-host
+      forwarding caller; it honours ``metadata.from_agent``
+      verbatim (used by WI-4 forwarders authenticating with the
+      destination's host bearer from ``peer-tokens/`` registry).
+
+    Bearer auth is enforced by :class:`BearerAuthMiddleware` (outer
+    perimeter) and identity resolution by :class:`NodeAuthMiddleware`
+    (sets ``request.state.authenticated_node``).
     """
     name = request.path_params["name"]
     try:
@@ -491,6 +549,23 @@ async def node_message_send(request: Request) -> Response:
     for src in (params.get("metadata"), message.get("metadata")):
         if isinstance(src, dict):
             sac_meta.update(src)
+
+    # WI-2 ACL check. ``authenticated_node`` is set by
+    # :class:`NodeAuthMiddleware` — ``None`` means the host-wide
+    # bearer was presented (administrative caller). With a per-node
+    # bearer, ``metadata.from_agent`` MUST match the resolved name
+    # so identity cannot be spoofed via a metadata field (handoff
+    # §4 acceptance). See :func:`_acl.check_send_acl`.
+    authenticated_node = getattr(
+        request.state, "authenticated_node", None
+    )
+    decision, reason = check_send_acl(
+        authenticated_node=authenticated_node,
+        claimed_from_agent=sac_meta.get("from_agent"),
+        target=name,
+    )
+    if decision == "deny":
+        return deny_response(reason or "ACL deny")
 
     event = mint_event(
         name,
@@ -614,13 +689,32 @@ def _v1_agent_routes(prefix: str) -> list[Route]:
     ]
 
 
-def create_app(*, token: str) -> Starlette:
+def create_app(*, token: str, local_host: str | None = None) -> Starlette:
     """Build the Starlette app with bearer auth (ADR-0004 — ``/agents`` only).
 
     WI-3 wires a per-app :class:`Broker` + :class:`NodeRegistry` so
     external nodes (no YAML, no container) can attach as first-class
     members of the comms graph. The state lives on ``app.state`` so
     every handler shares the same broker and registry instance.
+
+    WI-2 chains :class:`NodeAuthMiddleware` after
+    :class:`BearerAuthMiddleware`: the outer middleware admits any
+    request bearing a valid token (host-wide or per-node); the inner
+    one resolves that token to a node identity and attaches it to
+    ``request.state.authenticated_node`` so the ACL gate in
+    :func:`node_message_send` enforces "identity cannot be spoofed
+    via a metadata field" (handoff §4 acceptance). The spawn-gate
+    in :func:`agents_start` consumes the same body-``caller`` shape.
+
+    Middleware order matters. Starlette executes the *outermost*
+    ``add_middleware`` call first (it wraps the app last but runs
+    first on the inbound path). So the BearerAuthMiddleware call
+    below comes **last** to make it the outermost layer.
+
+    WI-4 ``local_host`` configures the name this app sees as
+    "itself" so the cross-host forwarder can tell local-vs-remote
+    targets apart. When omitted, falls back to
+    :func:`state_db._resolve_host` (the env + config chain).
     """
     routes: list[Route] = [
         Route("/v1/health", health, methods=["GET"]),
@@ -631,5 +725,13 @@ def create_app(*, token: str) -> Starlette:
     # Per-app shared state for the WI-3 inbox surface.
     app.state.inbox = Broker()
     app.state.nodes = NodeRegistry()
+    # WI-4 — per-app local host name. May be ``None``; the forwarder
+    # then falls back to the env-based resolver.
+    app.state.local_host = local_host
+    # WI-2 — identity resolution (inner). Reads the same Bearer the
+    # outer middleware already validated; tags ``request.state`` with
+    # the resolved node name (or ``None`` for the host-wide bearer).
+    app.add_middleware(NodeAuthMiddleware, host_bearer=token)
+    # Outer perimeter — admits any valid token, rejects everything else.
     app.add_middleware(BearerAuthMiddleware, token=token)
     return app

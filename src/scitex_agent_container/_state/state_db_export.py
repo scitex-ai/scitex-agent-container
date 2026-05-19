@@ -67,6 +67,10 @@ def _table_filter_clauses(
         "attempts": ("WHERE ts >= ?", (since,)),
         "turns": ("WHERE ts >= ?", (since,)),
         "errors": ("WHERE ts >= ?", (since,)),
+        # WI-2 ACL tables — ``created_at`` is the row-mint time.
+        "node_tokens": ("WHERE created_at >= ?", (since,)),
+        "lineage": ("WHERE created_at >= ?", (since,)),
+        "comms_grants": ("WHERE created_at >= ?", (since,)),
     }
     return {t: explicit.get(t, ("WHERE ts >= ?", (since,))) for t in known_tables}
 
