@@ -432,7 +432,9 @@ def test_message_send_without_bearer_token_is_rejected(client) -> None:
 
 
 def test_inbox_stream_without_bearer_token_is_rejected(client) -> None:
-    # Arrange / Act
-    resp = client.get("/agents/anything/inbox/stream")
+    # Arrange
+    path = "/agents/anything/inbox/stream"
+    # Act
+    resp = client.get(path)
     # Assert
     assert resp.status_code == 401
