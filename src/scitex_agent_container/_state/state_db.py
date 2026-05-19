@@ -180,6 +180,33 @@ CREATE TABLE IF NOT EXISTS heartbeats (
     ts            REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_heartbeats_name_ts ON heartbeats(name, ts);
+
+-- WI-2 ACL — per-node bearer tokens + lineage edges (handoff §4).
+--
+-- ``node_tokens`` is the authenticated-identity primitive. Each node
+-- (sac-managed or external) gets a token minted at registration; the
+-- server resolves an incoming ``Authorization: Bearer <token>`` to a
+-- node name. Without this table the only available identity is the
+-- self-claimed ``metadata.from_agent`` field — exactly what the
+-- handoff forbids ("Do not gate on an unauthenticated string").
+--
+-- ``lineage`` records parent → child edges produced by
+-- ``sac agents start``. A node's *group* (the default-ACL unit) is
+-- derived from lineage: parent + parent's direct children. Schema
+-- stays N-level capable — see derive_group() for the traversal.
+CREATE TABLE IF NOT EXISTS node_tokens (
+    name        TEXT PRIMARY KEY,
+    token       TEXT NOT NULL UNIQUE,
+    created_at  REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_node_tokens_token ON node_tokens(token);
+
+CREATE TABLE IF NOT EXISTS lineage (
+    child_name   TEXT PRIMARY KEY,
+    parent_name  TEXT NOT NULL,
+    created_at   REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_lineage_parent ON lineage(parent_name);
 """
 
 # Tables exposed by `sac db query --table=<t>`. Whitelisted so users
@@ -193,6 +220,8 @@ KNOWN_TABLES = (
     "turns",
     "errors",
     "heartbeats",
+    "node_tokens",
+    "lineage",
 )
 
 
