@@ -65,13 +65,14 @@ structural / schema / data-structure change.
 >
 > The shipped ACL gates on the **self-claimed
 > `metadata.from_agent`** field; cryptographic per-node identity
-> is **deferred** to a separate follow-on handoff (related to the
-> existing
-> [`sac-accounts-per-agent-credentials-and-rotation`](https://github.com/ywatanabe1989/scitex-agent-container/blob/develop/docs/design/sac-accounts-per-agent-credentials-and-rotation.md)
-> FUTURE doc). Every cross-group grant row in `comms_grants`
+> is **deferred** to a separate follow-on handoff. The design for
+> the cryptographic-identity work is filed in scitex-lead at
+> `GITIGNORED/FUTURE/sac-per-node-authenticated-acl.md` — not in
+> this repo. Every cross-group grant row in `comms_grants`
 > carries the audit note
 > `"trusts metadata.from_agent until per-node creds land"` so the
-> follow-on work has the audit trail it needs.
+> follow-on work has the audit trail it needs to scope what each
+> grant must be re-validated against.
 >
 > Until that lands, the ACL is a policy gate — a misbehaving node
 > can claim a different identity by writing a different
