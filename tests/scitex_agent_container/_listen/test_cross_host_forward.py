@@ -248,6 +248,7 @@ def test_cross_host_send_forwards_to_target_host(isolated_env) -> None:
                         await sub
             return captured.get("event", {})
 
+    # Act
     event = asyncio.run(driver())
     # Assert
     assert event.get("content") == "hi from b"
@@ -319,6 +320,7 @@ def test_cross_host_forward_preserves_from_agent_metadata(isolated_env) -> None:
                         await sub
             return captured.get("event", {})
 
+    # Act
     event = asyncio.run(driver())
     # Assert
     assert event.get("from_agent") == "permitted-peer"
@@ -329,14 +331,14 @@ def test_cross_host_forward_preserves_from_agent_metadata(isolated_env) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_cross_host_forward_502_when_peer_token_missing(
-    tmp_path: Path,
-) -> None:
-    """When forwarding to a host whose bearer is NOT in
-    ``peer-tokens/``, the forwarder must fail loudly with 502 and a
-    message naming the missing file + the ``sac host add-peer`` fix.
+@pytest.fixture
+def missing_peer_token_response(tmp_path: Path):
+    """Drive a forwarder POST with NO peer-token written for the
+    destination host, so the forwarder must fall through to the loud
+    502 path. Yielded value is the live ``httpx.Response`` so each
+    test can assert one aspect of the failure shape.
     """
-    # Arrange — fresh tmp env, NO peer-token written for host-z.
+    # Arrange — fresh tmp env, NO peer-token for host-z.
     saved_db_env = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
     saved_db_const = state_db.DEFAULT_DB_PATH
     saved_home = os.environ.get("HOME")
@@ -357,7 +359,6 @@ def test_cross_host_forward_502_when_peer_token_missing(
     app_local = create_app(token=SHARED_TOKEN, local_host="host-b")
 
     try:
-        # Act
         from starlette.testclient import TestClient
 
         with TestClient(app_local) as client:
@@ -366,11 +367,7 @@ def test_cross_host_forward_502_when_peer_token_missing(
                 json=_send_payload("hi", from_agent="permitted-peer"),
                 headers={"authorization": f"Bearer {SHARED_TOKEN}"},
             )
-        # Assert
-        assert r.status_code == 502, r.text
-        body = r.json()
-        assert "host-z" in body.get("error", "")
-        assert "sac host add-peer" in body.get("error", "")
+        yield r
     finally:
         state_db.DEFAULT_DB_PATH = saved_db_const
         _reg.REGISTRY_DIR = saved_reg_const
@@ -383,3 +380,44 @@ def test_cross_host_forward_502_when_peer_token_missing(
             os.environ.pop("HOME", None)
         else:
             os.environ["HOME"] = saved_home
+
+
+def test_cross_host_forward_502_when_peer_token_missing(
+    missing_peer_token_response,
+) -> None:
+    """When forwarding to a host whose bearer is NOT in
+    ``peer-tokens/``, the forwarder fails loudly with 502
+    (handoff §0 — no silent drop).
+    """
+    # Arrange
+    r = missing_peer_token_response
+    # Act
+    status = r.status_code
+    # Assert
+    assert status == 502, r.text
+
+
+def test_cross_host_forward_502_body_names_missing_host(
+    missing_peer_token_response,
+) -> None:
+    """The 502 body names the specific peer host so the operator
+    sees which ``sac host add-peer`` to run."""
+    # Arrange
+    r = missing_peer_token_response
+    # Act
+    err = r.json().get("error", "")
+    # Assert
+    assert "host-z" in err
+
+
+def test_cross_host_forward_502_body_carries_add_peer_fix(
+    missing_peer_token_response,
+) -> None:
+    """The 502 body advertises the ``sac host add-peer`` remediation
+    so the loud failure points at the fix."""
+    # Arrange
+    r = missing_peer_token_response
+    # Act
+    err = r.json().get("error", "")
+    # Assert
+    assert "sac host add-peer" in err

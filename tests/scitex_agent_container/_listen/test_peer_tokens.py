@@ -85,14 +85,16 @@ def test_write_peer_token_overwrites_existing(peer_tokens_dir: Path) -> None:
 
 def test_write_peer_token_rejects_empty_host(peer_tokens_dir: Path) -> None:
     # Arrange
-    # Act / Assert
+    # Act
+    # Assert
     with pytest.raises(PeerTokenError):
         write_peer_token(peer_host="", token="t", tokens_dir=peer_tokens_dir)
 
 
 def test_write_peer_token_rejects_empty_token(peer_tokens_dir: Path) -> None:
     # Arrange
-    # Act / Assert
+    # Act
+    # Assert
     with pytest.raises(PeerTokenError):
         write_peer_token(peer_host="host-a", token="", tokens_dir=peer_tokens_dir)
 
@@ -119,7 +121,8 @@ def test_read_peer_token_raises_loudly_when_file_missing(
     """Missing token must fail loudly with an actionable message —
     no silent ``None`` fallback (handoff §0 Hard rules)."""
     # Arrange
-    # Act / Assert
+    # Act
+    # Assert
     with pytest.raises(PeerTokenError, match="sac host add-peer"):
         read_peer_token(peer_host="host-z", tokens_dir=peer_tokens_dir)
 
@@ -147,7 +150,8 @@ def test_read_peer_token_raises_on_empty_file(peer_tokens_dir: Path) -> None:
     # Arrange
     peer_tokens_dir.mkdir(parents=True, exist_ok=True)
     (peer_tokens_dir / "host-a.token").write_text("")
-    # Act / Assert
+    # Act
+    # Assert
     with pytest.raises(PeerTokenError, match="empty"):
         read_peer_token(peer_host="host-a", tokens_dir=peer_tokens_dir)
 
