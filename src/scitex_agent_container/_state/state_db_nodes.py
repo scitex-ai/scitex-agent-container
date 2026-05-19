@@ -45,9 +45,11 @@ from typing import Any
 
 __all__ = [
     "derive_group",
+    "is_local_node",
     "list_node_tokens",
     "mint_node_token",
     "record_lineage",
+    "resolve_node_host",
     "resolve_node_token",
 ]
 
@@ -195,6 +197,69 @@ def derive_group(
         for r in sibling_rows:
             group.add(str(r["child_name"]))
         return group
+
+
+def resolve_node_host(
+    *,
+    name: str,
+    db_path: Path | None = None,
+) -> dict[str, Any] | None:
+    """Map a node ``name`` to ``{host, a2a_port}`` from the
+    ``instances`` table.
+
+    Returns ``None`` when the name does not match a *live* instance
+    (``ended_at IS NULL``). When several live records exist for the
+    same name (e.g., a restart race), the most recently started one
+    wins — cross-host forwarding cannot pick non-deterministically.
+
+    WI-4: the cross-host forwarder consults this resolver to decide
+    whether ``message:send`` targets a local node (broker publish)
+    or a remote node (HTTP forward to that host's ``sac listen``).
+    """
+    if not name:
+        return None
+    from .state_db import open_db
+
+    with open_db(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT host, a2a_port
+              FROM instances
+             WHERE name = ? AND ended_at IS NULL
+             ORDER BY started_at DESC, id DESC
+             LIMIT 1
+            """,
+            (name,),
+        ).fetchone()
+    if row is None:
+        return None
+    return {
+        "host": str(row["host"]),
+        "a2a_port": int(row["a2a_port"]) if row["a2a_port"] is not None else None,
+    }
+
+
+def is_local_node(
+    *,
+    name: str,
+    local_host: str,
+    db_path: Path | None = None,
+) -> bool:
+    """Return ``True`` if ``name`` should be served locally, ``False``
+    if the cross-host forwarder should hand it off.
+
+    Local cases:
+
+    * The name resolves to ``local_host`` via ``resolve_node_host``.
+    * The name does NOT resolve to any host (unknown / external node) —
+      defer to the local ``NodeRegistry`` implicit-registration path.
+      Forwarding a never-seen name would synthesise an SSRF target
+      from a self-claimed string; the host-local path is correct.
+    """
+    info = resolve_node_host(name=name, db_path=db_path)
+    if info is None:
+        return True
+    return info["host"] == local_host
 
 
 def list_node_tokens(db_path: Path | None = None) -> list[dict[str, Any]]:
