@@ -1,4 +1,12 @@
-"""WI-3 — external nodes join the comms graph (handoff §4).
+"""Tests for ``_listen._nodes`` — external-node registry + AgentCard
+synthesis, exercised end-to-end through the ``sac listen`` inbox routes.
+
+Mirrors ``src/scitex_agent_container/_listen/_nodes.py``. The route
+handlers in ``_listen/server.py`` (``node_message_send``,
+``node_inbox_stream``) use ``NodeRegistry`` + ``Broker`` from this
+module; testing them together is what proves the
+``NodeRegistry.register`` / ``card`` / ``synthesize_external_card``
+contract.
 
 Per HANDOFF_AGENT_COMMS_2026-05-19.md §4 (WI-3 "External nodes join
 the comms graph"): sac must support a node with an identity + inbox
@@ -8,17 +16,18 @@ but **no spec and no lifecycle**. The inbox endpoints
 not by the presence of an agent YAML.
 
 These tests drive the real Starlette app through
-``starlette.testclient.TestClient`` (no mocks, per handoff §0 Hard
-rules). Real bearer auth, real Broker, real SSE — exactly the
-shape ``sac mcp channel`` will see in production.
+``starlette.testclient.TestClient`` and a real ``uvicorn`` loopback
+(no mocks, per handoff §0 Hard rules). Real bearer auth, real
+Broker, real SSE — exactly the shape ``sac mcp channel`` will see
+in production.
 
 Acceptance from §4: "a plain ``claude`` CLI session running
 ``sac mcp channel --name <id>`` receives, as
 ``<channel source="sac" ...>`` blocks, messages a permitted node
 sends to ``<id>`` — with no container and no spec for ``<id>``."
 
-This file exercises the HTTP-side of that acceptance: an inbox stream
-opens, a message is POSTed, the SSE frame is delivered.
+This file exercises the HTTP-side of that acceptance: an inbox
+stream opens, a message is POSTed, the SSE frame is delivered.
 """
 
 from __future__ import annotations
