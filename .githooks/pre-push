@@ -21,19 +21,38 @@ set -euo pipefail
 # Run from repo root.
 cd "$(git rev-parse --show-toplevel)"
 
-# Locate ruff. Prefer the repo's .venv (matches what `pip install -e .[dev]`
-# produces), fall back to whatever ruff is on PATH.
+# Locate ruff. Search order matches the venvs the SciTeX harness
+# typically installs into; falls back to whatever ruff is on PATH.
+# Operator-overridable via $SAC_PRE_PUSH_RUFF if a non-standard venv
+# is in use (rare).
 RUFF=""
-if [ -x ".venv/bin/ruff" ]; then
-  RUFF=".venv/bin/ruff"
-elif command -v ruff >/dev/null 2>&1; then
+for candidate in \
+    "${SAC_PRE_PUSH_RUFF:-}" \
+    ".venv/bin/ruff" \
+    "/opt/venv-agent/bin/ruff" \
+    "/opt/venv-sac/bin/ruff" \
+    "$HOME/.local/bin/ruff" \
+; do
+  if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+    RUFF="$candidate"
+    break
+  fi
+done
+if [ -z "$RUFF" ] && command -v ruff >/dev/null 2>&1; then
   RUFF="$(command -v ruff)"
 fi
 
 if [ -z "$RUFF" ]; then
-  echo "WARN: ruff not found; skipping pre-push lint gate." >&2
-  echo "      pip install -e .[dev] to enable it." >&2
-  exit 0
+  # Loud failure — never silently skip the gate (handoff Q3). If a
+  # genuine emergency requires bypass, --no-verify is documented as
+  # the explicit override and shows up in the audit log.
+  echo "PRE-PUSH BLOCKED: ruff binary not found." >&2
+  echo "  Searched: \$SAC_PRE_PUSH_RUFF, .venv/bin/ruff, /opt/venv-agent/bin/ruff," >&2
+  echo "           /opt/venv-sac/bin/ruff, \$HOME/.local/bin/ruff, PATH." >&2
+  echo "  Install ruff via: pip install -e .[dev]" >&2
+  echo "  Or point the hook at an existing ruff: export SAC_PRE_PUSH_RUFF=/path/to/ruff" >&2
+  echo "  Or bypass once (emergency only): git push --no-verify" >&2
+  exit 1
 fi
 
 # Strict check (no autofix). Narrow --select keeps the gate focused on
