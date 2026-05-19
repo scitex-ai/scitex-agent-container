@@ -491,8 +491,9 @@ async def node_message_send(request: Request) -> Response:
 
     **Identity caveat** — the sender identity is the self-claimed
     ``metadata.from_agent`` field. Cryptographic per-node identity
-    is deferred to a separate follow-on handoff (related to the
-    sac-accounts-per-agent-credentials-and-rotation FUTURE doc);
+    is deferred to a separate follow-on handoff filed in
+    scitex-lead at
+    ``GITIGNORED/FUTURE/sac-per-node-authenticated-acl.md``;
     until then every grant row stores the caveat "trusts
     metadata.from_agent until per-node creds land". Bearer auth
     (host-wide token) is still enforced by

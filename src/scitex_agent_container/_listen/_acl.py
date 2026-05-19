@@ -14,8 +14,8 @@ Per HANDOFF_AGENT_COMMS_2026-05-19.md §4 (WI-2) and the lead's
 * "Denial is **explicit**: a denied send returns a clear ``403`` to
   the sender and is logged."
 
-**Deferred** (separate handoff, related to the existing sac-accounts-
-per-agent-credentials-and-rotation FUTURE doc):
+**Deferred** (separate handoff filed in scitex-lead at
+``GITIGNORED/FUTURE/sac-per-node-authenticated-acl.md``):
 
 * Authenticated per-node identity. The current
   :func:`check_send_acl` gates on the self-claimed

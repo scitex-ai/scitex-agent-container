@@ -10,9 +10,8 @@ Per HANDOFF_AGENT_COMMS_2026-05-19.md §4 (WI-2) and the lead's
   * Cross-group grants — accepted, keyed on the self-claimed
     ``metadata.from_agent`` field, **with the caveat that each row
     "trusts metadata.from_agent until per-node creds land"**. The
-    cryptographic-identity follow-on is tracked separately (related
-    to the existing sac-accounts-per-agent-credentials-and-rotation
-    FUTURE doc).
+    cryptographic-identity follow-on is tracked in scitex-lead at
+    ``GITIGNORED/FUTURE/sac-per-node-authenticated-acl.md``.
 
   * Spawn permission — root-only by current policy (a node with no
     parent may call ``sac agents start``; a child may not). The
