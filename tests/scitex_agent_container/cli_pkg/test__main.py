@@ -340,3 +340,89 @@ def test_cli_entry_point_rejects_malformed_on_flag(saved_argv):
     # Assert
     with pytest.raises(SystemExit):
         run()
+
+
+# ---------------------------------------------------------------------------
+# WI-6 — ``sac channel`` tombstone regression guard (handoff §6)
+#
+# Per HANDOFF_AGENT_COMMS_2026-05-19.md §6 (WI-6 "Delete deprecated
+# tombstones"): the ``sac channel send`` group was a ``[DEPRECATED]``
+# back-compat surface duplicating ``sac peer post-turn`` (same outcome,
+# different transport). No live in-repo caller. Deleted on this branch.
+# These tests assert the tombstone stays gone — adding ``channel`` back
+# would have to land with a new behaviour test, not as a back-compat
+# re-introduction.
+# ---------------------------------------------------------------------------
+
+
+def test_channel_group_module_is_deleted() -> None:
+    """The ``scitex_agent_container.cli_pkg.channel_group`` module is
+    no longer importable. The tombstone is fully removed (handoff §6).
+    """
+    # Arrange
+    import importlib
+
+    target = "scitex_agent_container.cli_pkg.channel_group"
+    # Act
+    try:
+        importlib.import_module(target)
+    except ModuleNotFoundError:
+        importable = False
+    else:
+        importable = True
+    # Assert
+    assert importable is False
+
+
+def test_main_cli_does_not_advertise_channel_command() -> None:
+    """``sac --help`` text must not mention ``channel`` — it would be a
+    surfaced tombstone (handoff §0 Hard rules).
+    """
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(main, ["--help"])
+    # Assert
+    assert "channel" not in result.output.lower(), result.output
+
+
+def test_sac_channel_invocation_is_unknown_command() -> None:
+    """``sac channel send`` must exit non-zero — the group is gone.
+    Click reports 'No such command' for the unknown noun.
+    """
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(main, ["channel", "send", "alpha", "hi"])
+    # Assert
+    assert result.exit_code != 0
+
+
+def test_lazy_commands_does_not_register_channel() -> None:
+    """The LazyGroup mapping must not list ``channel`` either."""
+    # Arrange
+    keys = set(_MainGroup.LAZY_COMMANDS.keys())
+    # Act
+    has_channel = "channel" in keys
+    # Assert
+    assert has_channel is False
+
+
+def test_main_cli_module_imports_cleanly() -> None:
+    """Guard: if someone removes ``channel_group`` but leaves a dangling
+    reference in ``_main.py``, every CLI invocation breaks at import
+    time. Catch it here rather than in every other test."""
+    # Arrange
+    import importlib
+
+    target = "scitex_agent_container.cli_pkg._main"
+    # Act
+    try:
+        mod = importlib.import_module(target)
+    except Exception as exc:  # noqa: BLE001
+        mod = None
+        err: Exception | None = exc
+    else:
+        err = None
+    # Assert
+    assert mod is not None, f"_main import failed: {err!r}"
