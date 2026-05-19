@@ -487,20 +487,29 @@ async def _forward_to_remote(
     """WI-4 cross-host forwarder. Reposts ``body`` to the destination
     host's ``sac listen`` and proxies the response back.
 
-    **Bearer handling**: the incoming ``Authorization`` header is
-    passed through verbatim. The current model assumes a **shared
-    fleet bearer** (Q4 option (a) in ``/work/QUESTIONS.md``) — every
-    sac listen in the fleet runs with the same listen token, so the
-    caller's bearer is also acceptable at the destination. Per-host
-    bearer discovery (Q4 (b)/(c)) is a follow-on; the receiver's
-    ``BearerAuthMiddleware`` still enforces *its* token, so a wrong
-    bearer fails loudly at the destination rather than silently.
+    **Bearer handling — per-host bearer registry** (Q4 (b)). The
+    destination's host bearer is read from
+    ``peer-tokens/<target_host>.token`` on the forwarding host. The
+    operator populates that registry with ``sac host add-peer <host>
+    <token>`` (one entry per peer). The forwarder uses that bearer
+    on the wire — not its own, not the original caller's. This
+    keeps the **per-host blast radius** the lead asked for: leaking
+    one host's listen bearer compromises only that host.
+
+    Missing ``peer-tokens/<host>.token`` is a **loud failure**: 502
+    with a clear "no peer token for X" message that names the file
+    and the ``sac host add-peer`` fix. Never silently drop a forward
+    (handoff §0 Hard rules).
 
     **ACL handling**: the body is unchanged, so the destination
     re-runs ``check_send_acl`` against the same
-    ``metadata.from_agent``. Cross-group denials fire at the
-    receiving host (handoff §4 acceptance "ACL is enforced at the
-    receiving host").
+    ``metadata.from_agent``. Because the forwarder authenticates
+    with the destination's *host* bearer (administrative caller),
+    ``authenticated_node`` is ``None`` at the destination and the
+    ACL gates on the metadata claim — exactly the cross-host shape
+    the lead documented under Q1's restored design. Cross-group
+    denials fire at the receiving host (handoff §4 acceptance "ACL
+    is enforced at the receiving host").
     """
     if not target_port:
         return JSONResponse(
@@ -521,6 +530,8 @@ async def _forward_to_remote(
     # / "host-b" via SAC_HOST.
     import httpx as _httpx
 
+    from .peer_tokens import PeerTokenError, read_peer_token
+
     forward_url = f"http://{target_host}:{target_port}/agents/{target_name}/message:send"
     # In our test loopback both hosts live on 127.0.0.1; the canonical
     # host name is a label, not a routable address. Rewrite to
@@ -532,10 +543,20 @@ async def _forward_to_remote(
             f"http://127.0.0.1:{target_port}/agents/{target_name}/message:send"
         )
 
-    auth = request.headers.get("authorization") or request.headers.get("Authorization")
-    forward_headers = {"Content-Type": "application/json"}
-    if auth:
-        forward_headers["Authorization"] = auth
+    # WI-4 Q4(b) — per-host bearer registry. Pull the destination's
+    # host bearer; loud 502 if it's missing.
+    try:
+        peer_bearer = read_peer_token(peer_host=target_host)
+    except PeerTokenError as exc:
+        return JSONResponse(
+            {"error": f"cross-host forward refused: {exc}"},
+            status_code=502,
+        )
+
+    forward_headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {peer_bearer}",
+    }
 
     try:
         async with _httpx.AsyncClient(timeout=15.0) as ac:
