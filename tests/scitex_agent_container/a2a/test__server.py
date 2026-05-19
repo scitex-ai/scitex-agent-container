@@ -20,6 +20,7 @@ split into per-behaviour tests, parametrized when natural.
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 from pathlib import Path
 
@@ -630,3 +631,307 @@ def test_sdk_round_trip_get_task_envelope_carries_result(_round_trip):
     has_result = "result" in env
     # Assert
     assert has_result, f"expected result, got {env}"
+
+
+# ---------------------------------------------------------------------
+# WI-1 — channel-bus durability + replay-on-reconnect (handoff §4)
+#
+# Per HANDOFF_AGENT_COMMS_2026-05-19.md §4 (WI-1 "Durability /
+# replay-on-reconnect"):
+#
+#   * An event POSTed to ``message:send`` while no SSE subscriber is
+#     connected MUST be delivered on connect.
+#   * Kill + reconnect MUST replay exactly the missed events.
+#   * Nothing is ever dropped silently.
+#
+# These tests drive the real Starlette app via a real ``uvicorn`` on a
+# loopback port (no mocks, per handoff §0). The ``channel_events``
+# table is the durability surface; the SSE handler reads from it on
+# connect and stamps the SSE ``id:`` line so a Last-Event-ID reconnect
+# resumes at the right cursor.
+# ---------------------------------------------------------------------
+
+import asyncio as _asyncio
+import contextlib as _contextlib
+import socket as _socket
+import threading as _threading
+
+import httpx as _httpx
+import uvicorn as _uvicorn
+
+from scitex_agent_container._state import state_db as _state_db
+
+
+@pytest.fixture
+def _isolated_db(tmp_path: Path):
+    """Point state.db at a tmp file for this test.
+
+    PA-306 no-mocks: yield-based fixture saving/restoring real state
+    (no ``monkeypatch``). Both the env var and the module-level
+    constant are touched so callers that read either path see the
+    isolated db.
+    """
+    db = tmp_path / "state.db"
+    saved_env = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
+    saved_default = _state_db.DEFAULT_DB_PATH
+    os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
+    _state_db.DEFAULT_DB_PATH = db
+    _state_db.init_schema(db)
+    try:
+        yield db
+    finally:
+        _state_db.DEFAULT_DB_PATH = saved_default
+        if saved_env is None:
+            os.environ.pop("SCITEX_AGENT_CONTAINER_STATE_DB", None)
+        else:
+            os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = saved_env
+
+
+def _send_payload(text: str, *, from_agent: str = "alice") -> dict:
+    return {
+        "jsonrpc": "2.0",
+        "id": "1",
+        "method": "SendMessage",
+        "params": {
+            "message": {
+                "message_id": "m-x",
+                "role": "ROLE_USER",
+                "parts": [{"text": text}],
+            },
+            "metadata": {"from_agent": from_agent},
+        },
+    }
+
+
+@_contextlib.contextmanager
+def _run_loopback(app, port: int):
+    """Spin up uvicorn on a loopback port for a single test block."""
+    # Arrange — boot the uvicorn server on a background thread.
+    config = _uvicorn.Config(
+        app, host="127.0.0.1", port=port, log_level="warning", ws="none"
+    )
+    server = _uvicorn.Server(config)
+    t = _threading.Thread(target=server.run, daemon=True)
+    t.start()
+    # Wait for "started"; raise loudly if it doesn't come up.
+    import time as _time
+
+    deadline = _time.monotonic() + 5.0
+    while not server.started:
+        if _time.monotonic() > deadline:
+            raise RuntimeError("uvicorn loopback did not start in 5s")
+        _time.sleep(0.05)
+    try:
+        yield port
+    finally:
+        server.should_exit = True
+        t.join(timeout=5.0)
+
+
+def _free_port() -> int:
+    with _contextlib.closing(_socket.socket()) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+async def _consume_first_event(url: str, *, headers: dict | None = None) -> dict:
+    """Open the SSE stream, read until the first ``data:`` frame."""
+    async with _httpx.AsyncClient(timeout=5.0) as ac:
+        async with ac.stream("GET", url, headers=headers or {}) as sse:
+            async for line in sse.aiter_lines():
+                if line.startswith("data:"):
+                    return json.loads(line[len("data:") :].lstrip())
+    raise AssertionError(f"SSE stream {url!r} closed without a data frame")
+
+
+async def _consume_event_with_id(
+    url: str, *, headers: dict | None = None
+) -> tuple[str | None, dict]:
+    """Like ``_consume_first_event`` but also returns the SSE ``id:`` line."""
+    seen_id: str | None = None
+    async with _httpx.AsyncClient(timeout=5.0) as ac:
+        async with ac.stream("GET", url, headers=headers or {}) as sse:
+            async for line in sse.aiter_lines():
+                if line.startswith("id:"):
+                    seen_id = line[len("id:") :].strip()
+                    continue
+                if line.startswith("data:"):
+                    return seen_id, json.loads(line[len("data:") :].lstrip())
+    raise AssertionError(f"SSE stream {url!r} closed without a data frame")
+
+
+@pytest.fixture
+def _durable_publish_row(_isolated_db, tmp_path):
+    """POST one ``message:send`` with no subscriber; return the persisted row."""
+    # Arrange
+    yml = _write_yaml(tmp_path, "bob")
+    app = build_app([yml])
+    with TestClient(app) as client:
+        # Act
+        resp = client.post(
+            "/agents/bob/message:send",
+            json=_send_payload("hello durable", from_agent="alice"),
+        )
+    assert resp.status_code in (200, 201, 202), resp.text
+    # Assert handled by per-behaviour tests below.
+    with _state_db.open_db(_isolated_db) as conn:
+        rows = conn.execute(
+            "SELECT id, target, source, content, delivered_at "
+            "FROM channel_events"
+        ).fetchall()
+    return rows
+
+
+def test_publish_with_no_subscriber_persists_exactly_one_row(
+    _durable_publish_row,
+) -> None:
+    """The broker fans out to zero queues, but the event lands once
+    in ``channel_events``."""
+    # Arrange
+    rows = _durable_publish_row
+    # Act
+    count = len(rows)
+    # Assert
+    assert count == 1
+
+
+def test_persisted_row_target_matches_path_param(_durable_publish_row) -> None:
+    """``target`` carries the agent name from the URL."""
+    # Arrange
+    row = _durable_publish_row[0]
+    # Act
+    actual = row["target"]
+    # Assert
+    assert actual == "bob"
+
+
+def test_persisted_row_source_carries_from_agent_metadata(
+    _durable_publish_row,
+) -> None:
+    """``source`` carries the publisher's ``from_agent`` metadata."""
+    # Arrange
+    row = _durable_publish_row[0]
+    # Act
+    actual = row["source"]
+    # Assert
+    assert actual == "alice"
+
+
+def test_persisted_row_content_carries_message_text(_durable_publish_row) -> None:
+    """``content`` carries the joined ``message.parts[*].text``."""
+    # Arrange
+    row = _durable_publish_row[0]
+    # Act
+    actual = row["content"]
+    # Assert
+    assert actual == "hello durable"
+
+
+def test_persisted_row_delivered_at_is_null_with_no_subscriber(
+    _durable_publish_row,
+) -> None:
+    """``delivered_at`` stays NULL until the first subscriber receives."""
+    # Arrange
+    row = _durable_publish_row[0]
+    # Act
+    actual = row["delivered_at"]
+    # Assert
+    assert actual is None
+
+
+def test_event_posted_before_subscribe_is_replayed_on_connect(
+    _isolated_db, tmp_path: Path
+) -> None:
+    """Acceptance criterion (handoff §4): "an event POSTed with no
+    subscriber is delivered on connect".
+
+    The publisher's POST status is treated as a precondition (raise
+    on failure) rather than an assertion so the test carries exactly
+    one assert — the SSE-replayed payload (TQ007).
+    """
+    # Arrange
+    yml = _write_yaml(tmp_path, "bob")
+    app = build_app([yml])
+    port = _free_port()
+
+    with _run_loopback(app, port):
+        with _httpx.Client(timeout=5.0) as c:
+            r = c.post(
+                f"http://127.0.0.1:{port}/agents/bob/message:send",
+                json=_send_payload("queued for bob"),
+            )
+            if r.status_code not in (200, 201, 202):
+                raise RuntimeError(
+                    f"precondition: publisher POST returned {r.status_code}: "
+                    f"{r.text!r}"
+                )
+        # Act — subscribe and read the replay.
+        event = _asyncio.run(
+            _consume_first_event(
+                f"http://127.0.0.1:{port}/agents/bob/inbox/stream"
+            )
+        )
+    # Assert
+    assert event.get("content") == "queued for bob"
+
+
+def test_replayed_event_is_marked_delivered_after_first_delivery(
+    _isolated_db, tmp_path: Path
+) -> None:
+    """``delivered_at`` is set the first time the event reaches a live
+    subscriber. The replay path stamps it inline so the next reconnect
+    does not re-yield the same event from the undelivered window."""
+    # Arrange
+    yml = _write_yaml(tmp_path, "bob")
+    app = build_app([yml])
+    port = _free_port()
+
+    with _run_loopback(app, port):
+        with _httpx.Client(timeout=5.0) as c:
+            c.post(
+                f"http://127.0.0.1:{port}/agents/bob/message:send",
+                json=_send_payload("queued for bob"),
+            )
+        _asyncio.run(
+            _consume_first_event(
+                f"http://127.0.0.1:{port}/agents/bob/inbox/stream"
+            )
+        )
+    # Act
+    with _state_db.open_db(_isolated_db) as conn:
+        row = conn.execute(
+            "SELECT delivered_at FROM channel_events WHERE target='bob'"
+        ).fetchone()
+    # Assert
+    assert row["delivered_at"] is not None
+
+
+def test_sse_id_line_is_persisted_row_id(
+    _isolated_db, tmp_path: Path
+) -> None:
+    """The SSE ``id:`` line carries the channel_events row id — the
+    cursor a reconnecting client echoes back as Last-Event-ID."""
+    # Arrange
+    yml = _write_yaml(tmp_path, "bob")
+    app = build_app([yml])
+    port = _free_port()
+
+    with _run_loopback(app, port):
+        with _httpx.Client(timeout=5.0) as c:
+            c.post(
+                f"http://127.0.0.1:{port}/agents/bob/message:send",
+                json=_send_payload("first"),
+            )
+        sse_id, _event = _asyncio.run(
+            _consume_event_with_id(
+                f"http://127.0.0.1:{port}/agents/bob/inbox/stream"
+            )
+        )
+    with _state_db.open_db(_isolated_db) as conn:
+        row = conn.execute(
+            "SELECT id FROM channel_events WHERE target='bob'"
+        ).fetchone()
+    # Act
+    matches = sse_id is not None and int(sse_id) == int(row["id"])
+    # Assert
+    assert matches
