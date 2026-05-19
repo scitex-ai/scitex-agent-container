@@ -175,8 +175,21 @@
 <p class="caption" role="heading"><span class="caption-text">Ecosystem</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="sac-and-orochi.html">sac and orochi</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#architecture">Architecture</a></li>
-<li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#responsibility-split">Responsibility split</a></li>
+<li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#the-comms-model-what-sac-knows">The comms model — what sac knows</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#lineage-parent-children">Lineage — parent / children</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#group-the-unit-of-default-acl">Group — the unit of default ACL</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#depth-limit-a-policy-not-a-structural-limit">Depth limit — a POLICY, not a structural limit</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#acl-permissioned-messaging">ACL — permissioned messaging</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#authenticated-identity-handoff-4-acceptance">Authenticated identity (handoff §4 acceptance)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#cross-host-forwarding-per-host-bearer-registry">Cross-host forwarding — per-host bearer registry</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#a2a-compliance">A2A compliance</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#what-sac-knows-vs-doesnt">What sac knows vs doesn’t</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#the-corrected-boundary">The corrected boundary</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#responsibility-split">Responsibility split</a></li>
+</ul>
+</li>
 <li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#how-orochi-consumes-sac">How orochi consumes sac</a></li>
 <li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#standalone-use">Standalone use</a></li>
 <li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#live-instance">Live instance</a></li>
@@ -462,7 +475,7 @@ externally addressable Claude agent.</p>
 <section id="spec-yaml-ssot">
 <h3><code class="docutils literal notranslate"><span class="pre">spec.yaml</span></code> (SSoT)<a class="headerlink" href="#spec-yaml-ssot" title="Link to this heading"></a></h3>
 <p>The single file that fully defines an agent. The agent name is the name of its
-parent directory — no name field in the YAML. See <span class="xref myst">spec-reference.md</span>.</p>
+parent directory — no name field in the YAML. See <a class="reference internal" href="spec-reference.html"><span class="std std-doc">spec-reference.md</span></a>.</p>
 </section>
 <section id="dot-claude-optional">
 <h3><code class="docutils literal notranslate"><span class="pre">dot_claude/</span></code> (optional)<a class="headerlink" href="#dot-claude-optional" title="Link to this heading"></a></h3>
@@ -540,9 +553,9 @@ Heartbeat state is written to <code class="docutils literal notranslate"><span c
 <section id="see-also">
 <h2>See also<a class="headerlink" href="#see-also" title="Link to this heading"></a></h2>
 <ul class="simple">
-<li><p><span class="xref myst">spec-reference.md</span> — full field reference</p></li>
-<li><p><span class="xref myst">directories.md</span> — directory tree + config cascade</p></li>
-<li><p><span class="xref myst">images.md</span> — Apptainer image management</p></li>
+<li><p><a class="reference internal" href="spec-reference.html"><span class="std std-doc">spec-reference.md</span></a> — full field reference</p></li>
+<li><p><a class="reference internal" href="directories.html"><span class="std std-doc">directories.md</span></a> — directory tree + config cascade</p></li>
+<li><p><a class="reference internal" href="images.html"><span class="std std-doc">images.md</span></a> — Apptainer image management</p></li>
 </ul>
 </section>
 </section>

@@ -3,9 +3,10 @@
 <!DOCTYPE html>
 <html class="writer-html5" lang="en" data-content_root="../">
 <head>
-  <meta charset="utf-8" />
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Overview: module code &mdash; scitex-agent-container v0.17.1</title>
+  <title>ADR-0003: Runtime home/ directory as the canonical container HOME (2026-05-14) &mdash; scitex-agent-container v0.17.1</title>
       <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=9edc463e" />
       <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
@@ -419,8 +420,9 @@
           <div role="navigation" aria-label="Page navigation">
   <ul class="wy-breadcrumbs">
       <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
-      <li class="breadcrumb-item active">Overview: module code</li>
+      <li class="breadcrumb-item active">ADR-0003: Runtime <code class="docutils literal notranslate"><span class="pre">home/</span></code> directory as the canonical container HOME (2026-05-14)</li>
       <li class="wy-breadcrumbs-aside">
+              <a href="https://github.com/ywatanabe1989/scitex-agent-container/blob/main/docs/sphinx/adr/0003-runtime-home-directory.md" class="fa fa-github"> Edit on GitHub</a>
       </li>
   </ul>
   <hr/>
@@ -428,16 +430,237 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
            <div itemprop="articleBody">
              
-  <h1>All modules for which code is available</h1>
-<ul><li><a href="scitex_agent_container/config.html">scitex_agent_container.config</a></li>
-<ul><li><a href="scitex_agent_container/config/_host.html">scitex_agent_container.config._host</a></li>
-<li><a href="scitex_agent_container/config/_loaders.html">scitex_agent_container.config._loaders</a></li>
-<li><a href="scitex_agent_container/config/_proxy_types.html">scitex_agent_container.config._proxy_types</a></li>
-<li><a href="scitex_agent_container/config/_resolve.html">scitex_agent_container.config._resolve</a></li>
-<li><a href="scitex_agent_container/config/_types.html">scitex_agent_container.config._types</a></li>
-<li><a href="scitex_agent_container/config/_validation.html">scitex_agent_container.config._validation</a></li>
-</ul><li><a href="scitex_agent_container/runtimes/prompts.html">scitex_agent_container.runtimes.prompts</a></li>
+  <section class="tex2jax_ignore mathjax_ignore" id="adr-0003-runtime-home-directory-as-the-canonical-container-home-2026-05-14">
+<h1>ADR-0003: Runtime <code class="docutils literal notranslate"><span class="pre">home/</span></code> directory as the canonical container HOME (2026-05-14)<a class="headerlink" href="#adr-0003-runtime-home-directory-as-the-canonical-container-home-2026-05-14" title="Link to this heading"></a></h1>
+<p><strong>Status:</strong> Accepted.
+<strong>Supersedes:</strong> Implicit layout from <code class="docutils literal notranslate"><span class="pre">runtime/agents/&lt;name&gt;/</span></code> + <code class="docutils literal notranslate"><span class="pre">runtime/workspaces/&lt;name&gt;/</span></code> (both unused after this ADR).
+<strong>Related:</strong> <a class="reference internal" href="0001-isolation-hardening.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">0001-isolation-hardening.md</span></code></span></a> — D5 introduced <code class="docutils literal notranslate"><span class="pre">--home</span> <span class="pre">/home/agent</span></code> but didn’t relocate the host-side directory the container HOME points at.</p>
+<section id="problem">
+<h2>Problem<a class="headerlink" href="#problem" title="Link to this heading"></a></h2>
+<p>After D5 (<code class="docutils literal notranslate"><span class="pre">docs/adr/0001-isolation-hardening.md</span></code>), sac auto-injects
+<code class="docutils literal notranslate"><span class="pre">--home</span> <span class="pre">/home/agent</span></code> so <code class="docutils literal notranslate"><span class="pre">$HOME</span></code> is operator-independent inside the
+container. But <code class="docutils literal notranslate"><span class="pre">_dot_claude.py::deploy_dot_claude(config,</span> <span class="pre">workdir)</span></code>
+still materialises <code class="docutils literal notranslate"><span class="pre">dot_claude/*</span></code> into <code class="docutils literal notranslate"><span class="pre">&lt;host-workdir&gt;/.claude/</span></code>,
+and the host workdir is bind-mounted at <strong><code class="docutils literal notranslate"><span class="pre">/work</span></code></strong> — not at
+<code class="docutils literal notranslate"><span class="pre">/home/agent</span></code>.</p>
+<p>Consequence:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">/work/.claude/CLAUDE.md</span></code> is found by Claude’s auto-walk-from-cwd
+(still works for CLAUDE.md).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">/home/agent/.claude/skills/</span></code>, <code class="docutils literal notranslate"><span class="pre">/home/agent/.claude/.mcp.json</span></code>,
+<code class="docutils literal notranslate"><span class="pre">/home/agent/.claude/hooks/</span></code>, <code class="docutils literal notranslate"><span class="pre">/home/agent/.claude/commands/</span></code> — empty.
+Claude SDK’s <code class="docutils literal notranslate"><span class="pre">$HOME/.claude/</span></code>-rooted discovery never sees the
+operator’s <code class="docutils literal notranslate"><span class="pre">dot_claude/</span></code> contents.</p></li>
 </ul>
+<p>The runtime layout also carries vestigial empty directories
+(<code class="docutils literal notranslate"><span class="pre">runtime/agents/&lt;name&gt;/</span></code>, <code class="docutils literal notranslate"><span class="pre">runtime/workspaces/&lt;name&gt;/</span></code>) from earlier
+designs that were never wired through, which makes the “where does
+sac actually put things?” question ambiguous.</p>
+</section>
+<section id="decision">
+<h2>Decision<a class="headerlink" href="#decision" title="Link to this heading"></a></h2>
+<section id="d6-per-agent-runtime-directory-the-containers-home-source">
+<h3>D6. Per-agent runtime directory = the container’s <code class="docutils literal notranslate"><span class="pre">$HOME</span></code> source.<a class="headerlink" href="#d6-per-agent-runtime-directory-the-containers-home-source" title="Link to this heading"></a></h3>
+<p>For each agent, sac maintains:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>~/.scitex/agent-container/runtime/&lt;name&gt;/
+├── home/                  ← bind-mounted at /home/agent (canonical $HOME)
+│   ├── .claude/           ← dot_claude materialised here
+│   │   ├── CLAUDE.md
+│   │   ├── .mcp.json
+│   │   ├── skills/
+│   │   ├── hooks/
+│   │   └── commands/
+│   └── (anything the agent writes to $HOME — proj/, .cache/, ...)
+├── overlay.img            ← per-agent writable layer (was: runtime/overlays/&lt;name&gt;.img)
+├── pid
+├── apptainer_pid
+├── heartbeat.json
+├── session_id
+├── session.jsonl
+├── quota.json
+└── stdout.log
+</pre></div>
+</div>
+<p>The bind:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>~/.scitex/agent-container/runtime/&lt;name&gt;/home  →  /home/agent  (rw)
+</pre></div>
+</div>
+<p>So inside the container:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">$HOME</span> <span class="pre">==</span> <span class="pre">/home/agent</span></code> (D5 invariant).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">$HOME/.claude/skills/</span></code> resolves to the materialised tree —
+Claude SDK’s discovery works without further config.</p></li>
+<li><p>Anything the agent writes under <code class="docutils literal notranslate"><span class="pre">$HOME</span></code> persists on the host at
+<code class="docutils literal notranslate"><span class="pre">runtime/&lt;name&gt;/home/</span></code>, browsable from the operator side without
+entering the container.</p></li>
+</ul>
+</section>
+<section id="d7-dot-claude-materialises-into-runtime-name-home-claude">
+<h3>D7. <code class="docutils literal notranslate"><span class="pre">dot_claude</span></code> materialises into <code class="docutils literal notranslate"><span class="pre">runtime/&lt;name&gt;/home/.claude/</span></code>.<a class="headerlink" href="#d7-dot-claude-materialises-into-runtime-name-home-claude" title="Link to this heading"></a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">_dot_claude.py::deploy_dot_claude</span></code> is rewritten to:</p>
+<ol class="arabic simple">
+<li><p>Resolve <code class="docutils literal notranslate"><span class="pre">runtime/&lt;name&gt;/home/.claude/</span></code> as the target.</p></li>
+<li><p>Materialise <code class="docutils literal notranslate"><span class="pre">dot_claude/CLAUDE.md</span> <span class="pre">→</span> <span class="pre">home/CLAUDE.md</span></code>,
+<code class="docutils literal notranslate"><span class="pre">dot_claude/.mcp.json</span> <span class="pre">→</span> <span class="pre">home/.mcp.json</span></code>, <code class="docutils literal notranslate"><span class="pre">dot_claude/.env</span> <span class="pre">→</span> <span class="pre">home/.env</span></code>, <code class="docutils literal notranslate"><span class="pre">dot_claude/state.md</span> <span class="pre">→</span> <span class="pre">home/state.md</span></code>.</p></li>
+<li><p>Mirror <code class="docutils literal notranslate"><span class="pre">dot_claude/{commands,skills,hooks,agents,settings,...}/</span></code>
+→ <code class="docutils literal notranslate"><span class="pre">home/.claude/&lt;same&gt;/</span></code>.</p></li>
+</ol>
+<p>The workdir <code class="docutils literal notranslate"><span class="pre">/work</span></code> (which still mounts the operator’s host workdir)
+no longer receives a <code class="docutils literal notranslate"><span class="pre">.claude/</span></code> materialisation — it stays a pure
+project-content mount.</p>
+</section>
+<section id="d8-overlay-path-consolidation">
+<h3>D8. Overlay path consolidation.<a class="headerlink" href="#d8-overlay-path-consolidation" title="Link to this heading"></a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">apptainer.overlay</span></code> default resolves to <code class="docutils literal notranslate"><span class="pre">runtime/&lt;name&gt;/overlay.img</span></code>
+(previously <code class="docutils literal notranslate"><span class="pre">runtime/overlays/&lt;name&gt;.img</span></code>). Per-agent state lives
+under <code class="docutils literal notranslate"><span class="pre">runtime/&lt;name&gt;/</span></code> exclusively; the old <code class="docutils literal notranslate"><span class="pre">runtime/overlays/</span></code>
+location is left in place for backward compatibility but new agents
+write to the new location.</p>
+</section>
+<section id="d9-vestigial-directories-deprecated">
+<h3>D9. Vestigial directories deprecated.<a class="headerlink" href="#d9-vestigial-directories-deprecated" title="Link to this heading"></a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">runtime/agents/&lt;name&gt;/</span></code> and <code class="docutils literal notranslate"><span class="pre">runtime/workspaces/&lt;name&gt;/</span></code> are no
+longer used by sac. They remain in the filesystem for now (no
+destructive cleanup); a future <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">runtime</span> <span class="pre">cleanup</span></code> command can
+remove them.</p>
+</section>
+</section>
+<section id="migration">
+<h2>Migration<a class="headerlink" href="#migration" title="Link to this heading"></a></h2>
+<ul class="simple">
+<li><p><strong>Existing agents</strong> — on next <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agents</span> <span class="pre">start</span></code>:</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">runtime/&lt;name&gt;/home/</span></code> is auto-created if missing.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">dot_claude</span></code> re-materialises into the new location.</p></li>
+<li><p>Existing <code class="docutils literal notranslate"><span class="pre">runtime/&lt;name&gt;/{pid,session.jsonl,…}</span></code> files keep their
+current location (this ADR doesn’t move them).</p></li>
+<li><p>Existing <code class="docutils literal notranslate"><span class="pre">runtime/overlays/&lt;name&gt;.img</span></code> continues to work if
+<code class="docutils literal notranslate"><span class="pre">apptainer.overlay</span></code> points at it explicitly; new agents get
+<code class="docutils literal notranslate"><span class="pre">runtime/&lt;name&gt;/overlay.img</span></code> by default.</p></li>
+</ul>
+</li>
+<li><p><strong>No data loss</strong> — the refactor adds a directory; doesn’t delete
+or move existing data.</p></li>
+</ul>
+</section>
+<section id="rationale">
+<h2>Rationale<a class="headerlink" href="#rationale" title="Link to this heading"></a></h2>
+<section id="why-name-the-directory-home-not-workspace">
+<h3>Why name the directory <code class="docutils literal notranslate"><span class="pre">home/</span></code>, not <code class="docutils literal notranslate"><span class="pre">workspace/</span></code>?<a class="headerlink" href="#why-name-the-directory-home-not-workspace" title="Link to this heading"></a></h3>
+<p>The semantic name (<code class="docutils literal notranslate"><span class="pre">home/</span></code>) directly matches what it becomes inside
+the container (<code class="docutils literal notranslate"><span class="pre">/home/agent</span></code>). Operators reading
+<code class="docutils literal notranslate"><span class="pre">runtime/scitex-stats-auditor/home/.claude/skills/</span></code> instantly know
+“this is what the agent sees as <code class="docutils literal notranslate"><span class="pre">~/.claude/skills/</span></code> inside the
+container.” <code class="docutils literal notranslate"><span class="pre">workspace/</span></code> requires a glossary lookup.</p>
+<p>The bind line is self-documenting:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>runtime/&lt;name&gt;/home  →  /home/agent
+       (host home)      (container home)
+</pre></div>
+</div>
+<p>This matches Kubernetes’ philosophy of naming things by their
+container-side semantic (<code class="docutils literal notranslate"><span class="pre">volumeMounts.mountPath</span></code>), not the host-side
+implementation detail.</p>
+</section>
+<section id="why-home-inside-runtime-name-not-as-a-sibling">
+<h3>Why <code class="docutils literal notranslate"><span class="pre">home/</span></code> <em>inside</em> <code class="docutils literal notranslate"><span class="pre">runtime/&lt;name&gt;/</span></code>, not as a sibling?<a class="headerlink" href="#why-home-inside-runtime-name-not-as-a-sibling" title="Link to this heading"></a></h3>
+<p>Per-agent state should be browsable as one directory tree. Operators
+running <code class="docutils literal notranslate"><span class="pre">du</span> <span class="pre">-sh</span> <span class="pre">runtime/&lt;name&gt;/</span></code> should see the total footprint of
+that agent (overlay + home + logs + session). Splitting across
+parallel trees (<code class="docutils literal notranslate"><span class="pre">runtime/&lt;name&gt;/</span></code>, <code class="docutils literal notranslate"><span class="pre">runtime/overlays/&lt;name&gt;.img</span></code>,
+<code class="docutils literal notranslate"><span class="pre">runtime/workspaces/&lt;name&gt;/</span></code>) makes the “what does this agent use?”
+question harder than it needs to be.</p>
+</section>
+<section id="why-not-symlink-home-agent-work">
+<h3>Why not symlink <code class="docutils literal notranslate"><span class="pre">/home/agent</span> <span class="pre">→</span> <span class="pre">/work</span></code>?<a class="headerlink" href="#why-not-symlink-home-agent-work" title="Link to this heading"></a></h3>
+<ul class="simple">
+<li><p>Symlinks inside containers interact poorly with apptainer’s bind
+scaffolding (the same class of bugs as the original D4 motivation).</p></li>
+<li><p>Two distinct mounts (one at <code class="docutils literal notranslate"><span class="pre">/work</span></code>, one at <code class="docutils literal notranslate"><span class="pre">/home/agent</span></code>) makes
+the semantic separation visible: <code class="docutils literal notranslate"><span class="pre">/work</span></code> = project source code
+(often read-only), <code class="docutils literal notranslate"><span class="pre">/home/agent</span></code> = agent’s own state + skills.</p></li>
+</ul>
+</section>
+<section id="relationship-to-strict-vs-relaxed-deployment-modes">
+<h3>Relationship to “strict vs relaxed” deployment modes<a class="headerlink" href="#relationship-to-strict-vs-relaxed-deployment-modes" title="Link to this heading"></a></h3>
+<p>This ADR is layout-only. The strict-vs-relaxed mode distinction
+(Clew reproducibility runs vs everyday development) layers on top:</p>
+<ul class="simple">
+<li><p><strong>strict</strong>: <code class="docutils literal notranslate"><span class="pre">runtime/&lt;name&gt;/home</span></code> bound <code class="docutils literal notranslate"><span class="pre">:ro</span></code>, project sources
+<code class="docutils literal notranslate"><span class="pre">:ro</span></code>, no shared skills bind. Promises the verification chain
+that <code class="docutils literal notranslate"><span class="pre">$HOME</span></code> was immutable during the run.</p></li>
+<li><p><strong>relaxed</strong>: <code class="docutils literal notranslate"><span class="pre">runtime/&lt;name&gt;/home</span></code> bound <code class="docutils literal notranslate"><span class="pre">:rw</span></code>, project sources
+potentially <code class="docutils literal notranslate"><span class="pre">:rw</span></code>, host-side <code class="docutils literal notranslate"><span class="pre">~/.claude/skills/</span></code> optionally bound
+in for cross-agent skill sharing.</p></li>
+</ul>
+<p>A separate ADR (0004) will formalise the mode field. This ADR just
+gives both modes a sensible directory to bind.</p>
+</section>
+</section>
+<section id="implementation">
+<h2>Implementation<a class="headerlink" href="#implementation" title="Link to this heading"></a></h2>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Layer</p></th>
+<th class="head"><p>Where</p></th>
+<th class="head"><p>Status</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Auto-create <code class="docutils literal notranslate"><span class="pre">runtime/&lt;name&gt;/home/</span></code> on start</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">_apptainer_runtime.py::start</span></code></p></td>
+<td><p>⏳ this PR</p></td>
+</tr>
+<tr class="row-odd"><td><p>Auto-prepend bind <code class="docutils literal notranslate"><span class="pre">home:/home/agent:rw</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">_apptainer_runtime.py::build_run_argv</span></code></p></td>
+<td><p>⏳ this PR</p></td>
+</tr>
+<tr class="row-even"><td><p>Materialise <code class="docutils literal notranslate"><span class="pre">dot_claude/</span></code> into <code class="docutils literal notranslate"><span class="pre">runtime/&lt;name&gt;/home/.claude/</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">_dot_claude.py::deploy_dot_claude</span></code></p></td>
+<td><p>⏳ this PR</p></td>
+</tr>
+<tr class="row-odd"><td><p>Default <code class="docutils literal notranslate"><span class="pre">apptainer.overlay</span></code> → <code class="docutils literal notranslate"><span class="pre">runtime/&lt;name&gt;/overlay.img</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">_apptainer_runtime.py</span></code> resolution</p></td>
+<td><p>⏳ this PR</p></td>
+</tr>
+<tr class="row-even"><td><p>ADR + <code class="docutils literal notranslate"><span class="pre">docs/isolation.md</span></code> cross-ref</p></td>
+<td><p>docs</p></td>
+<td><p>✅ this commit</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="consequences">
+<h2>Consequences<a class="headerlink" href="#consequences" title="Link to this heading"></a></h2>
+<p><strong>Positive.</strong></p>
+<ul class="simple">
+<li><p>Claude SDK’s <code class="docutils literal notranslate"><span class="pre">$HOME/.claude/</span></code>-rooted discovery (skills, hooks,
+<code class="docutils literal notranslate"><span class="pre">.mcp.json</span></code>) works without operator intervention.</p></li>
+<li><p>Per-agent state lives in one tree (<code class="docutils literal notranslate"><span class="pre">runtime/&lt;name&gt;/</span></code>) — backup,
+cleanup, and inspection commands stay simple.</p></li>
+<li><p>Operator-side debugging: <code class="docutils literal notranslate"><span class="pre">ls</span> <span class="pre">runtime/&lt;name&gt;/home/</span></code> shows what the
+agent sees as its <code class="docutils literal notranslate"><span class="pre">$HOME</span></code> — no container shell needed.</p></li>
+<li><p>Layout name aligns with container-side semantic — fewer
+glossary jumps in docs.</p></li>
+</ul>
+<p><strong>Negative / tradeoffs.</strong></p>
+<ul class="simple">
+<li><p>One extra bind in every container’s argv. Negligible startup cost.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">dot_claude/</span></code> materialised twice during the transition window:
+once into <code class="docutils literal notranslate"><span class="pre">runtime/&lt;name&gt;/home/.claude/</span></code> (new) and old
+<code class="docutils literal notranslate"><span class="pre">&lt;workdir&gt;/.claude/</span></code> may still exist on disk from prior runs.
+Cleanup deferred; not a correctness issue.</p></li>
+</ul>
+</section>
+<section id="references">
+<h2>References<a class="headerlink" href="#references" title="Link to this heading"></a></h2>
+<ul class="simple">
+<li><p><a class="reference internal" href="0001-isolation-hardening.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">0001-isolation-hardening.md</span></code></span></a> — D5 introduced <code class="docutils literal notranslate"><span class="pre">--home</span> <span class="pre">/home/agent</span></code>.</p></li>
+<li><p><a class="reference internal" href="../isolation.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">../isolation.md</span></code></span></a> — to be updated with the new layout description.</p></li>
+<li><p><a class="reference internal" href="../spec-reference.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">../spec-reference.md</span></code></span></a> — <code class="docutils literal notranslate"><span class="pre">spec.dot_claude</span></code> materialisation target.</p></li>
+</ul>
+</section>
+</section>
+
 
            </div>
           </div>

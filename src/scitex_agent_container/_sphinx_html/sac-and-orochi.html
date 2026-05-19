@@ -175,8 +175,21 @@
 <p class="caption" role="heading"><span class="caption-text">Ecosystem</span></p>
 <ul class="current">
 <li class="toctree-l1 current"><a class="current reference internal" href="#">sac and orochi</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="#architecture">Architecture</a></li>
-<li class="toctree-l2"><a class="reference internal" href="#responsibility-split">Responsibility split</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#the-comms-model-what-sac-knows">The comms model — what sac knows</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#lineage-parent-children">Lineage — parent / children</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#group-the-unit-of-default-acl">Group — the unit of default ACL</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#depth-limit-a-policy-not-a-structural-limit">Depth limit — a POLICY, not a structural limit</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#acl-permissioned-messaging">ACL — permissioned messaging</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#authenticated-identity-handoff-4-acceptance">Authenticated identity (handoff §4 acceptance)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#cross-host-forwarding-per-host-bearer-registry">Cross-host forwarding — per-host bearer registry</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#a2a-compliance">A2A compliance</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#what-sac-knows-vs-doesnt">What sac knows vs doesn’t</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#the-corrected-boundary">The corrected boundary</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#responsibility-split">Responsibility split</a></li>
+</ul>
+</li>
 <li class="toctree-l2"><a class="reference internal" href="#how-orochi-consumes-sac">How orochi consumes sac</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#standalone-use">Standalone use</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#live-instance">Live instance</a></li>
@@ -421,10 +434,165 @@
              
   <section class="tex2jax_ignore mathjax_ignore" id="sac-and-orochi">
 <h1>sac and orochi<a class="headerlink" href="#sac-and-orochi" title="Link to this heading"></a></h1>
-<p><code class="docutils literal notranslate"><span class="pre">scitex-agent-container</span></code> (<code class="docutils literal notranslate"><span class="pre">sac</span></code>) and <a class="reference external" href="https://github.com/ywatanabe1989/scitex-orochi"><code class="docutils literal notranslate"><span class="pre">scitex-orochi</span></code></a>
-are two separate packages with a <strong>one-way dependency</strong>: orochi reads from sac; sac never imports orochi.</p>
-<section id="architecture">
-<h2>Architecture<a class="headerlink" href="#architecture" title="Link to this heading"></a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">scitex-agent-container</span></code> (<code class="docutils literal notranslate"><span class="pre">sac</span></code>) and
+<a class="reference external" href="https://github.com/ywatanabe1989/scitex-orochi"><code class="docutils literal notranslate"><span class="pre">scitex-orochi</span></code></a> are two
+separate packages with a <strong>one-way dependency</strong>: orochi reads from sac; sac
+never imports orochi.</p>
+<p>This doc supersedes the older “sac = one host; orochi = across hosts”
+framing — sac already places and drives agents on remote hosts via SSH
+hops, so it must also carry their messages. The corrected boundary is
+captured below and tracked under
+<a class="reference internal" href="adr/0008-sac-node-transport-boundary.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">docs/adr/0008-sac-node-transport-boundary.md</span></code></span></a>.</p>
+<section id="the-comms-model-what-sac-knows">
+<h2>The comms model — what sac knows<a class="headerlink" href="#the-comms-model-what-sac-knows" title="Link to this heading"></a></h2>
+<p>sac sees a single thing on its comms graph: <strong>nodes</strong>. A node is an
+<em>identity</em> + an <em>inbox</em> + an <em>ACL</em>. There are two kinds, distinguished
+<em>only</em> by who owns the lifecycle:</p>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Kind</p></th>
+<th class="head"><p>Lifecycle owner</p></th>
+<th class="head"><p>Example</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>sac-managed</p></td>
+<td><p>sac (spec, container, start/stop/health)</p></td>
+<td><p>An agent declared in a <code class="docutils literal notranslate"><span class="pre">spec.yaml</span></code>, launched by <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agent</span> <span class="pre">start</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>external</strong></p></td>
+<td><p>NOT sac — the operator, a separate tool, a human</p></td>
+<td><p>A plain <code class="docutils literal notranslate"><span class="pre">claude</span></code> CLI session, joining via <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">mcp</span> <span class="pre">channel</span> <span class="pre">--name</span> <span class="pre">&lt;id&gt;</span></code>.</p></td>
+</tr>
+</tbody>
+</table>
+<p>Both kinds are equal on the comms graph. Whatever <em>role</em> the orchestration
+layer assigns a node — “lead”, “head”, “worker”, “coordinator” — is
+irrelevant to sac; sac sees only “a node”.</p>
+<section id="lineage-parent-children">
+<h3>Lineage — parent / children<a class="headerlink" href="#lineage-parent-children" title="Link to this heading"></a></h3>
+<p>sac records who called <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agents</span> <span class="pre">start</span></code>: the caller is the <strong>parent</strong>,
+the spawned agent its <strong>child</strong>. A parent may have many children; every
+node is a parent or a child (the root is a parent with no parent of its
+own).</p>
+</section>
+<section id="group-the-unit-of-default-acl">
+<h3>Group — the unit of default ACL<a class="headerlink" href="#group-the-unit-of-default-acl" title="Link to this heading"></a></h3>
+<p>A parent together with its direct children is one <strong>group</strong>. The group is
+the unit of intra-group default ACL: within a group every node may
+message every other, <strong>bidirectionally</strong> (parent↔child <em>and</em>
+sibling↔sibling).</p>
+</section>
+<section id="depth-limit-a-policy-not-a-structural-limit">
+<h3>Depth limit — a POLICY, not a structural limit<a class="headerlink" href="#depth-limit-a-policy-not-a-structural-limit" title="Link to this heading"></a></h3>
+<p>We currently forbid a child from spawning children, so the <em>live</em>
+hierarchy is two levels (root + its direct children). <strong>This is a
+policy constraint we choose to enforce, not an architectural ceiling.</strong>
+The model, schema, lineage and group logic remain <strong>N-level capable</strong> —
+recursion is the natural shape; nothing hard-codes “2” or assumes a
+fixed depth. The cap is a <em>lift-able policy</em> (a rule that denies a
+non-root spawn). Lifting it later is a policy change only — zero
+structural / schema / data-structure change.</p>
+</section>
+<section id="acl-permissioned-messaging">
+<h3>ACL — permissioned messaging<a class="headerlink" href="#acl-permissioned-messaging" title="Link to this heading"></a></h3>
+<ul class="simple">
+<li><p>Intra-group is allowed by default (bidirectional).</p></li>
+<li><p>Cross-group requires an <strong>explicit ACL grant</strong> (per-node config:
+<code class="docutils literal notranslate"><span class="pre">spec.comms.allow</span></code> for sac-managed; a policy store for external nodes).</p></li>
+<li><p>The graph is permissioned — never implicitly all-to-all. An ungated
+channel is a prompt-injection vector
+(<a class="reference external" href="https://code.claude.com/docs/en/channels-reference">Claude Code channels reference</a>).</p></li>
+</ul>
+</section>
+<section id="authenticated-identity-handoff-4-acceptance">
+<h3>Authenticated identity (handoff §4 acceptance)<a class="headerlink" href="#authenticated-identity-handoff-4-acceptance" title="Link to this heading"></a></h3>
+<p>Identity is <strong>bearer-authenticated</strong>, not self-claimed:</p>
+<ul class="simple">
+<li><p>Every node (sac-managed or external) gets a per-node bearer
+minted at registration (<code class="docutils literal notranslate"><span class="pre">node_tokens</span></code> table). The listen
+server’s <code class="docutils literal notranslate"><span class="pre">NodeAuthMiddleware</span></code> resolves the <code class="docutils literal notranslate"><span class="pre">Authorization:</span> <span class="pre">Bearer</span> <span class="pre">&lt;token&gt;</span></code> header to a node name on <code class="docutils literal notranslate"><span class="pre">request.state</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">check_send_acl</span></code> requires <code class="docutils literal notranslate"><span class="pre">params.metadata.from_agent</span></code> to
+<strong>match</strong> the resolved name; mismatch → <code class="docutils literal notranslate"><span class="pre">403</span> <span class="pre">identity</span> <span class="pre">spoof</span></code>
+with the resolved-name vs claimed-name in the body. This meets
+the handoff §4 acceptance “identity cannot be spoofed via a
+metadata field”.</p></li>
+<li><p>The <strong>host-wide bearer</strong> is the <em>administrative caller</em> — it
+honours <code class="docutils literal notranslate"><span class="pre">metadata.from_agent</span></code> verbatim (used by cross-host
+forwarders, see below).</p></li>
+</ul>
+</section>
+<section id="cross-host-forwarding-per-host-bearer-registry">
+<h3>Cross-host forwarding — per-host bearer registry<a class="headerlink" href="#cross-host-forwarding-per-host-bearer-registry" title="Link to this heading"></a></h3>
+<p>When <code class="docutils literal notranslate"><span class="pre">message:send</span></code> targets a node on a different host, the local
+<code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code> forwards to that host’s <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code>. The destination
+host has its own listen bearer; the forwarder authenticates
+<strong>with the destination’s bearer</strong>, pulled from a small registry:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="o">~/.</span><span class="n">scitex</span><span class="o">/</span><span class="n">agent</span><span class="o">-</span><span class="n">container</span><span class="o">/</span><span class="n">peer</span><span class="o">-</span><span class="n">tokens</span><span class="o">/</span>
+    <span class="n">host</span><span class="o">-</span><span class="n">a</span><span class="o">.</span><span class="n">token</span>      <span class="c1"># 0600 — host A&#39;s listen bearer, used to</span>
+                      <span class="c1"># auth at host A from this host.</span>
+    <span class="n">head</span><span class="o">-</span><span class="n">spartan</span><span class="o">.</span><span class="n">token</span>
+    <span class="o">...</span>
+</pre></div>
+</div>
+<p>Operators populate the registry with <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">host</span> <span class="pre">add-peer</span> <span class="pre">&lt;host&gt;</span> <span class="pre">&lt;token&gt;</span></code>; <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">host</span> <span class="pre">list-peers</span></code> shows the registered hosts (token
+values are never printed). A missing entry is a <strong>loud 502</strong> with
+the file path and the <code class="docutils literal notranslate"><span class="pre">add-peer</span></code> fix in the error body — never a
+silent drop (handoff §0 Hard rules).</p>
+<p>This gives a <strong>per-host blast radius</strong>: leaking host A’s listen
+bearer compromises only host A, not the whole fleet. The
+ACL is re-evaluated at the receiving host on the same
+<code class="docutils literal notranslate"><span class="pre">metadata.from_agent</span></code>, so cross-group denials fire at the
+destination per handoff §4 (“ACL is enforced at the receiving
+host”).</p>
+</section>
+<section id="a2a-compliance">
+<h3>A2A compliance<a class="headerlink" href="#a2a-compliance" title="Link to this heading"></a></h3>
+<p>Every node, sac-managed or external, is addressable via the A2A protocol;
+a node’s identity <em>is</em> its A2A AgentCard.</p>
+<ul class="simple">
+<li><p>sac-managed nodes derive their AgentCard from <code class="docutils literal notranslate"><span class="pre">spec.yaml</span></code> (see
+<a class="reference external" href="https://github.com/ywatanabe1989/scitex-agent-container/blob/develop/src/scitex_agent_container/a2a/_card.py"><code class="docutils literal notranslate"><span class="pre">a2a/_card.py::project_card</span></code></a>).</p></li>
+<li><p>External nodes have no YAML, so sac <strong>synthesises a minimal AgentCard
+at registration</strong> when <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">mcp</span> <span class="pre">channel</span> <span class="pre">--name</span> <span class="pre">&lt;id&gt;</span></code> connects: identity</p>
+<ul>
+<li><p>inbox endpoint + the required A2A capability fields, and <em>nothing</em>
+runtime/container-shaped. The synthesised card is the external node’s
+whole definition (see
+<a class="reference external" href="https://github.com/ywatanabe1989/scitex-agent-container/blob/develop/src/scitex_agent_container/_listen/_nodes.py"><code class="docutils literal notranslate"><span class="pre">_listen/_nodes.py::synthesize_external_card</span></code></a>).
+The card carries <code class="docutils literal notranslate"><span class="pre">&quot;x-scitex-agent-container.node_kind&quot;:</span> <span class="pre">&quot;external&quot;</span></code> so
+downstream tooling can distinguish the kinds.</p></li>
+</ul>
+</li>
+</ul>
+</section>
+<section id="what-sac-knows-vs-doesnt">
+<h3>What sac knows vs doesn’t<a class="headerlink" href="#what-sac-knows-vs-doesnt" title="Link to this heading"></a></h3>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>sac knows</p></th>
+<th class="head"><p>sac does NOT know</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Nodes (sac-managed + external)</p></td>
+<td><p>Roles (“lead”, “head”, “worker”, …)</p></td>
+</tr>
+<tr class="row-odd"><td><p>Lineage (parent / children)</p></td>
+<td><p>Topology visualisations</p></td>
+</tr>
+<tr class="row-even"><td><p>Groups (parent + direct children)</p></td>
+<td><p>Connectivity mesh (cloudflared, autossh)</p></td>
+</tr>
+<tr class="row-odd"><td><p>ACL grants</p></td>
+<td><p>Human chatops UI</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+</section>
+<section id="the-corrected-boundary">
+<h2>The corrected boundary<a class="headerlink" href="#the-corrected-boundary" title="Link to this heading"></a></h2>
 <div class="highlight-default notranslate"><div class="highlight"><pre><span></span>            ┌────────────────────┐                       ┌──────────────────────┐
             │   Human operator   │  chat · DM · channel  │ claude-code-         │
             │   (web UI / CLI)   │ ◄───── alerts ─────── │ telegrammer          │
@@ -433,30 +601,36 @@ are two separate packages with a <strong>one-way dependency</strong>: orochi rea
                       ▼                                             │
         ┌──────────────────────────────────┐                        │
         │   scitex-orochi                  │                        │
-        │   WebSocket hub · dashboard      │                        │
-        │   MCP channels · presence · A2A  │                        │
-        │   peer registry · cross-host     │                        │
+        │   web chatops UI · dashboard     │                        │
+        │   topology / presence            │                        │
+        │   channels · DMs · threads       │                        │
+        │   connectivity mesh              │                        │
+        │   (cloudflared / autossh)        │                        │
         └─────────────────┬────────────────┘                        │
-                          │  reads status                           │
+                          │  CONSUMES sac transport                 │
                           │  (one-way dep: orochi → sac)            │
                           ▼                                         │
         ┌──────────────────────────────────┐                        │
         │   scitex-agent-container (sac)   │                        │
-        │   lifecycle · health · restart   │                        │
-        │   apptainer runtime · per host   │                        │
-        │   (zero knowledge of orochi)     │                        │
+        │   NODE TRANSPORT SUBSTRATE       │                        │
+        │     any-node ↔ any-node          │                        │
+        │     any host (same / LAN /       │                        │
+        │     SSH-alias / tunnel)          │                        │
+        │     ACL-gated                    │                        │
+        │   Lifecycle for sac-managed      │                        │
+        │   nodes only (apptainer)         │                        │
+        │   Zero knowledge of orochi       │                        │
         └─────────────────┬────────────────┘                        │
-                          │  starts / supervises                    │
+                          │  starts / supervises (sac-managed)      │
                           ▼                                         │
         ┌──────────────────────────────────┐                        │
-        │   Claude agents (one per host)   │ ── heartbeat-push ──▶ orochi
-        │   session.jsonl · SDK            │ ── alerts ─────────────┘
+        │   Claude agents + external nodes │ ── heartbeat-push ──▶ orochi
+        │   (sac-managed)   (external)     │ ── alerts ─────────────┘
         └──────────────────────────────────┘
 </pre></div>
 </div>
-</section>
 <section id="responsibility-split">
-<h2>Responsibility split<a class="headerlink" href="#responsibility-split" title="Link to this heading"></a></h2>
+<h3>Responsibility split<a class="headerlink" href="#responsibility-split" title="Link to this heading"></a></h3>
 <table class="docutils align-default">
 <thead>
 <tr class="row-odd"><th class="head"><p>Concern</p></th>
@@ -473,47 +647,77 @@ are two separate packages with a <strong>one-way dependency</strong>: orochi rea
 <tr class="row-even"><td><p>Container runtime (apptainer)</p></td>
 <td><p><strong>sac</strong></p></td>
 </tr>
-<tr class="row-odd"><td><p>Per-agent local inbox (<code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/agents/&lt;name&gt;/turn</span></code>)</p></td>
+<tr class="row-odd"><td><p><strong>Node transport (any-to-any, any host, ACL-gated)</strong></p></td>
+<td><p><strong>sac</strong></p></td>
+</tr>
+<tr class="row-even"><td><p><strong>Channel-event durability + replay</strong> (<code class="docutils literal notranslate"><span class="pre">channel_events</span></code> in state.db)</p></td>
+<td><p><strong>sac</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>External-node inbox</strong> (no YAML, identity + inbox only)</p></td>
 <td><p><strong>sac</strong></p></td>
 </tr>
 <tr class="row-even"><td><p>In-session push (MCP channel server <code class="docutils literal notranslate"><span class="pre">server:sac</span></code>)</p></td>
-<td><p><strong>sac</strong> — connects to local <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code> SSE stream and pushes <code class="docutils literal notranslate"><span class="pre">notifications/claude/channel</span></code> into the running session</p></td>
+<td><p><strong>sac</strong></p></td>
 </tr>
-<tr class="row-odd"><td><p>Cross-host message routing</p></td>
+<tr class="row-odd"><td><p>Human chatops UI (Slack-like web interface)</p></td>
 <td><p><strong>orochi</strong></p></td>
 </tr>
-<tr class="row-even"><td><p>Human chatops UI (Slack-like web interface)</p></td>
+<tr class="row-even"><td><p>Topology / presence / dashboard</p></td>
 <td><p><strong>orochi</strong></p></td>
 </tr>
-<tr class="row-odd"><td><p>SSH mesh / tunnel layer (cloudflared + autossh)</p></td>
+<tr class="row-odd"><td><p>Channels / DMs / threads as features</p></td>
 <td><p><strong>orochi</strong></p></td>
 </tr>
-<tr class="row-even"><td><p>Peer registry</p></td>
-<td><p><strong>orochi</strong> (<code class="docutils literal notranslate"><span class="pre">~/.scitex/orochi/peers.yaml</span></code>)</p></td>
+<tr class="row-even"><td><p>Connectivity mesh (cloudflared + autossh) — <em>establishes</em> host reachability</p></td>
+<td><p><strong>orochi</strong></p></td>
 </tr>
 </tbody>
 </table>
-<p><strong>Rule: sac owns containers + sessions + the local channel primitive on one host; orochi owns messages + people + transport across hosts.</strong> <code class="docutils literal notranslate"><span class="pre">server:orochi-push</span></code> remains orochi’s own MCP channel (for orochi-mediated cross-host topics + chat); <code class="docutils literal notranslate"><span class="pre">server:sac</span></code> is sac’s local primitive that any peer reaches by POSTing to the host’s <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code> — whether the network in between is orochi-mediated, an operator’s SSH tunnel, or nothing at all (same host).</p>
+<p><strong>Rule:</strong> sac is the node-transport substrate. Orochi is the human/product
+layer that <em>consumes</em> sac transport. The connectivity mesh that
+establishes reachability lives in orochi; sac assumes reachability.</p>
+</section>
 </section>
 <section id="how-orochi-consumes-sac">
 <h2>How orochi consumes sac<a class="headerlink" href="#how-orochi-consumes-sac" title="Link to this heading"></a></h2>
-<p>orochi reads <code class="docutils literal notranslate"><span class="pre">~/.scitex/agent-container/runtime/&lt;name&gt;/heartbeat.json</span></code> and
-<code class="docutils literal notranslate"><span class="pre">session.jsonl</span></code> from each host it manages. It never calls <code class="docutils literal notranslate"><span class="pre">sac</span></code> CLI commands
-directly — the contract is the on-disk state files.</p>
-<p>Agents push heartbeats and alerts to orochi via the <code class="docutils literal notranslate"><span class="pre">server:orochi-push</span></code> MCP
-channel, configured in <code class="docutils literal notranslate"><span class="pre">spec.claude.channels</span></code>:</p>
+<p>orochi reads sac’s state files
+(<code class="docutils literal notranslate"><span class="pre">~/.scitex/agent-container/runtime/&lt;name&gt;/heartbeat.json</span></code>,
+<code class="docutils literal notranslate"><span class="pre">session.jsonl</span></code>, <code class="docutils literal notranslate"><span class="pre">state.db</span></code>) from each host it manages. It also calls
+sac’s HTTP endpoints (<code class="docutils literal notranslate"><span class="pre">/agents/&lt;name&gt;/{message:send,inbox/stream}</span></code>) like
+any other A2A v1 client. It never calls <code class="docutils literal notranslate"><span class="pre">sac</span></code> CLI commands directly —
+the contract is the on-disk state files plus the published HTTP
+endpoints.</p>
+<p>Agents push heartbeats and alerts to orochi via the <code class="docutils literal notranslate"><span class="pre">server:orochi-push</span></code>
+MCP channel, configured in <code class="docutils literal notranslate"><span class="pre">spec.claude.channels</span></code>:</p>
 <div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">spec</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">claude</span><span class="p">:</span>
 <span class="w">    </span><span class="nt">channels</span><span class="p">:</span>
 <span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">server:orochi-push</span>
 </pre></div>
 </div>
+<p>The <code class="docutils literal notranslate"><span class="pre">server:sac</span></code> channel is sac’s own primitive — agents enable it the
+same way:</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">claude</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">channels</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">server:sac</span>
+</pre></div>
+</div>
+<p>When <code class="docutils literal notranslate"><span class="pre">server:sac</span></code> is in <code class="docutils literal notranslate"><span class="pre">channels</span></code>, <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agent</span> <span class="pre">start</span></code> auto-spawns
+<code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">mcp</span> <span class="pre">channel</span> <span class="pre">--name</span> <span class="pre">&lt;agent&gt;</span></code> as a stdio MCP subprocess of the agent’s
+Claude session; it subscribes to the host-local
+<code class="docutils literal notranslate"><span class="pre">/agents/&lt;name&gt;/inbox/stream</span></code> SSE and pushes
+<code class="docutils literal notranslate"><span class="pre">notifications/claude/channel</span></code> so the agent sees
+<code class="docutils literal notranslate"><span class="pre">&lt;channel</span> <span class="pre">source=&quot;sac&quot;</span> <span class="pre">...&gt;</span></code> tags in real time. External nodes opt in by
+running the same command from their own Claude session — no container,
+no spec.</p>
 </section>
 <section id="standalone-use">
 <h2>Standalone use<a class="headerlink" href="#standalone-use" title="Link to this heading"></a></h2>
-<p>sac works fully without orochi. If you don’t need cross-host chatops, just
-omit <code class="docutils literal notranslate"><span class="pre">server:orochi-push</span></code> from <code class="docutils literal notranslate"><span class="pre">spec.claude.channels</span></code> and skip the orochi
-install entirely.</p>
+<p>sac works fully without orochi. If you don’t need cross-host chatops,
+just omit <code class="docutils literal notranslate"><span class="pre">server:orochi-push</span></code> from <code class="docutils literal notranslate"><span class="pre">spec.claude.channels</span></code> and skip the
+orochi install entirely. The sac comms graph still works: nodes message
+each other, the channel bus is durable, and the ACL still gates.</p>
 </section>
 <section id="live-instance">
 <h2>Live instance<a class="headerlink" href="#live-instance" title="Link to this heading"></a></h2>

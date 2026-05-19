@@ -177,7 +177,7 @@ consumers):
 
 `send` accepts both turn types:
 
-```jsonc
+```text
 // prompt turn
 { "type": "prompt", "prompt": "Your question here", "options": { ... } }
 
@@ -228,7 +228,7 @@ spec:
 ```
 
 See [`spec-reference.md` § `kind: AgentProxy`](spec-reference.md#kind-agentproxy--http-forwarder-agents)
-and [`examples/agents/proxy-agent/`](../examples/agents/proxy-agent/)
+and [`examples/agents/proxy-agent/`](https://github.com/ywatanabe1989/scitex-agent-container/tree/develop/examples/agents/proxy-agent)
 for the full reference.
 
 ## Picking a transport

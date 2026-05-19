@@ -174,8 +174,21 @@
 <p class="caption" role="heading"><span class="caption-text">Ecosystem</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../sac-and-orochi.html">sac and orochi</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="../sac-and-orochi.html#architecture">Architecture</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../sac-and-orochi.html#responsibility-split">Responsibility split</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../sac-and-orochi.html#the-comms-model-what-sac-knows">The comms model — what sac knows</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../sac-and-orochi.html#lineage-parent-children">Lineage — parent / children</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../sac-and-orochi.html#group-the-unit-of-default-acl">Group — the unit of default ACL</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../sac-and-orochi.html#depth-limit-a-policy-not-a-structural-limit">Depth limit — a POLICY, not a structural limit</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../sac-and-orochi.html#acl-permissioned-messaging">ACL — permissioned messaging</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../sac-and-orochi.html#authenticated-identity-handoff-4-acceptance">Authenticated identity (handoff §4 acceptance)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../sac-and-orochi.html#cross-host-forwarding-per-host-bearer-registry">Cross-host forwarding — per-host bearer registry</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../sac-and-orochi.html#a2a-compliance">A2A compliance</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../sac-and-orochi.html#what-sac-knows-vs-doesnt">What sac knows vs doesn’t</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../sac-and-orochi.html#the-corrected-boundary">The corrected boundary</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../sac-and-orochi.html#responsibility-split">Responsibility split</a></li>
+</ul>
+</li>
 <li class="toctree-l2"><a class="reference internal" href="../sac-and-orochi.html#how-orochi-consumes-sac">How orochi consumes sac</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../sac-and-orochi.html#standalone-use">Standalone use</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../sac-and-orochi.html#live-instance">Live instance</a></li>
@@ -1308,7 +1321,7 @@ are no longer accepted — sac is dir-as-SSoT.</p>
 </dl>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><p><strong>gethostname</strong> (<span class="sphinx_autodoc_typehints-type">Callable[[], str]</span>) – Callable returning the raw OS hostname. Defaults to
+<dd class="field-odd"><p><strong>gethostname</strong> (<span class="sphinx_autodoc_typehints-type"><a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Callable" title="(in Python v3.14)"><code class="xref py py-data docutils literal notranslate"><span class="pre">Callable</span></code></a>[[], <a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><code class="xref py py-class docutils literal notranslate"><span class="pre">str</span></code></a>]</span>) – Callable returning the raw OS hostname. Defaults to
 <code class="docutils literal notranslate"><span class="pre">socket.gethostname</span></code> (production). Tests inject a callable
 returning a fixed string instead of patching <code class="docutils literal notranslate"><span class="pre">socket</span></code>.</p>
 </dd>
@@ -1319,7 +1332,7 @@ returning a fixed string instead of patching <code class="docutils literal notra
     than returning the empty string.</p>
 </dd>
 <dt class="field-odd">Return type<span class="colon">:</span></dt>
-<dd class="field-odd"><p><span class="sphinx_autodoc_typehints-type">str</span></p>
+<dd class="field-odd"><p><span class="sphinx_autodoc_typehints-type"><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><code class="xref py py-class docutils literal notranslate"><span class="pre">str</span></code></a></span></p>
 </dd>
 </dl>
 </dd></dl>

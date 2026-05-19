@@ -3,9 +3,10 @@
 <!DOCTYPE html>
 <html class="writer-html5" lang="en" data-content_root="../">
 <head>
-  <meta charset="utf-8" />
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Overview: module code &mdash; scitex-agent-container v0.17.1</title>
+  <title>ADR-0008: sac is the node-transport substrate; comms model is nodes / lineage / groups / ACL (2026-05-20) &mdash; scitex-agent-container v0.17.1</title>
       <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=9edc463e" />
       <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
@@ -419,8 +420,9 @@
           <div role="navigation" aria-label="Page navigation">
   <ul class="wy-breadcrumbs">
       <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
-      <li class="breadcrumb-item active">Overview: module code</li>
+      <li class="breadcrumb-item active">ADR-0008: sac is the node-transport substrate; comms model is nodes / lineage / groups / ACL (2026-05-20)</li>
       <li class="wy-breadcrumbs-aside">
+              <a href="https://github.com/ywatanabe1989/scitex-agent-container/blob/main/docs/sphinx/adr/0008-sac-node-transport-boundary.md" class="fa fa-github"> Edit on GitHub</a>
       </li>
   </ul>
   <hr/>
@@ -428,16 +430,201 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
            <div itemprop="articleBody">
              
-  <h1>All modules for which code is available</h1>
-<ul><li><a href="scitex_agent_container/config.html">scitex_agent_container.config</a></li>
-<ul><li><a href="scitex_agent_container/config/_host.html">scitex_agent_container.config._host</a></li>
-<li><a href="scitex_agent_container/config/_loaders.html">scitex_agent_container.config._loaders</a></li>
-<li><a href="scitex_agent_container/config/_proxy_types.html">scitex_agent_container.config._proxy_types</a></li>
-<li><a href="scitex_agent_container/config/_resolve.html">scitex_agent_container.config._resolve</a></li>
-<li><a href="scitex_agent_container/config/_types.html">scitex_agent_container.config._types</a></li>
-<li><a href="scitex_agent_container/config/_validation.html">scitex_agent_container.config._validation</a></li>
-</ul><li><a href="scitex_agent_container/runtimes/prompts.html">scitex_agent_container.runtimes.prompts</a></li>
+  <section class="tex2jax_ignore mathjax_ignore" id="adr-0008-sac-is-the-node-transport-substrate-comms-model-is-nodes-lineage-groups-acl-2026-05-20">
+<h1>ADR-0008: sac is the node-transport substrate; comms model is nodes / lineage / groups / ACL (2026-05-20)<a class="headerlink" href="#adr-0008-sac-is-the-node-transport-substrate-comms-model-is-nodes-lineage-groups-acl-2026-05-20" title="Link to this heading"></a></h1>
+<p><strong>Status:</strong> Accepted.
+<strong>Supersedes:</strong> the implicit “sac = one host; orochi = across hosts”
+framing in <a class="reference internal" href="../sac-and-orochi.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">docs/sac-and-orochi.md</span></code></span></a> (pre-2026-05-20
+revision).
+<strong>Related:</strong> <a class="reference internal" href="0004-a2a-v1-compliance.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">ADR-0004</span></code></span></a> (A2A v1 compliance —
+§D12 defines the push primitive this ADR builds on).
+<strong>Handoff:</strong> <code class="docutils literal notranslate"><span class="pre">GITIGNORED/HANDOFF_AGENT_COMMS_2026-05-19.md</span></code>.</p>
+<section id="problem">
+<h2>Problem<a class="headerlink" href="#problem" title="Link to this heading"></a></h2>
+<p>Two boundaries had drifted out of alignment with reality:</p>
+<ol class="arabic simple">
+<li><p><strong>The “one host vs many hosts” split between sac and orochi was
+wrong.</strong> sac already places and drives agents on remote hosts via
+<code class="docutils literal notranslate"><span class="pre">spec.host</span></code> (and SSH hops in <code class="docutils literal notranslate"><span class="pre">spec.remote.hops</span></code>); the moment it does
+so, it must also carry their messages — there is no “off-host” sac
+could hand the messaging off to without orochi installed. Yet the
+doc said “sac = one host, orochi = across hosts.”</p></li>
+<li><p><strong>sac had no model for non-sac-managed nodes on its comms graph.</strong>
+A plain <code class="docutils literal notranslate"><span class="pre">claude</span></code> CLI session — the official CLI is stable and good
+for terminal/human interaction — could not address or be addressed by
+a sac-managed agent without sac inheriting its lifecycle. That made
+“lead = plain <code class="docutils literal notranslate"><span class="pre">claude</span></code> CLI, workers = sac-managed agents” impossible
+to express, even though the operator regularly runs exactly that
+topology.</p></li>
+</ol>
+<p>The remediation is a single ADR because the two are intertwined: the
+non-sac-managed-node concept <em>only</em> makes sense once sac is the
+transport substrate (not the lifecycle manager that happens to also
+forward messages).</p>
+</section>
+<section id="decision">
+<h2>Decision<a class="headerlink" href="#decision" title="Link to this heading"></a></h2>
+<section id="d1-sac-is-the-node-transport-substrate">
+<h3>D1. sac is the node-transport substrate<a class="headerlink" href="#d1-sac-is-the-node-transport-substrate" title="Link to this heading"></a></h3>
+<p>sac carries messages <strong>any node ↔ any node</strong>, on <strong>any host</strong> (same
+host, LAN, SSH-alias, tunnel), <strong>ACL-gated</strong>, self-sufficient with zero
+orochi installed.</p>
+<p>Orochi is the human/product layer: web chatops UI, dashboard, topology
+viz, presence, channels/DMs/threads as features, <em>and</em> the connectivity
+mesh (cloudflared / autossh) that <strong>establishes</strong> host reachability.
+Orochi is a <em>consumer</em> of sac transport, not the transport.</p>
+<p>sac assumes reachability. Orochi establishes it.</p>
+</section>
+<section id="d2-two-kinds-of-node-distinguished-only-by-who-owns-the-lifecycle">
+<h3>D2. Two kinds of node, distinguished only by who owns the lifecycle<a class="headerlink" href="#d2-two-kinds-of-node-distinguished-only-by-who-owns-the-lifecycle" title="Link to this heading"></a></h3>
+<p>A <strong>node</strong> is an <em>identity</em> + an <em>inbox</em> + an <em>ACL</em>. Two kinds:</p>
+<ul class="simple">
+<li><p><strong>sac-managed</strong> — sac owns the lifecycle (spec, container,
+start/stop/health). Lifecycle entry point: <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agent</span> <span class="pre">start</span></code>.</p></li>
+<li><p><strong>external</strong> — sac does <strong>not</strong> own the lifecycle. Typically a plain
+<code class="docutils literal notranslate"><span class="pre">claude</span></code> CLI session. Joins the comms graph by running
+<code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">mcp</span> <span class="pre">channel</span> <span class="pre">--name</span> <span class="pre">&lt;id&gt;</span> <span class="pre">--listen-url</span> <span class="pre">&lt;sac</span> <span class="pre">listen&gt;</span></code>. No
+container. No spec. sac never starts or stops an external node.</p></li>
 </ul>
+<p>Both kinds are equal on the comms graph. The orchestration layer may
+assign a role (“lead”, “worker”, “coordinator”) to a node — sac sees
+only “a node”.</p>
+</section>
+<section id="d3-lineage-and-groups">
+<h3>D3. Lineage and groups<a class="headerlink" href="#d3-lineage-and-groups" title="Link to this heading"></a></h3>
+<p>sac records who called <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agents</span> <span class="pre">start</span></code>: the caller is the <strong>parent</strong>,
+the spawned agent its <strong>child</strong>. A parent together with its direct
+children is one <strong>group</strong>. The group is the unit of default ACL.</p>
+</section>
+<section id="d4-acl-permissioned-messaging">
+<h3>D4. ACL — permissioned messaging<a class="headerlink" href="#d4-acl-permissioned-messaging" title="Link to this heading"></a></h3>
+<ul class="simple">
+<li><p>Intra-group sends are allowed by default (parent↔child <em>and</em>
+sibling↔sibling, bidirectional).</p></li>
+<li><p>Cross-group sends require an <strong>explicit ACL grant</strong>
+(<code class="docutils literal notranslate"><span class="pre">spec.comms.allow</span></code> for sac-managed nodes; a policy store for
+external nodes).</p></li>
+<li><p>The graph is permissioned — never implicitly all-to-all. An ungated
+channel is a prompt-injection vector
+(<a class="reference external" href="https://code.claude.com/docs/en/channels-reference">Claude Code channels reference</a>).</p></li>
+</ul>
+</section>
+<section id="d5-depth-limit-is-a-policy-not-a-structural-ceiling">
+<h3>D5. Depth limit is a POLICY, not a structural ceiling<a class="headerlink" href="#d5-depth-limit-is-a-policy-not-a-structural-ceiling" title="Link to this heading"></a></h3>
+<p>We currently forbid a child from spawning children, so the <em>live</em>
+hierarchy is two levels. The model, schema, lineage and group logic
+remain <strong>N-level capable</strong> — recursion is the natural shape; nothing
+hard-codes “2” or assumes fixed depth. The cap is a lift-able policy
+rule. Lifting it later is a policy change only — zero
+structural / schema / data-structure change.</p>
+</section>
+<section id="d6-a2a-compliance-for-both-kinds-of-node">
+<h3>D6. A2A compliance for both kinds of node<a class="headerlink" href="#d6-a2a-compliance-for-both-kinds-of-node" title="Link to this heading"></a></h3>
+<p>Every node, sac-managed or external, is addressable via A2A; a node’s
+identity <em>is</em> its A2A AgentCard.</p>
+<ul class="simple">
+<li><p>sac-managed: the card is projected from <code class="docutils literal notranslate"><span class="pre">spec.yaml</span></code> by
+<code class="docutils literal notranslate"><span class="pre">a2a/_card.py::project_card</span></code>.</p></li>
+<li><p>External: the card is <strong>synthesised at registration</strong> by
+<code class="docutils literal notranslate"><span class="pre">_listen/_nodes.py::synthesize_external_card</span></code> — identity + inbox
+endpoint + the v1-required capability fields, marked
+<code class="docutils literal notranslate"><span class="pre">&quot;x-scitex-agent-container.node_kind&quot;:</span> <span class="pre">&quot;external&quot;</span></code>. Registration is
+implicit: the first <code class="docutils literal notranslate"><span class="pre">message:send</span></code> / <code class="docutils literal notranslate"><span class="pre">inbox/stream</span></code> touch on a name
+mints + caches the card.</p></li>
+</ul>
+</section>
+<section id="d7-durability-of-the-channel-bus">
+<h3>D7. Durability of the channel bus<a class="headerlink" href="#d7-durability-of-the-channel-bus" title="Link to this heading"></a></h3>
+<p>Every channel event is persisted to <code class="docutils literal notranslate"><span class="pre">state.db.channel_events</span></code> before
+fan-out. The SSE handler replays missed events on connect
+(<code class="docutils literal notranslate"><span class="pre">Last-Event-ID</span></code> cursor) and stamps each frame with <code class="docutils literal notranslate"><span class="pre">id:</span> <span class="pre">&lt;row_id&gt;</span></code>,
+marking the row delivered as it ships. An event POSTed while no
+subscriber is connected is delivered on the next connect; a
+kill + reconnect replays exactly the missed events; nothing is dropped
+silently.</p>
+<p>Schema: <code class="docutils literal notranslate"><span class="pre">(id,</span> <span class="pre">target,</span> <span class="pre">source,</span> <span class="pre">kind,</span> <span class="pre">content,</span> <span class="pre">meta_json,</span> <span class="pre">ts,</span> <span class="pre">delivered_at)</span></code>.</p>
+</section>
+<section id="d8-endpoint-location-for-the-inbox-surface">
+<h3>D8. Endpoint location for the inbox surface<a class="headerlink" href="#d8-endpoint-location-for-the-inbox-surface" title="Link to this heading"></a></h3>
+<p>The inbox endpoints (<code class="docutils literal notranslate"><span class="pre">message:send</span></code> and <code class="docutils literal notranslate"><span class="pre">inbox/stream</span></code>) live on the
+always-on <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code> host control-plane (<code class="docutils literal notranslate"><span class="pre">_listen/server.py</span></code>),
+<strong>keyed by node identity</strong> — they accept a name that has no YAML and
+no container. The per-agent <code class="docutils literal notranslate"><span class="pre">a2a/_server.py</span></code> is a separate surface
+for sac-managed-agent SDK plumbing.</p>
+</section>
+<section id="d9-the-transport-is-claude-codes-official-channels-feature">
+<h3>D9. The transport is Claude Code’s official channels feature<a class="headerlink" href="#d9-the-transport-is-claude-codes-official-channels-feature" title="Link to this heading"></a></h3>
+<p>No new channel protocol. The MCP server emits
+<code class="docutils literal notranslate"><span class="pre">notifications/claude/channel</span></code>; Claude Code renders it as a
+<code class="docutils literal notranslate"><span class="pre">&lt;channel</span> <span class="pre">source=&quot;...&quot;</span> <span class="pre">...&gt;</span></code> block in the running session. This is
+the same protocol orochi’s <code class="docutils literal notranslate"><span class="pre">server:orochi-push</span></code> uses — sac just adds
+the <code class="docutils literal notranslate"><span class="pre">server:sac</span></code> flavour pointing at the local listen.</p>
+</section>
+</section>
+<section id="what-this-rules-out">
+<h2>What this rules out<a class="headerlink" href="#what-this-rules-out" title="Link to this heading"></a></h2>
+<ul class="simple">
+<li><p>No UI, dashboard, or topology viz in sac — orochi’s.</p></li>
+<li><p>No orochi awareness in sac. The boundary stays one-way (orochi → sac).</p></li>
+<li><p>No new channel protocol — use Claude Code channels as-is.</p></li>
+<li><p>No “lead” / “head” / “worker” / role concept in sac — only nodes,
+lineage, groups, ACL.</p></li>
+<li><p>No sac lifecycle management of external nodes — sac never starts or
+stops any external node.</p></li>
+<li><p>No per-agent role/address config beyond <code class="docutils literal notranslate"><span class="pre">spec.comms</span></code> ACL.</p></li>
+</ul>
+</section>
+<section id="what-this-opens-up-deliberately-but-not-built-yet">
+<h2>What this opens up (deliberately, but not built yet)<a class="headerlink" href="#what-this-opens-up-deliberately-but-not-built-yet" title="Link to this heading"></a></h2>
+<p>The model is shaped to accept <strong>transport adapters</strong> in a phase-2:</p>
+<ul class="simple">
+<li><p>A <strong>human adapter</strong> (a human is a node too — reachable via Telegram /
+phone / email; replies in that app). Backed by
+<code class="docutils literal notranslate"><span class="pre">claude-code-telegrammer</span></code> + <code class="docutils literal notranslate"><span class="pre">scitex-notification</span></code> today; phase 2
+registers them behind the same <code class="docutils literal notranslate"><span class="pre">node</span> <span class="pre">=</span> <span class="pre">identity</span> <span class="pre">+</span> <span class="pre">inbox</span> <span class="pre">+</span> <span class="pre">ACL</span></code> model.</p></li>
+<li><p>A possible HTTP webhook adapter or the orochi UI as an adapter.</p></li>
+</ul>
+<p>The phase-1 work (WI-1…6 from the handoff) builds exactly one adapter:
+the Claude-session adapter (<code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">mcp</span> <span class="pre">channel</span></code>, MCP
+<code class="docutils literal notranslate"><span class="pre">notifications/claude/channel</span></code>). The model is deliberately
+adapter-shaped so a second adapter can be added later without touching
+the core. The only phase-2 obligation on phase-1 is: keep the adapter
+seam clean — the node model, ACL and routing must not assume the
+Claude-session adapter is the only transport.</p>
+</section>
+<section id="implementation-sources-of-truth">
+<h2>Implementation sources of truth<a class="headerlink" href="#implementation-sources-of-truth" title="Link to this heading"></a></h2>
+<ul class="simple">
+<li><p>Node-identity inbox endpoints + external-node registry —
+<code class="docutils literal notranslate"><span class="pre">src/scitex_agent_container/_listen/_nodes.py</span></code>,
+<code class="docutils literal notranslate"><span class="pre">src/scitex_agent_container/_listen/server.py</span></code>.</p></li>
+<li><p>Channel-event durability + replay —
+<code class="docutils literal notranslate"><span class="pre">src/scitex_agent_container/_state/state_db_channel.py</span></code>,
+<code class="docutils literal notranslate"><span class="pre">channel_events</span></code> table schema in
+<code class="docutils literal notranslate"><span class="pre">src/scitex_agent_container/_state/state_db.py</span></code>.</p></li>
+<li><p>SSE replay handler — <code class="docutils literal notranslate"><span class="pre">a2a/_server.py::get_inbox_stream</span></code> (and the
+symmetric handler in <code class="docutils literal notranslate"><span class="pre">_listen/server.py::node_inbox_stream</span></code>).</p></li>
+<li><p>Card projection (sac-managed) — <code class="docutils literal notranslate"><span class="pre">a2a/_card.py::project_card</span></code>.</p></li>
+<li><p>Card synthesis (external) — <code class="docutils literal notranslate"><span class="pre">_listen/_nodes.py::synthesize_external_card</span></code>.</p></li>
+</ul>
+</section>
+<section id="references">
+<h2>References<a class="headerlink" href="#references" title="Link to this heading"></a></h2>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">docs/sac-and-orochi.md</span></code> — narrative version of this ADR for the
+package docs.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">GITIGNORED/HANDOFF_AGENT_COMMS_2026-05-19.md</span></code> — the handoff that
+motivated this work; superseded once WI-1…6 land.</p></li>
+<li><p><a class="reference external" href="https://code.claude.com/docs/en/channels-reference">Claude Code channels reference</a>
+— protocol + the “gate inbound messages” guidance that directly
+informs D4.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">docs/design/telegram-fold.md</span></code> — the consumer flow
+(telegram → Broker → SSE → <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">mcp</span> <span class="pre">channel</span></code> → session) that
+prefigured this model.</p></li>
+</ul>
+</section>
+</section>
+
 
            </div>
           </div>

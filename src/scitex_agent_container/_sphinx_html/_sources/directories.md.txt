@@ -55,7 +55,7 @@ Settings are resolved in this order (first wins):
 1. **CLI flag** — `sac agents start hello --workdir /tmp/x`
 2. **Env var** — `SAC_<X>` or the long `SCITEX_AGENT_CONTAINER_<X>` form
    (setting both with different values raises `SacEnvConflict`). Copy
-   [`.env.example`](../.env.example) to `.env` and uncomment what you need.
+   [`.env.example`](https://github.com/ywatanabe1989/scitex-agent-container/blob/develop/.env.example) to `.env` and uncomment what you need.
 3. **Project config** — `<proj>/.scitex/agent-container/config.yaml`,
    when you're inside a git repo that ships one.
 4. **User config** — `~/.scitex/agent-container/config.yaml`

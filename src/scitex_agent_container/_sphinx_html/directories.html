@@ -175,8 +175,21 @@
 <p class="caption" role="heading"><span class="caption-text">Ecosystem</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="sac-and-orochi.html">sac and orochi</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#architecture">Architecture</a></li>
-<li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#responsibility-split">Responsibility split</a></li>
+<li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#the-comms-model-what-sac-knows">The comms model — what sac knows</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#lineage-parent-children">Lineage — parent / children</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#group-the-unit-of-default-acl">Group — the unit of default ACL</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#depth-limit-a-policy-not-a-structural-limit">Depth limit — a POLICY, not a structural limit</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#acl-permissioned-messaging">ACL — permissioned messaging</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#authenticated-identity-handoff-4-acceptance">Authenticated identity (handoff §4 acceptance)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#cross-host-forwarding-per-host-bearer-registry">Cross-host forwarding — per-host bearer registry</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#a2a-compliance">A2A compliance</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#what-sac-knows-vs-doesnt">What sac knows vs doesn’t</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#the-corrected-boundary">The corrected boundary</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#responsibility-split">Responsibility split</a></li>
+</ul>
+</li>
 <li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#how-orochi-consumes-sac">How orochi consumes sac</a></li>
 <li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#standalone-use">Standalone use</a></li>
 <li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#live-instance">Live instance</a></li>
@@ -475,7 +488,7 @@
 <li><p><strong>CLI flag</strong> — <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agents</span> <span class="pre">start</span> <span class="pre">hello</span> <span class="pre">--workdir</span> <span class="pre">/tmp/x</span></code></p></li>
 <li><p><strong>Env var</strong> — <code class="docutils literal notranslate"><span class="pre">SAC_&lt;X&gt;</span></code> or the long <code class="docutils literal notranslate"><span class="pre">SCITEX_AGENT_CONTAINER_&lt;X&gt;</span></code> form
 (setting both with different values raises <code class="docutils literal notranslate"><span class="pre">SacEnvConflict</span></code>). Copy
-<a class="reference internal" href="#../.env.example"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">.env.example</span></code></span></a> to <code class="docutils literal notranslate"><span class="pre">.env</span></code> and uncomment what you need.</p></li>
+<a class="reference external" href="https://github.com/ywatanabe1989/scitex-agent-container/blob/develop/.env.example"><code class="docutils literal notranslate"><span class="pre">.env.example</span></code></a> to <code class="docutils literal notranslate"><span class="pre">.env</span></code> and uncomment what you need.</p></li>
 <li><p><strong>Project config</strong> — <code class="docutils literal notranslate"><span class="pre">&lt;proj&gt;/.scitex/agent-container/config.yaml</span></code>,
 when you’re inside a git repo that ships one.</p></li>
 <li><p><strong>User config</strong> — <code class="docutils literal notranslate"><span class="pre">~/.scitex/agent-container/config.yaml</span></code>

@@ -175,8 +175,21 @@
 <p class="caption" role="heading"><span class="caption-text">Ecosystem</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="sac-and-orochi.html">sac and orochi</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#architecture">Architecture</a></li>
-<li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#responsibility-split">Responsibility split</a></li>
+<li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#the-comms-model-what-sac-knows">The comms model — what sac knows</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#lineage-parent-children">Lineage — parent / children</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#group-the-unit-of-default-acl">Group — the unit of default ACL</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#depth-limit-a-policy-not-a-structural-limit">Depth limit — a POLICY, not a structural limit</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#acl-permissioned-messaging">ACL — permissioned messaging</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#authenticated-identity-handoff-4-acceptance">Authenticated identity (handoff §4 acceptance)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#cross-host-forwarding-per-host-bearer-registry">Cross-host forwarding — per-host bearer registry</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#a2a-compliance">A2A compliance</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#what-sac-knows-vs-doesnt">What sac knows vs doesn’t</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#the-corrected-boundary">The corrected boundary</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#responsibility-split">Responsibility split</a></li>
+</ul>
+</li>
 <li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#how-orochi-consumes-sac">How orochi consumes sac</a></li>
 <li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#standalone-use">Standalone use</a></li>
 <li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#live-instance">Live instance</a></li>
@@ -556,7 +569,7 @@ SDK session (the conversation accumulates).</p>
 <section id="discover-the-agent">
 <h3>Discover the agent<a class="headerlink" href="#discover-the-agent" title="Link to this heading"></a></h3>
 <p>The AgentCard at <code class="docutils literal notranslate"><span class="pre">/.well-known/agent-card.json</span></code> is auto-generated from
-the agent’s <code class="docutils literal notranslate"><span class="pre">spec.yaml</span></code> (see <span class="xref myst"><code class="docutils literal notranslate"><span class="pre">spec-reference.md</span></code></span>
+the agent’s <code class="docutils literal notranslate"><span class="pre">spec.yaml</span></code> (see <a class="reference internal" href="spec-reference.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">spec-reference.md</span></code></span></a>
 for the field-to-card mapping). Browsers and A2A-spec discovery clients
 read it directly:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>curl<span class="w"> </span>-s<span class="w"> </span>http://127.0.0.1:7901/.well-known/agent-card.json<span class="w"> </span><span class="p">|</span><span class="w"> </span>python3<span class="w"> </span>-m<span class="w"> </span>json.tool
@@ -656,7 +669,7 @@ consumers):</p>
 </tbody>
 </table>
 <p><code class="docutils literal notranslate"><span class="pre">send</span></code> accepts both turn types:</p>
-<div class="highlight-jsonc notranslate"><div class="highlight"><pre><span></span>// prompt turn
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>// prompt turn
 { &quot;type&quot;: &quot;prompt&quot;, &quot;prompt&quot;: &quot;Your question here&quot;, &quot;options&quot;: { ... } }
 
 // key / interrupt
@@ -700,8 +713,8 @@ peers see one consistent skill list.</p>
 <span class="w">  </span><span class="nt">a2a</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt"> port</span><span class="p">:</span><span class="w"> </span><span class="nv">7905</span><span class="w"> </span><span class="p p-Indicator">}</span>
 </pre></div>
 </div>
-<p>See <span class="xref myst"><code class="docutils literal notranslate"><span class="pre">spec-reference.md</span></code> § <code class="docutils literal notranslate"><span class="pre">kind:</span> <span class="pre">AgentProxy</span></code></span>
-and <a class="reference internal" href="#../examples/agents/proxy-agent/"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">examples/agents/proxy-agent/</span></code></span></a>
+<p>See <a class="reference internal" href="spec-reference.html#kind-agentproxy-http-forwarder-agents"><span class="std std-ref"><code class="docutils literal notranslate"><span class="pre">spec-reference.md</span></code> § <code class="docutils literal notranslate"><span class="pre">kind:</span> <span class="pre">AgentProxy</span></code></span></a>
+and <a class="reference external" href="https://github.com/ywatanabe1989/scitex-agent-container/tree/develop/examples/agents/proxy-agent"><code class="docutils literal notranslate"><span class="pre">examples/agents/proxy-agent/</span></code></a>
 for the full reference.</p>
 </section>
 <section id="picking-a-transport">
@@ -711,7 +724,7 @@ for the full reference.</p>
 <li><p><strong>Shell script on the same host</strong> → <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agents</span> <span class="pre">send</span></code> + <code class="docutils literal notranslate"><span class="pre">tail</span></code>. No port, no JSON, no token.</p></li>
 <li><p><strong>Another agent, on the same host</strong> → A2A sidecar; agents have <code class="docutils literal notranslate"><span class="pre">httpx</span></code> in the SIF. Use the canonical URL or the <code class="docutils literal notranslate"><span class="pre">/v1/turn</span></code> shortcut — both work.</p></li>
 <li><p><strong>Orchestrator (orochi, custom)</strong> → <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code> (port 7878) with the bearer token; same <code class="docutils literal notranslate"><span class="pre">/agents/&lt;name&gt;/...</span></code> path shape, cross-host via the existing SSH mesh.</p></li>
-<li><p><strong>External A2A peer (hosted service, vendor)</strong> → wrap as a <span class="xref myst"><code class="docutils literal notranslate"><span class="pre">kind:</span> <span class="pre">AgentProxy</span></code></span> agent so the rest of sac treats it the same.</p></li>
+<li><p><strong>External A2A peer (hosted service, vendor)</strong> → wrap as a <a class="reference internal" href="spec-reference.html#kind-agentproxy-http-forwarder-agents"><span class="std std-ref"><code class="docutils literal notranslate"><span class="pre">kind:</span> <span class="pre">AgentProxy</span></code></span></a> agent so the rest of sac treats it the same.</p></li>
 </ul>
 <p>Pick the most external transport that meets your needs — every layer
 above the inbox is a thin wrapper, so there’s no functional difference
@@ -721,9 +734,9 @@ sidecar and <code class="docutils literal notranslate"><span class="pre">sac</sp
 <section id="see-also">
 <h2>See also<a class="headerlink" href="#see-also" title="Link to this heading"></a></h2>
 <ul class="simple">
-<li><p><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">spec-reference.md</span></code></span> — the YAML knobs (<code class="docutils literal notranslate"><span class="pre">spec.a2a.port</span></code>, <code class="docutils literal notranslate"><span class="pre">spec.listen.port</span></code>)</p></li>
-<li><p><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">how-sac-works.md</span></code></span> — the architecture diagram showing where each transport hooks in</p></li>
-<li><p><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">sac-and-orochi.md</span></code></span> — how orochi consumes <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code> across hosts</p></li>
+<li><p><a class="reference internal" href="spec-reference.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">spec-reference.md</span></code></span></a> — the YAML knobs (<code class="docutils literal notranslate"><span class="pre">spec.a2a.port</span></code>, <code class="docutils literal notranslate"><span class="pre">spec.listen.port</span></code>)</p></li>
+<li><p><a class="reference internal" href="how-sac-works.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">how-sac-works.md</span></code></span></a> — the architecture diagram showing where each transport hooks in</p></li>
+<li><p><a class="reference internal" href="sac-and-orochi.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">sac-and-orochi.md</span></code></span></a> — how orochi consumes <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code> across hosts</p></li>
 </ul>
 <!-- EOF --></section>
 </section>
