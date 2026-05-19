@@ -28,7 +28,6 @@ from ._hosts import _VALID_SCHEDULING_MODES, parse_hosts_spec, parse_scheduling
 from ._listen import parse_listen
 from ._mcp import interpolate_mcp_servers
 from ._proxy import parse_proxy
-from ._remote import parse_remote
 from ._restart import parse_restart
 from ._skills import parse_skills
 from ._startup import parse_startup_commands
@@ -52,7 +51,6 @@ __all__ = [
     "parse_hosts_spec",
     "parse_listen",
     "parse_proxy",
-    "parse_remote",
     "parse_restart",
     "parse_scheduling",
     "parse_skills",

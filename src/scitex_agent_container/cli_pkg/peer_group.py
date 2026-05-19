@@ -60,8 +60,9 @@ def peer_post_turn(
 
     Resolves AGENT's URL via the standard discovery chain (project-local
     → ~/.scitex/agent-container/agents/ → env → fleet dirs). Remote
-    agents (spec.remote.host set) are reached via ssh-as-transport;
-    local agents go straight to 127.0.0.1:<port>.
+    agents (``spec.host`` pinned to a different host) are reached via
+    that host's reachable address; local agents go straight to
+    127.0.0.1:<port>.
 
     Examples:
         sac peer post-turn worker "summarize today's commits"
