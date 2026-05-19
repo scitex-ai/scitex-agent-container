@@ -179,7 +179,7 @@ sac agents find   <capability>
 
 # Control plane (HTTP/JSON, loopback-only)
 sac listen [--bind 127.0.0.1:7878]       # boot per-host REST API (bearer-auth)
-sac channel send <to> "<msg>"            # local agent-to-agent message via sac listen
+sac peer post-turn <to> "<msg>"          # local agent-to-agent message via sac listen
 
 # Image lifecycle (delegates to scitex-container)
 sac image build [base|scitex] [--sandbox] [--runtime apptainer|docker]

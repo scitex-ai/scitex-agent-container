@@ -81,12 +81,6 @@ When running, exposes (bearer-token authenticated):
 | `POST /agents/<name>/send` | One turn — buffered JSON by default; `Accept: text/event-stream` → SSE frames |
 | `DELETE /agents/<name>` | SIGTERM the runner pid |
 
-## sac channel (local agent ↔ agent)
-
-```bash
-sac channel send <to> "<msg>" --from <id>   # POST a channel-wrapped turn to a local agent via sac listen
-```
-
 ## A2A protocol (sidecar)
 
 ```bash
