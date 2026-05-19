@@ -43,6 +43,7 @@ from .._state.registry import Registry
 from ..a2a._inbox_bus import mint_event
 from ..config import load_config
 from ..config._resolve import resolve_config
+from ._acl import NodeAuthMiddleware, check_send_acl, deny_response
 from ._inline_spec import materialize_inline_spec
 from ._nodes import Broker, NodeRegistry
 from .auth import BearerAuthMiddleware
@@ -444,8 +445,20 @@ async def node_message_send(request: Request) -> Response:
     lookup. The publish is **always loud** — a malformed body returns
     400, never a silent drop (handoff §0 Hard rules).
 
-    No ACL gating yet — that lands in WI-2. Bearer auth (outer
-    perimeter) still applies via :class:`BearerAuthMiddleware`.
+    WI-2 ACL gate: every send is checked by
+    :func:`_acl.check_send_acl` before publish:
+
+    * A per-node bearer pins identity — ``metadata.from_agent`` must
+      match the bearer's resolved name; mismatch → 403.
+    * Cross-group is denied by default; intra-group (parent↔child
+      and sibling↔sibling) is allowed.
+    * The host-wide bearer is treated as an administrative caller
+      whose ``metadata.from_agent`` is honoured verbatim — the
+      cross-host-forwarding seam (handoff §4 WI-4 prerequisite).
+
+    Bearer auth (outer perimeter) is still enforced by
+    :class:`BearerAuthMiddleware`; identity resolution is enforced
+    by :class:`NodeAuthMiddleware`.
     """
     name = request.path_params["name"]
     try:
@@ -491,6 +504,22 @@ async def node_message_send(request: Request) -> Response:
     for src in (params.get("metadata"), message.get("metadata")):
         if isinstance(src, dict):
             sac_meta.update(src)
+
+    # WI-2 ACL check. ``authenticated_node`` is set by
+    # :class:`NodeAuthMiddleware` — ``None`` means the host-wide
+    # bearer was presented (administrative caller). The check honours
+    # ``metadata.from_agent`` only when no per-node bearer is bound
+    # (or when it matches), so a metadata field cannot spoof identity.
+    authenticated_node = getattr(
+        request.state, "authenticated_node", None
+    )
+    decision, reason = check_send_acl(
+        authenticated_node=authenticated_node,
+        claimed_from_agent=sac_meta.get("from_agent"),
+        target=name,
+    )
+    if decision == "deny":
+        return deny_response(reason or "ACL deny")
 
     event = mint_event(
         name,
@@ -621,6 +650,18 @@ def create_app(*, token: str) -> Starlette:
     external nodes (no YAML, no container) can attach as first-class
     members of the comms graph. The state lives on ``app.state`` so
     every handler shares the same broker and registry instance.
+
+    WI-2 chains :class:`NodeAuthMiddleware` after
+    :class:`BearerAuthMiddleware`: the outer middleware admits any
+    request bearing a valid token (host-wide or per-node); the inner
+    one resolves that token to a node identity and attaches it to
+    ``request.state.authenticated_node`` so the ACL gate in
+    :func:`node_message_send` can decide allow / deny.
+
+    Middleware order matters. Starlette executes the *outermost*
+    ``add_middleware`` call first (it wraps the app last but runs
+    first on the inbound path). So the BearerAuthMiddleware call
+    below comes **last** to make it the outermost layer.
     """
     routes: list[Route] = [
         Route("/v1/health", health, methods=["GET"]),
@@ -631,5 +672,10 @@ def create_app(*, token: str) -> Starlette:
     # Per-app shared state for the WI-3 inbox surface.
     app.state.inbox = Broker()
     app.state.nodes = NodeRegistry()
+    # WI-2 — identity resolution (inner). Reads the same Bearer the
+    # outer middleware already validated; tags ``request.state`` with
+    # the resolved node name (or ``None`` for the host-wide bearer).
+    app.add_middleware(NodeAuthMiddleware, host_bearer=token)
+    # Outer perimeter — admits any valid token, rejects everything else.
     app.add_middleware(BearerAuthMiddleware, token=token)
     return app
