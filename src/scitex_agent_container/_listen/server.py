@@ -43,7 +43,12 @@ from .._state.registry import Registry
 from ..a2a._inbox_bus import mint_event
 from ..config import load_config
 from ..config._resolve import resolve_config
-from ._acl import check_send_acl, check_spawn, deny_response
+from ._acl import (
+    NodeAuthMiddleware,
+    check_send_acl,
+    check_spawn,
+    deny_response,
+)
 from ._inline_spec import materialize_inline_spec
 from ._nodes import Broker, NodeRegistry
 from .auth import BearerAuthMiddleware
@@ -480,24 +485,25 @@ async def node_message_send(request: Request) -> Response:
     lookup. The publish is **always loud** — a malformed body returns
     400, never a silent drop (handoff §0 Hard rules).
 
-    WI-2 ACL gate (limited scope per lead 2026-05-20): every send
-    is checked by :func:`_acl.check_send_acl` before publish:
+    WI-2 ACL gate: every send is checked by
+    :func:`_acl.check_send_acl` before publish:
 
-    * Cross-group is denied by default; intra-group (parent↔child
-      and sibling↔sibling) is allowed.
-    * Explicit cross-group grants (``comms_grants`` table) flip
+    * **Per-node bearer** pins identity — ``metadata.from_agent``
+      must match the resolved name, else 403 "identity spoof"
+      (handoff §4 acceptance).
+    * **Cross-group** is denied by default; intra-group
+      (parent↔child and sibling↔sibling) is allowed.
+    * **Explicit cross-group grants** (``comms_grants`` table) flip
       a deny to an allow.
-    * Self-send is always allowed.
+    * **Self-send** is always allowed.
+    * The **host-wide bearer** is the administrative / cross-host
+      forwarding caller; it honours ``metadata.from_agent``
+      verbatim (used by WI-4 forwarders authenticating with the
+      destination's host bearer from ``peer-tokens/`` registry).
 
-    **Identity caveat** — the sender identity is the self-claimed
-    ``metadata.from_agent`` field. Cryptographic per-node identity
-    is deferred to a separate follow-on handoff filed in
-    scitex-lead at
-    ``GITIGNORED/FUTURE/sac-per-node-authenticated-acl.md``;
-    until then every grant row stores the caveat "trusts
-    metadata.from_agent until per-node creds land". Bearer auth
-    (host-wide token) is still enforced by
-    :class:`BearerAuthMiddleware` as the outer perimeter.
+    Bearer auth is enforced by :class:`BearerAuthMiddleware` (outer
+    perimeter) and identity resolution by :class:`NodeAuthMiddleware`
+    (sets ``request.state.authenticated_node``).
     """
     name = request.path_params["name"]
     try:
@@ -544,11 +550,17 @@ async def node_message_send(request: Request) -> Response:
         if isinstance(src, dict):
             sac_meta.update(src)
 
-    # WI-2 ACL check (limited scope). Gates on the self-claimed
-    # ``metadata.from_agent`` field; cryptographic per-node identity
-    # is deferred. See :func:`_acl.check_send_acl` for the decision
-    # branches and the identity caveat.
+    # WI-2 ACL check. ``authenticated_node`` is set by
+    # :class:`NodeAuthMiddleware` — ``None`` means the host-wide
+    # bearer was presented (administrative caller). With a per-node
+    # bearer, ``metadata.from_agent`` MUST match the resolved name
+    # so identity cannot be spoofed via a metadata field (handoff
+    # §4 acceptance). See :func:`_acl.check_send_acl`.
+    authenticated_node = getattr(
+        request.state, "authenticated_node", None
+    )
     decision, reason = check_send_acl(
+        authenticated_node=authenticated_node,
         claimed_from_agent=sac_meta.get("from_agent"),
         target=name,
     )
@@ -677,7 +689,7 @@ def _v1_agent_routes(prefix: str) -> list[Route]:
     ]
 
 
-def create_app(*, token: str) -> Starlette:
+def create_app(*, token: str, local_host: str | None = None) -> Starlette:
     """Build the Starlette app with bearer auth (ADR-0004 — ``/agents`` only).
 
     WI-3 wires a per-app :class:`Broker` + :class:`NodeRegistry` so
@@ -685,11 +697,24 @@ def create_app(*, token: str) -> Starlette:
     members of the comms graph. The state lives on ``app.state`` so
     every handler shares the same broker and registry instance.
 
-    WI-2 (limited scope per lead 2026-05-20) adds the ACL gate to
-    :func:`node_message_send` and the spawn-permission gate to
-    :func:`agents_start`. Both gate on the self-claimed
-    ``metadata.from_agent`` / body-``caller`` field; cryptographic
-    per-node identity is deferred to a separate follow-on handoff.
+    WI-2 chains :class:`NodeAuthMiddleware` after
+    :class:`BearerAuthMiddleware`: the outer middleware admits any
+    request bearing a valid token (host-wide or per-node); the inner
+    one resolves that token to a node identity and attaches it to
+    ``request.state.authenticated_node`` so the ACL gate in
+    :func:`node_message_send` enforces "identity cannot be spoofed
+    via a metadata field" (handoff §4 acceptance). The spawn-gate
+    in :func:`agents_start` consumes the same body-``caller`` shape.
+
+    Middleware order matters. Starlette executes the *outermost*
+    ``add_middleware`` call first (it wraps the app last but runs
+    first on the inbound path). So the BearerAuthMiddleware call
+    below comes **last** to make it the outermost layer.
+
+    WI-4 ``local_host`` configures the name this app sees as
+    "itself" so the cross-host forwarder can tell local-vs-remote
+    targets apart. When omitted, falls back to
+    :func:`state_db._resolve_host` (the env + config chain).
     """
     routes: list[Route] = [
         Route("/v1/health", health, methods=["GET"]),
@@ -700,9 +725,13 @@ def create_app(*, token: str) -> Starlette:
     # Per-app shared state for the WI-3 inbox surface.
     app.state.inbox = Broker()
     app.state.nodes = NodeRegistry()
-    # Outer perimeter — host-wide bearer. The limited WI-2 scope
-    # does not add a per-node-identity middleware; sender identity
-    # is the self-claimed ``metadata.from_agent`` field, gated by
-    # :func:`_acl.check_send_acl`.
+    # WI-4 — per-app local host name. May be ``None``; the forwarder
+    # then falls back to the env-based resolver.
+    app.state.local_host = local_host
+    # WI-2 — identity resolution (inner). Reads the same Bearer the
+    # outer middleware already validated; tags ``request.state`` with
+    # the resolved node name (or ``None`` for the host-wide bearer).
+    app.add_middleware(NodeAuthMiddleware, host_bearer=token)
+    # Outer perimeter — admits any valid token, rejects everything else.
     app.add_middleware(BearerAuthMiddleware, token=token)
     return app

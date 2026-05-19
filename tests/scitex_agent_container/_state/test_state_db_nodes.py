@@ -25,12 +25,14 @@ import pytest
 
 from scitex_agent_container._state import state_db
 from scitex_agent_container._state.state_db_nodes import (
-    GRANT_DEFERRED_CAVEAT,
     derive_group,
     grant_send,
     has_grant,
     list_comms_grants,
+    list_node_tokens,
+    mint_node_token,
     record_lineage,
+    resolve_node_token,
     revoke_send,
     spawn_allowed,
 )
@@ -267,15 +269,20 @@ def test_grant_send_is_directional(db_path: Path) -> None:
     assert reverse_granted is False
 
 
-def test_grant_send_writes_deferred_caveat_note(db_path: Path) -> None:
-    """Each grant carries the audit caveat documenting the deferred
-    cryptographic identity."""
+def test_grant_send_records_caller_supplied_audit_note(db_path: Path) -> None:
+    """An operator-supplied ``note`` round-trips into ``comms_grants``
+    so the audit trail records *why* the grant was authorised."""
     # Arrange
-    grant_send(sender="alice", target="bob", db_path=db_path)
+    grant_send(
+        sender="alice",
+        target="bob",
+        db_path=db_path,
+        note="handoff-2026-05-21",
+    )
     # Act
     rows = list_comms_grants(db_path=db_path)
     # Assert
-    assert rows and rows[0]["note"] == GRANT_DEFERRED_CAVEAT
+    assert rows and rows[0]["note"] == "handoff-2026-05-21"
 
 
 def test_grant_send_idempotent_no_duplicate_rows(db_path: Path) -> None:
@@ -325,3 +332,96 @@ def test_list_comms_grants_returns_each_grant_pair(db_path: Path) -> None:
     # Assert
     pairs = sorted((r["sender"], r["target"]) for r in rows)
     assert pairs == [("alice", "bob"), ("root-1", "child-2")]
+
+
+# ---------------------------------------------------------------------------
+# node_tokens — authenticated identity primitive (handoff §4 acceptance)
+# ---------------------------------------------------------------------------
+
+
+def test_node_tokens_table_exists(db_path: Path) -> None:
+    # Arrange
+    conn_ctx = state_db.open_db(db_path)
+    # Act
+    with conn_ctx as conn:
+        rows = conn.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name='node_tokens'"
+        ).fetchall()
+    # Assert
+    assert len(rows) == 1
+
+
+def test_mint_node_token_returns_non_empty_string(db_path: Path) -> None:
+    # Arrange
+    name = "alice"
+    # Act
+    token = mint_node_token(name=name, db_path=db_path)
+    # Assert
+    assert isinstance(token, str) and len(token) >= 32
+
+
+def test_mint_node_token_is_idempotent_per_name(db_path: Path) -> None:
+    """Re-registration returns the same token, so an active bearer
+    keeps working across a re-register."""
+    # Arrange
+    first = mint_node_token(name="alice", db_path=db_path)
+    # Act
+    second = mint_node_token(name="alice", db_path=db_path)
+    # Assert
+    assert first == second
+
+
+def test_mint_node_token_is_unique_per_name(db_path: Path) -> None:
+    # Arrange
+    a = mint_node_token(name="alice", db_path=db_path)
+    b = mint_node_token(name="bob", db_path=db_path)
+    # Act
+    different = a != b
+    # Assert
+    assert different is True
+
+
+def test_resolve_node_token_returns_minted_identity(db_path: Path) -> None:
+    # Arrange
+    token = mint_node_token(name="alice", db_path=db_path)
+    # Act
+    resolved = resolve_node_token(token=token, db_path=db_path)
+    # Assert
+    assert resolved == "alice"
+
+
+def test_resolve_node_token_returns_none_for_unknown_bearer(
+    db_path: Path,
+) -> None:
+    # Arrange
+    bogus = "no-such-token-1234567890abcdef"
+    # Act
+    resolved = resolve_node_token(token=bogus, db_path=db_path)
+    # Assert
+    assert resolved is None
+
+
+def test_resolve_node_token_returns_none_for_empty_string(
+    db_path: Path,
+) -> None:
+    # Arrange
+    empty = ""
+    # Act
+    resolved = resolve_node_token(token=empty, db_path=db_path)
+    # Assert
+    assert resolved is None
+
+
+def test_list_node_tokens_returns_each_minted_name(db_path: Path) -> None:
+    """The token observability surface returns names (NOT token
+    values — that would defeat the purpose of storing them as
+    secrets)."""
+    # Arrange
+    mint_node_token(name="alice", db_path=db_path)
+    mint_node_token(name="bob", db_path=db_path)
+    # Act
+    rows = list_node_tokens(db_path=db_path)
+    # Assert
+    names = sorted(r["name"] for r in rows)
+    assert names == ["alice", "bob"]

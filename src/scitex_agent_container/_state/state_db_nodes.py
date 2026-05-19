@@ -1,20 +1,30 @@
-"""Lineage + ACL-grant primitives for WI-2 ACL (limited scope).
+"""Node-identity primitives for WI-2 ACL.
 
 Per HANDOFF_AGENT_COMMS_2026-05-19.md §4 (WI-2) and the lead's
-2026-05-20 directive (limited scope — defer authenticated identity):
+2026-05-21 directive (RESTORED the authenticated-identity criterion
+the prior limited scope had deferred):
 
-  * Group-based default ACL — intra-group bidirectional, cross-group
-    denied. Group is *derived from lineage*; see
+  * **Authenticated identity** — per-node bearer tokens minted at
+    registration (:func:`mint_node_token`). The listen server resolves
+    an incoming ``Authorization: Bearer <token>`` to a node name
+    (:func:`resolve_node_token`). With this in place,
+    ``check_send_acl`` enforces "identity cannot be spoofed via a
+    metadata field" — when a per-node bearer is presented,
+    ``params.metadata.from_agent`` MUST match the bearer's resolved
+    name; mismatch → 403.
+
+  * **Group-based default ACL** — intra-group bidirectional,
+    cross-group denied. Group is *derived from lineage*; see
     :func:`derive_group`.
 
-  * Cross-group grants — accepted, keyed on the self-claimed
-    ``metadata.from_agent`` field, **with the caveat that each row
-    "trusts metadata.from_agent until per-node creds land"**. The
-    cryptographic-identity follow-on is tracked in scitex-lead at
-    ``GITIGNORED/FUTURE/sac-per-node-authenticated-acl.md``.
+  * **Cross-group grants** — accepted, keyed on the *resolved*
+    sender identity (per-node bearer authenticates the sender; the
+    host-wide bearer is the administrative / cross-host-forwarder
+    path, which honours ``metadata.from_agent`` verbatim). See
+    :func:`grant_send`.
 
-  * Spawn permission — root-only by current policy (a node with no
-    parent may call ``sac agents start``; a child may not). The
+  * **Spawn permission** — root-only by current policy (a node with
+    no parent may call ``sac agents start``; a child may not). The
     policy is **lift-able**: lifting it later is a single-callsite
     edit to :func:`spawn_allowed` with zero schema change (handoff
     §2 D5 "Depth limit is a POLICY, not a structural ceiling").
@@ -27,6 +37,7 @@ All times stored as ``REAL`` unix-seconds (float).
 
 from __future__ import annotations
 
+import secrets
 import time
 from pathlib import Path
 from typing import Any
@@ -37,11 +48,96 @@ __all__ = [
     "has_grant",
     "is_local_node",
     "list_comms_grants",
+    "list_node_tokens",
+    "mint_node_token",
     "record_lineage",
     "resolve_node_host",
+    "resolve_node_token",
     "revoke_send",
     "spawn_allowed",
 ]
+
+
+# ---------------------------------------------------------------------------
+# node_tokens — authenticated identity (handoff §4 acceptance: "identity
+# cannot be spoofed via a metadata field")
+# ---------------------------------------------------------------------------
+
+# 256 bits of entropy. URL-safe base64 → ~43 chars.
+_TOKEN_BYTES = 32
+
+
+def mint_node_token(*, name: str, db_path: Path | None = None) -> str:
+    """Return the bearer token for ``name``, minting one if absent.
+
+    Idempotent: re-registration returns the existing token rather
+    than rotating, so an active agent's ``Authorization: Bearer ...``
+    header keeps working across a re-register. Rotation, when needed,
+    is a separate operation (not implemented here).
+
+    Raises ``ValueError`` if ``name`` is empty.
+    """
+    if not name:
+        raise ValueError("mint_node_token: name must be non-empty")
+    from .state_db import open_db
+
+    with open_db(db_path) as conn:
+        existing = conn.execute(
+            "SELECT token FROM node_tokens WHERE name = ?", (name,)
+        ).fetchone()
+        if existing is not None:
+            return str(existing["token"])
+        token = secrets.token_urlsafe(_TOKEN_BYTES)
+        now = time.time()
+        conn.execute(
+            "INSERT INTO node_tokens (name, token, created_at) "
+            "VALUES (?, ?, ?)",
+            (name, token, now),
+        )
+    return token
+
+
+def resolve_node_token(
+    *,
+    token: str,
+    db_path: Path | None = None,
+) -> str | None:
+    """Map a bearer token back to a node name; ``None`` if unknown.
+
+    Returns ``None`` for an empty token (defence-in-depth — the
+    middleware already rejects requests with no Authorization
+    header, but we never resolve ``""`` to a real identity).
+    """
+    if not token:
+        return None
+    from .state_db import open_db
+
+    with open_db(db_path) as conn:
+        row = conn.execute(
+            "SELECT name FROM node_tokens WHERE token = ?", (token,)
+        ).fetchone()
+    if row is None:
+        return None
+    return str(row["name"])
+
+
+def list_node_tokens(db_path: Path | None = None) -> list[dict[str, Any]]:
+    """Return ``[{name, created_at}, ...]`` over every minted token.
+
+    Observability surface for the host operator. The token value
+    itself is deliberately NOT returned — that would defeat the
+    purpose of storing it as a secret.
+    """
+    from .state_db import open_db
+
+    with open_db(db_path) as conn:
+        cur = conn.execute(
+            "SELECT name, created_at FROM node_tokens ORDER BY name ASC"
+        )
+        return [
+            {"name": str(r["name"]), "created_at": float(r["created_at"])}
+            for r in cur.fetchall()
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -188,10 +284,6 @@ def spawn_allowed(
 # comms_grants — explicit cross-group send permissions
 # ---------------------------------------------------------------------------
 
-# Standard audit caveat written into every grant row. The follow-on
-# work item (per lead 2026-05-20) will close this gap.
-GRANT_DEFERRED_CAVEAT = "trusts metadata.from_agent until per-node creds land"
-
 
 def grant_send(
     *,
@@ -203,9 +295,10 @@ def grant_send(
     """Insert (or refresh) a cross-group grant ``sender → target``.
 
     Idempotent — re-granting the same pair leaves the row untouched
-    (timestamp not bumped). The ``note`` defaults to the standard
-    deferred-identity caveat so every grant carries the audit trail
-    the follow-on cryptographic-identity work item will close.
+    (timestamp not bumped). The ``sender`` identity is authenticated
+    by :class:`_listen._acl.NodeAuthMiddleware` resolving the bearer;
+    the optional ``note`` is a free-form audit annotation (e.g. the
+    ticket / handoff that authorised the grant).
     """
     if not sender or not target:
         raise ValueError("grant_send: sender and target must be non-empty")
@@ -223,7 +316,7 @@ def grant_send(
             "INSERT INTO comms_grants "
             "(sender_name, target_name, created_at, note) "
             "VALUES (?, ?, ?, ?)",
-            (sender, target, time.time(), note or GRANT_DEFERRED_CAVEAT),
+            (sender, target, time.time(), note),
         )
 
 

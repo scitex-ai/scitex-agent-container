@@ -208,8 +208,18 @@ CREATE INDEX IF NOT EXISTS idx_channel_events_target_undelivered
 CREATE INDEX IF NOT EXISTS idx_channel_events_target_id
     ON channel_events(target, id);
 
--- WI-2 ACL — lineage edges + cross-group grants (handoff §4, limited
--- scope per lead 2026-05-20).
+-- WI-2 ACL — authenticated identity, lineage edges, cross-group grants
+-- (handoff §4; lead 2026-05-21 RESTORED the authenticated-identity
+-- criterion the prior limited scope had deferred).
+--
+-- ``node_tokens`` is the authenticated-identity primitive. Each node
+-- (sac-managed or external) gets a token minted at registration; the
+-- listen server resolves an incoming ``Authorization: Bearer <token>``
+-- to a node name via :class:`_listen._acl.NodeAuthMiddleware`. The
+-- acceptance "identity cannot be spoofed via a metadata field"
+-- (handoff §4) is enforced by ``check_send_acl``: when a per-node
+-- bearer is presented, ``metadata.from_agent`` MUST match the bearer's
+-- resolved name — a mismatch is a 403 with an explicit spoof reason.
 --
 -- ``lineage`` records parent → child edges produced by
 -- ``sac agents start``. A node's *group* (the default-ACL unit) is
@@ -218,13 +228,18 @@ CREATE INDEX IF NOT EXISTS idx_channel_events_target_id
 --
 -- ``comms_grants`` records explicit cross-group send grants. A row
 -- ``(sender, target)`` permits ``sender → target`` even when the
--- two are in different groups. Identity for the ``sender`` column
--- is the self-claimed ``metadata.from_agent`` for now; the
--- cryptographic-identity follow-on (per lead 2026-05-20 deferred to
--- a separate handoff related to sac-accounts) will pin this to an
--- authenticated principal. **Document each grant entry as "trusts
--- metadata.from_agent until per-node creds land"** — this caveat is
--- the gap the follow-on closes.
+-- two are in different groups. With authenticated identity in force,
+-- ``sender`` is the resolved-from-bearer name (administrative caller
+-- path: the host-wide bearer honours ``metadata.from_agent`` verbatim
+-- — used by cross-host forwarders authenticating with the
+-- destination's host bearer pulled from ``peer-tokens/`` registry).
+CREATE TABLE IF NOT EXISTS node_tokens (
+    name        TEXT PRIMARY KEY,
+    token       TEXT NOT NULL UNIQUE,
+    created_at  REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_node_tokens_token ON node_tokens(token);
+
 CREATE TABLE IF NOT EXISTS lineage (
     child_name   TEXT PRIMARY KEY,
     parent_name  TEXT NOT NULL,
@@ -236,7 +251,7 @@ CREATE TABLE IF NOT EXISTS comms_grants (
     sender_name  TEXT NOT NULL,
     target_name  TEXT NOT NULL,
     created_at   REAL NOT NULL,
-    note         TEXT,  -- optional audit caveat ("trusts metadata.from_agent...")
+    note         TEXT,  -- optional audit annotation
     PRIMARY KEY (sender_name, target_name)
 );
 CREATE INDEX IF NOT EXISTS idx_comms_grants_target ON comms_grants(target_name);
@@ -254,6 +269,7 @@ KNOWN_TABLES = (
     "errors",
     "heartbeats",
     "channel_events",
+    "node_tokens",
     "lineage",
     "comms_grants",
 )
