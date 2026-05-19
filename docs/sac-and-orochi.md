@@ -60,25 +60,50 @@ structural / schema / data-structure change.
   channel is a prompt-injection vector
   ([Claude Code channels reference](https://code.claude.com/docs/en/channels-reference)).
 
-> ⚠️ **Identity caveat — ACL is policy-shaped today** (handoff
-> 2026-05-20 limited-scope decision).
->
-> The shipped ACL gates on the **self-claimed
-> `metadata.from_agent`** field; cryptographic per-node identity
-> is **deferred** to a separate follow-on handoff. The design for
-> the cryptographic-identity work is filed in scitex-lead at
-> `GITIGNORED/FUTURE/sac-per-node-authenticated-acl.md` — not in
-> this repo. Every cross-group grant row in `comms_grants`
-> carries the audit note
-> `"trusts metadata.from_agent until per-node creds land"` so the
-> follow-on work has the audit trail it needs to scope what each
-> grant must be re-validated against.
->
-> Until that lands, the ACL is a policy gate — a misbehaving node
-> can claim a different identity by writing a different
-> `from_agent`. The handoff acceptance "identity cannot be
-> spoofed via a metadata field" will be met by the follow-on, not
-> by the limited-scope WI-2.
+### Authenticated identity (handoff §4 acceptance)
+
+Identity is **bearer-authenticated**, not self-claimed:
+
+- Every node (sac-managed or external) gets a per-node bearer
+  minted at registration (`node_tokens` table). The listen
+  server's `NodeAuthMiddleware` resolves the `Authorization:
+  Bearer <token>` header to a node name on `request.state`.
+- `check_send_acl` requires `params.metadata.from_agent` to
+  **match** the resolved name; mismatch → `403 identity spoof`
+  with the resolved-name vs claimed-name in the body. This meets
+  the handoff §4 acceptance "identity cannot be spoofed via a
+  metadata field".
+- The **host-wide bearer** is the *administrative caller* — it
+  honours `metadata.from_agent` verbatim (used by cross-host
+  forwarders, see below).
+
+### Cross-host forwarding — per-host bearer registry
+
+When `message:send` targets a node on a different host, the local
+`sac listen` forwards to that host's `sac listen`. The destination
+host has its own listen bearer; the forwarder authenticates
+**with the destination's bearer**, pulled from a small registry:
+
+```
+~/.scitex/agent-container/peer-tokens/
+    host-a.token      # 0600 — host A's listen bearer, used to
+                      # auth at host A from this host.
+    head-spartan.token
+    ...
+```
+
+Operators populate the registry with `sac host add-peer <host>
+<token>`; `sac host list-peers` shows the registered hosts (token
+values are never printed). A missing entry is a **loud 502** with
+the file path and the `add-peer` fix in the error body — never a
+silent drop (handoff §0 Hard rules).
+
+This gives a **per-host blast radius**: leaking host A's listen
+bearer compromises only host A, not the whole fleet. The
+ACL is re-evaluated at the receiving host on the same
+`metadata.from_agent`, so cross-group denials fire at the
+destination per handoff §4 ("ACL is enforced at the receiving
+host").
 
 ### A2A compliance
 
