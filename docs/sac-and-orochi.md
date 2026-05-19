@@ -60,6 +60,25 @@ structural / schema / data-structure change.
   channel is a prompt-injection vector
   ([Claude Code channels reference](https://code.claude.com/docs/en/channels-reference)).
 
+> ⚠️ **Identity caveat — ACL is policy-shaped today** (handoff
+> 2026-05-20 limited-scope decision).
+>
+> The shipped ACL gates on the **self-claimed
+> `metadata.from_agent`** field; cryptographic per-node identity
+> is **deferred** to a separate follow-on handoff (related to the
+> existing
+> [`sac-accounts-per-agent-credentials-and-rotation`](https://github.com/ywatanabe1989/scitex-agent-container/blob/develop/docs/design/sac-accounts-per-agent-credentials-and-rotation.md)
+> FUTURE doc). Every cross-group grant row in `comms_grants`
+> carries the audit note
+> `"trusts metadata.from_agent until per-node creds land"` so the
+> follow-on work has the audit trail it needs.
+>
+> Until that lands, the ACL is a policy gate — a misbehaving node
+> can claim a different identity by writing a different
+> `from_agent`. The handoff acceptance "identity cannot be
+> spoofed via a metadata field" will be met by the follow-on, not
+> by the limited-scope WI-2.
+
 ### A2A compliance
 
 Every node, sac-managed or external, is addressable via the A2A protocol;
