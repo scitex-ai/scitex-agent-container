@@ -24,12 +24,14 @@ ADR-0004 (no backward compat).
 from __future__ import annotations
 
 import asyncio
+import json
 import json as _json
 import os
 import shutil
 import subprocess
 import urllib.error as _urlerror
 import urllib.request as _urlrequest
+from typing import Any
 
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -38,9 +40,11 @@ from starlette.routing import Route
 
 from .._runners._session_state import read_session_id, state_dir_for
 from .._state.registry import Registry
+from ..a2a._inbox_bus import mint_event
 from ..config import load_config
 from ..config._resolve import resolve_config
 from ._inline_spec import materialize_inline_spec
+from ._nodes import Broker, NodeRegistry
 from .auth import BearerAuthMiddleware
 
 # Re-exported under the module's public surface so unit tests can patch
@@ -349,28 +353,45 @@ async def agents_start(request: Request) -> JSONResponse:
 async def agent_card(request: Request) -> JSONResponse:
     """GET /agents/<name>/.well-known/agent-card.json.
 
-    A2A v1.0 canonical per-agent AgentCard built from the agent's v3
-    spec. The pre-v1 ``/agents/<name>/card`` route was dropped per
-    ADR-0004 (no backward compat).
+    Resolution order (handoff §4 — A2A compliance for both kinds of
+    node):
+      1. sac-managed agent — look up the YAML via ``resolve_config``
+         and project the v3 spec onto a v1 AgentCard.
+      2. external node — return the synthesised card cached by
+         :class:`NodeRegistry` (registered implicitly on first
+         ``message:send`` / ``inbox/stream`` touch).
+
+    Only 404 when *neither* path can produce a card.
     """
     import yaml
 
     from ..a2a._card import project_card
 
     name = request.path_params["name"]
+    base_url = str(request.base_url).rstrip("/")
+
+    # 1) sac-managed (YAML-backed) — preserve the existing behaviour.
     try:
         spec_path = resolve_config(name)
-    except Exception as exc:
-        return JSONResponse({"error": str(exc)}, status_code=404)
-    try:
-        with open(spec_path, encoding="utf-8") as fh:
-            v3 = yaml.safe_load(fh) or {}
-    except OSError as exc:
-        return JSONResponse({"error": str(exc)}, status_code=500)
+    except Exception:
+        spec_path = None
+    if spec_path is not None:
+        try:
+            with open(spec_path, encoding="utf-8") as fh:
+                v3 = yaml.safe_load(fh) or {}
+        except OSError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=500)
+        return JSONResponse(project_card(name, v3, base_url))
 
-    base_url = str(request.base_url).rstrip("/")
-    card = project_card(name, v3, base_url)
-    return JSONResponse(card)
+    # 2) external node — synthesised card cached at registration.
+    nodes: NodeRegistry = request.app.state.nodes
+    card = nodes.card(name)
+    if card is not None:
+        return JSONResponse(card)
+
+    return JSONResponse(
+        {"error": f"unknown agent or node: {name!r}"}, status_code=404
+    )
 
 
 async def fleet_card_handler(request: Request) -> JSONResponse:
@@ -394,6 +415,154 @@ async def fleet_card_handler(request: Request) -> JSONResponse:
     return JSONResponse(card)
 
 
+# --- WI-3 external nodes: inbox endpoints on the host control plane ------
+#
+# The handoff (HANDOFF_AGENT_COMMS_2026-05-19.md §4) puts the inbox
+# endpoints (``message:send`` and ``inbox/stream``) on the always-on
+# ``sac listen`` host control-plane and makes them keyed by **node
+# identity** — they must accept a name that has no YAML and no
+# container. The handlers below are the implementation of that
+# requirement.
+#
+# Routes registered in ``_v1_agent_routes`` below:
+#
+#   POST /agents/{name}/message:send  → node_message_send
+#   GET  /agents/{name}/inbox/stream  → node_inbox_stream
+#
+# The agent-card route is *not* overridden here — instead
+# :func:`agent_card` falls back to the synthesised card for nodes
+# that are not YAML-backed. That fall-back is added to the existing
+# handler below.
+
+
+async def node_message_send(request: Request) -> Response:
+    """``POST /agents/<name>/message:send`` — publish an A2A
+    ``SendMessage`` body to the local node's inbox bus.
+
+    Implicitly registers ``<name>`` as an external node on first use
+    so the synthesised AgentCard is available for the well-known
+    lookup. The publish is **always loud** — a malformed body returns
+    400, never a silent drop (handoff §0 Hard rules).
+
+    No ACL gating yet — that lands in WI-2. Bearer auth (outer
+    perimeter) still applies via :class:`BearerAuthMiddleware`.
+    """
+    name = request.path_params["name"]
+    try:
+        body = await request.json()
+    except (ValueError, json.JSONDecodeError) as exc:
+        return JSONResponse(
+            {"error": f"body must be valid JSON: {exc}"}, status_code=400
+        )
+    if not isinstance(body, dict):
+        return JSONResponse(
+            {"error": "body must be a JSON object"}, status_code=400
+        )
+
+    method = body.get("method")
+    if method not in ("message/send", "SendMessage", "SendStreamingMessage"):
+        return JSONResponse(
+            {
+                "error": (
+                    f"unsupported method {method!r}; expected one of "
+                    "'message/send', 'SendMessage', 'SendStreamingMessage'"
+                )
+            },
+            status_code=400,
+        )
+
+    params = body.get("params") or {}
+    if not isinstance(params, dict):
+        return JSONResponse(
+            {"error": "params must be a JSON object"}, status_code=400
+        )
+    message = params.get("message") or {}
+    parts = message.get("parts") if isinstance(message, dict) else None
+    text = ""
+    if isinstance(parts, list):
+        for p in parts:
+            if isinstance(p, dict) and isinstance(p.get("text"), str):
+                text += p["text"]
+
+    # sac-extension metadata: same convention as a2a/_server.py — under
+    # ``params.metadata`` first, then ``message.metadata`` as a
+    # secondary, since some clients prefer message-scoped metadata.
+    sac_meta: dict[str, Any] = {}
+    for src in (params.get("metadata"), message.get("metadata")):
+        if isinstance(src, dict):
+            sac_meta.update(src)
+
+    event = mint_event(
+        name,
+        content=text,
+        from_agent=sac_meta.get("from_agent"),
+        conversation_id=sac_meta.get("conversation_id"),
+        in_reply_to=sac_meta.get("in_reply_to"),
+        priority=str(sac_meta.get("priority", "normal")),
+        requires_reply=bool(sac_meta.get("requires_reply", False)),
+    )
+
+    # Implicit registration — handoff §4 "A2A compliance without a
+    # YAML": synthesise the card the first time the name is touched.
+    base_url = str(request.base_url).rstrip("/")
+    nodes: NodeRegistry = request.app.state.nodes
+    broker: Broker = request.app.state.inbox
+    nodes.register(name, base_url)
+
+    delivered = await broker.publish(name, event)
+    return JSONResponse(
+        {
+            "msg_id": event["msg_id"],
+            "to_agent": name,
+            "delivered_subscriber_count": delivered,
+        }
+    )
+
+
+async def node_inbox_stream(request: Request) -> Response:
+    """``GET /agents/<name>/inbox/stream`` — SSE: one frame per event
+    published to ``<name>`` on this sac listen.
+
+    Consumed by ``sac mcp channel --name <name>`` inside an external
+    node's Claude session (or a sac-managed agent's container). The
+    frame shape is identical to ``a2a/_server.py``'s stream so the
+    same client adapter works for both kinds of node.
+
+    Implicitly registers ``<name>`` as an external node on first
+    connect.
+    """
+    from starlette.responses import StreamingResponse
+
+    name = request.path_params["name"]
+    base_url = str(request.base_url).rstrip("/")
+    nodes: NodeRegistry = request.app.state.nodes
+    broker: Broker = request.app.state.inbox
+    nodes.register(name, base_url)
+
+    queue = await broker.subscribe(name)
+
+    async def stream():
+        try:
+            # Comment-only frame so HTTP clients see the connection
+            # open immediately (and tests can race-free detect "I'm
+            # subscribed" before publishing).
+            yield b": sac-channel ready\n\n"
+            while True:
+                if await request.is_disconnected():
+                    return
+                event = await queue.get()
+                data = json.dumps(event, ensure_ascii=False)
+                yield f"event: message\ndata: {data}\n\n".encode("utf-8")
+        finally:
+            await broker.unsubscribe(name, queue)
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 async def agent_delete(request: Request) -> JSONResponse:
     """DELETE /agents/<name> — stop the agent."""
     name = request.path_params["name"]
@@ -413,13 +582,29 @@ async def agent_delete(request: Request) -> JSONResponse:
 
 
 def _v1_agent_routes(prefix: str) -> list[Route]:
-    """Build the agent route set under ``prefix`` (ADR-0004: only ``/agents``)."""
+    """Build the agent route set under ``prefix`` (ADR-0004: only ``/agents``).
+
+    Includes the WI-3 inbox endpoints (``message:send`` and
+    ``inbox/stream``) which are keyed by node identity — they serve
+    sac-managed agents and external nodes equally.
+    """
     return [
         Route(f"{prefix}", list_agents, methods=["GET"]),
         Route(f"{prefix}", agents_start, methods=["POST"]),
         Route(f"{prefix}/{{name}}/status", agent_status, methods=["GET"]),
         Route(f"{prefix}/{{name}}/tail", agent_tail, methods=["GET"]),
         Route(f"{prefix}/{{name}}/send", agent_send, methods=["POST"]),
+        # WI-3 — node-identity-keyed inbox endpoints.
+        Route(
+            f"{prefix}/{{name}}/message:send",
+            node_message_send,
+            methods=["POST"],
+        ),
+        Route(
+            f"{prefix}/{{name}}/inbox/stream",
+            node_inbox_stream,
+            methods=["GET"],
+        ),
         Route(
             f"{prefix}/{{name}}/.well-known/agent-card.json",
             agent_card,
@@ -430,12 +615,21 @@ def _v1_agent_routes(prefix: str) -> list[Route]:
 
 
 def create_app(*, token: str) -> Starlette:
-    """Build the Starlette app with bearer auth (ADR-0004 — ``/agents`` only)."""
+    """Build the Starlette app with bearer auth (ADR-0004 — ``/agents`` only).
+
+    WI-3 wires a per-app :class:`Broker` + :class:`NodeRegistry` so
+    external nodes (no YAML, no container) can attach as first-class
+    members of the comms graph. The state lives on ``app.state`` so
+    every handler shares the same broker and registry instance.
+    """
     routes: list[Route] = [
         Route("/v1/health", health, methods=["GET"]),
         Route("/.well-known/agent-card.json", fleet_card_handler, methods=["GET"]),
     ]
     routes += _v1_agent_routes("/agents")
     app = Starlette(routes=routes)
+    # Per-app shared state for the WI-3 inbox surface.
+    app.state.inbox = Broker()
+    app.state.nodes = NodeRegistry()
     app.add_middleware(BearerAuthMiddleware, token=token)
     return app
