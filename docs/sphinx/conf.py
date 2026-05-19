@@ -130,6 +130,10 @@ myst_enable_extensions = [
     "substitution",
     "tasklist",
 ]
+# Auto-generate anchors for headings up to h3 so cross-document
+# fragment links (e.g. ``[X](spec-reference.md#kind-agentproxy)``)
+# resolve without explicit ``(target)=`` labels in the source.
+myst_heading_anchors = 3
 
 # -- Options for intersphinx extension ---------------------------------------
 
