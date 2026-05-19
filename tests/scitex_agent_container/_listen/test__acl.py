@@ -1,17 +1,22 @@
-"""WI-2 — ACL gate on ``message:send`` (handoff §4).
+"""WI-2 — ACL gate on ``message:send`` + spawn-permission gate
+(limited scope per lead 2026-05-20).
 
-Per HANDOFF_AGENT_COMMS_2026-05-19.md §4 (WI-2 "ACL: permissioned
-messaging"):
+Per HANDOFF_AGENT_COMMS_2026-05-19.md §4 (WI-2):
 
-  Acceptance: an un-permitted (cross-group, no grant) sender is
-  rejected with ``403`` + a log line; an intra-group sender's
-  message lands; ... identity cannot be spoofed via a metadata field.
+  Acceptance (limited scope): an un-permitted (cross-group, no
+  grant) sender is rejected with ``403`` + a log line; an
+  intra-group sender's message lands; a child's
+  ``sac agents start`` is rejected.
 
-Mirrors ``src/scitex_agent_container/_listen/_acl.py``. The tests
-drive the ACL function directly (unit-level, deterministic) plus
-a couple of HTTP-level shape checks against the real ``sac listen``
-Starlette app to confirm the wiring lands the 403 with a clear
-reason. No mocks (handoff §0).
+The "identity cannot be spoofed via a metadata field" acceptance
+criterion is DEFERRED (lead 2026-05-20) to a separate follow-on
+handoff. Until then, the ACL gates on the self-claimed
+``metadata.from_agent`` field and every cross-group grant carries
+the audit caveat "trusts metadata.from_agent until per-node creds
+land".
+
+Mirrors ``src/scitex_agent_container/_listen/_acl.py``. No mocks
+(handoff §0): real SQLite, real Starlette app.
 """
 
 from __future__ import annotations
@@ -22,13 +27,13 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
-from scitex_agent_container._listen._acl import check_send_acl
+from scitex_agent_container._listen._acl import check_send_acl, check_spawn
 from scitex_agent_container._listen.server import create_app
 from scitex_agent_container._runners import _session_state as _ss
 from scitex_agent_container._state import state_db
 from scitex_agent_container._state import registry as _reg
 from scitex_agent_container._state.state_db_nodes import (
-    mint_node_token,
+    grant_send,
     record_lineage,
 )
 
@@ -36,6 +41,7 @@ from scitex_agent_container._state.state_db_nodes import (
 @pytest.fixture
 def db_path(tmp_path: Path):
     """Isolated state.db. PA-306 no-mocks: yield-based env override."""
+    # Arrange
     db = tmp_path / "state.db"
     saved_env = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
     saved_default = state_db.DEFAULT_DB_PATH
@@ -58,15 +64,12 @@ def db_path(tmp_path: Path):
 
 
 def test_acl_allows_self_send(db_path: Path) -> None:
-    """A node may always address itself — the trivial allow case."""
+    """A node may always address itself — trivial allow."""
     # Arrange
-    mint_node_token(name="alice", db_path=db_path)
+    sender = "alice"
     # Act
     decision, _reason = check_send_acl(
-        authenticated_node="alice",
-        claimed_from_agent="alice",
-        target="alice",
-        db_path=db_path,
+        claimed_from_agent=sender, target="alice", db_path=db_path
     )
     # Assert
     assert decision == "allow"
@@ -74,15 +77,10 @@ def test_acl_allows_self_send(db_path: Path) -> None:
 
 def test_acl_allows_intra_group_parent_to_child(db_path: Path) -> None:
     # Arrange
-    mint_node_token(name="root", db_path=db_path)
-    mint_node_token(name="worker-a", db_path=db_path)
     record_lineage(child="worker-a", parent="root", db_path=db_path)
     # Act
     decision, _reason = check_send_acl(
-        authenticated_node="root",
-        claimed_from_agent="root",
-        target="worker-a",
-        db_path=db_path,
+        claimed_from_agent="root", target="worker-a", db_path=db_path
     )
     # Assert
     assert decision == "allow"
@@ -91,147 +89,124 @@ def test_acl_allows_intra_group_parent_to_child(db_path: Path) -> None:
 def test_acl_allows_intra_group_sibling_to_sibling(db_path: Path) -> None:
     """Handoff §4: 'parent↔child *and* sibling↔sibling, bidirectional'."""
     # Arrange
-    mint_node_token(name="root", db_path=db_path)
-    mint_node_token(name="worker-a", db_path=db_path)
-    mint_node_token(name="worker-b", db_path=db_path)
     record_lineage(child="worker-a", parent="root", db_path=db_path)
     record_lineage(child="worker-b", parent="root", db_path=db_path)
     # Act
     decision, _reason = check_send_acl(
-        authenticated_node="worker-a",
-        claimed_from_agent="worker-a",
-        target="worker-b",
-        db_path=db_path,
+        claimed_from_agent="worker-a", target="worker-b", db_path=db_path
     )
     # Assert
     assert decision == "allow"
 
 
 def test_acl_denies_cross_group_without_grant(db_path: Path) -> None:
-    """Two unrelated families. No grant configured (handoff defers
-    explicit grants); cross-group must be denied with a clear reason.
-    """
-    # Arrange
-    for name in ("root-1", "child-1", "root-2", "child-2"):
-        mint_node_token(name=name, db_path=db_path)
+    # Arrange — two unrelated families
     record_lineage(child="child-1", parent="root-1", db_path=db_path)
     record_lineage(child="child-2", parent="root-2", db_path=db_path)
     # Act
     decision, _reason = check_send_acl(
-        authenticated_node="child-1",
-        claimed_from_agent="child-1",
-        target="child-2",
-        db_path=db_path,
+        claimed_from_agent="child-1", target="child-2", db_path=db_path
     )
     # Assert
     assert decision == "deny"
 
 
 def test_acl_deny_carries_explanatory_reason(db_path: Path) -> None:
-    """Denial is the policy working — but the sender must know why."""
     # Arrange
-    for name in ("root-1", "child-1", "root-2", "child-2"):
-        mint_node_token(name=name, db_path=db_path)
     record_lineage(child="child-1", parent="root-1", db_path=db_path)
     record_lineage(child="child-2", parent="root-2", db_path=db_path)
     # Act
     _decision, reason = check_send_acl(
-        authenticated_node="child-1",
-        claimed_from_agent="child-1",
-        target="child-2",
-        db_path=db_path,
+        claimed_from_agent="child-1", target="child-2", db_path=db_path
     )
     # Assert
     assert reason is not None and "cross-group" in reason
 
 
-# ---------------------------------------------------------------------------
-# Spoofing: bearer authenticates X but metadata.from_agent claims Y
-# ---------------------------------------------------------------------------
-
-
-def test_acl_denies_identity_spoof_mismatched_from_agent(db_path: Path) -> None:
-    """The acceptance criterion: 'identity cannot be spoofed via a
-    metadata field'. Bearer says ``alice``, metadata claims ``bob`` —
-    deny.
-    """
-    # Arrange
-    mint_node_token(name="alice", db_path=db_path)
-    mint_node_token(name="bob", db_path=db_path)
+def test_acl_allows_cross_group_with_explicit_grant(db_path: Path) -> None:
+    """Explicit cross-group grant flips a deny to allow."""
+    # Arrange — two unrelated families + grant child-1 → child-2
+    record_lineage(child="child-1", parent="root-1", db_path=db_path)
+    record_lineage(child="child-2", parent="root-2", db_path=db_path)
+    grant_send(sender="child-1", target="child-2", db_path=db_path)
     # Act
     decision, _reason = check_send_acl(
-        authenticated_node="alice",
-        claimed_from_agent="bob",  # spoof
-        target="alice",
-        db_path=db_path,
-    )
-    # Assert
-    assert decision == "deny"
-
-
-def test_acl_spoof_deny_reason_names_both_identities(db_path: Path) -> None:
-    """The 403 body explains *which* identity claimed to be whom."""
-    # Arrange
-    mint_node_token(name="alice", db_path=db_path)
-    mint_node_token(name="bob", db_path=db_path)
-    # Act
-    _decision, reason = check_send_acl(
-        authenticated_node="alice",
-        claimed_from_agent="bob",
-        target="alice",
-        db_path=db_path,
-    )
-    # Assert
-    assert reason is not None and "alice" in reason and "bob" in reason
-
-
-# ---------------------------------------------------------------------------
-# Administrative path: no per-node bearer, host bearer used. Metadata
-# must still carry a from_agent so the ACL has something to gate on.
-# ---------------------------------------------------------------------------
-
-
-def test_acl_denies_when_no_identity_at_all(db_path: Path) -> None:
-    """Host bearer + empty metadata.from_agent → there is no identity
-    to gate on. Deny rather than fall through to an unauthenticated
-    send.
-    """
-    # Arrange
-    # (no tokens needed — the denial fires before lineage lookup)
-    # Act
-    decision, _reason = check_send_acl(
-        authenticated_node=None,
-        claimed_from_agent=None,
-        target="anyone",
-        db_path=db_path,
-    )
-    # Assert
-    assert decision == "deny"
-
-
-def test_acl_admin_caller_honors_claimed_from_agent(db_path: Path) -> None:
-    """Host bearer + metadata.from_agent → trust the claim and run
-    the group check against THAT identity. This is the
-    cross-host-forwarding path: the forwarding host's bearer
-    authenticates the request, but the sender is the original node.
-    """
-    # Arrange
-    mint_node_token(name="root", db_path=db_path)
-    mint_node_token(name="worker-a", db_path=db_path)
-    record_lineage(child="worker-a", parent="root", db_path=db_path)
-    # Act — admin caller (authenticated_node=None) speaks for root
-    decision, _reason = check_send_acl(
-        authenticated_node=None,
-        claimed_from_agent="root",
-        target="worker-a",
-        db_path=db_path,
+        claimed_from_agent="child-1", target="child-2", db_path=db_path
     )
     # Assert
     assert decision == "allow"
 
 
+def test_acl_denies_when_metadata_from_agent_missing(db_path: Path) -> None:
+    """Empty sender → deny. No identity to gate on."""
+    # Arrange
+    target = "anyone"
+    # Act
+    decision, _reason = check_send_acl(
+        claimed_from_agent=None, target=target, db_path=db_path
+    )
+    # Assert
+    assert decision == "deny"
+
+
+def test_acl_denies_when_target_missing(db_path: Path) -> None:
+    # Arrange
+    sender = "alice"
+    # Act
+    decision, _reason = check_send_acl(
+        claimed_from_agent=sender, target="", db_path=db_path
+    )
+    # Assert
+    assert decision == "deny"
+
+
 # ---------------------------------------------------------------------------
-# HTTP-level: the wired-up node_message_send returns 403 on deny.
+# Spawn-permission gate (check_spawn / spawn_allowed)
+# ---------------------------------------------------------------------------
+
+
+def test_spawn_allows_root_caller(db_path: Path) -> None:
+    """A node with no parent in lineage is allowed to spawn."""
+    # Arrange
+    caller = "root"
+    # Act
+    decision, _reason = check_spawn(caller=caller, db_path=db_path)
+    # Assert
+    assert decision == "allow"
+
+
+def test_spawn_allows_admin_caller_when_caller_is_none(db_path: Path) -> None:
+    """``caller=None`` is the administrative / operator path."""
+    # Arrange
+    caller = None
+    # Act
+    decision, _reason = check_spawn(caller=caller, db_path=db_path)
+    # Assert
+    assert decision == "allow"
+
+
+def test_spawn_denies_child_caller(db_path: Path) -> None:
+    """A node with a parent (child) is NOT allowed to spawn."""
+    # Arrange
+    record_lineage(child="worker-a", parent="root", db_path=db_path)
+    # Act
+    decision, _reason = check_spawn(caller="worker-a", db_path=db_path)
+    # Assert
+    assert decision == "deny"
+
+
+def test_spawn_deny_reason_explains_root_only_policy(db_path: Path) -> None:
+    """The 403 body explains the lift-able policy."""
+    # Arrange
+    record_lineage(child="worker-a", parent="root", db_path=db_path)
+    # Act
+    _decision, reason = check_spawn(caller="worker-a", db_path=db_path)
+    # Assert
+    assert reason is not None and "lift-able policy" in reason
+
+
+# ---------------------------------------------------------------------------
+# HTTP-level: node_message_send returns 403 on cross-group deny.
 # ---------------------------------------------------------------------------
 
 
@@ -241,6 +216,7 @@ TOKEN = "test-token-acl"
 @pytest.fixture
 def isolated_listen_env(tmp_path: Path, db_path: Path):
     """Point Registry / runtime dirs at tmp_path; reuse db_path fixture."""
+    # Arrange
     saved_home = os.environ.get("HOME")
     saved_reg_const = _reg.REGISTRY_DIR
     saved_state_const = _ss.DEFAULT_STATE_ROOT
@@ -258,7 +234,7 @@ def isolated_listen_env(tmp_path: Path, db_path: Path):
             os.environ["HOME"] = saved_home
 
 
-def _payload(target_sender: str, content: str = "x") -> dict:
+def _payload(sender: str, content: str = "x") -> dict:
     return {
         "jsonrpc": "2.0",
         "id": "1",
@@ -269,7 +245,7 @@ def _payload(target_sender: str, content: str = "x") -> dict:
                 "role": "ROLE_USER",
                 "parts": [{"text": content}],
             },
-            "metadata": {"from_agent": target_sender},
+            "metadata": {"from_agent": sender},
         },
     }
 
@@ -277,12 +253,8 @@ def _payload(target_sender: str, content: str = "x") -> dict:
 def test_http_node_message_send_denies_cross_group_with_403(
     isolated_listen_env, db_path: Path
 ) -> None:
-    """End-to-end: admin caller (host bearer) speaks for a node in
-    one group, addresses a node in a different group → 403.
-    """
+    """End-to-end: cross-group sender → 403."""
     # Arrange
-    for name in ("root-1", "child-1", "root-2", "child-2"):
-        mint_node_token(name=name, db_path=db_path)
     record_lineage(child="child-1", parent="root-1", db_path=db_path)
     record_lineage(child="child-2", parent="root-2", db_path=db_path)
     app = create_app(token=TOKEN)
@@ -300,11 +272,8 @@ def test_http_node_message_send_denies_cross_group_with_403(
 def test_http_node_message_send_403_body_carries_reason(
     isolated_listen_env, db_path: Path
 ) -> None:
-    """The 403 body explains the denial (handoff §4: 'denial is
-    explicit ... the sender must know')."""
+    """The 403 body explains the denial."""
     # Arrange
-    for name in ("root-1", "child-1", "root-2", "child-2"):
-        mint_node_token(name=name, db_path=db_path)
     record_lineage(child="child-1", parent="root-1", db_path=db_path)
     record_lineage(child="child-2", parent="root-2", db_path=db_path)
     app = create_app(token=TOKEN)
@@ -325,8 +294,6 @@ def test_http_node_message_send_allows_intra_group(
 ) -> None:
     """Intra-group send (sibling-to-sibling) lands."""
     # Arrange
-    for name in ("root", "worker-a", "worker-b"):
-        mint_node_token(name=name, db_path=db_path)
     record_lineage(child="worker-a", parent="root", db_path=db_path)
     record_lineage(child="worker-b", parent="root", db_path=db_path)
     app = create_app(token=TOKEN)
@@ -339,3 +306,66 @@ def test_http_node_message_send_allows_intra_group(
         )
     # Assert
     assert r.status_code < 400, r.text
+
+
+def test_http_node_message_send_allows_after_explicit_grant(
+    isolated_listen_env, db_path: Path
+) -> None:
+    """A cross-group grant flips the deny to an allow."""
+    # Arrange
+    record_lineage(child="child-1", parent="root-1", db_path=db_path)
+    record_lineage(child="child-2", parent="root-2", db_path=db_path)
+    grant_send(sender="child-1", target="child-2", db_path=db_path)
+    app = create_app(token=TOKEN)
+    # Act
+    with TestClient(app) as client:
+        r = client.post(
+            "/agents/child-2/message:send",
+            json=_payload("child-1"),
+            headers={"authorization": f"Bearer {TOKEN}"},
+        )
+    # Assert
+    assert r.status_code < 400, r.text
+
+
+# ---------------------------------------------------------------------------
+# HTTP-level: agents_start denies a child caller with 403.
+# ---------------------------------------------------------------------------
+
+
+def test_http_agents_start_denies_child_caller_with_403(
+    isolated_listen_env, db_path: Path
+) -> None:
+    """Root-only spawn (current policy): a child caller → 403."""
+    # Arrange
+    record_lineage(child="worker-a", parent="root", db_path=db_path)
+    app = create_app(token=TOKEN)
+    body = {"name": "new-agent", "caller": "worker-a"}
+    # Act
+    with TestClient(app) as client:
+        r = client.post(
+            "/agents",
+            json=body,
+            headers={"authorization": f"Bearer {TOKEN}"},
+        )
+    # Assert
+    assert r.status_code == 403, r.text
+
+
+def test_http_agents_start_403_carries_lift_able_policy_text(
+    isolated_listen_env, db_path: Path
+) -> None:
+    # Arrange
+    record_lineage(child="worker-a", parent="root", db_path=db_path)
+    app = create_app(token=TOKEN)
+    body = {"name": "new-agent", "caller": "worker-a"}
+    # Act
+    with TestClient(app) as client:
+        r = client.post(
+            "/agents",
+            json=body,
+            headers={"authorization": f"Bearer {TOKEN}"},
+        )
+    body_json = r.json()
+    # Assert
+    assert "lift-able policy" in body_json.get("reason", "")

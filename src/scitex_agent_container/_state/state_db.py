@@ -208,32 +208,38 @@ CREATE INDEX IF NOT EXISTS idx_channel_events_target_undelivered
 CREATE INDEX IF NOT EXISTS idx_channel_events_target_id
     ON channel_events(target, id);
 
--- WI-2 ACL — per-node bearer tokens + lineage edges (handoff §4).
---
--- ``node_tokens`` is the authenticated-identity primitive. Each node
--- (sac-managed or external) gets a token minted at registration; the
--- server resolves an incoming ``Authorization: Bearer <token>`` to a
--- node name. Without this table the only available identity is the
--- self-claimed ``metadata.from_agent`` field — exactly what the
--- handoff forbids ("Do not gate on an unauthenticated string").
+-- WI-2 ACL — lineage edges + cross-group grants (handoff §4, limited
+-- scope per lead 2026-05-20).
 --
 -- ``lineage`` records parent → child edges produced by
 -- ``sac agents start``. A node's *group* (the default-ACL unit) is
 -- derived from lineage: parent + parent's direct children. Schema
 -- stays N-level capable — see derive_group() for the traversal.
-CREATE TABLE IF NOT EXISTS node_tokens (
-    name        TEXT PRIMARY KEY,
-    token       TEXT NOT NULL UNIQUE,
-    created_at  REAL NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_node_tokens_token ON node_tokens(token);
-
+--
+-- ``comms_grants`` records explicit cross-group send grants. A row
+-- ``(sender, target)`` permits ``sender → target`` even when the
+-- two are in different groups. Identity for the ``sender`` column
+-- is the self-claimed ``metadata.from_agent`` for now; the
+-- cryptographic-identity follow-on (per lead 2026-05-20 deferred to
+-- a separate handoff related to sac-accounts) will pin this to an
+-- authenticated principal. **Document each grant entry as "trusts
+-- metadata.from_agent until per-node creds land"** — this caveat is
+-- the gap the follow-on closes.
 CREATE TABLE IF NOT EXISTS lineage (
     child_name   TEXT PRIMARY KEY,
     parent_name  TEXT NOT NULL,
     created_at   REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_lineage_parent ON lineage(parent_name);
+
+CREATE TABLE IF NOT EXISTS comms_grants (
+    sender_name  TEXT NOT NULL,
+    target_name  TEXT NOT NULL,
+    created_at   REAL NOT NULL,
+    note         TEXT,  -- optional audit caveat ("trusts metadata.from_agent...")
+    PRIMARY KEY (sender_name, target_name)
+);
+CREATE INDEX IF NOT EXISTS idx_comms_grants_target ON comms_grants(target_name);
 """
 
 # Tables exposed by `sac db query --table=<t>`. Whitelisted so users
@@ -248,8 +254,8 @@ KNOWN_TABLES = (
     "errors",
     "heartbeats",
     "channel_events",
-    "node_tokens",
     "lineage",
+    "comms_grants",
 )
 
 

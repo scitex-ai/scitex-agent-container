@@ -1,110 +1,53 @@
-"""Per-node tokens + lineage primitives for WI-2 ACL.
+"""Lineage + ACL-grant primitives for WI-2 ACL (limited scope).
 
-The handoff (``HANDOFF_AGENT_COMMS_2026-05-19.md`` §4 / WI-2) requires:
+Per HANDOFF_AGENT_COMMS_2026-05-19.md §4 (WI-2) and the lead's
+2026-05-20 directive (limited scope — defer authenticated identity):
 
-  > Authenticated sender identity. The ACL check is only as strong
-  > as the identity — the sender identity carried in
-  > ``params.metadata`` must be authenticated (per-node credential /
-  > bearer token), never a self-claimed name. **Do not gate on an
-  > unauthenticated string.**
+  * Group-based default ACL — intra-group bidirectional, cross-group
+    denied. Group is *derived from lineage*; see
+    :func:`derive_group`.
 
-and:
+  * Cross-group grants — accepted, keyed on the self-claimed
+    ``metadata.from_agent`` field, **with the caveat that each row
+    "trusts metadata.from_agent until per-node creds land"**. The
+    cryptographic-identity follow-on is tracked separately (related
+    to the existing sac-accounts-per-agent-credentials-and-rotation
+    FUTURE doc).
 
-  > Group-based default ACL. ... The group is derived from lineage —
-  > no per-pair config for the common case.
+  * Spawn permission — root-only by current policy (a node with no
+    parent may call ``sac agents start``; a child may not). The
+    policy is **lift-able**: lifting it later is a single-callsite
+    edit to :func:`spawn_allowed` with zero schema change (handoff
+    §2 D5 "Depth limit is a POLICY, not a structural ceiling").
 
-This module supplies the two state.db primitives that satisfy both
-requirements:
+The N-level structural capability of ``lineage`` is preserved —
+nothing here hard-codes "2" or assumes fixed depth.
 
-* :func:`mint_node_token` / :func:`resolve_node_token` —
-  authenticated identity. Each node (sac-managed or external) gets a
-  bearer token at registration; the listen server resolves an
-  incoming ``Authorization: Bearer <token>`` to a node name via
-  ``resolve_node_token``.
-
-* :func:`record_lineage` / :func:`derive_group` — lineage and group
-  derivation. ``record_lineage(child, parent)`` is called by
-  ``sac agents start``; ``derive_group(name)`` returns the set of
-  nodes inside the same default-ACL bubble (parent + direct
-  children).
-
-Both pieces stay N-level capable per handoff §2 D5 ("Depth limit is
-a POLICY, not a structural ceiling"). The two-level cap currently in
-force is a separate policy gate, NOT enforced by these primitives.
-
-All times stored as ``REAL`` unix-seconds (float). Matches the diary
-tables.
+All times stored as ``REAL`` unix-seconds (float).
 """
 
 from __future__ import annotations
 
-import secrets
 import time
 from pathlib import Path
 from typing import Any
 
 __all__ = [
     "derive_group",
-    "list_node_tokens",
-    "mint_node_token",
+    "grant_send",
+    "has_grant",
+    "is_local_node",
+    "list_comms_grants",
     "record_lineage",
-    "resolve_node_token",
+    "resolve_node_host",
+    "revoke_send",
+    "spawn_allowed",
 ]
 
 
-# 256 bits of entropy. URL-safe base64 → ~43 chars; comfortably above
-# the 32-char floor the tests assert against.
-_TOKEN_BYTES = 32
-
-
-def mint_node_token(*, name: str, db_path: Path | None = None) -> str:
-    """Return the bearer token for ``name``, minting one if absent.
-
-    Idempotent: re-registration returns the existing token rather
-    than rotating, so an active agent's ``Authorization: Bearer ...``
-    header keeps working across a re-register. Rotation, when needed,
-    is a separate operation (not implemented here).
-
-    Raises if ``name`` is empty.
-    """
-    if not name:
-        raise ValueError("mint_node_token: name must be non-empty")
-    from .state_db import open_db
-
-    with open_db(db_path) as conn:
-        existing = conn.execute(
-            "SELECT token FROM node_tokens WHERE name = ?", (name,)
-        ).fetchone()
-        if existing is not None:
-            return str(existing["token"])
-        token = secrets.token_urlsafe(_TOKEN_BYTES)
-        now = time.time()
-        conn.execute(
-            "INSERT INTO node_tokens (name, token, created_at) VALUES (?, ?, ?)",
-            (name, token, now),
-        )
-    return token
-
-
-def resolve_node_token(*, token: str, db_path: Path | None = None) -> str | None:
-    """Map a bearer token back to a node name; ``None`` if unknown.
-
-    Returns ``None`` for an empty token rather than treating it as a
-    valid lookup — the listen server's middleware already rejects
-    requests with no Authorization header, but defence-in-depth means
-    we never resolve ``""`` to a real identity.
-    """
-    if not token:
-        return None
-    from .state_db import open_db
-
-    with open_db(db_path) as conn:
-        row = conn.execute(
-            "SELECT name FROM node_tokens WHERE token = ?", (token,)
-        ).fetchone()
-    if row is None:
-        return None
-    return str(row["name"])
+# ---------------------------------------------------------------------------
+# lineage — parent → child edges and the group they imply
+# ---------------------------------------------------------------------------
 
 
 def record_lineage(
@@ -162,17 +105,16 @@ def derive_group(
     * If ``name`` has no edges at all: group = {name} (singleton —
       a fresh registration starts unattached).
 
-    The derivation is intentionally local — it never walks the
-    full lineage tree. That keeps the default-ACL semantics simple
-    and matches handoff §2: "the group is the unit of default ACL"
-    (one parent + its direct children, not the entire ancestry).
+    The derivation is intentionally local — it never walks the full
+    lineage tree. That keeps the default-ACL semantics simple and
+    matches handoff §2: "the group is the unit of default ACL" (one
+    parent + its direct children, not the entire ancestry).
     """
     if not name:
         raise ValueError("derive_group: name must be non-empty")
     from .state_db import open_db
 
     with open_db(db_path) as conn:
-        # Is ``name`` a parent?
         children_rows = conn.execute(
             "SELECT child_name FROM lineage WHERE parent_name = ?", (name,)
         ).fetchall()
@@ -181,7 +123,6 @@ def derive_group(
             for r in children_rows:
                 group.add(str(r["child_name"]))
             return group
-        # Is ``name`` a child?
         parent_row = conn.execute(
             "SELECT parent_name FROM lineage WHERE child_name = ?", (name,)
         ).fetchone()
@@ -197,20 +138,225 @@ def derive_group(
         return group
 
 
-def list_node_tokens(db_path: Path | None = None) -> list[dict[str, Any]]:
-    """Return ``[{name, created_at}, ...]`` over every minted token.
+# ---------------------------------------------------------------------------
+# spawn permission — current policy: root-only spawn
+# ---------------------------------------------------------------------------
 
-    Observability surface for the host operator (``sac db query
-    --table=node_tokens`` already exists via the generic table-walker;
-    this helper is a typed-API alias). The token value itself is
-    deliberately NOT returned — that would defeat the purpose of
-    storing it as a secret.
+
+def spawn_allowed(
+    *,
+    caller: str | None,
+    db_path: Path | None = None,
+) -> tuple[bool, str | None]:
+    """Decide whether ``caller`` is allowed to call ``sac agents start``.
+
+    Current policy (handoff §4 / WI-2): a *root* node (no parent) is
+    allowed to spawn; a child is not. ``caller=None`` means the
+    administrative / human-operator path (e.g., a shell invocation
+    from outside any sac-managed agent) — allowed.
+
+    Returns ``(True, None)`` on allow or ``(False, reason)`` on
+    deny. The reason is suitable for inclusion in a 403 body and a
+    host log line.
+
+    **Lift-able policy**: when N-level spawning becomes acceptable
+    (handoff §2 D5), this function shrinks to ``return (True, None)``
+    — zero schema change, zero data migration.
+    """
+    if caller is None or caller == "":
+        # Admin / human operator. Allowed.
+        return (True, None)
+    from .state_db import open_db
+
+    with open_db(db_path) as conn:
+        parent_row = conn.execute(
+            "SELECT parent_name FROM lineage WHERE child_name = ?", (caller,)
+        ).fetchone()
+    if parent_row is None:
+        return (True, None)  # caller has no parent → root → allow
+    return (
+        False,
+        (
+            f"spawn denied: caller {caller!r} is a child of "
+            f"{parent_row['parent_name']!r}. Current policy allows only "
+            "root nodes to spawn (handoff §4 'lift-able policy' — change "
+            "is a single edit to spawn_allowed())."
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# comms_grants — explicit cross-group send permissions
+# ---------------------------------------------------------------------------
+
+# Standard audit caveat written into every grant row. The follow-on
+# work item (per lead 2026-05-20) will close this gap.
+GRANT_DEFERRED_CAVEAT = "trusts metadata.from_agent until per-node creds land"
+
+
+def grant_send(
+    *,
+    sender: str,
+    target: str,
+    db_path: Path | None = None,
+    note: str | None = None,
+) -> None:
+    """Insert (or refresh) a cross-group grant ``sender → target``.
+
+    Idempotent — re-granting the same pair leaves the row untouched
+    (timestamp not bumped). The ``note`` defaults to the standard
+    deferred-identity caveat so every grant carries the audit trail
+    the follow-on cryptographic-identity work item will close.
+    """
+    if not sender or not target:
+        raise ValueError("grant_send: sender and target must be non-empty")
+    from .state_db import open_db
+
+    with open_db(db_path) as conn:
+        existing = conn.execute(
+            "SELECT 1 FROM comms_grants "
+            "WHERE sender_name = ? AND target_name = ?",
+            (sender, target),
+        ).fetchone()
+        if existing is not None:
+            return
+        conn.execute(
+            "INSERT INTO comms_grants "
+            "(sender_name, target_name, created_at, note) "
+            "VALUES (?, ?, ?, ?)",
+            (sender, target, time.time(), note or GRANT_DEFERRED_CAVEAT),
+        )
+
+
+def revoke_send(
+    *,
+    sender: str,
+    target: str,
+    db_path: Path | None = None,
+) -> bool:
+    """Remove a ``sender → target`` grant. Returns ``True`` iff a row
+    was removed."""
+    if not sender or not target:
+        return False
+    from .state_db import open_db
+
+    with open_db(db_path) as conn:
+        cur = conn.execute(
+            "DELETE FROM comms_grants "
+            "WHERE sender_name = ? AND target_name = ?",
+            (sender, target),
+        )
+    return cur.rowcount > 0
+
+
+def has_grant(
+    *,
+    sender: str,
+    target: str,
+    db_path: Path | None = None,
+) -> bool:
+    """Return ``True`` iff a ``sender → target`` cross-group grant
+    exists."""
+    if not sender or not target:
+        return False
+    from .state_db import open_db
+
+    with open_db(db_path) as conn:
+        row = conn.execute(
+            "SELECT 1 FROM comms_grants "
+            "WHERE sender_name = ? AND target_name = ?",
+            (sender, target),
+        ).fetchone()
+    return row is not None
+
+
+def list_comms_grants(
+    db_path: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Return every grant row in insertion order.
+
+    Observability surface for the host operator. Each row carries the
+    audit ``note`` (default: the deferred-identity caveat).
     """
     from .state_db import open_db
 
     with open_db(db_path) as conn:
         cur = conn.execute(
-            "SELECT name, created_at FROM node_tokens ORDER BY name ASC"
+            "SELECT sender_name, target_name, created_at, note "
+            "FROM comms_grants "
+            "ORDER BY created_at ASC, sender_name ASC, target_name ASC"
         )
-        return [{"name": str(r["name"]), "created_at": float(r["created_at"])}
-                for r in cur.fetchall()]
+        return [
+            {
+                "sender": str(r["sender_name"]),
+                "target": str(r["target_name"]),
+                "created_at": float(r["created_at"]),
+                "note": (r["note"] if r["note"] is not None else None),
+            }
+            for r in cur.fetchall()
+        ]
+
+
+# ---------------------------------------------------------------------------
+# WI-4 — name → host resolver primitives. Kept here (rather than
+# splitting into a sibling module) because the cross-host forwarder
+# consults both the resolver and the ACL primitives from this module.
+# ---------------------------------------------------------------------------
+
+
+def resolve_node_host(
+    *,
+    name: str,
+    db_path: Path | None = None,
+) -> dict[str, Any] | None:
+    """Map a node ``name`` to ``{host, a2a_port}`` from the
+    ``instances`` table.
+
+    Returns ``None`` when the name does not match a *live* instance
+    (``ended_at IS NULL``). When several live records exist for the
+    same name (e.g., a restart race), the most recently started one
+    wins — cross-host forwarding cannot pick non-deterministically.
+    """
+    if not name:
+        return None
+    from .state_db import open_db
+
+    with open_db(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT host, a2a_port
+              FROM instances
+             WHERE name = ? AND ended_at IS NULL
+             ORDER BY started_at DESC, id DESC
+             LIMIT 1
+            """,
+            (name,),
+        ).fetchone()
+    if row is None:
+        return None
+    return {
+        "host": str(row["host"]),
+        "a2a_port": int(row["a2a_port"]) if row["a2a_port"] is not None else None,
+    }
+
+
+def is_local_node(
+    *,
+    name: str,
+    local_host: str,
+    db_path: Path | None = None,
+) -> bool:
+    """Return ``True`` if ``name`` should be served locally.
+
+    Local cases:
+
+    * The name resolves to ``local_host`` via :func:`resolve_node_host`.
+    * The name does NOT resolve to any host (unknown / external node) —
+      defer to the local ``NodeRegistry`` implicit-registration path.
+      Forwarding a never-seen name would synthesise an SSRF target
+      from a self-claimed string; the host-local path is correct.
+    """
+    info = resolve_node_host(name=name, db_path=db_path)
+    if info is None:
+        return True
+    return info["host"] == local_host

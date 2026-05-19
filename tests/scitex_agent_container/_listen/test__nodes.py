@@ -46,10 +46,7 @@ from scitex_agent_container._listen.server import create_app
 from scitex_agent_container._runners import _session_state as _ss
 from scitex_agent_container._state import registry as _reg
 from scitex_agent_container._state import state_db as _state_db
-from scitex_agent_container._state.state_db_nodes import (
-    mint_node_token,
-    record_lineage,
-)
+from scitex_agent_container._state.state_db_nodes import record_lineage
 
 TOKEN = "test-token-wi3"
 
@@ -86,9 +83,6 @@ def isolated_env(tmp_path: Path):
     # common root so they share a group. Without this the new
     # ACL gate would deny ``permitted-peer → external-bob`` as
     # cross-group (each unattached node is its own singleton).
-    mint_node_token(name="permitted-peer", db_path=db_path)
-    mint_node_token(name="external-bob", db_path=db_path)
-    mint_node_token(name="root", db_path=db_path)
     record_lineage(child="permitted-peer", parent="root", db_path=db_path)
     record_lineage(child="external-bob", parent="root", db_path=db_path)
 
