@@ -180,6 +180,33 @@ CREATE TABLE IF NOT EXISTS heartbeats (
     ts            REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_heartbeats_name_ts ON heartbeats(name, ts);
+
+-- WI-1 channel-event durability (handoff §4 "Durability /
+-- replay-on-reconnect"): persist every channel-bus event so a POST
+-- with no subscriber is delivered on connect, and a kill+reconnect
+-- replays exactly the missed events.
+--
+-- ``id`` is the SSE-cursor (the value of the SSE ``id:`` line); a
+-- reconnecting client passes it back as ``Last-Event-ID`` to resume
+-- without dropping or duplicating events.
+-- ``meta_json`` carries the full minted envelope so the inbox bus can
+-- replay byte-identical frames after a process restart.
+-- ``delivered_at`` is set the first time the event reaches a live
+-- subscriber; NULL means "still waiting on the bus".
+CREATE TABLE IF NOT EXISTS channel_events (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    target        TEXT NOT NULL,
+    source        TEXT,
+    kind          TEXT NOT NULL DEFAULT 'message',
+    content       TEXT,
+    meta_json     TEXT NOT NULL,
+    ts            REAL NOT NULL,
+    delivered_at  REAL
+);
+CREATE INDEX IF NOT EXISTS idx_channel_events_target_undelivered
+    ON channel_events(target, id) WHERE delivered_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_channel_events_target_id
+    ON channel_events(target, id);
 """
 
 # Tables exposed by `sac db query --table=<t>`. Whitelisted so users
@@ -193,6 +220,7 @@ KNOWN_TABLES = (
     "turns",
     "errors",
     "heartbeats",
+    "channel_events",
 )
 
 
