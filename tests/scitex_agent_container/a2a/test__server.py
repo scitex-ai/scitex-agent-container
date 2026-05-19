@@ -20,6 +20,7 @@ split into per-behaviour tests, parametrized when natural.
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 from pathlib import Path
 
@@ -662,15 +663,28 @@ from scitex_agent_container._state import state_db as _state_db
 
 
 @pytest.fixture
-def _isolated_db(tmp_path: Path, monkeypatch):
-    """Point state.db at a tmp file for this test."""
-    # Arrange
+def _isolated_db(tmp_path: Path):
+    """Point state.db at a tmp file for this test.
+
+    PA-306 no-mocks: yield-based fixture saving/restoring real state
+    (no ``monkeypatch``). Both the env var and the module-level
+    constant are touched so callers that read either path see the
+    isolated db.
+    """
     db = tmp_path / "state.db"
-    monkeypatch.setenv("SCITEX_AGENT_CONTAINER_STATE_DB", str(db))
-    monkeypatch.setattr(_state_db, "DEFAULT_DB_PATH", db)
+    saved_env = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
+    saved_default = _state_db.DEFAULT_DB_PATH
+    os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
+    _state_db.DEFAULT_DB_PATH = db
     _state_db.init_schema(db)
-    # Act / Assert handled by the test that consumes this fixture.
-    yield db
+    try:
+        yield db
+    finally:
+        _state_db.DEFAULT_DB_PATH = saved_default
+        if saved_env is None:
+            os.environ.pop("SCITEX_AGENT_CONTAINER_STATE_DB", None)
+        else:
+            os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = saved_env
 
 
 def _send_payload(text: str, *, from_agent: str = "alice") -> dict:
@@ -829,7 +843,12 @@ def test_event_posted_before_subscribe_is_replayed_on_connect(
     _isolated_db, tmp_path: Path
 ) -> None:
     """Acceptance criterion (handoff §4): "an event POSTed with no
-    subscriber is delivered on connect"."""
+    subscriber is delivered on connect".
+
+    The publisher's POST status is treated as a precondition (raise
+    on failure) rather than an assertion so the test carries exactly
+    one assert — the SSE-replayed payload (TQ007).
+    """
     # Arrange
     yml = _write_yaml(tmp_path, "bob")
     app = build_app([yml])
@@ -841,7 +860,11 @@ def test_event_posted_before_subscribe_is_replayed_on_connect(
                 f"http://127.0.0.1:{port}/agents/bob/message:send",
                 json=_send_payload("queued for bob"),
             )
-            assert r.status_code in (200, 201, 202), r.text
+            if r.status_code not in (200, 201, 202):
+                raise RuntimeError(
+                    f"precondition: publisher POST returned {r.status_code}: "
+                    f"{r.text!r}"
+                )
         # Act — subscribe and read the replay.
         event = _asyncio.run(
             _consume_first_event(

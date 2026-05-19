@@ -39,8 +39,10 @@ def db_path(tmp_path: Path) -> Path:
 
 
 def test_channel_events_table_exists(db_path: Path) -> None:
-    # Arrange / Act
-    with state_db.open_db(db_path) as conn:
+    # Arrange
+    conn_ctx = state_db.open_db(db_path)
+    # Act
+    with conn_ctx as conn:
         rows = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='channel_events'"
         ).fetchall()
@@ -53,8 +55,10 @@ def test_channel_events_table_exists(db_path: Path) -> None:
     ["id", "target", "source", "kind", "content", "meta_json", "ts", "delivered_at"],
 )
 def test_channel_events_has_column(db_path: Path, column: str) -> None:
-    # Arrange / Act
-    with state_db.open_db(db_path) as conn:
+    # Arrange
+    conn_ctx = state_db.open_db(db_path)
+    # Act
+    with conn_ctx as conn:
         cols = {
             r[1]
             for r in conn.execute("PRAGMA table_info(channel_events)").fetchall()
@@ -134,8 +138,10 @@ def test_persist_event_stores_full_envelope_as_meta_json(db_path: Path) -> None:
 
 
 def test_list_undelivered_returns_empty_when_nothing_persisted(db_path: Path) -> None:
-    # Arrange / Act
-    rows = list_undelivered(target="bob", db_path=db_path)
+    # Arrange
+    target = "bob"
+    # Act
+    rows = list_undelivered(target=target, db_path=db_path)
     # Assert
     assert rows == []
 
