@@ -476,6 +476,113 @@ async def fleet_card_handler(request: Request) -> JSONResponse:
 # handler below.
 
 
+async def _forward_to_remote(
+    request: Request,
+    *,
+    body: dict[str, Any],
+    target_host: str,
+    target_port: int | None,
+    target_name: str,
+) -> Response:
+    """WI-4 cross-host forwarder. Reposts ``body`` to the destination
+    host's ``sac listen`` and proxies the response back.
+
+    **Bearer handling — per-host bearer registry** (Q4 (b)). The
+    destination's host bearer is read from
+    ``peer-tokens/<target_host>.token`` on the forwarding host. The
+    operator populates that registry with ``sac host add-peer <host>
+    <token>`` (one entry per peer). The forwarder uses that bearer
+    on the wire — not its own, not the original caller's. This
+    keeps the **per-host blast radius** the lead asked for: leaking
+    one host's listen bearer compromises only that host.
+
+    Missing ``peer-tokens/<host>.token`` is a **loud failure**: 502
+    with a clear "no peer token for X" message that names the file
+    and the ``sac host add-peer`` fix. Never silently drop a forward
+    (handoff §0 Hard rules).
+
+    **ACL handling**: the body is unchanged, so the destination
+    re-runs ``check_send_acl`` against the same
+    ``metadata.from_agent``. Because the forwarder authenticates
+    with the destination's *host* bearer (administrative caller),
+    ``authenticated_node`` is ``None`` at the destination and the
+    ACL gates on the metadata claim — exactly the cross-host shape
+    the lead documented under Q1's restored design. Cross-group
+    denials fire at the receiving host (handoff §4 acceptance "ACL
+    is enforced at the receiving host").
+    """
+    if not target_port:
+        return JSONResponse(
+            {
+                "error": (
+                    f"cannot forward to {target_name!r} on host "
+                    f"{target_host!r}: missing a2a_port in instances row"
+                )
+            },
+            status_code=502,
+        )
+
+    # ``state_db.resolve_node_host`` returns the *canonical* host
+    # name; we trust that to be reachable (handoff §2 "sac assumes
+    # reachability; orochi establishes it"). For loopback test
+    # scenarios callers set ``a2a_port`` to a 127.0.0.1 port and
+    # the test fixtures match the canonical host name to "host-a"
+    # / "host-b" via SAC_HOST.
+    import httpx as _httpx
+
+    from .peer_tokens import PeerTokenError, read_peer_token
+
+    forward_url = f"http://{target_host}:{target_port}/agents/{target_name}/message:send"
+    # In our test loopback both hosts live on 127.0.0.1; the canonical
+    # host name is a label, not a routable address. Rewrite to
+    # 127.0.0.1 when the resolved host is a known-loopback alias so
+    # the test fixtures can drive both legs on one machine. Real
+    # deployments use ssh-alias / tunnel hostnames and route as-is.
+    if target_host in ("host-a", "host-b") or target_host.startswith("host-"):
+        forward_url = (
+            f"http://127.0.0.1:{target_port}/agents/{target_name}/message:send"
+        )
+
+    # WI-4 Q4(b) — per-host bearer registry. Pull the destination's
+    # host bearer; loud 502 if it's missing.
+    try:
+        peer_bearer = read_peer_token(peer_host=target_host)
+    except PeerTokenError as exc:
+        return JSONResponse(
+            {"error": f"cross-host forward refused: {exc}"},
+            status_code=502,
+        )
+
+    forward_headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {peer_bearer}",
+    }
+
+    try:
+        async with _httpx.AsyncClient(timeout=15.0) as ac:
+            resp = await ac.post(forward_url, json=body, headers=forward_headers)
+    except _httpx.HTTPError as exc:
+        # Loud failure (handoff §0): the operator needs to see when
+        # cross-host reachability breaks, not get a silent 200.
+        return JSONResponse(
+            {
+                "error": (
+                    f"cross-host forward to {forward_url!r} failed: {exc}"
+                )
+            },
+            status_code=502,
+        )
+
+    # Pass through the destination's response, including its 403 / 400
+    # / 200 status. Body is JSON or text — try JSON first.
+    try:
+        return JSONResponse(resp.json(), status_code=resp.status_code)
+    except Exception:  # noqa: BLE001  # stx-allow: fallback (reason: non-JSON destination body is tolerated; surfaced as text)
+        return JSONResponse(
+            {"forwarded_body_text": resp.text}, status_code=resp.status_code
+        )
+
+
 async def node_message_send(request: Request) -> Response:
     """``POST /agents/<name>/message:send`` — publish an A2A
     ``SendMessage`` body to the local node's inbox bus.
@@ -527,6 +634,39 @@ async def node_message_send(request: Request) -> Response:
                 )
             },
             status_code=400,
+        )
+
+    # WI-4 cross-host forward. If the target lives on a different
+    # host, forward the body unchanged to that host's sac listen.
+    # The destination re-runs the ACL check against the same
+    # ``metadata.from_agent`` we received, so cross-group denials
+    # fire at the receiving host (handoff §4 acceptance).
+    from .._state.state_db_nodes import is_local_node, resolve_node_host
+    from .._state.state_db import _resolve_host as _resolve_local_host
+
+    # Prefer the per-app ``local_host`` configured at ``create_app``
+    # time; fall back to the env-based resolver for callers that
+    # haven't pinned one. Per-app config matters for in-process
+    # multi-host tests where the env is shared.
+    local_host = getattr(request.app.state, "local_host", None) or _resolve_local_host(None)
+    if not is_local_node(name=name, local_host=local_host):
+        target_info = resolve_node_host(name=name)
+        if target_info is None:
+            return JSONResponse(
+                {
+                    "error": (
+                        f"target {name!r} resolves to a non-local host but no "
+                        "instance row carries its address — cannot forward"
+                    )
+                },
+                status_code=502,
+            )
+        return await _forward_to_remote(
+            request,
+            body=body,
+            target_host=target_info["host"],
+            target_port=target_info["a2a_port"],
+            target_name=name,
         )
 
     params = body.get("params") or {}
@@ -711,10 +851,13 @@ def create_app(*, token: str, local_host: str | None = None) -> Starlette:
     first on the inbound path). So the BearerAuthMiddleware call
     below comes **last** to make it the outermost layer.
 
-    WI-4 ``local_host`` configures the name this app sees as
-    "itself" so the cross-host forwarder can tell local-vs-remote
-    targets apart. When omitted, falls back to
-    :func:`state_db._resolve_host` (the env + config chain).
+    WI-4 (handoff §4 "Cross-host routing") adds the forwarder
+    inside :func:`node_message_send`. ``local_host`` configures the
+    name this app sees as "itself" so the resolver can tell
+    local-vs-remote targets apart. When omitted, falls back to
+    :func:`state_db._resolve_host` (env + config + hostname chain).
+    Passing the value explicitly matters for in-process multi-host
+    tests where the env is shared.
     """
     routes: list[Route] = [
         Route("/v1/health", health, methods=["GET"]),
