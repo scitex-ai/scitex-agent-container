@@ -1,15 +1,16 @@
-"""sac MCP **channel** server (commit 2/4 of the A2A push slice).
+"""sac MCP **channel** server — the receive-side Claude-session adapter.
 
 Run as a stdio MCP subprocess of Claude Code:
 
-    sac mcp channel --name <agent> [--listen-url http://127.0.0.1:7878]
+    sac mcp channel --name <node-id> [--listen-url http://127.0.0.1:7878]
 
 Behaviour:
 
 1. Speaks the standard MCP handshake over stdio (so `claude
    --dangerously-load-development-channels server:sac` is happy).
 2. After initialise, opens an HTTP SSE connection to the local
-   `sac listen` at ``/agents/<name>/inbox/stream`` (ADR-0004).
+   `sac listen` at ``/agents/<node-id>/inbox/stream`` (ADR-0004,
+   ADR-0008).
 3. For every event the bus pushes, emits a JSON-RPC notification:
 
        method: notifications/claude/channel
@@ -18,11 +19,18 @@ Behaviour:
    so Claude renders ``<channel source="..." chat_id="..." ...>`` in
    the running session (see Claude Code channels reference).
 
-This module has **no tools** — pure receive-side adapter. The tools
-(`a2a_send`, `a2a_reply`, …) land in commit 3 on the existing sac MCP
-server. Splitting them keeps each surface single-purpose: the channel
-is a stdio process Claude spawns at session start; the tools server
-lives in the agent's MCP config.
+This module hosts the receive-side adapter **and** the send-side
+``a2a_*`` MCP tools (``a2a_send``, ``a2a_reply``, ``a2a_ack``,
+``a2a_peers``, ``a2a_inbox``). They live together because they
+share the per-process inbox ring buffer (``_recent``) that
+``a2a_reply`` / ``a2a_ack`` consult to look up the original sender
+of a msg_id.
+
+Per ADR-0008 (sac node-transport boundary), a *node* — sac-managed
+or external — joins the comms graph by running this command. An
+external node (e.g. a plain ``claude`` CLI session) has no
+container and no spec; its AgentCard is synthesised by
+``_listen/_nodes.py::synthesize_external_card`` at first connect.
 """
 
 from __future__ import annotations

@@ -20,7 +20,7 @@ from __future__ import annotations
 import re
 import socket
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from scitex_config._ecosystem import local_state as _local_state
 
