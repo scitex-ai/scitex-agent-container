@@ -129,7 +129,8 @@ def test_record_lineage_re_parent_raises(db_path: Path) -> None:
     """A child cannot silently switch parents."""
     # Arrange
     record_lineage(child="bob", parent="alice", db_path=db_path)
-    # Act / Assert
+    # Act
+    # Assert
     with pytest.raises(ValueError, match="refusing to re-parent"):
         record_lineage(child="bob", parent="other-root", db_path=db_path)
 
