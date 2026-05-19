@@ -28,9 +28,15 @@ URL resolution rules for ``post_turn(agent_name, ...)``:
   user fixes the YAML rather than getting an opaque connection
   refused.
 
-No auth on the wire — this is for trusted intra-fleet calls. Layer
-post-3 will add bearer-token / mTLS gates when sac itself is widely
-deployed.
+Auth on the wire (WI-2 / WI-4, 2026-05-21): cross-host calls into
+another sac listen's ``message:send`` carry the destination host's
+listen bearer, pulled from
+``~/.scitex/agent-container/peer-tokens/<peer-host>.token`` on the
+caller's side (registered via ``sac host add-peer <host> <token>``).
+The destination's :class:`BearerAuthMiddleware` admits the request
+as an *administrative* caller; the destination's ACL then gates on
+``metadata.from_agent`` per handoff §4 ("ACL is enforced at the
+receiving host").
 """
 
 from __future__ import annotations
