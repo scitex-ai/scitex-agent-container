@@ -379,3 +379,245 @@ def test_agent_send_error_when_sidecar_returns_non_200(
         )
     # Assert
     assert result["status"] == "error"
+
+
+# ---------------------------------------------------------------------------
+# State-aware failure diagnosis (PS-NN: send_to_agent attaches a
+# ``diagnosis`` to the timeout / error returns so the caller can tell
+# "still booting" / "alive & busy" / "dead" / "port unreachable" apart).
+#
+# Real state: the ``heartbeats`` diary table + ``instances`` row + a real
+# local TCP listener are used — no mocks. ``record_heartbeat`` writes a
+# real row; a throwaway socket binds a real port.
+# ---------------------------------------------------------------------------
+
+
+def _record_heartbeat(name: str, state: str, *, pid=None, ts=None) -> None:
+    """Append one real ``heartbeats`` row for ``name`` (no mocks)."""
+    from scitex_agent_container._state.state_db import record_heartbeat
+
+    record_heartbeat(name=name, host="lead-host", pid=pid, state=state, ts=ts)
+
+
+def _seed_local_with_pid(name: str, a2a_port: int, pid: int) -> None:
+    """Record an active local instance row carrying a specific pid."""
+    from scitex_agent_container._state.state_db import record_instance_start
+
+    record_instance_start(name=name, host="lead-host", pid=pid, a2a_port=a2a_port)
+
+
+@contextmanager
+def _real_listener() -> Iterator[int]:
+    """Bind a real TCP listener on a free loopback port; yield the port.
+
+    Used so the diagnosis sees ``port_reachable=True`` and the heartbeat
+    dimension (not the port) is the deciding factor for ``likely_causes``.
+    """
+    import socket as _socket
+
+    srv = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    try:
+        yield srv.getsockname()[1]
+    finally:
+        srv.close()
+
+
+def test_agent_send_timeout_includes_diagnosis(state_db_env, fresh_lead_creds_path):
+    # Arrange
+    _seed_local("alpha", a2a_port=12345)
+    from scitex_agent_container._network.peer import PeerError
+
+    def fake_post(url, text, *, timeout_s):
+        raise PeerError(f"peer timeout at {url} after {timeout_s:.0f}s")
+
+    # Act
+    with _swap_post_turn(fake_post):
+        result = send_to_agent(
+            "alpha", "hi", timeout_seconds=2, lead_creds_path=fresh_lead_creds_path
+        )
+    # Assert
+    assert "diagnosis" in result
+
+
+def test_agent_send_error_includes_diagnosis(state_db_env, fresh_lead_creds_path):
+    # Arrange
+    _seed_local("alpha", a2a_port=12345)
+    from scitex_agent_container._network.peer import PeerError
+
+    def fake_post(url, text, *, timeout_s):
+        raise PeerError("peer returned HTTP 500: internal error")
+
+    # Act
+    with _swap_post_turn(fake_post):
+        result = send_to_agent(
+            "alpha", "hi", timeout_seconds=2, lead_creds_path=fresh_lead_creds_path
+        )
+    # Assert
+    assert "diagnosis" in result
+
+
+def test_agent_send_diagnosis_reports_registry_running(
+    state_db_env, fresh_lead_creds_path
+):
+    # Arrange
+    _seed_local("alpha", a2a_port=12345)
+    from scitex_agent_container._network.peer import PeerError
+
+    def fake_post(url, text, *, timeout_s):
+        raise PeerError("peer timeout at <url> after 2s")
+
+    # Act
+    with _swap_post_turn(fake_post):
+        result = send_to_agent(
+            "alpha", "hi", timeout_seconds=2, lead_creds_path=fresh_lead_creds_path
+        )
+    # Assert
+    assert result["diagnosis"]["registry_status"] == "running"
+
+
+def test_agent_send_not_running_diagnosis_reports_stopped(state_db_env):
+    # Arrange — no rows seeded
+    # Act
+    result = send_to_agent("ghost", "hi")
+    # Assert
+    assert result["diagnosis"]["registry_status"] == "stopped"
+
+
+def test_agent_send_diagnosis_reports_busy_heartbeat_state(
+    state_db_env, fresh_lead_creds_path
+):
+    # Arrange
+    _seed_local("alpha", a2a_port=12345)
+    _record_heartbeat("alpha", "working", ts=time.time())
+    from scitex_agent_container._network.peer import PeerError
+
+    def fake_post(url, text, *, timeout_s):
+        raise PeerError("peer timeout at <url> after 2s")
+
+    # Act
+    with _swap_post_turn(fake_post):
+        result = send_to_agent(
+            "alpha", "hi", timeout_seconds=2, lead_creds_path=fresh_lead_creds_path
+        )
+    # Assert
+    assert result["diagnosis"]["heartbeat_state"] == "working"
+
+
+def test_agent_send_diagnosis_busy_likely_cause_says_in_progress(
+    state_db_env, fresh_lead_creds_path
+):
+    # Arrange — real listener so the port is reachable and the heartbeat
+    # state (working) is what drives likely_causes.
+    from scitex_agent_container._network.peer import PeerError
+
+    def fake_post(url, text, *, timeout_s):
+        raise PeerError("peer timeout at <url> after 2s")
+
+    with _real_listener() as port:
+        _seed_local("alpha", a2a_port=port)
+        _record_heartbeat("alpha", "working", ts=time.time())
+        # Act
+        with _swap_post_turn(fake_post):
+            result = send_to_agent(
+                "alpha", "hi", timeout_seconds=2, lead_creds_path=fresh_lead_creds_path
+            )
+    # Assert
+    assert "still" in result["diagnosis"]["likely_causes"].lower()
+
+
+def test_agent_send_diagnosis_stale_heartbeat_likely_cause_says_dead(
+    state_db_env, fresh_lead_creds_path
+):
+    # Arrange — real listener (port reachable) but heartbeat far older
+    # than the staleness window, so "stale/dead" is the deciding factor.
+    from scitex_agent_container._network.peer import PeerError
+
+    def fake_post(url, text, *, timeout_s):
+        raise PeerError("peer timeout at <url> after 2s")
+
+    with _real_listener() as port:
+        _seed_local("alpha", a2a_port=port)
+        _record_heartbeat("alpha", "idle", ts=time.time() - 600)
+        # Act
+        with _swap_post_turn(fake_post):
+            result = send_to_agent(
+                "alpha", "hi", timeout_seconds=2, lead_creds_path=fresh_lead_creds_path
+            )
+    # Assert
+    assert "dead or hung" in result["diagnosis"]["likely_causes"]
+
+
+def test_agent_send_diagnosis_dead_pid_reports_pid_not_alive(
+    state_db_env, fresh_lead_creds_path
+):
+    # Arrange — a pid that is essentially guaranteed not to exist.
+    dead_pid = 2_147_483_646
+    _seed_local_with_pid("alpha", a2a_port=12345, pid=dead_pid)
+    from scitex_agent_container._network.peer import PeerError
+
+    def fake_post(url, text, *, timeout_s):
+        raise PeerError("peer timeout at <url> after 2s")
+
+    # Act
+    with _swap_post_turn(fake_post):
+        result = send_to_agent(
+            "alpha", "hi", timeout_seconds=2, lead_creds_path=fresh_lead_creds_path
+        )
+    # Assert
+    assert result["diagnosis"]["pid_alive"] is False
+
+
+def test_agent_send_diagnosis_port_unreachable_when_nothing_listening(
+    state_db_env, fresh_lead_creds_path
+):
+    # Arrange — a2a_port that no process is listening on. We grab a free
+    # port from the OS and immediately release it so the connect refuses.
+    import socket as _socket
+
+    s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    s.bind(("127.0.0.1", 0))
+    free_port = s.getsockname()[1]
+    s.close()
+    _seed_local("alpha", a2a_port=free_port)
+    from scitex_agent_container._network.peer import PeerError
+
+    def fake_post(url, text, *, timeout_s):
+        raise PeerError("peer timeout at <url> after 2s")
+
+    # Act
+    with _swap_post_turn(fake_post):
+        result = send_to_agent(
+            "alpha", "hi", timeout_seconds=2, lead_creds_path=fresh_lead_creds_path
+        )
+    # Assert
+    assert result["diagnosis"]["port_reachable"] is False
+
+
+def test_agent_send_diagnosis_port_reachable_when_listener_bound(
+    state_db_env, fresh_lead_creds_path
+):
+    # Arrange — bind a real listener so the diagnosis sees a live port.
+    import socket as _socket
+
+    srv = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    bound_port = srv.getsockname()[1]
+    _seed_local("alpha", a2a_port=bound_port)
+    from scitex_agent_container._network.peer import PeerError
+
+    def fake_post(url, text, *, timeout_s):
+        raise PeerError("peer timeout at <url> after 2s")
+
+    # Act
+    try:
+        with _swap_post_turn(fake_post):
+            result = send_to_agent(
+                "alpha", "hi", timeout_seconds=2, lead_creds_path=fresh_lead_creds_path
+            )
+    finally:
+        srv.close()
+    # Assert
+    assert result["diagnosis"]["port_reachable"] is True
