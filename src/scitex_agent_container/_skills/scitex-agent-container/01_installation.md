@@ -10,12 +10,16 @@ tags: [scitex-agent-container-installation]
 ## pip install
 
 ```bash
-pip install scitex-agent-container          # core CLI + apptainer runtime
-pip install 'scitex-agent-container[sdk]'   # adds claude-agent-sdk + starlette/uvicorn for the inbound HTTP endpoint
-pip install 'scitex-agent-container[all]'   # everything
+pip install scitex-agent-container          # core CLI + apptainer runtime + claude-agent-sdk
+pip install 'scitex-agent-container[all]'   # everything (mcp + telegram + slurm + dev + docs)
 ```
 
-The CLI ships as both `scitex-agent-container` and the short alias `sac`.
+`claude-agent-sdk` and `uvicorn` (the inbound `/v1/turn` HTTP endpoint)
+are **core** dependencies — they ship in the base install, not behind an
+extra. The declared extras are `[mcp]`, `[telegram]`, `[slurm]`, `[dev]`,
+`[docs]`, and the `[all]` aggregate (see `pyproject.toml`). There is no
+`[sdk]` extra. The CLI ships as both `scitex-agent-container` and the
+short alias `sac`.
 
 ## What ships in the wheel
 
@@ -28,27 +32,48 @@ images without cloning the repo:
   apptainer-scitex.def     # FROM :base + scitex[all] + sac
 ```
 
-Built artifacts (SIFs, sandboxes) land under user state, never in the wheel:
+Built artifacts (SIFs, sandboxes) land under user state, never in the
+wheel. `sac image build` delegates to `scitex-container`, which owns the
+dir-per-layer layout (`cli_pkg/image_group.py`):
 
 ```
 ~/.scitex/agent-container/containers/
-  sac-base/sac-base.sif        + symlink at containers/sac-base.sif
-  sac-scitex/sac-scitex.sif    + symlink at containers/sac-scitex.sif
-  sac-*/*.sandbox/             (optional sandbox builds)
+  sac-base.sif        -> sac-base/sac-base.sif          (symlink)
+  sac-base/
+    sac-base.sif
+    sac-base.def                         # recipe snapshot at build time
+    .def-hash                            # def fingerprint; skips rebuild when unchanged
+    sac-base.build-YYYY-MMDD-HHMMSS.log  # full build log, one per build
+  sac-scitex.sif      -> sac-scitex/sac-scitex.sif      (symlink)
+  sac-scitex/
+    sac-scitex.{sif,def}, .def-hash, sac-scitex.build-*.log
+  overlays/<agent-name>/                 # per-agent directory overlays (upper/, work/)
+  dpkg-lock.txt  node-lock.txt  requirements-lock.txt   # build reproducibility locks
+  sac-*/*.sandbox/                       # optional writable sandbox builds (only when built)
 ```
+
+The `.sif` symlinks at the `containers/` root are the stable paths specs
+reference; the dir-per-layer keeps each build's `.def` snapshot, hash,
+and logs alongside the image. `overlays/<agent-name>/upper/` is the
+relaxed-mode writable upper layer (see ADR-0009); `work/` is its
+apptainer overlay workdir.
 
 Build with `sac image build base -y && sac image build scitex -y`. See
 [`02_quick-start.md`](02_quick-start.md) for the full first-agent flow.
 
 ## Auth (cost-critical)
 
-The SDK runtime reads Anthropic auth in this precedence (see `runtimes/_sdk_common.py`):
+The SDK runtime reads Anthropic auth in this precedence (see
+`runtimes/_sdk_common.py::provision_anthropic_auth`):
 
-1. `ANTHROPIC_API_KEY` env (used verbatim if set — operator opt-in)
-2. `~/.claude/.credentials.json` Pro/Max OAuth (default — flat-rate, no per-token billing)
-3. `SAC_ANTHROPIC_API_KEY` env (sac-namespaced handoff; works for OAuth `sk-ant-oat*` *and* API-key `sk-ant-api*` forms — the runner detects by prefix and either bridges to `ANTHROPIC_API_KEY` or synthesises the credentials file)
+1. `~/.claude/.credentials.json` Pro/Max OAuth (default — flat-rate, no per-token billing). Run `claude /login` once to populate it.
+2. `SAC_ANTHROPIC_API_KEY` env (sac-namespaced handoff for headless contexts — CI, SLURM, cron — mirrored into `ANTHROPIC_API_KEY` for the SDK).
 
-Run `claude /login` once to populate the credentials file. Set neither and you get a clear `SDKCommonError` rather than silent fall-through to API-key billing.
+A bare host `ANTHROPIC_API_KEY` is **never honoured**: if
+`SAC_ANTHROPIC_API_KEY` is unset, `provision_anthropic_auth` *pops*
+`ANTHROPIC_API_KEY` from the env so a stale dotfiles export can't
+silently switch you to pay-per-token billing or shadow a working OAuth
+credentials file. Set neither and you get a clear `SDKCommonError`.
 
 ## Per-host hook (optional but recommended for remote/HPC)
 

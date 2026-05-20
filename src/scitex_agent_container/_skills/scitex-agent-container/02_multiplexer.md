@@ -1,38 +1,37 @@
 ---
 description: |
-  [TOPIC] Multiplexer
-  [DETAILS] tmux vs screen multiplexer support, capture-pane, send-keys..
+  [TOPIC] Multiplexer (vestigial for agents)
+  [DETAILS] SAC agents run via the apptainer SDK runtime (runtimes/claude_session.py) — NOT inside a terminal multiplexer. The tmux wrap is the lead session's launcher concern, outside this package. The spec.multiplexer key is a vestigial config field with no live consumer.
 tags: [scitex-agent-container-multiplexer]
 ---
 
 # Multiplexer
 
-Set in YAML: `spec.multiplexer: tmux` (default) or `screen`
+**A terminal multiplexer is not part of the SAC agent execution path.**
+SAC agents run via the apptainer SDK runtime
+(`runtimes/claude_session.py`), which drives `claude-agent-sdk` from a
+Python runner — no tmux, no screen, no pane scraping, no `send-keys`
+auto-accept. See [15_claude-session.md](15_claude-session.md).
 
-## Comparison
+There is no `runtimes/multiplexer.py` module and nothing in the runtime
+imports a `get_multiplexer` / `TmuxManager` / `ScreenManager` API; that
+surface was removed when the SDK runtime replaced the legacy tmux-wrapped
+CLI runtime. The `spec.multiplexer` YAML key still parses (default
+`tmux`, in `config/_types.py`) but is **vestigial** — no agent code path
+consumes it, so setting it has no effect on how an agent runs.
 
-| Feature | tmux | screen |
-|---------|------|--------|
-| `capture-pane` | Works on macOS | Fails on macOS (hardcopy) |
-| Auto-accept | Reliable | Unreliable on macOS |
-| Socket dir | Consistent | Varies (SSH vs local) |
-| Default | Yes (since v0.7) | Legacy |
+## Where tmux *is* used
 
-## Usage
+tmux is used only to wrap the **lead** Claude session — for session
+continuity (`--continue`) and remote (iPhone) attach. That wrapping lives
+in the lead's launcher (`scripts/deployment/claude.sh`, which wraps the
+session in a named tmux session `lead`), **outside** this package. It is
+an operator convenience for one interactive human-facing session, not an
+agent execution mechanism, and SAC does not manage it.
 
-```python
-from scitex_agent_container.runtimes.multiplexer import get_multiplexer
+## Attaching to a running agent
 
-mux = get_multiplexer(config)          # TmuxManager or ScreenManager
-mux.exists("session-name")             # Check session exists
-mux.capture_content("session-name")    # Read pane content
-mux.send_keys("session-name", "2", "Enter")  # Send keystrokes
-mux.start(name, command, workdir)      # Launch session
-mux.stop("session-name")              # Kill session
-mux.attach("session-name")            # Interactive attach
-```
+Use the SDK runtime's own surfaces instead of `tmux attach`:
 
-## Detach shortcuts
-
-- tmux: `Ctrl-B D`
-- screen: `Ctrl-A D`
+- `sac agent logs <name>` — rendered transcript from `session.jsonl`.
+- `sac agent start <name> --foreground` — stream a turn to your terminal.

@@ -47,7 +47,7 @@ rich non-agentic status surface.
 
 ### Core
 - [01_config-v3.md](01_config-v3.md) — v3 config format (current); v2+`metadata.name` rejected
-- [02_multiplexer.md](02_multiplexer.md) — tmux vs screen
+- [02_multiplexer.md](02_multiplexer.md) — vestigial for agents (SDK runtime, no tmux); lead-only tmux wrap
 - [03_auto-accept.md](03_auto-accept.md) — Modular prompt handlers
 - [04_resource-management.md](04_resource-management.md) — Resource management
 - [05_resource-heartbeat.md](05_resource-heartbeat.md) — Resource heartbeat
