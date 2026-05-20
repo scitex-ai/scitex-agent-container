@@ -30,7 +30,17 @@ and pass it explicitly.
 `.mcp.json`, `CLAUDE.md`, `.claude/hooks`, instructions, `.bashrc` — should be
 declared as `to_home` files and materialized into the container. `spec.yaml`
 should shrink toward *container wiring only* (image, overlay, runtime flags);
-the agent's *contents* live in `to_home`. (Migration target: today's
+the agent's *contents* live in `to_home`.
+
+Why `to_home`-first beats stuffing config into `raw_args`/`startup_prompts`:
+
+1. **Easier to handle** — ordinary files, edited with ordinary tools.
+2. **Easier to grow** — add a capability by adding a file, no spec schema churn.
+3. **Host-isolated** — the tree is self-contained; nothing leaks in from the host.
+4. **Isomorphic to a normal `$HOME`** — it *is* just a home dir (`.bashrc`,
+   `.env`, `.ssh`, `.claude`), so standard conventions, tools, and mental
+   models apply directly. No special knowledge is needed to read, reason about,
+   or reproduce an agent. (Migration target: today's
 `raw_args: --env GIT_AUTHOR_*` move to `to_home/.env`; `startup_prompts` move
 to `to_home/CLAUDE.md`.)
 
