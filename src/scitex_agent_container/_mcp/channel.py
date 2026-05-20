@@ -411,7 +411,10 @@ def _register_tools(
             return [TextContent(type="text", text=json.dumps(res))]
 
         if name == "a2a_peers":
-            res = await _get("/agents/")
+            # No trailing slash: sac listen registers `/agents` and a GET to
+            # `/agents/` 307-redirects, which httpx does not follow by default
+            # (a2a_peers then returns a bare 307 with empty body).
+            res = await _get("/agents")
             return [TextContent(type="text", text=json.dumps(res))]
 
         if name == "a2a_inbox":
