@@ -30,7 +30,7 @@ no-passwd-entry trap with non-1000 UIDs.
 
 from __future__ import annotations
 
-import hashlib
+import logging
 import os
 import shutil
 import signal
@@ -38,7 +38,22 @@ import subprocess
 from pathlib import Path
 
 from ..config import AgentConfig
+
+# Re-exported for back-compat — extracted to _apptainer_build, still
+# imported here so existing `mod._build_sif_* / mod._safe_image_tag`
+# references keep resolving.
+from ._apptainer_build import (  # noqa: F401
+    _build_sif_from_def,
+    _build_sif_from_uri,
+    _create_overlay_image,
+    _listen_token_path,
+    _read_listen_bearer,
+    _safe_image_tag,
+)
+from ._apptainer_build import resolve_sif as _resolve_sif
 from .base import RuntimeBase
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_SIF_NAME = "scitex-agent-container.sif"
 RUNNER_MODULE = "scitex_agent_container._runners.claude_session"
@@ -249,6 +264,33 @@ class ApptainerContainerRuntime(RuntimeBase):
 
         argv += ["--env", f"SAC_LISTEN_BASE_URL={_listen_base_url()}"]
 
+        # Bus auth — the in-container channel adapter (sac MCP) must present
+        # a bearer to reach `sac listen` (it returns 401 without one), or the
+        # inbox subscription never lands and pushed turns report
+        # delivered_subscriber_count=0. Inject the host-generated bearer read
+        # from the token file the listen server itself writes
+        # (~/.scitex/agent-container/tokens/listen-<host>.token via
+        # default_token_path()). This injection is UNCONDITIONAL w.r.t. the
+        # relaxed escape-hatch below — relaxed specs bypass the preflight
+        # wrapper but still need bus auth. The token is read at start time;
+        # it is never written into spec.yaml.
+        #
+        # Missing token file → inject only BASE_URL and log a loud warning
+        # (push will not work). No silent fallback: the adapter surfaces the
+        # resulting auth failure rather than silently degrading.
+        bearer = _read_listen_bearer()
+        if bearer:
+            argv += ["--env", f"SAC_LISTEN_BEARER={bearer}"]
+        else:
+            logger.warning(
+                "SAC_LISTEN_BEARER not injected: bus token file %s is absent. "
+                "The in-container channel adapter cannot authenticate to "
+                "`sac listen` (401), so inbox subscription and pushed turns "
+                "will fail. Start `sac listen` to generate the token, then "
+                "restart this agent.",
+                _listen_token_path(),
+            )
+
         # v3-realign: spec.apptainer.raw_args (§1 escape-hatch invariant) —
         # appended verbatim after all curated args, before the SIF +
         # inner command. Lets operators bolt on flags sac doesn't model
@@ -321,57 +363,15 @@ class ApptainerContainerRuntime(RuntimeBase):
         Returns ``None`` on any unrecoverable error (build failed,
         unparseable image reference) so the caller can short-circuit
         ``start`` with a clear message.
+
+        Thin delegate over :func:`_apptainer_build.resolve_sif` — this
+        method only supplies the per-agent image cache dir.
         """
         if shutil.which("apptainer") is None:
             return None
-
         cache_dir = self._image_cache_dir(config)
         cache_dir.mkdir(parents=True, exist_ok=True)
-
-        ap = getattr(config, "apptainer", None)
-        def_file_str = getattr(ap, "def_file", "") if ap is not None else ""
-        if def_file_str:
-            def_file = Path(def_file_str).expanduser().resolve()
-            if not def_file.is_file():
-                return None
-            sif_path = cache_dir / f"{_safe_image_tag(str(def_file))}.sif"
-            if sif_path.is_file():
-                return sif_path
-            return sif_path if _build_sif_from_def(sif_path, def_file) else None
-
-        # v3-realign: prefer spec.apptainer.image; fall back to legacy
-        # AgentConfig.image (kept populated for back-compat) and finally
-        # to the default sac-scitex SIF path.
-        ap_image = getattr(ap, "image", "") if ap is not None else ""
-        image = (ap_image or config.image or "").strip()
-        if not image:
-            return None
-
-        if image.endswith(".sif"):
-            sif_path = Path(image).expanduser().resolve()
-            return sif_path if sif_path.is_file() else None
-
-        # Sandbox image: a directory tree built via `apptainer build
-        # --sandbox`. Used on hosts where /dev/fuse isn't exposed to
-        # user namespaces (Spartan compute nodes etc.) — the rootfs
-        # is a regular directory tree, no squashfuse needed at exec.
-        # Detection: presence of the `.singularity.d/` marker dir.
-        candidate = Path(image).expanduser()
-        if candidate.is_dir() and (candidate / ".singularity.d").is_dir():
-            return candidate.resolve()
-
-        if image.startswith("docker://") or image.startswith("oras://"):
-            sif_path = cache_dir / f"{_safe_image_tag(image)}.sif"
-            if sif_path.is_file():
-                return sif_path
-            return sif_path if _build_sif_from_uri(sif_path, image) else None
-
-        # Bare image name without a scheme — assume docker://.
-        uri = f"docker://{image}"
-        sif_path = cache_dir / f"{_safe_image_tag(uri)}.sif"
-        if sif_path.is_file():
-            return sif_path
-        return sif_path if _build_sif_from_uri(sif_path, uri) else None
+        return _resolve_sif(config, cache_dir)
 
     # ------------------------------------------------------------------
     # lifecycle
@@ -486,86 +486,6 @@ class ApptainerContainerRuntime(RuntimeBase):
         """Per-host SIF cache. Lives under the per-agent state dir so
         cleanup follows the agent's lifecycle."""
         return self._state_dir(config) / "images"
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _safe_image_tag(reference: str) -> str:
-    """Hash an image reference / def-file path to a filename-safe tag.
-
-    apptainer build emits a single .sif per (image, build-time) tuple;
-    this hash gives us a deterministic filename so subsequent starts
-    skip the rebuild. The full reference is preserved in the .sif
-    metadata; the hash is just the cache key.
-    """
-    digest = hashlib.sha1(reference.encode("utf-8")).hexdigest()[:16]
-    return digest
-
-
-def _create_overlay_image(path: Path, size: str) -> None:
-    """Create an apptainer overlay image at ``path`` with the given size.
-
-    Size string accepts apptainer-style units with **M/MB/G/GB only**:
-    ``"5G"``, ``"500M"``, ``"1024MB"`` etc. K/KB are explicitly
-    rejected — ``apptainer overlay create --size`` takes integer MB so
-    sub-MB granularity is unrepresentable. Parent dir is created if
-    missing. Raises ``ValueError`` for unparseable / unsupported sizes
-    and ``RuntimeError`` if the apptainer call itself fails.
-    """
-    import re
-
-    m = re.match(r"^\s*(\d+)\s*([MG]B?)\s*$", size, re.IGNORECASE)
-    if not m:
-        raise ValueError(
-            f"overlay_size {size!r} unparseable; use '5G', '500M', '1024MB' "
-            "etc. (units M/MB/G/GB only — K/KB rejected because apptainer "
-            "overlay create takes integer MB)."
-        )
-    n = int(m.group(1))
-    unit = m.group(2).upper()
-    # apptainer overlay create --size expects integer MB.
-    multipliers = {"M": 1, "MB": 1, "G": 1024, "GB": 1024}
-    if unit not in multipliers:
-        # Defensive: regex already constrains to M/MB/G/GB, but if
-        # someone ever broadens it without updating multipliers we
-        # want a clear error, not a KeyError.
-        raise ValueError(f"overlay_size unit {unit!r} unsupported")
-    mb = int(n * multipliers[unit])
-    if mb < 1:
-        raise ValueError(f"overlay_size {size!r} resolves to <1MB")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    result = subprocess.run(
-        ["apptainer", "overlay", "create", "--size", str(mb), str(path)],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"apptainer overlay create failed (rc={result.returncode}): "
-            f"{result.stderr.strip()}"
-        )
-
-
-def _build_sif_from_uri(sif_path: Path, uri: str) -> bool:
-    """``apptainer build <sif> <uri>`` — pulls + converts an OCI image."""
-    sif_path.parent.mkdir(parents=True, exist_ok=True)
-    result = subprocess.run(["apptainer", "build", str(sif_path), uri])
-    return result.returncode == 0
-
-
-def _build_sif_from_def(sif_path: Path, def_file: Path) -> bool:
-    """``apptainer build <sif> <def_file>`` — builds from a .def script.
-
-    No docker daemon required even if the .def starts with
-    ``Bootstrap: docker`` — apptainer's docker compatibility runs
-    entirely over OCI registry pulls.
-    """
-    sif_path.parent.mkdir(parents=True, exist_ok=True)
-    result = subprocess.run(["apptainer", "build", str(sif_path), str(def_file)])
-    return result.returncode == 0
 
 
 __all__ = [
