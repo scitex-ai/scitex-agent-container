@@ -378,11 +378,14 @@ def build_sdk_options(
     # ClaudeAgentOptions is strict and rejects unknown fields. The
     # ``_*`` prefix marks these as sac-internal (not SDK fields).
     channels: list[str] | None = None
-    a2a_port: int | None = None
     if extra:
         extra = dict(extra)  # shallow copy so we can mutate
         channels = extra.pop("_channels", None)
-        a2a_port = extra.pop("_a2a_port", None)
+        # ``_a2a_port`` is threaded for the /v1/turn registration path; the
+        # channel sidecar below does NOT use it (the inbox SSE lives on the
+        # bus, resolved from SAC_LISTEN_BASE_URL). Pop it only to strip the
+        # sac-private key before merging ``extra`` into ClaudeAgentOptions.
+        extra.pop("_a2a_port", None)
         if extra:
             kwargs.update(extra)
 
@@ -408,28 +411,23 @@ def build_sdk_options(
             extra_args.setdefault("dangerously-load-development-channels", "server:sac")
         mcps = kwargs.setdefault("mcp_servers", {})
         if isinstance(mcps, dict) and "sac" not in mcps:
-            # No silent fallback. The sidecar's --listen-url MUST point
-            # at the actual server hosting /agents/<name>/inbox/stream.
-            # If a2a_port wasn't threaded through, the caller forgot to
-            # pass listen_port to build_app — surface that explicitly
-            # rather than letting the sidecar quietly fall back to env
-            # / 127.0.0.1:7878 and produce "Command failed with no
-            # output" tool errors at runtime.
-            if a2a_port is None:
-                raise SDKCommonError(
-                    "spec.claude.channels=[server:sac] is set but no "
-                    "a2a_port was threaded through to build_sdk_options. "
-                    "The MCP sidecar needs the server's actual listen "
-                    "port for its --listen-url. Pass listen_port to "
-                    "build_app(), or set spec.a2a.port in the yaml."
-                )
+            # The sidecar subscribes to /agents/<name>/inbox/stream, which
+            # is served by the BUS (`sac listen`, default :7878), NOT the
+            # agent's own a2a sidecar port. Omit --listen-url here and let
+            # the adapter's main() resolve the bus from SAC_LISTEN_BASE_URL
+            # (its existing default, injected into the container) — the
+            # same source the CLI default and the adapter both use. Passing
+            # the a2a_port here pointed the SSE GET at a server that 404s on
+            # the inbox route, so the bus saw zero subscribers and
+            # delivered_subscriber_count was always 0.
+            #
+            # a2a_port stays threaded for the /v1/turn registration path; it
+            # is simply irrelevant to inbox subscription.
             sidecar_args = [
                 "mcp",
                 "channel",
                 "--name",
                 agent_name,
-                "--listen-url",
-                f"http://127.0.0.1:{int(a2a_port)}",
             ]
             mcps["sac"] = {
                 "type": "stdio",
