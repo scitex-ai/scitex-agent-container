@@ -38,6 +38,29 @@ No fragmented "leaf-vs-mirror" distinction — every path under
 
 Missing ``to_home/`` dir → silent no-op (specs without one just don't
 get materialization).
+
+Baseline layer (shared/common to_home)
+--------------------------------------
+Common hooks/settings shared by every agent live in ONE place instead
+of being copied into every agent's ``to_home/``. Materialization is a
+two-pass overlay:
+
+  1. Apply the COMMON baseline ``to_home/`` first.
+  2. Apply the per-agent ``<spec_dir>/to_home/`` ON TOP.
+
+Per-agent files therefore win on conflict (overlay semantics) — they
+re-run the same per-entry deploy helpers over whatever the baseline
+laid down (full overwrite, marker-protected re-wrap, symlink replace).
+
+Baseline location (see :func:`resolve_baseline_to_home_dir`):
+
+  - ``$SAC_TO_HOME_BASELINE`` — explicit override (absolute dir), or
+  - ``<agents_dir>/_base/to_home/`` — a sibling ``_base`` dir under the
+    agents root (agents live at ``<agents_dir>/<name>/``, so the agents
+    root is the spec dir's parent).
+
+Absent baseline dir → behaves exactly as before (no baseline = current
+behavior; fully backward compatible).
 """
 
 from __future__ import annotations
@@ -70,6 +93,15 @@ _MARKER_PROTECTED_BASENAMES = frozenset({"CLAUDE.md", "state.md"})
 # rest preserve source perms via ``shutil.copy2``.
 _TIGHT_PERM_BASENAMES = frozenset({".env"})
 
+# Env var: explicit override for the shared/common baseline to_home dir.
+# Absolute path. When unset we fall back to ``<agents_dir>/_base/to_home``.
+_BASELINE_ENV_VAR = "SAC_TO_HOME_BASELINE"
+
+# Name of the sibling dir (under the agents root) that holds the common
+# baseline. Agents live at ``<agents_dir>/<name>/``, so the agents root
+# is the spec dir's parent and the baseline is ``<parent>/_base/to_home``.
+_BASELINE_DIR_NAME = "_base"
+
 
 # --- public API ------------------------------------------------------------
 
@@ -100,36 +132,72 @@ def resolve_to_home_dir(config: AgentConfig) -> Path | None:
     return p if p.is_dir() else None
 
 
+def resolve_baseline_to_home_dir(spec_dir: Path | None) -> Path | None:
+    """Resolve the shared/common baseline ``to_home/`` directory.
+
+    Resolution order:
+      1. ``$SAC_TO_HOME_BASELINE`` (absolute dir) — explicit override.
+      2. ``<agents_dir>/_base/to_home`` — a sibling ``_base`` dir under
+         the agents root. Agents live at ``<agents_dir>/<name>/``, so the
+         agents root is ``spec_dir.parent``.
+
+    Returns ``None`` when no baseline dir can be resolved (no baseline =
+    current behavior; fully backward compatible).
+    """
+    override = (os.environ.get(_BASELINE_ENV_VAR, "") or "").strip()
+    if override:
+        p = Path(override).expanduser()
+        return p if p.is_dir() else None
+    if spec_dir is None:
+        return None
+    p = spec_dir.parent / _BASELINE_DIR_NAME / "to_home"
+    return p if p.is_dir() else None
+
+
 def materialize_to_home(spec_dir: Path, workspace_home: Path) -> None:
     """Mirror ``<spec_dir>/to_home/`` into ``<workspace_home>/``.
 
-    Walks the tree and applies the per-entry semantics described in the
-    module docstring. Idempotent — safe to call on every agent start.
+    Two-pass overlay: the shared/common baseline ``to_home/`` is applied
+    first, then ``<spec_dir>/to_home/`` is applied on top — so per-agent
+    files win on conflict. Walks each tree and applies the per-entry
+    semantics described in the module docstring. Idempotent — safe to
+    call on every agent start.
 
-    No-op when ``<spec_dir>/to_home/`` does not exist.
+    No-op when neither the baseline nor ``<spec_dir>/to_home/`` exists.
     """
+    baseline = resolve_baseline_to_home_dir(spec_dir)
     root = spec_dir / "to_home"
-    if not root.is_dir():
+    if baseline is None and not root.is_dir():
         return
     workspace_home.mkdir(parents=True, exist_ok=True)
-    _walk_and_apply(root, root, workspace_home, config=None)
+    if baseline is not None:
+        _walk_and_apply(baseline, baseline, workspace_home, config=None)
+    if root.is_dir():
+        _walk_and_apply(root, root, workspace_home, config=None)
 
 
 def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
     """``AgentConfig``-driven entrypoint, parallel to
     :func:`_dot_claude.deploy_dot_claude`.
 
-    Resolves the to_home/ directory via :func:`resolve_to_home_dir`
-    (honours ``spec.to_home`` overrides) and applies metadata-aware
-    interpolation (${metadata.name}, ${metadata.labels.*}, ${ENV_VAR})
-    to text files. No-op when the directory cannot be resolved.
+    Two-pass overlay: the shared/common baseline ``to_home/`` is applied
+    first, then the per-agent ``to_home/`` is applied on top — so
+    per-agent files win on conflict. Resolves the per-agent directory via
+    :func:`resolve_to_home_dir` (honours ``spec.to_home`` overrides) and
+    the baseline via :func:`resolve_baseline_to_home_dir`, then applies
+    metadata-aware interpolation (${metadata.name}, ${metadata.labels.*},
+    ${ENV_VAR}) to text files. No-op when neither directory resolves.
     """
     root = resolve_to_home_dir(config)
-    if root is None:
+    baseline = resolve_baseline_to_home_dir(_spec_dir(config))
+    if root is None and baseline is None:
         return
     dest = Path(workspace_home)
     dest.mkdir(parents=True, exist_ok=True)
-    _walk_and_apply(root, root, dest, config=config)
+    if baseline is not None:
+        _walk_and_apply(baseline, baseline, dest, config=config)
+    if root is not None:
+        _walk_and_apply(root, root, dest, config=config)
 
 
 # --- traversal -------------------------------------------------------------
@@ -341,5 +409,6 @@ __all__ = [
     "WorkspaceCLAUDEMarkerError",
     "deploy_to_home",
     "materialize_to_home",
+    "resolve_baseline_to_home_dir",
     "resolve_to_home_dir",
 ]

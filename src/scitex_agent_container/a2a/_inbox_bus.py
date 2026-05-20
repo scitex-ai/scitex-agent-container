@@ -103,6 +103,7 @@ def mint_event(
     in_reply_to: str | None = None,
     priority: str = "normal",
     requires_reply: bool = False,
+    ack: bool = False,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Mint the event shape sac's channel publishes.
@@ -110,6 +111,12 @@ def mint_event(
     Sender side fills ``content`` + optional metadata; sac listen
     enriches with ``msg_id`` and ``ts`` so receivers can ack/reply
     against stable identifiers.
+
+    ``ack`` marks the event as itself a read-receipt (the same flag
+    the ``a2a_ack`` tool stamps under ``metadata.ack``). It must
+    survive minting so the receiving adapter's auto-ack loop-guard
+    can recognise an ack and decline to ack it back — otherwise two
+    auto-ack adapters ping-pong forever.
     """
     event: dict[str, Any] = {
         "msg_id": uuid.uuid4().hex,
@@ -119,6 +126,7 @@ def mint_event(
         "content": content,
         "priority": priority,
         "requires_reply": requires_reply,
+        "ack": ack,
     }
     if conversation_id:
         event["conversation_id"] = conversation_id

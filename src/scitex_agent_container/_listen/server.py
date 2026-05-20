@@ -715,6 +715,7 @@ async def node_message_send(request: Request) -> Response:
         in_reply_to=sac_meta.get("in_reply_to"),
         priority=str(sac_meta.get("priority", "normal")),
         requires_reply=bool(sac_meta.get("requires_reply", False)),
+        ack=bool(sac_meta.get("ack", False)),
     )
 
     # Implicit registration — handoff §4 "A2A compliance without a
