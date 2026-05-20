@@ -7,11 +7,22 @@ tags: [scitex-agent-container-claude-setup-delivery]
 
 # Claude setup delivery into apptainer agents
 
-SAC runs each agent's Claude session **inside** an apptainer container. The
-guiding principle is the `claude --bare` philosophy: SAC never auto-discovers
-the host operator's `~/.claude`. Every piece of Claude setup — settings,
-hooks, MCP config, credentials, CLAUDE.md, `.bashrc`, `.env` — is passed
-**explicitly** so a run is reproducible on any host (machine-independence).
+## Core doctrine — the definition files are the single source of truth
+
+**To understand or reproduce an agent you should only ever need to read its
+definition: the `spec.yaml` plus its `to_home/`. Never the host machine.**
+Nothing about an agent is implicit or inherited from whatever box it happens
+to run on. This is *why* everything below exists — it is not a set of
+mechanisms first, it is this principle, enforced by mechanisms.
+
+SAC runs each agent's Claude session **inside** an apptainer container and
+never auto-discovers the host operator's `~/.claude` (the `claude --bare`
+philosophy). Every piece of Claude setup — settings, hooks, MCP config,
+credentials, CLAUDE.md, `.bashrc`, `.env` — is passed **explicitly**, declared
+in the agent's definition, so a run is identically reproducible on any host
+(machine-independence). If you find yourself reaching for host state to make
+an agent behave, that is the bug: put it in the definition (`to_home`/`spec`)
+and pass it explicitly.
 
 ## The `to_home` 1:1 mirror (general, not just `.claude`)
 
