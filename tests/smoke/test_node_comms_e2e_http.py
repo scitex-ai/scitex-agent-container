@@ -30,18 +30,18 @@ Six AAA-marked cases — one behaviour each (TQ):
 Substrate split
 ===============
 
-Today the substrate has two SSE-publish surfaces with non-overlapping
-feature sets:
-
-* ``sac listen`` (``_listen/server.py``) carries bearer auth + WI-2
-  ACL but does **not** persist or honour ``Last-Event-ID``.
-* ``a2a/_server.py`` (the sac-managed agent sidecar) carries WI-1
-  persistence + replay but has neither bearer auth nor the WI-2 ACL
-  gate.
-
-So cases (a)–(e) drive ``sac listen`` (the only ACL surface) and case
-(f) drives ``a2a/_server.py`` (the only replay surface). Unifying the
-two surfaces is an open follow-on WI.
+Historically the substrate had two SSE-publish surfaces with
+non-overlapping feature sets — ``sac listen`` carried bearer-auth +
+WI-2 ACL but no persistence, while ``a2a/_server.py`` carried
+WI-1 persistence + replay but no auth/ACL. The follow-on WI-1 finish-
+work has now unified them: ``_listen/server.py``'s
+``node_message_send`` persists every accepted publish to
+``channel_events`` and ``node_inbox_stream`` replays missed events on
+connect (honouring ``Last-Event-ID``). Cases (a)–(e) still drive
+``sac listen`` for the ACL semantics; case (f) drives the
+``a2a/_server.py`` surface for replay; new cases (g)–(i) drive WI-1
+durability through ``sac listen`` so the same acceptance criteria
+hold there.
 """
 
 from __future__ import annotations
@@ -468,4 +468,223 @@ def test_replay_on_reconnect_uses_last_event_id_to_resume_cursor(comms_env):
     # Assert — exactly e3 surfaces after the cursor.
     assert third_event.get("content") == "e3", (
         f"expected only e3 after Last-Event-ID={cursor_id}; got {third_event!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Case (g) — WI-1 finish-work: an event POSTed to ``sac listen`` with no
+# subscriber is delivered on the NEXT subscribe (fresh-replay path —
+# undelivered rows in ``channel_events``).
+#
+# This is the WI-1 acceptance "an event POSTed with no subscriber is
+# delivered on connect" applied to the ``_listen/server.py`` surface
+# (the WI-3 external-node substrate). Until the durability wiring landed
+# there, this publish was silently dropped — the exact failure mode the
+# handoff §0 hard rules forbid.
+# ---------------------------------------------------------------------------
+
+
+def test_listen_publish_with_no_subscriber_is_replayed_on_next_connect(comms_env):
+    """Publish first, subscribe second — the event must arrive.
+
+    Sequence:
+      1. POST alpha → beta with **no SSE subscriber attached** (the
+         ``Broker.publish`` fan-out returns ``delivered=0``).
+      2. Open beta's inbox stream — the WI-1 fresh-replay path yields
+         the missed event from ``channel_events`` (``delivered_at IS
+         NULL``).
+
+    Acceptance (handoff §4): "an event POSTed with no subscriber is
+    delivered on connect; … nothing is ever dropped silently."
+    """
+    # Arrange — siblings under one parent so default ACL allows the send.
+    db = comms_env["db"]
+    tokens = _set_up_two_groups(db)
+    app = create_app(token=tokens["host"], local_host="smoke-local")
+    port = _free_port()
+
+    async def driver() -> dict:
+        # Pre-subscriber publish.
+        async with httpx.AsyncClient(timeout=5.0) as ac:
+            resp = await ac.post(
+                f"http://127.0.0.1:{port}/agents/beta/message:send",
+                json=_send_payload("delayed delivery", from_agent="alpha"),
+                headers=_bearer(tokens["alpha"]),
+            )
+        if resp.status_code != 200:
+            raise RuntimeError(
+                f"precondition publish failed: {resp.status_code}: {resp.text!r}"
+            )
+
+        # Now subscribe — the WI-1 fresh-replay yields the missed event.
+        ready = asyncio.Event()
+        captured: dict = {}
+
+        async def consume() -> None:
+            captured["event"] = await _await_subscribed_and_read_one(
+                f"http://127.0.0.1:{port}/agents/beta/inbox/stream",
+                headers=_bearer(tokens["beta"]),
+                ready=ready,
+            )
+
+        sub = asyncio.create_task(consume())
+        try:
+            await asyncio.wait_for(sub, timeout=5.0)
+        finally:
+            if not sub.done():
+                sub.cancel()
+                with contextlib.suppress(BaseException):
+                    await sub
+        return captured.get("event", {})
+
+    # Act
+    with _run_loopback(app, port):
+        event = asyncio.run(driver())
+    # Assert
+    assert event.get("content") == "delayed delivery", (
+        f"WI-1 fresh-replay on _listen surface did not surface the missed "
+        f"pre-subscriber publish; got {event!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Case (h) — WI-1 finish-work: kill + reconnect with ``Last-Event-ID``
+# resumes the stream at the next undelivered row on the ``sac listen``
+# surface. Mirrors case (f) but against ``_listen/server.py`` rather
+# than ``a2a/_server.py``.
+# ---------------------------------------------------------------------------
+
+
+def test_listen_replay_on_reconnect_uses_last_event_id_to_resume_cursor(comms_env):
+    """Three publishes; subscribe, disconnect after #2, publish #3,
+    re-subscribe with ``Last-Event-ID = id(#2)`` → only #3 arrives.
+    """
+    # Arrange
+    db = comms_env["db"]
+    tokens = _set_up_two_groups(db)
+    app = create_app(token=tokens["host"], local_host="smoke-local")
+    port = _free_port()
+    url_send = f"http://127.0.0.1:{port}/agents/beta/message:send"
+    url_stream = f"http://127.0.0.1:{port}/agents/beta/inbox/stream"
+
+    async def consume_n(
+        url: str,
+        n: int,
+        *,
+        last_event_id: str | None = None,
+    ) -> list[tuple[str | None, dict]]:
+        seen: list[tuple[str | None, dict]] = []
+        cur_id: str | None = None
+        headers = dict(_bearer(tokens["beta"]))
+        if last_event_id is not None:
+            headers["Last-Event-ID"] = last_event_id
+        async with httpx.AsyncClient(timeout=5.0) as ac:
+            async with ac.stream("GET", url, headers=headers) as sse:
+                async for line in sse.aiter_lines():
+                    if line.startswith("id:"):
+                        cur_id = line[len("id:") :].strip()
+                        continue
+                    if line.startswith("data:"):
+                        seen.append(
+                            (
+                                cur_id,
+                                json.loads(line[len("data:") :].lstrip()),
+                            )
+                        )
+                        if len(seen) == n:
+                            return seen
+        raise AssertionError(
+            f"SSE {url!r} closed before {n} events (saw {len(seen)})"
+        )
+
+    async def driver() -> tuple[list[tuple[str | None, dict]], dict]:
+        # Two pre-subscriber publishes.
+        async with httpx.AsyncClient(timeout=5.0) as ac:
+            for i in (1, 2):
+                r = await ac.post(
+                    url_send,
+                    json=_send_payload(f"e{i}", from_agent="alpha"),
+                    headers=_bearer(tokens["alpha"]),
+                )
+                if r.status_code != 200:
+                    raise RuntimeError(
+                        f"precondition publish e{i} failed {r.status_code}: {r.text!r}"
+                    )
+        # First subscribe — replays e1 + e2; capture their SSE ids.
+        first_two = await consume_n(url_stream, 2)
+        # Third publish post-disconnect.
+        async with httpx.AsyncClient(timeout=5.0) as ac:
+            r3 = await ac.post(
+                url_send,
+                json=_send_payload("e3", from_agent="alpha"),
+                headers=_bearer(tokens["alpha"]),
+            )
+        if r3.status_code != 200:
+            raise RuntimeError(
+                f"precondition publish e3 failed {r3.status_code}: {r3.text!r}"
+            )
+        cursor = first_two[-1][0]
+        if cursor is None:
+            raise RuntimeError(
+                f"precondition: SSE id missing on replay frame: {first_two!r}"
+            )
+        # Reconnect with Last-Event-ID → expect ONLY e3.
+        post_cursor = await consume_n(url_stream, 1, last_event_id=cursor)
+        return first_two, post_cursor[0][1]
+
+    # Act
+    with _run_loopback(app, port):
+        first_two, third = asyncio.run(driver())
+
+    # Assert — replay frames carry e1/e2 contents in id order; the
+    # cursor resume yields only e3.
+    contents = [evt.get("content") for _id, evt in first_two]
+    assert contents == ["e1", "e2"], f"replay order wrong: {contents!r}"
+    assert third.get("content") == "e3", (
+        f"expected only e3 after Last-Event-ID; got {third!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Case (i) — WI-1 finish-work: a DENIED publish must NOT persist to
+# ``channel_events``. Denial is the policy working (handoff §0): it
+# returns 403 to the sender and leaves zero side-effects on the bus or
+# the durable store — otherwise a malicious / mis-permissioned sender
+# could pollute the recipient's inbox by triggering the persist path.
+# ---------------------------------------------------------------------------
+
+
+def test_listen_denied_send_does_not_persist_to_channel_events(comms_env):
+    """403'd cross-group send leaves ``channel_events`` empty for the target."""
+    # Arrange
+    import sqlite3
+
+    db = comms_env["db"]
+    tokens = _set_up_two_groups(db)
+    app = create_app(token=tokens["host"], local_host="smoke-local")
+    port = _free_port()
+
+    # Act — alpha (group A) attempts gamma (group B); no grant exists.
+    with _run_loopback(app, port):
+        with httpx.Client(timeout=5.0) as c:
+            resp = c.post(
+                f"http://127.0.0.1:{port}/agents/gamma/message:send",
+                json=_send_payload("forbidden", from_agent="alpha"),
+                headers=_bearer(tokens["alpha"]),
+            )
+    if resp.status_code != 403:
+        raise RuntimeError(
+            f"precondition: expected 403, got {resp.status_code}: {resp.text!r}"
+        )
+
+    # Assert — no channel_events row materialised for the denied target.
+    with sqlite3.connect(db) as conn:
+        cur = conn.execute(
+            "SELECT COUNT(*) FROM channel_events WHERE target = ?",
+            ("gamma",),
+        )
+        n = int(cur.fetchone()[0])
+    assert n == 0, (
+        f"denied send must not persist; channel_events has {n} row(s) "
+        "for target=gamma"
     )
