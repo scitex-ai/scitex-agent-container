@@ -666,28 +666,26 @@ def test_agent_start_failback_poller_failure_is_swallowed(
     assert ok is True
 
 
-def test_agent_start_config_no_preflight_overrides_cli_flag(
+def test_agent_start_cli_no_preflight_propagates_to_runtime(
     tmp_path: Path, registry: Registry
 ) -> None:
-    # Arrange: mutate the loaded config's RemoteSpec via the runtime
-    # factory (a real seam) — v3 YAML no longer accepts top-level
-    # ``spec.remote``, so the config object is the right surface to set
-    # ``remote.no_preflight`` on.
+    """WI-6 removed ``RemoteSpec`` and the
+    ``cfg.remote.no_preflight`` config-level override. Only the
+    ``--no-preflight`` CLI flag now controls the runtime's
+    preflight behaviour. This test exercises that single seam.
+    """
+    # Arrange
     spec = _write_spec(tmp_path)
     runtime = FakeRuntime(start_result=True)
-
-    def factory(c: AgentConfig) -> FakeRuntime:
-        c.remote.no_preflight = True
-        return runtime
 
     # Act
     lc.agent_start(
         str(spec),
         registry=registry,
-        runtime_factory=factory,
+        runtime_factory=lambda _c: runtime,
         handover_mod=FakeHandover(),
         sleep_fn=_no_sleep,
-        no_preflight=False,
+        no_preflight=True,
     )
     # Assert
     assert runtime.start_kwargs.get("no_preflight") is True
@@ -1041,23 +1039,24 @@ def test_agent_status_config_load_failure_reports_unknown_model_and_runtime(
     assert result["model"] == "unknown" and result["runtime"] == "unknown"
 
 
-def test_agent_status_remote_host_surfaces_when_set(
+def test_agent_status_omits_remote_host_after_wi6_deletion(
     tmp_path: Path, registry: Registry
 ) -> None:
-    # Arrange: mutate the loaded config to set ``remote.host`` (v3 YAML
-    # no longer accepts the top-level ``spec.remote`` block, so the
-    # status code reads it off the in-memory AgentConfig).
+    """WI-6 (handoff §6, 2026-05-20) deleted ``RemoteSpec`` and the
+    ``cfg.remote`` attribute, so ``agent_status`` no longer emits a
+    ``remote`` key. v3 host pinning lives in ``spec.host`` and is
+    surfaced via ``sac host`` / state.db ``instances.host`` instead.
+    """
+    # Arrange
     spec = _write_spec(tmp_path)
     registry.add("alpha", str(spec), "cld-alpha")
-
-    def factory(c: AgentConfig) -> FakeRuntime:
-        c.remote.host = "remote-box"
-        return FakeRuntime(running=True)
-
+    runtime_factory = lambda _c: FakeRuntime(running=True)  # noqa: E731
     # Act
-    result = lc.agent_status("alpha", registry=registry, runtime_factory=factory)
+    result = lc.agent_status(
+        "alpha", registry=registry, runtime_factory=runtime_factory
+    )
     # Assert
-    assert result.get("remote") == "remote-box"
+    assert "remote" not in result
 
 
 # ---------------------------------------------------------------------------

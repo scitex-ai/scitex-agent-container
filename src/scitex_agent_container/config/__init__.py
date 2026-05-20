@@ -3,7 +3,11 @@
 Public API:
     AgentConfig, load_config, validate_config, resolve_config
     ContainerSpec, ClaudeSpec, HealthSpec, WatchdogSpec, RestartSpec,
-    RemoteSpec, SkillsSpec, StartupCommand
+    SkillsSpec, StartupCommand
+
+``RemoteSpec`` and the ``spec.remote`` field were deleted in WI-6
+(handoff §6, 2026-05-20). Cross-host placement is via ``spec.host``;
+the old SSH-dispatch path is retired.
 """
 
 from __future__ import annotations
@@ -25,7 +29,6 @@ from ._types import (
     HookSpec,
     HostsSpec,
     ListenPort,
-    RemoteSpec,
     RestartSpec,
     SchedulingSpec,
     SkillsSpec,
@@ -44,7 +47,6 @@ __all__ = [
     "HostsSpec",
     "ListenPort",
     "ProxySpec",
-    "RemoteSpec",
     "RestartSpec",
     "SchedulingSpec",
     "SkillsSpec",

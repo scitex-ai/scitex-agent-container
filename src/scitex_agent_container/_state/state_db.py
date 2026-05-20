@@ -180,6 +180,81 @@ CREATE TABLE IF NOT EXISTS heartbeats (
     ts            REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_heartbeats_name_ts ON heartbeats(name, ts);
+
+-- WI-1 channel-event durability (handoff §4 "Durability /
+-- replay-on-reconnect"): persist every channel-bus event so a POST
+-- with no subscriber is delivered on connect, and a kill+reconnect
+-- replays exactly the missed events.
+--
+-- ``id`` is the SSE-cursor (the value of the SSE ``id:`` line); a
+-- reconnecting client passes it back as ``Last-Event-ID`` to resume
+-- without dropping or duplicating events.
+-- ``meta_json`` carries the full minted envelope so the inbox bus can
+-- replay byte-identical frames after a process restart.
+-- ``delivered_at`` is set the first time the event reaches a live
+-- subscriber; NULL means "still waiting on the bus".
+CREATE TABLE IF NOT EXISTS channel_events (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    target        TEXT NOT NULL,
+    source        TEXT,
+    kind          TEXT NOT NULL DEFAULT 'message',
+    content       TEXT,
+    meta_json     TEXT NOT NULL,
+    ts            REAL NOT NULL,
+    delivered_at  REAL
+);
+CREATE INDEX IF NOT EXISTS idx_channel_events_target_undelivered
+    ON channel_events(target, id) WHERE delivered_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_channel_events_target_id
+    ON channel_events(target, id);
+
+-- WI-2 ACL — authenticated identity, lineage edges, cross-group grants
+-- (handoff §4; lead 2026-05-21 RESTORED the authenticated-identity
+-- criterion the prior limited scope had deferred).
+--
+-- ``node_tokens`` is the authenticated-identity primitive. Each node
+-- (sac-managed or external) gets a token minted at registration; the
+-- listen server resolves an incoming ``Authorization: Bearer <token>``
+-- to a node name via :class:`_listen._acl.NodeAuthMiddleware`. The
+-- acceptance "identity cannot be spoofed via a metadata field"
+-- (handoff §4) is enforced by ``check_send_acl``: when a per-node
+-- bearer is presented, ``metadata.from_agent`` MUST match the bearer's
+-- resolved name — a mismatch is a 403 with an explicit spoof reason.
+--
+-- ``lineage`` records parent → child edges produced by
+-- ``sac agents start``. A node's *group* (the default-ACL unit) is
+-- derived from lineage: parent + parent's direct children. Schema
+-- stays N-level capable — see derive_group() for the traversal.
+--
+-- ``comms_grants`` records explicit cross-group send grants. A row
+-- ``(sender, target)`` permits ``sender → target`` even when the
+-- two are in different groups. With authenticated identity in force,
+-- ``sender`` is the resolved-from-bearer name (administrative caller
+-- path: the host-wide bearer honours ``metadata.from_agent`` verbatim
+-- — used by cross-host forwarders authenticating with the
+-- destination's host bearer pulled from ``peer-tokens/`` registry).
+CREATE TABLE IF NOT EXISTS node_tokens (
+    name        TEXT PRIMARY KEY,
+    token       TEXT NOT NULL UNIQUE,
+    created_at  REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_node_tokens_token ON node_tokens(token);
+
+CREATE TABLE IF NOT EXISTS lineage (
+    child_name   TEXT PRIMARY KEY,
+    parent_name  TEXT NOT NULL,
+    created_at   REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_lineage_parent ON lineage(parent_name);
+
+CREATE TABLE IF NOT EXISTS comms_grants (
+    sender_name  TEXT NOT NULL,
+    target_name  TEXT NOT NULL,
+    created_at   REAL NOT NULL,
+    note         TEXT,  -- optional audit annotation
+    PRIMARY KEY (sender_name, target_name)
+);
+CREATE INDEX IF NOT EXISTS idx_comms_grants_target ON comms_grants(target_name);
 """
 
 # Tables exposed by `sac db query --table=<t>`. Whitelisted so users
@@ -193,6 +268,10 @@ KNOWN_TABLES = (
     "turns",
     "errors",
     "heartbeats",
+    "channel_events",
+    "node_tokens",
+    "lineage",
+    "comms_grants",
 )
 
 

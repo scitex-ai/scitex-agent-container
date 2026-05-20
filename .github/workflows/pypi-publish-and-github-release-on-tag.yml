@@ -1,9 +1,27 @@
-name: pypi
+name: release
+
+# Tag-driven release pipeline. The intended operator flow is:
+#
+#     git tag vX.Y.Z && git push origin vX.Y.Z
+#
+# Everything else fires automatically:
+#
+#   1. test          — matrix pytest. Must pass or the pipeline halts;
+#                      nothing is published until tests are green on the
+#                      tagged commit.
+#   2. build         — wheel + sdist, uploaded as workflow artifact.
+#   3. publish       — PyPI via OIDC trusted publisher.
+#   4. release       — GitHub Release with CHANGELOG notes + artifacts.
+#   5. sync-main     — open a develop→main PR (admin-merge) so main
+#                      always equals the latest released commit. Skipped
+#                      if main already matches.
+#
+# Manual re-run: the workflow also accepts a `version` input via
+# workflow_dispatch so you can re-publish without re-tagging.
 
 on:
   push:
-    tags:
-      - 'v*'
+    tags: ['v*']
   workflow_dispatch:
     inputs:
       version:
@@ -12,90 +30,155 @@ on:
         type: string
 
 jobs:
-  build:
-    name: pypi-build-distribution-on-ubuntu-latest
+  test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
     steps:
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            v="${GITHUB_REF#refs/tags/}"
+          else
+            v="${{ inputs.version }}"
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.version || github.ref }}
+          ref: ${{ steps.ver.outputs.version }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install (best-effort fallback chain)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[all,dev]" || pip install -e ".[dev]" || pip install -e .
+      - name: Run pytest
+        run: |
+          if [ -d tests ]; then
+            pytest tests/ -x
+          else
+            echo "no tests/ directory — skipping pytest"
+          fi
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            v="${GITHUB_REF#refs/tags/}"
+          else
+            v="${{ inputs.version }}"
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.ver.outputs.version }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
       - name: Install build tools
         run: pip install build
-
       - name: Build distribution
         run: python -m build
-
-      - name: Upload dist artifacts
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: dist
           path: dist/
 
   publish:
-    name: pypi-publish-trusted-on-ubuntu-latest
     needs: build
     runs-on: ubuntu-latest
     environment:
       name: pypi
       url: https://pypi.org/p/scitex-agent-container
     permissions:
-      id-token: write   # OIDC for trusted publisher
+      id-token: write
     steps:
-      - name: Download dist artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: dist
           path: dist
-
-      - name: Publish to PyPI (trusted publisher / OIDC)
-        uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@release/v1
 
   release:
-    # Sync a GitHub Release with every PyPI publish. Notes come from
-    # CHANGELOG.md (section heading "## [VERSION]"); wheel + sdist
-    # attach as release assets so users can audit what shipped without
-    # cloning. Tag was already pushed (this workflow is *triggered by*
-    # the tag); we just create the Release record on top of it.
-    name: github-release-create-on-ubuntu-latest
-    needs: publish
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, publish]
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # gh release create
+      contents: write
     steps:
       - uses: actions/checkout@v4
-
-      - name: Download dist artifacts
-        uses: actions/download-artifact@v4
+        with:
+          ref: ${{ needs.build.outputs.version }}
+      - uses: actions/download-artifact@v4
         with:
           name: dist
           path: dist
-
       - name: Extract release notes from CHANGELOG.md
-        id: notes
         run: |
-          VERSION="${GITHUB_REF#refs/tags/v}"
+          VERSION="${{ needs.build.outputs.version }}"
+          VERSION="${VERSION#v}"
           awk -v v="$VERSION" '
             $0 ~ "^## \\[" v "\\]" {p=1; next}
             p && /^## \[/ {exit}
             p
-          ' CHANGELOG.md > release-notes.md
+          ' CHANGELOG.md > release-notes.md || true
           if [ ! -s release-notes.md ]; then
             echo "Release v${VERSION}. See CHANGELOG.md for details." > release-notes.md
           fi
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${GITHUB_REF#refs/tags/}" \
-            --title "v${{ steps.notes.outputs.version }}" \
+          gh release create "${{ needs.build.outputs.version }}" \
+            --title "${{ needs.build.outputs.version }}" \
             --notes-file release-notes.md \
             dist/*
+
+  sync-main:
+    # Open develop→main PR so main always equals the latest released
+    # commit. Branch-protected mains require PR review; this job tries
+    # admin-merge but leaves the PR open if that isn't allowed.
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: develop
+      - name: Open develop→main PR if diverged
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          git fetch origin main
+          AHEAD=$(git rev-list --count origin/main..origin/develop)
+          if [ "$AHEAD" -eq 0 ]; then
+            echo "main already up-to-date with develop."
+            exit 0
+          fi
+          EXISTING=$(gh pr list --base main --head develop --state open --json number --jq '.[0].number // empty')
+          if [ -z "$EXISTING" ]; then
+            PR_URL=$(gh pr create --base main --head develop \
+              --title "release: sync main with develop" \
+              --body "Auto-opened by the release pipeline so main equals the latest released commit.")
+            EXISTING=$(echo "$PR_URL" | grep -oE '[0-9]+$')
+            echo "Created PR #${EXISTING}"
+          else
+            echo "Reusing existing PR #${EXISTING}"
+          fi
+          gh pr merge "$EXISTING" --merge --admin \
+            || echo "Admin merge unavailable; PR left open for manual merge."

@@ -73,11 +73,12 @@ def run_bulk_path(
             if skip:
                 console.print(f"  [yellow]SKIP[/yellow] {config.name}: {skip}")
                 continue
-            location = (
-                f"REMOTE: {config.remote.host}" if config.remote.is_remote else "LOCAL"
-            )
+            # ``config.remote`` was deleted in WI-6. Host pinning under
+            # v3 lives in ``spec.host`` / ``spec.hosts`` and is shown
+            # via ``sac host`` / ``sac agent status``, not in the
+            # bulk-start one-liner.
             console.print(
-                f"  [blue]{config.name}[/blue] ({location})...",
+                f"  [blue]{config.name}[/blue]...",
                 end=" ",
             )
             agent_start(

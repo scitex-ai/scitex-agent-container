@@ -379,11 +379,9 @@ def start(
             #   * the path the agent sees inside the container
             # The container side is always /work — fixed by sac
             # (`--bind <workdir>:/work` in _apptainer_runtime).
-            host = (
-                config.remote.host
-                if config.remote.is_remote
-                else (resolve_hostname() or "local")
-            )
+            # ``config.remote`` deleted in WI-6; v3 uses ``spec.host``
+            # for cross-host placement, exposed via ``resolve_hostname``.
+            host = resolve_hostname() or "local"
             host_workdir = config.expanded_workdir
             container_workdir = config.apptainer.container_workdir
             location = f"{host}@{host_workdir}:{container_workdir}"
@@ -475,8 +473,11 @@ def start(
                         )
                     )
                 ):
+                    # ``config.remote`` deleted in WI-6; ``host`` was
+                    # resolved above from ``resolve_hostname`` (v3
+                    # ``spec.host``) so reuse it.
                     console.print(
-                        f"[yellow]auto_accept: false — manual TUI acceptance required on {config.remote.host or 'local'}[/yellow]"
+                        f"[yellow]auto_accept: false — manual TUI acceptance required on {host}[/yellow]"
                     )
         except Exception as exc:
             any_error = True

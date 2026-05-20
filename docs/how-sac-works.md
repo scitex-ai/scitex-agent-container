@@ -33,7 +33,6 @@ externally addressable Claude agent.
     ...                                                      no live runner)
   }
                                                             ▲
-  sac channel send TO MSG ─────────────────────────────────┤
   sac peer  post-turn  AGENT TEXT  ────────────────────────┘
 ```
 
@@ -84,7 +83,7 @@ tmux pane — including other agents via `sac peer post-turn`.
 
 A per-host REST API (bearer-auth, loopback-only) that exposes fleet-wide
 operations: health checks, agent status, send, agent-card, and more.
-`sac channel send` routes through it for local agent-to-agent messaging.
+`sac peer post-turn` routes through it for local agent-to-agent messaging.
 
 ## Restart / health
 

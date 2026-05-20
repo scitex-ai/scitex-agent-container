@@ -339,12 +339,10 @@ def agent_start(
     _run_hooks(config.hooks.get("pre_start", []), extra_env=hook_env)
     _fire_forget_hook(config.name, "pre_start", config.hooks.get("pre_start", []))
 
-    # Start — pass ``force`` through so remote dispatchers (SSHRemote)
-    # can relay ``--force`` to the remote CLI and skip its own
-    # already-running check.
-    # Config-level no_preflight overrides CLI flag
-    if config.remote.no_preflight:
-        no_preflight = True
+    # Start — ``force`` is propagated to the runtime. The legacy
+    # ``config.remote.no_preflight`` override was retired with
+    # ``RemoteSpec`` in WI-6 (handoff §6, 2026-05-20); the
+    # ``--no-preflight`` CLI flag remains the only way to set it.
     start_kw = {"no_preflight": no_preflight, "force": force, "foreground": foreground}
     if one_shot:
         start_kw["one_shot"] = True
@@ -592,8 +590,9 @@ def agent_status(
         "model": config.model if config else "unknown",
         "runtime": config.runtime if config else "unknown",
     }
-    if config and config.remote.is_remote:
-        result["remote"] = config.remote.host
+    # ``config.remote`` was deleted in WI-6; spec.host (host pinning)
+    # is the v3 equivalent and is recorded in state.db's ``instances``
+    # table rather than echoed back through ``status``.
 
     # Hook-points / listen / extensions plumbing (todo#286 Phase 4).
     # Counts are exposed so consumers can see what's wired up; command

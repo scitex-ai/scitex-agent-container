@@ -5,7 +5,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Index &mdash; scitex-agent-container v0.17.0</title>
+  <title>Index &mdash; scitex-agent-container v0.17.2</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=9edc463e" />
       <link rel="stylesheet" type="text/css" href="_static/copybutton.css?v=76b2166b" />
@@ -13,7 +13,7 @@
   
       <script src="_static/jquery.js?v=5d32c60e"></script>
       <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
-      <script src="_static/documentation_options.js?v=0c3dd48d"></script>
+      <script src="_static/documentation_options.js?v=9fbddafe"></script>
       <script src="_static/doctools.js?v=fd6eb6e6"></script>
       <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
       <script src="_static/clipboard.min.js?v=a7894cd8"></script>
@@ -172,8 +172,21 @@
 <p class="caption" role="heading"><span class="caption-text">Ecosystem</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="sac-and-orochi.html">sac and orochi</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#architecture">Architecture</a></li>
-<li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#responsibility-split">Responsibility split</a></li>
+<li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#the-comms-model-what-sac-knows">The comms model — what sac knows</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#lineage-parent-children">Lineage — parent / children</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#group-the-unit-of-default-acl">Group — the unit of default ACL</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#depth-limit-a-policy-not-a-structural-limit">Depth limit — a POLICY, not a structural limit</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#acl-permissioned-messaging">ACL — permissioned messaging</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#authenticated-identity-handoff-4-acceptance">Authenticated identity (handoff §4 acceptance)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#cross-host-forwarding-per-host-bearer-registry">Cross-host forwarding — per-host bearer registry</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#a2a-compliance">A2A compliance</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#what-sac-knows-vs-doesnt">What sac knows vs doesn’t</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#the-corrected-boundary">The corrected boundary</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#responsibility-split">Responsibility split</a></li>
+</ul>
+</li>
 <li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#how-orochi-consumes-sac">How orochi consumes sac</a></li>
 <li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#standalone-use">Standalone use</a></li>
 <li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#live-instance">Live instance</a></li>
@@ -205,7 +218,6 @@
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hooks"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hooks</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.listen"><code class="docutils literal notranslate"><span class="pre">AgentConfig.listen</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.extensions"><code class="docutils literal notranslate"><span class="pre">AgentConfig.extensions</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.remote"><code class="docutils literal notranslate"><span class="pre">AgentConfig.remote</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.skills</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.context_management"><code class="docutils literal notranslate"><span class="pre">AgentConfig.context_management</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_commands"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_commands</span></code></a></li>
@@ -298,19 +310,6 @@
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ProxySpec.redact"><code class="docutils literal notranslate"><span class="pre">ProxySpec.redact</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ProxySpec.__init__"><code class="docutils literal notranslate"><span class="pre">ProxySpec.__init__()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ProxySpec.timeout_s"><code class="docutils literal notranslate"><span class="pre">ProxySpec.timeout_s</span></code></a></li>
-</ul>
-</li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec"><code class="docutils literal notranslate"><span class="pre">RemoteSpec</span></code></a><ul>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.hops"><code class="docutils literal notranslate"><span class="pre">RemoteSpec.hops</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.host"><code class="docutils literal notranslate"><span class="pre">RemoteSpec.host</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.user"><code class="docutils literal notranslate"><span class="pre">RemoteSpec.user</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.key"><code class="docutils literal notranslate"><span class="pre">RemoteSpec.key</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.port"><code class="docutils literal notranslate"><span class="pre">RemoteSpec.port</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.timeout"><code class="docutils literal notranslate"><span class="pre">RemoteSpec.timeout</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.login_shell"><code class="docutils literal notranslate"><span class="pre">RemoteSpec.login_shell</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.no_preflight"><code class="docutils literal notranslate"><span class="pre">RemoteSpec.no_preflight</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.is_remote"><code class="docutils literal notranslate"><span class="pre">RemoteSpec.is_remote</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.__init__"><code class="docutils literal notranslate"><span class="pre">RemoteSpec.__init__()</span></code></a></li>
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec"><code class="docutils literal notranslate"><span class="pre">RestartSpec</span></code></a><ul>
@@ -464,8 +463,6 @@
         <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.ListenPort.__init__">(scitex_agent_container.config.ListenPort method)</a>
 </li>
         <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.ProxySpec.__init__">(scitex_agent_container.config.ProxySpec method)</a>
-</li>
-        <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.__init__">(scitex_agent_container.config.RemoteSpec method)</a>
 </li>
         <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.__init__">(scitex_agent_container.config.RestartSpec method)</a>
 </li>
@@ -642,16 +639,10 @@
 </li>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.HookSpec">HookSpec (class in scitex_agent_container.config)</a>
 </li>
-      <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.hops">hops (scitex_agent_container.config.RemoteSpec attribute)</a>
-</li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.HostsSpec.host">host (scitex_agent_container.config.HostsSpec attribute)</a>
-
-      <ul>
-        <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.host">(scitex_agent_container.config.RemoteSpec attribute)</a>
 </li>
-      </ul></li>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.HostsSpec.hosts">hosts (scitex_agent_container.config.HostsSpec attribute)</a>
 </li>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hosts_spec">hosts_spec (scitex_agent_container.config.AgentConfig attribute)</a>
@@ -682,20 +673,16 @@
       </ul></li>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.is_ready">is_ready() (in module scitex_agent_container.runtimes.prompts)</a>
 </li>
-      <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.is_remote">is_remote (scitex_agent_container.config.RemoteSpec property)</a>
-</li>
   </ul></td>
 </tr></table>
 
 <h2 id="K">K</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.key">key (scitex_agent_container.config.RemoteSpec attribute)</a>
+      <li><a href="api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.PromptHandler.keys">keys (scitex_agent_container.runtimes.prompts.PromptHandler attribute)</a>
 </li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.PromptHandler.keys">keys (scitex_agent_container.runtimes.prompts.PromptHandler attribute)</a>
-</li>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.kind">kind (scitex_agent_container.config.AgentConfig attribute)</a>
 </li>
   </ul></td>
@@ -713,8 +700,6 @@
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.ListenPort">ListenPort (class in scitex_agent_container.config)</a>
 </li>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.load_config">load_config() (in module scitex_agent_container.config)</a>
-</li>
-      <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.login_shell">login_shell (scitex_agent_container.config.RemoteSpec attribute)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -775,8 +760,6 @@
   <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.network">network (scitex_agent_container.config.ContainerSpec attribute)</a>
 </li>
-      <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.no_preflight">no_preflight (scitex_agent_container.config.RemoteSpec attribute)</a>
-</li>
   </ul></td>
 </tr></table>
 
@@ -804,21 +787,17 @@
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.policy">policy (scitex_agent_container.config.RestartSpec attribute)</a>
 </li>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.ListenPort.port">port (scitex_agent_container.config.ListenPort attribute)</a>
-
-      <ul>
-        <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.port">(scitex_agent_container.config.RemoteSpec attribute)</a>
 </li>
-      </ul></li>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.post_start">post_start (scitex_agent_container.config.HookSpec attribute)</a>
 </li>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.post_stop">post_stop (scitex_agent_container.config.HookSpec attribute)</a>
 </li>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.pre_start">pre_start (scitex_agent_container.config.HookSpec attribute)</a>
 </li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.pre_stop">pre_stop (scitex_agent_container.config.HookSpec attribute)</a>
 </li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.SchedulingSpec.preferred_host">preferred_host (scitex_agent_container.config.SchedulingSpec attribute)</a>
 </li>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.PromptHandler.priority">priority (scitex_agent_container.runtimes.prompts.PromptHandler attribute)</a>
@@ -845,20 +824,16 @@
 </li>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.register_prompt">register_prompt() (in module scitex_agent_container.runtimes.prompts)</a>
 </li>
-      <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.remote">remote (scitex_agent_container.config.AgentConfig attribute)</a>
-</li>
-      <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec">RemoteSpec (class in scitex_agent_container.config)</a>
-</li>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.SkillsSpec.required">required (scitex_agent_container.config.SkillsSpec attribute)</a>
 </li>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.resolve_config">resolve_config() (in module scitex_agent_container.config)</a>
 </li>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.resolve_hostname">resolve_hostname() (in module scitex_agent_container.config)</a>
 </li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec.resp_waiting">resp_waiting (scitex_agent_container.config.WatchdogSpec attribute)</a>
 </li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec.resp_y_n">resp_y_n (scitex_agent_container.config.WatchdogSpec attribute)</a>
 </li>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec.resp_y_y_n">resp_y_y_n (scitex_agent_container.config.WatchdogSpec attribute)</a>
@@ -928,11 +903,7 @@
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.HealthSpec.timeout">timeout (scitex_agent_container.config.HealthSpec attribute)</a>
-
-      <ul>
-        <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.timeout">(scitex_agent_container.config.RemoteSpec attribute)</a>
 </li>
-      </ul></li>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.ProxySpec.timeout_s">timeout_s (scitex_agent_container.config.ProxySpec attribute)</a>
 </li>
   </ul></td>
@@ -954,11 +925,7 @@
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.user">user (scitex_agent_container.config.AgentConfig attribute)</a>
-
-      <ul>
-        <li><a href="api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.user">(scitex_agent_container.config.RemoteSpec attribute)</a>
 </li>
-      </ul></li>
   </ul></td>
 </tr></table>
 

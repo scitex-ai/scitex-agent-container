@@ -18,18 +18,25 @@ Two surfaces:
 
 URL resolution rules for ``post_turn(agent_name, ...)``:
 
-* Local agent (``spec.remote.host`` empty) → ``http://127.0.0.1:<port>/v1/turn``.
-* Remote agent (``spec.remote.host`` set) →
-  ``http://<spec.remote.host>:<port>/v1/turn``. The agent YAML's
+* Local agent (``spec.host`` empty / matches the calling host) →
+  ``http://127.0.0.1:<port>/v1/turn``.
+* Remote agent (``spec.host`` pinned to a different host) →
+  ``http://<spec.host>:<port>/v1/turn``. The agent YAML's
   ``spec.a2a.host`` MUST be ``0.0.0.0`` (or a LAN-visible address)
   for this to work — loopback-only listens aren't reachable from
   the caller's host. We raise a clear error in that case so the
   user fixes the YAML rather than getting an opaque connection
   refused.
 
-No auth on the wire — this is for trusted intra-fleet calls. Layer
-post-3 will add bearer-token / mTLS gates when sac itself is widely
-deployed.
+Auth on the wire (WI-2 / WI-4, 2026-05-21): cross-host calls into
+another sac listen's ``message:send`` carry the destination host's
+listen bearer, pulled from
+``~/.scitex/agent-container/peer-tokens/<peer-host>.token`` on the
+caller's side (registered via ``sac host add-peer <host> <token>``).
+The destination's :class:`BearerAuthMiddleware` admits the request
+as an *administrative* caller; the destination's ACL then gates on
+``metadata.from_agent`` per handoff §4 ("ACL is enforced at the
+receiving host").
 """
 
 from __future__ import annotations
@@ -118,8 +125,8 @@ def resolve_peer_url(agent_name: str) -> str:
 
     The same ``spec.host`` field is consulted by ``sac start`` for
     dispatch, so post-turn cannot disagree about where the agent
-    lives. ``spec.remote.host`` is no longer consulted (legacy spec
-    files with ``spec.remote.host`` set should migrate to ``spec.host``).
+    lives. The legacy ``spec.remote`` block was deleted in WI-6
+    (handoff §6, 2026-05-20).
     """
     from ..config._resolve import resolve_config
 

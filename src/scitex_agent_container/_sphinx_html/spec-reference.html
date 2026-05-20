@@ -6,7 +6,7 @@
   <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>YAML Spec Reference (v3) &mdash; scitex-agent-container v0.17.0</title>
+  <title>YAML Spec Reference (v3) &mdash; scitex-agent-container v0.17.2</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=9edc463e" />
       <link rel="stylesheet" type="text/css" href="_static/copybutton.css?v=76b2166b" />
@@ -14,7 +14,7 @@
   
       <script src="_static/jquery.js?v=5d32c60e"></script>
       <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
-      <script src="_static/documentation_options.js?v=0c3dd48d"></script>
+      <script src="_static/documentation_options.js?v=9fbddafe"></script>
       <script src="_static/doctools.js?v=fd6eb6e6"></script>
       <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
       <script src="_static/clipboard.min.js?v=a7894cd8"></script>
@@ -175,8 +175,21 @@
 <p class="caption" role="heading"><span class="caption-text">Ecosystem</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="sac-and-orochi.html">sac and orochi</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#architecture">Architecture</a></li>
-<li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#responsibility-split">Responsibility split</a></li>
+<li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#the-comms-model-what-sac-knows">The comms model — what sac knows</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#lineage-parent-children">Lineage — parent / children</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#group-the-unit-of-default-acl">Group — the unit of default ACL</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#depth-limit-a-policy-not-a-structural-limit">Depth limit — a POLICY, not a structural limit</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#acl-permissioned-messaging">ACL — permissioned messaging</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#authenticated-identity-handoff-4-acceptance">Authenticated identity (handoff §4 acceptance)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#cross-host-forwarding-per-host-bearer-registry">Cross-host forwarding — per-host bearer registry</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#a2a-compliance">A2A compliance</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#what-sac-knows-vs-doesnt">What sac knows vs doesn’t</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#the-corrected-boundary">The corrected boundary</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="sac-and-orochi.html#responsibility-split">Responsibility split</a></li>
+</ul>
+</li>
 <li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#how-orochi-consumes-sac">How orochi consumes sac</a></li>
 <li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#standalone-use">Standalone use</a></li>
 <li class="toctree-l2"><a class="reference internal" href="sac-and-orochi.html#live-instance">Live instance</a></li>
@@ -208,7 +221,6 @@
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hooks"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hooks</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.listen"><code class="docutils literal notranslate"><span class="pre">AgentConfig.listen</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.extensions"><code class="docutils literal notranslate"><span class="pre">AgentConfig.extensions</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.remote"><code class="docutils literal notranslate"><span class="pre">AgentConfig.remote</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.skills</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.context_management"><code class="docutils literal notranslate"><span class="pre">AgentConfig.context_management</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_commands"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_commands</span></code></a></li>
@@ -301,19 +313,6 @@
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ProxySpec.redact"><code class="docutils literal notranslate"><span class="pre">ProxySpec.redact</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ProxySpec.__init__"><code class="docutils literal notranslate"><span class="pre">ProxySpec.__init__()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ProxySpec.timeout_s"><code class="docutils literal notranslate"><span class="pre">ProxySpec.timeout_s</span></code></a></li>
-</ul>
-</li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec"><code class="docutils literal notranslate"><span class="pre">RemoteSpec</span></code></a><ul>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.hops"><code class="docutils literal notranslate"><span class="pre">RemoteSpec.hops</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.host"><code class="docutils literal notranslate"><span class="pre">RemoteSpec.host</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.user"><code class="docutils literal notranslate"><span class="pre">RemoteSpec.user</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.key"><code class="docutils literal notranslate"><span class="pre">RemoteSpec.key</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.port"><code class="docutils literal notranslate"><span class="pre">RemoteSpec.port</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.timeout"><code class="docutils literal notranslate"><span class="pre">RemoteSpec.timeout</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.login_shell"><code class="docutils literal notranslate"><span class="pre">RemoteSpec.login_shell</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.no_preflight"><code class="docutils literal notranslate"><span class="pre">RemoteSpec.no_preflight</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.is_remote"><code class="docutils literal notranslate"><span class="pre">RemoteSpec.is_remote</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.RemoteSpec.__init__"><code class="docutils literal notranslate"><span class="pre">RemoteSpec.__init__()</span></code></a></li>
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec"><code class="docutils literal notranslate"><span class="pre">RestartSpec</span></code></a><ul>
@@ -431,9 +430,9 @@ no <code class="docutils literal notranslate"><span class="pre">metadata.name</s
 <section id="quick-links">
 <h2>Quick links<a class="headerlink" href="#quick-links" title="Link to this heading"></a></h2>
 <ul class="simple">
-<li><p>Annotated full example: <a class="reference internal" href="#../examples/agents/full-agent/spec.yaml"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">examples/agents/full-agent/spec.yaml</span></code></span></a> — every supported field with inline comments</p></li>
-<li><p>Minimal example: <a class="reference internal" href="#../examples/agents/minimal-agent/spec.yaml"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">examples/agents/minimal-agent/spec.yaml</span></code></span></a></p></li>
-<li><p>Quickstart with <code class="docutils literal notranslate"><span class="pre">startup_prompts</span></code>: <a class="reference internal" href="#../examples/agents/hello-agent/spec.yaml"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">examples/agents/hello-agent/spec.yaml</span></code></span></a></p></li>
+<li><p>Annotated full example: <a class="reference external" href="https://github.com/ywatanabe1989/scitex-agent-container/blob/develop/examples/agents/full-agent/spec.yaml"><code class="docutils literal notranslate"><span class="pre">examples/agents/full-agent/spec.yaml</span></code></a> — every supported field with inline comments</p></li>
+<li><p>Minimal example: <a class="reference external" href="https://github.com/ywatanabe1989/scitex-agent-container/blob/develop/examples/agents/minimal-agent/spec.yaml"><code class="docutils literal notranslate"><span class="pre">examples/agents/minimal-agent/spec.yaml</span></code></a></p></li>
+<li><p>Quickstart with <code class="docutils literal notranslate"><span class="pre">startup_prompts</span></code>: <a class="reference external" href="https://github.com/ywatanabe1989/scitex-agent-container/blob/develop/examples/agents/hello-agent/spec.yaml"><code class="docutils literal notranslate"><span class="pre">examples/agents/hello-agent/spec.yaml</span></code></a></p></li>
 </ul>
 </section>
 <section id="top-level-shape">
@@ -706,7 +705,7 @@ when <code class="docutils literal notranslate"><span class="pre">spec.a2a.port<
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">relaxed</span></code></p></td>
 <td><p>bool (default <code class="docutils literal notranslate"><span class="pre">false</span></code>)</p></td>
-<td><p><strong>(DESIGN — not yet implemented in the parser.)</strong> Intent: opt OUT of hardened-by-default isolation. When <code class="docutils literal notranslate"><span class="pre">false</span></code> (default), sac auto-prepends <code class="docutils literal notranslate"><span class="pre">--containall</span></code> / <code class="docutils literal notranslate"><span class="pre">--cleanenv</span></code> / <code class="docutils literal notranslate"><span class="pre">--writable-tmpfs</span></code> / <code class="docutils literal notranslate"><span class="pre">--home</span> <span class="pre">/home/agent</span></code>. Set <code class="docutils literal notranslate"><span class="pre">true</span></code> to disable; see <span class="xref myst"><code class="docutils literal notranslate"><span class="pre">docs/isolation.md</span></code></span> + <a class="reference internal" href="#adr/0001-isolation-hardening.md"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">docs/adr/0001-isolation-hardening.md</span></code></span></a>. TODO: wire into <code class="docutils literal notranslate"><span class="pre">ApptainerSpec</span></code>.</p></td>
+<td><p><strong>(DESIGN — not yet implemented in the parser.)</strong> Intent: opt OUT of hardened-by-default isolation. When <code class="docutils literal notranslate"><span class="pre">false</span></code> (default), sac auto-prepends <code class="docutils literal notranslate"><span class="pre">--containall</span></code> / <code class="docutils literal notranslate"><span class="pre">--cleanenv</span></code> / <code class="docutils literal notranslate"><span class="pre">--writable-tmpfs</span></code> / <code class="docutils literal notranslate"><span class="pre">--home</span> <span class="pre">/home/agent</span></code>. Set <code class="docutils literal notranslate"><span class="pre">true</span></code> to disable; see <a class="reference internal" href="isolation.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">docs/isolation.md</span></code></span></a> + <a class="reference internal" href="adr/0001-isolation-hardening.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">docs/adr/0001-isolation-hardening.md</span></code></span></a>. TODO: wire into <code class="docutils literal notranslate"><span class="pre">ApptainerSpec</span></code>.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">fakeroot</span></code></p></td>
 <td><p>bool (default <code class="docutils literal notranslate"><span class="pre">false</span></code>)</p></td>
@@ -990,18 +989,18 @@ to a <em>different</em> host is rejected with HTTP 502. The MVP does
 not enforce an apptainer <code class="docutils literal notranslate"><span class="pre">--net</span></code> policy.</p></li>
 <li><p>Runs in <code class="docutils literal notranslate"><span class="pre">sac-proxy.sif</span></code> — see <code class="docutils literal notranslate"><span class="pre">containers/sac-proxy.def</span></code>.</p></li>
 </ul>
-<p>See <a class="reference internal" href="#../examples/agents/proxy-agent/spec.yaml"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">examples/agents/proxy-agent/spec.yaml</span></code></span></a>
+<p>See <a class="reference external" href="https://github.com/ywatanabe1989/scitex-agent-container/blob/develop/examples/agents/proxy-agent/spec.yaml"><code class="docutils literal notranslate"><span class="pre">examples/agents/proxy-agent/spec.yaml</span></code></a>
 for a complete minimal example.</p>
 </section>
 </section>
 <section id="examples">
 <h2>Examples<a class="headerlink" href="#examples" title="Link to this heading"></a></h2>
-<p>Copy from <a class="reference internal" href="#../examples/agents/"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">examples/agents/</span></code></span></a>:</p>
+<p>Copy from <a class="reference external" href="https://github.com/ywatanabe1989/scitex-agent-container/tree/develop/examples/agents"><code class="docutils literal notranslate"><span class="pre">examples/agents/</span></code></a>:</p>
 <ul class="simple">
-<li><p><a class="reference internal" href="#../examples/agents/full-agent/"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">full-agent/</span></code></span></a> — annotated spec exercising every supported field (plus <code class="docutils literal notranslate"><span class="pre">dot_claude/</span></code> layout)</p></li>
-<li><p><a class="reference internal" href="#../examples/agents/minimal-agent/"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">minimal-agent/</span></code></span></a> — bare minimum, no <code class="docutils literal notranslate"><span class="pre">dot_claude</span></code></p></li>
-<li><p><a class="reference internal" href="#../examples/agents/hello-agent/"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">hello-agent/</span></code></span></a> — quickstart with <code class="docutils literal notranslate"><span class="pre">startup_prompts</span></code></p></li>
-<li><p><a class="reference internal" href="#../examples/agents/proxy-agent/"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">proxy-agent/</span></code></span></a> — <code class="docutils literal notranslate"><span class="pre">kind:</span> <span class="pre">AgentProxy</span></code> forwarder example</p></li>
+<li><p><a class="reference external" href="https://github.com/ywatanabe1989/scitex-agent-container/tree/develop/examples/agents/full-agent"><code class="docutils literal notranslate"><span class="pre">full-agent/</span></code></a> — annotated spec exercising every supported field (plus <code class="docutils literal notranslate"><span class="pre">dot_claude/</span></code> layout)</p></li>
+<li><p><a class="reference external" href="https://github.com/ywatanabe1989/scitex-agent-container/tree/develop/examples/agents/minimal-agent"><code class="docutils literal notranslate"><span class="pre">minimal-agent/</span></code></a> — bare minimum, no <code class="docutils literal notranslate"><span class="pre">dot_claude</span></code></p></li>
+<li><p><a class="reference external" href="https://github.com/ywatanabe1989/scitex-agent-container/tree/develop/examples/agents/hello-agent"><code class="docutils literal notranslate"><span class="pre">hello-agent/</span></code></a> — quickstart with <code class="docutils literal notranslate"><span class="pre">startup_prompts</span></code></p></li>
+<li><p><a class="reference external" href="https://github.com/ywatanabe1989/scitex-agent-container/tree/develop/examples/agents/proxy-agent"><code class="docutils literal notranslate"><span class="pre">proxy-agent/</span></code></a> — <code class="docutils literal notranslate"><span class="pre">kind:</span> <span class="pre">AgentProxy</span></code> forwarder example</p></li>
 </ul>
 </section>
 </section>

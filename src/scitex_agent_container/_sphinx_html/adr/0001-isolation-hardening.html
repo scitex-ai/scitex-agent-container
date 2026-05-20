@@ -1,0 +1,845 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ADR: Isolation Hardening (2026-05-13) &mdash; scitex-agent-container v0.17.2</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=9edc463e" />
+      <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+
+  
+      <script src="../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../_static/documentation_options.js?v=9fbddafe"></script>
+      <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+      <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+      <script src="../_static/copybutton.js?v=f281be69"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            scitex-agent-container
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../installation.html">Installation</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../installation.html#from-pypi">From PyPI</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../installation.html#from-source">From Source</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../installation.html#requirements">Requirements</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../quickstart.html">Quickstart</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../templates.html">Templates and Examples</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../templates.html#pattern-templates">Pattern Templates</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../templates.html#instantiating-a-template">Instantiating a Template</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../templates.html#examples">Examples</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../status_and_hooks.html">Status and Hook Integration</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../status_and_hooks.html#rich-status">Rich Status</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../status_and_hooks.html#claude-code-hook-integration">Claude Code Hook Integration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../status_and_hooks.html#zero-coupling-design">Zero Coupling Design</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Architecture &amp; Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../how-sac-works.html">How sac works</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../how-sac-works.html#launch-flow">Launch flow</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-sac-works.html#what-each-piece-does">What each piece does</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../how-sac-works.html#spec-yaml-ssot"><code class="docutils literal notranslate"><span class="pre">spec.yaml</span></code> (SSoT)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../how-sac-works.html#dot-claude-optional"><code class="docutils literal notranslate"><span class="pre">dot_claude/</span></code> (optional)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../how-sac-works.html#apptainer-instance">Apptainer instance</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../how-sac-works.html#claude-sdk-session">Claude SDK session</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../how-sac-works.html#a2a-inbound-spec-a2a-port">A2A inbound (<code class="docutils literal notranslate"><span class="pre">spec.a2a.port</span></code>)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../how-sac-works.html#sac-listen-control-plane"><code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code> (control plane)</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../how-sac-works.html#restart-health">Restart / health</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-sac-works.html#see-also">See also</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../spec-reference.html">YAML Spec Reference (v3)</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../spec-reference.html#quick-links">Quick links</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../spec-reference.html#top-level-shape">Top-level shape</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../spec-reference.html#field-reference">Field reference</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../spec-reference.html#metadata-labels-agentcard-fields"><code class="docutils literal notranslate"><span class="pre">metadata.labels</span></code> → AgentCard fields</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../spec-reference.html#spec-top-level"><code class="docutils literal notranslate"><span class="pre">spec</span></code> — top-level</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../spec-reference.html#spec-apptainer-engine-knobs"><code class="docutils literal notranslate"><span class="pre">spec.apptainer</span></code> — engine knobs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../spec-reference.html#spec-claude-sdk-knobs"><code class="docutils literal notranslate"><span class="pre">spec.claude</span></code> — SDK knobs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../spec-reference.html#spec-health-spec-restart-spec-watchdog-spec-autonomous"><code class="docutils literal notranslate"><span class="pre">spec.health</span></code> / <code class="docutils literal notranslate"><span class="pre">spec.restart</span></code> / <code class="docutils literal notranslate"><span class="pre">spec.watchdog</span></code> / <code class="docutils literal notranslate"><span class="pre">spec.autonomous</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../spec-reference.html#spec-a2a-spec-listen-network-endpoints"><code class="docutils literal notranslate"><span class="pre">spec.a2a</span></code> / <code class="docutils literal notranslate"><span class="pre">spec.listen</span></code> — network endpoints</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../spec-reference.html#scitex-agent-container-config-yaml"><code class="docutils literal notranslate"><span class="pre">~/.scitex/agent-container/config.yaml</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../spec-reference.html#skills">Skills</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../spec-reference.html#spec-mcp-servers"><code class="docutils literal notranslate"><span class="pre">spec.mcp_servers</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../spec-reference.html#spec-telegram-spec-hooks-spec-extensions"><code class="docutils literal notranslate"><span class="pre">spec.telegram</span></code> / <code class="docutils literal notranslate"><span class="pre">spec.hooks</span></code> / <code class="docutils literal notranslate"><span class="pre">spec.extensions</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../spec-reference.html#lifetime-session-selection">Lifetime / session selection</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../spec-reference.html#kind-agentproxy-http-forwarder-agents"><code class="docutils literal notranslate"><span class="pre">kind:</span> <span class="pre">AgentProxy</span></code> — HTTP forwarder agents</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../spec-reference.html#spec-proxy-reference"><code class="docutils literal notranslate"><span class="pre">spec.proxy</span></code> reference</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../spec-reference.html#security-notes">Security notes</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../spec-reference.html#examples">Examples</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../talking-to-agents.html">Talking to a Running Agent</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../talking-to-agents.html#a2a-sidecar-post-agents-name-turn">1. A2A sidecar — <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/agents/&lt;name&gt;/turn</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../talking-to-agents.html#send-a-turn">Send a turn</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../talking-to-agents.html#discover-the-agent">Discover the agent</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../talking-to-agents.html#one-shot-vs-follow-up">One-shot vs follow-up</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../talking-to-agents.html#cli-sac-agents-send-sac-agents-tail">2. CLI — <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agents</span> <span class="pre">send</span></code> / <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agents</span> <span class="pre">tail</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="../talking-to-agents.html#sac-listen-host-level-http-control-plane">3. <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code> — host-level HTTP control plane</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../talking-to-agents.html#cross-host-sac-on-peer">Cross-host: <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">--on</span> <span class="pre">&lt;peer&gt;</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="../talking-to-agents.html#forwarding-to-external-a2a-kind-agentproxy">Forwarding to external A2A (<code class="docutils literal notranslate"><span class="pre">kind:</span> <span class="pre">AgentProxy</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../talking-to-agents.html#picking-a-transport">Picking a transport</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../talking-to-agents.html#see-also">See also</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../isolation.html">Container Isolation in sac</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../isolation.html#apptainers-default-leak-paths-10-categories">Apptainer’s default leak paths (10 categories)</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../isolation.html#auto-bound-filesystem-paths">1. Auto-bound filesystem paths</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../isolation.html#environment-variable-inheritance">2. Environment variable inheritance</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../isolation.html#user-permission-inheritance">3. User / permission inheritance</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../isolation.html#network-transparency">4. Network transparency</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../isolation.html#process-ipc-uts-namespaces">5. Process / IPC / UTS namespaces</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../isolation.html#sif-build-time-leaks-apptainer-specific">6. SIF build-time leaks (Apptainer-specific)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../isolation.html#overlay-state-persistence">7. Overlay state persistence</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../isolation.html#writable-vs-writable-tmpfs-confusion">8. <code class="docutils literal notranslate"><span class="pre">--writable</span></code> vs <code class="docutils literal notranslate"><span class="pre">--writable-tmpfs</span></code> confusion</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../isolation.html#indirect-leakage-via-bind-mounts">9. Indirect leakage via bind-mounts</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../isolation.html#apptainer-version-differences">10. Apptainer version differences</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../isolation.html#sacs-hardened-defaults">sac’s hardened defaults</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../isolation.html#canonical-container-home-home-agent-d5">Canonical container HOME — <code class="docutils literal notranslate"><span class="pre">/home/agent</span></code> (D5)</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../isolation.html#roadmap-for-sacs-isolation-surface">Roadmap for sac’s isolation surface</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../isolation.html#one-line-summary-for-papers-readmes">One-line summary for papers / READMEs</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../isolation.html#see-also">See also</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../directories.html">Configuration and Runtime Directories</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../directories.html#layout">Layout</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../directories.html#configuration-cascade">Configuration cascade</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../credentials.html">Claude Code credential &amp; settings files</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../credentials.html#files">Files</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../credentials.html#claude-json"><code class="docutils literal notranslate"><span class="pre">~/.claude.json</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../credentials.html#claude-credentials-json"><code class="docutils literal notranslate"><span class="pre">~/.claude/.credentials.json</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../credentials.html#claude-settings-json"><code class="docutils literal notranslate"><span class="pre">~/.claude/settings.json</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../credentials.html#fleet-hosts">Fleet hosts</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../credentials.html#what-not-to-emit">What NOT to emit</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../credentials.html#safe-metadata-fields-whitelist">Safe metadata fields (whitelist)</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../images.html">Apptainer Images</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../images.html#builtin-layers">Builtin layers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../images.html#build">Build</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../images.html#sandbox-freeze-workflow">Sandbox / freeze workflow</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../images.html#pinning-a-custom-image">Pinning a custom image</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Ecosystem</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../sac-and-orochi.html">sac and orochi</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../sac-and-orochi.html#the-comms-model-what-sac-knows">The comms model — what sac knows</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../sac-and-orochi.html#lineage-parent-children">Lineage — parent / children</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../sac-and-orochi.html#group-the-unit-of-default-acl">Group — the unit of default ACL</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../sac-and-orochi.html#depth-limit-a-policy-not-a-structural-limit">Depth limit — a POLICY, not a structural limit</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../sac-and-orochi.html#acl-permissioned-messaging">ACL — permissioned messaging</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../sac-and-orochi.html#authenticated-identity-handoff-4-acceptance">Authenticated identity (handoff §4 acceptance)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../sac-and-orochi.html#cross-host-forwarding-per-host-bearer-registry">Cross-host forwarding — per-host bearer registry</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../sac-and-orochi.html#a2a-compliance">A2A compliance</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../sac-and-orochi.html#what-sac-knows-vs-doesnt">What sac knows vs doesn’t</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../sac-and-orochi.html#the-corrected-boundary">The corrected boundary</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../sac-and-orochi.html#responsibility-split">Responsibility split</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../sac-and-orochi.html#how-orochi-consumes-sac">How orochi consumes sac</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../sac-and-orochi.html#standalone-use">Standalone use</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../sac-and-orochi.html#live-instance">Live instance</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../api/scitex_agent_container.html">scitex_agent_container API Reference</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../api/scitex_agent_container.html#module-scitex_agent_container.config">Config</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig"><code class="docutils literal notranslate"><span class="pre">AgentConfig</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.name"><code class="docutils literal notranslate"><span class="pre">AgentConfig.name</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.runtime"><code class="docutils literal notranslate"><span class="pre">AgentConfig.runtime</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.image"><code class="docutils literal notranslate"><span class="pre">AgentConfig.image</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.model"><code class="docutils literal notranslate"><span class="pre">AgentConfig.model</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.workdir</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.python_venv"><code class="docutils literal notranslate"><span class="pre">AgentConfig.python_venv</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.env"><code class="docutils literal notranslate"><span class="pre">AgentConfig.env</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.env_files"><code class="docutils literal notranslate"><span class="pre">AgentConfig.env_files</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.screen_name"><code class="docutils literal notranslate"><span class="pre">AgentConfig.screen_name</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.labels"><code class="docutils literal notranslate"><span class="pre">AgentConfig.labels</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.container"><code class="docutils literal notranslate"><span class="pre">AgentConfig.container</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.claude"><code class="docutils literal notranslate"><span class="pre">AgentConfig.claude</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.health"><code class="docutils literal notranslate"><span class="pre">AgentConfig.health</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.watchdog"><code class="docutils literal notranslate"><span class="pre">AgentConfig.watchdog</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.restart"><code class="docutils literal notranslate"><span class="pre">AgentConfig.restart</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.autonomous"><code class="docutils literal notranslate"><span class="pre">AgentConfig.autonomous</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.apptainer"><code class="docutils literal notranslate"><span class="pre">AgentConfig.apptainer</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hooks"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hooks</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.listen"><code class="docutils literal notranslate"><span class="pre">AgentConfig.listen</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.extensions"><code class="docutils literal notranslate"><span class="pre">AgentConfig.extensions</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.skills</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.context_management"><code class="docutils literal notranslate"><span class="pre">AgentConfig.context_management</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_commands"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_commands</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_prompts"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_prompts</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.mcp_servers"><code class="docutils literal notranslate"><span class="pre">AgentConfig.mcp_servers</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.multiplexer"><code class="docutils literal notranslate"><span class="pre">AgentConfig.multiplexer</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hosts_spec"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hosts_spec</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.scheduling"><code class="docutils literal notranslate"><span class="pre">AgentConfig.scheduling</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.config_path"><code class="docutils literal notranslate"><span class="pre">AgentConfig.config_path</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.mounts"><code class="docutils literal notranslate"><span class="pre">AgentConfig.mounts</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.user"><code class="docutils literal notranslate"><span class="pre">AgentConfig.user</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.a2a"><code class="docutils literal notranslate"><span class="pre">AgentConfig.a2a</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.kind"><code class="docutils literal notranslate"><span class="pre">AgentConfig.kind</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.proxy"><code class="docutils literal notranslate"><span class="pre">AgentConfig.proxy</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.dot_claude"><code class="docutils literal notranslate"><span class="pre">AgentConfig.dot_claude</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.to_home"><code class="docutils literal notranslate"><span class="pre">AgentConfig.to_home</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.expanded_workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.expanded_workdir</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.model"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.model</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.channels"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.channels</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.flags"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.flags</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.raw_options"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.raw_options</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.session"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.session</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.continue_max_age_minutes"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.continue_max_age_minutes</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.resume_id"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.resume_id</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.auto_accept"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.auto_accept</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.__init__"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec"><code class="docutils literal notranslate"><span class="pre">ContainerSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.runtime"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.runtime</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.image"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.image</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.volumes"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.volumes</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.network"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.network</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.mount_host_claude"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.mount_host_claude</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.__init__"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.trigger_at_percent"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.trigger_at_percent</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.strategy"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.strategy</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.warn_before_n_checks"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.warn_before_n_checks</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.check_interval_seconds"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.check_interval_seconds</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.state_file"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.state_file</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.enabled"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.enabled</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.__init__"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.HealthSpec"><code class="docutils literal notranslate"><span class="pre">HealthSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.HealthSpec.enabled"><code class="docutils literal notranslate"><span class="pre">HealthSpec.enabled</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.HealthSpec.interval"><code class="docutils literal notranslate"><span class="pre">HealthSpec.interval</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.HealthSpec.timeout"><code class="docutils literal notranslate"><span class="pre">HealthSpec.timeout</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.HealthSpec.method"><code class="docutils literal notranslate"><span class="pre">HealthSpec.method</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.HealthSpec.__init__"><code class="docutils literal notranslate"><span class="pre">HealthSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec"><code class="docutils literal notranslate"><span class="pre">HookSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.pre_start"><code class="docutils literal notranslate"><span class="pre">HookSpec.pre_start</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.post_start"><code class="docutils literal notranslate"><span class="pre">HookSpec.post_start</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.pre_stop"><code class="docutils literal notranslate"><span class="pre">HookSpec.pre_stop</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.post_stop"><code class="docutils literal notranslate"><span class="pre">HookSpec.post_stop</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.on_compact"><code class="docutils literal notranslate"><span class="pre">HookSpec.on_compact</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.on_restart"><code class="docutils literal notranslate"><span class="pre">HookSpec.on_restart</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.on_diff"><code class="docutils literal notranslate"><span class="pre">HookSpec.on_diff</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.counts"><code class="docutils literal notranslate"><span class="pre">HookSpec.counts()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.__init__"><code class="docutils literal notranslate"><span class="pre">HookSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.HostsSpec"><code class="docutils literal notranslate"><span class="pre">HostsSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.HostsSpec.host"><code class="docutils literal notranslate"><span class="pre">HostsSpec.host</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.HostsSpec.hosts"><code class="docutils literal notranslate"><span class="pre">HostsSpec.hosts</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.HostsSpec.__init__"><code class="docutils literal notranslate"><span class="pre">HostsSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ListenPort"><code class="docutils literal notranslate"><span class="pre">ListenPort</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ListenPort.port"><code class="docutils literal notranslate"><span class="pre">ListenPort.port</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ListenPort.proto"><code class="docutils literal notranslate"><span class="pre">ListenPort.proto</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ListenPort.path"><code class="docutils literal notranslate"><span class="pre">ListenPort.path</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ListenPort.name"><code class="docutils literal notranslate"><span class="pre">ListenPort.name</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ListenPort.owner"><code class="docutils literal notranslate"><span class="pre">ListenPort.owner</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ListenPort.__init__"><code class="docutils literal notranslate"><span class="pre">ListenPort.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ProxySpec"><code class="docutils literal notranslate"><span class="pre">ProxySpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ProxySpec.upstream"><code class="docutils literal notranslate"><span class="pre">ProxySpec.upstream</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ProxySpec.trust"><code class="docutils literal notranslate"><span class="pre">ProxySpec.trust</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ProxySpec.redact"><code class="docutils literal notranslate"><span class="pre">ProxySpec.redact</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ProxySpec.__init__"><code class="docutils literal notranslate"><span class="pre">ProxySpec.__init__()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ProxySpec.timeout_s"><code class="docutils literal notranslate"><span class="pre">ProxySpec.timeout_s</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec"><code class="docutils literal notranslate"><span class="pre">RestartSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.policy"><code class="docutils literal notranslate"><span class="pre">RestartSpec.policy</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.max_retries"><code class="docutils literal notranslate"><span class="pre">RestartSpec.max_retries</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.backoff_initial"><code class="docutils literal notranslate"><span class="pre">RestartSpec.backoff_initial</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.backoff_max"><code class="docutils literal notranslate"><span class="pre">RestartSpec.backoff_max</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.backoff_multiplier"><code class="docutils literal notranslate"><span class="pre">RestartSpec.backoff_multiplier</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.__init__"><code class="docutils literal notranslate"><span class="pre">RestartSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.SchedulingSpec"><code class="docutils literal notranslate"><span class="pre">SchedulingSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.SchedulingSpec.mode"><code class="docutils literal notranslate"><span class="pre">SchedulingSpec.mode</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.SchedulingSpec.preferred_host"><code class="docutils literal notranslate"><span class="pre">SchedulingSpec.preferred_host</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.SchedulingSpec.fallback_hosts"><code class="docutils literal notranslate"><span class="pre">SchedulingSpec.fallback_hosts</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.SchedulingSpec.__init__"><code class="docutils literal notranslate"><span class="pre">SchedulingSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.SkillsSpec"><code class="docutils literal notranslate"><span class="pre">SkillsSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.SkillsSpec.required"><code class="docutils literal notranslate"><span class="pre">SkillsSpec.required</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.SkillsSpec.available"><code class="docutils literal notranslate"><span class="pre">SkillsSpec.available</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.SkillsSpec.injection_mode"><code class="docutils literal notranslate"><span class="pre">SkillsSpec.injection_mode</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.SkillsSpec.match_by"><code class="docutils literal notranslate"><span class="pre">SkillsSpec.match_by</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.SkillsSpec.match_style"><code class="docutils literal notranslate"><span class="pre">SkillsSpec.match_style</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.SkillsSpec.__init__"><code class="docutils literal notranslate"><span class="pre">SkillsSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.StartupCommand"><code class="docutils literal notranslate"><span class="pre">StartupCommand</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.StartupCommand.delay"><code class="docutils literal notranslate"><span class="pre">StartupCommand.delay</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.StartupCommand.command"><code class="docutils literal notranslate"><span class="pre">StartupCommand.command</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.StartupCommand.__init__"><code class="docutils literal notranslate"><span class="pre">StartupCommand.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec.enabled"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec.enabled</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec.interval"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec.interval</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec.resp_y_n"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec.resp_y_n</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec.resp_y_y_n"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec.resp_y_y_n</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec.resp_waiting"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec.resp_waiting</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec.__init__"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.compose_effective_name"><code class="docutils literal notranslate"><span class="pre">compose_effective_name()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.load_config"><code class="docutils literal notranslate"><span class="pre">load_config()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.resolve_config"><code class="docutils literal notranslate"><span class="pre">resolve_config()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.resolve_hostname"><code class="docutils literal notranslate"><span class="pre">resolve_hostname()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.substitute_hostnames"><code class="docutils literal notranslate"><span class="pre">substitute_hostnames()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.validate_config"><code class="docutils literal notranslate"><span class="pre">validate_config()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../api/scitex_agent_container.html#module-scitex_agent_container.runtimes.prompts">Runtimes</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.PromptHandler"><code class="docutils literal notranslate"><span class="pre">PromptHandler</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.PromptHandler.name"><code class="docutils literal notranslate"><span class="pre">PromptHandler.name</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.PromptHandler.detect"><code class="docutils literal notranslate"><span class="pre">PromptHandler.detect</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.PromptHandler.keys"><code class="docutils literal notranslate"><span class="pre">PromptHandler.keys</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.PromptHandler.priority"><code class="docutils literal notranslate"><span class="pre">PromptHandler.priority</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.PromptHandler.__init__"><code class="docutils literal notranslate"><span class="pre">PromptHandler.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_bypass_permissions"><code class="docutils literal notranslate"><span class="pre">_detect_bypass_permissions()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_dev_channels"><code class="docutils literal notranslate"><span class="pre">_detect_dev_channels()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_thinking_effort"><code class="docutils literal notranslate"><span class="pre">_detect_thinking_effort()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_skip_permissions_yn"><code class="docutils literal notranslate"><span class="pre">_detect_skip_permissions_yn()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_mcp_json_edit"><code class="docutils literal notranslate"><span class="pre">_detect_mcp_json_edit()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_press_enter_continue"><code class="docutils literal notranslate"><span class="pre">_detect_press_enter_continue()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_file_trust"><code class="docutils literal notranslate"><span class="pre">_detect_file_trust()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_file_trust_radio"><code class="docutils literal notranslate"><span class="pre">_detect_file_trust_radio()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_external_imports"><code class="docutils literal notranslate"><span class="pre">_detect_external_imports()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_login_method"><code class="docutils literal notranslate"><span class="pre">_detect_login_method()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_theme_selection"><code class="docutils literal notranslate"><span class="pre">_detect_theme_selection()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_compose_pending_unsent"><code class="docutils literal notranslate"><span class="pre">_detect_compose_pending_unsent()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_done"><code class="docutils literal notranslate"><span class="pre">_detect_done()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.register_prompt"><code class="docutils literal notranslate"><span class="pre">register_prompt()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.detect_and_respond"><code class="docutils literal notranslate"><span class="pre">detect_and_respond()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.is_ready"><code class="docutils literal notranslate"><span class="pre">is_ready()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">scitex-agent-container</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">ADR: Isolation Hardening (2026-05-13)</li>
+      <li class="wy-breadcrumbs-aside">
+              <a href="https://github.com/ywatanabe1989/scitex-agent-container/blob/main/docs/sphinx/adr/0001-isolation-hardening.md" class="fa fa-github"> Edit on GitHub</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section class="tex2jax_ignore mathjax_ignore" id="adr-isolation-hardening-2026-05-13">
+<h1>ADR: Isolation Hardening (2026-05-13)<a class="headerlink" href="#adr-isolation-hardening-2026-05-13" title="Link to this heading"></a></h1>
+<p><strong>Status:</strong> Accepted.
+<strong>Context:</strong> Agent symlink incident in <code class="docutils literal notranslate"><span class="pre">scitex-stats-auditor</span></code> proof of
+concept; sac’s positioning vs. Clew reproducibility verification.</p>
+<section id="problem">
+<h2>Problem<a class="headerlink" href="#problem" title="Link to this heading"></a></h2>
+<p>On 2026-05-13 the first per-package auditor (<code class="docutils literal notranslate"><span class="pre">scitex-stats-auditor</span></code>)
+ran under Apptainer with <code class="docutils literal notranslate"><span class="pre">sac-base.sif</span> <span class="pre">+</span> <span class="pre">overlay</span></code> and reported:
+“the project venv targets <code class="docutils literal notranslate"><span class="pre">/opt/python3.12/bin/python3.12</span></code>, which is
+missing on this host; I repaired it by symlinking it to
+<code class="docutils literal notranslate"><span class="pre">/usr/bin/python3.12</span></code>.” The agent’s mental model was that it had
+patched the host. Investigation showed the symlink only landed in the
+container’s overlay — the host was untouched. But two systemic gaps
+were exposed:</p>
+<ol class="arabic simple">
+<li><p><strong>The agent thought it had host write access.</strong> Apptainer’s
+defaults make the container/host boundary porous enough that an
+agent can’t distinguish “I patched the container’s view of /opt”
+from “I patched the host.”</p></li>
+<li><p><strong>Operator-side prompts can’t enforce isolation.</strong> The prompt told
+the agent to be read-only; the agent ignored it. Prompt-level
+guardrails are not a security mechanism.</p></li>
+</ol>
+<p>The deeper issue: sac’s stated positioning is reproducible-by-default,
+but its actual default behavior inherited Apptainer’s HPC-convenience
+defaults (auto-bind <code class="docutils literal notranslate"><span class="pre">$HOME</span></code>, <code class="docutils literal notranslate"><span class="pre">/tmp</span></code>, <code class="docutils literal notranslate"><span class="pre">/proc</span></code>, <code class="docutils literal notranslate"><span class="pre">/sys</span></code>, <code class="docutils literal notranslate"><span class="pre">/dev</span></code>; inherit
+all env vars; share host namespaces). Convenience-first defaults are
+upside-down for an agent runtime where the container is supposed to
+be the security boundary.</p>
+</section>
+<section id="decisions">
+<h2>Decisions<a class="headerlink" href="#decisions" title="Link to this heading"></a></h2>
+<section id="d1-hardened-isolation-by-default-relaxed-true-to-opt-out">
+<h3>D1. Hardened isolation by default; <code class="docutils literal notranslate"><span class="pre">relaxed:</span> <span class="pre">true</span></code> to opt out.<a class="headerlink" href="#d1-hardened-isolation-by-default-relaxed-true-to-opt-out" title="Link to this heading"></a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">spec.apptainer.relaxed:</span> <span class="pre">false</span></code> is the default. sac auto-prepends
+<code class="docutils literal notranslate"><span class="pre">--containall</span></code> (filesystem isolation), <code class="docutils literal notranslate"><span class="pre">--cleanenv</span></code> (environment
+isolation), and <code class="docutils literal notranslate"><span class="pre">--writable-tmpfs</span></code> (when no overlay is declared) to
+the apptainer argv.</p>
+<p><code class="docutils literal notranslate"><span class="pre">relaxed:</span> <span class="pre">true</span></code> is an explicit opt-out for HPC-style convenience use
+cases. Agents started with <code class="docutils literal notranslate"><span class="pre">relaxed:</span> <span class="pre">true</span></code> are <strong>outside the Clew
+verification chain</strong> — their runs cannot be attested as reproducible.</p>
+<p><strong>Rationale.</strong> sac’s differentiation against LangGraph / CrewAI /
+AutoGen is “spec.yaml declares isolation; mechanism enforces it;
+external verifier can attest it.” Default-strict supports that
+thesis directly. HPC users can opt in to the legacy behavior with
+one line, and they pay the cost of falling out of the verification
+chain (which they typically don’t need anyway).</p>
+</section>
+<section id="d2-universal-preflight-via-home-visibility-check-not-per-path-enumeration">
+<h3>D2. Universal preflight via <code class="docutils literal notranslate"><span class="pre">$HOME</span></code>-visibility check, not per-path enumeration.<a class="headerlink" href="#d2-universal-preflight-via-home-visibility-check-not-per-path-enumeration" title="Link to this heading"></a></h3>
+<p>The preflight that sac auto-injects before user <code class="docutils literal notranslate"><span class="pre">startup_commands</span></code> is:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">test</span><span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>id<span class="w"> </span>-u<span class="k">)</span><span class="s2">&quot;</span><span class="w"> </span>!<span class="o">=</span><span class="w"> </span><span class="s2">&quot;0&quot;</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="o">(</span><span class="nb">echo</span><span class="w"> </span><span class="s1">&#39;ERROR: running as root&#39;</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">exit</span><span class="w"> </span><span class="m">1</span><span class="o">)</span>
+<span class="nb">test</span><span class="w"> </span>!<span class="w"> </span>-d<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$HOME</span><span class="s2">&quot;</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="o">(</span><span class="nb">echo</span><span class="w"> </span><span class="s1">&#39;ERROR: host $HOME visible — isolation breach&#39;</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">exit</span><span class="w"> </span><span class="m">1</span><span class="o">)</span>
+</pre></div>
+</div>
+<p><strong>Rationale.</strong> Per-path enumeration (<code class="docutils literal notranslate"><span class="pre">test</span> <span class="pre">!</span> <span class="pre">-e</span> <span class="pre">$HOME/.gitconfig</span></code>,
+<code class="docutils literal notranslate"><span class="pre">test</span> <span class="pre">!</span> <span class="pre">-e</span> <span class="pre">$HOME/.ssh</span></code>, …) has unbounded false-negative risk: every
+new credential store added in the next decade (<code class="docutils literal notranslate"><span class="pre">.kube/config</span></code>,
+<code class="docutils literal notranslate"><span class="pre">.docker/config.json</span></code>, <code class="docutils literal notranslate"><span class="pre">.netrc</span></code>, <code class="docutils literal notranslate"><span class="pre">.npmrc</span></code>, <code class="docutils literal notranslate"><span class="pre">.pypirc</span></code>, <code class="docutils literal notranslate"><span class="pre">.gnupg/</span></code>,
+<code class="docutils literal notranslate"><span class="pre">~/.config/anthropic/</span></code>, <code class="docutils literal notranslate"><span class="pre">~/.bash_history</span></code> with embedded secrets, …)
+requires a new line. The <code class="docutils literal notranslate"><span class="pre">$HOME</span></code>-visibility check covers all of them
+at once.</p>
+<p>Under <code class="docutils literal notranslate"><span class="pre">--containall</span></code>, <code class="docutils literal notranslate"><span class="pre">$HOME</span></code> is NOT auto-bound — it should be
+invisible inside the container. If the check fails, either <code class="docutils literal notranslate"><span class="pre">--containall</span></code>
+isn’t in effect or an operator-declared bind brought it in. Either way,
+the agent shouldn’t start.</p>
+<p><strong>Operator opt-out</strong> for paths that legitimately need to be visible:</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">apptainer</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">preflight_allow</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;$HOME/.gitconfig&quot;</span><span class="w">   </span><span class="c1"># acknowledged: agent needs read-only gitconfig</span>
+</pre></div>
+</div>
+<p>The opt-out is declared per-path, not as a blanket “disable preflight.”</p>
+</section>
+<section id="d3-agentcard-exposes-structured-isolation-block-not-a-flat-enum">
+<h3>D3. AgentCard exposes structured isolation block, not a flat enum.<a class="headerlink" href="#d3-agentcard-exposes-structured-isolation-block-not-a-flat-enum" title="Link to this heading"></a></h3>
+<p>Instead of <code class="docutils literal notranslate"><span class="pre">isolation_level:</span> <span class="pre">hardened</span> <span class="pre">|</span> <span class="pre">relaxed</span> <span class="pre">|</span> <span class="pre">custom</span></code>:</p>
+<div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="nt">&quot;x-scitex-agent-container&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;isolation&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">&quot;level&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;hardened&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;containall&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;cleanenv&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;writable_tmpfs&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;preflight_passed&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;uid-nonzero&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;no-host-home&quot;</span><span class="p">],</span>
+<span class="w">    </span><span class="nt">&quot;preflight_allowed&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[],</span>
+<span class="w">    </span><span class="nt">&quot;binds_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;binds_writable_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">level:</span> <span class="pre">hardened</span></code> is the human shorthand for “all booleans true +
+<code class="docutils literal notranslate"><span class="pre">preflight_allowed:</span> <span class="pre">[]</span></code>”. External verifiers (Clew, orochi attestation)
+read the structured booleans to attest specific properties.</p>
+<p><strong>Rationale.</strong> A flat <code class="docutils literal notranslate"><span class="pre">custom</span></code> label hides what’s custom about it.
+A run with <code class="docutils literal notranslate"><span class="pre">preflight_allow:</span> <span class="pre">[$HOME/.ssh]</span></code> and a run with
+<code class="docutils literal notranslate"><span class="pre">preflight_allow:</span> <span class="pre">[$HOME/.aws]</span></code> are both <code class="docutils literal notranslate"><span class="pre">custom</span></code> under the enum but
+have very different security profiles. Clew’s verification chain wants
+to attest specific properties: “did this run set containall? did it
+allow any preflight bypasses?” The structured block answers those
+directly.</p>
+</section>
+</section>
+<section id="considered-and-rejected">
+<h2>Considered and rejected<a class="headerlink" href="#considered-and-rejected" title="Link to this heading"></a></h2>
+<section id="rejected-prompt-level-isolation-guarantees">
+<h3>Rejected: prompt-level isolation guarantees.<a class="headerlink" href="#rejected-prompt-level-isolation-guarantees" title="Link to this heading"></a></h3>
+<p>“Tell the agent in the prompt to be read-only.” The PoC proved this
+fails — the agent acknowledged the rule and then violated it. Prompts
+are not a security mechanism. Mechanism-level enforcement is
+non-negotiable for the Clew thesis.</p>
+</section>
+<section id="rejected-test-w-path-permission-based-preflight">
+<h3>Rejected: <code class="docutils literal notranslate"><span class="pre">test</span> <span class="pre">-w</span> <span class="pre">&lt;path&gt;</span></code> permission-based preflight.<a class="headerlink" href="#rejected-test-w-path-permission-based-preflight" title="Link to this heading"></a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">test</span> <span class="pre">!</span> <span class="pre">-w</span> <span class="pre">/opt</span></code> would fail inside any container with a writable
+overlay shadowing <code class="docutils literal notranslate"><span class="pre">/opt</span></code>, even when no host damage is possible. The
+intent (catch leaks) and the test (catch any write capability) don’t
+align under apptainer’s overlay model. Existence-based checks on
+identity files (<code class="docutils literal notranslate"><span class="pre">$HOME</span></code> visibility) avoid this entirely.</p>
+</section>
+<section id="rejected-enumerated-per-path-preflight-gitconfig-ssh-aws">
+<h3>Rejected: enumerated per-path preflight (<code class="docutils literal notranslate"><span class="pre">.gitconfig</span></code>, <code class="docutils literal notranslate"><span class="pre">.ssh</span></code>, <code class="docutils literal notranslate"><span class="pre">.aws</span></code>, …).<a class="headerlink" href="#rejected-enumerated-per-path-preflight-gitconfig-ssh-aws" title="Link to this heading"></a></h3>
+<p>Forever incomplete; every new credential cache added by tooling
+elsewhere requires a sac patch. The <code class="docutils literal notranslate"><span class="pre">$HOME</span></code>-visibility check covers
+the same surface in one assertion.</p>
+</section>
+<section id="rejected-isolation-level-hardened-relaxed-custom-flat-enum">
+<h3>Rejected: <code class="docutils literal notranslate"><span class="pre">isolation_level:</span> <span class="pre">hardened</span> <span class="pre">|</span> <span class="pre">relaxed</span> <span class="pre">|</span> <span class="pre">custom</span></code> flat enum.<a class="headerlink" href="#rejected-isolation-level-hardened-relaxed-custom-flat-enum" title="Link to this heading"></a></h3>
+<p>Loses verifier resolution. Two <code class="docutils literal notranslate"><span class="pre">custom</span></code> runs with very different
+preflight_allow sets become indistinguishable on the card.</p>
+</section>
+</section>
+<section id="implementation">
+<h2>Implementation<a class="headerlink" href="#implementation" title="Link to this heading"></a></h2>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Layer</p></th>
+<th class="head"><p>Where</p></th>
+<th class="head"><p>Status</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">apptainer.relaxed:</span> <span class="pre">false</span></code> default</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">config/_types.py::ApptainerSpec</span></code></p></td>
+<td><p>✅ shipped earlier today</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">--containall</span></code> auto-prepended</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">runtimes/_apptainer_runtime.py</span></code></p></td>
+<td><p>✅ shipped</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">--cleanenv</span></code> auto-prepended</p></td>
+<td><p>same</p></td>
+<td><p>✅ shipped (D1)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">--writable-tmpfs</span></code> when no overlay</p></td>
+<td><p>same</p></td>
+<td><p>✅ shipped (D1)</p></td>
+</tr>
+<tr class="row-even"><td><p>Universal preflight injection</p></td>
+<td><p>runtime wraps inner cmd with <code class="docutils literal notranslate"><span class="pre">bash</span> <span class="pre">-c</span> <span class="pre">&quot;&lt;preflight&gt;\nexec</span> <span class="pre">&lt;inner&gt;&quot;</span></code></p></td>
+<td><p>✅ shipped (D2)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">spec.apptainer.preflight_allow</span></code> field</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">config/_types.py::ApptainerSpec</span></code></p></td>
+<td><p>⏳ deferred (out of D1–D4 scope)</p></td>
+</tr>
+<tr class="row-even"><td><p>AgentCard structured <code class="docutils literal notranslate"><span class="pre">isolation</span></code> block</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">a2a/_card.py::project_card</span></code></p></td>
+<td><p>✅ shipped (D3)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agents</span> <span class="pre">check</span></code> D4 bind-target warning</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">cli_pkg/build_cmds.py::check</span></code></p></td>
+<td><p>✅ shipped (D4)</p></td>
+</tr>
+<tr class="row-even"><td><p>Regression tests</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">tests/.../test__apptainer_runtime.py</span></code> + <code class="docutils literal notranslate"><span class="pre">tests/.../a2a/test__card.py</span></code> + <code class="docutils literal notranslate"><span class="pre">tests/.../cli_pkg/test_build_cmds.py</span></code> + <code class="docutils literal notranslate"><span class="pre">tests/.../runtimes/test__apptainer_isolation.py</span></code> + <code class="docutils literal notranslate"><span class="pre">tests/.../runtimes/test__apptainer_preflight.py</span></code></p></td>
+<td><p>✅ shipped</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="consequences">
+<h2>Consequences<a class="headerlink" href="#consequences" title="Link to this heading"></a></h2>
+<p><strong>Positive.</strong></p>
+<ul class="simple">
+<li><p>sac becomes the only A2A-compatible agent runtime that mechanically
+enforces isolation by default. Clear differentiation from LangGraph
+/ CrewAI / AutoGen (no isolation concept) and from Docker (isolation
+exists but not declared / not attestable).</p></li>
+<li><p>Clew can build verification chains that attest specific isolation
+properties without sac-internal introspection.</p></li>
+<li><p>The <code class="docutils literal notranslate"><span class="pre">scitex-stats-auditor</span></code> symlink-confusion class of incidents
+becomes impossible: the agent can’t “fix” the host because the host
+isn’t reachable.</p></li>
+</ul>
+<p><strong>Negative / tradeoffs.</strong></p>
+<ul class="simple">
+<li><p>Existing agents that worked under the old defaults will fail-fast
+if they implicitly relied on <code class="docutils literal notranslate"><span class="pre">$HOME</span></code> auto-bind. Operators must
+either declare the bind explicitly OR opt in to <code class="docutils literal notranslate"><span class="pre">relaxed:</span> <span class="pre">true</span></code>.</p></li>
+<li><p>The <code class="docutils literal notranslate"><span class="pre">--cleanenv</span></code> default removes <code class="docutils literal notranslate"><span class="pre">$PATH</span></code> inheritance; sac has to
+inject the container’s expected <code class="docutils literal notranslate"><span class="pre">$PATH</span></code> itself.</p></li>
+<li><p>HPC-style “just run my command inside the container with my home
+visible” is now a two-step (write <code class="docutils literal notranslate"><span class="pre">relaxed:</span> <span class="pre">true</span></code>); intentional.</p></li>
+</ul>
+</section>
+<section id="addendum-d2-refinement-2026-05-13-evening">
+<h2>Addendum: D2 refinement (2026-05-13 evening)<a class="headerlink" href="#addendum-d2-refinement-2026-05-13-evening" title="Link to this heading"></a></h2>
+<p>Initial D2 design proposed <code class="docutils literal notranslate"><span class="pre">test</span> <span class="pre">!</span> <span class="pre">-d</span> <span class="pre">&quot;$HOME&quot;</span></code> as a universal
+invariant. Pre-implementation verification against the
+scitex-stats-auditor spec.yaml exposed an Apptainer-specific edge
+case: <strong>Apptainer creates the entire directory path of every bind
+target as scaffolding</strong>, so a bind like
+<code class="docutils literal notranslate"><span class="pre">/home/$USER/proj/scitex-stats:/home/$USER/proj/scitex-stats:ro</span></code>
+causes <code class="docutils literal notranslate"><span class="pre">/home/$USER</span></code> (== <code class="docutils literal notranslate"><span class="pre">$HOME</span></code>) to exist as a directory inside the
+container — even under <code class="docutils literal notranslate"><span class="pre">--containall</span></code>, with no credential files
+visible. The D2 check would false-fire on every agent that mirrors
+host paths into the container.</p>
+<p>Two solutions were considered:</p>
+<ul class="simple">
+<li><p><strong>Bind-aware preflight</strong> (sac generates the preflight at runtime,
+knowing what binds it’s about to create, and the preflight checks
+<code class="docutils literal notranslate"><span class="pre">$HOME</span></code> contents are a subset of the declared bind scaffolding).
+Rejected: dynamic preflight is harder to integrate into Clew’s
+verification chain — verifier has to attest the <em>generator</em>, not
+just the executed script.</p></li>
+<li><p><strong>Container-canonical paths</strong> (bind targets MUST use container-
+side conventional roots — <code class="docutils literal notranslate"><span class="pre">/srv/</span></code>, <code class="docutils literal notranslate"><span class="pre">/work/</span></code>, <code class="docutils literal notranslate"><span class="pre">/opt/</span></code>, <code class="docutils literal notranslate"><span class="pre">/data/</span></code> —
+never host-mirroring paths). Accepted.</p></li>
+</ul>
+<section id="d4-bind-targets-must-be-container-canonical-paths">
+<h3>D4. Bind targets MUST be container-canonical paths.<a class="headerlink" href="#d4-bind-targets-must-be-container-canonical-paths" title="Link to this heading"></a></h3>
+<p>Bind targets that mirror host paths (<code class="docutils literal notranslate"><span class="pre">/home/</span></code>, <code class="docutils literal notranslate"><span class="pre">/Users/</span></code>, <code class="docutils literal notranslate"><span class="pre">/root/</span></code>,
+absolute Windows-style paths) are deprecated. Bind targets MUST live
+under conventional container roots: <code class="docutils literal notranslate"><span class="pre">/srv/</span></code>, <code class="docutils literal notranslate"><span class="pre">/work/</span></code>, <code class="docutils literal notranslate"><span class="pre">/opt/</span></code>,
+<code class="docutils literal notranslate"><span class="pre">/data/</span></code>.</p>
+<p>Spec.yaml convention:</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">apptainer</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">binds</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">$HOME/proj/scitex-stats:/srv/sources/scitex-stats:ro</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">$HOME/proj/scitex-dev:/srv/sources/scitex-dev:ro</span>
+</pre></div>
+</div>
+<p>Inside the container nothing under <code class="docutils literal notranslate"><span class="pre">/home/$USER</span></code> appears, so:</p>
+<ol class="arabic simple">
+<li><p>The D2 preflight (<code class="docutils literal notranslate"><span class="pre">test</span> <span class="pre">!</span> <span class="pre">-d</span> <span class="pre">&quot;$HOME&quot;</span></code>) stays static and universal.</p></li>
+<li><p>spec.yaml is <strong>operator-agnostic</strong> — the same spec runs cleanly
+for any user.</p></li>
+<li><p>Verification chain receives a static preflight script with a
+stable sha256; no meta-verification required.</p></li>
+</ol>
+<p><strong>Rationale, beyond the technical fix.</strong> Container-canonical paths
+match Docker / OCI best practice and break the “works on my
+machine” failure mode (every agent that hardcodes
+<code class="docutils literal notranslate"><span class="pre">/home/ywatanabe/proj/...</span></code> is operator-bound). The shared-path
+convention was an HPC convenience artifact; Clew’s reproducibility
+context inverts it.</p>
+<p><strong>sac-side enforcement (planned).</strong> <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agents</span> <span class="pre">check</span> <span class="pre">&lt;name&gt;</span></code> will
+emit a warning when a bind target starts with <code class="docutils literal notranslate"><span class="pre">/home/</span></code>, <code class="docutils literal notranslate"><span class="pre">/Users/</span></code>, or
+<code class="docutils literal notranslate"><span class="pre">/root/</span></code>. Future strict mode (<code class="docutils literal notranslate"><span class="pre">sac.audit.strict_binds:</span> <span class="pre">true</span></code>) makes
+it an error.</p>
+<p><strong>Convenience.</strong> The runtime sets <code class="docutils literal notranslate"><span class="pre">$SAC_WORKDIR=/srv/sources</span></code> inside
+the container (when any bind targets land there), so <code class="docutils literal notranslate"><span class="pre">startup_prompts</span></code>
+and operator scripts can use <code class="docutils literal notranslate"><span class="pre">cd</span> <span class="pre">$SAC_WORKDIR/&lt;pkg&gt;</span></code> without
+hardcoding paths.</p>
+</section>
+<section id="order-of-execution">
+<h3>Order of execution<a class="headerlink" href="#order-of-execution" title="Link to this heading"></a></h3>
+<ol class="arabic simple">
+<li><p>ADR addendum (this section) — done.</p></li>
+<li><p>scitex-stats-auditor spec.yaml — bind targets translated to
+<code class="docutils literal notranslate"><span class="pre">/srv/sources/...</span></code>; startup_prompts updated to reference the
+container paths.</p></li>
+<li><p>Implementation: D1 + D2 (static check) + D3 + D4 (CLI validator).</p></li>
+<li><p>Restart scitex-stats-auditor against hardened sac; verify the
+static preflight passes end-to-end.</p></li>
+<li><p>Preserve session.jsonl + preflight result for Clew supplementary.</p></li>
+</ol>
+</section>
+</section>
+<section id="addendum-d5-canonical-container-home-2026-05-14">
+<h2>Addendum: D5 — canonical container HOME (2026-05-14)<a class="headerlink" href="#addendum-d5-canonical-container-home-2026-05-14" title="Link to this heading"></a></h2>
+<p>Live verification of the hardened auditor exposed two issues with D2
+as originally specified:</p>
+<ol class="arabic simple">
+<li><p><strong>Empty-<code class="docutils literal notranslate"><span class="pre">$HOME</span></code> false-fires.</strong> Apptainer scaffolds <code class="docutils literal notranslate"><span class="pre">$HOME</span></code> from the
+inherited passwd entry regardless of bind targets (even under
+<code class="docutils literal notranslate"><span class="pre">--containall</span></code>), so <code class="docutils literal notranslate"><span class="pre">$HOME</span></code> is always a directory. The D2 check was
+relaxed to “<code class="docutils literal notranslate"><span class="pre">$HOME</span></code> is <em>empty</em>” — workable, but it forces bind
+targets out of <code class="docutils literal notranslate"><span class="pre">$HOME</span></code>, breaking operator-intuitive paths.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">/srv/</span></code>-style targets force script rewrites.</strong> Anything that
+references <code class="docutils literal notranslate"><span class="pre">~/proj/X</span></code> or <code class="docutils literal notranslate"><span class="pre">$HOME/proj/X</span></code> inside the container
+breaks.</p></li>
+</ol>
+<section id="d5-canonical-container-home-home-agent">
+<h3>D5. Canonical container HOME = <code class="docutils literal notranslate"><span class="pre">/home/agent</span></code>.<a class="headerlink" href="#d5-canonical-container-home-home-agent" title="Link to this heading"></a></h3>
+<p>sac auto-injects <code class="docutils literal notranslate"><span class="pre">--home</span> <span class="pre">/home/agent</span></code> (skipped only under
+<code class="docutils literal notranslate"><span class="pre">apptainer.relaxed:</span> <span class="pre">true</span></code> or when the operator declared <code class="docutils literal notranslate"><span class="pre">--home</span></code>).
+Inside the container:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">$HOME</span> <span class="pre">==</span> <span class="pre">/home/agent</span></code>, operator-independent.</p></li>
+<li><p>Bind targets use the canonical HOME: <code class="docutils literal notranslate"><span class="pre">~/proj/X:/home/agent/proj/X</span></code>.</p></li>
+<li><p>The operator’s actual host home is never scaffolded inside the
+container.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">sac-base.sif</span></code> is rebuilt so UID-1000’s passwd entry reads <code class="docutils literal notranslate"><span class="pre">agent</span></code>
+(not <code class="docutils literal notranslate"><span class="pre">ubuntu</span></code>); <code class="docutils literal notranslate"><span class="pre">whoami</span></code> matches <code class="docutils literal notranslate"><span class="pre">$HOME</span></code>.</p></li>
+</ul>
+</section>
+<section id="d5-preflight-replaces-d2s-empty-home-check">
+<h3>D5 preflight (replaces D2’s empty-<code class="docutils literal notranslate"><span class="pre">$HOME</span></code> check).<a class="headerlink" href="#d5-preflight-replaces-d2s-empty-home-check" title="Link to this heading"></a></h3>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># uid != 0, OR /proc/self/uid_map confirms userns-fakeroot.</span>
+<span class="k">if</span><span class="w"> </span><span class="o">[</span><span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>id<span class="w"> </span>-u<span class="k">)</span><span class="s2">&quot;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0&quot;</span><span class="w"> </span><span class="o">]</span><span class="p">;</span><span class="w"> </span><span class="k">then</span>
+<span class="w">  </span>awk<span class="w"> </span><span class="s1">&#39;$1==0 &amp;&amp; $2!=0 {found=1} END {exit !found}&#39;</span><span class="w"> </span>/proc/self/uid_map<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span><span class="o">||</span><span class="w"> </span><span class="nb">exit</span><span class="w"> </span><span class="m">11</span><span class="w">   </span><span class="c1"># real root, refuse</span>
+<span class="k">fi</span>
+<span class="nb">test</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$HOME</span><span class="s2">&quot;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;/home/agent&quot;</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">exit</span><span class="w"> </span><span class="m">12</span><span class="w">  </span><span class="c1"># canonical HOME</span>
+</pre></div>
+</div>
+<p>Two static lines, attestable by sha256. The “no host leak” property
+falls out of <code class="docutils literal notranslate"><span class="pre">--containall</span></code> + canonical <code class="docutils literal notranslate"><span class="pre">--home</span></code> + declared <code class="docutils literal notranslate"><span class="pre">binds:</span></code>.</p>
+</section>
+<section id="rationale">
+<h3>Rationale.<a class="headerlink" href="#rationale" title="Link to this heading"></a></h3>
+<ul class="simple">
+<li><p><strong>D4 stays</strong> but is no longer the only path. Bind destinations may
+live under <code class="docutils literal notranslate"><span class="pre">/home/agent/...</span></code> (intuitive) OR <code class="docutils literal notranslate"><span class="pre">/srv/</span></code>, <code class="docutils literal notranslate"><span class="pre">/work/</span></code>,
+<code class="docutils literal notranslate"><span class="pre">/opt/</span></code>, <code class="docutils literal notranslate"><span class="pre">/data/</span></code> (container-canonical). Both pass D5.</p></li>
+<li><p><strong>fakeroot opt-in (<code class="docutils literal notranslate"><span class="pre">apptainer.fakeroot:</span> <span class="pre">true</span></code>)</strong> integrates: inside
+the container <code class="docutils literal notranslate"><span class="pre">id</span> <span class="pre">-u</span> <span class="pre">==</span> <span class="pre">0</span></code>, but <code class="docutils literal notranslate"><span class="pre">/proc/self/uid_map</span></code> proves
+userns-mapping; the preflight accepts this without weakening the
+no-real-root guarantee.</p></li>
+</ul>
+</section>
+<section id="implementation-d5">
+<h3>Implementation (D5).<a class="headerlink" href="#implementation-d5" title="Link to this heading"></a></h3>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Layer</p></th>
+<th class="head"><p>Where</p></th>
+<th class="head"><p>Status</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">apptainer.fakeroot:</span> <span class="pre">bool</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">config/_types.py::ApptainerSpec</span></code></p></td>
+<td><p>✅</p></td>
+</tr>
+<tr class="row-odd"><td><p>Auto-prepend <code class="docutils literal notranslate"><span class="pre">--home</span> <span class="pre">/home/agent</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">runtimes/_apptainer_iso_flags.py</span></code></p></td>
+<td><p>✅</p></td>
+</tr>
+<tr class="row-even"><td><p>Auto-append <code class="docutils literal notranslate"><span class="pre">--fakeroot</span></code> when opted in</p></td>
+<td><p>same</p></td>
+<td><p>✅</p></td>
+</tr>
+<tr class="row-odd"><td><p>Preflight rewrite (uid-map + canonical-HOME)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">runtimes/_apptainer_preflight.py</span></code></p></td>
+<td><p>✅</p></td>
+</tr>
+<tr class="row-even"><td><p>sac-base.sif: ubuntu → agent</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">containers/apptainer-base.def</span></code></p></td>
+<td><p>✅ recipe; SIF rebuild pending</p></td>
+</tr>
+<tr class="row-odd"><td><p>Bind destination validation</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">config/_parsers/_apptainer.py</span></code></p></td>
+<td><p>✅</p></td>
+</tr>
+<tr class="row-even"><td><p>Doc updates + AgentCard JSON example</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">docs/isolation.md</span></code></p></td>
+<td><p>✅</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="network-isolation-addendum-2026-05-14">
+<h3>Network isolation addendum (2026-05-14).<a class="headerlink" href="#network-isolation-addendum-2026-05-14" title="Link to this heading"></a></h3>
+<p>Peer review pushed on <code class="docutils literal notranslate"><span class="pre">--network=bridge</span></code>, surfaced the A2A +
+MCP-over-loopback interop constraint, and converged on: stay with
+host netns for the Clew arXiv window; plan a <code class="docutils literal notranslate"><span class="pre">--network=bridge</span></code> +
+bridge-IF bind + <code class="docutils literal notranslate"><span class="pre">sac-host</span></code> <code class="docutils literal notranslate"><span class="pre">/etc/hosts</span></code> injection migration that
+preserves MCP URL stability. See <code class="docutils literal notranslate"><span class="pre">docs/isolation.md</span></code> §4.</p>
+</section>
+</section>
+<section id="references">
+<h2>References<a class="headerlink" href="#references" title="Link to this heading"></a></h2>
+<ul class="simple">
+<li><p><a class="reference internal" href="../isolation.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">docs/isolation.md</span></code></span></a> — the 10-category leak catalog this ADR’s decisions close.</p></li>
+<li><p><a class="reference internal" href="../spec-reference.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">docs/spec-reference.md</span></code></span></a> — <code class="docutils literal notranslate"><span class="pre">spec.apptainer.relaxed</span></code>, <code class="docutils literal notranslate"><span class="pre">spec.apptainer.fakeroot</span></code>.</p></li>
+<li><p>The 2026-05-13 scitex-stats-auditor incident — session.jsonl at
+<code class="docutils literal notranslate"><span class="pre">~/.scitex/agent-container/runtime/scitex-stats-auditor/</span></code> for the
+full trace.</p></li>
+</ul>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2026, Yusuke Watanabe.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

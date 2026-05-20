@@ -10,7 +10,6 @@ import yaml
 
 from scitex_agent_container.config import (
     AgentConfig,
-    RemoteSpec,
     SkillsSpec,
     load_config,
     validate_config,
@@ -730,126 +729,13 @@ class TestCleanupClaudeMd:
             assert claude_md.exists() is False
 
 
-@pytest.fixture
-def default_remote_config():
-    path = _write_config(MINIMAL_CONFIG)
-    cfg = load_config(path)
-    yield cfg
-    Path(path).unlink(missing_ok=True)
-
-
-class TestDefaultRemoteSpec:
-    """Remote spec defaults to empty (local execution)."""
-
-    def test_default_remote_host_is_empty(self, default_remote_config):
-        # Arrange
-        config = default_remote_config
-        # Act
-        value = config.remote.host
-        # Assert
-        assert value == ""
-
-    def test_default_remote_user_is_empty(self, default_remote_config):
-        # Arrange
-        config = default_remote_config
-        # Act
-        value = config.remote.user
-        # Assert
-        assert value == ""
-
-    def test_default_remote_key_is_empty(self, default_remote_config):
-        # Arrange
-        config = default_remote_config
-        # Act
-        value = config.remote.key
-        # Assert
-        assert value == ""
-
-    def test_default_remote_port_is_22(self, default_remote_config):
-        # Arrange
-        config = default_remote_config
-        # Act
-        value = config.remote.port
-        # Assert
-        assert value == 22
-
-    def test_default_remote_is_remote_false(self, default_remote_config):
-        # Arrange
-        config = default_remote_config
-        # Act
-        value = config.remote.is_remote
-        # Assert
-        assert value is False
-
-
-class TestRemoteSpecDataclass:
-    def test_empty_remote_spec_is_not_remote(self):
-        # Arrange
-        r = RemoteSpec()
-        # Act
-        value = r.is_remote
-        # Assert
-        assert value is False
-
-    def test_remote_spec_with_host_user_is_remote(self):
-        # Arrange
-        r = RemoteSpec(host="myhost", user="me")
-        # Act
-        value = r.is_remote
-        # Assert
-        assert value is True
-
-
-class TestAgentConfigRemote:
-    def test_agent_config_accepts_remote_spec_is_remote(self):
-        # Arrange
-        config = AgentConfig(
-            name="test",
-            remote=RemoteSpec(host="server1", user="admin"),
-        )
-        # Act
-        value = config.remote.is_remote
-        # Assert
-        assert value is True
-
-    def test_agent_config_accepts_remote_spec_host(self):
-        # Arrange
-        config = AgentConfig(
-            name="test",
-            remote=RemoteSpec(host="server1", user="admin"),
-        )
-        # Act
-        value = config.remote.host
-        # Assert
-        assert value == "server1"
-
-
-class TestLoginShellDefault:
-    def test_login_shell_default_is_true(self, default_remote_config):
-        """login_shell defaults to True."""
-        # Arrange
-        config = default_remote_config
-        # Act
-        value = config.remote.login_shell
-        # Assert
-        assert value is True
-
-
-# Skipped legacy tests preserved as documentation of v3-realign removals.
-
-
-@pytest.mark.skip(
-    reason="v3-realign: spec.remote was removed (cross-host routing "
-    "is orochi's job per §2)."
-)
-def test_remote_from_yaml_loads_host():
-    """Remote spec parsed from YAML config (legacy)."""
-    # Arrange
-    pass
-    # Act
-    pass
-    # Assert
-    pass
+# WI-6 (handoff §6, 2026-05-20) deleted ``RemoteSpec`` and the
+# ``cfg.remote`` attribute on ``AgentConfig``. The legacy
+# ``TestDefaultRemoteSpec`` / ``TestRemoteSpecDataclass`` /
+# ``TestAgentConfigRemote`` / ``TestLoginShellDefault`` /
+# ``test_remote_from_yaml_loads_host`` blocks were removed wholesale —
+# they exercised behaviour that no longer exists. Cross-host placement
+# is via ``spec.host`` (see ``HostsSpec`` tests below).
 
 
 @pytest.mark.skip(reason="v3-realign: spec.remote was removed (§2).")
