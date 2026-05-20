@@ -500,3 +500,89 @@ class TestBuildOptions:
         # Assert
         with ctx:
             build_sdk_options("any")
+
+
+# ---------------------------------------------------------------------------
+# build_sdk_options — server:sac channel sidecar registration
+# ---------------------------------------------------------------------------
+
+
+class TestChannelSidecar:
+    """``channels=[server:sac]`` registers the ``sac mcp channel`` adapter.
+
+    Regression guard: the adapter subscribes to ``/agents/<name>/inbox/
+    stream`` which is served by the BUS (``sac listen``, resolved from
+    ``SAC_LISTEN_BASE_URL``), NOT the agent's own a2a sidecar port. An
+    earlier version hardcoded ``--listen-url http://127.0.0.1:{a2a_port}``,
+    pointing the SSE GET at a server that 404s on the inbox route, so the
+    bus saw zero subscribers and ``delivered_subscriber_count`` was always
+    0. These tests pin: the ``sac`` stdio MCP is registered, and its args
+    never carry an a2a_port-derived ``--listen-url``.
+    """
+
+    @pytest.fixture
+    def _sac_channel_opts(self, sdk_env: _Env, tmp_path):
+        # Arrange: cred file present so auth needs no env mutation.
+        cred = tmp_path / ".credentials.json"
+        cred.write_text("{}")
+        sdk_env.setattr_module(_sdk_common, "_CRED_FILE", cred)
+        sdk_env.delenv("ANTHROPIC_API_KEY")
+        _swap_registry(sdk_env, None)
+        # Act: thread the same sac-private extra the runner sends, including
+        # an a2a_port that must NOT leak into the channel sidecar args.
+        opts = build_sdk_options(
+            "lead",
+            extra={"_channels": ["server:sac"], "_a2a_port": 9999},
+        )
+        return opts
+
+    def test_registers_sac_stdio_mcp(self, _sac_channel_opts):
+        # Arrange
+        servers = _sac_channel_opts.mcp_servers  # type: ignore[operator]
+        # Act
+        sac = servers.get("sac")
+        # Assert
+        assert sac is not None and sac["command"] == "sac"
+
+    def test_sidecar_args_subscribe_to_named_agent_inbox(self, _sac_channel_opts):
+        # Arrange
+        sac = _sac_channel_opts.mcp_servers["sac"]  # type: ignore[index]
+        # Act
+        args = sac["args"]
+        # Assert
+        assert args[:4] == ["mcp", "channel", "--name", "lead"]
+
+    def test_sidecar_args_omit_a2a_port_listen_url(self, _sac_channel_opts):
+        # Arrange
+        sac = _sac_channel_opts.mcp_servers["sac"]  # type: ignore[index]
+        # Act — the a2a_port (9999) must never appear in any sidecar arg.
+        args = sac["args"]
+        # Assert: bus URL resolution is delegated to the adapter's main()
+        # via SAC_LISTEN_BASE_URL; no hardcoded a2a-port listen-url here.
+        assert not any("9999" in str(a) for a in args)
+
+    def test_sidecar_listen_url_when_present_is_not_a2a_port(self, _sac_channel_opts):
+        # Arrange
+        sac = _sac_channel_opts.mcp_servers["sac"]  # type: ignore[index]
+        args = sac["args"]
+        # Act: if a --listen-url is emitted at all, it must be the bus, never
+        # the agent's own a2a sidecar port.
+        if "--listen-url" in args:
+            listen_url = args[args.index("--listen-url") + 1]
+        else:
+            listen_url = None
+        # Assert
+        assert listen_url is None or listen_url == os.environ.get("SAC_LISTEN_BASE_URL")
+
+    def test_no_error_when_a2a_port_absent(self, sdk_env: _Env, tmp_path):
+        # Arrange: cred file present; channels set but NO _a2a_port threaded.
+        cred = tmp_path / ".credentials.json"
+        cred.write_text("{}")
+        sdk_env.setattr_module(_sdk_common, "_CRED_FILE", cred)
+        sdk_env.delenv("ANTHROPIC_API_KEY")
+        _swap_registry(sdk_env, None)
+        # Act: a2a_port is irrelevant to inbox subscription, so its absence
+        # must NOT raise — the adapter resolves the bus from env at runtime.
+        opts = build_sdk_options("lead", extra={"_channels": ["server:sac"]})
+        # Assert
+        assert "sac" in opts.mcp_servers  # type: ignore[operator]
