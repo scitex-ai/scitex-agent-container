@@ -121,18 +121,37 @@ async def _consume_sse(
         backoff = min(backoff * 2, 30.0)
 
 
+def _meta_str(value: Any) -> str:
+    """Coerce a meta value to the string the Claude Code client demands.
+
+    Claude Code's ``claude/channel`` notification schema types **every**
+    ``meta`` value as a string. A raw bool (``requires_reply``) trips the
+    client's Zod validator — its notification handler throws and the
+    pushed turn is silently dropped (mcp-logs-sac: "Uncaught error in
+    notification handler: ZodError ... requires_reply: expected string,
+    received boolean"). Render bools JSON-style so a receiving agent can
+    compare them verbatim against ``"true"`` / ``"false"``.
+    """
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
 def _build_notification(event: dict[str, Any]) -> dict[str, Any]:
     """Project a bus event onto the Claude Code channel notification
     shape: ``{content, meta: {source, chat_id, ts, ...}}``.
+
+    Every ``meta`` value is stringified via :func:`_meta_str` — the
+    client schema rejects non-string values (see that helper).
     """
     meta: dict[str, Any] = {
-        "source": event.get("from_agent", "unknown"),
-        "ts": str(event.get("ts", "")),
-        "msg_id": event.get("msg_id", ""),
+        "source": _meta_str(event.get("from_agent", "unknown")),
+        "ts": _meta_str(event.get("ts", "")),
+        "msg_id": _meta_str(event.get("msg_id", "")),
     }
     for k in ("conversation_id", "in_reply_to", "priority", "requires_reply"):
         if k in event:
-            meta[k] = event[k]
+            meta[k] = _meta_str(event[k])
     return {
         "content": event.get("content", ""),
         "meta": meta,

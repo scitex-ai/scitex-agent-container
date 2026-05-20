@@ -292,21 +292,49 @@ def test_build_notification_ts_is_stringified():
 
 
 @pytest.mark.parametrize(
-    "key,value",
+    "key,raw,expected",
     [
-        ("conversation_id", "conv-42"),
-        ("in_reply_to", "msg-7"),
-        ("priority", "high"),
-        ("requires_reply", True),
+        ("conversation_id", "conv-42", "conv-42"),
+        ("in_reply_to", "msg-7", "msg-7"),
+        ("priority", "high", "high"),
+        # requires_reply arrives as a bool off the bus but must be
+        # stringified — a raw bool trips the client's Zod validator and
+        # the pushed turn is silently dropped.
+        ("requires_reply", True, "true"),
+        ("requires_reply", False, "false"),
     ],
 )
-def test_build_notification_propagates_optional_meta_key(key: str, value: Any):
+def test_build_notification_propagates_optional_meta_key(
+    key: str, raw: Any, expected: str
+):
     # Arrange
-    event = {"from_agent": "bob", "content": "x", key: value}
+    event = {"from_agent": "bob", "content": "x", key: raw}
     # Act
     meta = _build_notification(event)["meta"]
     # Assert
-    assert meta[key] == value
+    assert meta[key] == expected
+
+
+def test_build_notification_meta_values_are_all_strings():
+    """Regression: Claude Code's channel-notification schema types every
+    ``meta`` value as a string. A raw bool (``requires_reply``) made the
+    client's notification handler throw a ZodError and silently drop the
+    pushed turn. Pin the contract: nothing non-string reaches ``meta``."""
+    # Arrange — include the boolean offender plus a non-str ts.
+    event = {
+        "from_agent": "bob",
+        "content": "x",
+        "ts": 1234,
+        "msg_id": "m1",
+        "requires_reply": True,
+        "priority": "high",
+        "conversation_id": "c1",
+    }
+    # Act
+    meta = _build_notification(event)["meta"]
+    non_strings = {k: v for k, v in meta.items() if not isinstance(v, str)}
+    # Assert
+    assert non_strings == {}
 
 
 def test_build_notification_omits_optional_keys_when_absent():
