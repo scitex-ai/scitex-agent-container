@@ -77,6 +77,39 @@ Two principles that sound similar but govern different things — they coexist:
   cleanly requires the runtime to merge the layers and resolve overrides —
   today `spec.raw_args` and `to_home` are still separate surfaces.)
 
+### Scope / non-goals
+
+SAC guarantees exactly this model: per-agent `to_home` + the `_base` shared
+baseline, with `ro`-binds for secrets and shared skills. That is the line.
+
+Bolder convenience patterns are *possible* through the raw escape hatches
+(`spec.apptainer.binds` / `raw_args`) but are explicitly **out of scope** — SAC
+neither designs for nor supports them, and they are the operator's own risk:
+
+- pooling a single **shared `to_home`** across many agents, or
+- binding the **host `$HOME` directly** into the container.
+
+Keeping these out of scope is deliberate — it avoids over-engineering and keeps
+the reproducibility guarantee crisp.
+
+### The `ro`-bind reproducibility trade-off
+
+A `ro`-bind trades strict reproducibility for currency/sharing — worth being
+honest about:
+
+- **Secrets** (`.ssh`, `.config/gh`, `.credentials.json`): correctly *outside*
+  the reproducible artifact. You reproduce the *structure*; secret values are
+  injected at run time, never committed. This is standard and not a gap.
+- **Skills**: a real trade-off. The live `ro`-bind is always-current and shared
+  but **not pinned** — if the host's `~/.claude/skills` changes, the agent
+  changes, so the run is not byte-reproducible. For *strict* reproducibility you
+  would "chain everything": pin the skills to a version and materialize that
+  pinned snapshot into `to_home` (bringing it into the definition chain).
+
+So there are two postures: **default = `ro`-bind** (current, shared) and
+**strict-reproducible = pin skills into `to_home`**. Pick per agent; the default
+is currency.
+
 ## The `to_home` 1:1 mirror (general, not just `.claude`)
 
 `<spec_dir>/to_home/` mirrors the container `$HOME` **1:1**. Every path under
