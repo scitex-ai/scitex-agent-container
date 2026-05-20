@@ -20,6 +20,7 @@ fixture which is what ``Path.home()`` reads on POSIX.
 
 from __future__ import annotations
 
+import importlib
 import os
 from pathlib import Path
 from typing import Any, Iterator
@@ -320,21 +321,25 @@ def test_run_hooks_real_subprocess_executes(tmp_path: Path) -> None:
 
 def test_fire_forget_hook_swallows_run_hook_exceptions() -> None:
     # Arrange: route the module-level ``run_hook`` symbol used by
-    # ``_fire_forget_hook`` to a real callable that raises. We restore
-    # the original at the end so we don't leak state across tests.
-    original = lc.run_hook
+    # ``_fire_forget_hook`` to a real callable that raises. ``_fire_forget_hook``
+    # lives in ``_hook_runner`` (split out of the former monolith), and
+    # resolves ``run_hook`` from that module's namespace, so patch there.
+    # We restore the original at the end so we don't leak state across tests.
+    from scitex_agent_container._lifecycle import _hook_runner
+
+    original = _hook_runner.run_hook
 
     def boom(*_a: Any, **_kw: Any) -> None:
         raise RuntimeError("hook crash")
 
-    lc.run_hook = boom  # real callable, not Mock
+    _hook_runner.run_hook = boom  # real callable, not Mock
     try:
         # Act: must not raise.
         lc._fire_forget_hook("alpha", "pre_start", ["echo hi"])
         # Assert: reaching this line means the exception was swallowed.
         assert True
     finally:
-        lc.run_hook = original
+        _hook_runner.run_hook = original
 
 
 # ---------------------------------------------------------------------------
@@ -452,6 +457,99 @@ def test_agent_start_force_restarts_when_already_running(
     )
     # Assert: force triggered stop AND start on the same runtime instance.
     assert len(runtime.stop_calls) == 1 and len(runtime.start_calls) == 1
+
+
+@pytest.fixture
+def isolated_state_db(tmp_path: Path) -> Iterator[Path]:
+    """Per-test on-disk state.db, exported via env (explicit save/restore).
+
+    ``state_db`` reads ``SCITEX_AGENT_CONTAINER_STATE_DB`` at import into a
+    module-level ``DEFAULT_DB_PATH``; reload it after setting the env so the
+    ``instances`` / ``a2a_ports`` writes land in the temp DB, not the
+    developer's real ``~/.scitex`` tree. Mirrors the ``_instances`` test.
+    """
+    p = tmp_path / "state.db"
+    key = "SCITEX_AGENT_CONTAINER_STATE_DB"
+    saved = os.environ.get(key)
+    os.environ[key] = str(p)
+    import scitex_agent_container._state.state_db as mod
+
+    importlib.reload(mod)
+    try:
+        yield p
+    finally:
+        if saved is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = saved
+        importlib.reload(mod)
+
+
+def _force_restart_running_agent(
+    tmp_path: Path, registry: Registry, name: str = "alpha"
+) -> None:
+    """Drive a ``--force`` restart of a registered, running agent whose
+    spec uses ``a2a.port: auto`` (the AgentConfig default), so resolution
+    claims a real allocator port. Shared Act for the regression tests."""
+    spec = _write_spec(tmp_path, name=name)
+    registry.add(name, str(spec), f"cld-{name}")
+    runtime = FakeRuntime(running=True, start_result=True)
+    lc.agent_start(
+        str(spec),
+        registry=registry,
+        runtime_factory=lambda _c: runtime,
+        handover_mod=FakeHandover(),
+        sleep_fn=_no_sleep,
+        force=True,
+    )
+
+
+def test_agent_start_force_restart_records_single_active_instance_row(
+    tmp_path: Path, registry: Registry, isolated_state_db: Path
+) -> None:
+    # Arrange
+    from scitex_agent_container._state.state_db import list_active_instances
+
+    # Act
+    _force_restart_running_agent(tmp_path, registry)
+    # Assert: exactly one active instances row survives the restart.
+    rows = [r for r in list_active_instances() if r["name"] == "alpha"]
+    assert len(rows) == 1
+
+
+def test_agent_start_force_restart_records_non_none_a2a_port(
+    tmp_path: Path, registry: Registry, isolated_state_db: Path
+) -> None:
+    """Regression: before the fix, the ``--force`` ``agent_stop`` released
+    the port claim that the line-249 resolve had inserted, so
+    ``record_local_instance`` read an empty ``a2a_ports`` table and wrote
+    ``a2a_port=None`` — breaking ``/v1/turn`` routing even though the
+    sidecar bound. The post-force-stop re-resolve keeps it non-None."""
+    # Arrange
+    from scitex_agent_container._state.state_db import list_active_instances
+
+    # Act
+    _force_restart_running_agent(tmp_path, registry)
+    # Assert
+    row = [r for r in list_active_instances() if r["name"] == "alpha"][0]
+    assert row["a2a_port"] is not None
+
+
+def test_agent_start_force_restart_instances_port_matches_claim(
+    tmp_path: Path, registry: Registry, isolated_state_db: Path
+) -> None:
+    """After a force restart the ``instances`` row a2a_port must equal the
+    live ``a2a_ports`` claim — the two tables stay consistent so ``sac
+    listen`` / ``/v1/turn`` agree on the port."""
+    # Arrange
+    from scitex_agent_container._state.port_allocator import get_port
+    from scitex_agent_container._state.state_db import list_active_instances
+
+    # Act
+    _force_restart_running_agent(tmp_path, registry)
+    # Assert
+    row = [r for r in list_active_instances() if r["name"] == "alpha"][0]
+    assert row["a2a_port"] == get_port("alpha")
 
 
 def test_agent_start_force_clears_stale_registry_entry(
