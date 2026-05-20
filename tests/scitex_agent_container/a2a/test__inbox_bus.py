@@ -313,3 +313,26 @@ def test_mint_event_attaches_extra_metadata_when_provided() -> None:
     extra = event.get("extra")
     # Assert
     assert extra == {"trace_id": "abc"}
+
+
+# ---------------------------------------------------------------------------
+# mint_event: ``ack`` survives minting so the auto-ack loop-guard works
+# ---------------------------------------------------------------------------
+
+
+def test_mint_event_carries_ack_flag_when_true() -> None:
+    # Arrange
+    event = mint_event("alice", content="read", from_agent="bob", ack=True)
+    # Act
+    ack = event["ack"]
+    # Assert
+    assert ack is True
+
+
+def test_mint_event_defaults_ack_to_false() -> None:
+    # Arrange
+    event = mint_event("alice", content="hi", from_agent="bob")
+    # Act
+    ack = event["ack"]
+    # Assert
+    assert ack is False
