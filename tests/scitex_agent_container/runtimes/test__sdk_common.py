@@ -503,6 +503,65 @@ class TestBuildOptions:
 
 
 # ---------------------------------------------------------------------------
+# build_sdk_options — explicit --settings load (hooks/settings)
+#
+# setting_sources stays [] (machine-independence: no host ~/.claude
+# auto-discovery). The agent's settings.local.json is delivered into the
+# container $HOME/.claude/ via the to_home mirror; build_sdk_options must
+# point the SDK ``settings`` field (=> --settings, the highest-priority
+# flag-settings layer) at it so hooks load independently of setting_sources.
+# ---------------------------------------------------------------------------
+
+
+class TestSettingsFlag:
+    @pytest.fixture
+    def _opts_with_settings(self, sdk_env: _Env, tmp_path):
+        # Arrange — auth via cred file (no env mutation), and a container
+        # $HOME holding the delivered settings.local.json.
+        cred = tmp_path / ".credentials.json"
+        cred.write_text("{}")
+        sdk_env.setattr_module(_sdk_common, "_CRED_FILE", cred)
+        sdk_env.delenv("ANTHROPIC_API_KEY")
+        home = tmp_path / "home" / "agent"
+        (home / ".claude").mkdir(parents=True)
+        (home / ".claude" / "settings.local.json").write_text('{"hooks": {}}\n')
+        sdk_env.setenv("HOME", str(home))
+        _swap_registry(sdk_env, None)
+        # Act
+        opts = build_sdk_options("alpha")
+        return opts, home
+
+    def test_settings_points_at_container_home_settings(self, _opts_with_settings):
+        # Arrange
+        opts, home = _opts_with_settings
+        # Act
+        # Assert — the in-container path, derived from $HOME.
+        assert opts.settings == str(home / ".claude" / "settings.local.json")
+
+    def test_setting_sources_stays_empty(self, _opts_with_settings):
+        # Arrange — machine-independence invariant must NOT change.
+        opts, _ = _opts_with_settings
+        # Act
+        # Assert
+        assert opts.setting_sources == []
+
+    def test_no_settings_when_file_absent(self, sdk_env: _Env, tmp_path):
+        # Arrange — $HOME without a settings.local.json → no --settings.
+        cred = tmp_path / ".credentials.json"
+        cred.write_text("{}")
+        sdk_env.setattr_module(_sdk_common, "_CRED_FILE", cred)
+        sdk_env.delenv("ANTHROPIC_API_KEY")
+        empty_home = tmp_path / "empty_home"
+        empty_home.mkdir()
+        sdk_env.setenv("HOME", str(empty_home))
+        _swap_registry(sdk_env, None)
+        # Act
+        opts = build_sdk_options("alpha")
+        # Assert
+        assert opts.settings is None
+
+
+# ---------------------------------------------------------------------------
 # build_sdk_options — server:sac channel sidecar registration
 # ---------------------------------------------------------------------------
 
