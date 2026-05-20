@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ._send_diagnosis import diagnose_send_failure
 from ._send_preflight import SshRunner, preflight_send_creds
 
 __all__ = ["send_to_agent"]
@@ -102,12 +103,23 @@ def send_to_agent(
     from .._network.peer import PeerError
     from .._state.state_db import _resolve_host, list_active_instances
 
+    current_host = _resolve_host(None)
     rows = list_active_instances()
     matching = [r for r in rows if r.get("name") == name]
     if not matching:
-        return {"status": "error", "error": f"agent {name!r} not running"}
+        return {
+            "status": "error",
+            "error": f"agent {name!r} not running",
+            "diagnosis": diagnose_send_failure(
+                name,
+                a2a_port=None,
+                peer_host=current_host,
+                current_host=current_host,
+            ),
+        }
     row = matching[0]
     a2a_port = row.get("a2a_port")
+    peer_host = str(row.get("host") or "")
     if not isinstance(a2a_port, int) or a2a_port <= 0:
         return {
             "status": "error",
@@ -115,9 +127,13 @@ def send_to_agent(
                 f"agent {name!r} has no a2a_port recorded "
                 f"(a2a_port={a2a_port!r}); cannot reach /v1/turn"
             ),
+            "diagnosis": diagnose_send_failure(
+                name,
+                a2a_port=a2a_port if isinstance(a2a_port, int) else None,
+                peer_host=peer_host or current_host,
+                current_host=current_host,
+            ),
         }
-    peer_host = str(row.get("host") or "")
-    current_host = _resolve_host(None)
     if peer_host and peer_host != current_host:
         url = f"ssh://{peer_host}:{a2a_port}/v1/turn"
     else:
@@ -164,9 +180,24 @@ def send_to_agent(
         # ssh+curl timeouts as "ssh+curl timeout to ...". Sniff either
         # shape so the MCP tool can surface status="timeout" sharply
         # rather than burying the timeout inside a generic "error".
+        #
+        # Both surfaces carry a state-aware ``diagnosis`` gathered at the
+        # moment of failure so the caller can tell "still booting" /
+        # "alive & busy" / "dead" / "port unreachable" apart instead of
+        # getting an opaque "no response".
+        diagnosis = diagnose_send_failure(
+            name,
+            a2a_port=a2a_port,
+            peer_host=peer_host,
+            current_host=current_host,
+        )
         if "timeout" in msg.lower():
-            return {"status": "timeout", "error": f"no response in {timeout_seconds}s"}
-        return {"status": "error", "error": msg}
+            return {
+                "status": "timeout",
+                "error": f"no response in {timeout_seconds}s",
+                "diagnosis": diagnosis,
+            }
+        return {"status": "error", "error": msg, "diagnosis": diagnosis}
 
     metadata: dict[str, Any] = {
         "name": name,
