@@ -81,6 +81,10 @@ from ._dot_claude import (
     _interpolate_metadata,
     _validate_marker_invariants,
 )
+from ._skills_resolve import (
+    deploy_host_skills_resolved,
+    resolve_host_skills_dir,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -158,19 +162,31 @@ def resolve_baseline_to_home_dir(spec_dir: Path | None) -> Path | None:
 def materialize_to_home(spec_dir: Path, workspace_home: Path) -> None:
     """Mirror ``<spec_dir>/to_home/`` into ``<workspace_home>/``.
 
-    Two-pass overlay: the shared/common baseline ``to_home/`` is applied
-    first, then ``<spec_dir>/to_home/`` is applied on top — so per-agent
-    files win on conflict. Walks each tree and applies the per-entry
-    semantics described in the module docstring. Idempotent — safe to
-    call on every agent start.
+    Three-pass overlay:
 
-    No-op when neither the baseline nor ``<spec_dir>/to_home/`` exists.
+      0. Host ``~/.claude/skills/`` resolved (symlink-dereferenced) into
+         ``<workspace_home>/.claude/skills/`` — see :mod:`_skills_resolve`.
+         This runs FIRST so the to_home passes below can still override
+         on conflict (per-agent skills always win).
+      1. The shared/common baseline ``to_home/``.
+      2. ``<spec_dir>/to_home/`` on top — so per-agent files win on
+         conflict.
+
+    Walks each tree and applies the per-entry semantics described in
+    the module docstring. Idempotent — safe to call on every agent
+    start.
+
+    No-op when none of the host skills dir, the baseline, or
+    ``<spec_dir>/to_home/`` exists.
     """
     baseline = resolve_baseline_to_home_dir(spec_dir)
     root = spec_dir / "to_home"
-    if baseline is None and not root.is_dir():
+    host_skills = resolve_host_skills_dir()
+    if baseline is None and not root.is_dir() and host_skills is None:
         return
     workspace_home.mkdir(parents=True, exist_ok=True)
+    if host_skills is not None:
+        deploy_host_skills_resolved(workspace_home, host_skills_dir=host_skills)
     if baseline is not None:
         _walk_and_apply(baseline, baseline, workspace_home, config=None)
     if root.is_dir():
@@ -181,20 +197,32 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
     """``AgentConfig``-driven entrypoint, parallel to
     :func:`_dot_claude.deploy_dot_claude`.
 
-    Two-pass overlay: the shared/common baseline ``to_home/`` is applied
-    first, then the per-agent ``to_home/`` is applied on top — so
-    per-agent files win on conflict. Resolves the per-agent directory via
-    :func:`resolve_to_home_dir` (honours ``spec.to_home`` overrides) and
-    the baseline via :func:`resolve_baseline_to_home_dir`, then applies
-    metadata-aware interpolation (${metadata.name}, ${metadata.labels.*},
-    ${ENV_VAR}) to text files. No-op when neither directory resolves.
+    Three-pass overlay:
+
+      0. Host ``~/.claude/skills/`` resolved (symlink-dereferenced) into
+         ``<workspace_home>/.claude/skills/`` — see :mod:`_skills_resolve`.
+         Runs FIRST so the to_home passes below can still override on
+         conflict (per-agent skills always win).
+      1. The shared/common baseline ``to_home/``.
+      2. The per-agent ``to_home/`` on top — so per-agent files win on
+         conflict.
+
+    Resolves the per-agent directory via :func:`resolve_to_home_dir`
+    (honours ``spec.to_home`` overrides) and the baseline via
+    :func:`resolve_baseline_to_home_dir`, then applies metadata-aware
+    interpolation (${metadata.name}, ${metadata.labels.*}, ${ENV_VAR})
+    to text files. No-op when none of the host skills dir, the
+    baseline, or the per-agent to_home resolves.
     """
     root = resolve_to_home_dir(config)
     baseline = resolve_baseline_to_home_dir(_spec_dir(config))
-    if root is None and baseline is None:
+    host_skills = resolve_host_skills_dir()
+    if root is None and baseline is None and host_skills is None:
         return
     dest = Path(workspace_home)
     dest.mkdir(parents=True, exist_ok=True)
+    if host_skills is not None:
+        deploy_host_skills_resolved(dest, host_skills_dir=host_skills)
     if baseline is not None:
         _walk_and_apply(baseline, baseline, dest, config=config)
     if root is not None:
