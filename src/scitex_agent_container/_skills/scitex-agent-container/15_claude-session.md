@@ -95,8 +95,7 @@ Scope resolution (highest priority first):
 
 1. **Project-local**: walks up from cwd to a git repo containing
    `.scitex/agent-container/`. State lands in
-   `<repo>/.scitex/agent-container/runtime/<name>/`. Same convention
-   as the slurm runtime + scitex-hpc reservations.
+   `<repo>/.scitex/agent-container/runtime/<name>/`.
 2. **Home**: `~/.scitex/agent-container/runtime/<name>/` (when no
    project scope is available).
 3. Override via `$SCITEX_AGENT_CONTAINER_RUNTIME_DIR` (the runner reads

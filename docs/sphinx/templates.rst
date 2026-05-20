@@ -1,21 +1,15 @@
 Templates and Examples
 ======================
 
-Two directories ship under ``config/`` in the repo:
+``examples/agents/`` ships pattern templates as agent directories
+(``hello-agent``, ``minimal-agent``, ``full-agent``, ``proxy-agent``).
+Each directory holds a ``spec.yaml`` (plus an optional ``dot_claude/``
+sibling) and demonstrates one deployment pattern with the smallest
+manifest that exercises it. Copy-and-adapt is the intended workflow.
 
-* ``examples/agent-templates/`` — minimal pattern templates. Each one demonstrates
-  one deployment pattern with the smallest YAML that exercises it.
-  Copy-and-adapt is the intended workflow.
-* ``examples/agents/`` — concrete real-world configs that document
-  specific operator decisions (e.g. ``newbie-docker.yaml`` carries the
-  Hawthorne-effect-free design notes from the 2026-04-12 contamination
-  incident).
-
-Both directories are validated by ``tests/test_templates_v3_valid.py``.
-Every YAML must round-trip through ``load_config`` cleanly; the SLURM
-template additionally renders a valid sbatch script so YAML-key drift
-from ``SlurmSpec`` / ``SlurmHooks`` fails loudly in CI rather than at a
-user's first ``sac agent start``.
+The shipped YAML must round-trip through ``load_config`` cleanly so
+YAML-key drift fails loudly in CI rather than at a user's first
+``sac agents start``.
 
 Pattern Templates
 -----------------
@@ -27,15 +21,20 @@ Pattern Templates
    * - Template
      - Pattern
      - When to use
-   * - ``apptainer.yaml``
-     - claude-session inside Apptainer SIF
-     - **Default**. HPC + reproducibility. F-CS17 made sac
-       container-only; this is the canonical pattern.
-   * - ``ssh.yaml``
-     - remote agent via SSH
-     - Cross-machine fleet member. ``sac --on <peer>`` (F-CS12)
-       dispatches across hosts; the per-agent
-       ``dot_claude/`` directory is rsync'd to the remote at start.
+   * - ``minimal-agent``
+     - Smallest valid ``spec.yaml``
+     - Starting point. The fewest fields that load and start.
+   * - ``hello-agent``
+     - claude-session inside an Apptainer SIF
+     - **Default**. F-CS17 made sac container-only; this is the
+       canonical single-turn pattern.
+   * - ``full-agent``
+     - Fully-featured agent
+     - Health, restart, A2A, and ``dot_claude/`` wiring all enabled.
+   * - ``proxy-agent``
+     - ``kind: AgentProxy``
+     - HTTP forwarder with no SDK runner — routes ``/v1/turn`` to
+       another agent.
 
 MCP tool wiring is no longer a separate template — drop a
 ``.mcp.json`` into the agent's ``dot_claude/`` directory and it'll be
@@ -50,27 +49,8 @@ instantiate:
 
 .. code-block:: bash
 
-    mkdir -p ~/.scitex/agent-container/agents/my-agent
-    cp examples/agent-templates/apptainer.yaml \\
-       ~/.scitex/agent-container/agents/my-agent/spec.yaml
-    # Optionally add a dot_claude/ sibling with CLAUDE.md / .mcp.json /
-    # .env / state.md / commands/ / skills/ / hooks/ (all optional).
-    sac agent start my-agent
-
-Examples
---------
-
-.. list-table::
-   :header-rows: 1
-   :widths: 25 75
-
-   * - Example
-     - What it documents
-   * - ``newbie-docker.yaml``
-     - Hawthorne-effect-free naive-user simulation. Zero skills, zero
-       fleet identity, ``mount_host_claude: false``, ``network: bridge``
-       (not ``none`` — DNS blocking caused 3-min/call retry loops).
-       Disposable: ``restart.policy: never``.
-   * - ``researcher-opus.yaml``
-     - Opus-powered researcher with ``restart.policy: on-failure``,
-       backoff tuned for long-running research sessions.
+    cp -r examples/agents/hello-agent \\
+       ~/.scitex/agent-container/agents/my-agent
+    # The dot_claude/ sibling (CLAUDE.md / .mcp.json / .env / state.md /
+    # commands/ / skills/ / hooks/) is all optional.
+    sac agents start my-agent

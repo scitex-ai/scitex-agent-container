@@ -42,7 +42,7 @@ metadata:
     role: worker
     machine: local
 spec:
-  runtime: claude-code    # claude-code | slurm | slurm-tenant
+  runtime: apptainer      # apptainer (only accepted value)
   model: opus[1m]
   multiplexer: tmux       # tmux (default) or screen
 
@@ -111,4 +111,3 @@ If you have legacy YAMLs:
 
 - `08_templates.md` — six minimal pattern templates under `examples/agent-templates/`
 - `06_env-injection-ports.md` — yaml.env vs dot_claude/.mcp.json env vs dot_claude/.env vs hooks
-- `09_slurm-tenant.md` — multi-tenant `runtime: slurm-tenant` and `slurm.reservation`

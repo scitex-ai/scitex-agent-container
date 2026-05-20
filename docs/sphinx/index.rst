@@ -59,16 +59,16 @@ Quick Example
 .. code-block:: bash
 
     # Create and launch an agent from YAML definition
-    scitex-agent-container start my-agent.yaml
+    sac agents start my-agent
 
-    # List running agents
-    scitex-agent-container list
+    # List agents and their status
+    sac agents list
 
-    # Inspect live pane state / rich status
-    scitex-agent-container show-status my-agent --json
+    # Inspect status as JSON
+    sac agents list --json
 
     # Stop an agent
-    scitex-agent-container stop my-agent
+    sac agents stop my-agent
 
 Indices and tables
 ==================

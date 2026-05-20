@@ -39,7 +39,7 @@
 
 | # | Problem                                                     | Solution                                                                                                                                      |
 |---|-------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------|
-| 1 | Scripting an agentic workflow is hard.                      | `scitex-agent-container` (`sac`) declares the agent as a **single YAML file** ([`spec.yaml`](#yaml-spec-reference-v3)).                                                  |
+| 1 | Scripting an agentic workflow is hard.                      | `scitex-agent-container` (`sac`) declares the agent as a **single YAML file** ([`spec.yaml`](docs/spec-reference.md)).                                                  |
 | 2 | Subagents don't scale across hosts, projects, and contexts. | `sac` lets agents spawn **full agents** on local AND **remote hosts**.                                                                        |
 | 3 | Controlling agent permissions is difficult.                 | `sac` runs every agent **inside Apptainer** — full mount/env/security options exposed in `spec.yaml`.                                         |
 | 4 | Supporting the A2A protocol by hand is time-consuming.      | `sac` needs just one YAML field (`spec.a2a.port`).                                                                                            |
@@ -193,7 +193,7 @@ sac image status                          # unified dashboard
 sac image snapshot [-o env.json]          # reproducibility capsule
 
 # Account / quota
-sac account list / save / delete / switch / watch-quota
+sac accounts list / save / delete / switch / watch-quota
 
 # Network / peers
 sac host list / add / remove / set / probe / exec / validate
