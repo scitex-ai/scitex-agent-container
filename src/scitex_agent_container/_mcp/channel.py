@@ -199,7 +199,16 @@ async def _serve(
             ServerSession(
                 read_stream,
                 write_stream,
-                server.create_initialization_options(),
+                # Declare the `claude/channel` experimental capability in the
+                # initialize response. Without it Claude Code logs "Channel
+                # notifications skipped: server did not declare claude/channel
+                # capability" and drops every notifications/claude/channel we
+                # push — the receive→inject seam dies on the *client* side even
+                # though send_message succeeded. This is distinct from the
+                # earlier silent-drop (the server not pushing at all).
+                server.create_initialization_options(
+                    experimental_capabilities={"claude/channel": {}},
+                ),
             )
         )
 
