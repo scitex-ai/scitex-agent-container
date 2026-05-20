@@ -1,3 +1,10 @@
+---
+description: |
+  [TOPIC] scitex-agent-container — agent image build & rebuild (apptainer .sif)
+  [DETAILS] Where sac-base / sac-scitex .def + .sif live (dotfiles containers/), how sac is installed from git@develop, the `sac image build scitex` / `scitex-container build` commands, the @develop→@tag stable pin, and the gotcha that runner/channel changes do NOT reach running agents until the image is rebuilt.
+tags: [scitex-agent-container-image-build]
+---
+
 # Image build & rebuild (apptainer .sif)
 
 The container images agents run are **apptainer** `.sif` files, defined in the
