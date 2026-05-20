@@ -24,6 +24,28 @@ in the agent's definition, so a run is identically reproducible on any host
 an agent behave, that is the bug: put it in the definition (`to_home`/`spec`)
 and pass it explicitly.
 
+## `to_home`-first: the default placement, with a `ro`-bind exception
+
+**Default everything to `to_home`.** The whole agent `$HOME` — `.env`,
+`.mcp.json`, `CLAUDE.md`, `.claude/hooks`, instructions, `.bashrc` — should be
+declared as `to_home` files and materialized into the container. `spec.yaml`
+should shrink toward *container wiring only* (image, overlay, runtime flags);
+the agent's *contents* live in `to_home`. (Migration target: today's
+`raw_args: --env GIT_AUTHOR_*` move to `to_home/.env`; `startup_prompts` move
+to `to_home/CLAUDE.md`.)
+
+The **only** exception is read-only `bind`s, used for two narrow cases where a
+materialized copy is wrong:
+
+- **Host secrets** — `.ssh`, `.config/gh`, `.claude/.credentials.json`. A copy
+  would land secrets in the git-tracked `to_home` source; a `ro`-bind keeps
+  them out of git and always current.
+- **Large shared, always-current trees** — `~/.claude/skills`. A copy would
+  duplicate and go stale; a `ro`-bind shares the live host copy.
+
+Both are acceptable mechanisms, but `to_home` is the first choice; reach for a
+`ro`-bind only for secrets or shared-live trees.
+
 ## The `to_home` 1:1 mirror (general, not just `.claude`)
 
 `<spec_dir>/to_home/` mirrors the container `$HOME` **1:1**. Every path under
