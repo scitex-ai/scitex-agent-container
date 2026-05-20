@@ -27,6 +27,7 @@ from scitex_agent_container.runtimes._to_home import (
     WorkspaceCLAUDEMarkerError,
     deploy_to_home,
     materialize_to_home,
+    resolve_baseline_to_home_dir,
     resolve_to_home_dir,
 )
 
@@ -432,3 +433,224 @@ class TestDeployToHomeFromConfig:
         deploy_to_home(cfg, str(home))
         # Assert
         assert (home / "blob.bin").read_bytes() == payload
+
+
+# ---------------------------------------------------------------------------
+# Baseline layer — shared/common to_home overlaid by per-agent to_home.
+#
+# Layout under tmp_path:
+#   agents/<name>/spec.yaml   ← spec dir
+#   agents/<name>/to_home/    ← per-agent layer (overlay, wins on conflict)
+#   agents/_base/to_home/     ← shared baseline (applied first)
+# ---------------------------------------------------------------------------
+
+
+def _build_layered(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """Build the agents-root layout used by baseline tests.
+
+    Returns ``(spec_dir, per_agent_to_home, baseline_to_home)`` — all
+    real directories rooted at ``tmp_path/agents``.
+    """
+    agents_root = tmp_path / "agents"
+    spec_dir = agents_root / "test-agent"
+    per_agent = spec_dir / "to_home"
+    baseline = agents_root / "_base" / "to_home"
+    per_agent.mkdir(parents=True, exist_ok=True)
+    baseline.mkdir(parents=True, exist_ok=True)
+    return spec_dir, per_agent, baseline
+
+
+class TestResolveBaselineToHomeDir:
+    def test_resolves_sibling_base_dir_under_agents_root(self, tmp_path):
+        # Arrange
+        spec_dir, _, baseline = _build_layered(tmp_path)
+        # Act
+        resolved = resolve_baseline_to_home_dir(spec_dir)
+        # Assert
+        assert resolved == baseline
+
+    def test_returns_none_when_no_base_dir_present(self, tmp_path):
+        # Arrange — spec dir without a sibling _base/to_home.
+        spec_dir = tmp_path / "agents" / "lonely-agent"
+        spec_dir.mkdir(parents=True)
+        # Act
+        resolved = resolve_baseline_to_home_dir(spec_dir)
+        # Assert
+        assert resolved is None
+
+    def test_returns_none_when_spec_dir_is_none(self):
+        # Arrange — no spec dir, no env override.
+        # Act
+        resolved = resolve_baseline_to_home_dir(None)
+        # Assert
+        assert resolved is None
+
+    def test_env_override_takes_precedence(self, tmp_path, env_save_restore):
+        # Arrange — an explicit baseline elsewhere wins over the sibling.
+        spec_dir, _, sibling = _build_layered(tmp_path)
+        custom = tmp_path / "custom_baseline" / "to_home"
+        custom.mkdir(parents=True)
+        env_save_restore.set("SAC_TO_HOME_BASELINE", str(custom))
+        # Act
+        resolved = resolve_baseline_to_home_dir(spec_dir)
+        # Assert
+        assert resolved == custom
+
+    def test_env_override_pointing_at_missing_dir_returns_none(
+        self, tmp_path, env_save_restore
+    ):
+        # Arrange — override path that does not exist.
+        spec_dir, _, _ = _build_layered(tmp_path)
+        env_save_restore.set("SAC_TO_HOME_BASELINE", str(tmp_path / "does_not_exist"))
+        # Act
+        resolved = resolve_baseline_to_home_dir(spec_dir)
+        # Assert
+        assert resolved is None
+
+
+class TestMaterializeBaselineOverlay:
+    def test_baseline_only_file_lands_in_home(self, tmp_path):
+        # Arrange — baseline provides a shared file the agent does not.
+        spec_dir, _, baseline = _build_layered(tmp_path)
+        (baseline / ".bashrc").write_text("export BASE=1\n")
+        home = tmp_path / "home"
+        # Act
+        materialize_to_home(spec_dir, home)
+        # Assert
+        assert (home / ".bashrc").read_text() == "export BASE=1\n"
+
+    def test_per_agent_file_overrides_baseline_file_of_same_name(self, tmp_path):
+        # Arrange — same relative path in both layers; per-agent must win.
+        spec_dir, per_agent, baseline = _build_layered(tmp_path)
+        (baseline / "shared.txt").write_text("from baseline\n")
+        (per_agent / "shared.txt").write_text("from agent\n")
+        home = tmp_path / "home"
+        # Act
+        materialize_to_home(spec_dir, home)
+        # Assert
+        assert (home / "shared.txt").read_text() == "from agent\n"
+
+    def test_distinct_baseline_file_lands_alongside_per_agent(self, tmp_path):
+        # Arrange — distinct files in each layer.
+        spec_dir, per_agent, baseline = _build_layered(tmp_path)
+        (baseline / "base_only.txt").write_text("base\n")
+        (per_agent / "agent_only.txt").write_text("agent\n")
+        home = tmp_path / "home"
+        # Act
+        materialize_to_home(spec_dir, home)
+        # Assert
+        assert (home / "base_only.txt").read_text() == "base\n"
+
+    def test_distinct_per_agent_file_lands_alongside_baseline(self, tmp_path):
+        # Arrange — distinct files in each layer.
+        spec_dir, per_agent, baseline = _build_layered(tmp_path)
+        (baseline / "base_only.txt").write_text("base\n")
+        (per_agent / "agent_only.txt").write_text("agent\n")
+        home = tmp_path / "home"
+        # Act
+        materialize_to_home(spec_dir, home)
+        # Assert
+        assert (home / "agent_only.txt").read_text() == "agent\n"
+
+    def test_absent_baseline_is_unchanged_current_behavior(self, tmp_path):
+        # Arrange — no _base/ sibling at all; only a per-agent to_home.
+        # (Matches the historical single-layer layout.)
+        spec_dir = tmp_path / "spec"
+        (spec_dir / "to_home").mkdir(parents=True)
+        (spec_dir / "to_home" / ".bashrc").write_text("export FOO=1\n")
+        home = tmp_path / "home"
+        # Act
+        materialize_to_home(spec_dir, home)
+        # Assert — identical to the legacy single-layer test.
+        assert (home / ".bashrc").read_text() == "export FOO=1\n"
+
+    def test_baseline_only_with_no_per_agent_to_home(self, tmp_path):
+        # Arrange — baseline exists but the agent has NO to_home/ of its own.
+        agents_root = tmp_path / "agents"
+        spec_dir = agents_root / "test-agent"
+        spec_dir.mkdir(parents=True)
+        baseline = agents_root / "_base" / "to_home"
+        baseline.mkdir(parents=True)
+        (baseline / "common.txt").write_text("shared\n")
+        home = tmp_path / "home"
+        # Act
+        materialize_to_home(spec_dir, home)
+        # Assert
+        assert (home / "common.txt").read_text() == "shared\n"
+
+
+class TestDeployBaselineFromConfig:
+    def test_baseline_lands_via_config_entrypoint(self, tmp_path):
+        # Arrange — config_path under an agents root with a _base sibling.
+        agents_root = tmp_path / "agents"
+        spec_dir = agents_root / "test-agent"
+        (spec_dir / "to_home").mkdir(parents=True)
+        baseline = agents_root / "_base" / "to_home"
+        baseline.mkdir(parents=True)
+        (baseline / ".bashrc").write_text("export BASE=1\n")
+        cfg = AgentConfig(name="test-agent")
+        cfg.config_path = str(spec_dir / "spec.yaml")
+        cfg.to_home = ""
+        home = tmp_path / "home"
+        # Act
+        deploy_to_home(cfg, str(home))
+        # Assert
+        assert (home / ".bashrc").read_text() == "export BASE=1\n"
+
+    def test_per_agent_overrides_baseline_via_config_entrypoint(self, tmp_path):
+        # Arrange
+        agents_root = tmp_path / "agents"
+        spec_dir = agents_root / "test-agent"
+        per_agent = spec_dir / "to_home"
+        per_agent.mkdir(parents=True)
+        baseline = agents_root / "_base" / "to_home"
+        baseline.mkdir(parents=True)
+        (baseline / "shared.txt").write_text("from baseline\n")
+        (per_agent / "shared.txt").write_text("from agent\n")
+        cfg = AgentConfig(name="test-agent")
+        cfg.config_path = str(spec_dir / "spec.yaml")
+        cfg.to_home = ""
+        home = tmp_path / "home"
+        # Act
+        deploy_to_home(cfg, str(home))
+        # Assert
+        assert (home / "shared.txt").read_text() == "from agent\n"
+
+
+@pytest.fixture
+def overlaid_claude_md(tmp_path: Path) -> Path:
+    """Materialize a marker-protected CLAUDE.md from BOTH layers and return
+    the destination. Per-agent must win the overlay. One-shot setup feeds
+    several single-assert tests.
+    """
+    spec_dir, per_agent, baseline = _build_layered(tmp_path)
+    (baseline / ".claude").mkdir()
+    (baseline / ".claude" / "CLAUDE.md").write_text("## Base doctrine\n")
+    (per_agent / ".claude").mkdir()
+    (per_agent / ".claude" / "CLAUDE.md").write_text("## Agent doctrine\n")
+    home = tmp_path / "home"
+    materialize_to_home(spec_dir, home)
+    return home / ".claude" / "CLAUDE.md"
+
+
+class TestMarkerProtectedOverlay:
+    def test_per_agent_body_wins(self, overlaid_claude_md):
+        # Arrange
+        content = overlaid_claude_md.read_text()
+        # Act
+        # Assert
+        assert "Agent doctrine" in content
+
+    def test_baseline_body_is_overwritten(self, overlaid_claude_md):
+        # Arrange
+        content = overlaid_claude_md.read_text()
+        # Act
+        # Assert
+        assert "Base doctrine" not in content
+
+    def test_result_has_single_marker_section(self, overlaid_claude_md):
+        # Arrange
+        content = overlaid_claude_md.read_text()
+        # Act
+        # Assert
+        assert content.count(END_MARKER) == 1
