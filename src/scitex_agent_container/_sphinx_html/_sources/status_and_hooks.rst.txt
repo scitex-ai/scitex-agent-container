@@ -9,14 +9,14 @@ agent itself.
 Rich Status
 -----------
 
-``scitex-agent-container show-status <name> --json`` emits a dict suitable
+``sac agents list <name> --json`` emits a dict suitable
 for dashboards or fleet monitors. It merges the registry entry with
 fields collected by ``agent_meta.collect_rich()`` and
 ``event_log.summarize()``.
 
 .. code-block:: bash
 
-    scitex-agent-container show-status my-agent --json
+    sac agents list my-agent --json
 
 Selected fields:
 
@@ -145,7 +145,7 @@ orchestrator (scitex-orochi, a custom hub, etc.). ``status --json``
 emits a self-describing dict; consumers wrap it themselves. For
 example, scitex-orochi's ``heartbeat-push`` command:
 
-1. Shells out to ``scitex-agent-container show-status <name> --json``.
+1. Shells out to ``sac agents list <name> --json``.
 2. Reshapes the payload into its own hub schema.
 3. POSTs to its ``/api/agents/register/`` endpoint.
 

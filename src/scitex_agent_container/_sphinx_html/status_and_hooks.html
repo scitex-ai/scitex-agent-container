@@ -57,7 +57,6 @@
 <li class="toctree-l1"><a class="reference internal" href="templates.html">Templates and Examples</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="templates.html#pattern-templates">Pattern Templates</a></li>
 <li class="toctree-l2"><a class="reference internal" href="templates.html#instantiating-a-template">Instantiating a Template</a></li>
-<li class="toctree-l2"><a class="reference internal" href="templates.html#examples">Examples</a></li>
 </ul>
 </li>
 <li class="toctree-l1 current"><a class="current reference internal" href="#">Status and Hook Integration</a><ul>
@@ -426,11 +425,11 @@ consumer observe what an agent is doing without adding code to the
 agent itself.</p>
 <section id="rich-status">
 <h2>Rich Status<a class="headerlink" href="#rich-status" title="Link to this heading"></a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">scitex-agent-container</span> <span class="pre">show-status</span> <span class="pre">&lt;name&gt;</span> <span class="pre">--json</span></code> emits a dict suitable
+<p><code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agents</span> <span class="pre">list</span> <span class="pre">&lt;name&gt;</span> <span class="pre">--json</span></code> emits a dict suitable
 for dashboards or fleet monitors. It merges the registry entry with
 fields collected by <code class="docutils literal notranslate"><span class="pre">agent_meta.collect_rich()</span></code> and
 <code class="docutils literal notranslate"><span class="pre">event_log.summarize()</span></code>.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>scitex-agent-container<span class="w"> </span>show-status<span class="w"> </span>my-agent<span class="w"> </span>--json
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>sac<span class="w"> </span>agents<span class="w"> </span>list<span class="w"> </span>my-agent<span class="w"> </span>--json
 </pre></div>
 </div>
 <p>Selected fields:</p>
@@ -540,7 +539,7 @@ orchestrator (scitex-orochi, a custom hub, etc.). <code class="docutils literal 
 emits a self-describing dict; consumers wrap it themselves. For
 example, scitex-orochi’s <code class="docutils literal notranslate"><span class="pre">heartbeat-push</span></code> command:</p>
 <ol class="arabic simple">
-<li><p>Shells out to <code class="docutils literal notranslate"><span class="pre">scitex-agent-container</span> <span class="pre">show-status</span> <span class="pre">&lt;name&gt;</span> <span class="pre">--json</span></code>.</p></li>
+<li><p>Shells out to <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agents</span> <span class="pre">list</span> <span class="pre">&lt;name&gt;</span> <span class="pre">--json</span></code>.</p></li>
 <li><p>Reshapes the payload into its own hub schema.</p></li>
 <li><p>POSTs to its <code class="docutils literal notranslate"><span class="pre">/api/agents/register/</span></code> endpoint.</p></li>
 </ol>

@@ -56,7 +56,6 @@
 <li class="toctree-l1"><a class="reference internal" href="templates.html">Templates and Examples</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="templates.html#pattern-templates">Pattern Templates</a></li>
 <li class="toctree-l2"><a class="reference internal" href="templates.html#instantiating-a-template">Instantiating a Template</a></li>
-<li class="toctree-l2"><a class="reference internal" href="templates.html#examples">Examples</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="status_and_hooks.html">Status and Hook Integration</a><ul>
@@ -433,7 +432,6 @@
 <li class="toctree-l1"><a class="reference internal" href="templates.html">Templates and Examples</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="templates.html#pattern-templates">Pattern Templates</a></li>
 <li class="toctree-l2"><a class="reference internal" href="templates.html#instantiating-a-template">Instantiating a Template</a></li>
-<li class="toctree-l2"><a class="reference internal" href="templates.html#examples">Examples</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="status_and_hooks.html">Status and Hook Integration</a><ul>
@@ -544,16 +542,16 @@ their own hubs</p></li>
 <section id="quick-example">
 <h2>Quick Example<a class="headerlink" href="#quick-example" title="Link to this heading"></a></h2>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Create and launch an agent from YAML definition</span>
-scitex-agent-container<span class="w"> </span>start<span class="w"> </span>my-agent.yaml
+sac<span class="w"> </span>agents<span class="w"> </span>start<span class="w"> </span>my-agent
 
-<span class="c1"># List running agents</span>
-scitex-agent-container<span class="w"> </span>list
+<span class="c1"># List agents and their status</span>
+sac<span class="w"> </span>agents<span class="w"> </span>list
 
-<span class="c1"># Inspect live pane state / rich status</span>
-scitex-agent-container<span class="w"> </span>show-status<span class="w"> </span>my-agent<span class="w"> </span>--json
+<span class="c1"># Inspect status as JSON</span>
+sac<span class="w"> </span>agents<span class="w"> </span>list<span class="w"> </span>--json
 
 <span class="c1"># Stop an agent</span>
-scitex-agent-container<span class="w"> </span>stop<span class="w"> </span>my-agent
+sac<span class="w"> </span>agents<span class="w"> </span>stop<span class="w"> </span>my-agent
 </pre></div>
 </div>
 </section>

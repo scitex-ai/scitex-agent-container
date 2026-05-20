@@ -57,7 +57,6 @@
 <li class="toctree-l1"><a class="reference internal" href="templates.html">Templates and Examples</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="templates.html#pattern-templates">Pattern Templates</a></li>
 <li class="toctree-l2"><a class="reference internal" href="templates.html#instantiating-a-template">Instantiating a Template</a></li>
-<li class="toctree-l2"><a class="reference internal" href="templates.html#examples">Examples</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="status_and_hooks.html">Status and Hook Integration</a><ul>
@@ -426,33 +425,33 @@
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>scitex-agent-container
 
 The<span class="w"> </span>fastest<span class="w"> </span>path<span class="w"> </span>is<span class="w"> </span>to<span class="w"> </span>copy<span class="w"> </span>a<span class="w"> </span>pattern<span class="w"> </span>template<span class="w"> </span>from
-<span class="sb">``</span>examples/agent-templates/<span class="sb">``</span><span class="w"> </span><span class="o">(</span><span class="sb">``</span><span class="nb">local</span><span class="sb">``</span>,<span class="w"> </span><span class="sb">``</span>docker<span class="sb">``</span>,<span class="w"> </span><span class="sb">``</span>apptainer<span class="sb">``</span>,<span class="w"> </span><span class="sb">``</span>ssh<span class="sb">``</span>,
-<span class="sb">``</span>ssh-slurm<span class="sb">``</span>,<span class="w"> </span><span class="sb">``</span>mcp<span class="sb">``</span><span class="o">)</span>.<span class="w"> </span>See<span class="w"> </span>:doc:<span class="sb">`</span>templates<span class="sb">`</span><span class="w"> </span><span class="k">for</span><span class="w"> </span>the<span class="w"> </span>full<span class="w"> </span>matrix.
+<span class="sb">``</span>examples/agents/<span class="sb">``</span><span class="w"> </span><span class="o">(</span><span class="sb">``</span>hello-agent<span class="sb">``</span>,<span class="w"> </span><span class="sb">``</span>minimal-agent<span class="sb">``</span>,
+<span class="sb">``</span>full-agent<span class="sb">``</span>,<span class="w"> </span><span class="sb">``</span>proxy-agent<span class="sb">``</span><span class="o">)</span>.<span class="w"> </span>See<span class="w"> </span>:doc:<span class="sb">`</span>templates<span class="sb">`</span><span class="w"> </span><span class="k">for</span><span class="w"> </span>details.
 </pre></div>
 </div>
 <ol class="arabic simple" start="2">
-<li><p>Create an agent definition directory with a YAML manifest plus
-sibling <code class="docutils literal notranslate"><span class="pre">src_CLAUDE.md</span></code> and <code class="docutils literal notranslate"><span class="pre">src_mcp.json</span></code>:</p></li>
+<li><p>Create an agent definition directory with a <code class="docutils literal notranslate"><span class="pre">spec.yaml</span></code> manifest
+plus an optional <code class="docutils literal notranslate"><span class="pre">dot_claude/</span></code> sibling (CLAUDE.md / .mcp.json / …):</p></li>
 </ol>
-<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="c1"># my-agent/my-agent.yaml</span>
-<span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">scitex-agent-container/v2</span>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="c1"># ~/.scitex/agent-container/agents/my-agent/spec.yaml</span>
+<span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">scitex-agent-container/v3</span>
 <span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Agent</span>
 <span class="nt">metadata</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my-agent</span>
 <span class="w">  </span><span class="nt">labels</span><span class="p">:</span>
 <span class="w">    </span><span class="nt">role</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">worker</span>
 <span class="nt">spec</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">runtime</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude-code</span>
-<span class="w">  </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sonnet</span>
-<span class="w">  </span><span class="nt">multiplexer</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tmux</span>
+<span class="w">  </span><span class="nt">runtime</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">apptainer</span>
+<span class="w">  </span><span class="nt">apptainer</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">~/.scitex/agent-container/containers/sac-base.sif</span>
 <span class="w">  </span><span class="nt">claude</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sonnet</span>
 <span class="w">    </span><span class="nt">flags</span><span class="p">:</span>
 <span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">--dangerously-skip-permissions</span>
 <span class="w">    </span><span class="nt">session</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">continue-or-new</span>
 <span class="w">  </span><span class="nt">health</span><span class="p">:</span>
 <span class="w">    </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
 <span class="w">    </span><span class="nt">interval</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">60</span>
-<span class="w">    </span><span class="nt">method</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">multiplexer-alive</span>
+<span class="w">    </span><span class="nt">method</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sdk-alive</span>
 <span class="w">  </span><span class="nt">restart</span><span class="p">:</span>
 <span class="w">    </span><span class="nt">policy</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">on-failure</span>
 <span class="w">    </span><span class="nt">max_retries</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3</span>
@@ -461,32 +460,18 @@ sibling <code class="docutils literal notranslate"><span class="pre">src_CLAUDE.
 <ol class="arabic simple" start="3">
 <li><p>Start and inspect the agent:</p></li>
 </ol>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>scitex-agent-container<span class="w"> </span>start<span class="w"> </span>my-agent/my-agent.yaml
-scitex-agent-container<span class="w"> </span>inspect<span class="w"> </span>my-agent
-scitex-agent-container<span class="w"> </span>show-status<span class="w"> </span>my-agent<span class="w"> </span>--json
-scitex-agent-container<span class="w"> </span>show-logs<span class="w"> </span>my-agent<span class="w"> </span>-n<span class="w"> </span><span class="m">100</span>
-scitex-agent-container<span class="w"> </span>attach<span class="w"> </span>my-agent<span class="w">      </span><span class="c1"># Ctrl-B D to detach (tmux)</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>sac<span class="w"> </span>agents<span class="w"> </span>start<span class="w"> </span>my-agent
+sac<span class="w"> </span>agents<span class="w"> </span>list<span class="w"> </span>my-agent<span class="w"> </span>--json
+sac<span class="w"> </span>agents<span class="w"> </span>tail<span class="w"> </span>my-agent
+sac<span class="w"> </span>agents<span class="w"> </span>recall<span class="w"> </span>my-agent
 </pre></div>
 </div>
 <ol class="arabic simple" start="4">
-<li><p>(Optional) Wire Claude Code hooks so <code class="docutils literal notranslate"><span class="pre">status</span> <span class="pre">--json</span></code> can surface
+<li><p>(Optional) Wire Claude Code hooks so <code class="docutils literal notranslate"><span class="pre">list</span> <span class="pre">--json</span></code> can surface
 recent tool calls, prompts, and sub-agent launches. See
 <a class="reference internal" href="status_and_hooks.html"><span class="doc">Status and Hook Integration</span></a> for the full <code class="docutils literal notranslate"><span class="pre">.claude/settings.local.json</span></code>
 snippet.</p></li>
-<li><p>Run your first pane action. The nonce probe types
-<code class="docutils literal notranslate"><span class="pre">Repeat</span> <span class="pre">&lt;nonce&gt;</span></code> into the pane and confirms the model echoes it
-back – a true functional-liveness check, not just “process alive”:</p></li>
 </ol>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="w"> </span>scitex-agent-container<span class="w"> </span>actions<span class="w"> </span>run<span class="w"> </span>nonce-probe<span class="w"> </span>my-agent
-<span class="w"> </span>scitex-agent-container<span class="w"> </span>actions<span class="w"> </span>query<span class="w"> </span>--agent<span class="w"> </span>my-agent<span class="w"> </span>--limit<span class="w"> </span><span class="m">5</span>
-<span class="w"> </span>scitex-agent-container<span class="w"> </span>actions<span class="w"> </span>stats<span class="w"> </span>--agent<span class="w"> </span>my-agent<span class="w"> </span>--since<span class="w"> </span>1h
-
-Every<span class="w"> </span>attempt<span class="w"> </span>is<span class="w"> </span>recorded<span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="sb">``</span>~/.scitex/agent-container/actions.db<span class="sb">``</span>
-and<span class="w"> </span>the<span class="w"> </span>most<span class="w"> </span>recent<span class="w"> </span>one<span class="w"> </span>is<span class="w"> </span>reflected<span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="sb">``</span>status<span class="w"> </span>--json<span class="sb">``</span><span class="w"> </span>under
-<span class="sb">``</span>last_action_at<span class="sb">``</span><span class="w"> </span>/<span class="w"> </span><span class="sb">``</span>last_action_name<span class="sb">``</span><span class="w"> </span>/<span class="w"> </span><span class="sb">``</span>last_action_outcome<span class="sb">``</span>.
-See<span class="w"> </span>:doc:<span class="sb">`</span>actions<span class="sb">`</span><span class="w"> </span><span class="k">for</span><span class="w"> </span>the<span class="w"> </span>full<span class="w"> </span>subsystem.
-</pre></div>
-</div>
 </section>
 
 
