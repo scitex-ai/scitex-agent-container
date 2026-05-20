@@ -20,6 +20,7 @@ docs/to_claude/
 .coverage.*
 .venv
 logs/
+.pytest-tmp/
 .scitex/clew/
 
 # Sphinx-generated AST cache — not part of the published HTML
