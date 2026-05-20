@@ -8,33 +8,33 @@ Quickstart
     pip install scitex-agent-container
 
    The fastest path is to copy a pattern template from
-   ``examples/agent-templates/`` (``local``, ``docker``, ``apptainer``, ``ssh``,
-   ``ssh-slurm``, ``mcp``). See :doc:`templates` for the full matrix.
+   ``examples/agents/`` (``hello-agent``, ``minimal-agent``,
+   ``full-agent``, ``proxy-agent``). See :doc:`templates` for details.
 
-2. Create an agent definition directory with a YAML manifest plus
-   sibling ``src_CLAUDE.md`` and ``src_mcp.json``:
+2. Create an agent definition directory with a ``spec.yaml`` manifest
+   plus an optional ``dot_claude/`` sibling (CLAUDE.md / .mcp.json / ...):
 
 .. code-block:: yaml
 
-    # my-agent/my-agent.yaml
-    apiVersion: scitex-agent-container/v2
+    # ~/.scitex/agent-container/agents/my-agent/spec.yaml
+    apiVersion: scitex-agent-container/v3
     kind: Agent
     metadata:
-      name: my-agent
       labels:
         role: worker
     spec:
-      runtime: claude-code
-      model: sonnet
-      multiplexer: tmux
+      runtime: apptainer
+      apptainer:
+        image: ~/.scitex/agent-container/containers/sac-base.sif
       claude:
+        model: sonnet
         flags:
           - --dangerously-skip-permissions
         session: continue-or-new
       health:
         enabled: true
         interval: 60
-        method: multiplexer-alive
+        method: sdk-alive
       restart:
         policy: on-failure
         max_retries: 3
@@ -43,28 +43,12 @@ Quickstart
 
 .. code-block:: bash
 
-    scitex-agent-container start my-agent/my-agent.yaml
-    scitex-agent-container inspect my-agent
-    scitex-agent-container show-status my-agent --json
-    scitex-agent-container show-logs my-agent -n 100
-    scitex-agent-container attach my-agent      # Ctrl-B D to detach (tmux)
+    sac agents start my-agent
+    sac agents list my-agent --json
+    sac agents tail my-agent
+    sac agents recall my-agent
 
-4. (Optional) Wire Claude Code hooks so ``status --json`` can surface
+4. (Optional) Wire Claude Code hooks so ``list --json`` can surface
    recent tool calls, prompts, and sub-agent launches. See
    :doc:`status_and_hooks` for the full ``.claude/settings.local.json``
    snippet.
-
-5. Run your first pane action. The nonce probe types
-   ``Repeat <nonce>`` into the pane and confirms the model echoes it
-   back -- a true functional-liveness check, not just "process alive":
-
-.. code-block:: bash
-
-    scitex-agent-container actions run nonce-probe my-agent
-    scitex-agent-container actions query --agent my-agent --limit 5
-    scitex-agent-container actions stats --agent my-agent --since 1h
-
-   Every attempt is recorded in ``~/.scitex/agent-container/actions.db``
-   and the most recent one is reflected in ``status --json`` under
-   ``last_action_at`` / ``last_action_name`` / ``last_action_outcome``.
-   See :doc:`actions` for the full subsystem.
