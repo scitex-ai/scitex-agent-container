@@ -67,6 +67,7 @@ rich non-agentic status surface.
 - [11_remote-deploy.md](11_remote-deploy.md) — SSH deployment, src files, venv
 - [12_wsl-connectivity.md](12_wsl-connectivity.md) — WSL connectivity notes
 - [24_image-build.md](24_image-build.md) — apptainer `.sif` build/rebuild, `@develop` pin, rebuild-to-ship runner/channel changes (gotcha)
+- [25_claude-setup-delivery.md](25_claude-setup-delivery.md) — how sac passes Claude setup explicitly into apptainer agents: `to_home`→`$HOME` 1:1 mirror, overlay/`--home` delivery, `--settings` hook load, `setting_sources=[]`
 
 ### Reference
 - [13_observability.md](13_observability.md) — `sac agent status` JSON contract

@@ -218,6 +218,14 @@ class ClaudeSessionRuntime(RuntimeBase):
         Path(home_dir).mkdir(parents=True, exist_ok=True)
         setup_claude_md(config, home_dir)
         _materialize_home_layouts(config, home_dir)
+        # Relaxed apptainer specs declare their own ``--home``/``--overlay``
+        # in raw_args; under that combo the workspace-home bind above is
+        # shadowed and the to_home tree never reaches the container $HOME.
+        # Mirror the same tree into the overlay's upper home so it lands as
+        # part of the container filesystem (no-op for non-overlay specs).
+        from ._to_home_overlay import deploy_to_home_overlay
+
+        deploy_to_home_overlay(config)
 
     def _cleanup_workspace(self, config: AgentConfig) -> None:
         """Remove the agent-container CLAUDE.md section on stop."""

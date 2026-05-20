@@ -93,6 +93,30 @@ def _cred_file_path() -> Path:
 
 _CRED_FILE = _cred_file_path()
 
+
+def _container_settings_path() -> str | None:
+    """Resolve the in-container ``settings.local.json`` path, or ``None``.
+
+    sac mirrors the agent's ``to_home`` tree (including
+    ``.claude/settings.local.json``) into the container ``$HOME`` — both via
+    the workspace-home bind (hardened mode) and via the overlay upper home
+    (relaxed ``--home``/``--overlay`` specs). The runner executes INSIDE the
+    container, so ``$HOME`` already points at ``/home/agent`` (or whatever
+    ``--home`` the spec set). We resolve the settings file against that
+    ``$HOME`` and return its path only when the file is present — so a spec
+    without a ``settings.local.json`` doesn't aim ``--settings`` at a missing
+    file.
+
+    The hook ``command``s inside that settings file use ``$HOME/.claude/...``,
+    so they resolve in-container regardless of what ``$HOME`` resolves to.
+    """
+    home = os.environ.get("HOME")
+    if not home:
+        return None
+    candidate = Path(home) / ".claude" / "settings.local.json"
+    return str(candidate) if candidate.is_file() else None
+
+
 # ---------------------------------------------------------------------------
 # Why we never honour a pre-set ANTHROPIC_API_KEY
 # ---------------------------------------------------------------------------
@@ -374,6 +398,22 @@ def build_sdk_options(
     # this way either, which is the right default for container-as-
     # boundary anyway.)
     kwargs.setdefault("setting_sources", [])
+    # Load hooks/settings explicitly via the SDK ``settings`` field
+    # (emits ``--settings <path>``). This is the "flag settings" layer —
+    # the highest-priority user-controlled layer — and loads INDEPENDENTLY
+    # of ``setting_sources``, which stays ``[]`` for machine-independence
+    # (no host ``~/.claude`` auto-discovery). sac delivers the agent's
+    # ``settings.local.json`` into the container ``$HOME/.claude/`` via the
+    # ``to_home`` mirror; without ``--settings`` the SDK would never load it
+    # (empty ``setting_sources`` skips the $HOME settings layer entirely).
+    #
+    # We resolve the path from the in-container ``$HOME`` (where the runner
+    # actually executes) and only set it when the file is present, so a
+    # spec without a settings.local.json doesn't point ``--settings`` at a
+    # missing file.
+    settings_path = _container_settings_path()
+    if settings_path is not None and "settings" not in kwargs:
+        kwargs["settings"] = settings_path
     # Pop sac-private keys from ``extra`` BEFORE merging into kwargs —
     # ClaudeAgentOptions is strict and rejects unknown fields. The
     # ``_*`` prefix marks these as sac-internal (not SDK fields).
