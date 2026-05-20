@@ -105,6 +105,18 @@ def _agent_runner_argv(config: "AgentConfig", *, one_shot: bool) -> list[str]:
             # the in-container path is the same string. Used to
             # publish /.well-known/agent-card.json.
             runner_argv += ["--a2a-card-yaml", str(cfg_path)]
+    # spec.claude.channels → one --channels arg per entry. When the set
+    # contains 'server:sac', the daemon runner threads it into
+    # build_sdk_options, which auto-registers the 'sac mcp channel' stdio
+    # MCP so the long-lived SDK session subscribes to its inbox SSE and
+    # a2a_send pushes are delivered. Mirrors the legacy stateless path in
+    # a2a/_handlers.py + a2a/executors/_claude_session.py.
+    claude_spec = getattr(config, "claude", None)
+    channels = list(getattr(claude_spec, "channels", []) or []) if claude_spec else []
+    for channel in channels:
+        channel = str(channel).strip()
+        if channel:
+            runner_argv += ["--channels", channel]
     auto = getattr(config, "autonomous", None)
     if auto is not None and getattr(auto, "enabled", False):
         runner_argv += [

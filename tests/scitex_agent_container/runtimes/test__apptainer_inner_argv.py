@@ -8,8 +8,9 @@ the legacy --mission fallback. See commit message
 from __future__ import annotations
 
 from scitex_agent_container.config import AgentConfig
-from scitex_agent_container.config._types import StartupCommand
+from scitex_agent_container.config._types import A2ASpec, ClaudeSpec, StartupCommand
 from scitex_agent_container.runtimes._apptainer_inner_argv import (
+    _agent_runner_argv,
     _format_shell_steps,
     build_inner_argv,
 )
@@ -175,3 +176,56 @@ def test_format_shell_steps_delay_zero_omits_sleep():
     steps = _format_shell_steps(cmds)
     # Assert
     assert "sleep 0" not in steps
+
+
+# ---------------------------------------------------------------------------
+# _agent_runner_argv: spec.claude.channels → --channels (sac-node-comms fix)
+# ---------------------------------------------------------------------------
+
+
+def test_agent_runner_argv_no_channels_omits_flag():
+    # Arrange
+    cfg = _mk_cfg(claude=ClaudeSpec(channels=[]), a2a=A2ASpec(port=9999))
+    # Act
+    argv = _agent_runner_argv(cfg, one_shot=False)
+    # Assert
+    assert "--channels" not in argv
+
+
+def test_agent_runner_argv_emits_channels_flag_when_configured():
+    # Arrange
+    cfg = _mk_cfg(claude=ClaudeSpec(channels=["server:sac"]), a2a=A2ASpec(port=9999))
+    # Act
+    argv = _agent_runner_argv(cfg, one_shot=False)
+    # Assert
+    assert "--channels" in argv
+
+
+def test_agent_runner_argv_emits_channel_value_after_flag():
+    # Arrange
+    cfg = _mk_cfg(claude=ClaudeSpec(channels=["server:sac"]), a2a=A2ASpec(port=9999))
+    # Act
+    argv = _agent_runner_argv(cfg, one_shot=False)
+    # Assert
+    assert argv[argv.index("--channels") + 1] == "server:sac"
+
+
+def test_agent_runner_argv_emits_one_flag_per_channel():
+    # Arrange
+    cfg = _mk_cfg(
+        claude=ClaudeSpec(channels=["server:sac", "client:x"]),
+        a2a=A2ASpec(port=9999),
+    )
+    # Act
+    argv = _agent_runner_argv(cfg, one_shot=False)
+    # Assert
+    assert argv.count("--channels") == 2
+
+
+def test_agent_runner_argv_skips_blank_channel_entries():
+    # Arrange
+    cfg = _mk_cfg(claude=ClaudeSpec(channels=["", "  "]), a2a=A2ASpec(port=9999))
+    # Act
+    argv = _agent_runner_argv(cfg, one_shot=False)
+    # Assert
+    assert "--channels" not in argv
