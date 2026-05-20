@@ -107,21 +107,24 @@ Symmetric: agent definitions follow the same resolution order
 
 ## Auth (cost-critical)
 
-The SDK's authentication path, by precedence:
+The SDK's authentication path, by precedence
+(`runtimes/_sdk_common.py::provision_anthropic_auth`):
 
-1. `ANTHROPIC_API_KEY` already set → used verbatim.
-2. `~/.claude/.credentials.json` exists → SDK reads OAuth token
+1. `~/.claude/.credentials.json` exists → SDK reads OAuth token
    automatically (Pro/Max plan, **flat-rate**). The default on every
    workstation that has run `claude /login`.
-3. `SAC_ANTHROPIC_API_KEY` (sac-namespaced handoff for headless
-   contexts — CI, SLURM, cron). Auto-routes by prefix:
-   * `sk-ant-oat*` → OAuth credentials file is synthesised so the SDK
-     uses the flat-rate OAuth path.
-   * `sk-ant-api*` → bridged into `ANTHROPIC_API_KEY` (**pay-per-token**;
-     explicit opt-in only).
+2. `SAC_ANTHROPIC_API_KEY` (sac-namespaced handoff for headless
+   contexts — CI, SLURM, cron). When set it is mirrored into
+   `ANTHROPIC_API_KEY` for the SDK (an `sk-ant-api*` value is
+   **pay-per-token**, explicit opt-in only).
 
-Set neither and you get a clear `SDKCommonError` rather than a silent
-fall-through to API-key billing.
+A bare host `ANTHROPIC_API_KEY` is **never honoured**: the first thing
+`provision_anthropic_auth` does is overwrite it from
+`SAC_ANTHROPIC_API_KEY`, or *pop* it from the env when
+`SAC_ANTHROPIC_API_KEY` is unset — so a stale dotfiles export can't be
+picked up by the SDK auto-reader, shadow a working OAuth credentials
+file, or silently switch you to API-key billing. Set neither input and
+you get a clear `SDKCommonError`.
 
 ## Status JSON addition
 
