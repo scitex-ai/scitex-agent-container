@@ -210,9 +210,8 @@ def diagnose_send_failure(
 
     # ---- boot completion -------------------------------------------------
     # Boot looks complete when a heartbeat exists and is fresh.
-    if isinstance(diagnosis.get("heartbeat_state"), str) and diagnosis[
-        "heartbeat_state"
-    ].startswith("unreadable"):
+    hb_state_str = diagnosis.get("heartbeat_state")
+    if isinstance(hb_state_str, str) and hb_state_str.startswith("unreadable"):
         diagnosis["boot_complete"] = None
     elif hb_state is None:
         diagnosis["boot_complete"] = False

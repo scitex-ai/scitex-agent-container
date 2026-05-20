@@ -256,11 +256,10 @@ def test_agent_send_timeout_error_message_quotes_timeout_value(
 
 def test_agent_send_prompt_and_key_mutually_exclusive(state_db_env):
     # Arrange
-    args = dict(prompt="hi", key="ESC")
     # Act
     raised: Exception | None = None
     try:
-        send_to_agent("alpha", **args)
+        send_to_agent("alpha", prompt="hi", key="ESC")
     except ValueError as exc:
         raised = exc
     # Assert
