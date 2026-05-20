@@ -68,6 +68,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import stat
 from datetime import datetime
 from pathlib import Path
 
@@ -245,6 +246,28 @@ def _walk_and_apply(
 # --- per-entry deploy helpers ----------------------------------------------
 
 
+def _clear_readonly_dst(dst: Path) -> None:
+    """Make an existing ``dst`` overwritable before a copy/write.
+
+    Hooks deployed under ``to_home/`` are commonly mode 0755/read-only
+    (e.g. ``hook_switch_helper.sh``). ``shutil.copy2`` / ``Path.write_text``
+    over a read-only existing destination raise
+    ``PermissionError: [Errno 13]`` — the deploy from #142 hit exactly
+    this. We add the owner-write bit so the in-place overwrite succeeds.
+
+    No-op when ``dst`` doesn't exist or is already writable. Symlinks are
+    left untouched (the symlink path unlinks them instead). Genuinely
+    unexpected ``OSError`` (e.g. EROFS, EPERM on a foreign-owned file) is
+    re-raised so the deploy still crashes loud rather than masking a real
+    permissions problem.
+    """
+    if dst.is_symlink() or not dst.exists():
+        return
+    mode = dst.stat().st_mode
+    if not mode & stat.S_IWUSR:
+        os.chmod(dst, mode | stat.S_IWUSR)
+
+
 def _copy_symlink(src: Path, dst: Path) -> None:
     """Preserve a symlink verbatim — never resolve the target.
 
@@ -293,6 +316,7 @@ def _deploy_plain_file(
     """Full overwrite. Uses ``shutil.copy2`` for binary-safe perm preserve
     when no interpolation is needed; otherwise writes interpolated text."""
     dst.parent.mkdir(parents=True, exist_ok=True)
+    _clear_readonly_dst(dst)
     if config is None:
         shutil.copy2(src, dst)
     else:
@@ -317,6 +341,7 @@ def _deploy_tight_perm_file(
     """Full overwrite, then chmod 0600 (e.g. ``.env``)."""
     text = _read_and_interpolate(src, config)
     dst.parent.mkdir(parents=True, exist_ok=True)
+    _clear_readonly_dst(dst)
     if not text.endswith("\n"):
         text += "\n"
     dst.write_text(text)
@@ -385,6 +410,7 @@ def _deploy_marker_protected(
         updated = new_content
 
     dst.parent.mkdir(parents=True, exist_ok=True)
+    _clear_readonly_dst(dst)
     dst.write_text(updated)
     logger.info(
         "to_home: marker-protected %s -> %s (user tail preserved: %s)",

@@ -654,3 +654,80 @@ class TestMarkerProtectedOverlay:
         # Act
         # Assert
         assert content.count(END_MARKER) == 1
+
+
+# ---------------------------------------------------------------------------
+# Read-only destination overwrite (FIX 2) — hooks are commonly mode 0755 /
+# read-only; deploy must overwrite them in place without PermissionError.
+# ---------------------------------------------------------------------------
+
+
+class TestReadOnlyDestinationOverwrite:
+    def _deploy_over_readonly(
+        self, tmp_path: Path, basename: str, *, mode: int = 0o555
+    ) -> Path:
+        """Materialize a source file over a pre-existing read-only dest.
+
+        Returns the destination path. Uses the no-config
+        ``materialize_to_home`` path so the plain-file ``shutil.copy2``
+        branch is exercised directly.
+        """
+        spec_dir = tmp_path / "spec"
+        (spec_dir / "to_home").mkdir(parents=True)
+        (spec_dir / "to_home" / basename).write_text("new content\n")
+        home = tmp_path / "home"
+        home.mkdir()
+        dst = home / basename
+        dst.write_text("old content\n")
+        os.chmod(dst, mode)
+        materialize_to_home(spec_dir, home)
+        return dst
+
+    def test_plain_file_overwrite_succeeds_over_readonly(self, tmp_path):
+        # Arrange — read-only existing dest (the #142 PermissionError case).
+        # Act
+        dst = self._deploy_over_readonly(tmp_path, "hook_switch_helper.sh")
+        # Assert — no PermissionError raised; content updated.
+        assert dst.read_text() == "new content\n"
+
+    def test_plain_file_content_is_updated(self, tmp_path):
+        # Arrange
+        # Act
+        dst = self._deploy_over_readonly(tmp_path, "hook_switch_helper.sh")
+        # Assert
+        assert "old content" not in dst.read_text()
+
+    def test_marker_protected_overwrite_succeeds_over_readonly(self, tmp_path):
+        # Arrange — CLAUDE.md gets marker-protected merge; a prior deploy
+        # left a valid marker section that is now read-only.
+        spec_dir = tmp_path / "spec"
+        (spec_dir / "to_home").mkdir(parents=True)
+        (spec_dir / "to_home" / "CLAUDE.md").write_text("## doctrine\n")
+        home = tmp_path / "home"
+        home.mkdir()
+        dst = home / "CLAUDE.md"
+        dst.write_text(
+            "<!-- Start of scitex-agent-container generated section (old) -->\n"
+            "## stale\n"
+            f"{END_MARKER}\n"
+        )
+        os.chmod(dst, 0o444)
+        # Act
+        materialize_to_home(spec_dir, home)
+        # Assert — wrapped section refreshed, no PermissionError.
+        assert "doctrine" in dst.read_text()
+
+    def test_tight_perm_file_overwrite_succeeds_over_readonly(self, tmp_path):
+        # Arrange — .env gets chmod 0600; dest starts read-only.
+        spec_dir = tmp_path / "spec"
+        (spec_dir / "to_home").mkdir(parents=True)
+        (spec_dir / "to_home" / ".env").write_text("KEY=new\n")
+        home = tmp_path / "home"
+        home.mkdir()
+        dst = home / ".env"
+        dst.write_text("KEY=old\n")
+        os.chmod(dst, 0o400)
+        # Act
+        materialize_to_home(spec_dir, home)
+        # Assert
+        assert dst.read_text() == "KEY=new\n"
