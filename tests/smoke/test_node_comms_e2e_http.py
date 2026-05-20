@@ -14,7 +14,7 @@ same ``sac listen`` — lives in ``test_node_comms_e2e_mcp.py``. Shared
 bring-up helpers live in ``_node_comms.py``; shared fixtures
 (``comms_env`` / ``disk_tmp``) live in ``conftest.py``.
 
-Six AAA-marked cases — one behaviour each (TQ):
+AAA-marked cases — one behaviour each (TQ):
 
 * (a) Same-group send (alpha → beta, both children of parent_a).
 * (b) Cross-group deny (alpha groupA → gamma groupB) — 403 + reason.
@@ -26,6 +26,14 @@ Six AAA-marked cases — one behaviour each (TQ):
   gamma, zeta); every sibling→sibling pair allowed by default.
 * (f) Replay-on-reconnect — emit with no subscriber, reconnect,
   receive via ``Last-Event-ID``.
+* (g) Fresh-replay on the ``sac listen`` surface — a single
+  pre-subscriber publish surfaces on first connect.
+* (h.1) Listen-surface replay order — two pre-subscriber publishes
+  arrive in id order on first connect.
+* (h.2) Listen-surface cursor resume — ``Last-Event-ID`` =
+  id(previous) yields only the post-cursor publish.
+* (i) Listen-surface denied send leaves ``channel_events`` empty —
+  denial is the policy working (handoff §0).
 
 Substrate split
 ===============
@@ -552,30 +560,39 @@ def test_listen_publish_with_no_subscriber_is_replayed_on_next_connect(comms_env
 # resumes the stream at the next undelivered row on the ``sac listen``
 # surface. Mirrors case (f) but against ``_listen/server.py`` rather
 # than ``a2a/_server.py``.
+#
+# Split into two TQ007-clean tests, one behaviour each:
+#
+#   (h.1) ``test_listen_replay_on_reconnect_replays_pre_subscribe_events_in_id_order``
+#         — pre-subscriber publishes are replayed in insertion (id)
+#         order on first connect. Validates the *replay* half of the
+#         durability contract.
+#
+#   (h.2) ``test_listen_replay_on_reconnect_resumes_only_post_cursor_event_with_last_event_id``
+#         — after disconnect + a fresh publish, reconnecting with
+#         ``Last-Event-ID`` = the previously-seen id yields **only**
+#         the post-cursor event. Validates the *cursor resume* half.
 # ---------------------------------------------------------------------------
 
 
-def test_listen_replay_on_reconnect_uses_last_event_id_to_resume_cursor(comms_env):
-    """Three publishes; subscribe, disconnect after #2, publish #3,
-    re-subscribe with ``Last-Event-ID = id(#2)`` → only #3 arrives.
-    """
-    # Arrange
-    db = comms_env["db"]
-    tokens = _set_up_two_groups(db)
-    app = create_app(token=tokens["host"], local_host="smoke-local")
-    port = _free_port()
-    url_send = f"http://127.0.0.1:{port}/agents/beta/message:send"
-    url_stream = f"http://127.0.0.1:{port}/agents/beta/inbox/stream"
+def _consume_sse_n(
+    url: str,
+    n: int,
+    *,
+    bearer: dict[str, str],
+    last_event_id: str | None = None,
+) -> "asyncio.coroutines.Coroutine[None, None, list[tuple[str | None, dict]]]":
+    """Open an SSE stream and return the first ``n`` ``data:`` events
+    paired with the most recent ``id:`` line that preceded each.
 
-    async def consume_n(
-        url: str,
-        n: int,
-        *,
-        last_event_id: str | None = None,
-    ) -> list[tuple[str | None, dict]]:
+    Lifted to a module helper so cases (h.1) and (h.2) share one
+    implementation without coupling their assertions.
+    """
+
+    async def _run() -> list[tuple[str | None, dict]]:
         seen: list[tuple[str | None, dict]] = []
         cur_id: str | None = None
-        headers = dict(_bearer(tokens["beta"]))
+        headers = dict(bearer)
         if last_event_id is not None:
             headers["Last-Event-ID"] = last_event_id
         async with httpx.AsyncClient(timeout=5.0) as ac:
@@ -597,7 +614,24 @@ def test_listen_replay_on_reconnect_uses_last_event_id_to_resume_cursor(comms_en
             f"SSE {url!r} closed before {n} events (saw {len(seen)})"
         )
 
-    async def driver() -> tuple[list[tuple[str | None, dict]], dict]:
+    return _run()
+
+
+def test_listen_replay_on_reconnect_replays_pre_subscribe_events_in_id_order(comms_env):
+    """Two pre-subscriber publishes are replayed in id order on first connect.
+
+    Isolates the *replay-order* half of case (h). The cursor-resume
+    half lives in the sister test below.
+    """
+    # Arrange
+    db = comms_env["db"]
+    tokens = _set_up_two_groups(db)
+    app = create_app(token=tokens["host"], local_host="smoke-local")
+    port = _free_port()
+    url_send = f"http://127.0.0.1:{port}/agents/beta/message:send"
+    url_stream = f"http://127.0.0.1:{port}/agents/beta/inbox/stream"
+
+    async def driver() -> list[str]:
         # Two pre-subscriber publishes.
         async with httpx.AsyncClient(timeout=5.0) as ac:
             for i in (1, 2):
@@ -610,8 +644,59 @@ def test_listen_replay_on_reconnect_uses_last_event_id_to_resume_cursor(comms_en
                     raise RuntimeError(
                         f"precondition publish e{i} failed {r.status_code}: {r.text!r}"
                     )
-        # First subscribe — replays e1 + e2; capture their SSE ids.
-        first_two = await consume_n(url_stream, 2)
+        # First subscribe — replays e1 + e2; surface their contents in
+        # arrival order so the assertion can compare on order alone.
+        frames = await _consume_sse_n(
+            url_stream, 2, bearer=_bearer(tokens["beta"])
+        )
+        return [evt.get("content") for _id, evt in frames]
+
+    # Act
+    with _run_loopback(app, port):
+        contents = asyncio.run(driver())
+    # Assert
+    assert contents == ["e1", "e2"], f"replay order wrong: {contents!r}"
+
+
+def test_listen_replay_on_reconnect_resumes_only_post_cursor_event_with_last_event_id(
+    comms_env,
+):
+    """Three publishes; subscribe + disconnect after #2, publish #3,
+    re-subscribe with ``Last-Event-ID = id(#2)`` → only #3 arrives.
+    """
+    # Arrange
+    db = comms_env["db"]
+    tokens = _set_up_two_groups(db)
+    app = create_app(token=tokens["host"], local_host="smoke-local")
+    port = _free_port()
+    url_send = f"http://127.0.0.1:{port}/agents/beta/message:send"
+    url_stream = f"http://127.0.0.1:{port}/agents/beta/inbox/stream"
+
+    async def driver() -> dict:
+        # Two pre-subscriber publishes.
+        async with httpx.AsyncClient(timeout=5.0) as ac:
+            for i in (1, 2):
+                r = await ac.post(
+                    url_send,
+                    json=_send_payload(f"e{i}", from_agent="alpha"),
+                    headers=_bearer(tokens["alpha"]),
+                )
+                if r.status_code != 200:
+                    raise RuntimeError(
+                        f"precondition publish e{i} failed {r.status_code}: {r.text!r}"
+                    )
+        # First subscribe — replays e1 + e2; capture the trailing id as
+        # the resume cursor. The *order* of these frames is covered as
+        # primary behaviour by the sister test above, so a wrong order
+        # here is a precondition failure, not the assertion under test.
+        first_two = await _consume_sse_n(
+            url_stream, 2, bearer=_bearer(tokens["beta"])
+        )
+        first_contents = [evt.get("content") for _id, evt in first_two]
+        if first_contents != ["e1", "e2"]:
+            raise RuntimeError(
+                f"precondition: replay order wrong: {first_contents!r}"
+            )
         # Third publish post-disconnect.
         async with httpx.AsyncClient(timeout=5.0) as ac:
             r3 = await ac.post(
@@ -629,17 +714,18 @@ def test_listen_replay_on_reconnect_uses_last_event_id_to_resume_cursor(comms_en
                 f"precondition: SSE id missing on replay frame: {first_two!r}"
             )
         # Reconnect with Last-Event-ID → expect ONLY e3.
-        post_cursor = await consume_n(url_stream, 1, last_event_id=cursor)
-        return first_two, post_cursor[0][1]
+        post_cursor = await _consume_sse_n(
+            url_stream,
+            1,
+            bearer=_bearer(tokens["beta"]),
+            last_event_id=cursor,
+        )
+        return post_cursor[0][1]
 
     # Act
     with _run_loopback(app, port):
-        first_two, third = asyncio.run(driver())
-
-    # Assert — replay frames carry e1/e2 contents in id order; the
-    # cursor resume yields only e3.
-    contents = [evt.get("content") for _id, evt in first_two]
-    assert contents == ["e1", "e2"], f"replay order wrong: {contents!r}"
+        third = asyncio.run(driver())
+    # Assert
     assert third.get("content") == "e3", (
         f"expected only e3 after Last-Event-ID; got {third!r}"
     )
