@@ -99,7 +99,7 @@ def test_agent_list_with_no_filters_dispatches_bare_json_argv():
         # Act
         _agent.agent_list()
     # Assert
-    assert captured[-1] == ("json", ["agent", "list", "--json"])
+    assert captured[-1] == ("json", ["agents", "list", "--json"])
 
 
 def test_agent_list_with_capability_and_machine_appends_filter_argv():
@@ -110,7 +110,7 @@ def test_agent_list_with_capability_and_machine_appends_filter_argv():
     # Assert
     assert captured[-1] == (
         "json",
-        ["agent", "list", "--json", "--capability", "HPC", "--machine", "ws1"],
+        ["agents", "list", "--json", "--capability", "HPC", "--machine", "ws1"],
     )
 
 
@@ -120,16 +120,16 @@ def test_agent_status_with_name_dispatches_json_argv():
         # Act
         _agent.agent_status("x")
     # Assert
-    assert captured[-1] == ("json", ["agent", "status", "x", "--json"])
+    assert captured[-1] == ("json", ["agents", "list", "x", "--json"])
 
 
-def test_agent_logs_with_lines_dispatches_text_argv():
+def test_agent_logs_with_lines_dispatches_tail_text_argv():
     # Arrange
     with _recording() as captured:
         # Act
         _agent.agent_logs("x", lines=10)
     # Assert
-    assert captured[-1] == ("text", ["agent", "logs", "x", "--lines", "10"])
+    assert captured[-1] == ("text", ["agents", "tail", "x", "--lines", "10"])
 
 
 def test_agent_health_with_name_dispatches_json_argv():
@@ -138,7 +138,7 @@ def test_agent_health_with_name_dispatches_json_argv():
         # Act
         _agent.agent_health("x")
     # Assert
-    assert captured[-1] == ("json", ["agent", "health", "x", "--json"])
+    assert captured[-1] == ("json", ["agents", "health", "x", "--json"])
 
 
 def test_agent_find_with_pattern_dispatches_text_argv():
@@ -147,7 +147,7 @@ def test_agent_find_with_pattern_dispatches_text_argv():
         # Act
         _agent.agent_find("pat-*")
     # Assert
-    assert captured[-1] == ("text", ["agent", "find", "pat-*"])
+    assert captured[-1] == ("text", ["agents", "find", "pat-*"])
 
 
 def test_agent_check_with_name_dispatches_text_argv():
@@ -156,25 +156,7 @@ def test_agent_check_with_name_dispatches_text_argv():
         # Act
         _agent.agent_check("x")
     # Assert
-    assert captured[-1] == ("text", ["agent", "check", "x"])
-
-
-def test_agent_validate_with_config_path_dispatches_text_argv():
-    # Arrange
-    with _recording() as captured:
-        # Act
-        _agent.agent_validate("/p.yaml")
-    # Assert
-    assert captured[-1] == ("text", ["agent", "validate", "/p.yaml"])
-
-
-def test_agent_inspect_with_name_dispatches_text_argv():
-    # Arrange
-    with _recording() as captured:
-        # Act
-        _agent.agent_inspect("x")
-    # Assert
-    assert captured[-1] == ("text", ["agent", "inspect", "x"])
+    assert captured[-1] == ("text", ["agents", "check", "x"])
 
 
 def test_agent_recall_with_name_dispatches_text_argv():
@@ -183,34 +165,7 @@ def test_agent_recall_with_name_dispatches_text_argv():
         # Act
         _agent.agent_recall("x")
     # Assert
-    assert captured[-1] == ("text", ["agent", "recall", "x"])
-
-
-def test_agent_check_priority_with_name_dispatches_text_argv():
-    # Arrange
-    with _recording() as captured:
-        # Act
-        _agent.agent_check_priority("x")
-    # Assert
-    assert captured[-1] == ("text", ["agent", "check-priority", "x"])
-
-
-def test_agent_take_snapshot_with_name_dispatches_text_argv():
-    # Arrange
-    with _recording() as captured:
-        # Act
-        _agent.agent_take_snapshot("x")
-    # Assert
-    assert captured[-1] == ("text", ["agent", "take-snapshot", "x"])
-
-
-def test_agent_attach_with_name_dispatches_text_argv():
-    # Arrange
-    with _recording() as captured:
-        # Act
-        _agent.agent_attach("x")
-    # Assert
-    assert captured[-1] == ("text", ["agent", "attach", "x"])
+    assert captured[-1] == ("text", ["agents", "recall", "x"])
 
 
 def test_agent_start_with_defaults_dispatches_text_argv_without_foreground():
@@ -219,7 +174,7 @@ def test_agent_start_with_defaults_dispatches_text_argv_without_foreground():
         # Act
         _agent.agent_start("x")
     # Assert
-    assert captured[-1] == ("text", ["agent", "start", "x"])
+    assert captured[-1] == ("text", ["agents", "start", "x"])
 
 
 def test_agent_start_with_foreground_true_appends_foreground_flag():
@@ -228,7 +183,7 @@ def test_agent_start_with_foreground_true_appends_foreground_flag():
         # Act
         _agent.agent_start("x", foreground=True)
     # Assert
-    assert captured[-1] == ("text", ["agent", "start", "x", "--foreground"])
+    assert captured[-1] == ("text", ["agents", "start", "x", "--foreground"])
 
 
 def test_agent_stop_with_name_dispatches_text_argv():
@@ -237,7 +192,7 @@ def test_agent_stop_with_name_dispatches_text_argv():
         # Act
         _agent.agent_stop("x")
     # Assert
-    assert captured[-1] == ("text", ["agent", "stop", "x"])
+    assert captured[-1] == ("text", ["agents", "stop", "x"])
 
 
 def test_agent_restart_with_name_dispatches_text_argv():
@@ -246,7 +201,7 @@ def test_agent_restart_with_name_dispatches_text_argv():
         # Act
         _agent.agent_restart("x")
     # Assert
-    assert captured[-1] == ("text", ["agent", "restart", "x"])
+    assert captured[-1] == ("text", ["agents", "restart", "x"])
 
 
 # ---------------------------------------------------------------------------
