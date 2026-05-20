@@ -6,29 +6,57 @@ lag. ``cli_pkg/_lazy_group.py`` keeps the import cost low; this test
 enforces the budget so a future "just one more eager import" doesn't
 silently reverse the win.
 
-Threshold defaults to 500 ms wall-clock for ``scitex-agent-container
+Threshold is a flat 500 ms wall-clock for ``scitex-agent-container
 --help`` in a clean Python subprocess (Python boot + click + LazyGroup
 + ``--help`` render — the package is already installed, so this never
-includes install time). The 500 ms ceiling is a *local-dev* target.
-
-On CI the floor is higher and load-variable (~0.5–0.55 s on a shared
-GitHub runner), so the default relaxes to 1.0 s when ``CI`` /
-``GITHUB_ACTIONS`` is set — still an order of magnitude below the
-~2.5 s eager-import regression this gate exists to catch. Override
-explicitly with the ``SAC_STARTUP_BUDGET_S`` env var on either path.
+includes install time). The same ceiling holds on CI: the package's
+``.pth`` shims no longer import ``coverage`` at every interpreter
+startup, so a clean ``--help`` stays well under budget on a shared
+runner. Override explicitly with the ``SAC_STARTUP_BUDGET_S`` env var.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
-import time
+import sys
 
 import pytest
 
 _DEFAULT_BUDGET_S = 0.5
-_CI_BUDGET_S = 1.0
+
+# Run inside a *lean* Python child: it spawns `sac --help`, times the
+# spawn with perf_counter, and prints a JSON record per run. Timing from
+# this minimal parent — instead of from the heavyweight pytest
+# interpreter (typeguard, hypothesis, playwright, coverage tracing, … all
+# resident) — measures the cold start a real user's shell pays, not the
+# fork/scheduler tax of a bloated parent address space. That parent tax
+# (~0.3 s here) was the source of the historical CI flake, not any CLI
+# regression.
+# Take the floor of several runs: scheduler jitter and disk-cache misses
+# only ever *add* time, so the minimum is the cleanest estimate of the
+# real cold-start cost. More samples => a tighter floor that the CI
+# runner's load variance can't push over the line.
+_N_SAMPLES = 8
+_TIMER_SOURCE = """
+import json, subprocess, sys, time
+binary = sys.argv[1]
+n = int(sys.argv[2])
+records = []
+for _ in range(n):
+    t0 = time.perf_counter()
+    proc = subprocess.run([binary, "--help"], capture_output=True, text=True)
+    records.append(
+        {
+            "elapsed": time.perf_counter() - t0,
+            "returncode": proc.returncode,
+            "stderr": proc.stderr,
+        }
+    )
+json.dump(records, sys.stdout)
+"""
 
 
 def _budget_s() -> float:
@@ -38,63 +66,73 @@ def _budget_s() -> float:
             return float(raw)
         except ValueError:
             pass
-    # CI runners are slower and load-variable than a dev box; relax the
-    # ceiling there so runner jitter (a ~10 ms overshoot of the 500 ms
-    # local target) doesn't block releases. 1.0 s still catches the real
-    # regression class — a forgotten eager import historically pushed
-    # `--help` to ~2.5 s.
-    if os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"):
-        return _CI_BUDGET_S
     return _DEFAULT_BUDGET_S
 
 
 @pytest.fixture
-def help_run_samples() -> tuple[list[float], list[subprocess.CompletedProcess[str]]]:
-    """Run ``scitex-agent-container --help`` three times and collect timings + results.
+def help_run_samples() -> tuple[list[float], list[dict]]:
+    """Time ``scitex-agent-container --help`` cold-start ``_N_SAMPLES`` times.
 
-    Spawns fresh subprocesses so the parent's already-warmed
-    ``sys.modules`` doesn't mask import cost.
+    The timing loop runs in a lean Python child (``_TIMER_SOURCE``), not
+    in this pytest process, so the measured wall time reflects a real
+    user's shell — not the fork tax of pytest's heavyweight interpreter.
+
+    The child env is scrubbed of ``COVERAGE_PROCESS_START`` /
+    ``COVERAGE_FILE``: under ``pytest --cov`` those are set, which makes
+    the package's coverage ``.pth`` shim eagerly import ``coverage`` in
+    every grandchild — pure measurement noise that no end user pays. The
+    gate exists to catch eager-import regressions in the CLI graph, not
+    coverage instrumentation overhead.
+
+    Returns ``(elapsed_seconds, run_records)`` where each record carries
+    ``returncode`` + ``stderr`` for the exit-code assertion.
     """
     binary = shutil.which("scitex-agent-container")
     if binary is None:
         pytest.skip("scitex-agent-container CLI not on PATH (install -e .)")
 
-    samples: list[float] = []
-    results: list[subprocess.CompletedProcess[str]] = []
-    for _ in range(3):
-        t0 = time.perf_counter()
-        result = subprocess.run(
-            [binary, "--help"],
-            capture_output=True,
-            text=True,
-        )
-        samples.append(time.perf_counter() - t0)
-        results.append(result)
-    return samples, results
+    child_env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("COVERAGE_PROCESS_START", "COVERAGE_FILE")
+    }
+
+    proc = subprocess.run(
+        [sys.executable, "-c", _TIMER_SOURCE, binary, str(_N_SAMPLES)],
+        capture_output=True,
+        text=True,
+        env=child_env,
+    )
+    assert proc.returncode == 0, (
+        f"timer child exited {proc.returncode}; stderr: {proc.stderr}"
+    )
+    records = json.loads(proc.stdout)
+    samples = [r["elapsed"] for r in records]
+    return samples, records
 
 
 def test_cli_help_exits_zero(
-    help_run_samples: tuple[list[float], list[subprocess.CompletedProcess[str]]],
+    help_run_samples: tuple[list[float], list[dict]],
 ) -> None:
     """Every ``--help`` invocation must exit cleanly."""
     # Arrange
     _, results = help_run_samples
     # Act
-    failed = [r for r in results if r.returncode != 0]
+    failed = [r for r in results if r["returncode"] != 0]
     # Assert
     assert not failed, (
         f"--help exited non-zero on {len(failed)} run(s); "
-        f"first stderr: {failed[0].stderr if failed else ''}"
+        f"first stderr: {failed[0]['stderr'] if failed else ''}"
     )
 
 
 def test_cli_help_under_budget(
-    help_run_samples: tuple[list[float], list[subprocess.CompletedProcess[str]]],
+    help_run_samples: tuple[list[float], list[dict]],
 ) -> None:
     """``scitex-agent-container --help`` must complete within the budget.
 
-    Takes the best of three runs to absorb scheduler / disk-cache jitter —
-    we care about the floor, not the worst case.
+    Takes the best of several runs to absorb scheduler / disk-cache
+    jitter — we care about the floor, not the worst case.
     """
     # Arrange
     samples, _ = help_run_samples
@@ -111,11 +149,11 @@ def test_cli_help_under_budget(
 
 
 # ---------------------------------------------------------------------------
-# _budget_s — threshold resolution (env override > CI default > local default)
+# _budget_s — threshold resolution (env override > flat default)
 # ---------------------------------------------------------------------------
 
 
-_BUDGET_ENV_VARS = ("SAC_STARTUP_BUDGET_S", "CI", "GITHUB_ACTIONS")
+_BUDGET_ENV_VARS = ("SAC_STARTUP_BUDGET_S",)
 
 
 @pytest.fixture
@@ -144,35 +182,16 @@ def budget_env():
                 os.environ[k] = v
 
 
-def test_budget_defaults_to_local_ceiling_off_ci(budget_env):
-    # Arrange — no env vars set (neither CI nor override).
+def test_budget_defaults_to_flat_ceiling(budget_env):
+    # Arrange — no override set.
     # Act
     budget = _budget_s()
     # Assert
     assert budget == _DEFAULT_BUDGET_S
 
 
-def test_budget_relaxes_on_ci(budget_env):
+def test_explicit_env_override_wins(budget_env):
     # Arrange
-    budget_env("CI", "true")
-    # Act
-    budget = _budget_s()
-    # Assert
-    assert budget == _CI_BUDGET_S
-
-
-def test_budget_relaxes_on_github_actions(budget_env):
-    # Arrange
-    budget_env("GITHUB_ACTIONS", "true")
-    # Act
-    budget = _budget_s()
-    # Assert
-    assert budget == _CI_BUDGET_S
-
-
-def test_explicit_env_override_wins_over_ci_default(budget_env):
-    # Arrange — override must beat the CI relaxation.
-    budget_env("CI", "true")
     budget_env("SAC_STARTUP_BUDGET_S", "0.25")
     # Act
     budget = _budget_s()
@@ -181,7 +200,7 @@ def test_explicit_env_override_wins_over_ci_default(budget_env):
 
 
 def test_malformed_env_override_falls_back_not_crashes(budget_env):
-    # Arrange — a garbage override off-CI falls back to the local default.
+    # Arrange — a garbage override falls back to the flat default.
     budget_env("SAC_STARTUP_BUDGET_S", "not-a-float")
     # Act
     budget = _budget_s()
