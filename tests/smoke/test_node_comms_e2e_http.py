@@ -27,8 +27,8 @@ Six AAA-marked cases — one behaviour each (TQ):
 * (f) Replay-on-reconnect — emit with no subscriber, reconnect,
   receive via ``Last-Event-ID``.
 
-Substrate split (see ``QUESTIONS.md`` Q5)
-=========================================
+Substrate split
+===============
 
 Today the substrate has two SSE-publish surfaces with non-overlapping
 feature sets:
@@ -40,8 +40,8 @@ feature sets:
   gate.
 
 So cases (a)–(e) drive ``sac listen`` (the only ACL surface) and case
-(f) drives ``a2a/_server.py`` (the only replay surface). A follow-on
-WI to unify the two surfaces is flagged in ``QUESTIONS.md`` Q5.
+(f) drives ``a2a/_server.py`` (the only replay surface). Unifying the
+two surfaces is an open follow-on WI.
 """
 
 from __future__ import annotations
@@ -368,7 +368,7 @@ def test_sibling_fan_out_every_pair_delivers_under_default_acl(comms_env):
 # Case (f) — replay-on-reconnect via Last-Event-ID
 #
 # WI-1 (durability) is wired into the ``a2a/_server.py`` surface, NOT
-# into ``sac listen``. See QUESTIONS.md Q5 for the substrate split.
+# into ``sac listen`` (see the "Substrate split" note above).
 # This case therefore drives the a2a server directly, with its own
 # minimal echo-handler YAML.
 # ---------------------------------------------------------------------------

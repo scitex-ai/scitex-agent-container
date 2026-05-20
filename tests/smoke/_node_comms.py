@@ -172,7 +172,7 @@ def _set_up_four_siblings(db: Path) -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# a2a/_server.py echo-agent YAML (replay surface — see QUESTIONS.md Q5).
+# a2a/_server.py echo-agent YAML (replay surface).
 # ---------------------------------------------------------------------------
 
 

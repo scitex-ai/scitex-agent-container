@@ -33,9 +33,9 @@ Cases (mirroring the HTTP file's ACL matrix, through the tools):
 * (e) 4-sibling fan-out — every pair delivers via the tool.
 * (reply) receive → ``a2a_reply`` routes back to the original sender.
 
-Replay-on-reconnect lives only on the ``a2a/_server.py`` surface
-(QUESTIONS.md Q5) which the MCP tools do not target, so it is covered
-once, in the HTTP file.
+Replay-on-reconnect lives only on the ``a2a/_server.py`` surface,
+which the MCP tools do not target, so it is covered once, in the
+HTTP file.
 """
 
 from __future__ import annotations
