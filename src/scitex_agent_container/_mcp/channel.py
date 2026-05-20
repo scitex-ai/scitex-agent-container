@@ -139,23 +139,64 @@ def _build_notification(event: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def _run(name: str, listen_url: str, bearer: str | None) -> None:
-    from mcp.server.lowlevel import Server
-    from mcp.server.stdio import stdio_server
+async def _push_channel_event(session: Any, event: dict[str, Any]) -> None:
+    """Buffer ``event`` and push it to the client as a
+    ``notifications/claude/channel`` message through ``session``.
+
+    Split out of the SSE consumer so the receive→inject path is
+    directly testable end-to-end (see ``tests/.../_mcp/test_channel.py``
+    ``test_serve_pushes_sse_event_to_client_as_channel_notification``).
+    That seam used to be untested, which let a silent drop ship.
+    """
     from mcp.shared.message import SessionMessage
     from mcp.types import JSONRPCMessage, JSONRPCNotification
 
+    # Buffer for a2a_reply / a2a_ack lookups by msg_id.
+    _recent.append(event)
+    params = _build_notification(event)
+    msg = JSONRPCMessage(
+        JSONRPCNotification(
+            jsonrpc="2.0",
+            method="notifications/claude/channel",
+            params=params,
+        )
+    )
+    await session.send_message(SessionMessage(msg))
+
+
+async def _serve(
+    read_stream: Any,
+    write_stream: Any,
+    *,
+    name: str,
+    listen_url: str,
+    bearer: str | None,
+) -> None:
+    """Drive the MCP session **and** the SSE consumer over the given
+    streams, keeping a handle to the session so the consumer can push.
+
+    We deliberately do not call ``Server.run``: it constructs its
+    ``ServerSession`` internally and never exposes it, so a side
+    channel (the inbox SSE consumer) would have no session to push
+    ``notifications/claude/channel`` through — exactly the bug that
+    silently dropped every inbound event. Owning the session here is
+    the supported way to send server-initiated notifications with the
+    low-level API (mcp >= 1.x; pinned).
+    """
+    from contextlib import AsyncExitStack
+
+    import anyio
+    from mcp.server.lowlevel import Server
+    from mcp.server.session import ServerSession
+
     server = Server(name=f"sac-channel-{name}")
+    _register_tools(server, agent_name=name, listen_url=listen_url, bearer=bearer)
     sse_url = f"{listen_url.rstrip('/')}/agents/{name}/inbox/stream"
 
-    _register_tools(server, agent_name=name, listen_url=listen_url, bearer=bearer)
-
-    async with stdio_server() as (read_stream, write_stream):
-        # Run the MCP loop and the SSE consumer concurrently. The
-        # consumer pushes channel notifications via the session that
-        # the MCP loop sets up after `initialize`.
-        run_task: asyncio.Task[Any] = asyncio.create_task(
-            server.run(
+    async with AsyncExitStack() as stack:
+        lifespan_context = await stack.enter_async_context(server.lifespan(server))
+        session = await stack.enter_async_context(
+            ServerSession(
                 read_stream,
                 write_stream,
                 server.create_initialization_options(),
@@ -163,39 +204,39 @@ async def _run(name: str, listen_url: str, bearer: str | None) -> None:
         )
 
         async def on_event(event: dict[str, Any]) -> None:
-            # Buffer for a2a_reply / a2a_ack lookups by msg_id.
-            _recent.append(event)
-            # Until the session exists (pre-initialize) — drop the
-            # event. sac listen will redeliver any *new* events; nothing
-            # we can do about ones that arrived before claude was ready.
-            sess = (
-                server._session  # type: ignore[attr-defined]
-                if hasattr(server, "_session")
-                else None
-            )
-            if sess is None:
-                return
-            params = _build_notification(event)
-            msg = JSONRPCMessage(
-                JSONRPCNotification(
-                    jsonrpc="2.0",
-                    method="notifications/claude/channel",
-                    params=params,
-                )
-            )
             try:
-                await sess.send_message(SessionMessage(msg))
-            except Exception as exc:  # stx-allow: fallback (reason: notification send must not crash channel)
-                log.warning("sac channel: send_message failed: %s", exc)
+                await _push_channel_event(session, event)
+            except Exception as exc:  # stx-allow: fallback (reason: one failed push must not kill the long-lived SSE consumer; logged loudly, never silent)
+                log.warning("sac channel: pushing inbox event failed: %s", exc)
 
         sse_task: asyncio.Task[None] = asyncio.create_task(
             _consume_sse(sse_url, bearer, on_event)
         )
-
         try:
-            await run_task
+            async with anyio.create_task_group() as tg:
+                async for message in session.incoming_messages:
+                    tg.start_soon(
+                        server._handle_message,
+                        message,
+                        session,
+                        lifespan_context,
+                        False,
+                    )
         finally:
             sse_task.cancel()
+
+
+async def _run(name: str, listen_url: str, bearer: str | None) -> None:
+    from mcp.server.stdio import stdio_server
+
+    async with stdio_server() as (read_stream, write_stream):
+        await _serve(
+            read_stream,
+            write_stream,
+            name=name,
+            listen_url=listen_url,
+            bearer=bearer,
+        )
 
 
 def _register_tools(

@@ -101,7 +101,10 @@ class _FakeListenServer:
 
             if method == "GET" and path.endswith("/inbox/stream"):
                 await self._serve_sse(writer)
-            elif method == "GET" and path == "/agents/":
+            elif method == "GET" and path.rstrip("/") == "/agents":
+                # a2a_peers hits `/agents` (no trailing slash) to dodge the
+                # 307 redirect httpx won't follow; accept both shapes so the
+                # fake mirrors the real sac listen route.
                 await self._serve_json(writer, self.peers_payload)
             elif method == "POST" and "/message:send" in path:
                 try:
@@ -1111,3 +1114,71 @@ async def test_call_tool_a2a_peers_handles_non_json_response_body(
     body = json.loads(out[0].text)
     # Assert
     assert body["body"] == "plain-text-body"
+
+
+# ---------------------------------------------------------------------------
+# _serve — receive→inject seam, end-to-end over real MCP memory streams.
+#
+# This is the path a ``server._session`` lookup silently dropped: the
+# inbox SSE consumer must push each event to the connected client as a
+# ``notifications/claude/channel`` message. The earlier tests covered
+# the projection (_build_notification) and the SSE consumer in
+# isolation but never asserted that an event actually reaches a client
+# through the live session — so the drop shipped green. This test
+# closes that gap: a real event flows fake_listen → _serve's owned
+# ServerSession → the client stream, and we assert it arrives.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_serve_pushes_sse_event_to_client_as_channel_notification(
+    fake_listen,
+):
+    # Arrange — fake listen will emit one inbox event on SSE connect.
+    import anyio
+    from mcp.shared.memory import create_client_server_memory_streams
+
+    from scitex_agent_container._mcp.channel import _serve
+
+    fake_listen.sse_events = [
+        {"from_agent": "bob", "content": "hello channel", "msg_id": "m-e2e"}
+    ]
+
+    got: dict[str, Any] = {}
+
+    async with create_client_server_memory_streams() as (
+        client_streams,
+        server_streams,
+    ):
+        client_read, _client_write = client_streams
+        server_read, server_write = server_streams
+
+        async with anyio.create_task_group() as tg:
+
+            async def _run_serve() -> None:
+                await _serve(
+                    server_read,
+                    server_write,
+                    name="alice",
+                    listen_url=fake_listen.base_url,
+                    bearer=None,
+                )
+
+            tg.start_soon(_run_serve)
+
+            # Act — read raw frames off the client side until the channel
+            # notification surfaces (no ClientSession: the method is a
+            # Claude Code extension the stock client would not parse).
+            with anyio.move_on_after(5.0):
+                async for session_msg in client_read:
+                    if isinstance(session_msg, Exception):
+                        continue
+                    root = session_msg.message.root
+                    if getattr(root, "method", None) == "notifications/claude/channel":
+                        got["params"] = root.params
+                        break
+
+            tg.cancel_scope.cancel()
+
+    # Assert — the event reached the client through the live session.
+    assert got.get("params", {}).get("content") == "hello channel"
