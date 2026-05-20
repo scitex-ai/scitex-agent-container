@@ -26,7 +26,11 @@ from pathlib import Path
 
 from ..config import AgentConfig
 from ._dot_claude import cleanup_dot_claude, deploy_dot_claude
-from ._to_home import deploy_to_home, resolve_to_home_dir
+from ._to_home import (
+    deploy_to_home,
+    resolve_baseline_to_home_dir,
+    resolve_to_home_dir,
+)
 from .base import RuntimeBase
 from .claude_md import cleanup_claude_md, setup_claude_md
 
@@ -49,13 +53,16 @@ def _materialize_home_layouts(config: AgentConfig, home_dir: str) -> None:
     silent-merge data-loss pattern.
 
     Order:
-      1. If a ``to_home/`` dir is present: deploy it.
+      1. If a ``to_home/`` dir (per-agent or shared baseline) is present:
+         deploy it. ``deploy_to_home`` overlays the per-agent ``to_home/``
+         on top of the common baseline, so per-agent files win.
       2. If a ``dot_claude/`` dir is present and ``to_home/`` is NOT:
          deploy dot_claude (legacy path) and emit a DeprecationWarning.
       3. If both are present: raise — operator must pick one.
     """
     spec_dir = _spec_dir_for(config)
     to_home_dir = resolve_to_home_dir(config)
+    baseline_dir = resolve_baseline_to_home_dir(spec_dir)
     legacy_dir = None
     if spec_dir is not None and (spec_dir / "dot_claude").is_dir():
         legacy_dir = spec_dir / "dot_claude"
@@ -69,7 +76,10 @@ def _materialize_home_layouts(config: AgentConfig, home_dir: str) -> None:
             "see ADR-0006 for the migration guide."
         )
 
-    if to_home_dir is not None:
+    # The baseline alone is enough to take the to_home path, but only when
+    # the spec is NOT a legacy dot_claude spec — otherwise a global baseline
+    # would silently shadow the legacy deploy.
+    if to_home_dir is not None or (baseline_dir is not None and legacy_dir is None):
         deploy_to_home(config, home_dir)
         return
 
