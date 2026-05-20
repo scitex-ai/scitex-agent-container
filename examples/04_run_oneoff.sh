@@ -36,7 +36,7 @@
 #       sac agents stop  <name>                # graceful shutdown
 #
 #   You never invoke apptainer directly — sac materialises the workspace
-#   (workdir + dot_claude/) then dispatches `apptainer instance start`.
+#   (workdir + to_home/) then dispatches `apptainer instance start`.
 #   sac is apptainer-only since 2026-05-13 (no --runtime flag).
 #
 # Pure-apptainer way to fake "send a turn":

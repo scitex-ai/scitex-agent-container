@@ -111,7 +111,7 @@ def _mcp_server_names(config: AgentConfig, workdir: str) -> list[str]:
         names.update(config.mcp_servers.keys())
 
     # From on-disk .mcp.json (may have been written by setup_mcp_config or
-    # deploy_dot_claude earlier in the start flow)
+    # deploy_to_home earlier in the start flow)
     mcp_path = Path(workdir) / ".mcp.json"
     if mcp_path.exists():
         try:

@@ -7,14 +7,14 @@ externally addressable Claude agent.
 
 ```
   spec.yaml   ─┐
-  dot_claude/ ─┴─→ sac agents start ──→ apptainer instance
+  to_home/    ─┴─→ sac agents start ──→ apptainer instance
                                           │
                                           ▼
                               long-lived Claude SDK session
                               │
-                              ├── <workdir>  (= spec.workdir, mounted rw)
-                              │     CLAUDE.md / .mcp.json / .env / state.md     ← from dot_claude/
-                              │     .claude/{commands,skills,hooks,...}         ← mirrored
+                              ├── $HOME  (= runtime/<name>/home/, bind-mounted)
+                              │     CLAUDE.md / .mcp.json / .env / state.md     ← from to_home/
+                              │     .claude/{commands,skills,hooks,...}         ← from to_home/.claude/
                               │
                               ├── spec.mounts[]  ← explicit host-path allowlist (ro/rw)
                               │
@@ -44,18 +44,19 @@ externally addressable Claude agent.
 The single file that fully defines an agent. The agent name is the name of its
 parent directory — no name field in the YAML. See [spec-reference.md](spec-reference.md).
 
-### `dot_claude/` (optional)
+### `to_home/` (optional)
 
-A directory next to `spec.yaml`. At start, `sac` copies its contents into the
-agent's `<workdir>`:
+A directory next to `spec.yaml`. At start, `sac` mirrors its contents into the
+agent's container `$HOME` (= `runtime/<name>/home/`). Every path under
+`to_home/` lands at the same relative path under `$HOME`:
 
 | Source                    | Destination                     | Merge rule             |
 |---------------------------|---------------------------------|------------------------|
-| `CLAUDE.md`               | `<workdir>/CLAUDE.md`           | marker-protected append |
-| `.mcp.json`               | `<workdir>/.mcp.json`           | per-server merge       |
-| `.env`                    | `<workdir>/.env`                | mode 0600, overwrite   |
-| `state.md`                | `<workdir>/state.md`            | full overwrite         |
-| `commands/`, `skills/`, `hooks/` | `<workdir>/.claude/*/`   | recursive copy         |
+| `CLAUDE.md`               | `$HOME/CLAUDE.md`               | marker-protected append |
+| `.mcp.json`               | `$HOME/.mcp.json`               | full overwrite         |
+| `.env`                    | `$HOME/.env`                    | mode 0600, overwrite   |
+| `state.md`                | `$HOME/state.md`                | marker-protected append |
+| `.claude/{commands,skills,hooks}/` | `$HOME/.claude/*/`     | recursive copy         |
 
 ### Apptainer instance
 
