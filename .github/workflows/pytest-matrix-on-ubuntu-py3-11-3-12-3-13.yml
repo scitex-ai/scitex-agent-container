@@ -37,12 +37,6 @@ jobs:
         run: pytest tests/integration/test_templates_v3_valid.py -q
       - name: Run tests
         if: always()
-        env:
-          # GH runner CPUs are ~2-3x slower than typical dev boxes; the
-          # 0.5 s --help budget is calibrated for dev hardware. Bump to
-          # 0.9 s on CI so we still catch real regressions without
-          # red-flagging the slower runner.
-          SAC_STARTUP_BUDGET_S: "0.9"
         run: |
           pytest --cov=src/scitex_agent_container --cov-report=xml --cov-report=term tests/
       - name: Upload coverage to Codecov
