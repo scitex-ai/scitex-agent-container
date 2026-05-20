@@ -24,91 +24,48 @@ in the agent's definition, so a run is identically reproducible on any host
 an agent behave, that is the bug: put it in the definition (`to_home`/`spec`)
 and pass it explicitly.
 
-## `to_home`-first: the default placement, with a `ro`-bind exception
+## `to_home`-first: the default, with a `ro`-bind exception
 
 **Default everything to `to_home`.** The whole agent `$HOME` — `.env`,
-`.mcp.json`, `CLAUDE.md`, `.claude/hooks`, instructions, `.bashrc` — should be
-declared as `to_home` files and materialized into the container. `spec.yaml`
-should shrink toward *container wiring only* (image, overlay, runtime flags);
-the agent's *contents* live in `to_home`.
+`.mcp.json`, `CLAUDE.md`, `.claude/hooks`, instructions, `.bashrc` — is declared
+as `to_home` files; `spec.yaml` shrinks toward container wiring only. (Migration
+target: today's `raw_args: --env GIT_AUTHOR_*` → `to_home/.env`;
+`startup_prompts` → `to_home/CLAUDE.md`.) Why this beats stuffing config into
+`raw_args`: ordinary files (easy to handle), add a file to add a capability
+(easy to grow), self-contained (host-isolated), and **isomorphic to a normal
+`$HOME`** — standard tools and mental models apply with no special knowledge.
 
-Why `to_home`-first beats stuffing config into `raw_args`/`startup_prompts`:
+The **only** exception is read-only `bind`s, for two cases where a copy is wrong:
 
-1. **Easier to handle** — ordinary files, edited with ordinary tools.
-2. **Easier to grow** — add a capability by adding a file, no spec schema churn.
-3. **Host-isolated** — the tree is self-contained; nothing leaks in from the host.
-4. **Isomorphic to a normal `$HOME`** — it *is* just a home dir (`.bashrc`,
-   `.env`, `.ssh`, `.claude`), so standard conventions, tools, and mental
-   models apply directly. No special knowledge is needed to read, reason about,
-   or reproduce an agent. (Migration target: today's
-`raw_args: --env GIT_AUTHOR_*` move to `to_home/.env`; `startup_prompts` move
-to `to_home/CLAUDE.md`.)
+- **Host secrets** (`.ssh`, `.config/gh`, `.claude/.credentials.json`) — a copy
+  would commit secrets into the git-tracked `to_home`; a `ro`-bind keeps them out.
+- **Large shared, always-current trees** (`~/.claude/skills`) — a copy would
+  duplicate and go stale.
 
-The **only** exception is read-only `bind`s, used for two narrow cases where a
-materialized copy is wrong:
+### Placement vs precedence (two different axes)
 
-- **Host secrets** — `.ssh`, `.config/gh`, `.claude/.credentials.json`. A copy
-  would land secrets in the git-tracked `to_home` source; a `ro`-bind keeps
-  them out of git and always current.
-- **Large shared, always-current trees** — `~/.claude/skills`. A copy would
-  duplicate and go stale; a `ro`-bind shares the live host copy.
-
-Both are acceptable mechanisms, but `to_home` is the first choice; reach for a
-`ro`-bind only for secrets or shared-live trees.
-
-### Placement default vs override precedence (two different axes)
-
-Two principles that sound similar but govern different things — they coexist:
-
-- **Placement default (`to_home`-first):** where you *put* a setup. Default to
-  `to_home`.
-- **Override precedence (when the same key is declared in several layers, which
-  wins):**
-
-  ```
-  direct command arguments  >  spec.yaml fields  >  to_home/<files>
-  ```
-
-  `to_home` is the **base** (declared defaults); `spec.yaml` fields override it;
-  explicit command arguments / `raw_args` are the final override. This mirrors
-  Claude's own settings precedence (user < project < flag). So: declare the
-  baseline in `to_home`, and use `spec`/args only as escape hatches to override
-  a specific value without editing the `to_home` base. (Implementing this
-  cleanly requires the runtime to merge the layers and resolve overrides —
-  today `spec.raw_args` and `to_home` are still separate surfaces.)
+- **Placement (`to_home`-first):** *where* you put a setup. Default `to_home`.
+- **Precedence (which layer wins on conflict):**
+  `direct command args > spec.yaml fields > to_home/<files>`. `to_home` is the
+  base; `spec`/args are escape-hatch overrides (mirrors Claude's
+  `user < project < flag`). Clean layering still needs the runtime to merge +
+  resolve — today `spec.raw_args` and `to_home` are separate surfaces.
 
 ### Scope / non-goals
 
-SAC guarantees exactly this model: per-agent `to_home` + the `_base` shared
-baseline, with `ro`-binds for secrets and shared skills. That is the line.
-
-Bolder convenience patterns are *possible* through the raw escape hatches
-(`spec.apptainer.binds` / `raw_args`) but are explicitly **out of scope** — SAC
-neither designs for nor supports them, and they are the operator's own risk:
-
-- pooling a single **shared `to_home`** across many agents, or
-- binding the **host `$HOME` directly** into the container.
-
-Keeping these out of scope is deliberate — it avoids over-engineering and keeps
-the reproducibility guarantee crisp.
+SAC guarantees this model only: per-agent `to_home` + the `_base` baseline, with
+`ro`-binds for secrets/skills. Bolder patterns — a pooled **shared `to_home`**, or
+binding the **host `$HOME`** directly — are possible via raw escape hatches but
+are explicitly **out of scope** (operator's own risk). Keeps the guarantee crisp.
 
 ### The `ro`-bind reproducibility trade-off
 
-A `ro`-bind trades strict reproducibility for currency/sharing — worth being
-honest about:
-
-- **Secrets** (`.ssh`, `.config/gh`, `.credentials.json`): correctly *outside*
-  the reproducible artifact. You reproduce the *structure*; secret values are
-  injected at run time, never committed. This is standard and not a gap.
-- **Skills**: a real trade-off. The live `ro`-bind is always-current and shared
-  but **not pinned** — if the host's `~/.claude/skills` changes, the agent
-  changes, so the run is not byte-reproducible. For *strict* reproducibility you
-  would "chain everything": pin the skills to a version and materialize that
-  pinned snapshot into `to_home` (bringing it into the definition chain).
-
-So there are two postures: **default = `ro`-bind** (current, shared) and
-**strict-reproducible = pin skills into `to_home`**. Pick per agent; the default
-is currency.
+- **Secrets**: correctly *outside* the reproducible artifact — you reproduce the
+  structure; values are injected at run time. Not a gap.
+- **Skills**: a real trade-off. The live `ro`-bind is current but **not pinned**,
+  so a run isn't byte-reproducible. For *strict* reproducibility, pin skills to a
+  version and materialize that into `to_home` ("chain everything"). Default =
+  currency (`ro`-bind); strict = pinned `to_home`.
 
 ## The `to_home` 1:1 mirror (general, not just `.claude`)
 
@@ -226,13 +183,3 @@ at a missing file). The hook `command`s inside `settings.local.json` use
 `$HOME/.claude/hooks/...`, so they resolve in-container regardless of what
 `$HOME` is — both the workspace-home bind and the overlay upper home put the
 hook scripts at exactly that path.
-
-## Summary
-
-1. `to_home/` = a general 1:1 `$HOME` mirror.
-2. Hardened mode: delivered via the workspace-home bind. Relaxed
-   `--home`/`--overlay` mode: delivered into `<overlay>/upper/<home>/` so the
-   tree is part of the container filesystem and the skills bind layers on top.
-3. `setting_sources=[]` (machine-independence) + explicit `--settings`,
-   `--mcp-config`, and the auth-layer credentials bind. No host `~/.claude`
-   auto-discovery, ever.
