@@ -46,6 +46,27 @@ materialized copy is wrong:
 Both are acceptable mechanisms, but `to_home` is the first choice; reach for a
 `ro`-bind only for secrets or shared-live trees.
 
+### Placement default vs override precedence (two different axes)
+
+Two principles that sound similar but govern different things — they coexist:
+
+- **Placement default (`to_home`-first):** where you *put* a setup. Default to
+  `to_home`.
+- **Override precedence (when the same key is declared in several layers, which
+  wins):**
+
+  ```
+  direct command arguments  >  spec.yaml fields  >  to_home/<files>
+  ```
+
+  `to_home` is the **base** (declared defaults); `spec.yaml` fields override it;
+  explicit command arguments / `raw_args` are the final override. This mirrors
+  Claude's own settings precedence (user < project < flag). So: declare the
+  baseline in `to_home`, and use `spec`/args only as escape hatches to override
+  a specific value without editing the `to_home` base. (Implementing this
+  cleanly requires the runtime to merge the layers and resolve overrides —
+  today `spec.raw_args` and `to_home` are still separate surfaces.)
+
 ## The `to_home` 1:1 mirror (general, not just `.claude`)
 
 `<spec_dir>/to_home/` mirrors the container `$HOME` **1:1**. Every path under
