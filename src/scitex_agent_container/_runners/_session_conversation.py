@@ -179,6 +179,8 @@ async def run_conversation(
     build_sdk_options_fn: Any | None = None,
     host: str | None = None,
     db_writer=None,
+    channels: list[str] | None = None,
+    a2a_port: int | None = None,
 ) -> None:
     """Drive an inbox-driven conversation against ``ClaudeSDKClient``.
 
@@ -230,6 +232,21 @@ async def run_conversation(
 
     hooks = build_event_log_hooks(name, HookMatcher)
 
+    # Thread spec.claude.channels + the runner's own a2a_port into the
+    # SDK options under the sac-private ``extra`` keys so build_sdk_options
+    # auto-registers the ``sac mcp channel`` stdio MCP when channels
+    # contains ``server:sac`` (see runtimes/_sdk_common.py). Without this
+    # the long-lived daemon session never subscribes to its inbox SSE and
+    # ``a2a_send`` to it yields delivered_subscriber_count=0. Mirrors the
+    # legacy stateless path in a2a/_handlers.py.
+    sdk_extra: dict | None = None
+    if channels or a2a_port is not None:
+        sdk_extra = {}
+        if channels:
+            sdk_extra["_channels"] = list(channels)
+        if a2a_port is not None:
+            sdk_extra["_a2a_port"] = int(a2a_port)
+
     attempt = 0
     last_exc: BaseException | None = None
     while True:
@@ -242,6 +259,7 @@ async def run_conversation(
                 permission_mode="bypassPermissions",
                 resume=current_sid,
                 hooks=hooks,
+                extra=sdk_extra,
             )
         except SDKCommonError as exc:
             logger.error("could not build sdk options: %s", exc)

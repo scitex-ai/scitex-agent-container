@@ -33,6 +33,8 @@ from .._state.registry import Registry
 from ..config import AgentConfig, load_config, resolve_config
 from ..hooks import run_hook
 from ._a2a_port import release_a2a_port, resolve_a2a_port
+from ._instances import end_local_instance as _end_local_instance
+from ._instances import record_local_instance as _record_local_instance
 from .health import health_monitor
 
 
@@ -357,6 +359,15 @@ def agent_start(
         screen_name=config.screen_name,
     )
 
+    # Record the state.db ``instances`` row for a LOCAL start. The
+    # cross-host dispatcher (cli_pkg/lifecycle/_dispatch.py) writes the
+    # lead-side row for remote agents; local starts had no row at all,
+    # so ``send_to_agent`` / ``agent_send`` reported "agent not running"
+    # and the /v1/turn endpoint was unreachable even though the sidecar
+    # was bound. The resolved a2a_port comes from the allocator (set by
+    # ``resolve_a2a_port`` above) so /v1/turn routing has the port.
+    _record_local_instance(config, runtime)
+
     # Post-start hooks
     _run_hooks(config.hooks.get("post_start", []), extra_env=hook_env)
     _fire_forget_hook(config.name, "post_start", config.hooks.get("post_start", []))
@@ -470,6 +481,11 @@ def agent_stop(
         if not force:
             raise
     _fire_forget_hook(config.name, "post_stop", config.hooks.get("post_stop", []))
+
+    # Mark the local state.db ``instances`` row ended so subsequent
+    # ``send_to_agent`` calls correctly report "not running" and the
+    # unique (name, host, scope) active-row index is freed for a restart.
+    _end_local_instance(config, runtime)
 
     # Release the A2A port claim so the next agent can re-use it.
     release_a2a_port(name)
