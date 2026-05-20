@@ -711,9 +711,7 @@ def test_cross_host_send_forwards_to_target_host(cross_host_env) -> None:
     # Arrange
     db = cross_host_env["db"]
     # Register the target as a live instance on host-a.
-    state_db.record_instance_start(
-        name="alice", host="host-a", a2a_port=0, db_path=db
-    )
+    state_db.record_instance_start(name="alice", host="host-a", a2a_port=0, db_path=db)
     # Permitted-peer is registered as a child of root, so is alice;
     # they share a group and ACL allows the send.
     record_lineage(child="permitted-peer", parent="root", db_path=db)
@@ -768,9 +766,7 @@ def test_cross_host_send_forwards_to_target_host(cross_host_env) -> None:
                             json=_send_payload(
                                 "hi from b", from_agent="permitted-peer"
                             ),
-                            headers={
-                                "authorization": f"Bearer {SHARED_TOKEN}"
-                            },
+                            headers={"authorization": f"Bearer {SHARED_TOKEN}"},
                         )
                 if resp.status_code >= 400:
                     raise RuntimeError(
@@ -797,9 +793,7 @@ def test_cross_host_forward_preserves_from_agent_metadata(cross_host_env) -> Non
     """
     # Arrange
     db = cross_host_env["db"]
-    state_db.record_instance_start(
-        name="alice", host="host-a", a2a_port=0, db_path=db
-    )
+    state_db.record_instance_start(name="alice", host="host-a", a2a_port=0, db_path=db)
     record_lineage(child="permitted-peer", parent="root", db_path=db)
     record_lineage(child="alice", parent="root", db_path=db)
     host_a_port = _free_port()
@@ -841,12 +835,8 @@ def test_cross_host_forward_preserves_from_agent_metadata(cross_host_env) -> Non
                     async with httpx.AsyncClient(timeout=5.0) as ac:
                         await ac.post(
                             f"http://127.0.0.1:{host_b_port}/agents/alice/message:send",
-                            json=_send_payload(
-                                "x", from_agent="permitted-peer"
-                            ),
-                            headers={
-                                "authorization": f"Bearer {SHARED_TOKEN}"
-                            },
+                            json=_send_payload("x", from_agent="permitted-peer"),
+                            headers={"authorization": f"Bearer {SHARED_TOKEN}"},
                         )
                 await asyncio.wait_for(sub, timeout=5.0)
             finally:
@@ -955,3 +945,105 @@ def test_cross_host_forward_502_body_carries_add_peer_fix(
     err = r.json().get("error", "")
     # Assert
     assert "sac host add-peer" in err
+
+
+# ---------------------------------------------------------------------------
+# Auto-ack loop-guard propagation (#140 follow-up): the ``ack`` marker a
+# sender stamps under ``params.metadata.ack`` must survive minting so the
+# receiving adapter's ``_should_auto_ack`` sees it and declines to ack an
+# ack — otherwise two auto-ack adapters ping-pong forever. Real uvicorn +
+# SSE round-trip on one host (handoff §0 — no mocks).
+# ---------------------------------------------------------------------------
+
+
+def _send_payload_with_meta(text: str, *, metadata: dict) -> dict:
+    return {
+        "jsonrpc": "2.0",
+        "id": "1",
+        "method": "SendMessage",
+        "params": {
+            "message": {
+                "message_id": "m1",
+                "role": "ROLE_USER",
+                "parts": [{"text": text}],
+            },
+            "metadata": metadata,
+        },
+    }
+
+
+def _roundtrip_local_send(cross_host_env, *, metadata: dict) -> dict:
+    """POST a ``message:send`` to a single local host and return the
+    event the SSE inbox subscriber receives. ``alice`` has no instance
+    row so the target resolves local (no cross-host forward); sender
+    ``bob`` and target ``alice`` are siblings under ``root`` so the
+    intra-group ACL allows the send.
+    """
+    db = cross_host_env["db"]
+    record_lineage(child="bob", parent="root", db_path=db)
+    record_lineage(child="alice", parent="root", db_path=db)
+    port = _free_port()
+    app = create_app(token=SHARED_TOKEN, local_host="host-a")
+
+    async def driver() -> dict:
+        with _run_loopback(app, port):
+            ready = asyncio.Event()
+            captured: dict = {}
+
+            async def consume():
+                async with httpx.AsyncClient(timeout=5.0) as ac:
+                    async with ac.stream(
+                        "GET",
+                        f"http://127.0.0.1:{port}/agents/alice/inbox/stream",
+                        headers={"authorization": f"Bearer {SHARED_TOKEN}"},
+                    ) as sse:
+                        async for line in sse.aiter_lines():
+                            if line.startswith(":"):
+                                ready.set()
+                                continue
+                            if line.startswith("data:"):
+                                captured["event"] = json.loads(
+                                    line[len("data:") :].lstrip()
+                                )
+                                return
+
+            sub = asyncio.create_task(consume())
+            try:
+                await asyncio.wait_for(ready.wait(), timeout=5.0)
+                async with httpx.AsyncClient(timeout=5.0) as ac:
+                    await ac.post(
+                        f"http://127.0.0.1:{port}/agents/alice/message:send",
+                        json=_send_payload_with_meta("ping", metadata=metadata),
+                        headers={"authorization": f"Bearer {SHARED_TOKEN}"},
+                    )
+                await asyncio.wait_for(sub, timeout=5.0)
+            finally:
+                if not sub.done():
+                    sub.cancel()
+                    with contextlib.suppress(BaseException):
+                        await sub
+            return captured.get("event", {})
+
+    return asyncio.run(driver())
+
+
+def test_message_send_with_ack_metadata_yields_ack_true_event(
+    cross_host_env,
+) -> None:
+    # Arrange
+    metadata = {"from_agent": "bob", "ack": True}
+    # Act
+    event = _roundtrip_local_send(cross_host_env, metadata=metadata)
+    # Assert
+    assert event.get("ack") is True
+
+
+def test_message_send_without_ack_metadata_yields_falsey_ack_event(
+    cross_host_env,
+) -> None:
+    # Arrange
+    metadata = {"from_agent": "bob"}
+    # Act
+    event = _roundtrip_local_send(cross_host_env, metadata=metadata)
+    # Assert
+    assert not event.get("ack")
