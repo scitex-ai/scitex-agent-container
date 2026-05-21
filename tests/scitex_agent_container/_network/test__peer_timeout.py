@@ -29,8 +29,6 @@ import json
 import socket
 import threading
 
-import pytest
-
 from scitex_agent_container._network._peer_timeout import (
     PeerTimeoutPending,
     interpret_timeout_body,
