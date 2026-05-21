@@ -73,13 +73,31 @@ async def _wake_turn(
     once rather than buffered until some unrelated next turn. Raises on any
     transport/HTTP failure so the caller can decide whether to surface or
     contain it (WI-2 fail-loud).
+
+    Requester identity rides into the body so the woken turn's
+    ``TurnEnvelope`` carries it through to the Stop hook, which PUSHes a
+    completion report back to whoever asked. ``from_agent`` is the event's
+    sender (the requesting peer — generalizes to ANY peer, the lead is not
+    special-cased); ``dispatch_id`` is the sender-minted ledger id when the
+    sender minted one. Both are tolerated-absent: an event with no sender /
+    no ledger id simply drives a turn the Stop hook cannot address.
     """
     import httpx
 
     headers = {"Content-Type": "application/json"}
     if bearer:
         headers["Authorization"] = f"Bearer {bearer}"
-    payload = {"text": _wake_text(event)}
+    payload: dict[str, Any] = {"text": _wake_text(event)}
+    requester = event.get("from_agent")
+    if isinstance(requester, str) and requester and requester != "unknown":
+        # ``mint_event`` defaults a missing sender to the literal
+        # ``"unknown"`` — that is not an addressable peer, so don't thread
+        # it as a requester (the Stop hook would otherwise try to push to a
+        # node named "unknown").
+        payload["from_agent"] = requester
+    dispatch_id = event.get("dispatch_id")
+    if isinstance(dispatch_id, str) and dispatch_id:
+        payload["dispatch_id"] = dispatch_id
     # The wake POST returns only after the driven turn completes (the runner
     # awaits the SDK reply before responding). Use no client-side deadline —
     # a short client timeout would abort a legitimately long turn; the runner

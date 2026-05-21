@@ -16,9 +16,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from ._session_state import (
     STATE_IDLE,
@@ -44,7 +45,41 @@ logger = logging.getLogger(__name__)
 def _safe_repr(value: object) -> str:
     """Bounded repr so a runaway tool-result blob can't bloat session.jsonl."""
     s = repr(value)
-    return s if len(s) <= 1024 else s[:1024] + "…"
+    return s if len(s) <= 1024 else s[:1024] + "…"  # stx-allow: STX-NL001
+
+
+def _build_completion_push_fn(agent_name: str):
+    """Build the Stop-hook completion ``push_fn``, or ``None`` if not wired.
+
+    The push reuses the agent's own ``sac listen`` (``message:send``) — its
+    base URL + bearer ride in the runner's env (``SAC_LISTEN_BASE_URL`` /
+    ``SAC_LISTEN_BEARER``), injected by the apptainer runtime alongside the
+    channel adapter. When no listen URL is configured (e.g. a bare runner
+    with no host control-plane), there is nowhere to push a report, so we
+    return ``None`` and the Stop hook keeps its append-only behaviour. This
+    is the honest "no channel → no push" case, NOT a silenced failure: a
+    push that has a URL but cannot deliver still fails LOUD inside the hook.
+    """
+    listen_url = os.environ.get("SAC_LISTEN_BASE_URL", "").strip()
+    if not listen_url:
+        return None
+    bearer = os.environ.get("SAC_LISTEN_BEARER") or None
+
+    from ._session_completion import push_completion
+
+    async def _push_fn(
+        report: dict, requester: str, dispatch_id: Optional[str]
+    ) -> None:
+        await push_completion(
+            agent=agent_name,
+            requester=requester,
+            report=report,
+            listen_url=listen_url,
+            bearer=bearer,
+            dispatch_id=dispatch_id,
+        )
+
+    return _push_fn
 
 
 def _drain_failed_inbox(inbox: "asyncio.Queue", exc: BaseException) -> None:
@@ -102,11 +137,24 @@ async def _drive_turn(
     host: str | None = None,
     db_writer=None,
     stderr_capture: Any | None = None,
+    turn_context: Any | None = None,
+    push_fn: Any | None = None,
 ) -> None:
     AssistantMessage = sdk_types["AssistantMessage"]
     TextBlock = sdk_types["TextBlock"]
     UserMessage = sdk_types["UserMessage"]
     ResultMessage = sdk_types["ResultMessage"]
+
+    # Open the turn context BEFORE any work so the Stop hook (which fires
+    # after the SDK drains this turn) can address the requester that
+    # dispatched it. Requester identity rides on the envelope (threaded by
+    # the inbound /v1/turn handler from the POST body — see _session_http).
+    # ``None`` requester == a mission/boot turn with no peer to answer to.
+    if turn_context is not None:
+        turn_context.begin(
+            requester=getattr(env, "from_agent", None),
+            dispatch_id=getattr(env, "dispatch_id", None),
+        )
 
     write_heartbeat(
         state_dir,
@@ -192,6 +240,14 @@ async def _drive_turn(
                     state_dir,
                     {"type": "result", "session_id": sid, "usage": usage},
                 )
+                # Clean drain: record the HONEST success outcome + reply
+                # summary on the turn context BEFORE the Stop hook fires
+                # (Stop comes after this ResultMessage). The Stop hook reads
+                # this to PUSH the completion report to the requester.
+                if turn_context is not None:
+                    from ._session_completion import STATUS_SUCCESS
+
+                    turn_context.finish(status=STATUS_SUCCESS, summary="".join(chunks))
                 break
     except BaseException as exc:  # stx-allow: fallback (reason: enrich the failure with the real captured stderr, resolve the awaiter with the real cause, then re-raise for the supervisor)
         # The SDK turn failed (e.g. a ProcessError from a stale --resume
@@ -210,6 +266,15 @@ async def _drive_turn(
                 # see the original class.
                 exc.args = (enriched,) + tuple(exc.args[1:])
             env.response.set_exception(exc)
+        # Record the HONEST failure outcome on the turn context. Stop does
+        # NOT reliably fire when the SDK raises mid-turn, so the finally
+        # below is what emits the requester push in this case (status from
+        # here). Summary carries the failure detail so the requester sees
+        # WHY, not a bare "failure".
+        if turn_context is not None:
+            from ._session_completion import STATUS_FAILURE
+
+            turn_context.finish(status=STATUS_FAILURE, summary=str(exc))
         raise
     finally:
         if not env.response.done():
@@ -224,6 +289,16 @@ async def _drive_turn(
                 session_id=getattr(env, "session_id", None),
                 db_writer=db_writer,
             )
+        # Emit the requester completion push exactly once per turn. On a
+        # clean drain the Stop hook already pushed (pushed=True) → this is a
+        # no-op; on an SDK error (no clean Stop) THIS is the emit point,
+        # carrying the honest FAILURE status set in the except branch. The
+        # ``pushed`` guard inside ``emit_completion_push`` makes the double
+        # call idempotent. A no-requester (mission) turn skips quietly.
+        if turn_context is not None and push_fn is not None and name:
+            from ._session_hooks import emit_completion_push
+
+            await emit_completion_push(turn_context, push_fn, agent_name=name)
         if not stop.is_set():
             write_heartbeat(
                 state_dir,
@@ -296,12 +371,23 @@ async def run_conversation(
     }
 
     from ..runtimes._sdk_common import SDKCommonError, build_sdk_options
-    from ._session_hooks import build_event_log_hooks
+    from ._session_hooks import TurnContext, build_event_log_hooks
 
     if build_sdk_options_fn is None:
         build_sdk_options_fn = build_sdk_options
 
-    hooks = build_event_log_hooks(name, HookMatcher)
+    # Requester-feedback wiring: one TurnContext shared across the whole
+    # conversation (turns are serial, so a single holder is race-free) plus
+    # a completion push_fn resolved from the runner's listen env. The Stop
+    # hook reads the context to PUSH a completion report back to whoever
+    # dispatched each turn. ``push_fn`` is ``None`` when no host control-
+    # plane is configured (bare runner) — then the Stop hook keeps its
+    # append-only behaviour and ``_drive_turn`` skips the finally emit.
+    turn_context = TurnContext()
+    push_fn = _build_completion_push_fn(name)
+    hooks = build_event_log_hooks(
+        name, HookMatcher, turn_context=turn_context, push_fn=push_fn
+    )
 
     # Thread spec.claude.channels + the runner's own a2a_port into the
     # SDK options under the sac-private ``extra`` keys so build_sdk_options
@@ -411,6 +497,8 @@ async def run_conversation(
                         host=host,
                         db_writer=db_writer,
                         stderr_capture=stderr_capture,
+                        turn_context=turn_context,
+                        push_fn=push_fn,
                     )
                     if env.exit_after:
                         stop.set()
