@@ -92,29 +92,23 @@ delivery mechanism.
 
 ## Symlink resolution — dereference-copy, fail loud on dangling
 
-The definition is the **sole source of truth** and the runtime **never
-auto-reads host state**. Materialization enforces this at the symlink level:
+The definition is the **sole source of truth**; the runtime **never auto-reads
+host state**. Materialization enforces this at the symlink level:
 
-- **Every** symlink encountered while walking `_base/to_home/` and the
-  per-agent `to_home/` is **dereference-copied** — its target is resolved to
-  real content and that real content (a file or a whole directory tree, with
-  nested symlinks dereferenced too) lands at the destination. The container
-  `$HOME` therefore holds only real, self-contained files: closed to apptainer
-  regardless of host filesystem layout (no dangling host paths under
-  `--containall`).
-- A symlink whose target **cannot be resolved (dangling)** hard-aborts the
-  deploy with `DanglingToHomeSymlinkError`, naming the symlink path, its
-  target, and what to fix. A dangling definition symlink is a real defect — it
-  is never silently kept or skipped.
-- There is **no** "keep the literal symlink", warn-and-keep, or
-  naming-convention behavior, and **no** unconditional host `~/.claude/skills`
-  auto-read. The only way host content enters the container is via an
-  **explicit** symlink the operator places under `to_home/` — e.g.
-  `_base/to_home/.claude/skills -> ~/.claude/skills` — which this walk resolves
-  to real content at deploy time. That is explicit-pass, and it is fine.
-- The rule applies **uniformly** to skills, hooks, `.env`, and all other
-  `to_home` content. (An in-container literal symlink, if ever needed, is
-  created via `startup_commands` — out of scope for materialization.)
+- **Every** symlink under `_base/to_home/` and per-agent `to_home/` is
+  **dereference-copied**: the target resolves to real content (a file or whole
+  tree, nested symlinks dereferenced too) and lands at the destination. The
+  container `$HOME` holds only real, self-contained files — closed to apptainer
+  regardless of host layout.
+- A **dangling** symlink hard-aborts the deploy with
+  `DanglingToHomeSymlinkError` (naming path, target, fix) — never silently
+  kept or skipped.
+- **No** keep-literal / warn-and-keep / naming behavior and **no** unconditional
+  host `~/.claude/skills` auto-read. Host content enters only via an
+  **explicit** `to_home/` symlink — e.g.
+  `_base/to_home/.claude/skills -> ~/.claude/skills` — resolved at deploy time
+  (explicit-pass). Applies to skills, hooks, `.env`, etc. An in-container
+  literal symlink is made via `startup_commands`.
 
 See `runtimes/_symlink_resolve.py::deref_copy_symlink` and ADR-0009.
 
