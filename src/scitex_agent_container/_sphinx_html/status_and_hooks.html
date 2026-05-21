@@ -465,10 +465,9 @@ are derived from the existing hook buffer.</p>
 tool name starts with <code class="docutils literal notranslate"><span class="pre">mcp__</span></code>. Serves as an MCP sidecar health
 probe – confirms the MCP route is flowing, not just local tools.</p>
 </dd>
-<dt><code class="docutils literal notranslate"><span class="pre">last_action_at</span></code> / <code class="docutils literal notranslate"><span class="pre">last_action_name</span></code></dt><dd><p>ISO timestamp and name of the most recent recorded <code class="docutils literal notranslate"><span class="pre">PaneAction</span></code>
-attempt (e.g. <code class="docutils literal notranslate"><span class="pre">nonce-probe</span></code>, <code class="docutils literal notranslate"><span class="pre">compact</span></code>). <code class="docutils literal notranslate"><span class="pre">last_action_name</span></code>
-is renamed from the original <code class="docutils literal notranslate"><span class="pre">last_action</span></code> so it does not
-collide with the orochi hub’s own <code class="docutils literal notranslate"><span class="pre">last_action</span></code> column.</p>
+<dt><code class="docutils literal notranslate"><span class="pre">last_action_at</span></code> / <code class="docutils literal notranslate"><span class="pre">last_action_name</span></code></dt><dd><p>ISO timestamp and name of the most recent recorded action attempt.
+<code class="docutils literal notranslate"><span class="pre">last_action_name</span></code> is renamed from the original <code class="docutils literal notranslate"><span class="pre">last_action</span></code> so
+it does not collide with the orochi hub’s own <code class="docutils literal notranslate"><span class="pre">last_action</span></code> column.</p>
 </dd>
 <dt><code class="docutils literal notranslate"><span class="pre">last_action_outcome</span></code> / <code class="docutils literal notranslate"><span class="pre">last_action_elapsed_s</span></code></dt><dd><p>Outcome string (<code class="docutils literal notranslate"><span class="pre">success</span></code>, <code class="docutils literal notranslate"><span class="pre">precondition_fail</span></code>,
 <code class="docutils literal notranslate"><span class="pre">send_error</span></code>, <code class="docutils literal notranslate"><span class="pre">completion_timeout</span></code>, <code class="docutils literal notranslate"><span class="pre">skipped_by_policy</span></code>)

@@ -442,7 +442,7 @@ captured below and tracked under
 <tbody>
 <tr class="row-even"><td><p>sac-managed</p></td>
 <td><p>sac (spec, container, start/stop/health)</p></td>
-<td><p>An agent declared in a <code class="docutils literal notranslate"><span class="pre">spec.yaml</span></code>, launched by <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agent</span> <span class="pre">start</span></code>.</p></td>
+<td><p>An agent declared in a <code class="docutils literal notranslate"><span class="pre">spec.yaml</span></code>, launched by <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agents</span> <span class="pre">start</span></code>.</p></td>
 </tr>
 <tr class="row-odd"><td><p><strong>external</strong></p></td>
 <td><p>NOT sac — the operator, a separate tool, a human</p></td>
@@ -687,7 +687,7 @@ same way:</p>
 <span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">server:sac</span>
 </pre></div>
 </div>
-<p>When <code class="docutils literal notranslate"><span class="pre">server:sac</span></code> is in <code class="docutils literal notranslate"><span class="pre">channels</span></code>, <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agent</span> <span class="pre">start</span></code> auto-spawns
+<p>When <code class="docutils literal notranslate"><span class="pre">server:sac</span></code> is in <code class="docutils literal notranslate"><span class="pre">channels</span></code>, <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agents</span> <span class="pre">start</span></code> auto-spawns
 <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">mcp</span> <span class="pre">channel</span> <span class="pre">--name</span> <span class="pre">&lt;agent&gt;</span></code> as a stdio MCP subprocess of the agent’s
 Claude session; it subscribes to the host-local
 <code class="docutils literal notranslate"><span class="pre">/agents/&lt;name&gt;/inbox/stream</span></code> SSE and pushes

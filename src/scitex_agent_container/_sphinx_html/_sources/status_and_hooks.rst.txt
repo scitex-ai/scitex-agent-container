@@ -62,10 +62,9 @@ Selected fields:
     probe -- confirms the MCP route is flowing, not just local tools.
 
 ``last_action_at`` / ``last_action_name``
-    ISO timestamp and name of the most recent recorded ``PaneAction``
-    attempt (e.g. ``nonce-probe``, ``compact``). ``last_action_name``
-    is renamed from the original ``last_action`` so it does not
-    collide with the orochi hub's own ``last_action`` column.
+    ISO timestamp and name of the most recent recorded action attempt.
+    ``last_action_name`` is renamed from the original ``last_action`` so
+    it does not collide with the orochi hub's own ``last_action`` column.
 
 ``last_action_outcome`` / ``last_action_elapsed_s``
     Outcome string (``success``, ``precondition_fail``,
