@@ -1411,3 +1411,77 @@ async def test_wake_failure_propagates_to_caller():
         raised = True
     # Assert — the unreachable wake surfaced loudly, not silently dropped.
     assert raised is True
+
+
+# ---------------------------------------------------------------------------
+# Auto-ack rate limiter (`_auto_ack_rate_allow`) — belt-and-suspenders loop
+# breaker. Pure sync function; deterministic via the injectable ``now``. No
+# sleeps, no mocks. Module-level window/latch state is reset in each Arrange.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def _ack_rate_max_two():
+    """Lower the auto-ack cap to 2 via env (yield save/restore, no monkeypatch)."""
+    key = "SAC_AUTO_ACK_RATE_MAX"
+    saved = os.environ.get(key)
+    os.environ[key] = "2"
+    try:
+        yield
+    finally:
+        if saved is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = saved
+
+
+def test_auto_ack_rate_allows_calls_within_default_budget():
+    """Up to the default cap (20) within the window are all permitted."""
+    # Arrange
+    channel_mod._auto_ack_window.clear()
+    channel_mod._auto_ack_tripped.clear()
+    # Act
+    results = [
+        channel_mod._auto_ack_rate_allow("peer", now=float(i)) for i in range(20)
+    ]
+    # Assert
+    assert all(results) is True
+
+
+def test_auto_ack_rate_blocks_calls_over_default_budget():
+    """The 21st auto-ack to one sender within the window is refused."""
+    # Arrange
+    channel_mod._auto_ack_window.clear()
+    channel_mod._auto_ack_tripped.clear()
+    for i in range(20):
+        channel_mod._auto_ack_rate_allow("peer", now=float(i))
+    # Act
+    over = channel_mod._auto_ack_rate_allow("peer", now=19.5)
+    # Assert
+    assert over is False
+
+
+def test_auto_ack_rate_resumes_after_window_clears():
+    """Once the window passes, emission to the same sender resumes."""
+    # Arrange
+    channel_mod._auto_ack_window.clear()
+    channel_mod._auto_ack_tripped.clear()
+    for i in range(20):
+        channel_mod._auto_ack_rate_allow("peer", now=float(i))
+    # Act — far past the 60s default window, the old timestamps drop out.
+    after = channel_mod._auto_ack_rate_allow("peer", now=200.0)
+    # Assert
+    assert after is True
+
+
+def test_auto_ack_rate_env_override_lowers_cap(_ack_rate_max_two):
+    """``SAC_AUTO_ACK_RATE_MAX=2`` makes the 3rd call refuse."""
+    # Arrange
+    channel_mod._auto_ack_window.clear()
+    channel_mod._auto_ack_tripped.clear()
+    channel_mod._auto_ack_rate_allow("peer", now=0.0)
+    channel_mod._auto_ack_rate_allow("peer", now=1.0)
+    # Act
+    third = channel_mod._auto_ack_rate_allow("peer", now=2.0)
+    # Assert
+    assert third is False
