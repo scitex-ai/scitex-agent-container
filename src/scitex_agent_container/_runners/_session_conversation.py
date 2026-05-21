@@ -26,6 +26,7 @@ from ._session_state import (
     accumulate_quota,
     append_session_message,
     read_session_id,
+    read_session_id_history,
     record_turn_transition,
     report_sdk_error,
     write_heartbeat,
@@ -52,6 +53,35 @@ def _drain_failed_inbox(inbox: "asyncio.Queue", exc: BaseException) -> None:
             break
         if isinstance(env, TurnEnvelope) and not env.response.done():
             env.response.set_exception(exc)
+
+
+def _resume_candidate(
+    state_dir: Path,
+    *,
+    attempt: int,
+    fallback: str | None,
+) -> str | None:
+    """Pick the resume session_id for supervisor restart ``attempt``.
+
+    Walks the append-only ``session_id_history`` from latest to oldest:
+    ``attempt`` 0 → latest, 1 → next-older, etc. This lets a supervised
+    restart retry a prior still-on-disk id when the latest one was
+    forked or aged out and its resume is rejected.
+
+    - ``attempt`` within the history range → that id (latest-first).
+    - ``attempt == 0`` with no history yet → ``read_session_id`` if
+      present else ``fallback`` (preserves the pre-history behaviour for
+      the very first start, before any turn has recorded an id).
+    - ``attempt`` beyond the history → ``None`` (history exhausted →
+      fresh start, resume disabled).
+    """
+    history = read_session_id_history(state_dir)
+    candidates = list(reversed(history))  # latest-first
+    if attempt < len(candidates):
+        return candidates[attempt]
+    if attempt == 0:
+        return read_session_id(state_dir) or fallback
+    return None
 
 
 async def _drive_turn(
@@ -127,6 +157,23 @@ async def _drive_turn(
             elif isinstance(msg, ResultMessage):
                 sid = getattr(msg, "session_id", None)
                 if sid:
+                    # Fork detection: the SDK can return a NEW session id
+                    # on resume instead of the one we asked it to resume
+                    # (a fork). The latest marker still advances to the
+                    # fork below — we don't change behaviour here — but a
+                    # silent transition would orphan the prior id, so log
+                    # it LOUDLY (warning) to make the fork observable. The
+                    # prior id is preserved in session_id_history (see
+                    # write_session_id).
+                    prev_sid = read_session_id(state_dir)
+                    if prev_sid and prev_sid != sid:
+                        logger.warning(
+                            "session_id changed on resume: %s -> %s "
+                            "(SDK fork?); prior id retained in "
+                            "session_id_history",
+                            prev_sid,
+                            sid,
+                        )
                     write_session_id(state_dir, sid)
                     # Tag the envelope so the HTTP sidecar can echo the
                     # SDK session id back to the caller. Set BEFORE the
@@ -250,9 +297,26 @@ async def run_conversation(
     attempt = 0
     last_exc: BaseException | None = None
     while True:
-        # Re-read session_id each iteration so a supervised restart resumes
-        # against the most recent completed turn rather than the initial sid.
-        current_sid = read_session_id(state_dir) or resume_session_id
+        # Resume target, with history fallback. On the first attempt this
+        # is the latest completed-turn id (== read_session_id, since
+        # write_session_id appends to the history). On each supervised
+        # restart we step to a progressively OLDER id from the
+        # append-only history before giving up on resume — so if the
+        # latest id was forked/aged-out and its resume is rejected, a
+        # prior still-on-disk id gets a chance rather than the runner
+        # losing the whole conversation. Once the history is exhausted we
+        # fall through to a fresh start (resume=None).
+        current_sid = _resume_candidate(
+            state_dir, attempt=attempt, fallback=resume_session_id
+        )
+        if attempt > 0:
+            logger.warning(
+                "claude-session resume retry %d for %s: trying session_id %s "
+                "(walking session_id_history)",
+                attempt,
+                name,
+                current_sid,
+            )
         try:
             options = build_sdk_options_fn(
                 name,
