@@ -16,9 +16,29 @@ other way around at module load).
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from .channel import _recent
+
+log = logging.getLogger(__name__)
+
+
+class SendError(RuntimeError):
+    """A send/push could NOT reach or wake the target agent.
+
+    Raised by the send helper when delivery demonstrably failed:
+
+    * the transport raised (agent down / connection refused),
+    * the listen server returned a non-2xx status (delivery error), or
+    * the publish reported ``delivered_subscriber_count == 0`` — no live
+      inbox subscriber, so the message woke nobody.
+
+    The send-side ``a2a_*`` tools translate this into a loud, explicit
+    ``{"error": ...}`` result for the calling agent (never a misleading
+    success) and log it. STX hard rule: fail loudly, never silently drop
+    or return a misleading success.
+    """
 
 
 def register_tools(
@@ -59,6 +79,86 @@ def register_tools(
                 return {"status": resp.status_code, "body": resp.json()}
             except Exception:  # stx-allow: fallback (reason: non-JSON body tolerated)
                 return {"status": resp.status_code, "body": resp.text}
+
+    async def _send_or_raise(
+        target: str, path: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """POST a send/push and FAIL LOUDLY when it cannot reach/wake (WI-2).
+
+        Returns the parsed ``{status, body}`` on success. Raises
+        :class:`SendError` — never a misleading success — when:
+
+        * the transport raises (target agent down / connection refused),
+        * the HTTP status is 5xx (server / infra delivery error), or
+        * ``body.delivered_subscriber_count == 0`` — no live inbox
+          subscriber, so the push woke nobody.
+
+        A **4xx** is passed through verbatim (returned, not raised). A 4xx —
+        notably the 403 ACL deny carrying ``body.reason`` — is a deliberate,
+        structured policy/client response, already loud and actionable for
+        the agent ("denial is the policy working"). Reshaping it into an
+        opaque error string would lose the structured ``reason`` and is not
+        the silent-drop/misleading-success the fail-loud rule targets.
+
+        ``delivered_subscriber_count`` ABSENT is NOT treated as zero: some
+        responses (cross-host forwards) don't carry it, and inventing a
+        zero would be a false-positive failure. Only an explicit ``0``
+        from the local publish path is the no-subscriber signal.
+        """
+        import httpx
+
+        try:
+            res = await _post(path, payload)
+        except httpx.HTTPError as exc:
+            log.warning("sac a2a: send to %r failed (transport): %s", target, exc)
+            raise SendError(
+                f"send to {target!r} failed: agent unreachable ({exc})"
+            ) from exc
+
+        status = res.get("status")
+        # 5xx (and any non-int / sub-200) = server/infra delivery failure.
+        # 4xx passes through (deliberate policy/client response — see above).
+        if isinstance(status, int) and status >= 500:
+            body = res.get("body")
+            log.warning(
+                "sac a2a: send to %r returned HTTP %s: %s", target, status, body
+            )
+            raise SendError(
+                f"send to {target!r} failed: listen returned HTTP {status} ({body})"
+            )
+        if not isinstance(status, int) or status < 200:
+            body = res.get("body")
+            log.warning(
+                "sac a2a: send to %r returned unexpected status %r: %s",
+                target,
+                status,
+                body,
+            )
+            raise SendError(
+                f"send to {target!r} failed: unexpected status {status!r} ({body})"
+            )
+
+        body = res.get("body")
+        if isinstance(body, dict):
+            delivered = body.get("delivered_subscriber_count")
+            if isinstance(delivered, int) and delivered == 0:
+                log.warning(
+                    "sac a2a: send to %r reached no subscriber "
+                    "(delivered_subscriber_count=0)",
+                    target,
+                )
+                raise SendError(
+                    f"send to {target!r} reached no live subscriber "
+                    "(delivered_subscriber_count=0): the agent is not "
+                    "subscribed to its inbox (down, not started, or its "
+                    "channel adapter is not connected) — the message woke "
+                    "nobody and was not delivered."
+                )
+        return res
+
+    def _error_result(exc: SendError) -> "list[TextContent]":
+        """Render a :class:`SendError` as a loud tool result."""
+        return [TextContent(type="text", text=json.dumps({"error": str(exc)}))]
 
     def _find(msg_id: str) -> dict[str, Any] | None:
         for ev in reversed(_recent):
@@ -173,7 +273,12 @@ def register_tools(
                 priority=arguments.get("priority"),
                 requires_reply=arguments.get("requires_reply"),
             )
-            res = await _post(f"/agents/{target}/message:send", payload)
+            try:
+                res = await _send_or_raise(
+                    target, f"/agents/{target}/message:send", payload
+                )
+            except SendError as exc:
+                return _error_result(exc)
             return [TextContent(type="text", text=json.dumps(res))]
 
         if name == "a2a_reply":
@@ -201,7 +306,12 @@ def register_tools(
                 conversation_id=orig.get("conversation_id"),
                 in_reply_to=mid,
             )
-            res = await _post(f"/agents/{target}/message:send", payload)
+            try:
+                res = await _send_or_raise(
+                    target, f"/agents/{target}/message:send", payload
+                )
+            except SendError as exc:
+                return _error_result(exc)
             return [TextContent(type="text", text=json.dumps(res))]
 
         if name == "a2a_ack":
@@ -230,7 +340,12 @@ def register_tools(
                 in_reply_to=mid,
                 ack=True,
             )
-            res = await _post(f"/agents/{target}/message:send", payload)
+            try:
+                res = await _send_or_raise(
+                    target, f"/agents/{target}/message:send", payload
+                )
+            except SendError as exc:
+                return _error_result(exc)
             return [TextContent(type="text", text=json.dumps(res))]
 
         if name == "a2a_peers":
@@ -256,4 +371,4 @@ def register_tools(
         ]
 
 
-__all__ = ["register_tools"]
+__all__ = ["SendError", "register_tools"]
