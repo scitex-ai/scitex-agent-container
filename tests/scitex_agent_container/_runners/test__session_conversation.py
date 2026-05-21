@@ -131,12 +131,17 @@ def test_run_conversation_threads_channels_and_port_into_extra(
 
     # Act
     asyncio.run(_run())
-    # Assert — sac-private extra keys present so build_sdk_options
-    # registers the `sac mcp channel` adapter.
-    assert captured["extra"] == {"_channels": ["server:sac"], "_a2a_port": 7878}
+    # Assert — sac-private channel keys present so build_sdk_options
+    # registers the `sac mcp channel` adapter. (An always-on ``stderr``
+    # capture callback is also threaded into extra by the runner; this
+    # test asserts only the channel keys it cares about.)
+    assert {
+        "_channels": captured["extra"]["_channels"],
+        "_a2a_port": captured["extra"]["_a2a_port"],
+    } == {"_channels": ["server:sac"], "_a2a_port": 7878}
 
 
-def test_run_conversation_extra_is_none_without_channels_or_port(
+def test_run_conversation_omits_channel_keys_without_channels_or_port(
     tmp_path: Path,
 ) -> None:
     # Arrange
@@ -158,8 +163,9 @@ def test_run_conversation_extra_is_none_without_channels_or_port(
 
     # Act
     asyncio.run(_run())
-    # Assert — no channels and no a2a_port → no extra payload at all.
-    assert captured["extra"] is None
+    # Assert — no channels and no a2a_port → only the always-on stderr
+    # capture callback is threaded; no sac-private channel keys.
+    assert set(captured["extra"]) == {"stderr"}
 
 
 # ---------------------------------------------------------------------------
