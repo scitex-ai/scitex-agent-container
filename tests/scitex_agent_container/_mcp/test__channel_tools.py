@@ -45,6 +45,14 @@ class _FakeListenServer:
         self._server: asyncio.base_events.Server | None = None
         self.host: str = "127.0.0.1"
         self.port: int = 0
+        # Response the fake returns for a successful ``message:send`` POST.
+        # Default mirrors the historical fake (200 + ``{"ok": True}``). WI-2
+        # tests override this to model a real publish reply carrying
+        # ``delivered_subscriber_count``.
+        self.send_response: dict[str, Any] = {"ok": True}
+        # When set, ``message:send`` returns this HTTP status with a tiny
+        # body instead of a 200 JSON envelope (models a delivery error).
+        self.send_status: int = 200
 
     async def start(self) -> None:
         self._server = await asyncio.start_server(self._handle, host=self.host, port=0)
@@ -95,7 +103,12 @@ class _FakeListenServer:
                 except json.JSONDecodeError:
                     payload = {}
                 self.posts.append((path, payload))
-                await self._serve_json(writer, {"ok": True})
+                if self.send_status != 200:
+                    await self._serve_status(
+                        writer, self.send_status, b"delivery error"
+                    )
+                else:
+                    await self._serve_json(writer, self.send_response)
             else:
                 await self._serve_status(writer, 404, b"not found")
         finally:
@@ -502,3 +515,141 @@ async def test_register_tools_forwards_bearer_token_on_post(fake_listen):
     await rec.call_tool_fn("a2a_send", {"target": "bob", "content": "hi"})
     # Assert
     assert fake_listen.last_auth == "Bearer s3cret"
+
+
+# ---------------------------------------------------------------------------
+# WI-2 fail-loud — a send/push that cannot reach or wake the target must
+# surface a loud, explicit error to the caller, never a misleading success.
+#
+# Three failure modes from the work-item: no inbox subscriber
+# (delivered_subscriber_count == 0), agent stopped (connection refused),
+# delivery error (non-2xx). Real loopback servers, no mocks.
+# ---------------------------------------------------------------------------
+
+
+def _err(out: "list[TextContent]") -> str | None:
+    """Pull the ``error`` field out of a tool result, or None."""
+    body = json.loads(out[0].text)
+    return body.get("error") if isinstance(body, dict) else None
+
+
+@pytest.mark.asyncio
+async def test_a2a_send_no_subscriber_returns_loud_error(
+    registered_tools: _ToolRecorder, fake_listen
+):
+    """delivered_subscriber_count == 0 → the push woke nobody → loud error,
+    not a misleading success body."""
+    # Arrange — model a publish reply with zero subscribers.
+    fake_listen.send_response = {
+        "msg_id": "m1",
+        "to_agent": "bob",
+        "delivered_subscriber_count": 0,
+    }
+    call_fn = registered_tools.call_tool_fn
+    # Act
+    out = await call_fn("a2a_send", {"target": "bob", "content": "hi"})
+    # Assert
+    assert "no live subscriber" in (_err(out) or "")
+
+
+@pytest.mark.asyncio
+async def test_a2a_send_with_subscriber_returns_success(
+    registered_tools: _ToolRecorder, fake_listen
+):
+    """A delivered_subscriber_count >= 1 is a real delivery — success, no
+    error (guards against the fail-loud check over-firing)."""
+    # Arrange
+    fake_listen.send_response = {
+        "msg_id": "m1",
+        "to_agent": "bob",
+        "delivered_subscriber_count": 1,
+    }
+    call_fn = registered_tools.call_tool_fn
+    # Act
+    out = await call_fn("a2a_send", {"target": "bob", "content": "hi"})
+    # Assert
+    assert _err(out) is None
+
+
+@pytest.mark.asyncio
+async def test_a2a_send_delivery_error_status_returns_loud_error(
+    registered_tools: _ToolRecorder, fake_listen
+):
+    """A non-2xx from the listen server (e.g. 502 forward failure) is a
+    delivery error — surface it loudly, not as a success body."""
+    # Arrange
+    fake_listen.send_status = 502
+    call_fn = registered_tools.call_tool_fn
+    # Act
+    out = await call_fn("a2a_send", {"target": "bob", "content": "hi"})
+    # Assert
+    assert "HTTP 502" in (_err(out) or "")
+
+
+@pytest.mark.asyncio
+async def test_a2a_send_agent_stopped_connection_refused_returns_loud_error():
+    """Target agent down / listen unreachable (refused connection) → loud
+    'agent unreachable' error rather than a hang or silent success."""
+    # Arrange — register tools pointing at a closed loopback port.
+    import socket
+
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(("127.0.0.1", 0))
+    refused_port = s.getsockname()[1]
+    s.close()
+    rec = _ToolRecorder()
+    register_tools(
+        rec,
+        agent_name="alice",
+        listen_url=f"http://127.0.0.1:{refused_port}",
+        bearer=None,
+    )
+    # Act
+    out = await rec.call_tool_fn("a2a_send", {"target": "bob", "content": "hi"})
+    # Assert
+    assert "unreachable" in (_err(out) or "")
+
+
+@pytest.mark.asyncio
+async def test_a2a_send_absent_delivered_count_is_not_treated_as_failure(
+    registered_tools: _ToolRecorder, fake_listen
+):
+    """A 200 reply WITHOUT delivered_subscriber_count (e.g. a cross-host
+    forward) must NOT be flagged as a no-subscriber failure — inventing a
+    zero would be a false positive."""
+    # Arrange — default fake response is ``{"ok": True}`` (no count field).
+    call_fn = registered_tools.call_tool_fn
+    # Act
+    out = await call_fn("a2a_send", {"target": "bob", "content": "hi"})
+    # Assert
+    assert _err(out) is None
+
+
+@pytest.mark.asyncio
+async def test_a2a_reply_no_subscriber_returns_loud_error(
+    registered_tools: _ToolRecorder, fake_listen
+):
+    """The reply path shares the fail-loud send helper."""
+    # Arrange — seed a known inbound message to reply to, then zero subs.
+    _recent.append({"msg_id": "orig1", "from_agent": "bob", "conversation_id": "c1"})
+    fake_listen.send_response = {"delivered_subscriber_count": 0}
+    call_fn = registered_tools.call_tool_fn
+    # Act
+    out = await call_fn("a2a_reply", {"in_reply_to": "orig1", "content": "hey"})
+    # Assert
+    assert "no live subscriber" in (_err(out) or "")
+
+
+@pytest.mark.asyncio
+async def test_a2a_ack_no_subscriber_returns_loud_error(
+    registered_tools: _ToolRecorder, fake_listen
+):
+    """The explicit ack tool also fails loud when it reaches no subscriber."""
+    # Arrange
+    _recent.append({"msg_id": "orig2", "from_agent": "bob", "conversation_id": "c2"})
+    fake_listen.send_response = {"delivered_subscriber_count": 0}
+    call_fn = registered_tools.call_tool_fn
+    # Act
+    out = await call_fn("a2a_ack", {"msg_id": "orig2"})
+    # Assert
+    assert "no live subscriber" in (_err(out) or "")
