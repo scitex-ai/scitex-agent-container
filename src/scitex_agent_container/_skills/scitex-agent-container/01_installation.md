@@ -75,30 +75,27 @@ A bare host `ANTHROPIC_API_KEY` is **never honoured**: if
 silently switch you to pay-per-token billing or shadow a working OAuth
 credentials file. Set neither and you get a clear `SDKCommonError`.
 
-## Per-host hook (optional but recommended for remote/HPC)
+## Remote / HPC agents
 
-When running agents on remote hosts via ssh, sac sources `~/.scitex/agent-container/hosts/$(hostname).sh` on the remote before launching the runner. Keeps per-host quirks (Lmod, env unsets, custom PATH, container wrappers) out of the package and in your private dotfiles.
+sac is apptainer-only: the runner always launches via `apptainer exec`
+inside the SIF — there is no host-side bare-Python launch path. The old
+per-host `~/.scitex/agent-container/hosts/$(hostname).sh` + `SAC_RUNNER_PREFIX`
+hook (a host-side `python -m ... claude_session` wrapper) was removed with
+the bare-metal/SSH-dispatch ripout (WI-6, 2026-05-20). The
+`_runners/_remote_launch` module that generated it still exists but is
+dead code (no live importers).
 
-Example for Spartan HPC compute nodes:
+Cross-host placement now goes through:
 
-```bash
-# ~/.scitex/agent-container/hosts/spartan-bm198.hpc.unimelb.edu.au.sh
-module load GCCcore/11.3.0 OpenSSL/1.1
-unset SAC_ANTHROPIC_API_KEY
-# Optional: re-exec the runner inside an existing SLURM allocation
-if [ -z "$SLURM_JOB_ID" ]; then
-    JOBID=$(squeue --me -h -n head-spartan -o "%i" | head -1)
-    [ -n "$JOBID" ] && export SAC_RUNNER_PREFIX="srun --jobid=$JOBID --overlap"
-fi
-```
+- **`spec.host`** — pin an agent to a host (or a priority list). See
+  [11_remote-deploy.md](11_remote-deploy.md).
+- **`sac --on <peer>`** (F-CS12) — dispatch a `sac` command on a peer
+  defined in `config.yaml`'s `peers:` block.
 
-`SAC_RUNNER_PREFIX` is honored by the launch script; common values:
-
-```bash
-export SAC_RUNNER_PREFIX="srun --jobid=$JOBID --overlap"          # SLURM tenancy
-export SAC_RUNNER_PREFIX="apptainer exec --bind ... my-sac.sif"   # SIF-pinned version
-export SAC_RUNNER_PREFIX="conda run -n agent-env"                  # conda env
-```
+HPC-specific environment (Lmod modules, SLURM tenancy, etc.) belongs in
+the apptainer image / overlay or the agent's `to_home/` (see
+[25_claude-setup-delivery.md](25_claude-setup-delivery.md)), not in a
+host-side launch hook.
 
 ## Verify
 

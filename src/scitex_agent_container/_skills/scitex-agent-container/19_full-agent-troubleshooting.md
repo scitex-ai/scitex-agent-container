@@ -60,13 +60,10 @@ push channel.
 | **hard** | `spec.skills.required: [foo]` | `@<absolute-path>` line so the SDK inlines content at session start | invariants the agent must apply (procedure, validity gate, security rule) |
 | **soft** | `spec.skills.available: [foo]` | name + path under `## Available Skills` (no `@-import`) | references / examples / optional patterns |
 
-Caveat (resolved 2026-05-05): `runtime: claude-session` previously
-ignored both modes. F-CS1 (commit `2483f6f` on
-`feat/f-cs1-claude-session-skills`) extends `claude-session` to honour
-both uniformly via the existing `setup_claude_md` /
-`build_skills_lines` helpers. Until merged to develop, include the
-absolute path to any required skill in the mission text as a safety
-net.
+Both modes are honoured by the SDK runner uniformly (F-CS1, via
+`setup_claude_md` / `build_skills_lines`). The skills are materialised
+into the agent's in-container `$HOME/.claude/` so the SDK auto-discovers
+them at session start (see [25_claude-setup-delivery.md](25_claude-setup-delivery.md)).
 
 ## Reaper pattern (when delegating multiple agents)
 
