@@ -12,7 +12,7 @@
 #
 # The proxy runs in the sac-proxy.sif image (lightweight; no SDK +
 # no Python ML stack), backed by the same heartbeat/state layout as
-# kind: Agent so ``sac agent status`` works against both uniformly.
+# kind: Agent so ``sac agents status`` works against both uniformly.
 
 apiVersion: scitex-agent-container/v3
 kind: AgentProxy

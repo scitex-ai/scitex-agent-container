@@ -89,7 +89,7 @@ peers go quiet in a small handful of recognisable ways:
 |---|---|---|
 | Peer goes idle mid-task (no new assistant text, heartbeat still fresh) | model alias under-provisioned, or context drift | `sac peer post-turn <name> "Continue from where you left off..."`; if that fails, escalate the same yaml to `model: opus` (or `claude-opus-4-7[1m]`) |
 | Empty `result` after `--mission` (no assistant text, no tool calls) | model alias not resolving or prompt rejected silently | stop, restart with a shorter mission and `model: opus` |
-| `sac agent status` says `stopped` but `heartbeat.json` is fresh | sac registry-vs-reality drift | trust heartbeat over registry; `sac agent restart` only if heartbeat is also stale |
+| `sac agents status` says `stopped` but `heartbeat.json` is fresh | sac registry-vs-reality drift | trust heartbeat over registry; `sac agents restart` only if heartbeat is also stale |
 | Long startup_command timing out | the SDK does ONE turn per `--mission` then idles | drive subsequent turns with `sac peer post-turn` rather than packing everything into the mission |
 | `nohup bash` loses login PATH → `sac` not found on the remote | login env not sourced | `bash -lc 'setsid nohup …'` or hard-code `~/.env-3.11/bin/sac` |
 

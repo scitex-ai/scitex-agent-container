@@ -85,7 +85,7 @@ You can override any of these by setting them explicitly in the YAML. The auto-d
 
 A sibling directory named `to_home/` (override path with
 `spec.to_home:`, default `./to_home`) is materialized into the agent's
-container `$HOME` (= `runtime/<name>/home/`) at `sac agent start` time.
+container `$HOME` (= `runtime/<name>/home/`) at `sac agents start` time.
 Every path under `to_home/` lands at the same relative path under
 `$HOME`. `CLAUDE.md` / `state.md` get a marker-protected merge; `.env`
 gets mode 0600; everything else is a full overwrite. `${VAR}` and
@@ -114,7 +114,7 @@ If you have legacy YAMLs:
 1. Change `apiVersion: scitex-agent-container/v2` → `apiVersion: scitex-agent-container/v3`.
 2. Delete the `metadata.name:` field. The agent name now comes from the parent directory; ensure the YAML lives at `<name>/<name>.yaml`.
 3. If your YAML was at a flat path like `~/.scitex/agent-container/agents/foo.yaml`, move it to `~/.scitex/agent-container/agents/foo/foo.yaml`.
-4. `sac agent validate <new-path>` to confirm it parses.
+4. `sac agents check <new-path>` to confirm it parses (preflight).
 
 ## See also
 

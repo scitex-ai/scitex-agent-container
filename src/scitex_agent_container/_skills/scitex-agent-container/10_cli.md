@@ -12,42 +12,37 @@ Both the long form `scitex-agent-container` and the short alias `sac` are entry 
 ## Lifecycle
 
 ```bash
-sac agent start <config.yaml>          # Submit/launch one agent from YAML (dir-as-SSoT)
-sac agent start --all                  # Start every agent under SCITEX_AGENT_CONTAINER_YAML_DIRS
-sac agent start --no-preflight         # Skip SSH preflight checks (HPC where module load is needed)
-sac agent start --force                # Stop existing instance first then start fresh
-sac agent stop <name|yaml>             # Stop a running agent (or YAML path; resolves to name)
-sac agent stop --all                   # Stop every registered agent
-sac agent stop --force                 # Tolerate stale registry / ghost screen state
-sac agent restart <name>               # Stop then start
-sac registry clean                      # Remove stale registry entries (where the screen is already gone)
-sac agent validate <config.yaml>       # Validate YAML against the v3 schema
+sac agents start <name|yaml>            # Launch one (or more) agents (dir-as-SSoT; name or YAML path)
+sac agents start <name> --foreground    # Stream stdio + block until the turn finishes
+sac agents stop <name|yaml>             # Stop a running agent (graceful SIGTERM → SIGKILL after 5 s)
+sac agents restart <name>               # Stop then start, preserving session_id resume
+sac agents delete <name> -y             # Stop, deregister, and remove the agent's dir
+sac db clean                            # Sweep dead instances from state.db (replaces legacy registry clean)
 ```
 
 ## Inspection
 
 ```bash
-sac list                         # All registered agents (table)
-sac list --json                  # Machine-readable
-sac list --capability X          # Filter by capability label
-sac list --machine Y             # Filter by machine label
-sac agent status [name]                # Rich status: pane state, hooks, listen ports, snapshot
-sac agent status [name] --json         # Same, JSON
-sac agent inspect <name>               # Live pane-state classification (idle/working/auth/...)
-sac agent inspect <name> --json        # Same, JSON
-sac agent logs <name> [-n LINES]       # Recent agent output (capture-pane / journalctl / tmux capture)
-sac agent health <name>                # Run a health check on an agent
-sac agent attach <name>                # Attach to the agent's multiplexer session (Ctrl-B D to detach)
-sac agent find <capability>            # Find agents with a specific capability label across YAML roots
+sac agents list                         # All registered agents + liveness (table)
+sac agents list --json                  # Machine-readable
+sac agents list --capability X          # Filter by capability label
+sac agents list --machine Y             # Filter by machine label
+sac agents status [name]                # Per-agent status (heartbeat, session id, quota), or fleet view
+sac agents status [name] --json         # Same, JSON
+sac agents tail <name> [-n LINES]       # Render session.jsonl (user / assistant / tool / result events)
+sac agents health <name>                # Run a health check (heartbeat freshness, restart policy)
+sac agents recall <name>                # Human-readable session summary
+sac agents check <name>                 # Preflight: validate yaml + probe runtime deps
+sac agents find <capability>            # Find agents with a specific capability label across YAML roots
 ```
 
 ## Interact (resume an existing session)
 
 ```bash
-sac agent send <name> "<prompt>"          # Resume the agent's session for one more turn
-sac agent send <name> --key ESC           # Cancel the current turn (SIGINT to the runner pid)
-sac agent send <name> --no-stream         # Buffer the reply instead of streaming
-sac agent send <name> "..." -- --debug    # Anything after `--` is forwarded verbatim to claude
+sac agents send <name> "<prompt>"          # Resume the agent's session for one more turn
+sac agents send <name> --key ESC           # Cancel the current turn (SIGINT to the runner pid)
+sac agents send <name> --no-stream         # Buffer the reply instead of streaming
+sac agents send <name> "..." -- --debug    # Anything after `--` is forwarded verbatim to claude
 ```
 
 Reads `session_id` from the per-agent state dir and shells out to `claude --resume <sid> -p ...` inside the agent's `workdir`. See `15_claude-session.md` for the long-lived alternative that keeps the SDK client open across turns.
@@ -79,26 +74,25 @@ sac a2a serve <agent.yaml>...    # Foreground A2A server for one or more agents
 sac a2a doctor <agent.yaml>      # Probe an agent's AgentCard endpoint, report health
 ```
 
-Auto-launch is wired via `spec.a2a.port` — `sac agent start` spawns the A2A server as a sidecar subprocess after the multiplexer is up. See `07_a2a-protocol.md`.
+Auto-launch is wired via `spec.a2a.port` — for SDK agents the runner hosts `POST /v1/turn` itself; `sac a2a serve` is the sidecar path for non-SDK runtimes. See `07_a2a-protocol.md`.
 
 ## Build & deployment
 
 ```bash
 sac image build                        # Build container base image
-sac agent check <yaml>                 # Run preflight checks (SSH reachability, claude on PATH, …)
-sac network probe                # Probe WSL → fleet-hub connectivity (todo#457)
+sac agents check <yaml>                 # Run preflight checks (SSH reachability, claude on PATH, …)
+sac host probe-hub               # Probe WSL → fleet-hub connectivity (DNS, gateway, TCP, HTTPS)
 ```
 
 ## Operational tools
 
 ```bash
-sac actions run <action> <agent>      # Execute a typed PaneAction (e.g. nonce-probe)
-sac actions query --agent X --limit 5 # Query the host-wide attempt log
-sac actions stats --agent X --since 1h # Aggregate stats
-sac actions purge                     # Purge the attempt log
-sac account                           # Manage stored Claude Code accounts (rotation)
-sac quota watch                       # Monitor quota and auto-rotate credentials
-sac agent take-snapshot                          # Take a self-snapshot for AGENT, print as JSON
+sac accounts list                     # Stored Claude Code accounts + the active one
+sac accounts save <name>              # Snapshot current credentials for rotation
+sac accounts switch <name>            # Switch active credentials
+sac accounts watch-quota              # Monitor quota and auto-rotate credentials
+sac db clean                          # Sweep dead instances from state.db
+sac db query --table instances        # Inspect state.db rows
 sac event ingest                        # Append a Claude Code hook event to the per-agent ring buffer
 ```
 
@@ -113,25 +107,22 @@ sac <subcommand> --help          # Per-subcommand help
 ## Python API
 
 ```python
-from scitex_agent_container import (
-    agent_start, agent_stop, agent_restart,
-    agent_status, agent_logs,
-    Registry, load_config,
-)
+from scitex_agent_container import agent, load_config, Registry
 
-agent_start("path/to/agent.yaml")
-status = agent_status("my-agent")
-print(agent_logs("my-agent", lines=50))
+agent.start("my-agent")                 # name (dir-as-SSoT) or YAML path
+status = agent.status("my-agent")
+print(agent.logs("my-agent", lines=50))
 ```
 
-The CLI is a thin wrapper over these — every command corresponds to a function in `scitex_agent_container.lifecycle` or related modules.
+The CLI is a thin wrapper over the namespaced API submodules
+(`agent`, `db`, `host`, `image`, `account`, `skills`, `mcp`, `peer`).
+Run `sac list-python-apis -vv` for the full signature tree.
 
 ## Conventions
 
-- **Noun-verb subcommand structure** for grouped operations (`sac actions run`, `sac a2a serve`). Single-word commands are top-level (`sac agent start`, `sac agent stop`).
+- **Noun-verb subcommand structure** for grouped operations (`sac agents start`, `sac a2a serve`, `sac db query`).
 - **`--json` always available** on inspection commands so dashboards can consume them.
-- **`--force` is universal** for destructive ops — never silently overwrites without it.
-- **Both `<name>` and `<yaml-path>` accepted** by `start`/`stop`/`restart`/`validate` — the CLI resolves yaml paths to agent names internally.
+- **Both `<name>` and `<yaml-path>` accepted** by `start`/`stop`/`restart` — the CLI resolves yaml paths to agent names internally.
 
 ## See also
 

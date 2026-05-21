@@ -44,7 +44,7 @@ COMMAND_CATEGORIES = [
         "Network & Peer",
         ["host", "peer", "a2a", "fleet", "listen"],
     ),
-    ("Registry & Events", ["db", "registry", "event", "actions"]),
+    ("Registry & Events", ["db", "registry", "event"]),
     ("Build & Install", ["image", "installation"]),
     ("Introspection", ["mcp", "list-python-apis", "skills"]),
     ("Developer", ["dev"]),

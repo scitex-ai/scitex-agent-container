@@ -6,7 +6,7 @@
   <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>sac and orochi &mdash; scitex-agent-container v0.17.3</title>
+  <title>sac and orochi &mdash; scitex-agent-container v0.18.0</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=9edc463e" />
       <link rel="stylesheet" type="text/css" href="_static/copybutton.css?v=76b2166b" />
@@ -14,7 +14,7 @@
   
       <script src="_static/jquery.js?v=5d32c60e"></script>
       <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
-      <script src="_static/documentation_options.js?v=3bc55ee7"></script>
+      <script src="_static/documentation_options.js?v=ba2e7b09"></script>
       <script src="_static/doctools.js?v=fd6eb6e6"></script>
       <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
       <script src="_static/clipboard.min.js?v=a7894cd8"></script>
@@ -442,7 +442,7 @@ captured below and tracked under
 <tbody>
 <tr class="row-even"><td><p>sac-managed</p></td>
 <td><p>sac (spec, container, start/stop/health)</p></td>
-<td><p>An agent declared in a <code class="docutils literal notranslate"><span class="pre">spec.yaml</span></code>, launched by <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agent</span> <span class="pre">start</span></code>.</p></td>
+<td><p>An agent declared in a <code class="docutils literal notranslate"><span class="pre">spec.yaml</span></code>, launched by <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agents</span> <span class="pre">start</span></code>.</p></td>
 </tr>
 <tr class="row-odd"><td><p><strong>external</strong></p></td>
 <td><p>NOT sac — the operator, a separate tool, a human</p></td>
@@ -687,7 +687,7 @@ same way:</p>
 <span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">server:sac</span>
 </pre></div>
 </div>
-<p>When <code class="docutils literal notranslate"><span class="pre">server:sac</span></code> is in <code class="docutils literal notranslate"><span class="pre">channels</span></code>, <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agent</span> <span class="pre">start</span></code> auto-spawns
+<p>When <code class="docutils literal notranslate"><span class="pre">server:sac</span></code> is in <code class="docutils literal notranslate"><span class="pre">channels</span></code>, <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agents</span> <span class="pre">start</span></code> auto-spawns
 <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">mcp</span> <span class="pre">channel</span> <span class="pre">--name</span> <span class="pre">&lt;agent&gt;</span></code> as a stdio MCP subprocess of the agent’s
 Claude session; it subscribes to the host-local
 <code class="docutils literal notranslate"><span class="pre">/agents/&lt;name&gt;/inbox/stream</span></code> SSE and pushes

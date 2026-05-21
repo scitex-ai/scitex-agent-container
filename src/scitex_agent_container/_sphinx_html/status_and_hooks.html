@@ -6,7 +6,7 @@
   <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Status and Hook Integration &mdash; scitex-agent-container v0.17.3</title>
+  <title>Status and Hook Integration &mdash; scitex-agent-container v0.18.0</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=9edc463e" />
       <link rel="stylesheet" type="text/css" href="_static/copybutton.css?v=76b2166b" />
@@ -14,7 +14,7 @@
   
       <script src="_static/jquery.js?v=5d32c60e"></script>
       <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
-      <script src="_static/documentation_options.js?v=3bc55ee7"></script>
+      <script src="_static/documentation_options.js?v=ba2e7b09"></script>
       <script src="_static/doctools.js?v=fd6eb6e6"></script>
       <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
       <script src="_static/clipboard.min.js?v=a7894cd8"></script>
@@ -465,10 +465,9 @@ are derived from the existing hook buffer.</p>
 tool name starts with <code class="docutils literal notranslate"><span class="pre">mcp__</span></code>. Serves as an MCP sidecar health
 probe – confirms the MCP route is flowing, not just local tools.</p>
 </dd>
-<dt><code class="docutils literal notranslate"><span class="pre">last_action_at</span></code> / <code class="docutils literal notranslate"><span class="pre">last_action_name</span></code></dt><dd><p>ISO timestamp and name of the most recent recorded <code class="docutils literal notranslate"><span class="pre">PaneAction</span></code>
-attempt (e.g. <code class="docutils literal notranslate"><span class="pre">nonce-probe</span></code>, <code class="docutils literal notranslate"><span class="pre">compact</span></code>). <code class="docutils literal notranslate"><span class="pre">last_action_name</span></code>
-is renamed from the original <code class="docutils literal notranslate"><span class="pre">last_action</span></code> so it does not
-collide with the orochi hub’s own <code class="docutils literal notranslate"><span class="pre">last_action</span></code> column.</p>
+<dt><code class="docutils literal notranslate"><span class="pre">last_action_at</span></code> / <code class="docutils literal notranslate"><span class="pre">last_action_name</span></code></dt><dd><p>ISO timestamp and name of the most recent recorded action attempt.
+<code class="docutils literal notranslate"><span class="pre">last_action_name</span></code> is renamed from the original <code class="docutils literal notranslate"><span class="pre">last_action</span></code> so
+it does not collide with the orochi hub’s own <code class="docutils literal notranslate"><span class="pre">last_action</span></code> column.</p>
 </dd>
 <dt><code class="docutils literal notranslate"><span class="pre">last_action_outcome</span></code> / <code class="docutils literal notranslate"><span class="pre">last_action_elapsed_s</span></code></dt><dd><p>Outcome string (<code class="docutils literal notranslate"><span class="pre">success</span></code>, <code class="docutils literal notranslate"><span class="pre">precondition_fail</span></code>,
 <code class="docutils literal notranslate"><span class="pre">send_error</span></code>, <code class="docutils literal notranslate"><span class="pre">completion_timeout</span></code>, <code class="docutils literal notranslate"><span class="pre">skipped_by_policy</span></code>)

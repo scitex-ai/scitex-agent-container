@@ -23,17 +23,17 @@ Global flags:
 
 | Command | Purpose |
 |---|---|
-| `sac agent start <agent> [--foreground]` | Start the agent. Daemon by default; `--foreground` streams stdio + blocks. Honors `spec.remote.host` (ssh dispatch) and `spec.a2a.port` (HTTP inbound). |
-| `sac agent stop <agent>` | SIGTERM the runner; escalate to SIGKILL after 5 s. ssh-mediated for remote agents. |
-| `sac agent restart <agent>` | Stop + start, preserving session_id resume. |
-| `sac agent status [<agent>]` | Per-agent rich payload, or fleet view if no name. `--snapshot` persists a state capsule, `--priority` adds the singleton-yield report. |
-| `sac agent health <agent>` | Health-method poll (`sdk-alive`). |
-| `sac agent tail   <agent>` | Render `session.jsonl` (user / assistant / tool / result events). ssh-tails remote logs. |
-| `sac agent recall <agent>` | Human summary of the agent's session. |
-| `sac agent check  <agent>` | Preflight: validate yaml + probe runtime deps (docker/python). |
-| `sac agent find   <capability>` | Search agents by capability label. |
+| `sac agents start <agent> [--foreground]` | Start the agent. Daemon by default; `--foreground` streams stdio + blocks. Honors `spec.remote.host` (ssh dispatch) and `spec.a2a.port` (HTTP inbound). |
+| `sac agents stop <agent>` | SIGTERM the runner; escalate to SIGKILL after 5 s. ssh-mediated for remote agents. |
+| `sac agents restart <agent>` | Stop + start, preserving session_id resume. |
+| `sac agents status [<agent>]` | Per-agent rich payload, or fleet view if no name. `--snapshot` persists a state capsule, `--priority` adds the singleton-yield report. |
+| `sac agents health <agent>` | Health-method poll (`sdk-alive`). |
+| `sac agents tail   <agent>` | Render `session.jsonl` (user / assistant / tool / result events). ssh-tails remote logs. |
+| `sac agents recall <agent>` | Human summary of the agent's session. |
+| `sac agents check  <agent>` | Preflight: validate yaml + probe runtime deps (docker/python). |
+| `sac agents find   <capability>` | Search agents by capability label. |
 
-Multi-target: `sac agent start a b c` works for daemon mode; `--foreground` is single-target only.
+Multi-target: `sac agents start a b c` works for daemon mode; `--foreground` is single-target only.
 
 The earlier verbs `validate`, `take-snapshot`, `check-priority`, `inspect`, `logs`, `list` were folded into `check`, `status --snapshot`, `status --priority`, `status` (per-agent), `tail`, and `status` (fleet view) respectively.
 
@@ -62,15 +62,16 @@ sac image freeze sandbox/ scitex-X.sif # when stable
 sac image switch X
 ```
 
-## Account / quota (`sac account`)
+## Account / quota (`sac accounts`)
 
 | Command | Purpose |
 |---|---|
-| `sac account list` | Stored Claude Code accounts + the active credentials block. |
-| `sac account save <name>` | Snapshot current credentials under `<name>` for later rotation. |
-| `sac account switch <name>` | Switch active credentials to a stored account. |
-| `sac account delete <name>` | Remove a stored account. |
-| `sac account watch-quota` | Monitor quota and auto-rotate when threshold exceeded. (Was `sac quota watch`.) |
+| `sac accounts list` | Stored Claude Code accounts + the active credentials block. |
+| `sac accounts save <name>` | Snapshot current credentials under `<name>` for later rotation. |
+| `sac accounts switch <name>` | Switch active credentials to a stored account. |
+| `sac accounts delete <name>` | Remove a stored account. |
+| `sac accounts status` | One-shot quota snapshot (5h%, 7d%, account email + tier). |
+| `sac accounts watch-quota` | Monitor quota and auto-rotate when threshold exceeded. |
 
 ## Network / peer / A2A
 
@@ -80,7 +81,7 @@ sac image switch X
 | `sac peer post-turn AGENT TEXT` | Outbound A2A — POST a turn to another agent's `/v1/turn`. |
 | `sac peer resolve-url AGENT` | Print the URL `peer post-turn` would target. |
 | `sac a2a serve <yamls...>` | A2A inbound HTTP server (sidecar mode for non-SDK runtimes). For `runtime: apptainer` agents the runner hosts `POST /v1/turn` itself. |
-| `sac network probe` | WSL → fleet-hub connectivity probe. |
+| `sac host probe-hub` | WSL → fleet-hub layered connectivity probe (DNS, gateway, TCP, HTTPS). |
 
 ## State database / registry / events
 

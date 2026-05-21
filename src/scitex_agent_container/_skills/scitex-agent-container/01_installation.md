@@ -104,7 +104,7 @@ export SAC_RUNNER_PREFIX="conda run -n agent-env"                  # conda env
 
 ```bash
 sac --version
-sac agent status           # fleet view — empty on a fresh install
+sac agents status           # fleet view — empty on a fresh install
 sac mcp list-tools         # confirms package internals importable
 sac image list             # built SIFs (none on a fresh install)
 ```

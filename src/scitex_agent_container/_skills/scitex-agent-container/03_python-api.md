@@ -1,7 +1,7 @@
 ---
 description: |
   [TOPIC] Python programmatic surface
-  [DETAILS] AgentConfig + load_config + agent_start/stop/restart/status/logs + Registry + peer.post_turn for outbound A2A. Use when embedding sac in another Python process (orochi master, scripts, notebooks).
+  [DETAILS] AgentConfig + load_config/validate_config + the `agent` namespace (start/stop/restart/status/logs/...) + Registry + peer.post_turn for outbound A2A. Use when embedding sac in another Python process (orochi master, scripts, notebooks).
 tags: [scitex-agent-container-python-api]
 ---
 
@@ -9,30 +9,33 @@ tags: [scitex-agent-container-python-api]
 
 ## Lifecycle
 
+The lifecycle verbs live under the `agent` namespace and take an agent
+**name** (or YAML path), not a config object. Each returns a JSON-friendly
+`dict`.
+
 ```python
-from scitex_agent_container import (
-    load_config,
-    agent_start,
-    agent_stop,
-    agent_restart,
-    agent_status,
-    agent_logs,
-)
+from scitex_agent_container import agent
 
-cfg = load_config("worker")              # resolves YAML via dir-as-SSoT chain
-agent_start(cfg)                          # daemon — returns once PID file lands
-agent_start(cfg, foreground=True)         # streams stdio; blocks until runner exits
+agent.start("worker")                     # daemon — returns once PID file lands
+agent.start("worker", foreground=True)    # streams stdio; blocks until runner exits
 
-state = agent_status(cfg)                 # → dict (heartbeat, sdk_session, pane_state, ...)
+state = agent.status("worker")            # → dict (heartbeat, sdk_session, quota, ...)
 print(state["sdk_session"]["quota"])
 
-print(agent_logs(cfg, lines=50))          # rendered transcript
+print(agent.logs("worker", lines=50))     # rendered transcript
 
-agent_restart(cfg, no_preflight=False)    # stop + start
-agent_stop(cfg)                           # SIGTERM, escalate to SIGKILL after 5s
+agent.restart("worker")                   # stop + start, preserving session_id resume
+agent.stop("worker")                      # SIGTERM, escalate to SIGKILL after 5s
+
+agent.health("worker")                    # heartbeat freshness + restart policy
+agent.check("worker")                     # preflight: validate yaml + probe runtime deps
+agent.find("quality")                     # locate agents by capability label
 ```
 
-`load_config(name_or_path)` accepts either an agent name (resolved via the discovery chain — project-local → home → env → fleet dirs) or an explicit YAML path.
+`load_config(name_or_path)` (below) accepts either an agent name (resolved
+via the discovery chain — project-local → home → env → fleet dirs) or an
+explicit YAML path, and returns an `AgentConfig`. `validate_config(path)`
+returns a list of schema-violation strings (empty when valid).
 
 ## Peer — drive another agent's `/v1/turn`
 
