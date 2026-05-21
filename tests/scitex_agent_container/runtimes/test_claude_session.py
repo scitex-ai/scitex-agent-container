@@ -24,6 +24,7 @@ from scitex_agent_container.runtimes.claude_session import (
     ClaudeSessionRuntime,
     _container_runtime_for,
     _format_session_tail,
+    _materialize_home_layouts,
     _warn_if_heavy_workdir_claude,
     _workdir_claude_size_bytes,
 )
@@ -615,3 +616,52 @@ def test_format_session_tail_drops_first_chunk(_session_with_twenty_chunks):
     out = _format_session_tail(sess_dir, max_lines=3)
     # Assert
     assert "chunk-0" not in out
+
+
+# ---------------------------------------------------------------------------
+# Legacy dot_claude/ layout was removed (ADR-0006): a spec that still
+# ships a dot_claude/ dir hard-errors pointing at to_home/.
+# ---------------------------------------------------------------------------
+
+
+def test_legacy_dot_claude_dir_raises_runtime_error(tmp_path):
+    # Arrange
+    agent_dir = tmp_path / "agent"
+    (agent_dir / "dot_claude").mkdir(parents=True)
+    config = AgentConfig(name="legacy", config_path=str(agent_dir / "spec.yaml"))
+    home_dir = str(tmp_path / "home")
+    # Act
+    raises_cm = pytest.raises(RuntimeError)
+    # Assert
+    with raises_cm:
+        _materialize_home_layouts(config, home_dir)
+
+
+def test_legacy_dot_claude_error_points_at_to_home(tmp_path):
+    # Arrange
+    agent_dir = tmp_path / "agent"
+    (agent_dir / "dot_claude").mkdir(parents=True)
+    config = AgentConfig(name="legacy", config_path=str(agent_dir / "spec.yaml"))
+    try:
+        _materialize_home_layouts(config, str(tmp_path / "home"))
+        message = ""
+    except RuntimeError as exc:
+        message = str(exc)
+    # Act
+    points_at_to_home = "to_home/" in message
+    # Assert
+    assert points_at_to_home is True
+
+
+def test_to_home_dir_materializes_without_error(tmp_path):
+    # Arrange
+    agent_dir = tmp_path / "agent"
+    to_home = agent_dir / "to_home"
+    to_home.mkdir(parents=True)
+    (to_home / ".mcp.json").write_text('{"mcpServers": {}}\n')
+    config = AgentConfig(name="modern", config_path=str(agent_dir / "spec.yaml"))
+    home_dir = tmp_path / "home"
+    # Act
+    _materialize_home_layouts(config, str(home_dir))
+    # Assert
+    assert (home_dir / ".mcp.json").exists()

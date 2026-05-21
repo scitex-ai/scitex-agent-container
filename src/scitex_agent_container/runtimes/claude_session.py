@@ -21,16 +21,10 @@ through ``sac --on <peer>`` (F-CS12) and ``spec.host`` pinning.
 from __future__ import annotations
 
 import sys
-import warnings
 from pathlib import Path
 
 from ..config import AgentConfig
-from ._dot_claude import cleanup_dot_claude, deploy_dot_claude
-from ._to_home import (
-    deploy_to_home,
-    resolve_baseline_to_home_dir,
-    resolve_to_home_dir,
-)
+from ._to_home import deploy_to_home
 from .base import RuntimeBase
 from .claude_md import cleanup_claude_md, setup_claude_md
 
@@ -45,53 +39,27 @@ def _spec_dir_for(config: AgentConfig) -> Path | None:
 
 
 def _materialize_home_layouts(config: AgentConfig, home_dir: str) -> None:
-    """Run the to_home / dot_claude materialization pair.
+    """Materialize the agent's ``to_home/`` layout into ``home_dir``.
 
-    ADR-0006 transition: ``to_home/`` is the new layout; ``dot_claude/``
-    is deprecated and kept alive for one release. A spec MUST NOT
-    carry both — surfacing the ambiguity loudly avoids the
-    silent-merge data-loss pattern.
+    ``to_home/`` is the single canonical layout (see ADR-0006).
+    ``deploy_to_home`` overlays the per-agent ``to_home/`` on top of the
+    shared baseline ``to_home/``, so per-agent files win on conflict.
 
-    Order:
-      1. If a ``to_home/`` dir (per-agent or shared baseline) is present:
-         deploy it. ``deploy_to_home`` overlays the per-agent ``to_home/``
-         on top of the common baseline, so per-agent files win.
-      2. If a ``dot_claude/`` dir is present and ``to_home/`` is NOT:
-         deploy dot_claude (legacy path) and emit a DeprecationWarning.
-      3. If both are present: raise — operator must pick one.
+    The legacy ``dot_claude/`` layout was removed: a spec that still
+    ships a ``dot_claude/`` dir next to ``spec.yaml`` is a hard error
+    pointing at ``to_home/`` — refusing to silently ignore stale config.
     """
     spec_dir = _spec_dir_for(config)
-    to_home_dir = resolve_to_home_dir(config)
-    baseline_dir = resolve_baseline_to_home_dir(spec_dir)
-    legacy_dir = None
     if spec_dir is not None and (spec_dir / "dot_claude").is_dir():
-        legacy_dir = spec_dir / "dot_claude"
-
-    if to_home_dir is not None and legacy_dir is not None:
         raise RuntimeError(
-            f"Spec {getattr(config, 'config_path', '<unknown>')!r} carries "
-            f"BOTH 'to_home/' and 'dot_claude/' next to spec.yaml. "
-            "Pick one — refusing to silently merge two materialization "
-            "layouts (data-loss risk). dot_claude/ is deprecated; "
-            "see ADR-0006 for the migration guide."
+            f"Spec {getattr(config, 'config_path', '<unknown>')!r} ships a "
+            "legacy 'dot_claude/' dir next to spec.yaml. The dot_claude/ "
+            "layout was removed (see ADR-0006) — rename it to 'to_home/' "
+            "and move its contents to the $HOME-relative layout "
+            "(to_home/{CLAUDE.md,.mcp.json,.env,.claude/{hooks,skills}}). "
+            "Refusing to start with stale config."
         )
-
-    # The baseline alone is enough to take the to_home path, but only when
-    # the spec is NOT a legacy dot_claude spec — otherwise a global baseline
-    # would silently shadow the legacy deploy.
-    if to_home_dir is not None or (baseline_dir is not None and legacy_dir is None):
-        deploy_to_home(config, home_dir)
-        return
-
-    if legacy_dir is not None:
-        warnings.warn(
-            "dot_claude/ is deprecated; switch to to_home/ "
-            "(see ADR-0006). The legacy path will be removed in a "
-            "future release.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        deploy_dot_claude(config, home_dir)
+    deploy_to_home(config, home_dir)
 
 
 # F-CS8 — silent SDK failure on heavy workdir/.claude/ trees.
@@ -203,7 +171,7 @@ class ClaudeSessionRuntime(RuntimeBase):
         """Materialise CLAUDE.md before launching the SDK runner.
 
         ADR-0003 (D6/D7): the agent's container ``$HOME`` is bind-mounted
-        from ``runtime/<name>/home/``. We materialise ``dot_claude/`` and
+        from ``runtime/<name>/home/``. We materialise ``to_home/`` and
         the sac-managed CLAUDE.md there (instead of the workdir, which
         is the project-source mount at ``/work``). Claude SDK's
         ``$HOME/.claude/`` discovery then sees skills, hooks, .mcp.json.
@@ -234,7 +202,6 @@ class ClaudeSessionRuntime(RuntimeBase):
             return
         home_dir = str(self._state_dir(config) / "home")
         cleanup_claude_md(config, home_dir)
-        cleanup_dot_claude(config, home_dir)
 
     def start(
         self,

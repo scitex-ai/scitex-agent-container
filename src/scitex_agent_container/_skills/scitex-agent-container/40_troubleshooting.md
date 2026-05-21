@@ -108,7 +108,7 @@ contain the canonical marker pair:
 ...user tail, preserved across restarts...
 ```
 
-Hard-fail contract (see `runtimes/_dot_claude.py::_validate_marker_invariants`,
+Hard-fail contract (see `runtimes/_to_home.py::_validate_marker_invariants`,
 per ywatanabe spec msg 5250–5260):
 
 - exactly **one** Start marker

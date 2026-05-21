@@ -35,7 +35,7 @@ metadata:
 spec:
   runtime: apptainer                     # optional; only `apptainer` accepted; empty defaults to `apptainer` (since 2026-05-13)
   workdir: ~/proj                        # mounted rw at /work
-  dot_claude: ./dot_claude               # merged into <workdir>/.claude/ at start (no auto-discover; default "")
+  to_home: ./to_home                     # mirrored into the agent $HOME at start (auto-discovers ./to_home; default "./to_home")
   python-venv: auto                      # string or list — fallback chain
   env-file: .env                         # string or list of dotenv paths   (VERIFY: validator currently rejects — must be added to _KNOWN_SPEC_KEYS)
   multiplexer: tmux                      # tmux | screen                    (VERIFY: validator currently rejects — must be added to _KNOWN_SPEC_KEYS)
@@ -94,7 +94,7 @@ spec:
 > | Layer | Drives | Effect |
 > |---|---|---|
 > | `metadata.labels.skills` (CSV) | A2A `skills[0].tags` + `x-scitex-agent-container.required_skills` | Advertises capabilities on the card; **no behaviour change inside the agent** |
-> | `spec.dot_claude/skills/<name>/SKILL.md` (files) | Materialised at `runtime/<name>/home/.claude/skills/` (ADR-0003) and surfaced via `spec.skills.required[]` `@`-imports in the auto-generated CLAUDE.md | Loaded into the agent's prompt by the Claude SDK |
+> | `spec.to_home/.claude/skills/<name>/SKILL.md` (files) | Materialised at `runtime/<name>/home/.claude/skills/` (ADR-0006) and surfaced via `spec.skills.required[]` `@`-imports in the auto-generated CLAUDE.md | Loaded into the agent's prompt by the Claude SDK |
 >
 > Also note A2A's separate top-level `capabilities` field is for
 > *transport* properties (`streaming`, `pushNotifications`, etc.) —
@@ -129,7 +129,7 @@ when `spec.a2a.port` is set) and `GET /agents/<name>/card`
 |----------------------|----------------------------|--------------------------------------------------------------------------|
 | `runtime`            | `apptainer` (optional)     | Empty/unset defaults to `apptainer`; any other value is rejected. docker/podman were dropped 2026-05-13 |
 | `workdir`            | path                       | Mounted rw at `/work` (default: `~/.scitex/agent-container/runtime/agents/<name>/`) |
-| `dot_claude`         | path                       | Materialized into `<workdir>/.claude/`. Default is empty string — no auto-discovery of a sibling directory; operators must set the path explicitly if they want a `dot_claude/` merged in. |
+| `to_home`            | path                       | Mirrored into the agent's container `$HOME` (= `runtime/<name>/home/`) at start. Every path under `to_home/` lands at the same relative path under `$HOME`. Default `./to_home` — auto-discovers a sibling `to_home/` next to `spec.yaml`. |
 | `python-venv`        | string \| list             | Pre-activated for startup_commands; `auto` probes `~/.venv-3.11`, `~/.venv` |
 | `env-file`           | string \| list             | dotenv paths sourced at start. **(VERIFY: parsed by the loader but currently rejected by `_validation._KNOWN_SPEC_KEYS` — known parser/validator drift.)** |
 | `user`               | `""` \| `"host"` \| `"<uid>:<gid>"` | Container user override; empty = image default. |
@@ -227,8 +227,8 @@ a2a:
 ### Skills
 
 `spec.skills` was **removed in v3** — skills now live under
-`dot_claude/skills/` (a sibling directory next to `spec.yaml`,
-materialized into the workspace at start).
+`to_home/.claude/skills/` (a sibling directory next to `spec.yaml`,
+materialized into the agent's `$HOME` at start).
 
 For AgentCard publication, declare the skill IDs via
 `metadata.labels.skills` as a CSV (e.g. `skills: "scitex-dev, gh-cli, git"`).
@@ -239,7 +239,7 @@ The list ends up in the card's `skills[0].tags` (unioned with
 
 A dict-of-dicts merged into `<workdir>/.mcp.json` at start. Mirrors
 the `.mcp.json` shape directly. Use this OR drop a `.mcp.json` into
-`dot_claude/` — both are merged.
+`to_home/` (lands at `$HOME/.mcp.json`).
 
 ### `spec.telegram` / `spec.hooks` / `spec.extensions`
 
@@ -313,7 +313,7 @@ for a complete minimal example.
 
 Copy from [`examples/agents/`](../examples/agents/):
 
-- [`full-agent/`](../examples/agents/full-agent/) — annotated spec exercising every supported field (plus `dot_claude/` layout)
-- [`minimal-agent/`](../examples/agents/minimal-agent/) — bare minimum, no `dot_claude`
+- [`full-agent/`](../examples/agents/full-agent/) — annotated spec exercising every supported field (plus `to_home/` layout)
+- [`minimal-agent/`](../examples/agents/minimal-agent/) — bare minimum, no `to_home`
 - [`hello-agent/`](../examples/agents/hello-agent/) — quickstart with `startup_prompts`
 - [`proxy-agent/`](../examples/agents/proxy-agent/) — `kind: AgentProxy` forwarder example

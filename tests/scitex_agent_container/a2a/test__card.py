@@ -3,7 +3,7 @@
 The card was reading two stale spec paths that v3 had moved:
 
 * ``spec.skills.required`` — v3 rejects ``spec.skills`` outright (skills
-  live in ``dot_claude/skills/``). The card surface lost the required-
+  live in ``to_home/.claude/skills/``). The card surface lost the required-
   skills list silently for every v3 agent.
 * ``spec.model`` — v3 moved the model under ``spec.claude.model``. The
   card's ``x-scitex-agent-container.model`` field was always ``None``.

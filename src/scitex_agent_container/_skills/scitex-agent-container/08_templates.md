@@ -21,7 +21,7 @@ Both are validated by `tests/test_templates_v3_valid.py`. The SLURM template add
 | `apptainer.yaml` | claude-session inside Apptainer SIF | `spec.runtime: apptainer`, `spec.image: *.sif` (default) |
 | `ssh.yaml` | remote agent via SSH | dispatched cross-host via `sac --on <peer>` (F-CS12) |
 
-MCP wiring is no longer a separate template — drop a `.mcp.json` into the agent's `dot_claude/` directory and it's merged into `<workdir>/.mcp.json` at start (F-DC1). Docker / podman / local-bare-metal patterns deleted after F-CS17 made sac apptainer-only.
+MCP wiring is no longer a separate template — drop a `.mcp.json` into the agent's `to_home/` directory and it lands at `$HOME/.mcp.json` at start (ADR-0006). Docker / podman / local-bare-metal patterns deleted after F-CS17 made sac apptainer-only.
 
 ## Instantiating (dir-as-SSoT)
 
@@ -30,11 +30,11 @@ The v3 loader derives the agent name from the parent directory, not from `metada
 ```bash
 mkdir -p ~/.scitex/agent-container/agents/my-agent
 cp examples/agent-templates/apptainer.yaml ~/.scitex/agent-container/agents/my-agent/spec.yaml
-# optional: add a dot_claude/ sibling for CLAUDE.md / .mcp.json / .env / commands / skills / hooks
+# optional: add a to_home/ sibling for CLAUDE.md / .mcp.json / .env / .claude/{hooks,skills,commands}
 sac agent start my-agent
 ```
 
-For SSH-deployed agents, drop a sibling `dot_claude/` directory next to `spec.yaml` — the whole directory rsyncs to the remote and is materialized into the workspace at start.
+For SSH-deployed agents, drop a sibling `to_home/` directory next to `spec.yaml` — the whole directory rsyncs to the remote and is materialized into the agent's `$HOME` at start.
 
 ## When to add a new template
 

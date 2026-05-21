@@ -1,8 +1,9 @@
 # ADR-0006: `to_home/` spec-dir materialization
 
-**Status:** Accepted (2026-05-17).
-**Supersedes:** the `dot_claude/` convention introduced by F-DC1 (kept
-alive one release as the deprecated fallback).
+**Status:** Accepted (2026-05-17); legacy `dot_claude/` layout removed
+(2026-05-21).
+**Supersedes:** the `dot_claude/` convention introduced by F-DC1 (now
+removed — see the "removal landed" note under Deprecation policy).
 **Source:** `scitex-lead` FUTURE doc
 `~/proj/scitex-lead/GITIGNORED/FUTURE/sac-to_home-refactor.md`.
 
@@ -91,10 +92,11 @@ symlink that preserves muscle memory and existing prompts.
   `spec.yaml`. The agent-start path raises a `RuntimeError` if both
   exist. No silent merging — that's the data-loss pattern we're
   explicitly avoiding.
-- A spec with **only** `dot_claude/` continues to work for one release,
-  emitting a `DeprecationWarning` at start.
-- `runtimes/_dot_claude.py` is **not deleted** in this change. It will
-  be removed in a follow-up after the in-tree specs are migrated.
+- **Update (removal landed):** the legacy `dot_claude/` layout and
+  `runtimes/_dot_claude.py` have now been removed. A spec that still
+  ships a `dot_claude/` dir hard-errors at start with a message pointing
+  at `to_home/`; `spec.dot_claude` is rejected by the validator. The
+  one-release deprecation window described below is closed.
 
 ## Consequences
 
@@ -110,8 +112,9 @@ symlink that preserves muscle memory and existing prompts.
   `.gitignore` of `*` + `!.gitkeep` to keep contents out of the
   dotfiles repo) — first-class instead of bind-threaded.
 - The marker-protection contract for `CLAUDE.md` / `state.md` is
-  **identical** to `dot_claude/` (shared helpers from
-  `_dot_claude.py`). No regression in the safety guarantee.
+  unchanged — the shared helpers (`_validate_marker_invariants`,
+  `_extract_user_tail`, `END_MARKER`, `WorkspaceCLAUDEMarkerError`) now
+  live in `_to_home.py`. No regression in the safety guarantee.
 
 **Negative:**
 
@@ -126,8 +129,8 @@ symlink that preserves muscle memory and existing prompts.
 
 - Marker-protection helpers (`_validate_marker_invariants`,
   `_extract_user_tail`, `END_MARKER`, `WorkspaceCLAUDEMarkerError`)
-  are imported from `_dot_claude` so both modules share one source
-  of truth on the merge contract.
+  live in `_to_home.py` (originally shared with `_dot_claude`, which
+  has since been removed).
 - `materialize_to_home(spec_dir, workspace_home)` is the
   config-free low-level entrypoint (used by tests and any future
   caller that doesn't have a full `AgentConfig`).
@@ -137,8 +140,8 @@ symlink that preserves muscle memory and existing prompts.
 
 ## Related work
 
-- `runtimes/_dot_claude.py` — deprecated predecessor (kept for one
-  release).
+- `runtimes/_dot_claude.py` — removed predecessor (deleted once
+  in-tree specs migrated to `to_home/`).
 - ADR-0003 — runtime home directory layout (`runtime/<name>/home/`
   bind target).
 - ADR-0005 — SIF-mode migration (the immediate trigger for this

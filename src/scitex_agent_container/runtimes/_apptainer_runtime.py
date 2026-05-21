@@ -103,8 +103,8 @@ class ApptainerContainerRuntime(RuntimeBase):
 
         argv: list[str] = ["apptainer", "exec"]
         argv += compute_iso_prepend(config)
-        # ADR-0003 D6: runtime/<name>/home/ → /home/agent. dot_claude/
-        # materialises here (see _dot_claude.py) so SDK $HOME/.claude/
+        # ADR-0003 D6: runtime/<name>/home/ → /home/agent. to_home/
+        # materialises here (see _to_home.py) so SDK $HOME/.claude/
         # discovery works without manual operator config.
         home_host = state_dir.expanduser() / "home"
         home_host.mkdir(parents=True, exist_ok=True)

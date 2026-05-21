@@ -72,7 +72,7 @@
 <li class="toctree-l2"><a class="reference internal" href="#launch-flow">Launch flow</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#what-each-piece-does">What each piece does</a><ul>
 <li class="toctree-l3"><a class="reference internal" href="#spec-yaml-ssot"><code class="docutils literal notranslate"><span class="pre">spec.yaml</span></code> (SSoT)</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#dot-claude-optional"><code class="docutils literal notranslate"><span class="pre">dot_claude/</span></code> (optional)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#to-home-optional"><code class="docutils literal notranslate"><span class="pre">to_home/</span></code> (optional)</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#apptainer-instance">Apptainer instance</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#claude-sdk-session">Claude SDK session</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#a2a-inbound-spec-a2a-port">A2A inbound (<code class="docutils literal notranslate"><span class="pre">spec.a2a.port</span></code>)</a></li>
@@ -222,8 +222,8 @@
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.extensions"><code class="docutils literal notranslate"><span class="pre">AgentConfig.extensions</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.skills</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.context_management"><code class="docutils literal notranslate"><span class="pre">AgentConfig.context_management</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_commands"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_commands</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_commands"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_commands</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_prompts"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_prompts</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.mcp_servers"><code class="docutils literal notranslate"><span class="pre">AgentConfig.mcp_servers</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.multiplexer"><code class="docutils literal notranslate"><span class="pre">AgentConfig.multiplexer</span></code></a></li>
@@ -235,7 +235,6 @@
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.a2a"><code class="docutils literal notranslate"><span class="pre">AgentConfig.a2a</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.kind"><code class="docutils literal notranslate"><span class="pre">AgentConfig.kind</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.proxy"><code class="docutils literal notranslate"><span class="pre">AgentConfig.proxy</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.dot_claude"><code class="docutils literal notranslate"><span class="pre">AgentConfig.dot_claude</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.to_home"><code class="docutils literal notranslate"><span class="pre">AgentConfig.to_home</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.expanded_workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.expanded_workdir</span></code></a></li>
 </ul>
@@ -424,14 +423,14 @@ externally addressable Claude agent.</p>
 <section id="launch-flow">
 <h2>Launch flow<a class="headerlink" href="#launch-flow" title="Link to this heading"></a></h2>
 <div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  spec.yaml   ─┐
-  dot_claude/ ─┴─→ sac agents start ──→ apptainer instance
+  to_home/    ─┴─→ sac agents start ──→ apptainer instance
                                           │
                                           ▼
                               long-lived Claude SDK session
                               │
-                              ├── &lt;workdir&gt;  (= spec.workdir, mounted rw)
-                              │     CLAUDE.md / .mcp.json / .env / state.md     ← from dot_claude/
-                              │     .claude/{commands,skills,hooks,...}         ← mirrored
+                              ├── $HOME  (= runtime/&lt;name&gt;/home/, bind-mounted)
+                              │     CLAUDE.md / .mcp.json / .env / state.md     ← from to_home/
+                              │     .claude/{commands,skills,hooks,...}         ← from to_home/.claude/
                               │
                               ├── spec.mounts[]  ← explicit host-path allowlist (ro/rw)
                               │
@@ -462,10 +461,11 @@ externally addressable Claude agent.</p>
 <p>The single file that fully defines an agent. The agent name is the name of its
 parent directory — no name field in the YAML. See <a class="reference internal" href="spec-reference.html"><span class="std std-doc">spec-reference.md</span></a>.</p>
 </section>
-<section id="dot-claude-optional">
-<h3><code class="docutils literal notranslate"><span class="pre">dot_claude/</span></code> (optional)<a class="headerlink" href="#dot-claude-optional" title="Link to this heading"></a></h3>
-<p>A directory next to <code class="docutils literal notranslate"><span class="pre">spec.yaml</span></code>. At start, <code class="docutils literal notranslate"><span class="pre">sac</span></code> copies its contents into the
-agent’s <code class="docutils literal notranslate"><span class="pre">&lt;workdir&gt;</span></code>:</p>
+<section id="to-home-optional">
+<h3><code class="docutils literal notranslate"><span class="pre">to_home/</span></code> (optional)<a class="headerlink" href="#to-home-optional" title="Link to this heading"></a></h3>
+<p>A directory next to <code class="docutils literal notranslate"><span class="pre">spec.yaml</span></code>. At start, <code class="docutils literal notranslate"><span class="pre">sac</span></code> mirrors its contents into the
+agent’s container <code class="docutils literal notranslate"><span class="pre">$HOME</span></code> (= <code class="docutils literal notranslate"><span class="pre">runtime/&lt;name&gt;/home/</span></code>). Every path under
+<code class="docutils literal notranslate"><span class="pre">to_home/</span></code> lands at the same relative path under <code class="docutils literal notranslate"><span class="pre">$HOME</span></code>:</p>
 <table class="docutils align-default">
 <thead>
 <tr class="row-odd"><th class="head"><p>Source</p></th>
@@ -475,23 +475,23 @@ agent’s <code class="docutils literal notranslate"><span class="pre">&lt;workd
 </thead>
 <tbody>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">CLAUDE.md</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">&lt;workdir&gt;/CLAUDE.md</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">$HOME/CLAUDE.md</span></code></p></td>
 <td><p>marker-protected append</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">.mcp.json</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">&lt;workdir&gt;/.mcp.json</span></code></p></td>
-<td><p>per-server merge</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">$HOME/.mcp.json</span></code></p></td>
+<td><p>full overwrite</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">.env</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">&lt;workdir&gt;/.env</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">$HOME/.env</span></code></p></td>
 <td><p>mode 0600, overwrite</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">state.md</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">&lt;workdir&gt;/state.md</span></code></p></td>
-<td><p>full overwrite</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">$HOME/state.md</span></code></p></td>
+<td><p>marker-protected append</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">commands/</span></code>, <code class="docutils literal notranslate"><span class="pre">skills/</span></code>, <code class="docutils literal notranslate"><span class="pre">hooks/</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">&lt;workdir&gt;/.claude/*/</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">.claude/{commands,skills,hooks}/</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">$HOME/.claude/*/</span></code></p></td>
 <td><p>recursive copy</p></td>
 </tr>
 </tbody>

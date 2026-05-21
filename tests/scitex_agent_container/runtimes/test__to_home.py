@@ -1,10 +1,8 @@
 """Tests for the to_home/ materialization pipeline (ADR-0006).
 
-The new layout replaces the leaf-vs-mirror fragmentation of
-``dot_claude/``: every path under ``to_home/`` lands at the same
-relative path inside ``$HOME``. Marker-protection semantics for
-``CLAUDE.md`` / ``state.md`` carry over identically from
-:mod:`_dot_claude` — never silent data loss on a hand-edited file.
+Every path under ``to_home/`` lands at the same relative path inside
+``$HOME``. Marker-protection semantics for ``CLAUDE.md`` / ``state.md``
+guard against silent data loss on a hand-edited file.
 
 PA-306 no-mocks: real ``AgentConfig`` instances against ``tmp_path``.
 Env-driven tests use the project-wide ``env_save_restore`` fixture
@@ -22,8 +20,8 @@ from pathlib import Path
 import pytest
 
 from scitex_agent_container.config._types import AgentConfig
-from scitex_agent_container.runtimes._dot_claude import END_MARKER
 from scitex_agent_container.runtimes._to_home import (
+    END_MARKER,
     WorkspaceCLAUDEMarkerError,
     deploy_to_home,
     materialize_to_home,

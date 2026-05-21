@@ -12,7 +12,7 @@ Quickstart
    ``full-agent``, ``proxy-agent``). See :doc:`templates` for details.
 
 2. Create an agent definition directory with a ``spec.yaml`` manifest
-   plus an optional ``dot_claude/`` sibling (CLAUDE.md / .mcp.json / ...):
+   plus an optional ``to_home/`` sibling (CLAUDE.md / .mcp.json / ...):
 
 .. code-block:: yaml
 

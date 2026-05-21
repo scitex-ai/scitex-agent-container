@@ -21,7 +21,7 @@ spec:
 
 ## How It Works
 
-1. Copies `spec.yaml` + the whole `dot_claude/` directory (rsync, with a tar-pipe fallback) to `~/.scitex/agent-container/runtime/<name>/` on the remote
+1. Copies `spec.yaml` + the whole `to_home/` directory (rsync, with a tar-pipe fallback) to `~/.scitex/agent-container/runtime/<name>/` on the remote
 2. SSHs to remote and runs `sac agent start <name>` against the just-copied spec
 3. Remote side handles auto-accept and startup commands
 4. `remote:` section stripped from copied YAML (prevents recursion)

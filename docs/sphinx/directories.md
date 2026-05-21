@@ -10,14 +10,15 @@ Configuration is separated into user-scope and project-scope. Project-scope (`.s
 │                                listen.{host,port}, a2a.port_range
 ├── agents/<name>/             ← per-agent declarations (you write these)
 │   ├── spec.yaml              ← v3 Agent definition (the SSoT)
-│   └── dot_claude/            ← optional: materialized into <workdir> at start
-│       ├── CLAUDE.md           (→ <workdir>/CLAUDE.md, marker-protected)
-│       ├── .mcp.json           (→ <workdir>/.mcp.json, per-server merge)
-│       ├── .env                (→ <workdir>/.env, mode 0600)
-│       ├── state.md            (→ <workdir>/state.md, full overwrite)
-│       ├── commands/           (→ <workdir>/.claude/commands/)
-│       ├── skills/             (→ <workdir>/.claude/skills/)
-│       └── hooks/              (→ <workdir>/.claude/hooks/)
+│   └── to_home/               ← optional: mirrored into the agent $HOME at start
+│       ├── CLAUDE.md           (→ $HOME/CLAUDE.md, marker-protected)
+│       ├── .mcp.json           (→ $HOME/.mcp.json, full overwrite)
+│       ├── .env                (→ $HOME/.env, mode 0600)
+│       ├── state.md            (→ $HOME/state.md, marker-protected)
+│       └── .claude/
+│           ├── commands/       (→ $HOME/.claude/commands/)
+│           ├── skills/         (→ $HOME/.claude/skills/)
+│           └── hooks/          (→ $HOME/.claude/hooks/)
 ├── accounts/                  ← saved Claude Code accounts (sac account save)
 │   ├── <name>/
 │   │   ├── account.json        (safe metadata; no tokens)
