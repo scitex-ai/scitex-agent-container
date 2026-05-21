@@ -28,9 +28,13 @@ is loud, not a hang. Use ``text`` end-to-end.
 
     504 Gateway Timeout
     {
-      "error": "turn exceeded <N>s timeout",
+      "status": "timeout_wait_elapsed",
+      "is_failure": <bool computed from real heartbeat staleness>,
+      "detail": "<honest one-liner reflecting the turn's real state>",
+      "error": "turn exceeded <N>s timeout",   # back-compat alias of detail
       "timeout_s": <N>,
-      "session_id": "<sdk session id if known or null>"
+      "session_id": "<sdk session id if known or null>",
+      "heartbeat": {<phase/state, last beat ts, elapsed_s, ...> or null}
     }
 
 A2A v1.0 ``/agents/<name>/send`` / ``.../turn`` use the same body shape
@@ -38,11 +42,15 @@ via :func:`post_turn_named`.
 
 Per-turn timeout: ``turn_timeout_s`` is the BOUNDED wait the handler
 imposes on the SDK envelope's future. Default is 120 s, overridable
-process-wide via ``SAC_A2A_TURN_TIMEOUT_S``. When the SDK keeps
-yielding past the deadline the handler returns a 504 (loud failure)
-rather than hanging the HTTP request indefinitely — the long-form
-session.jsonl trail still records what the SDK produced, but the
-HTTP caller is no longer left waiting on a never-arriving response.
+process-wide via ``SAC_A2A_TURN_TIMEOUT_S``. The cap bounds only the
+HTTP *wait* — the SDK call itself is never cancelled, so a 504 here is
+NOT inherently a failure. The turn is usually still queued/draining and
+the long-form session.jsonl trail records what the SDK ultimately
+produces; the HTTP caller is simply released from an open-ended wait.
+The 504 body reports the turn's REAL current state read from the
+agent's ``heartbeat.json`` so the caller can tell "still progressing,
+poll again" from "looks wedged, investigate" instead of being handed a
+hardcoded optimistic (or pessimistic) label.
 
 Bound to ``127.0.0.1`` by default — operators who want LAN exposure can
 set ``host`` explicitly via the runner's ``--a2a-host`` flag (added
@@ -54,6 +62,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -94,6 +104,113 @@ def _resolve_turn_timeout(explicit: float | None) -> float:
         ) from exc
 
 
+# How many heartbeat ticks of silence we tolerate before flagging a turn
+# as a possible stall. The heartbeat loop writes every ``tick_seconds``
+# (default 10 s), so 2x the tick is one fully missed beat plus margin —
+# tight enough to catch a wedge, loose enough not to false-positive on a
+# single slow write.
+STALL_TICK_FACTOR: float = 2.0
+
+
+def _build_timeout_body(
+    *,
+    timeout_s: float,
+    session_id: str | None,
+    state_dir: Path | None,
+    tick_seconds: float,
+) -> dict:
+    """Build the honest 504 body from the agent's REAL heartbeat.
+
+    A 504 here means the bounded HTTP wait elapsed — NOT that the turn
+    failed. The SDK call is never cancelled, so the turn is usually
+    still queued/draining. This reads the actual ``heartbeat.json`` and
+    reports its values verbatim; ``is_failure`` is COMPUTED from beat
+    staleness, never hardcoded. When the heartbeat is missing or
+    unreadable we say so honestly rather than fabricating progress.
+    """
+    # Lazy import to keep the HTTP module importable even when the state
+    # helpers' transitive deps aren't installed (the runner already
+    # guards its own optional deps the same way).
+    from ._session_state import read_heartbeat, read_session_id
+
+    body: dict = {
+        "status": "timeout_wait_elapsed",
+        "timeout_s": timeout_s,
+    }
+
+    hb: dict | None = None
+    sid = session_id
+    if state_dir is not None:
+        hb = read_heartbeat(state_dir)
+        if sid is None:
+            # The SDK only stamps env.session_id once it streams a
+            # ResultMessage; before that the persisted session_id file
+            # is the next-best real source. Never invent one.
+            sid = read_session_id(state_dir)
+
+    body["session_id"] = sid
+    body["heartbeat"] = hb
+
+    if state_dir is None:
+        body["is_failure"] = False
+        body["detail"] = (
+            f"HTTP wait of {timeout_s:.0f}s elapsed; the turn is still "
+            "draining in the SDK (no agent state dir wired to this "
+            "endpoint, so live heartbeat state is unavailable). Follow up "
+            "via session.jsonl."
+        )
+    elif hb is None:
+        # Honest: we tried to read real state and it wasn't there.
+        body["is_failure"] = False
+        body["detail"] = (
+            f"HTTP wait of {timeout_s:.0f}s elapsed; heartbeat.json is "
+            "missing or unreadable, so the turn's live state is unknown. "
+            "The turn may still be draining — check session.jsonl."
+        )
+    else:
+        phase = hb.get("state")
+        beat_ts = hb.get("ts")
+        now = time.time()
+        age_s: float | None = None
+        if isinstance(beat_ts, (int, float)):
+            age_s = max(0.0, now - float(beat_ts))
+        stall_threshold = STALL_TICK_FACTOR * tick_seconds
+        # Stale beat == the runner stopped writing heartbeats, which is
+        # the real signal of a wedged/dead process. A fresh beat means
+        # the runner is alive and (per phase) still working the turn.
+        looks_stalled = age_s is not None and age_s > stall_threshold
+        body["is_failure"] = bool(looks_stalled)
+        if looks_stalled:
+            body["detail"] = (
+                f"HTTP wait of {timeout_s:.0f}s elapsed and the last "
+                f"heartbeat is {age_s:.0f}s old (> {stall_threshold:.0f}s "
+                f"threshold); the runner may be wedged (phase={phase!r}). "
+                "Investigate the agent process."
+            )
+        elif age_s is None:
+            # Heartbeat present but no parseable timestamp — report the
+            # phase honestly without asserting freshness.
+            body["detail"] = (
+                f"HTTP wait of {timeout_s:.0f}s elapsed; the turn is still "
+                f"in progress (phase={phase!r}, heartbeat timestamp "
+                "unavailable). Poll session.jsonl for the result."
+            )
+        else:
+            body["detail"] = (
+                f"HTTP wait of {timeout_s:.0f}s elapsed; the runner is "
+                f"alive (last heartbeat {age_s:.0f}s ago, phase={phase!r}) "
+                "and the turn is still draining in the SDK. Poll again or "
+                "follow up via session.jsonl."
+            )
+
+    # Back-compat alias: pre-existing callers / tests key on ``error``
+    # carrying the "<N>s timeout" string. Keep it as a mirror of detail's
+    # headline so old consumers don't break, but the honest signal lives
+    # in ``status`` / ``is_failure`` / ``detail``.
+    body["error"] = f"turn exceeded {timeout_s:.0f}s timeout"
+    return body
+
+
 async def serve_inbound(
     inbox: "asyncio.Queue[Envelope]",
     *,
@@ -103,10 +220,19 @@ async def serve_inbound(
     turn_timeout_s: float | None = None,
     agent_name: str = "",
     spec_yaml_path: str = "",
+    state_dir: Path | None = None,
+    tick_seconds: float = 10.0,
 ) -> None:
     """Run an HTTP server that feeds turn envelopes into ``inbox``.
 
     Returns when ``stop`` is set; cancels the uvicorn server task.
+
+    ``state_dir`` (when supplied) is the agent's runner state directory
+    — the same one the heartbeat loop writes ``heartbeat.json`` /
+    ``session_id`` into. The bounded-wait 504 handler reads it to embed
+    the turn's REAL current state in the response. ``tick_seconds`` is
+    the heartbeat cadence, used to judge whether a beat is stale (a
+    possible wedge) vs fresh (still progressing).
     """
     try:
         import uvicorn
@@ -147,18 +273,20 @@ async def serve_inbound(
                 env.response, timeout=effective_turn_timeout_s
             )
         except asyncio.TimeoutError:
-            # 504: BOUNDED wait elapsed before the SDK finished draining.
-            # Include the timeout value and (if known) the session_id so
-            # the caller can either retry, raise the cap, or follow up via
-            # session.jsonl. ``env.session_id`` is only populated if the
-            # SDK already streamed a ResultMessage before we tripped the
-            # timeout, which on a true hang will normally be ``None``.
+            # 504: the BOUNDED HTTP wait elapsed. This is NOT inherently a
+            # failure — the SDK call is never cancelled, so the turn is
+            # usually still queued/draining. Build an HONEST body from the
+            # agent's real heartbeat: is_failure is computed from beat
+            # staleness, never hardcoded optimistic. ``env.session_id`` is
+            # only populated if the SDK already streamed a ResultMessage;
+            # otherwise the builder falls back to the persisted session_id.
             return JSONResponse(
-                {
-                    "error": (f"turn exceeded {effective_turn_timeout_s:.0f}s timeout"),
-                    "timeout_s": effective_turn_timeout_s,
-                    "session_id": env.session_id,
-                },
+                _build_timeout_body(
+                    timeout_s=effective_turn_timeout_s,
+                    session_id=env.session_id,
+                    state_dir=state_dir,
+                    tick_seconds=tick_seconds,
+                ),
                 status_code=504,
             )
         except Exception as exc:  # stx-allow: fallback (reason: surface SDK errors as 502 instead of crashing the server)
