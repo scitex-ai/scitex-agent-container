@@ -1,9 +1,9 @@
 ---
 name: scitex-agent-container
 description: |
-  [WHAT] Declarative YAML-based AI agent lifecycle management — define an agent in one `spec.yaml` (apptainer image, model, MCP, mounts/env, health, restart, A2A port, remote host) and `sac agents start` brings it up as a long-lived Claude SDK session inside Apptainer, with A2A inbound (`POST /v1/turn`), SSH remote deployment, and JSON status introspection.
-  [WHEN] Use when the user asks to "launch a Claude Code agent", "spawn a fleet of coding agents", "manage agent lifecycle", "run an agent on a remote host", "wire MCP servers into an agent", "talk to a running agent over A2A", or mentions `sac agents start`, `scitex-agent-container`, `spec.yaml`, fleet head/worker.
-  [HOW] `pip install scitex-agent-container` then `sac agents start <name>` (CLI) or `import scitex_agent_container`; see leaf skills for details.
+  [WHAT] Declarative YAML AI-agent lifecycle — define an agent in one `spec.yaml` (apptainer image, model, MCP, mounts/env, health, restart, A2A port, remote host); `sac agents start` runs it as a long-lived Claude SDK session inside Apptainer, with A2A inbound (`POST /v1/turn`), SSH remote deploy, and JSON status.
+  [WHEN] Launching/managing a Claude Code agent or fleet, running an agent on a remote host, wiring MCP into an agent, talking to one over A2A, or any mention of `sac agents start`, `scitex-agent-container`, `spec.yaml`, fleet head/worker.
+  [HOW] `pip install scitex-agent-container` then `sac agents start <name>` (CLI) or `import scitex_agent_container`.
 tags: [scitex-agent-container]
 primary_interface: cli
 interfaces:
@@ -18,17 +18,16 @@ interfaces:
 
 > **Interfaces:** Python ⭐⭐ · CLI ⭐⭐⭐ (primary) · MCP ⭐ · Skills ⭐⭐ · Hook — · HTTP —
 
-Declarative lifecycle management for AI coding agents (Claude Code).
-Define an agent in `spec.yaml`, launch it as a long-lived Claude SDK
-session inside Apptainer — locally or on a remote host via SSH — and
-observe it through a rich non-agentic status surface (`sac agents
-list`/`tail`/`health`).
+Declarative lifecycle management for AI coding agents (Claude Code):
+define an agent in `spec.yaml`, launch it as a long-lived Claude SDK
+session inside Apptainer (local or remote via SSH), and observe it
+through `sac agents list`/`tail`/`health`.
 
 ## What the package ships
 
 | Surface | Location |
 |---|---|
-| Python API | `scitex_agent_container` (`AgentConfig`, `load_config`, `validate_config`, `Registry`, + namespaced submodules `agent.start`/`stop`/`status`/`logs`, `db.*`, `host.*`, `peer.*`) |
+| Python API | `scitex_agent_container` (`AgentConfig`, `load_config`, `validate_config`, `Registry`; submodules `agent.*`, `db.*`, `host.*`, `peer.*`) |
 | CLI | `scitex-agent-container`, `sac` — see [10_cli.md](10_cli.md) |
 | MCP servers | None bundled — agents spawn their own via `to_home/.mcp.json` |
 | Runtimes | `runtimes/claude_session.py` (SDK-native, default); apptainer container build helpers |
@@ -55,6 +54,7 @@ list`/`tail`/`health`).
 - [07_a2a-protocol.md](07_a2a-protocol.md) — Native A2A protocol (`sac a2a serve`)
 - [07_a2a-protocol-extension-fields.md](07_a2a-protocol-extension-fields.md) — `x-scitex-agent-container.*` AgentCard extension fields + JSON example
 - [08_templates.md](08_templates.md) — Six pattern templates + real-world examples
+- [14_claude-session-state.md](14_claude-session-state.md) — claude-session runner reference: state-dir layout, auth precedence, `sdk_session` status JSON, supervisor
 - [15_claude-session.md](15_claude-session.md) — the claude-session SDK runner (inside the apptainer SIF) + `POST /v1/turn` inbound endpoint; `runtime: apptainer` is the operative runtime
 - [16_claude-session-migration.md](16_claude-session-migration.md) — historical: the claude-code → SDK migration is complete; `runtime` is apptainer-only now
 - [17_inbound-turn-endpoint.md](17_inbound-turn-endpoint.md) — `POST /v1/turn` wire format + sidecar replacement
