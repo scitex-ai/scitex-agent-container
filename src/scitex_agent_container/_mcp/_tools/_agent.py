@@ -116,22 +116,37 @@ def agent_send(
     key: str | None = None,
     model: str | None = None,
     max_turns: int | None = None,
+    wait: bool = False,
 ) -> dict[str, Any]:
-    """Send one prompt (or control key) to ``name``'s live session via /v1/turn.
+    """Dispatch one prompt (or control key) to ``name``'s live session.
+
+    NON-BLOCKING by default. An MCP tool call cannot be backgrounded by
+    the caller, so a synchronous send would hang the lead's whole turn
+    until the target agent finishes processing. By default this tool
+    therefore validates that the agent is reachable and returns PROMPTLY
+    with ``status="dispatched"`` plus a backgroundable ``track_command``
+    — the equivalent ``sac agents send ...`` CLI the caller runs in a
+    background shell to deliver the prompt and stream the reply. Pass
+    ``wait=True`` to block inline and get the reply in ``response_text``.
 
     Library-grade dispatch to the agent's A2A sidecar. Unlike the
     other ``agent_*`` tools this does NOT go through the CLI runner
     surface — it calls
     :func:`scitex_agent_container.cli_pkg._send.send_to_agent` directly
-    so the structured ``{status, response_text, response_metadata}``
-    payload survives MCP transport intact (the CLI prints the reply as
-    free text, which would lose the metadata).
+    so the structured payload survives MCP transport intact (the CLI
+    prints the reply as free text, which would lose the metadata).
 
     Returns the helper's dict verbatim. ``status`` is one of:
 
-      * ``"ok"`` — reply received; ``response_text`` populated
-      * ``"error"`` — agent not running / no a2a_port / HTTP failure
-      * ``"timeout"`` — no response in ``timeout_seconds``
+      * ``"dispatched"`` — (default, ``wait=False``) reachability
+        validated; ``track_command`` carries the backgroundable
+        ``sac agents send ...`` CLI to deliver + await the reply
+      * ``"ok"`` — (``wait=True``) reply received; ``response_text``
+        populated
+      * ``"error"`` — agent not running / no a2a_port / sidecar
+        unreachable / HTTP failure
+      * ``"creds-expired"`` — lead/peer OAuth token expired
+      * ``"timeout"`` — (``wait=True``) no response in ``timeout_seconds``
 
     ``prompt`` and ``key`` are mutually exclusive; passing both raises
     ``ValueError`` (surfaced to the MCP host as a tool-input error).
@@ -145,6 +160,7 @@ def agent_send(
         timeout_seconds=timeout_seconds,
         model=model,
         max_turns=max_turns,
+        wait=wait,
     )
 
 
