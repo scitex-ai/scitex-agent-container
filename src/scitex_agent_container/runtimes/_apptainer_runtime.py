@@ -30,7 +30,6 @@ no-passwd-entry trap with non-1000 UIDs.
 
 from __future__ import annotations
 
-import logging
 import os
 import shutil
 import signal
@@ -52,8 +51,6 @@ from ._apptainer_build import (  # noqa: F401
 )
 from ._apptainer_build import resolve_sif as _resolve_sif
 from .base import RuntimeBase
-
-logger = logging.getLogger(__name__)
 
 DEFAULT_SIF_NAME = "scitex-agent-container.sif"
 RUNNER_MODULE = "scitex_agent_container._runners.claude_session"
@@ -253,43 +250,18 @@ class ApptainerContainerRuntime(RuntimeBase):
         for key, val in (config.env or {}).items():
             argv += ["--env", f"{key}={val}"]
 
-        # Layer-5 of auto-port-allocation: forward the host-stable
-        # ``sac listen`` base URL so the per-agent sidecar's
-        # ``/.well-known/agent-card.json`` can advertise an ``url``
-        # field that survives restarts. Without this, the card's url
-        # would be built from the runner's own port (auto-allocated
-        # and therefore churning every restart), and any peer that
-        # cached the previous card would dangle on its next call.
-        from .._listen._config import listen_base_url as _listen_base_url
+        # Layer-5 of auto-port-allocation + bus auth — forward the
+        # host-stable ``sac listen`` base URL and the host-generated bearer
+        # so the in-container ``sac mcp channel`` adapter can reach AND
+        # authenticate to the bus. Extracted to ``_apptainer_listen_env`` so
+        # the runtime file stays under the line cap; the helper fails loud
+        # when ``server:sac`` is registered but the bearer is unresolvable
+        # (see its docstring). UNCONDITIONAL w.r.t. the relaxed escape-hatch
+        # below: relaxed specs bypass the preflight wrapper but still need
+        # bus auth, else their adapter can never subscribe.
+        from ._apptainer_listen_env import listen_env_flags
 
-        argv += ["--env", f"SAC_LISTEN_BASE_URL={_listen_base_url()}"]
-
-        # Bus auth — the in-container channel adapter (sac MCP) must present
-        # a bearer to reach `sac listen` (it returns 401 without one), or the
-        # inbox subscription never lands and pushed turns report
-        # delivered_subscriber_count=0. Inject the host-generated bearer read
-        # from the token file the listen server itself writes
-        # (~/.scitex/agent-container/tokens/listen-<host>.token via
-        # default_token_path()). This injection is UNCONDITIONAL w.r.t. the
-        # relaxed escape-hatch below — relaxed specs bypass the preflight
-        # wrapper but still need bus auth. The token is read at start time;
-        # it is never written into spec.yaml.
-        #
-        # Missing token file → inject only BASE_URL and log a loud warning
-        # (push will not work). No silent fallback: the adapter surfaces the
-        # resulting auth failure rather than silently degrading.
-        bearer = _read_listen_bearer()
-        if bearer:
-            argv += ["--env", f"SAC_LISTEN_BEARER={bearer}"]
-        else:
-            logger.warning(
-                "SAC_LISTEN_BEARER not injected: bus token file %s is absent. "
-                "The in-container channel adapter cannot authenticate to "
-                "`sac listen` (401), so inbox subscription and pushed turns "
-                "will fail. Start `sac listen` to generate the token, then "
-                "restart this agent.",
-                _listen_token_path(),
-            )
+        argv += listen_env_flags(config)
 
         # v3-realign: spec.apptainer.raw_args (§1 escape-hatch invariant) —
         # appended verbatim after all curated args, before the SIF +
