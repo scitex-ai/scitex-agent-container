@@ -418,14 +418,18 @@ def build_sdk_options(
     # ClaudeAgentOptions is strict and rejects unknown fields. The
     # ``_*`` prefix marks these as sac-internal (not SDK fields).
     channels: list[str] | None = None
+    a2a_port: int | None = None
     if extra:
         extra = dict(extra)  # shallow copy so we can mutate
         channels = extra.pop("_channels", None)
-        # ``_a2a_port`` is threaded for the /v1/turn registration path; the
-        # channel sidecar below does NOT use it (the inbox SSE lives on the
-        # bus, resolved from SAC_LISTEN_BASE_URL). Pop it only to strip the
-        # sac-private key before merging ``extra`` into ClaudeAgentOptions.
-        extra.pop("_a2a_port", None)
+        # ``_a2a_port`` is threaded for two purposes:
+        #   1. The /v1/turn registration path (handled by the runner).
+        #   2. The channel sidecar's WAKE path (WI-1) — the adapter POSTs
+        #      received bus events to the agent's OWN ``/v1/turn`` on this
+        #      port so a push WAKES an idle session (push ≡ Telegram). This
+        #      is the agent's loopback turn endpoint, NOT the bus inbox SSE
+        #      (that still lives on SAC_LISTEN_BASE_URL — see below).
+        a2a_port = extra.pop("_a2a_port", None)
         if extra:
             kwargs.update(extra)
 
@@ -461,14 +465,23 @@ def build_sdk_options(
             # the inbox route, so the bus saw zero subscribers and
             # delivered_subscriber_count was always 0.
             #
-            # a2a_port stays threaded for the /v1/turn registration path; it
-            # is simply irrelevant to inbox subscription.
+            # a2a_port is irrelevant to inbox SUBSCRIPTION but IS the wake
+            # path (WI-1): pass it as ``--turn-url`` so the adapter can POST
+            # received bus events to the agent's OWN ``/v1/turn`` and WAKE an
+            # idle session. The bind host is loopback (the sidecar and the
+            # runner share the container netns); host LAN exposure of the turn
+            # endpoint does not change the in-container wake target.
             sidecar_args = [
                 "mcp",
                 "channel",
                 "--name",
                 agent_name,
             ]
+            if a2a_port is not None:
+                sidecar_args += [
+                    "--turn-url",
+                    f"http://127.0.0.1:{int(a2a_port)}/v1/turn",
+                ]
             mcps["sac"] = {
                 "type": "stdio",
                 "command": "sac",

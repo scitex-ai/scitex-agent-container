@@ -614,11 +614,29 @@ class TestChannelSidecar:
     def test_sidecar_args_omit_a2a_port_listen_url(self, _sac_channel_opts):
         # Arrange
         sac = _sac_channel_opts.mcp_servers["sac"]  # type: ignore[index]
-        # Act — the a2a_port (9999) must never appear in any sidecar arg.
         args = sac["args"]
-        # Assert: bus URL resolution is delegated to the adapter's main()
-        # via SAC_LISTEN_BASE_URL; no hardcoded a2a-port listen-url here.
-        assert not any("9999" in str(a) for a in args)
+        # Act — find the --listen-url value, if any.
+        if "--listen-url" in args:
+            listen_url = args[args.index("--listen-url") + 1]
+        else:
+            listen_url = None
+        # Assert: the a2a_port (9999) must NOT be the BUS listen-url — bus URL
+        # resolution is delegated to the adapter's main() via
+        # SAC_LISTEN_BASE_URL. (It DOES appear as --turn-url, the agent's own
+        # /v1/turn wake target — a distinct concern, covered separately.)
+        assert listen_url is None or "9999" not in str(listen_url)
+
+    def test_sidecar_args_carry_turn_url_for_wake(self, _sac_channel_opts):
+        """WI-1: the a2a_port is threaded as ``--turn-url`` so the adapter can
+        POST received bus events to the agent's own /v1/turn and WAKE an idle
+        session (push ≡ Telegram)."""
+        # Arrange
+        sac = _sac_channel_opts.mcp_servers["sac"]  # type: ignore[index]
+        args = sac["args"]
+        # Act
+        turn_url = args[args.index("--turn-url") + 1] if "--turn-url" in args else None
+        # Assert — points at the agent's own loopback /v1/turn on the a2a_port.
+        assert turn_url == "http://127.0.0.1:9999/v1/turn"
 
     def test_sidecar_listen_url_when_present_is_not_a2a_port(self, _sac_channel_opts):
         # Arrange
