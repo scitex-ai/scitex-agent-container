@@ -23,17 +23,17 @@ Global flags:
 
 | Command | Purpose |
 |---|---|
-| `sac agent start <agent> [--foreground]` | Start the agent. Daemon by default; `--foreground` streams stdio + blocks. Honors `spec.remote.host` (ssh dispatch) and `spec.a2a.port` (HTTP inbound). |
-| `sac agent stop <agent>` | SIGTERM the runner; escalate to SIGKILL after 5 s. ssh-mediated for remote agents. |
-| `sac agent restart <agent>` | Stop + start, preserving session_id resume. |
-| `sac agent status [<agent>]` | Per-agent rich payload, or fleet view if no name. `--snapshot` persists a state capsule, `--priority` adds the singleton-yield report. |
-| `sac agent health <agent>` | Health-method poll (`sdk-alive`). |
-| `sac agent tail   <agent>` | Render `session.jsonl` (user / assistant / tool / result events). ssh-tails remote logs. |
-| `sac agent recall <agent>` | Human summary of the agent's session. |
-| `sac agent check  <agent>` | Preflight: validate yaml + probe runtime deps (docker/python). |
-| `sac agent find   <capability>` | Search agents by capability label. |
+| `sac agents start <agent> [--foreground]` | Start the agent. Daemon by default; `--foreground` streams stdio + blocks. Honors `spec.remote.host` (ssh dispatch) and `spec.a2a.port` (HTTP inbound). |
+| `sac agents stop <agent>` | SIGTERM the runner; escalate to SIGKILL after 5 s. ssh-mediated for remote agents. |
+| `sac agents restart <agent>` | Stop + start, preserving session_id resume. |
+| `sac agents status [<agent>]` | Per-agent rich payload, or fleet view if no name. `--snapshot` persists a state capsule, `--priority` adds the singleton-yield report. |
+| `sac agents health <agent>` | Health-method poll (`sdk-alive`). |
+| `sac agents tail   <agent>` | Render `session.jsonl` (user / assistant / tool / result events). ssh-tails remote logs. |
+| `sac agents recall <agent>` | Human summary of the agent's session. |
+| `sac agents check  <agent>` | Preflight: validate yaml + probe runtime deps (docker/python). |
+| `sac agents find   <capability>` | Search agents by capability label. |
 
-Multi-target: `sac agent start a b c` works for daemon mode; `--foreground` is single-target only.
+Multi-target: `sac agents start a b c` works for daemon mode; `--foreground` is single-target only.
 
 The earlier verbs `validate`, `take-snapshot`, `check-priority`, `inspect`, `logs`, `list` were folded into `check`, `status --snapshot`, `status --priority`, `status` (per-agent), `tail`, and `status` (fleet view) respectively.
 

@@ -38,7 +38,7 @@ at module top.
 * `LAZY_COMMANDS = {"agent": "scitex_agent_container.cli_pkg.agent_group:agent_group", …}`
   — visible top-level commands. The module is only imported when
   `get_command(name)` is actually called (invocation or `--help <name>`).
-* `LAZY_RENAMED = {"start": ("…lifecycle_cmds:start", "sac agent start"), …}`
+* `LAZY_RENAMED = {"start": ("…lifecycle_cmds:start", "sac agents start"), …}`
   — legacy F-CS13 redirects. Same lazy mechanism; the renamed wrapper
   is built on demand and cached.
 * `LAZY_SHORT_HELPS = {"agent": "Agent lifecycle, …", …}` — mirror of

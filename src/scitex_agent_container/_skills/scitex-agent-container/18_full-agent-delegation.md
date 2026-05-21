@@ -57,7 +57,7 @@ spec:
   # hook — every turn returns 0 tokens, no log line, heartbeat fresh.
   # Use a project-specific subdir (e.g. ``~/proj/<this-project>/``) or
   # ``/tmp/<scratch>/`` and reference other repos via absolute paths.
-  # ``sac agent start`` emits a stderr precheck warning when the
+  # ``sac agents start`` emits a stderr precheck warning when the
   # workdir's ``.claude/`` exceeds 10 MB.
 
   startup_commands:
@@ -111,10 +111,10 @@ from multiple senders, and can themselves spawn further peers.
 sac agent validate ~/.scitex/agent-container/agents/<name>/<name>.yaml
 
 # 2. Start
-sac agent start ~/.scitex/agent-container/agents/<name>/<name>.yaml
+sac agents start ~/.scitex/agent-container/agents/<name>/<name>.yaml
 
 # 3. Verify it's running
-sac agent status <name>      # full table
+sac agents status <name>      # full table
 sac agent inspect <name>     # last-N tool calls + current task
 
 # 4. (optional) Talk to it
@@ -122,8 +122,8 @@ sac peer call <name> "How is the F2 implementation going?"
 sac a2a doctor <name>        # health probe
 
 # 5. Stop / restart
-sac agent stop <name>
-sac agent restart <name>
+sac agents stop <name>
+sac agents restart <name>
 ```
 
 ## Why `runtime: claude-session` (default)

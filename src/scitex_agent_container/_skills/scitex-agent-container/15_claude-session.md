@@ -12,8 +12,8 @@ The SDK-native counterpart to the legacy `claude-code` runtime. Where
 the TUI, `claude-session` drives `claude-agent-sdk` from a Python runner —
 no terminal multiplexer, no auto-accept handlers, no permission prompts.
 
-Same lifecycle CLI surface (`sac agent start`, `sac agent stop`, `sac agent status`,
-`sac agent logs`); flip a single YAML key.
+Same lifecycle CLI surface (`sac agents start`, `sac agents stop`, `sac agents status`,
+`sac agents tail`); flip a single YAML key.
 
 ## Why use it
 
@@ -25,7 +25,7 @@ Same lifecycle CLI surface (`sac agent start`, `sac agent stop`, `sac agent stat
 | Resume | `claude --resume <uuid>` | `ClaudeAgentOptions(resume=...)` (auto-loaded from `state_dir/session_id`) |
 | Quota | poll `claude usage` daemon | accumulated from per-turn `usage` blocks in the SDK message stream |
 | Auth | env / `~/.claude/.credentials.json` | env / `~/.claude/.credentials.json` (same — flat-rate OAuth by default) |
-| Human attach | `tmux attach` | `--foreground` / `sac agent logs` |
+| Human attach | `tmux attach` | `--foreground` / `sac agents tail` |
 
 ## Minimal YAML
 
@@ -54,16 +54,16 @@ not a timed sequence.
 ### Daemon (default — production fleet shape)
 
 ```bash
-sac agent start my-agent          # detach, returns once PID file lands
-sac agent status my-agent    # heartbeat + sdk_session block
-sac agent logs my-agent      # rendered transcript from session.jsonl
-sac agent stop my-agent
+sac agents start my-agent          # detach, returns once PID file lands
+sac agents status my-agent    # heartbeat + sdk_session block
+sac agents tail my-agent      # rendered transcript from session.jsonl
+sac agents stop my-agent
 ```
 
 ### Foreground (interactive — terminal visibility)
 
 ```bash
-sac agent start my-agent --foreground
+sac agents start my-agent --foreground
 # assistant output streams to stdout; runner exits when the turn completes
 ```
 
@@ -88,7 +88,7 @@ Per-agent state lives at `<scope>/runtime/<name>/`:
 | `pid` | Runner's PID (atomic write — tmp + rename). |
 | `heartbeat.json` | `{ts, pid, state}`. State ∈ `starting / idle / working / stopping`. Refreshed every 10 s (`--tick-seconds`). |
 | `session.jsonl` | One JSON object per turn event: `user / assistant / user_echo / result / error`. The transcript. |
-| `session_id` | Latest SDK session UUID. Auto-resumed by the next `sac agent start`. |
+| `session_id` | Latest SDK session UUID. Auto-resumed by the next `sac agents start`. |
 | `quota.json` | Accumulated per-turn token totals (input / output / cache_creation / cache_read / turns). |
 
 Scope resolution (highest priority first):
@@ -128,7 +128,7 @@ you get a clear `SDKCommonError`.
 
 ## Status JSON addition
 
-`sac agent status <name> --json` carries an `sdk_session` field for
+`sac agents status <name> --json` carries an `sdk_session` field for
 agents on this runtime:
 
 ```json
@@ -161,7 +161,7 @@ automatically when `sac` is invoked from inside the repo:
 
 ```bash
 cd ~/proj/scitex-agent-container
-sac agent start sdk-test --foreground
+sac agents start sdk-test --foreground
 # expected: sdk-runtime-ok
 ```
 

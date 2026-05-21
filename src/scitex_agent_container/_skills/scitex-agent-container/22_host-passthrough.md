@@ -116,11 +116,11 @@ image, keep these tools.
 ## Watching the agent
 
 ```bash
-sac agent start polish-stats
-sac agent tail polish-stats -n 30      # rendered transcript
-sac agent tail polish-stats --json     # raw session.jsonl records
+sac agents start polish-stats
+sac agents tail polish-stats -n 30      # rendered transcript
+sac agents tail polish-stats --json     # raw session.jsonl records
 sac agent inspect polish-stats         # is it alive?
-sac agent stop polish-stats
+sac agents stop polish-stats
 ```
 
 ## Caveats

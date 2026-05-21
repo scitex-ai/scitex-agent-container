@@ -85,7 +85,7 @@ You can override any of these by setting them explicitly in the YAML. The auto-d
 
 A sibling directory named `to_home/` (override path with
 `spec.to_home:`, default `./to_home`) is materialized into the agent's
-container `$HOME` (= `runtime/<name>/home/`) at `sac agent start` time.
+container `$HOME` (= `runtime/<name>/home/`) at `sac agents start` time.
 Every path under `to_home/` lands at the same relative path under
 `$HOME`. `CLAUDE.md` / `state.md` get a marker-protected merge; `.env`
 gets mode 0600; everything else is a full overwrite. `${VAR}` and

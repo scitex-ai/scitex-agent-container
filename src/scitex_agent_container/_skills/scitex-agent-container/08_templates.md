@@ -31,7 +31,7 @@ The v3 loader derives the agent name from the parent directory, not from `metada
 mkdir -p ~/.scitex/agent-container/agents/my-agent
 cp examples/agent-templates/apptainer.yaml ~/.scitex/agent-container/agents/my-agent/spec.yaml
 # optional: add a to_home/ sibling for CLAUDE.md / .mcp.json / .env / .claude/{hooks,skills,commands}
-sac agent start my-agent
+sac agents start my-agent
 ```
 
 For SSH-deployed agents, drop a sibling `to_home/` directory next to `spec.yaml` — the whole directory rsyncs to the remote and is materialized into the agent's `$HOME` at start.
