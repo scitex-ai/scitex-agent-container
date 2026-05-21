@@ -46,11 +46,32 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-__all__ = ["post_turn", "post_turn_to_url", "resolve_peer_url", "PeerError"]
+__all__ = [
+    "post_turn",
+    "post_turn_to_url",
+    "resolve_peer_url",
+    "PeerError",
+    "PeerTimeoutPending",
+]
 
 
 class PeerError(RuntimeError):
     """Raised when the peer call cannot be completed (resolution + transport)."""
+
+
+def __getattr__(name: str):
+    """Lazily re-export :class:`PeerTimeoutPending` from ``_peer_timeout``.
+
+    Kept lazy so ``_peer_timeout`` can import ``PeerError`` from this
+    module at its own import time without a cycle: nothing here imports
+    ``_peer_timeout`` at module load; the symbol resolves on first
+    attribute access (``from ..peer import PeerTimeoutPending``).
+    """
+    if name == "PeerTimeoutPending":
+        from ._peer_timeout import PeerTimeoutPending
+
+        return PeerTimeoutPending
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def post_turn_to_url(
@@ -89,6 +110,13 @@ def post_turn_to_url(
             Exception
         ):  # stx-allow: fallback (reason: defensive — body read may fail)
             err_body = ""
+        if exc.code == 504:
+            # A 504 means the peer's bounded HTTP wait elapsed — the turn
+            # is usually still running. Interpret the honest body (PR #169)
+            # for the caller instead of surfacing raw JSON; an older peer
+            # that returns 504 without the honest shape degrades to a
+            # generic "may still be running" message.
+            raise _interpret_504(err_body, fallback_label=url) from exc
         raise PeerError(
             f"peer returned HTTP {exc.code}: {err_body or exc.reason}"
         ) from exc
@@ -238,6 +266,29 @@ def post_turn(
 # ---------------------------------------------------------------------------
 
 
+def _interpret_504(err_body: str, *, fallback_label: str) -> PeerError:
+    """Return a ``PeerTimeoutPending`` interpreting a 504 response body.
+
+    Parses ``err_body`` as JSON and delegates to
+    :func:`_peer_timeout.interpret_timeout_body`. An empty or
+    unparseable body still yields a generic "timeout, may still be
+    running" interpretation — never a crash, never a raw-JSON leak.
+
+    The return type is annotated ``PeerError`` (the base) so the call
+    sites' ``raise ... from exc`` reads cleanly; the concrete object is
+    always a :class:`PeerTimeoutPending`.
+    """
+    from ._peer_timeout import interpret_timeout_body
+
+    body: dict | None
+    try:
+        parsed = json.loads(err_body) if err_body else None
+        body = parsed if isinstance(parsed, dict) else None
+    except json.JSONDecodeError:
+        body = None
+    return interpret_timeout_body(body, fallback_label=fallback_label)
+
+
 def _post_turn_via_ssh(
     url: str,
     text: str,
@@ -304,6 +355,14 @@ def _post_turn_via_ssh(
         raise PeerError(
             f"ssh+curl to {host}:{port} returned non-JSON: {(proc.stdout or '')[:300]}"
         ) from exc
+    # Over ssh the remote curl (no --fail) returns rc=0 even on a 504, so
+    # the HTTP status is invisible — the honest body's status field is the
+    # reliable discriminator. When present, interpret it as in-progress.
+    if isinstance(payload, dict):
+        from ._peer_timeout import TIMEOUT_STATUS
+
+        if payload.get("status") == TIMEOUT_STATUS:
+            raise _interpret_504(json.dumps(payload), fallback_label=f"{host}:{port}")
     if not isinstance(payload, dict) or "text" not in payload:
         raise PeerError(f"peer returned malformed body: {payload!r}")
     return str(payload["text"])

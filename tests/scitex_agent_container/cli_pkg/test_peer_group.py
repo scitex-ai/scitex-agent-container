@@ -20,6 +20,7 @@ from typing import Callable, Iterator
 from click.testing import CliRunner
 
 import scitex_agent_container._network.peer as peer_mod
+from scitex_agent_container._network._peer_timeout import PeerTimeoutPending
 from scitex_agent_container._network.peer import PeerError
 from scitex_agent_container.cli_pkg.peer_group import peer_group
 
@@ -188,6 +189,62 @@ def test_post_turn_peer_error_message_surfaces_in_output() -> None:
     result = invoke()
     # Assert
     assert "boom" in result.output
+
+
+# ---------------------------------------------------------------------------
+# `sac peer post-turn` — PeerTimeoutPending (504 in-progress) surface
+# ---------------------------------------------------------------------------
+
+
+def _pending_exc() -> PeerTimeoutPending:
+    """Build a real PeerTimeoutPending an in-progress 504 would raise."""
+    return PeerTimeoutPending(
+        "Timeout after 120s — this is NOT necessarily a failure. ...",
+        status="timeout_wait_elapsed",
+        timeout_s=120.0,
+        session_id="sid-abc",
+        heartbeat={"state": "working"},
+        possibilities=["turn still draining"],
+        raw_body={"status": "timeout_wait_elapsed", "timeout_s": 120.0},
+    )
+
+
+def _invoke_post_turn_timeout(extra_args: list[str] | None = None):
+    def fake_post_turn(*_a, **_kw) -> str:
+        raise _pending_exc()
+
+    runner = CliRunner()
+    args = ["post-turn", "alpha", "hi"] + (extra_args or [])
+    with _swap("post_turn", fake_post_turn):
+        result = runner.invoke(peer_group, args)
+    return result
+
+
+def test_post_turn_timeout_pending_exits_zero_not_failure() -> None:
+    # Arrange
+    invoke = _invoke_post_turn_timeout
+    # Act
+    result = invoke()
+    # Assert — in-progress is not an error; exit 0 (not 2).
+    assert result.exit_code == 0
+
+
+def test_post_turn_timeout_pending_prints_interpretation() -> None:
+    # Arrange
+    invoke = _invoke_post_turn_timeout
+    # Act
+    result = invoke()
+    # Assert
+    assert "NOT necessarily a failure" in result.output
+
+
+def test_post_turn_timeout_pending_json_emits_structured_body() -> None:
+    # Arrange
+    invoke = _invoke_post_turn_timeout
+    # Act
+    result = invoke(["--json"])
+    # Assert
+    assert json.loads(result.output)["status"] == "timeout_wait_elapsed"
 
 
 # ---------------------------------------------------------------------------
