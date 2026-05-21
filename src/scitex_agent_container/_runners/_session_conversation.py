@@ -32,6 +32,11 @@ from ._session_state import (
     write_heartbeat,
     write_session_id,
 )
+from ._stderr_capture import (
+    StderrCapture,
+    enrich_detail_with_stderr,
+    write_stderr_log,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +101,7 @@ async def _drive_turn(
     name: str | None = None,
     host: str | None = None,
     db_writer=None,
+    stderr_capture: Any | None = None,
 ) -> None:
     AssistantMessage = sdk_types["AssistantMessage"]
     TextBlock = sdk_types["TextBlock"]
@@ -187,6 +193,24 @@ async def _drive_turn(
                     {"type": "result", "session_id": sid, "usage": usage},
                 )
                 break
+    except BaseException as exc:  # stx-allow: fallback (reason: enrich the failure with the real captured stderr, resolve the awaiter with the real cause, then re-raise for the supervisor)
+        # The SDK turn failed (e.g. a ProcessError from a stale --resume
+        # whose only "stderr" is the placeholder). Fold the stderr the
+        # registered callback captured into the exception so the awaiting
+        # /v1/turn handler returns a 502 carrying the REAL cause instead
+        # of a silent empty-200 (the pre-fix behaviour: the finally below
+        # resolved the future with "".join(chunks)). Then re-raise so
+        # run_conversation's supervisor records + classifies it.
+        if not env.response.done():
+            captured = stderr_capture.text() if stderr_capture is not None else ""
+            enriched = enrich_detail_with_stderr(str(exc), captured)
+            if enriched != str(exc):
+                # Attach the enriched detail without losing the exception
+                # type, so classify_auth_failure / the supervisor still
+                # see the original class.
+                exc.args = (enriched,) + tuple(exc.args[1:])
+            env.response.set_exception(exc)
+        raise
     finally:
         if not env.response.done():
             env.response.set_result("".join(chunks))
@@ -317,13 +341,25 @@ async def run_conversation(
                 name,
                 current_sid,
             )
+        # Fresh per-attempt stderr collector. The SDK only PIPES the
+        # claude subprocess's stderr when a ``stderr`` callback is
+        # registered on ``ClaudeAgentOptions``; without it a ProcessError
+        # carries only the useless placeholder "Check stderr output for
+        # details". Register the callback through the ``extra`` seam
+        # (``stderr`` is a real ClaudeAgentOptions field) so the real
+        # failure reason — e.g. "No conversation found for session <id>"
+        # on a stale --resume — reaches both the persisted error record
+        # and the awaiting /v1/turn future.
+        stderr_capture = StderrCapture()
+        attempt_extra = dict(sdk_extra) if sdk_extra else {}
+        attempt_extra["stderr"] = stderr_capture.callback
         try:
             options = build_sdk_options_fn(
                 name,
                 permission_mode="bypassPermissions",
                 resume=current_sid,
                 hooks=hooks,
-                extra=sdk_extra,
+                extra=attempt_extra,
             )
         except SDKCommonError as exc:
             # A missing/expired credentials file fails option-building
@@ -374,6 +410,7 @@ async def run_conversation(
                         name=name,
                         host=host,
                         db_writer=db_writer,
+                        stderr_capture=stderr_capture,
                     )
                     if env.exit_after:
                         stop.set()
@@ -392,7 +429,19 @@ async def run_conversation(
                 classify_auth_failure,
             )
 
-            auth_detail = classify_auth_failure(exc)
+            # Fold the captured subprocess stderr into the failure string
+            # so BOTH auth classification AND the persisted detail see the
+            # real reason — not the SDK's "Check stderr output for details"
+            # placeholder. Also persist the full stream to a dedicated log
+            # so the actionable tail survives even when ``detail`` is
+            # bounded downstream. (When the failure came from _drive_turn,
+            # str(exc) is already enriched; enrich_detail_with_stderr is a
+            # no-op there since the captured text is already a substring.)
+            captured_stderr = stderr_capture.text()
+            enriched = enrich_detail_with_stderr(str(exc), captured_stderr)
+            write_stderr_log(state_dir, captured_stderr)
+
+            auth_detail = classify_auth_failure(enriched)
             if auth_detail is not None:
                 cause = AUTH_FAILURE_CAUSE
                 detail = auth_detail
@@ -402,9 +451,11 @@ async def run_conversation(
                 )
             else:
                 cause = "sdk-crash"
-                detail = str(exc)
+                detail = enriched
                 error_kind = "sdk_runtime"
-                logger.exception("claude-session conversation failed for %s", name)
+                logger.exception(
+                    "claude-session conversation failed for %s: %s", name, detail
+                )
             append_session_message(
                 state_dir,
                 {
