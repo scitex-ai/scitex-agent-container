@@ -86,7 +86,8 @@ Per-agent state lives at `<scope>/runtime/<name>/`:
 | File | Contents |
 |---|---|
 | `pid` | Runner's PID (atomic write — tmp + rename). |
-| `heartbeat.json` | `{ts, pid, state}`. State ∈ `starting / idle / working / stopping`. Refreshed every 10 s (`--tick-seconds`). |
+| `heartbeat.json` | `{ts, pid, state}` plus `elapsed_s` (seconds since session start, from `started_at`) and the running token totals `input_tokens / output_tokens / total_tokens` (from `quota.json`). State ∈ `starting / idle / working / stopping`. Refreshed every 10 s (`--tick-seconds`). |
+| `started_at` | Session start time (unix seconds). Written once at startup; preserved across a resumed respawn so `elapsed_s` tracks the conversation, not the process. |
 | `session.jsonl` | One JSON object per turn event: `user / assistant / user_echo / result / error`. The transcript. |
 | `session_id` | Latest SDK session UUID. Auto-resumed by the next `sac agent start`. |
 | `quota.json` | Accumulated per-turn token totals (input / output / cache_creation / cache_read / turns). |
@@ -143,7 +144,11 @@ agents on this runtime:
       "cache_read_input_tokens": 0,
       "turns": 1
     },
-    "heartbeat": {"ts": 1777766006.95, "pid": 3476972, "state": "idle"},
+    "heartbeat": {
+      "ts": 1777766006.95, "pid": 3476972, "state": "idle",
+      "started_at": 1777765800.0, "elapsed_s": 206.95,
+      "input_tokens": 6000, "output_tokens": 1500, "total_tokens": 40503
+    },
     "state_dir": "/path/to/.scitex/agent-container/runtime/<name>"
   }
 }

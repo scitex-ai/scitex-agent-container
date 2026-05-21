@@ -58,10 +58,12 @@ from ._session_state import (
     read_pid,
     read_quota,
     read_session_id,
+    read_started_at,
     state_dir_for,
     write_heartbeat,
     write_pid,
     write_session_id,
+    write_started_at,
 )
 from ._session_state import (
     heartbeat_loop as _heartbeat_loop,
@@ -83,11 +85,13 @@ __all__ = [
     "read_pid",
     "read_quota",
     "read_session_id",
+    "read_started_at",
     "run",
     "state_dir_for",
     "write_heartbeat",
     "write_pid",
     "write_session_id",
+    "write_started_at",
 ]
 
 
@@ -235,6 +239,14 @@ async def run(
             signal.signal(sig, lambda s, _f: _on_signal(s))
 
     write_pid(state_dir, pid)
+    # Record the session start time so every heartbeat can report
+    # ``elapsed_s``. Preserve an existing value across a respawn that
+    # resumes the same SDK session (resume_session_id present) — the
+    # elapsed clock should track the conversation, not the process.
+    if resume_session_id and read_started_at(state_dir) is not None:
+        pass
+    else:
+        write_started_at(state_dir)
     write_heartbeat(state_dir, pid=pid, state=STATE_STARTING, name=name, host=host)
 
     hb_task = asyncio.create_task(
