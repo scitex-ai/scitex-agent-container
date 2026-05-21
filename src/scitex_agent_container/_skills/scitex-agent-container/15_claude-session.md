@@ -188,6 +188,3 @@ immediately rather than during the next manual fleet operation.
   runtime; the SDK runtime makes auto-accept obsolete.
 - [13_observability.md](13_observability.md) — the broader status JSON
   contract; this leaf describes the SDK-specific addition.
-- [14_pane-actions.md](14_pane-actions.md) — pane actions are
-  CLI-runtime specific. SDK runtime equivalents arrive when the runner
-  grows an inbound queue (post-Phase 3).

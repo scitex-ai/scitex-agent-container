@@ -119,7 +119,7 @@ image, keep these tools.
 sac agents start polish-stats
 sac agents tail polish-stats -n 30      # rendered transcript
 sac agents tail polish-stats --json     # raw session.jsonl records
-sac agent inspect polish-stats         # is it alive?
+sac agents health polish-stats         # is it alive?
 sac agents stop polish-stats
 ```
 

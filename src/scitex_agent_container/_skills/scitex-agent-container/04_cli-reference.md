@@ -62,15 +62,16 @@ sac image freeze sandbox/ scitex-X.sif # when stable
 sac image switch X
 ```
 
-## Account / quota (`sac account`)
+## Account / quota (`sac accounts`)
 
 | Command | Purpose |
 |---|---|
-| `sac account list` | Stored Claude Code accounts + the active credentials block. |
-| `sac account save <name>` | Snapshot current credentials under `<name>` for later rotation. |
-| `sac account switch <name>` | Switch active credentials to a stored account. |
-| `sac account delete <name>` | Remove a stored account. |
-| `sac account watch-quota` | Monitor quota and auto-rotate when threshold exceeded. (Was `sac quota watch`.) |
+| `sac accounts list` | Stored Claude Code accounts + the active credentials block. |
+| `sac accounts save <name>` | Snapshot current credentials under `<name>` for later rotation. |
+| `sac accounts switch <name>` | Switch active credentials to a stored account. |
+| `sac accounts delete <name>` | Remove a stored account. |
+| `sac accounts status` | One-shot quota snapshot (5h%, 7d%, account email + tier). |
+| `sac accounts watch-quota` | Monitor quota and auto-rotate when threshold exceeded. |
 
 ## Network / peer / A2A
 
@@ -80,7 +81,7 @@ sac image switch X
 | `sac peer post-turn AGENT TEXT` | Outbound A2A — POST a turn to another agent's `/v1/turn`. |
 | `sac peer resolve-url AGENT` | Print the URL `peer post-turn` would target. |
 | `sac a2a serve <yamls...>` | A2A inbound HTTP server (sidecar mode for non-SDK runtimes). For `runtime: apptainer` agents the runner hosts `POST /v1/turn` itself. |
-| `sac network probe` | WSL → fleet-hub connectivity probe. |
+| `sac host probe-hub` | WSL → fleet-hub layered connectivity probe (DNS, gateway, TCP, HTTPS). |
 
 ## State database / registry / events
 

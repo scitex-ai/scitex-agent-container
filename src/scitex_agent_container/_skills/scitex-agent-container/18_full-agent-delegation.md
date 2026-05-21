@@ -107,18 +107,18 @@ from multiple senders, and can themselves spawn further peers.
 ## Lifecycle
 
 ```bash
-# 1. Validate (fast — schema check only)
-sac agent validate ~/.scitex/agent-container/agents/<name>/<name>.yaml
+# 1. Preflight (validates yaml + probes runtime deps)
+sac agents check ~/.scitex/agent-container/agents/<name>/<name>.yaml
 
 # 2. Start
 sac agents start ~/.scitex/agent-container/agents/<name>/<name>.yaml
 
 # 3. Verify it's running
-sac agents status <name>      # full table
-sac agent inspect <name>     # last-N tool calls + current task
+sac agents status <name>      # full status
+sac agents tail <name>        # last-N session.jsonl events (tool calls + current task)
 
 # 4. (optional) Talk to it
-sac peer call <name> "How is the F2 implementation going?"
+sac peer post-turn <name> "How is the F2 implementation going?"
 sac a2a doctor <name>        # health probe
 
 # 5. Stop / restart

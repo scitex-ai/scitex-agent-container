@@ -19,10 +19,10 @@ Configuration is separated into user-scope and project-scope. Project-scope (`.s
 │           ├── commands/       (→ $HOME/.claude/commands/)
 │           ├── skills/         (→ $HOME/.claude/skills/)
 │           └── hooks/          (→ $HOME/.claude/hooks/)
-├── accounts/                  ← saved Claude Code accounts (sac account save)
+├── accounts/                  ← saved Claude Code accounts (sac accounts save)
 │   ├── <name>/
 │   │   ├── account.json        (safe metadata; no tokens)
-│   │   └── .credentials.json   (copied into ~/.claude/ on `sac account use`)
+│   │   └── .credentials.json   (copied into ~/.claude/ on `sac accounts switch`)
 │   └── _rotations/
 │       └── <email>.ndjson      (OAuth-rotation log, one append per observed rotation)
 ├── tokens/

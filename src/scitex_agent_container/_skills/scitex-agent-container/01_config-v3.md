@@ -114,7 +114,7 @@ If you have legacy YAMLs:
 1. Change `apiVersion: scitex-agent-container/v2` → `apiVersion: scitex-agent-container/v3`.
 2. Delete the `metadata.name:` field. The agent name now comes from the parent directory; ensure the YAML lives at `<name>/<name>.yaml`.
 3. If your YAML was at a flat path like `~/.scitex/agent-container/agents/foo.yaml`, move it to `~/.scitex/agent-container/agents/foo/foo.yaml`.
-4. `sac agent validate <new-path>` to confirm it parses.
+4. `sac agents check <new-path>` to confirm it parses (preflight).
 
 ## See also
 
