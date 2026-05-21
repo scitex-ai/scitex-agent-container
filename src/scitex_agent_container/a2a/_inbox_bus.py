@@ -105,6 +105,7 @@ def mint_event(
     requires_reply: bool = False,
     ack: bool = False,
     extra: dict[str, Any] | None = None,
+    kind: str | None = None,
 ) -> dict[str, Any]:
     """Mint the event shape sac's channel publishes.
 
@@ -134,7 +135,50 @@ def mint_event(
         event["in_reply_to"] = in_reply_to
     if extra:
         event["extra"] = extra
+    if kind:
+        event["kind"] = kind
     return event
 
 
-__all__ = ["Broker", "mint_event"]
+def mint_deny_notification(
+    *,
+    target: str,
+    from_agent: str | None,
+    reason: str,
+) -> dict[str, Any]:
+    """Mint a denied-attempt notification event for the RECEIVER.
+
+    Comms item D (fail-loud on ACL-denied sends): when ``check_send_acl``
+    refuses an inbound ``message:send``, the sender already gets a 403
+    with the reason — but the receiver was previously told nothing,
+    leaving them unable to decide whether to grant the sender. This
+    helper produces the notification the receiver sees instead.
+
+    The shape mirrors a normal :func:`mint_event` envelope so SSE
+    consumers and ``channel_events`` persistence work unchanged, with
+    two deliberate differences:
+
+    * ``content`` is the empty string — **the message body never
+      leaks** to an unauthorized receiver. Only attempt metadata
+      (from / to / reason / timestamp) is published.
+    * ``kind`` is ``"denied_attempt"`` so receivers can distinguish
+      it from a real message at a glance, and the deny reason rides
+      under ``extra.deny_reason``.
+
+    ``from_agent`` should be the *effective* sender identity from the
+    ACL decision (authenticated bearer name, or the claimed name on
+    the admin-caller path). ``None`` is rendered as ``"unknown"`` by
+    ``mint_event`` — that's the only honest answer when neither was
+    presented (the "no identity at all" deny).
+    """
+    return mint_event(
+        target,
+        content="",
+        from_agent=from_agent,
+        priority="normal",
+        kind="denied_attempt",
+        extra={"deny_reason": reason},
+    )
+
+
+__all__ = ["Broker", "mint_event", "mint_deny_notification"]

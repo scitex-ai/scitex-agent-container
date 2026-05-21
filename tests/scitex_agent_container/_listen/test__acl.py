@@ -32,6 +32,7 @@ from scitex_agent_container._listen.server import create_app
 from scitex_agent_container._runners import _session_state as _ss
 from scitex_agent_container._state import state_db
 from scitex_agent_container._state import registry as _reg
+from scitex_agent_container._state.state_db_channel import list_undelivered
 from scitex_agent_container._state.state_db_nodes import (
     grant_send,
     mint_node_token,
@@ -519,3 +520,215 @@ def test_http_agents_start_403_carries_lift_able_policy_text(
     body_json = r.json()
     # Assert
     assert "lift-able policy" in body_json.get("reason", "")
+
+
+# ---------------------------------------------------------------------------
+# Comms item D — denied-attempt notification reaches the RECEIVER.
+#
+# Without this, the 403 only travels to the sender; the receiver has no
+# visibility into "X tried to reach me and was denied" and cannot decide
+# whether to grant. Per the lead's comms-D directive: on an ACL-denied
+# send the receiver MUST learn about the attempt via the same broker /
+# inbox channel they subscribe to — but the message body must NEVER
+# leak (only attempt metadata: from, to, reason, timestamp).
+# ---------------------------------------------------------------------------
+
+
+def _denied_attempt_rows(target: str, db_path: Path) -> list[dict]:
+    """Return every persisted ``kind="denied_attempt"`` row for ``target``.
+
+    Uses :func:`list_undelivered` — the same query the SSE inbox stream
+    runs on a fresh subscriber, so what this returns is exactly what a
+    receiver coming online sees after the denial.
+    """
+    rows = list_undelivered(target=target, db_path=db_path)
+    return [
+        r for r in rows if (r["event"] or {}).get("kind") == "denied_attempt"
+    ]
+
+
+def test_acl_deny_publishes_denied_attempt_notification_to_target(
+    isolated_listen_env, db_path: Path
+) -> None:
+    """Comms item D: a cross-group denied send (a) 403s the sender AND
+    (b) leaves a ``kind="denied_attempt"`` event on the target's inbox
+    channel for the receiver to consume on connect.
+    """
+    # Arrange — two unrelated families, no grant.
+    record_lineage(child="child-1", parent="root-1", db_path=db_path)
+    record_lineage(child="child-2", parent="root-2", db_path=db_path)
+    app = create_app(token=TOKEN)
+    # Act
+    with TestClient(app) as client:
+        r = client.post(
+            "/agents/child-2/message:send",
+            json=_payload("child-1", content="secret body"),
+            headers={"authorization": f"Bearer {TOKEN}"},
+        )
+    # Assert — (a) 403 to the sender (existing contract preserved).
+    assert r.status_code == 403, r.text
+    # Assert — (b) the receiver's inbox channel has the denied-attempt notif.
+    notifs = _denied_attempt_rows(target="child-2", db_path=db_path)
+    assert len(notifs) == 1, notifs
+    event = notifs[0]["event"]
+    # The notification identifies WHO tried and WHO they tried to reach.
+    assert event["from_agent"] == "child-1"
+    assert event["to_agent"] == "child-2"
+    # And carries the same reason the sender saw on its 403.
+    assert (
+        event.get("extra", {}).get("deny_reason")
+        and "cross-group" in event["extra"]["deny_reason"]
+    )
+    # And a timestamp the receiver can render.
+    assert isinstance(event.get("ts"), (int, float)) and event["ts"] > 0
+
+
+def test_acl_deny_notification_does_not_leak_message_body(
+    isolated_listen_env, db_path: Path
+) -> None:
+    """The body must never leak to an unauthorized receiver — only
+    attempt metadata. The persisted notif's ``content`` is the empty
+    string regardless of what the denied sender tried to send.
+    """
+    # Arrange
+    record_lineage(child="child-1", parent="root-1", db_path=db_path)
+    record_lineage(child="child-2", parent="root-2", db_path=db_path)
+    app = create_app(token=TOKEN)
+    secret = "PII / credentials / anything the sender shoved in here"
+    # Act
+    with TestClient(app) as client:
+        r = client.post(
+            "/agents/child-2/message:send",
+            json=_payload("child-1", content=secret),
+            headers={"authorization": f"Bearer {TOKEN}"},
+        )
+    # Assert — 403 returned, and the receiver's inbox row has no body.
+    assert r.status_code == 403, r.text
+    notifs = _denied_attempt_rows(target="child-2", db_path=db_path)
+    assert len(notifs) == 1
+    event = notifs[0]["event"]
+    assert event.get("content", "") == ""
+    # And the raw stored frame (meta_json round-trip) contains nothing
+    # that looks like the secret — defence-in-depth against a future
+    # accidental stash on ``extra`` / ``meta``.
+    import json as _json
+
+    assert secret not in _json.dumps(event)
+
+
+def test_acl_deny_notification_skipped_when_target_missing(
+    isolated_listen_env, db_path: Path
+) -> None:
+    """A ``missing target`` deny has no inbox to notify — must not
+    crash and must not persist a stray notification under "".
+    """
+    # Arrange — empty target denied at the ACL layer is unreachable via
+    # the route (path requires <name>), but unit-level the deny path
+    # is the same; here we exercise the cross-group HTTP deny with a
+    # well-formed target and confirm an UNRELATED target's inbox stays
+    # empty (regression guard against a fan-out bug).
+    record_lineage(child="child-1", parent="root-1", db_path=db_path)
+    record_lineage(child="child-2", parent="root-2", db_path=db_path)
+    record_lineage(child="bystander", parent="root-3", db_path=db_path)
+    app = create_app(token=TOKEN)
+    # Act
+    with TestClient(app) as client:
+        r = client.post(
+            "/agents/child-2/message:send",
+            json=_payload("child-1"),
+            headers={"authorization": f"Bearer {TOKEN}"},
+        )
+    # Assert
+    assert r.status_code == 403
+    # Only the actual target's inbox carries the notif; bystanders are
+    # untouched.
+    assert len(_denied_attempt_rows(target="child-2", db_path=db_path)) == 1
+    assert _denied_attempt_rows(target="bystander", db_path=db_path) == []
+    assert _denied_attempt_rows(target="", db_path=db_path) == []
+
+
+def test_acl_deny_notification_records_spoofed_identity_resolution(
+    isolated_listen_env, db_path: Path
+) -> None:
+    """On an identity-spoof deny (per-node bearer for X, claims to be Y),
+    the receiver's notification names the AUTHENTICATED identity, not
+    the spoofed claim — otherwise an attacker could forge the receiver's
+    view of who attempted to reach them.
+    """
+    # Arrange — worker-a and worker-b are siblings (intra-group); the
+    # spoof attempt comes from worker-a's bearer claiming to be worker-b
+    # while targeting worker-b. ACL denies as spoof regardless of the
+    # group relation.
+    record_lineage(child="worker-a", parent="root", db_path=db_path)
+    record_lineage(child="worker-b", parent="root", db_path=db_path)
+    worker_a_token = mint_node_token(name="worker-a", db_path=db_path)
+    app = create_app(token=TOKEN)
+    # Act — worker-a's bearer, claim to be worker-b, target worker-b.
+    with TestClient(app) as client:
+        r = client.post(
+            "/agents/worker-b/message:send",
+            json=_payload("worker-b"),
+            headers={"authorization": f"Bearer {worker_a_token}"},
+        )
+    # Assert
+    assert r.status_code == 403
+    notifs = _denied_attempt_rows(target="worker-b", db_path=db_path)
+    assert len(notifs) == 1
+    event = notifs[0]["event"]
+    # The receiver sees the AUTHENTICATED identity (worker-a), not the
+    # spoofed claim (worker-b).
+    assert event["from_agent"] == "worker-a"
+    assert "spoof" in event.get("extra", {}).get("deny_reason", "")
+
+
+def test_acl_deny_publishes_to_live_broker_subscriber(
+    isolated_listen_env, db_path: Path
+) -> None:
+    """End-to-end on the broker fast path: a live subscriber on the
+    target's inbox channel receives the denied-attempt event the moment
+    the denial happens (not just on next reconnect / replay).
+
+    Uses an in-process ASGI transport so the broker subscription and
+    the POST share the same event loop — that's the realistic shape
+    of ``sac mcp channel`` consuming SSE from the same listen.
+    """
+    import asyncio
+
+    import httpx
+
+    # Arrange — two unrelated families, no grant.
+    record_lineage(child="child-1", parent="root-1", db_path=db_path)
+    record_lineage(child="child-2", parent="root-2", db_path=db_path)
+    app = create_app(token=TOKEN)
+
+    async def driver() -> dict:
+        # Subscribe to the broker on the same loop the ASGI app will
+        # publish on. Then POST the denied send and pull the event.
+        broker = app.state.inbox
+        q = await broker.subscribe("child-2")
+        try:
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://testserver"
+            ) as client:
+                r = await client.post(
+                    "/agents/child-2/message:send",
+                    json=_payload("child-1", content="hidden"),
+                    headers={"authorization": f"Bearer {TOKEN}"},
+                )
+                assert r.status_code == 403, r.text
+                # Live subscriber MUST get the denied-attempt event.
+                event = await asyncio.wait_for(q.get(), timeout=2.0)
+                return event
+        finally:
+            await broker.unsubscribe("child-2", q)
+
+    event = asyncio.run(driver())
+    # Assert — shape matches the persisted-row contract.
+    assert event.get("kind") == "denied_attempt"
+    assert event.get("from_agent") == "child-1"
+    assert event.get("to_agent") == "child-2"
+    assert event.get("content", "") == ""
+    assert "cross-group" in event.get("extra", {}).get("deny_reason", "")
+    # No body leak even on the live publish path.
+    assert "hidden" not in __import__("json").dumps(event)

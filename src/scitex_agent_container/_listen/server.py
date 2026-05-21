@@ -46,7 +46,7 @@ from .._state.state_db_channel import (
     mark_delivered,
     persist_event,
 )
-from ..a2a._inbox_bus import mint_event
+from ..a2a._inbox_bus import mint_deny_notification, mint_event
 from ..config import load_config
 from ..config._resolve import resolve_config
 from ._acl import (
@@ -711,6 +711,31 @@ async def node_message_send(request: Request) -> Response:
         target=name,
     )
     if decision == "deny":
+        # Comms item D — fail-loud on the RECEIVER side too. The sender
+        # gets a 403 with the reason; without this notification the
+        # receiver would never learn that someone tried to reach them
+        # and was denied, so they couldn't decide whether to grant. We
+        # publish a ``kind="denied_attempt"`` envelope onto the target's
+        # inbox channel carrying only attempt METADATA — never the
+        # message body, which must not leak to an unauthorized
+        # receiver. Persist + publish mirrors the success path
+        # (handoff §0 durability — a notification with no live
+        # subscriber must not be silently dropped) but the
+        # ``channel_events`` row's ``content`` column stays empty.
+        # The ``missing target`` deny has no inbox to notify, so we
+        # skip publishing in that case (still 403 to the sender).
+        if name:
+            broker: Broker = request.app.state.inbox
+            notif = mint_deny_notification(
+                target=name,
+                from_agent=(
+                    authenticated_node or sac_meta.get("from_agent")
+                ),
+                reason=reason or "ACL deny",
+            )
+            row_id = persist_event(target=name, event=notif)
+            notif["_row_id"] = row_id
+            await broker.publish(name, notif)
         return deny_response(reason or "ACL deny")
 
     event = mint_event(
@@ -738,9 +763,12 @@ async def node_message_send(request: Request) -> Response:
     # id is attached to the envelope as ``_row_id``; the SSE stream
     # stamps it onto the ``id:`` line so clients can resume with
     # ``Last-Event-ID``. A denied send (returned earlier with 403)
-    # never reaches this point — denial leaves zero side-effects on
-    # ``channel_events`` and on the broker (handoff §0: "denial is
-    # the policy working").
+    # never reaches this point — denial leaves no ``content`` on
+    # ``channel_events`` and emits no ``kind="message"`` event on the
+    # broker. (Comms item D adds a separate ``kind="denied_attempt"``
+    # envelope on the deny branch above so the receiver still learns
+    # of the attempt; only attempt metadata is published — never the
+    # message body.)
     row_id = persist_event(target=name, event=event)
     event["_row_id"] = row_id
 
