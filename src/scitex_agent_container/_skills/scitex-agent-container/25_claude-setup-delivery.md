@@ -35,12 +35,14 @@ target: today's `raw_args: --env GIT_AUTHOR_*` → `to_home/.env`;
 (easy to grow), self-contained (host-isolated), and **isomorphic to a normal
 `$HOME`** — standard tools and mental models apply with no special knowledge.
 
-The **only** exception is read-only `bind`s, for two cases where a copy is wrong:
+The **only** exception is read-only `bind`s, for **host secrets** (`.ssh`,
+`.config/gh`, `.claude/.credentials.json`) — a copy would commit secrets into
+the git-tracked `to_home`; a `ro`-bind keeps them out and injects values at run
+time.
 
-- **Host secrets** (`.ssh`, `.config/gh`, `.claude/.credentials.json`) — a copy
-  would commit secrets into the git-tracked `to_home`; a `ro`-bind keeps them out.
-- **Large shared, always-current trees** (`~/.claude/skills`) — a copy would
-  duplicate and go stale.
+Large shared trees such as `~/.claude/skills` are **not** an exception: they
+enter via an explicit `to_home` symlink that materialize resolves to real
+content (see "Symlink resolution" below), never via a host auto-read.
 
 ### Placement vs precedence (two different axes)
 
@@ -58,14 +60,10 @@ SAC guarantees this model only: per-agent `to_home` + the `_base` baseline, with
 binding the **host `$HOME`** directly — are possible via raw escape hatches but
 are explicitly **out of scope** (operator's own risk). Keeps the guarantee crisp.
 
-### The `ro`-bind reproducibility trade-off
+### The secrets `ro`-bind reproducibility trade-off
 
-- **Secrets**: correctly *outside* the reproducible artifact — you reproduce the
-  structure; values are injected at run time. Not a gap.
-- **Skills**: a real trade-off. The live `ro`-bind is current but **not pinned**,
-  so a run isn't byte-reproducible. For *strict* reproducibility, pin skills to a
-  version and materialize that into `to_home` ("chain everything"). Default =
-  currency (`ro`-bind); strict = pinned `to_home`.
+**Secrets** are correctly *outside* the reproducible artifact — you reproduce
+the structure; values are injected at run time. Not a gap.
 
 ## The `to_home` 1:1 mirror (general, not just `.claude`)
 
@@ -82,7 +80,8 @@ agents/<name>/to_home/
     CLAUDE.md        → $HOME/.claude/CLAUDE.md (marker-protected)
     settings.local.json
     hooks/
-    skills/          (usually a separate read-only bind, see below)
+    skills/          → $HOME/.claude/skills/  (commonly an explicit symlink,
+                       resolved to real content — see below)
 ```
 
 A shared baseline (`<agents_dir>/_base/to_home/`, or `$SAC_TO_HOME_BASELINE`)
@@ -90,6 +89,34 @@ is applied first; the per-agent `to_home/` overlays on top (per-agent wins).
 See `runtimes/_to_home.py` and ADR-0006 for the per-entry semantics. **This
 is general** — `to_home` is not a `.claude` delivery mechanism, it is a `$HOME`
 delivery mechanism.
+
+## Symlink resolution — dereference-copy, fail loud on dangling
+
+The definition is the **sole source of truth** and the runtime **never
+auto-reads host state**. Materialization enforces this at the symlink level:
+
+- **Every** symlink encountered while walking `_base/to_home/` and the
+  per-agent `to_home/` is **dereference-copied** — its target is resolved to
+  real content and that real content (a file or a whole directory tree, with
+  nested symlinks dereferenced too) lands at the destination. The container
+  `$HOME` therefore holds only real, self-contained files: closed to apptainer
+  regardless of host filesystem layout (no dangling host paths under
+  `--containall`).
+- A symlink whose target **cannot be resolved (dangling)** hard-aborts the
+  deploy with `DanglingToHomeSymlinkError`, naming the symlink path, its
+  target, and what to fix. A dangling definition symlink is a real defect — it
+  is never silently kept or skipped.
+- There is **no** "keep the literal symlink", warn-and-keep, or
+  naming-convention behavior, and **no** unconditional host `~/.claude/skills`
+  auto-read. The only way host content enters the container is via an
+  **explicit** symlink the operator places under `to_home/` — e.g.
+  `_base/to_home/.claude/skills -> ~/.claude/skills` — which this walk resolves
+  to real content at deploy time. That is explicit-pass, and it is fine.
+- The rule applies **uniformly** to skills, hooks, `.env`, and all other
+  `to_home` content. (An in-container literal symlink, if ever needed, is
+  created via `startup_commands` — out of scope for materialization.)
+
+See `runtimes/_symlink_resolve.py::deref_copy_symlink` and ADR-0009.
 
 ## Two delivery paths into the container `$HOME`
 
@@ -141,21 +168,14 @@ overlays; `.img` loopback overlays are a no-op (they can't host an upper layer
 writable from the host), and such specs don't use the `--home`-override
 pattern anyway.
 
-### Why the skills bind is not shadowed
+### Skills are materialized, not bind-mounted
 
-Specs commonly bind skills read-only on top of `$HOME`:
-
-```yaml
-binds:
-  - /home/ywatanabe/.claude/skills:/home/agent/.claude/skills:ro
-```
-
-Writing `.claude/` (settings, hooks) into the overlay upper home is safe:
-apptainer bind mounts always win at their **exact** mount point, so the
-`/home/agent/.claude/skills` bind layers cleanly on top of the overlay's
-`.claude/` without being shadowed. This is precisely why overlay-write (not
-per-entry binds) is the chosen mechanism — a single `.claude` bind would
-shadow the skills sub-mount.
+Skills are delivered like every other `to_home` payload: the explicit
+`to_home/.claude/skills` symlink is dereference-copied into the container
+`$HOME` *before* launch (see "Symlink resolution"). There is no
+`~/.claude/skills:...:ro` bind, so there is no bind-shadowing concern under
+either delivery path — the resolved real `.claude/skills/` tree is simply part
+of the container filesystem, current as of deploy time and self-contained.
 
 ## Loading model — credentials, MCP, hooks
 

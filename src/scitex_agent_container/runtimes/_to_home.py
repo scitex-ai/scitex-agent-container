@@ -49,7 +49,8 @@ two-pass overlay:
 
 Per-agent files therefore win on conflict (overlay semantics) — they
 re-run the same per-entry deploy helpers over whatever the baseline
-laid down (full overwrite, marker-protected re-wrap, symlink replace).
+laid down (full overwrite, marker-protected re-wrap, symlink
+dereference-copy).
 
 Baseline location (see :func:`resolve_baseline_to_home_dir`):
 
@@ -73,10 +74,7 @@ from datetime import datetime
 from pathlib import Path
 
 from ..config import AgentConfig
-from ._skills_resolve import (
-    deploy_host_skills_resolved,
-    resolve_host_skills_dir,
-)
+from ._symlink_resolve import DanglingToHomeSymlinkError, deref_copy_symlink
 
 logger = logging.getLogger(__name__)
 
@@ -218,31 +216,25 @@ def resolve_baseline_to_home_dir(spec_dir: Path | None) -> Path | None:
 def materialize_to_home(spec_dir: Path, workspace_home: Path) -> None:
     """Mirror ``<spec_dir>/to_home/`` into ``<workspace_home>/``.
 
-    Three-pass overlay:
+    Two-pass overlay:
 
-      0. Host ``~/.claude/skills/`` resolved (symlink-dereferenced) into
-         ``<workspace_home>/.claude/skills/`` — see :mod:`_skills_resolve`.
-         This runs FIRST so the to_home passes below can still override
-         on conflict (per-agent skills always win).
       1. The shared/common baseline ``to_home/``.
       2. ``<spec_dir>/to_home/`` on top — so per-agent files win on
          conflict.
 
     Walks each tree and applies the per-entry semantics described in
-    the module docstring. Idempotent — safe to call on every agent
-    start.
+    the module docstring (symlinks are dereference-copied to real
+    content). Idempotent — safe to call on every agent start. The
+    runtime never auto-reads host state; the definition is the sole
+    source of truth.
 
-    No-op when none of the host skills dir, the baseline, or
-    ``<spec_dir>/to_home/`` exists.
+    No-op when neither the baseline nor ``<spec_dir>/to_home/`` exists.
     """
     baseline = resolve_baseline_to_home_dir(spec_dir)
     root = spec_dir / "to_home"
-    host_skills = resolve_host_skills_dir()
-    if baseline is None and not root.is_dir() and host_skills is None:
+    if baseline is None and not root.is_dir():
         return
     workspace_home.mkdir(parents=True, exist_ok=True)
-    if host_skills is not None:
-        deploy_host_skills_resolved(workspace_home, host_skills_dir=host_skills)
     if baseline is not None:
         _walk_and_apply(baseline, baseline, workspace_home, config=None)
     if root.is_dir():
@@ -252,12 +244,8 @@ def materialize_to_home(spec_dir: Path, workspace_home: Path) -> None:
 def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
     """``AgentConfig``-driven entrypoint for to_home materialization.
 
-    Three-pass overlay:
+    Two-pass overlay:
 
-      0. Host ``~/.claude/skills/`` resolved (symlink-dereferenced) into
-         ``<workspace_home>/.claude/skills/`` — see :mod:`_skills_resolve`.
-         Runs FIRST so the to_home passes below can still override on
-         conflict (per-agent skills always win).
       1. The shared/common baseline ``to_home/``.
       2. The per-agent ``to_home/`` on top — so per-agent files win on
          conflict.
@@ -266,18 +254,16 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
     (honours ``spec.to_home`` overrides) and the baseline via
     :func:`resolve_baseline_to_home_dir`, then applies metadata-aware
     interpolation (${metadata.name}, ${metadata.labels.*}, ${ENV_VAR})
-    to text files. No-op when none of the host skills dir, the
-    baseline, or the per-agent to_home resolves.
+    to text files. Symlinks are dereference-copied to real content; the
+    runtime never auto-reads host state. No-op when neither the baseline
+    nor the per-agent to_home resolves.
     """
     root = resolve_to_home_dir(config)
     baseline = resolve_baseline_to_home_dir(_spec_dir(config))
-    host_skills = resolve_host_skills_dir()
-    if root is None and baseline is None and host_skills is None:
+    if root is None and baseline is None:
         return
     dest = Path(workspace_home)
     dest.mkdir(parents=True, exist_ok=True)
-    if host_skills is not None:
-        deploy_host_skills_resolved(dest, host_skills_dir=host_skills)
     if baseline is not None:
         _walk_and_apply(baseline, baseline, dest, config=config)
     if root is not None:
@@ -307,9 +293,11 @@ def _walk_and_apply(
 
         # Symlinks first — must not follow into ``is_dir()`` / ``is_file()``
         # decisions, because is_dir(follow=True) would route a symlink to
-        # a directory through the mirror branch.
+        # a directory through the mirror branch. The link is resolved to
+        # its real target content (dereference-copy); a dangling target
+        # hard-aborts via DanglingToHomeSymlinkError.
         if child.is_symlink():
-            _copy_symlink(child, dst)
+            deref_copy_symlink(child, dst)
             continue
 
         if child.is_dir():
@@ -351,26 +339,9 @@ def _clear_readonly_dst(dst: Path) -> None:
         os.chmod(dst, mode | stat.S_IWUSR)
 
 
-def _copy_symlink(src: Path, dst: Path) -> None:
-    """Preserve a symlink verbatim — never resolve the target.
-
-    If ``dst`` exists (as link, file, or dir) it's removed first so the
-    new symlink can be written in place. Relative and absolute targets
-    both pass through unchanged.
-    """
-    target = os.readlink(src)
-    if dst.is_symlink() or dst.exists():
-        if dst.is_dir() and not dst.is_symlink():
-            shutil.rmtree(dst)
-        else:
-            try:
-                dst.unlink()
-            except OSError as exc:  # stx-allow: fallback (reason: filesystem race)
-                logger.warning("Failed to unlink %s: %s", dst, exc)
-                return
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    os.symlink(target, dst)
-    logger.info("to_home: symlink %s -> %s", dst, target)
+# Symlinks are dereference-copied to real content — see
+# :func:`_symlink_resolve.deref_copy_symlink`. The traversal calls it
+# directly; this module re-exports the symbol for callers.
 
 
 def _read_and_interpolate(src: Path, config: AgentConfig | None) -> str:
@@ -511,6 +482,7 @@ def _spec_dir(config: AgentConfig) -> Path | None:
 
 
 __all__ = [
+    "DanglingToHomeSymlinkError",
     "WorkspaceCLAUDEMarkerError",
     "deploy_to_home",
     "materialize_to_home",

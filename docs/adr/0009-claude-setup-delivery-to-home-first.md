@@ -45,22 +45,49 @@ capability (easy to grow), the agent is self-contained (host-isolated),
 and the layout is **isomorphic to a normal `$HOME`** — standard tools
 and mental models apply with no special knowledge.
 
-### Exception: read-only bind for secrets and large shared trees
+### Exception: read-only bind for secrets only
 
-The **only** exception to `to_home`-first is a read-only (`ro`) `bind`,
-for two cases where copying is wrong:
+The **only** exception to `to_home`-first is a read-only (`ro`) `bind`
+for **host secrets** (`.ssh`, `.config/gh`, `.claude/.credentials.json`)
+— a copy would commit secrets into the git-tracked `to_home`. Secrets
+are correctly *outside* the reproducible artifact: the structure is
+reproduced and values are injected at run time (not a gap).
 
-- **Host secrets** (`.ssh`, `.config/gh`, `.claude/.credentials.json`)
-  — a copy would commit secrets into the git-tracked `to_home`.
-- **Large shared, always-current trees** (`~/.claude/skills`) — a copy
-  would duplicate the tree and go stale.
+Large shared trees such as `~/.claude/skills` are **not** an exception.
+They are delivered via an explicit `to_home` symlink that materialize
+resolves to real content (see "Symlink resolution" below) — never via a
+host bind or a host auto-read.
 
-The `ro`-bind carries a reproducibility trade-off. Secrets are
-correctly *outside* the reproducible artifact (structure is reproduced,
-values injected at run time — not a gap). Skills are a real trade-off:
-the live bind is **current but not pinned**, so a run is not
-byte-reproducible. Default = currency (`ro`-bind); strict reproducibility
-= pin the skills version and materialize it into `to_home`.
+### Symlink resolution — definition is the sole source of truth
+
+Materialize walks **both** the global `_base/to_home/` and the per-agent
+`to_home/` and copies their content into the container `$HOME`
+(`/home/agent`). The rule for symlinks:
+
+- **Resolve every symlink to its real target content (dereference-copy).**
+  The container `$HOME` ends up holding only real, self-contained files
+  (and directory trees, with nested symlinks dereferenced too) — closed
+  to apptainer regardless of the host filesystem (no dangling host paths
+  under `--containall`).
+- **A dangling symlink (unresolvable target) fails loud** with
+  `DanglingToHomeSymlinkError`, naming the symlink path, its target, and
+  what to fix. A dangling definition symlink is a real defect; it is
+  never silently kept or skipped.
+- **No host auto-read.** There is no unconditional read of the host
+  `~/.claude/skills` (and no `~/.claude/skills` fallback). The only way
+  host content enters the container is via an **explicit** symlink the
+  operator places under `to_home/` — e.g.
+  `_base/to_home/.claude/skills -> ~/.claude/skills` — which the walk
+  resolves to real content at deploy time. That is explicit-pass, and it
+  is intended.
+- **No "keep literal symlink" / warn-and-keep / naming-convention
+  behavior.** Everything is resolved. The rule applies uniformly to
+  skills, hooks, `.env`, and all `to_home` content. (An in-container
+  literal symlink, if ever needed, is created via `startup_commands` —
+  out of scope for materialization.)
+
+Implementation: `runtimes/_symlink_resolve.py::deref_copy_symlink`,
+called from the materialize walk in `runtimes/_to_home.py`.
 
 ### Override precedence
 
@@ -128,8 +155,14 @@ Each surface is then loaded explicitly:
 
 **Negative:**
 
-- The skills `ro`-bind is current-but-not-pinned, so a default run is
-  not byte-reproducible (mitigated by the strict-mode pin option).
+- Skills delivered via a resolved `to_home` symlink are current as of
+  deploy time but not version-pinned, so a re-deploy can pick up changed
+  host skill content; the materialized tree is self-contained for that
+  run, but byte-for-byte reproducibility across deploys requires pinning
+  the source the symlink points at.
+- A dangling `to_home` symlink now hard-aborts the deploy instead of
+  being tolerated — correct, but operators must keep definition symlinks
+  resolvable on the deploy host.
 - `spec.raw_args` and `to_home` remain separate runtime surfaces today;
   full precedence merging (args > spec > to_home) still relies on the
   runtime resolving them rather than a single merged layer.
