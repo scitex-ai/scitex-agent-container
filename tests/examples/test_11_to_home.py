@@ -1,4 +1,4 @@
-"""PS-303 stub for examples/11_dot_claude.sh.
+"""PS-303 stub for examples/11_to_home.sh.
 
 Per-lesson smoke test covering three guarantees: the script parses under
 ``bash -n``, executes cleanly without ``--apply`` under a throwaway
@@ -23,7 +23,7 @@ from .test_lesson_scripts import (
     _probe_stale_cli_offenders,
 )
 
-SCRIPT = Path(__file__).resolve().parents[2] / "examples" / "11_dot_claude.sh"
+SCRIPT = Path(__file__).resolve().parents[2] / "examples" / "11_to_home.sh"
 
 
 def test_lesson_script_parses_under_bash_n() -> None:

@@ -41,7 +41,7 @@
 #
 # Useful additions (annotated full example: examples/agents/full-agent/spec.yaml):
 #   spec.workdir            host dir mounted at /work inside the container
-#   spec.dot_claude         dir merged into agent workspace (lesson 11)
+#   spec.to_home            dir mirrored into the agent $HOME (lesson 11)
 #   spec.startup_prompts    first user turn after start
 #   spec.startup_commands   shell to run before claude boots
 #   spec.health             liveness probe (lesson 13)

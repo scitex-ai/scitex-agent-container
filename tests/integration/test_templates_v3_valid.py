@@ -44,64 +44,64 @@ def test_example_spec_runtime_defaults_to_apptainer(spec):
     assert cfg.runtime == "apptainer"
 
 
-def test_full_example_dot_claude_contains_claude_md():
+def test_full_example_to_home_contains_claude_md():
     # Arrange
-    dot_claude = EXAMPLES_DIR / "full-agent" / "dot_claude"
+    to_home = EXAMPLES_DIR / "full-agent" / "to_home"
     # Act
-    path = dot_claude / "CLAUDE.md"
+    path = to_home / "CLAUDE.md"
     # Assert
     assert path.exists()
 
 
-def test_full_example_dot_claude_contains_mcp_json():
+def test_full_example_to_home_contains_mcp_json():
     # Arrange
-    dot_claude = EXAMPLES_DIR / "full-agent" / "dot_claude"
+    to_home = EXAMPLES_DIR / "full-agent" / "to_home"
     # Act
-    path = dot_claude / ".mcp.json"
+    path = to_home / ".mcp.json"
     # Assert
     assert path.exists()
 
 
-def test_full_example_dot_claude_contains_env_example():
+def test_full_example_to_home_contains_env_example():
     # Arrange
-    dot_claude = EXAMPLES_DIR / "full-agent" / "dot_claude"
+    to_home = EXAMPLES_DIR / "full-agent" / "to_home"
     # Act
-    path = dot_claude / ".env.example"
+    path = to_home / ".env.example"
     # Assert
     assert path.exists()
 
 
-def test_full_example_dot_claude_contains_commands_dir():
+def test_full_example_to_home_contains_commands_dir():
     # Arrange
-    dot_claude = EXAMPLES_DIR / "full-agent" / "dot_claude"
+    to_home = EXAMPLES_DIR / "full-agent" / "to_home"
     # Act
-    path = dot_claude / "commands"
+    path = to_home / ".claude" / "commands"
     # Assert
     assert path.is_dir()
 
 
-def test_full_example_dot_claude_contains_skills_dir():
+def test_full_example_to_home_contains_skills_dir():
     # Arrange
-    dot_claude = EXAMPLES_DIR / "full-agent" / "dot_claude"
+    to_home = EXAMPLES_DIR / "full-agent" / "to_home"
     # Act
-    path = dot_claude / "skills"
+    path = to_home / ".claude" / "skills"
     # Assert
     assert path.is_dir()
 
 
-def test_full_example_dot_claude_contains_hooks_dir():
+def test_full_example_to_home_contains_hooks_dir():
     # Arrange
-    dot_claude = EXAMPLES_DIR / "full-agent" / "dot_claude"
+    to_home = EXAMPLES_DIR / "full-agent" / "to_home"
     # Act
-    path = dot_claude / "hooks"
+    path = to_home / ".claude" / "hooks"
     # Assert
     assert path.is_dir()
 
 
-def test_minimal_example_has_no_dot_claude_directory():
+def test_minimal_example_has_no_to_home_directory():
     # Arrange
     minimal_dir = EXAMPLES_DIR / "minimal-agent"
     # Act
-    dot_claude = minimal_dir / "dot_claude"
+    to_home = minimal_dir / "to_home"
     # Assert
-    assert not dot_claude.exists()
+    assert not to_home.exists()

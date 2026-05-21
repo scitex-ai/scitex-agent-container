@@ -1,7 +1,7 @@
 """Materialize ``<spec_dir>/to_home/`` into the agent's workspace ``$HOME``.
 
-Successor to :mod:`_dot_claude` (see ADR-0006). The new layout makes
-the rule explicit:
+The single canonical layout for materializing files into an agent's
+``$HOME`` (see ADR-0006). The layout makes the rule explicit:
 
     agents/<name>/
     ├── spec.yaml          (spec.to_home: ./to_home — default)
@@ -25,8 +25,7 @@ Semantics per entry (see :func:`materialize_to_home`):
   - **CLAUDE.md** / **state.md** — marker-protected merge. Source is
     wrapped between Start/End markers; any user tail after the End
     marker is preserved. Malformed existing markers hard-abort the
-    deploy (re-raised as :class:`WorkspaceCLAUDEMarkerError` from
-    :mod:`_dot_claude`).
+    deploy with :class:`WorkspaceCLAUDEMarkerError`.
   - **.env** — full overwrite; chmod 0600 after write.
   - **Other regular files** — full overwrite (``shutil.copy2``).
   - **Directories** — recursed; structure preserved.
@@ -67,27 +66,84 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import stat
 from datetime import datetime
 from pathlib import Path
 
 from ..config import AgentConfig
-from ._dot_claude import (
-    END_MARKER,
-    WorkspaceCLAUDEMarkerError,
-    _extract_user_tail,
-    _interpolate_env,
-    _interpolate_metadata,
-    _validate_marker_invariants,
-)
 
 logger = logging.getLogger(__name__)
 
+END_MARKER = "<!-- End of scitex-agent-container generated section -->"
+START_MARKER_PREFIX = "<!-- Start of scitex-agent-container generated section"
+
+
+class WorkspaceCLAUDEMarkerError(RuntimeError):
+    """Existing workspace marker-protected file has malformed markers.
+
+    The deploy is hard-aborted on this error rather than silently
+    overwriting or guessing — preserving user content past the End
+    marker is a safety contract and any ambiguity in marker placement
+    could destroy work.
+    """
+
+
+def _validate_marker_invariants(text: str, source_name: str) -> None:
+    """Hard-fail if Start/End markers are missing or malformed."""
+    start_count = text.count(START_MARKER_PREFIX)
+    end_count = text.count(END_MARKER)
+    if start_count != 1 or end_count != 1:
+        raise WorkspaceCLAUDEMarkerError(
+            f"{source_name}: expected exactly 1 Start marker and 1 End "
+            f"marker, found Start={start_count} End={end_count}. "
+            "Refusing to deploy to avoid data loss. Restore the markers "
+            "manually before retrying."
+        )
+    if text.find(START_MARKER_PREFIX) > text.find(END_MARKER):
+        raise WorkspaceCLAUDEMarkerError(
+            f"{source_name}: Start marker appears AFTER End marker. "
+            "This indicates a corrupted file. Refusing to deploy."
+        )
+
+
+def _extract_user_tail(workspace_path: Path) -> str:
+    if not workspace_path.exists():
+        return ""
+    try:
+        existing = workspace_path.read_text()
+    except OSError:  # stx-allow: fallback (reason: file system operation failure)
+        return ""
+    idx = existing.rfind(END_MARKER)
+    if idx == -1:
+        return ""
+    return existing[idx + len(END_MARKER) :]
+
+
+def _interpolate_env(text: str) -> str:
+    return re.sub(
+        r"\$\{(\w+)\}",
+        lambda m: os.environ.get(m.group(1), m.group(0)),
+        text,
+    )
+
+
+def _interpolate_metadata(text: str, config: AgentConfig) -> str:
+    def _replace(m: re.Match) -> str:
+        key = m.group(1)
+        if key == "metadata.name":
+            return config.name
+        if key.startswith("metadata.labels."):
+            label = key[len("metadata.labels.") :]
+            return config.labels.get(label) or m.group(0)
+        return m.group(0)
+
+    return re.sub(r"\$\{([^}]+)\}", _replace, text)
+
 
 # Files that get marker-protected merge semantics (vs. full overwrite).
-# Same protection as the legacy dot_claude/CLAUDE.md path — never silent
-# data loss on a hand-edited file.
+# Marker protection guards against silent data loss on a hand-edited file.
 _MARKER_PROTECTED_BASENAMES = frozenset({"CLAUDE.md", "state.md"})
 
 # Files that get chmod 0600 after copy. ``.env`` only by default; the
@@ -110,7 +166,7 @@ _BASELINE_DIR_NAME = "_base"
 def resolve_to_home_dir(config: AgentConfig) -> Path | None:
     """Resolve ``spec.to_home`` to an absolute directory.
 
-    Resolution mirrors :func:`_dot_claude.resolve_dot_claude_dir`:
+    Resolution order:
       1. Absolute path: use as-is.
       2. Relative path: resolve against the directory containing
          ``spec.yaml``.
@@ -178,8 +234,7 @@ def materialize_to_home(spec_dir: Path, workspace_home: Path) -> None:
 
 
 def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
-    """``AgentConfig``-driven entrypoint, parallel to
-    :func:`_dot_claude.deploy_dot_claude`.
+    """``AgentConfig``-driven entrypoint for to_home materialization.
 
     Two-pass overlay: the shared/common baseline ``to_home/`` is applied
     first, then the per-agent ``to_home/`` is applied on top — so
@@ -361,7 +416,7 @@ def _deploy_marker_protected(
 ) -> None:
     """Marker-protected merge for CLAUDE.md / state.md.
 
-    Mirrors :func:`_dot_claude._deploy_claude_md` invariants:
+    Invariants:
       - Source wrapped in Start/End markers.
       - Existing user content past the End marker is preserved.
       - Malformed existing markers (count != 1 or order swapped)
@@ -380,10 +435,8 @@ def _deploy_marker_protected(
     )
 
     # Strip any embedded sac markers from the source so we don't end up
-    # with nested Start/End pairs after wrapping (same defensive scrub
-    # _dot_claude applies to CLAUDE.md).
-    import re
-
+    # with nested Start/End pairs after wrapping (defensive scrub for
+    # CLAUDE.md).
     section_body = re.sub(
         r"<!--.*?scitex-agent-container.*?-->\n?",
         "",
@@ -399,8 +452,8 @@ def _deploy_marker_protected(
     user_tail = _extract_user_tail(dst)
 
     if END_MARKER not in new_content:
-        # Shouldn't happen — we just wrote END_MARKER — but mirror the
-        # _dot_claude safety net so the contract is identical.
+        # Shouldn't happen — we just wrote END_MARKER — but keep the
+        # safety net so the contract is explicit.
         updated = new_content
     elif user_tail:
         updated = new_content.rstrip("\n") + user_tail
@@ -429,8 +482,6 @@ def _spec_dir(config: AgentConfig) -> Path | None:
     return Path(config.config_path).parent
 
 
-# Re-export so callers can ``from _to_home import WorkspaceCLAUDEMarkerError``
-# without also importing _dot_claude.
 __all__ = [
     "WorkspaceCLAUDEMarkerError",
     "deploy_to_home",
