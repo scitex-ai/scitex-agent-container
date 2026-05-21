@@ -22,6 +22,7 @@ import pytest
 from scitex_agent_container.config._types import AgentConfig
 from scitex_agent_container.runtimes._to_home import (
     END_MARKER,
+    DanglingToHomeSymlinkError,
     WorkspaceCLAUDEMarkerError,
     deploy_to_home,
     materialize_to_home,
@@ -169,65 +170,201 @@ class TestMaterializeToHomeBasics:
 # ---------------------------------------------------------------------------
 
 
-class TestSymlinkPreservation:
-    def test_relative_symlink_lands_as_symlink_in_home(self, tmp_path):
+@pytest.fixture
+def rel_file_symlink_home(tmp_path):
+    """Materialize a to_home/ with a relative symlink to a sibling file.
+
+    Returns the container home dir after materialization.
+    """
+    spec_dir = tmp_path / "spec"
+    (spec_dir / "to_home").mkdir(parents=True)
+    (spec_dir / "to_home" / "real.txt").write_text("payload\n")
+    os.symlink("real.txt", spec_dir / "to_home" / "link.txt")
+    home = tmp_path / "home"
+    materialize_to_home(spec_dir, home)
+    return home
+
+
+@pytest.fixture
+def abs_file_symlink_home(tmp_path):
+    """Materialize a to_home/ with an absolute symlink to a host file
+    outside to_home/ (the explicit-pass case). Returns container home.
+    """
+    external = tmp_path / "external_target"
+    external.write_text("external\n")
+    spec_dir = tmp_path / "spec"
+    (spec_dir / "to_home").mkdir(parents=True)
+    os.symlink(str(external), spec_dir / "to_home" / "abs_link")
+    home = tmp_path / "home"
+    materialize_to_home(spec_dir, home)
+    return home
+
+
+@pytest.fixture
+def dir_symlink_home(tmp_path):
+    """Materialize a to_home/ with a symlink to a real directory tree
+    that itself contains a nested symlink. Returns container home.
+    """
+    real = tmp_path / "real_payload"
+    real.write_text("deep\n")
+    src_tree = tmp_path / "src_tree"
+    (src_tree / "nested").mkdir(parents=True)
+    (src_tree / "a.txt").write_text("A\n")
+    (src_tree / "nested" / "b.txt").write_text("B\n")
+    os.symlink(str(real), src_tree / "inner_link")
+    spec_dir = tmp_path / "spec"
+    (spec_dir / "to_home").mkdir(parents=True)
+    os.symlink(str(src_tree), spec_dir / "to_home" / "tree")
+    home = tmp_path / "home"
+    materialize_to_home(spec_dir, home)
+    return home
+
+
+@pytest.fixture
+def dangling_symlink_spec(tmp_path):
+    """A to_home/ containing a single dangling symlink.
+
+    Returns ``(spec_dir, home)``; the caller drives materialization so
+    it can assert on the raised error or on the (absent) destination.
+    """
+    spec_dir = tmp_path / "spec"
+    (spec_dir / "to_home").mkdir(parents=True)
+    os.symlink("nonexistent.txt", spec_dir / "to_home" / "dead_link")
+    home = tmp_path / "home"
+    return spec_dir, home
+
+
+@pytest.fixture
+def dangling_symlink_error(dangling_symlink_spec):
+    """The :class:`DanglingToHomeSymlinkError` raised by materializing a
+    to_home/ that holds a dangling symlink. Fails the test if none is
+    raised.
+    """
+    spec_dir, home = dangling_symlink_spec
+    with pytest.raises(DanglingToHomeSymlinkError) as exc_info:
+        materialize_to_home(spec_dir, home)
+    return exc_info.value
+
+
+class TestSymlinkDereferenceCopy:
+    """Materialize resolves EVERY to_home symlink to its real target
+    content — the container home holds real, self-contained files (no
+    symlinks), so the agent is reproducible from its definition alone
+    and closed to apptainer regardless of host filesystem layout.
+    """
+
+    def test_relative_symlink_lands_as_real_file_not_symlink(
+        self, rel_file_symlink_home
+    ):
         # Arrange
-        spec_dir = tmp_path / "spec"
-        (spec_dir / "to_home").mkdir(parents=True)
-        (spec_dir / "to_home" / "real.txt").write_text("payload\n")
-        os.symlink("real.txt", spec_dir / "to_home" / "link.txt")
-        home = tmp_path / "home"
+        home = rel_file_symlink_home
         # Act
-        materialize_to_home(spec_dir, home)
+        is_link = (home / "link.txt").is_symlink()
         # Assert
-        assert (home / "link.txt").is_symlink()
+        assert is_link is False
 
-    def test_relative_symlink_target_string_unchanged(self, tmp_path):
+    def test_relative_symlink_lands_with_real_content(self, rel_file_symlink_home):
         # Arrange
-        spec_dir = tmp_path / "spec"
-        (spec_dir / "to_home").mkdir(parents=True)
-        (spec_dir / "to_home" / "real.txt").write_text("payload\n")
-        os.symlink("real.txt", spec_dir / "to_home" / "link.txt")
-        home = tmp_path / "home"
+        home = rel_file_symlink_home
         # Act
-        materialize_to_home(spec_dir, home)
+        content = (home / "link.txt").read_text()
         # Assert
-        assert os.readlink(home / "link.txt") == "real.txt"
+        assert content == "payload\n"
 
-    def test_absolute_symlink_target_string_unchanged(self, tmp_path):
-        # Arrange — target outside to_home/ on the host, absolute.
-        external = tmp_path / "external_target"
-        external.write_text("external\n")
-        spec_dir = tmp_path / "spec"
-        (spec_dir / "to_home").mkdir(parents=True)
-        os.symlink(str(external), spec_dir / "to_home" / "abs_link")
-        home = tmp_path / "home"
-        # Act
-        materialize_to_home(spec_dir, home)
-        # Assert
-        assert os.readlink(home / "abs_link") == str(external)
-
-    def test_broken_symlink_lands_as_symlink_in_home(self, tmp_path):
-        # Arrange — link target doesn't exist; we still preserve the link.
-        spec_dir = tmp_path / "spec"
-        (spec_dir / "to_home").mkdir(parents=True)
-        os.symlink("nonexistent.txt", spec_dir / "to_home" / "dead_link")
-        home = tmp_path / "home"
-        # Act
-        materialize_to_home(spec_dir, home)
-        # Assert
-        assert (home / "dead_link").is_symlink()
-
-    def test_broken_symlink_target_string_unchanged(self, tmp_path):
+    def test_absolute_symlink_lands_as_real_file_not_symlink(
+        self, abs_file_symlink_home
+    ):
         # Arrange
-        spec_dir = tmp_path / "spec"
-        (spec_dir / "to_home").mkdir(parents=True)
-        os.symlink("nonexistent.txt", spec_dir / "to_home" / "dead_link")
-        home = tmp_path / "home"
+        home = abs_file_symlink_home
         # Act
-        materialize_to_home(spec_dir, home)
+        is_link = (home / "abs_link").is_symlink()
         # Assert
-        assert os.readlink(home / "dead_link") == "nonexistent.txt"
+        assert is_link is False
+
+    def test_absolute_symlink_lands_with_real_content(self, abs_file_symlink_home):
+        # Arrange
+        home = abs_file_symlink_home
+        # Act
+        content = (home / "abs_link").read_text()
+        # Assert
+        assert content == "external\n"
+
+    def test_directory_symlink_lands_as_real_tree_not_symlink(self, dir_symlink_home):
+        # Arrange
+        home = dir_symlink_home
+        # Act
+        is_link = (home / "tree").is_symlink()
+        # Assert
+        assert is_link is False
+
+    def test_directory_symlink_copies_top_level_file(self, dir_symlink_home):
+        # Arrange
+        home = dir_symlink_home
+        # Act
+        content = (home / "tree" / "a.txt").read_text()
+        # Assert
+        assert content == "A\n"
+
+    def test_directory_symlink_copies_nested_file(self, dir_symlink_home):
+        # Arrange
+        home = dir_symlink_home
+        # Act
+        content = (home / "tree" / "nested" / "b.txt").read_text()
+        # Assert
+        assert content == "B\n"
+
+    def test_nested_symlink_inside_resolved_dir_is_not_symlink(self, dir_symlink_home):
+        # Arrange
+        home = dir_symlink_home
+        # Act
+        is_link = (home / "tree" / "inner_link").is_symlink()
+        # Assert
+        assert is_link is False
+
+    def test_nested_symlink_inside_resolved_dir_has_real_content(
+        self, dir_symlink_home
+    ):
+        # Arrange
+        home = dir_symlink_home
+        # Act
+        content = (home / "tree" / "inner_link").read_text()
+        # Assert
+        assert content == "deep\n"
+
+    def test_dangling_symlink_raises_dedicated_error(self, dangling_symlink_error):
+        # Arrange — fixture materializes a dangling-symlink to_home/ and
+        # captures the raised error (failing the test if none is raised).
+        error = dangling_symlink_error
+        # Act
+        is_dedicated = isinstance(error, DanglingToHomeSymlinkError)
+        # Assert
+        assert is_dedicated is True
+
+    def test_dangling_symlink_message_names_path(self, dangling_symlink_error):
+        # Arrange
+        message = str(dangling_symlink_error)
+        # Act
+        names_path = "dead_link" in message
+        # Assert
+        assert names_path is True
+
+    def test_dangling_symlink_message_names_target(self, dangling_symlink_error):
+        # Arrange
+        message = str(dangling_symlink_error)
+        # Act
+        names_target = "nonexistent.txt" in message
+        # Assert
+        assert names_target is True
+
+    def test_dangling_symlink_leaves_no_partial_destination(
+        self, dangling_symlink_spec, dangling_symlink_error
+    ):
+        # Arrange — dangling_symlink_error triggers the (failed) deploy.
+        _spec_dir, home = dangling_symlink_spec
+        # Act
+        leftover = (home / "dead_link").exists() or (home / "dead_link").is_symlink()
+        # Assert
+        assert leftover is False
 
 
 # ---------------------------------------------------------------------------
@@ -732,52 +869,110 @@ class TestReadOnlyDestinationOverwrite:
 
 
 # ---------------------------------------------------------------------------
-# Integration: host ``~/.claude/skills/`` resolution is wired into both
-# :func:`materialize_to_home` and :func:`deploy_to_home`, and per-agent
-# ``to_home/`` still wins on conflict (PR #149 overlay contract).
-#
-# See ``test__skills_resolve.py`` for the lower-level unit tests of the
-# resolver itself; the tests here lock the wiring point so a future
-# refactor that drops the resolution from these entrypoints fails loud.
+# Isolation: the delivery path NEVER auto-reads host state. Host content
+# enters ONLY via an EXPLICIT symlink the operator places under to_home/
+# (e.g. ``_base/to_home/.claude/skills -> ~/.claude/skills``), which the
+# materialize walk resolves to real content. The old unconditional host
+# ``~/.claude/skills`` auto-read is gone — these tests lock that.
 # ---------------------------------------------------------------------------
 
 
-class TestHostSkillsResolutionWiring:
-    def test_materialize_to_home_resolves_host_skills_into_workspace_home(
+class TestNoHostAutoRead:
+    """The runtime must be reproducible from the definition alone. There
+    is no module that sources the host ``~/.claude/skills`` and no
+    ``deploy_to_home`` / ``materialize_to_home`` call that reads it.
+    """
+
+    def test_skills_resolve_module_is_removed(self):
+        # Arrange
+        import importlib.util
+
+        module_name = "scitex_agent_container.runtimes._skills_resolve"
+        # Act
+        spec = importlib.util.find_spec(module_name)
+        # Assert — the host-sourcing module no longer exists.
+        assert spec is None
+
+    def test_materialize_does_not_read_real_home_claude_skills(
         self, tmp_path, env_save_restore
     ):
-        # Arrange — point the resolver at a real source dir with one
-        # symlinked skill; spec_dir has no to_home of its own.
-        host_skills = tmp_path / "host_skills"
-        proj_source = tmp_path / "proj" / "general"
-        proj_source.mkdir(parents=True)
-        (proj_source / "SKILL.md").write_text("via materialize\n")
-        (host_skills).mkdir()
-        os.symlink(str(proj_source), host_skills / "general")
-        env_save_restore.set("SAC_HOST_SKILLS_DIR", str(host_skills))
+        # Arrange — a HOME whose ``.claude/skills`` exists with content
+        # that must NOT be auto-read; spec has no to_home referencing it.
+        fake_home = tmp_path / "fake_home"
+        host_skills = fake_home / ".claude" / "skills" / "leaked"
+        host_skills.mkdir(parents=True)
+        (host_skills / "SKILL.md").write_text("must not leak\n")
+        env_save_restore.set("HOME", str(fake_home))
         spec_dir = tmp_path / "spec"
-        spec_dir.mkdir()
+        (spec_dir / "to_home").mkdir(parents=True)
+        (spec_dir / "to_home" / "marker.txt").write_text("ok\n")
+        container_home = tmp_path / "container_home"
+        # Act
+        materialize_to_home(spec_dir, container_home)
+        # Assert — host skills must NOT have been auto-materialized.
+        assert not (container_home / ".claude" / "skills" / "leaked").exists()
+
+    def test_explicit_to_home_symlink_to_host_skills_is_resolved(self, tmp_path):
+        # Arrange — operator EXPLICITLY links host skills into to_home/;
+        # the walk must resolve it to real content (explicit-pass).
+        host_skills = tmp_path / "host" / ".claude" / "skills" / "general"
+        host_skills.mkdir(parents=True)
+        (host_skills / "SKILL.md").write_text("explicit\n")
+        spec_dir = tmp_path / "spec"
+        link_parent = spec_dir / "to_home" / ".claude"
+        link_parent.mkdir(parents=True)
+        os.symlink(str(host_skills.parent), link_parent / "skills")
         home = tmp_path / "home"
         # Act
         materialize_to_home(spec_dir, home)
         # Assert
         assert (
             home / ".claude" / "skills" / "general" / "SKILL.md"
-        ).read_text() == "via materialize\n"
+        ).read_text() == "explicit\n"
 
-    def test_deploy_to_home_resolves_host_skills_into_workspace_home(
-        self, tmp_path, env_save_restore
-    ):
+    def test_explicit_to_home_symlink_lands_as_real_content_not_symlink(self, tmp_path):
         # Arrange
-        host_skills = tmp_path / "host_skills"
-        proj_source = tmp_path / "proj" / "general"
-        proj_source.mkdir(parents=True)
-        (proj_source / "SKILL.md").write_text("via deploy\n")
-        host_skills.mkdir()
-        os.symlink(str(proj_source), host_skills / "general")
-        env_save_restore.set("SAC_HOST_SKILLS_DIR", str(host_skills))
+        host_skills = tmp_path / "host" / ".claude" / "skills" / "general"
+        host_skills.mkdir(parents=True)
+        (host_skills / "SKILL.md").write_text("explicit\n")
+        spec_dir = tmp_path / "spec"
+        link_parent = spec_dir / "to_home" / ".claude"
+        link_parent.mkdir(parents=True)
+        os.symlink(str(host_skills.parent), link_parent / "skills")
+        home = tmp_path / "home"
+        # Act
+        materialize_to_home(spec_dir, home)
+        # Assert
+        assert not (home / ".claude" / "skills").is_symlink()
+
+    def test_per_agent_to_home_overrides_baseline_on_conflict(self, tmp_path):
+        # Arrange — baseline ships a skill; per-agent to_home ships its
+        # own at the same path. Per-agent must win (overlay order).
+        agents_root = tmp_path / "agents"
+        base_skill = (
+            agents_root
+            / "_base"
+            / "to_home"
+            / ".claude"
+            / "skills"
+            / "general"
+            / "SKILL.md"
+        )
+        base_skill.parent.mkdir(parents=True)
+        base_skill.write_text("from baseline\n")
+        agent_skill = (
+            agents_root
+            / "ghost"
+            / "to_home"
+            / ".claude"
+            / "skills"
+            / "general"
+            / "SKILL.md"
+        )
+        agent_skill.parent.mkdir(parents=True)
+        agent_skill.write_text("from per-agent\n")
         cfg = AgentConfig(name="ghost")
-        cfg.config_path = str(tmp_path / "ghost" / "spec.yaml")
+        cfg.config_path = str(agents_root / "ghost" / "spec.yaml")
         cfg.to_home = ""
         home = tmp_path / "home"
         # Act
@@ -785,30 +980,4 @@ class TestHostSkillsResolutionWiring:
         # Assert
         assert (
             home / ".claude" / "skills" / "general" / "SKILL.md"
-        ).read_text() == "via deploy\n"
-
-    def test_per_agent_to_home_skill_overrides_host_resolved_skill_on_conflict(
-        self, tmp_path, env_save_restore
-    ):
-        # Arrange — host delivers the "general" skill; per-agent to_home
-        # ships its own .claude/skills/general/SKILL.md. Per-agent must
-        # win (overlay order locked: host first, then baseline, then
-        # per-agent on top).
-        host_skills = tmp_path / "host_skills"
-        proj_source = tmp_path / "proj" / "general"
-        proj_source.mkdir(parents=True)
-        (proj_source / "SKILL.md").write_text("from host\n")
-        host_skills.mkdir()
-        os.symlink(str(proj_source), host_skills / "general")
-        env_save_restore.set("SAC_HOST_SKILLS_DIR", str(host_skills))
-        cfg, root = _build_cfg(tmp_path)
-        agent_skill_md = root / ".claude" / "skills" / "general" / "SKILL.md"
-        agent_skill_md.parent.mkdir(parents=True)
-        agent_skill_md.write_text("from per-agent to_home\n")
-        home = tmp_path / "home"
-        # Act
-        deploy_to_home(cfg, str(home))
-        # Assert
-        assert (
-            home / ".claude" / "skills" / "general" / "SKILL.md"
-        ).read_text() == "from per-agent to_home\n"
+        ).read_text() == "from per-agent\n"

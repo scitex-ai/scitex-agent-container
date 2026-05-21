@@ -15,11 +15,11 @@ container ``$HOME`` — hooks/settings/.bashrc/etc. silently absent.
 
 Fix: materialize the SAME tree (1:1, all files — not just ``.claude``) into
 the overlay's upper directory at ``<overlay>/upper/<container_home>/`` BEFORE
-launch, so the whole tree is part of the container filesystem. The separate
-read-only skills bind (``/home/agent/.claude/skills``) then layers cleanly ON
-TOP at exec time — apptainer bind mounts always win at their exact mount
-point, so writing ``.claude/`` (settings, hooks) into the overlay does NOT
-shadow the skills sub-mount.
+launch, so the whole tree is part of the container filesystem. Skills arrive
+as real materialized content under ``.claude/skills/`` (the explicit
+``to_home`` symlink is dereference-copied by :mod:`_to_home`; see
+:mod:`_symlink_resolve`), so there is no separate read-only skills bind to
+layer on top and nothing to shadow.
 
 Only directory-form overlays support an upper layer. ``.img`` overlays are
 loopback ext3 images we cannot write into from the host without mounting
