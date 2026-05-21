@@ -46,7 +46,7 @@ metadata:
   labels: { project: <my-project>, purpose: <one-line> }
 
 spec:
-  runtime: claude-session         # SDK-native, no tmux pane scraping
+  runtime: apptainer              # the only accepted runtime (sac is apptainer-only)
   model: sonnet                   # alias for the latest Sonnet (4.6+)
   workdir: /absolute/path/to/repo
   # WARNING (F-CS8): NEVER point workdir at an umbrella directory
@@ -126,29 +126,20 @@ sac agents stop <name>
 sac agents restart <name>
 ```
 
-## Why `runtime: claude-session` (default)
+## How the agent runs — `runtime: apptainer`
 
-| Runtime | Drives | How |
-|---|---|---|
-| `claude-session` (default) | `claude-agent-sdk` Python library | direct, no multiplexer, structured tool events |
-| `claude-cli-tui` (formerly `claude-code`) | the `claude` CLI binary | tmux/screen pane, send-keys + screen-scrape (TUI mode) |
+sac is **apptainer-only** (since 2026-05-13). `runtime: apptainer` is the
+only accepted value (`config/_validation.py` rejects everything else) —
+there is no runtime to choose between. The agent runs the
+`claude-agent-sdk` runner (`scitex_agent_container._runners.claude_session`)
+**inside** an apptainer SIF (`sac-base.sif` + relaxed directory overlay +
+uv-editable `/opt/venv-agent`), invoked via `apptainer exec`. No terminal
+multiplexer, no auto-accept, no pane scraping — but still in-container,
+not a bare host process. The legacy CLI/TUI (`claude-code`) and host-side
+bare-Python runtimes were removed.
 
-`claude-session` is the default — lower latency, no auto-accept hacks,
-no pane scraping, programmatic tool events. Most new agents should use
-it.
-
-`claude-cli-tui` is **intentionally retained** as a stability fallback
-while `claude-session` matures: when the SDK runtime is unavailable,
-broken, or feature-incomplete on a given host, `claude-cli-tui` provides
-a known-good path through the same Anthropic CLI a human would run
-interactively. The orthogonal `spec.multiplexer: tmux|screen` field
-chooses *which* multiplexer to use under it.
-
-The name `claude-code` (legacy alias) will continue to be accepted but
-new agents should write `claude-cli-tui` to make the implementation
-mechanism explicit.
-
-See [15_claude-session.md](15_claude-session.md) for the runtime details.
+See [15_claude-session.md](15_claude-session.md) for the runner and
+container shape, and [24_image-build.md](24_image-build.md) for the SIF.
 
 ## Model selection — `sonnet` vs `opus`
 

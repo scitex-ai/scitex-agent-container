@@ -55,8 +55,8 @@ list`/`tail`/`health`).
 - [07_a2a-protocol.md](07_a2a-protocol.md) — Native A2A protocol (`sac a2a serve`)
 - [07_a2a-protocol-extension-fields.md](07_a2a-protocol-extension-fields.md) — `x-scitex-agent-container.*` AgentCard extension fields + JSON example
 - [08_templates.md](08_templates.md) — Six pattern templates + real-world examples
-- [15_claude-session.md](15_claude-session.md) — `runtime: claude-session` SDK-native runtime + `POST /v1/turn` inbound endpoint
-- [16_claude-session-migration.md](16_claude-session-migration.md) — Migrating an agent to claude-session
+- [15_claude-session.md](15_claude-session.md) — the claude-session SDK runner (inside the apptainer SIF) + `POST /v1/turn` inbound endpoint; `runtime: apptainer` is the operative runtime
+- [16_claude-session-migration.md](16_claude-session-migration.md) — historical: the claude-code → SDK migration is complete; `runtime` is apptainer-only now
 - [17_inbound-turn-endpoint.md](17_inbound-turn-endpoint.md) — `POST /v1/turn` wire format + sidecar replacement
 - [18_full-agent-delegation.md](18_full-agent-delegation.md) — Delegate multi-step work to another *full* Claude Code agent (vs Task subagent)
 - [19_full-agent-troubleshooting.md](19_full-agent-troubleshooting.md) — Operational deep-dives for sac peer fleets: stuck-peer recovery, reaper pattern, hard/soft skills, Monitor over polling

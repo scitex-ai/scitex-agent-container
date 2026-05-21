@@ -49,7 +49,7 @@ Response body fields:
 
 ## Remote agents — ssh-as-transport
 
-For agents declared with `spec.remote.host`, the runner stays on `127.0.0.1` (loopback only — no LAN exposure). Peers reach it through ssh:
+For agents pinned to another host via `spec.host`, the runner stays on `127.0.0.1` (loopback only — no LAN exposure). Peers reach it through ssh:
 
 ```python
 from scitex_agent_container.peer import post_turn
@@ -71,6 +71,6 @@ This works for ssh aliases that aren't DNS-resolvable from the caller (e.g., `mb
 ## See also
 
 - [10_cli.md](10_cli.md) — `sac listen` + `sac agents send` + `sac peer post-turn`
-- [17_inbound-turn-endpoint.md](17_inbound-turn-endpoint.md) — full reference: detailed wire examples, comparison vs legacy A2A sidecar, implementation files, `SAC_RUNNER_PREFIX` hook for SLURM / apptainer wrappers
+- [17_inbound-turn-endpoint.md](17_inbound-turn-endpoint.md) — full reference: detailed wire examples, comparison vs legacy A2A sidecar, implementation files, cross-host (`spec.host` / `sac --on`)
 - [03_python-api.md](03_python-api.md) — `peer.post_turn()` + `peer.PeerError`
-- [07_a2a-protocol.md](07_a2a-protocol.md) — JSON-RPC `message/send` surface (legacy `runtime: claude-code` only)
+- [07_a2a-protocol.md](07_a2a-protocol.md) — JSON-RPC `message/send` surface (sidecar path for non-SDK runtimes)
