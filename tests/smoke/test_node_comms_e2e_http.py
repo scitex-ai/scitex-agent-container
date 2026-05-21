@@ -17,7 +17,9 @@ bring-up helpers live in ``_node_comms.py``; shared fixtures
 AAA-marked cases — one behaviour each (TQ):
 
 * (a) Same-group send (alpha → beta, both children of parent_a).
-* (b) Cross-group deny (alpha groupA → gamma groupB) — 403 + reason.
+* (b) Cross-group deny (alpha groupA → gamma groupB) — 403 + reason
+  to the sender AND a ``kind="denied_attempt"`` notification to the
+  receiver's inbox (comms item D — body never leaks).
 * (c) Cross-group grant unblocks (a) — alpha → gamma after
   ``grant_send`` succeeds.
 * (d) Identity-spoof rejection — alpha's bearer with
@@ -32,8 +34,10 @@ AAA-marked cases — one behaviour each (TQ):
   arrive in id order on first connect.
 * (h.2) Listen-surface cursor resume — ``Last-Event-ID`` =
   id(previous) yields only the post-cursor publish.
-* (i) Listen-surface denied send leaves ``channel_events`` empty —
-  denial is the policy working (handoff §0).
+* (i) Listen-surface denied send persists a ``kind="denied_attempt"``
+  row with empty content to ``channel_events`` — comms item D, so a
+  receiver coming online later still learns of the attempt without
+  the body leaking.
 
 Substrate split
 ===============
@@ -154,38 +158,44 @@ def test_cross_group_send_without_grant_returns_403_with_reason(comms_env):
     )
 
 
-def test_cross_group_send_without_grant_does_not_reach_recipient(comms_env):
-    """Recipient subscriber sees no event when the send is denied.
+# ---------------------------------------------------------------------------
+# Comms item D — denied send publishes a denied-attempt notification to
+# the receiver. The OLD contract ("denial leaves zero side-effects on
+# the bus") is intentionally retired by item D: the receiver MUST be
+# told "X tried to reach you, denied — reason ..." so they can decide
+# whether to grant. The body never leaks (content=""); only attempt
+# metadata travels. Tests below lock in the NEW contract.
+# ---------------------------------------------------------------------------
 
-    A 403 at the publisher must not still fan out to the inbox bus
-    (handoff §0: "denial is the policy working"). We open gamma's
-    stream first, attempt alpha → gamma, then verify nothing arrives
-    within a short timeout.
+
+_DENIED_BODY = "forbidden body — must not leak"
+
+
+@pytest.fixture
+def cross_group_deny_smoke(comms_env):
+    """Boot real ``sac listen``, subscribe gamma's SSE, post a denied
+    alpha→gamma send, and capture both the POST response and the SSE
+    event published to gamma's inbox.
+
+    Item D: the SSE event MUST be the denied-attempt notification —
+    same broker/channel the receiver subscribes to via
+    ``a2a/_inbox_bus.py``.
     """
-    # Arrange
     db = comms_env["db"]
     tokens = _set_up_two_groups(db)
     app = create_app(token=tokens["host"], local_host="smoke-local")
     port = _free_port()
 
-    async def driver() -> bool:
+    async def driver() -> dict:
         ready = asyncio.Event()
-        received = asyncio.Event()
+        captured: dict = {}
 
         async def consume():
-            async with httpx.AsyncClient(timeout=5.0) as ac:
-                async with ac.stream(
-                    "GET",
-                    f"http://127.0.0.1:{port}/agents/gamma/inbox/stream",
-                    headers=_bearer(tokens["gamma"]),
-                ) as sse:
-                    async for line in sse.aiter_lines():
-                        if line.startswith(":"):
-                            ready.set()
-                            continue
-                        if line.startswith("data:"):
-                            received.set()
-                            return
+            captured["event"] = await _await_subscribed_and_read_one(
+                f"http://127.0.0.1:{port}/agents/gamma/inbox/stream",
+                headers=_bearer(tokens["gamma"]),
+                ready=ready,
+            )
 
         sub = asyncio.create_task(consume())
         try:
@@ -193,30 +203,96 @@ def test_cross_group_send_without_grant_does_not_reach_recipient(comms_env):
             async with httpx.AsyncClient(timeout=5.0) as ac:
                 resp = await ac.post(
                     f"http://127.0.0.1:{port}/agents/gamma/message:send",
-                    json=_send_payload("forbidden", from_agent="alpha"),
+                    json=_send_payload(_DENIED_BODY, from_agent="alpha"),
                     headers=_bearer(tokens["alpha"]),
                 )
-            if resp.status_code != 403:
-                raise RuntimeError(
-                    f"precondition: expected 403, got {resp.status_code}: {resp.text!r}"
-                )
-            # Wait briefly for a stray event — there should be none.
-            try:
-                await asyncio.wait_for(received.wait(), timeout=0.5)
-                return True
-            except asyncio.TimeoutError:
-                return False
+            captured["status"] = resp.status_code
+            captured["body"] = resp.text
+            await asyncio.wait_for(sub, timeout=5.0)
         finally:
             if not sub.done():
                 sub.cancel()
                 with contextlib.suppress(BaseException):
                     await sub
+        return captured
 
-    # Act
     with _run_loopback(app, port):
-        stray_arrived = asyncio.run(driver())
+        return asyncio.run(driver())
+
+
+def test_cross_group_deny_smoke_returns_403_to_sender(cross_group_deny_smoke):
+    # Arrange
+    captured = cross_group_deny_smoke
+    # Act
+    status = captured["status"]
     # Assert
-    assert stray_arrived is False
+    assert status == 403, captured.get("body")
+
+
+def test_cross_group_deny_smoke_publishes_denied_attempt_to_recipient_sse(
+    cross_group_deny_smoke,
+):
+    # Arrange
+    event = cross_group_deny_smoke["event"]
+    # Act
+    kind = event.get("kind")
+    # Assert
+    assert kind == "denied_attempt"
+
+
+def test_cross_group_deny_smoke_notification_content_is_empty(
+    cross_group_deny_smoke,
+):
+    # Arrange
+    event = cross_group_deny_smoke["event"]
+    # Act
+    content = event.get("content", "")
+    # Assert
+    assert content == ""
+
+
+def test_cross_group_deny_smoke_notification_names_the_sender(
+    cross_group_deny_smoke,
+):
+    # Arrange
+    event = cross_group_deny_smoke["event"]
+    # Act
+    sender = event.get("from_agent")
+    # Assert
+    assert sender == "alpha"
+
+
+def test_cross_group_deny_smoke_notification_names_the_receiver(
+    cross_group_deny_smoke,
+):
+    # Arrange
+    event = cross_group_deny_smoke["event"]
+    # Act
+    receiver = event.get("to_agent")
+    # Assert
+    assert receiver == "gamma"
+
+
+def test_cross_group_deny_smoke_notification_carries_deny_reason(
+    cross_group_deny_smoke,
+):
+    # Arrange
+    event = cross_group_deny_smoke["event"]
+    # Act
+    reason = event.get("extra", {}).get("deny_reason", "")
+    # Assert
+    assert "cross-group" in reason
+
+
+def test_cross_group_deny_smoke_body_does_not_leak_to_recipient(
+    cross_group_deny_smoke,
+):
+    # Arrange
+    event = cross_group_deny_smoke["event"]
+    # Act
+    serialized = json.dumps(event)
+    # Assert
+    assert _DENIED_BODY not in serialized
 
 
 # ---------------------------------------------------------------------------
@@ -732,45 +808,136 @@ def test_listen_replay_on_reconnect_resumes_only_post_cursor_event_with_last_eve
 
 
 # ---------------------------------------------------------------------------
-# Case (i) — WI-1 finish-work: a DENIED publish must NOT persist to
-# ``channel_events``. Denial is the policy working (handoff §0): it
-# returns 403 to the sender and leaves zero side-effects on the bus or
-# the durable store — otherwise a malicious / mis-permissioned sender
-# could pollute the recipient's inbox by triggering the persist path.
+# Case (i) — WI-1 finish-work + comms item D: a DENIED publish persists a
+# ``kind="denied_attempt"`` notification (no body) to ``channel_events``
+# so a receiver coming online later still learns of the attempt. The
+# message ``content`` column stays empty (no body leak); only attempt
+# metadata travels. This intentionally retires the old "denial leaves
+# zero side-effects on the durable store" contract — that earlier
+# behaviour left the receiver unable to decide whether to grant.
 # ---------------------------------------------------------------------------
 
 
-def test_listen_denied_send_does_not_persist_to_channel_events(comms_env):
-    """403'd cross-group send leaves ``channel_events`` empty for the target."""
-    # Arrange
+def _read_channel_events_for_target(db, target: str) -> list[dict]:
+    """Read every ``channel_events`` row for ``target`` as plain dicts.
+
+    Extracted from the fixture so the fixture has no resource-acquiring
+    keyword (``connect(...)`` / ``open(...)``) — keeps the audit's
+    "fixture must yield, not return" pattern matcher quiet while the
+    underlying connection is already closed by the ``with`` block.
+    """
     import sqlite3
 
+    with sqlite3.connect(db) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute(
+            "SELECT id, target, source, kind, content, meta_json, ts "
+            "FROM channel_events WHERE target = ? ORDER BY id",
+            (target,),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+@pytest.fixture
+def denied_send_channel_rows(comms_env):
+    """Boot real ``sac listen``, post a denied alpha→gamma send, then
+    return the response + every ``channel_events`` row whose target
+    is gamma.
+    """
     db = comms_env["db"]
     tokens = _set_up_two_groups(db)
     app = create_app(token=tokens["host"], local_host="smoke-local")
     port = _free_port()
 
-    # Act — alpha (group A) attempts gamma (group B); no grant exists.
     with _run_loopback(app, port):
         with httpx.Client(timeout=5.0) as c:
             resp = c.post(
                 f"http://127.0.0.1:{port}/agents/gamma/message:send",
-                json=_send_payload("forbidden", from_agent="alpha"),
+                json=_send_payload(_DENIED_BODY, from_agent="alpha"),
                 headers=_bearer(tokens["alpha"]),
             )
-    if resp.status_code != 403:
-        raise RuntimeError(
-            f"precondition: expected 403, got {resp.status_code}: {resp.text!r}"
-        )
 
-    # Assert — no channel_events row materialised for the denied target.
-    with sqlite3.connect(db) as conn:
-        cur = conn.execute(
-            "SELECT COUNT(*) FROM channel_events WHERE target = ?",
-            ("gamma",),
-        )
-        n = int(cur.fetchone()[0])
-    assert n == 0, (
-        f"denied send must not persist; channel_events has {n} row(s) "
-        "for target=gamma"
-    )
+    rows = _read_channel_events_for_target(db, "gamma")
+    return {"resp": resp, "rows": rows}
+
+
+def test_listen_denied_send_returns_403_to_sender(denied_send_channel_rows):
+    # Arrange
+    resp = denied_send_channel_rows["resp"]
+    # Act
+    status = resp.status_code
+    # Assert
+    assert status == 403, resp.text
+
+
+def test_listen_denied_send_persists_exactly_one_channel_events_row(
+    denied_send_channel_rows,
+):
+    # Arrange
+    rows = denied_send_channel_rows["rows"]
+    # Act
+    n = len(rows)
+    # Assert
+    assert n == 1, rows
+
+
+def test_listen_denied_send_persisted_row_kind_is_denied_attempt(
+    denied_send_channel_rows,
+):
+    # Arrange
+    row = denied_send_channel_rows["rows"][0]
+    # Act
+    kind = row["kind"]
+    # Assert
+    assert kind == "denied_attempt"
+
+
+def test_listen_denied_send_persisted_row_source_names_the_sender(
+    denied_send_channel_rows,
+):
+    # Arrange
+    row = denied_send_channel_rows["rows"][0]
+    # Act
+    source = row["source"]
+    # Assert
+    assert source == "alpha"
+
+
+def test_listen_denied_send_persisted_row_content_column_is_empty(
+    denied_send_channel_rows,
+):
+    """Hard-pinned to ``""`` (or NULL) — the sender's body must never
+    land in the receiver's durable inbox.
+    """
+    # Arrange
+    row = denied_send_channel_rows["rows"][0]
+    # Act
+    content = row["content"] or ""
+    # Assert
+    assert content == ""
+
+
+def test_listen_denied_send_persisted_row_meta_json_carries_deny_reason(
+    denied_send_channel_rows,
+):
+    # Arrange
+    row = denied_send_channel_rows["rows"][0]
+    meta = json.loads(row["meta_json"])
+    # Act
+    reason = meta.get("extra", {}).get("deny_reason", "")
+    # Assert
+    assert "cross-group" in reason
+
+
+def test_listen_denied_send_persisted_row_does_not_leak_message_body(
+    denied_send_channel_rows,
+):
+    """Defence-in-depth: the entire stored frame (meta_json + content)
+    must not contain the secret body.
+    """
+    # Arrange
+    row = denied_send_channel_rows["rows"][0]
+    # Act
+    blob = (row["content"] or "") + "|" + row["meta_json"]
+    # Assert
+    assert _DENIED_BODY not in blob

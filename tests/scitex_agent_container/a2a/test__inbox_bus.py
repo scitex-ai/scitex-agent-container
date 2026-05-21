@@ -360,20 +360,43 @@ def test_mint_deny_notification_marks_kind_denied_attempt() -> None:
     assert kind == "denied_attempt"
 
 
-def test_mint_deny_notification_carries_from_to_and_reason() -> None:
+def test_mint_deny_notification_carries_from_agent() -> None:
     # Arrange
     event = mint_deny_notification(
         target="alice",
         from_agent="mallory",
         reason="cross-group: mallory may not address alice",
     )
-    # Act / Assert
-    assert event["from_agent"] == "mallory"
-    assert event["to_agent"] == "alice"
-    assert (
-        event["extra"]["deny_reason"]
-        == "cross-group: mallory may not address alice"
+    # Act
+    from_agent = event["from_agent"]
+    # Assert
+    assert from_agent == "mallory"
+
+
+def test_mint_deny_notification_carries_to_agent() -> None:
+    # Arrange
+    event = mint_deny_notification(
+        target="alice",
+        from_agent="mallory",
+        reason="cross-group: mallory may not address alice",
     )
+    # Act
+    to_agent = event["to_agent"]
+    # Assert
+    assert to_agent == "alice"
+
+
+def test_mint_deny_notification_carries_deny_reason_verbatim() -> None:
+    # Arrange
+    event = mint_deny_notification(
+        target="alice",
+        from_agent="mallory",
+        reason="cross-group: mallory may not address alice",
+    )
+    # Act
+    reason = event["extra"]["deny_reason"]
+    # Assert
+    assert reason == "cross-group: mallory may not address alice"
 
 
 def test_mint_deny_notification_has_empty_content() -> None:
