@@ -120,4 +120,4 @@ fi
 # export SAC_RUNNER_PREFIX="apptainer exec --bind $HOME/proj:$HOME/proj \"$HOME/scitex-images/sac-0.13.sif\""
 ```
 
-This keeps SLURM, apptainer, container-runtime, conda-env-activation, etc. as **user-side concerns** — sac stays generic. The package ships a single env-var honor; users compose their own dispatch. Live-verified 2026-05-03 against `spartan-bm198`: same `sac agent start` command works on plain ssh hosts and Spartan compute nodes simultaneously.
+This keeps SLURM, apptainer, container-runtime, conda-env-activation, etc. as **user-side concerns** — sac stays generic. The package ships a single env-var honor; users compose their own dispatch. Live-verified 2026-05-03 against `spartan-bm198`: same `sac agents start` command works on plain ssh hosts and Spartan compute nodes simultaneously.

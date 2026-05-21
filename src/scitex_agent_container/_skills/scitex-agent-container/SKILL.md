@@ -1,9 +1,9 @@
 ---
 name: scitex-agent-container
 description: |
-  [WHAT] Declarative YAML-based AI agent lifecycle management — define an agent in one YAML manifest (runtime, model, MCP, env, health, restart, remote SSH host) and `sac agent start` brings it up with auto-accept TUI handling, SSH remote deployment, A2A protocol sidecar, and live pane-state inspection.
-  [WHEN] Use when the user asks to "launch a Claude Code agent", "spawn a fleet of coding agents", "manage agent lifecycle", "run an agent on a remote host", "auto-accept Claude permission prompts", "wire MCP servers into an agent", or mentions `sac agent start`, `scitex-agent-container`, agent YAML, fleet head/worker.
-  [HOW] `pip install scitex-agent-container` then `import scitex_agent_container`; see leaf skills for details.
+  [WHAT] Declarative YAML-based AI agent lifecycle management — define an agent in one `spec.yaml` (apptainer image, model, MCP, mounts/env, health, restart, A2A port, remote host) and `sac agents start` brings it up as a long-lived Claude SDK session inside Apptainer, with A2A inbound (`POST /v1/turn`), SSH remote deployment, and JSON status introspection.
+  [WHEN] Use when the user asks to "launch a Claude Code agent", "spawn a fleet of coding agents", "manage agent lifecycle", "run an agent on a remote host", "wire MCP servers into an agent", "talk to a running agent over A2A", or mentions `sac agents start`, `scitex-agent-container`, `spec.yaml`, fleet head/worker.
+  [HOW] `pip install scitex-agent-container` then `sac agents start <name>` (CLI) or `import scitex_agent_container`; see leaf skills for details.
 tags: [scitex-agent-container]
 primary_interface: cli
 interfaces:
@@ -19,19 +19,19 @@ interfaces:
 > **Interfaces:** Python ⭐⭐ · CLI ⭐⭐⭐ (primary) · MCP ⭐ · Skills ⭐⭐ · Hook — · HTTP —
 
 Declarative lifecycle management for AI coding agents (Claude Code).
-Define an agent in YAML, launch it in a tmux (default) or screen
-session locally or on a remote host via SSH, and observe it through a
-rich non-agentic status surface.
+Define an agent in `spec.yaml`, launch it as a long-lived Claude SDK
+session inside Apptainer — locally or on a remote host via SSH — and
+observe it through a rich non-agentic status surface (`sac agents
+list`/`tail`/`health`).
 
 ## What the package ships
 
 | Surface | Location |
 |---|---|
-| Python API | `scitex_agent_container` (`AgentConfig`, `load_config`, `agent_start`/`stop`/`restart`/`status`/`logs`, `Registry`) |
+| Python API | `scitex_agent_container` (`AgentConfig`, `load_config`, `validate_config`, `Registry`, + namespaced submodules `agent.start`/`stop`/`status`/`logs`, `db.*`, `host.*`, `peer.*`) |
 | CLI | `scitex-agent-container`, `sac` — see [10_cli.md](10_cli.md) |
 | MCP servers | None bundled — agents spawn their own via `to_home/.mcp.json` |
 | Runtimes | `runtimes/claude_session.py` (SDK-native, default); apptainer container build helpers |
-| PaneActions | See [14_pane-actions.md](14_pane-actions.md) |
 | Observability | See [13_observability.md](13_observability.md) |
 | Config format | v3 `scitex-agent-container/v3` only — v2 is rejected |
 
@@ -40,7 +40,7 @@ rich non-agentic status surface.
 ### Onboarding & interfaces
 - [01_installation.md](01_installation.md) — pip install + auth + per-host hook
 - [02_quick-start.md](02_quick-start.md) — first agent in 30 seconds
-- [03_python-api.md](03_python-api.md) — programmatic surface (`agent_start`, `peer.post_turn`, ...)
+- [03_python-api.md](03_python-api.md) — programmatic surface (`agent.start`, `peer.post_turn`, ...)
 - [04_cli-reference.md](04_cli-reference.md) — every `sac` subcommand
 - [05_mcp-tools.md](05_mcp-tools.md) — `sac mcp` server, tool inventory, install snippet (F-CS15)
 - [06_http-api.md](06_http-api.md) — `POST /v1/turn` wire format (set `spec.a2a.port` to enable)
@@ -69,8 +69,7 @@ rich non-agentic status surface.
 - [25_claude-setup-delivery.md](25_claude-setup-delivery.md) — how sac passes Claude setup explicitly into apptainer agents: `to_home`→`$HOME` 1:1 mirror, overlay/`--home` delivery, `--settings` hook load, `setting_sources=[]`
 
 ### Reference
-- [13_observability.md](13_observability.md) — `sac agent status` JSON contract
-- [14_pane-actions.md](14_pane-actions.md) — Typed pane-mediated operations
+- [13_observability.md](13_observability.md) — `sac agents status` JSON contract
 
 ### Lessons
 - [40_troubleshooting.md](40_troubleshooting.md) — Common issues and debugging
@@ -86,7 +85,10 @@ rich non-agentic status surface.
 
 ```bash
 pip install scitex-agent-container
-sac agent start my-agent.yaml
-sac agent status my-agent --json | jq .pane_state
-sac agent attach my-agent           # Ctrl-B D to detach
+# Each agent lives in its own dir; the dir name is the agent name.
+mkdir -p ~/.scitex/agent-container/agents/my-agent
+$EDITOR ~/.scitex/agent-container/agents/my-agent/spec.yaml   # see 01_config-v3.md
+sac agents start my-agent                       # daemon by default; --foreground streams stdio
+sac agents list my-agent --json                 # single-agent status view
+sac agents tail my-agent                         # render session.jsonl transcript
 ```

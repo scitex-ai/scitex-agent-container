@@ -19,7 +19,7 @@ sac sees a single thing on its comms graph: **nodes**. A node is an
 
 | Kind          | Lifecycle owner                                       | Example                                                                       |
 |---------------|-------------------------------------------------------|-------------------------------------------------------------------------------|
-| sac-managed   | sac (spec, container, start/stop/health)              | An agent declared in a `spec.yaml`, launched by `sac agent start`.            |
+| sac-managed   | sac (spec, container, start/stop/health)              | An agent declared in a `spec.yaml`, launched by `sac agents start`.            |
 | **external**  | NOT sac — the operator, a separate tool, a human      | A plain `claude` CLI session, joining via `sac mcp channel --name <id>`.      |
 
 Both kinds are equal on the comms graph. Whatever *role* the orchestration
@@ -219,7 +219,7 @@ spec:
       - server:sac
 ```
 
-When `server:sac` is in `channels`, `sac agent start` auto-spawns
+When `server:sac` is in `channels`, `sac agents start` auto-spawns
 `sac mcp channel --name <agent>` as a stdio MCP subprocess of the agent's
 Claude session; it subscribes to the host-local
 `/agents/<name>/inbox/stream` SSE and pushes

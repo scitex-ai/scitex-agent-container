@@ -33,5 +33,5 @@ agent execution mechanism, and SAC does not manage it.
 
 Use the SDK runtime's own surfaces instead of `tmux attach`:
 
-- `sac agent logs <name>` — rendered transcript from `session.jsonl`.
-- `sac agent start <name> --foreground` — stream a turn to your terminal.
+- `sac agents tail <name>` — rendered transcript from `session.jsonl`.
+- `sac agents start <name> --foreground` — stream a turn to your terminal.
