@@ -825,6 +825,36 @@ def test_read_sdk_session_state_surfaces_accumulated_quota_turns(
     assert payload["quota"]["turns"] == 1
 
 
+def test_read_sdk_session_state_heartbeat_carries_elapsed_s(
+    isolated_local_state: Path,
+):
+    # Arrange — record a start time then beat so the heartbeat has elapsed_s.
+    from scitex_agent_container._runners import _session_state as ss
+
+    state_dir = isolated_local_state / "runtime" / "alpha"
+    ss.write_started_at(state_dir)
+    ss.write_heartbeat(state_dir, pid=1, state=ss.STATE_IDLE)
+    # Act
+    payload = tr_mod._read_sdk_session_state("alpha", workdir="/tmp")
+    # Assert
+    assert "elapsed_s" in payload["heartbeat"]
+
+
+def test_read_sdk_session_state_heartbeat_carries_total_tokens(
+    isolated_local_state: Path,
+):
+    # Arrange — accumulate usage then beat so the heartbeat has total_tokens.
+    from scitex_agent_container._runners import _session_state as ss
+
+    state_dir = isolated_local_state / "runtime" / "alpha"
+    ss.accumulate_quota(state_dir, {"input_tokens": 7, "output_tokens": 11})
+    ss.write_heartbeat(state_dir, pid=1, state=ss.STATE_IDLE)
+    # Act
+    payload = tr_mod._read_sdk_session_state("alpha", workdir="/tmp")
+    # Assert
+    assert payload["heartbeat"]["total_tokens"] == 18
+
+
 # ---------------------------------------------------------------------------
 # collect_rich — end-to-end smoke + key fields
 # ---------------------------------------------------------------------------
