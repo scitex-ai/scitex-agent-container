@@ -20,6 +20,17 @@ import os
 import time
 from pathlib import Path
 
+# Session-id resume marker + append-only history live in a focused
+# module to keep this file under the 512-line cap. Re-exported here
+# (explicit ``as`` aliases mark the intentional re-export) so the
+# existing importers of ``_session_state.{write,read,clear}_session_id``
+# keep working unchanged.
+from ._session_id import append_session_id_history as append_session_id_history
+from ._session_id import clear_session_id as clear_session_id
+from ._session_id import read_session_id as read_session_id
+from ._session_id import read_session_id_history as read_session_id_history
+from ._session_id import write_session_id as write_session_id
+
 DEFAULT_STATE_ROOT = Path(
     os.environ.get(
         "SCITEX_AGENT_CONTAINER_RUNTIME_DIR",
@@ -378,48 +389,15 @@ def accumulate_quota(state_dir: Path, usage: dict | None) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Session id (resume marker)
+# Session id (resume marker) + append-only history
+#
+# Implementation extracted to ``_session_id.py`` (focused module, keeps
+# this file under the 512-line cap) and imported at the top of this
+# module. The names ``write_session_id`` / ``read_session_id`` /
+# ``clear_session_id`` (plus the new ``append_session_id_history`` /
+# ``read_session_id_history``) therefore resolve as
+# ``_session_state.<name>`` unchanged for every existing caller.
 # ---------------------------------------------------------------------------
-
-
-def write_session_id(state_dir: Path, session_id: str) -> None:
-    """Persist the SDK session id so a respawn can resume."""
-    state_dir.mkdir(parents=True, exist_ok=True)
-    tmp = state_dir / "session_id.tmp"
-    tmp.write_text(session_id, encoding="utf-8")
-    tmp.replace(state_dir / "session_id")
-
-
-def read_session_id(state_dir: Path) -> str | None:
-    """Return the persisted session id, or None if absent."""
-    p = state_dir / "session_id"
-    if not p.is_file():
-        return None
-    try:
-        return p.read_text(encoding="utf-8").strip() or None
-    except OSError:
-        return None
-
-
-def clear_session_id(state_dir: Path) -> bool:
-    """Remove the persisted ``session_id`` resume marker.
-
-    Used by ``agent_start(force=True)`` so a stale session id left over
-    from a previous run can't make the SDK try to resume a conversation
-    the server has already aged out (symptom: ``ProcessError: Command
-    failed with exit code 1`` ~90s into the first turn).
-
-    Returns True if a file was removed, False if there was nothing to
-    remove. Never raises FileNotFoundError; never silently swallows
-    other ``OSError``s (callers want a loud failure if e.g. the runtime
-    dir is unreadable due to permissions).
-    """
-    p = state_dir / "session_id"
-    try:
-        p.unlink()
-        return True
-    except FileNotFoundError:
-        return False
 
 
 # ---------------------------------------------------------------------------
