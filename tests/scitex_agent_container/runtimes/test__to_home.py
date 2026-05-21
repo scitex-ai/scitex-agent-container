@@ -729,3 +729,86 @@ class TestReadOnlyDestinationOverwrite:
         materialize_to_home(spec_dir, home)
         # Assert
         assert dst.read_text() == "KEY=new\n"
+
+
+# ---------------------------------------------------------------------------
+# Integration: host ``~/.claude/skills/`` resolution is wired into both
+# :func:`materialize_to_home` and :func:`deploy_to_home`, and per-agent
+# ``to_home/`` still wins on conflict (PR #149 overlay contract).
+#
+# See ``test__skills_resolve.py`` for the lower-level unit tests of the
+# resolver itself; the tests here lock the wiring point so a future
+# refactor that drops the resolution from these entrypoints fails loud.
+# ---------------------------------------------------------------------------
+
+
+class TestHostSkillsResolutionWiring:
+    def test_materialize_to_home_resolves_host_skills_into_workspace_home(
+        self, tmp_path, env_save_restore
+    ):
+        # Arrange — point the resolver at a real source dir with one
+        # symlinked skill; spec_dir has no to_home of its own.
+        host_skills = tmp_path / "host_skills"
+        proj_source = tmp_path / "proj" / "general"
+        proj_source.mkdir(parents=True)
+        (proj_source / "SKILL.md").write_text("via materialize\n")
+        (host_skills).mkdir()
+        os.symlink(str(proj_source), host_skills / "general")
+        env_save_restore.set("SAC_HOST_SKILLS_DIR", str(host_skills))
+        spec_dir = tmp_path / "spec"
+        spec_dir.mkdir()
+        home = tmp_path / "home"
+        # Act
+        materialize_to_home(spec_dir, home)
+        # Assert
+        assert (
+            home / ".claude" / "skills" / "general" / "SKILL.md"
+        ).read_text() == "via materialize\n"
+
+    def test_deploy_to_home_resolves_host_skills_into_workspace_home(
+        self, tmp_path, env_save_restore
+    ):
+        # Arrange
+        host_skills = tmp_path / "host_skills"
+        proj_source = tmp_path / "proj" / "general"
+        proj_source.mkdir(parents=True)
+        (proj_source / "SKILL.md").write_text("via deploy\n")
+        host_skills.mkdir()
+        os.symlink(str(proj_source), host_skills / "general")
+        env_save_restore.set("SAC_HOST_SKILLS_DIR", str(host_skills))
+        cfg = AgentConfig(name="ghost")
+        cfg.config_path = str(tmp_path / "ghost" / "spec.yaml")
+        cfg.to_home = ""
+        home = tmp_path / "home"
+        # Act
+        deploy_to_home(cfg, str(home))
+        # Assert
+        assert (
+            home / ".claude" / "skills" / "general" / "SKILL.md"
+        ).read_text() == "via deploy\n"
+
+    def test_per_agent_to_home_skill_overrides_host_resolved_skill_on_conflict(
+        self, tmp_path, env_save_restore
+    ):
+        # Arrange — host delivers the "general" skill; per-agent to_home
+        # ships its own .claude/skills/general/SKILL.md. Per-agent must
+        # win (overlay order locked: host first, then baseline, then
+        # per-agent on top).
+        host_skills = tmp_path / "host_skills"
+        proj_source = tmp_path / "proj" / "general"
+        proj_source.mkdir(parents=True)
+        (proj_source / "SKILL.md").write_text("from host\n")
+        host_skills.mkdir()
+        os.symlink(str(proj_source), host_skills / "general")
+        env_save_restore.set("SAC_HOST_SKILLS_DIR", str(host_skills))
+        cfg, root = _build_cfg(tmp_path)
+        agent_skill_md = root / ".claude" / "skills" / "general" / "SKILL.md"
+        agent_skill_md.parent.mkdir(parents=True)
+        agent_skill_md.write_text("from per-agent to_home\n")
+        home = tmp_path / "home"
+        # Act
+        deploy_to_home(cfg, str(home))
+        # Assert
+        assert (
+            home / ".claude" / "skills" / "general" / "SKILL.md"
+        ).read_text() == "from per-agent to_home\n"
