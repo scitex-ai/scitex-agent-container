@@ -142,6 +142,26 @@ def test_agent_send_forwards_max_turns_kwarg():
     assert last["kwargs"]["max_turns"] == 3
 
 
+def test_agent_send_defaults_wait_to_false_nonblocking():
+    # Arrange
+    with _swap_send_to_agent() as captured:
+        # Act
+        agent_send("alpha", prompt="hi")
+        last = captured[-1]
+    # Assert — default dispatch is non-blocking.
+    assert last["kwargs"]["wait"] is False
+
+
+def test_agent_send_forwards_explicit_wait_kwarg():
+    # Arrange
+    with _swap_send_to_agent() as captured:
+        # Act
+        agent_send("alpha", prompt="hi", wait=True)
+        last = captured[-1]
+    # Assert
+    assert last["kwargs"]["wait"] is True
+
+
 def test_agent_send_returns_send_to_agent_payload_verbatim():
     # Arrange
     with _swap_send_to_agent():

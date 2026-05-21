@@ -179,6 +179,8 @@ async def run_conversation(
     build_sdk_options_fn: Any | None = None,
     host: str | None = None,
     db_writer=None,
+    channels: list[str] | None = None,
+    a2a_port: int | None = None,
 ) -> None:
     """Drive an inbox-driven conversation against ``ClaudeSDKClient``.
 
@@ -230,6 +232,21 @@ async def run_conversation(
 
     hooks = build_event_log_hooks(name, HookMatcher)
 
+    # Thread spec.claude.channels + the runner's own a2a_port into the
+    # SDK options under the sac-private ``extra`` keys so build_sdk_options
+    # auto-registers the ``sac mcp channel`` stdio MCP when channels
+    # contains ``server:sac`` (see runtimes/_sdk_common.py). Without this
+    # the long-lived daemon session never subscribes to its inbox SSE and
+    # ``a2a_send`` to it yields delivered_subscriber_count=0. Mirrors the
+    # legacy stateless path in a2a/_handlers.py.
+    sdk_extra: dict | None = None
+    if channels or a2a_port is not None:
+        sdk_extra = {}
+        if channels:
+            sdk_extra["_channels"] = list(channels)
+        if a2a_port is not None:
+            sdk_extra["_a2a_port"] = int(a2a_port)
+
     attempt = 0
     last_exc: BaseException | None = None
     while True:
@@ -242,18 +259,33 @@ async def run_conversation(
                 permission_mode="bypassPermissions",
                 resume=current_sid,
                 hooks=hooks,
+                extra=sdk_extra,
             )
         except SDKCommonError as exc:
-            logger.error("could not build sdk options: %s", exc)
+            # A missing/expired credentials file fails option-building
+            # with the refresh hint already in the message; classify it
+            # as auth-expired so the operator-facing record names the
+            # cause rather than the generic ``sdk-options``.
+            from ._auth_failure import (
+                AUTH_FAILURE_CAUSE,
+                classify_auth_failure,
+            )
+
+            auth_detail = classify_auth_failure(exc)
+            if auth_detail is not None:
+                opt_cause, opt_detail = AUTH_FAILURE_CAUSE, auth_detail
+            else:
+                opt_cause, opt_detail = "sdk-options", str(exc)
+            logger.error("could not build sdk options: %s", opt_detail)
             append_session_message(
-                state_dir, {"type": "error", "kind": "options", "detail": str(exc)}
+                state_dir, {"type": "error", "kind": "options", "detail": opt_detail}
             )
             if host:
                 report_sdk_error(
                     name=name,
                     host=host,
-                    cause="sdk-options",
-                    detail=str(exc),
+                    cause=opt_cause,
+                    detail=opt_detail,
                     db_writer=db_writer,
                 )
             _drain_failed_inbox(inbox, exc)
@@ -286,13 +318,35 @@ async def run_conversation(
                         return
         except Exception as exc:  # stx-allow: fallback (reason: SDK surface is broad; supervisor decides retry vs terminate)
             last_exc = exc
-            logger.exception("claude-session conversation failed for %s", name)
+            # Auth/credential death (expired or rotated OAuth token,
+            # 401, invalid key) bubbles up here as a generic SDK
+            # exception. Classify it so the operator sees a LOUD,
+            # specific signal with the manual-refresh hint instead of an
+            # ambiguous ``sdk-crash`` they only notice by the silence.
+            from ._auth_failure import (
+                AUTH_FAILURE_CAUSE,
+                classify_auth_failure,
+            )
+
+            auth_detail = classify_auth_failure(exc)
+            if auth_detail is not None:
+                cause = AUTH_FAILURE_CAUSE
+                detail = auth_detail
+                error_kind = "auth_expired"
+                logger.error(
+                    "claude-session AUTH FAILURE for %s: %s", name, auth_detail
+                )
+            else:
+                cause = "sdk-crash"
+                detail = str(exc)
+                error_kind = "sdk_runtime"
+                logger.exception("claude-session conversation failed for %s", name)
             append_session_message(
                 state_dir,
                 {
                     "type": "error",
-                    "kind": "sdk_runtime",
-                    "detail": str(exc),
+                    "kind": error_kind,
+                    "detail": detail,
                     "attempt": attempt,
                 },
             )
@@ -300,11 +354,15 @@ async def run_conversation(
                 report_sdk_error(
                     name=name,
                     host=host,
-                    cause="sdk-crash",
-                    detail=str(exc),
+                    cause=cause,
+                    detail=detail,
                     db_writer=db_writer,
                 )
-            if attempt >= max_restarts or stop.is_set():
+            # Auth failures are terminal: retrying with the same expired
+            # token only burns the backoff window and emits N identical
+            # confusing crashes. Recovery is manual (`claude login`), so
+            # stop now regardless of ``max_restarts``.
+            if auth_detail is not None or attempt >= max_restarts or stop.is_set():
                 _drain_failed_inbox(inbox, exc)
                 return
             delay = restart_backoff_s * (2**attempt)

@@ -5,16 +5,17 @@ The channel server is a stdio MCP subprocess that:
 1. Opens an HTTP/SSE connection to ``sac listen`` at
    ``/agents/<name>/inbox/stream`` and converts every event into an
    MCP ``notifications/claude/channel`` JSON-RPC notification.
-2. Registers the ``a2a_*`` tool surface (``a2a_send``, ``a2a_reply``,
-   ``a2a_ack``, ``a2a_peers``, ``a2a_inbox``), which speak HTTP to the
-   same ``sac listen`` HTTP base.
+2. On injecting a received event, emits an automatic ``a2a_ack`` back
+   to the sender (stage-2 "read" receipt) — infra-automatic, the agent
+   is unaware. The loop-guard skips events that are themselves acks.
+
+The send-side ``a2a_*`` tool surface lives in ``_channel_tools`` and is
+covered by ``test__channel_tools.py``; only the wrapper delegation is
+asserted here.
 
 Per the "no cut corners" principle these tests use **real** asyncio +
 real ``httpx`` + a real ``asyncio.start_server``-backed HTTP/1.1 server
-on loopback that speaks SSE and JSON. No mocks, no monkeypatch — the
-only test double is an explicit ``_ToolRecorder`` mirroring the MCP
-``@server.list_tools()`` / ``@server.call_tool()`` registration
-contract (a real collaborator, not a mock).
+on loopback that speaks SSE and JSON. No mocks, no monkeypatch.
 
 AAA markers, one-assert per test (TQ002, TQ007).
 """
@@ -22,14 +23,16 @@ AAA markers, one-assert per test (TQ002, TQ007).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
+import os
 from typing import Any
 
 import pytest
 import pytest_asyncio
 
 mcp_types = pytest.importorskip("mcp.types")  # gates entire module on `mcp`
-from mcp.types import TextContent, Tool  # noqa: E402
+from mcp.types import Tool  # noqa: E402
 
 from scitex_agent_container._mcp import channel as channel_mod  # noqa: E402
 from scitex_agent_container._mcp.channel import (  # noqa: E402
@@ -175,53 +178,6 @@ async def fake_listen():
         yield server
     finally:
         await server.stop()
-
-
-class _ToolRecorder:
-    """Captures ``@server.list_tools()`` and ``@server.call_tool()``
-    decorations onto a structural stand-in.
-
-    Mirrors the MCP server contract closely enough that
-    ``_register_tools`` runs unchanged, and the captured callables can
-    be invoked directly. Not a mock — no auto-spec, no call tracking
-    magic; just attribute storage.
-    """
-
-    def __init__(self) -> None:
-        self.list_tools_fn = None
-        self.call_tool_fn = None
-
-    def list_tools(self):
-        def _decorate(fn):
-            self.list_tools_fn = fn
-            return fn
-
-        return _decorate
-
-    def call_tool(self):
-        def _decorate(fn):
-            self.call_tool_fn = fn
-            return fn
-
-        return _decorate
-
-
-@pytest.fixture
-def tool_recorder() -> _ToolRecorder:
-    rec = _ToolRecorder()
-    return rec
-
-
-@pytest.fixture
-def registered_tools(tool_recorder: _ToolRecorder, fake_listen):
-    """Register tools against the recorder, pointing at the fake server."""
-    _register_tools(
-        tool_recorder,
-        agent_name="alice",
-        listen_url=fake_listen.base_url,
-        bearer=None,
-    )
-    return tool_recorder
 
 
 @pytest.fixture(autouse=True)
@@ -433,373 +389,49 @@ async def test_consume_sse_dispatches_multiple_events_in_order(fake_listen):
 
 
 # ---------------------------------------------------------------------------
-# _register_tools — list_tools surface
+# _register_tools — thin re-export wrapper delegation
+#
+# The a2a_* tool surface lives in ``_channel_tools`` (see
+# ``test__channel_tools.py`` for its full coverage). ``channel`` keeps a
+# ``_register_tools`` wrapper preserving the historical import path; this
+# test pins that the wrapper actually wires the tools onto the server.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_list_tools_returns_five_tools(registered_tools: _ToolRecorder):
-    # Arrange
-    list_fn = registered_tools.list_tools_fn
-    # Act
-    tools = await list_fn()
-    # Assert
-    assert len(tools) == 5
+async def test_register_tools_wrapper_delegates_to_channel_tools(fake_listen):
+    # Arrange — a structural recorder for the MCP decoration contract.
+    class _Rec:
+        def __init__(self):
+            self.list_tools_fn = None
 
+        def list_tools(self):
+            def _d(fn):
+                self.list_tools_fn = fn
+                return fn
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "expected_name",
-    ["a2a_send", "a2a_reply", "a2a_ack", "a2a_peers", "a2a_inbox"],
-)
-async def test_list_tools_includes_expected_tool(
-    registered_tools: _ToolRecorder, expected_name: str
-):
-    # Arrange
-    list_fn = registered_tools.list_tools_fn
-    # Act
-    names = {t.name for t in await list_fn()}
-    # Assert
-    assert expected_name in names
+            return _d
 
+        def call_tool(self):
+            def _d(fn):
+                return fn
 
-@pytest.mark.asyncio
-async def test_list_tools_every_entry_is_a_tool_instance(
-    registered_tools: _ToolRecorder,
-):
-    # Arrange
-    list_fn = registered_tools.list_tools_fn
-    # Act
-    tools = await list_fn()
-    bad = [t for t in tools if not isinstance(t, Tool)]
-    # Assert
-    assert bad == []
+            return _d
 
-
-# ---------------------------------------------------------------------------
-# _register_tools — call_tool dispatch (real HTTP to fake_listen)
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_call_tool_unknown_name_returns_error_payload(
-    registered_tools: _ToolRecorder,
-):
-    # Arrange
-    call_fn = registered_tools.call_tool_fn
-    # Act
-    out = await call_fn("not_a_tool", {})
-    body = json.loads(out[0].text)
-    # Assert
-    assert "error" in body
-
-
-@pytest.mark.asyncio
-async def test_call_tool_a2a_send_posts_to_target_path(
-    registered_tools: _ToolRecorder, fake_listen
-):
-    # Arrange
-    call_fn = registered_tools.call_tool_fn
-    # Act
-    await call_fn("a2a_send", {"target": "bob", "content": "hello"})
-    paths = [p for p, _ in fake_listen.posts]
-    # Assert
-    assert "/agents/bob/message:send" in paths
-
-
-@pytest.mark.asyncio
-async def test_call_tool_a2a_send_sets_from_agent_in_metadata(
-    registered_tools: _ToolRecorder, fake_listen
-):
-    # Arrange
-    call_fn = registered_tools.call_tool_fn
-    # Act
-    await call_fn("a2a_send", {"target": "bob", "content": "hi"})
-    _, payload = fake_listen.posts[-1]
-    # Assert
-    assert payload["params"]["metadata"]["from_agent"] == "alice"
-
-
-@pytest.mark.asyncio
-async def test_call_tool_a2a_send_uses_send_message_method(
-    registered_tools: _ToolRecorder, fake_listen
-):
-    # Arrange
-    call_fn = registered_tools.call_tool_fn
-    # Act
-    await call_fn("a2a_send", {"target": "bob", "content": "hi"})
-    _, payload = fake_listen.posts[-1]
-    # Assert
-    assert payload["method"] == "SendMessage"
-
-
-@pytest.mark.asyncio
-async def test_call_tool_a2a_send_returns_status_field(
-    registered_tools: _ToolRecorder,
-):
-    # Arrange
-    call_fn = registered_tools.call_tool_fn
-    # Act
-    out = await call_fn("a2a_send", {"target": "bob", "content": "hi"})
-    body = json.loads(out[0].text)
-    # Assert
-    assert body["status"] == 200
-
-
-@pytest.mark.asyncio
-async def test_call_tool_a2a_reply_unknown_msg_id_returns_error(
-    registered_tools: _ToolRecorder,
-):
-    # Arrange
-    call_fn = registered_tools.call_tool_fn
-    # Act
-    out = await call_fn("a2a_reply", {"in_reply_to": "ghost", "content": "x"})
-    body = json.loads(out[0].text)
-    # Assert
-    assert "error" in body
-
-
-@pytest.mark.asyncio
-async def test_call_tool_a2a_reply_routes_to_original_sender(
-    registered_tools: _ToolRecorder, fake_listen
-):
-    # Arrange — seed the ring buffer with a received event.
-    _recent.append({"msg_id": "m1", "from_agent": "carol", "conversation_id": "c1"})
-    call_fn = registered_tools.call_tool_fn
-    # Act
-    await call_fn("a2a_reply", {"in_reply_to": "m1", "content": "thanks"})
-    paths = [p for p, _ in fake_listen.posts]
-    # Assert
-    assert "/agents/carol/message:send" in paths
-
-
-@pytest.mark.asyncio
-async def test_call_tool_a2a_reply_carries_conversation_id(
-    registered_tools: _ToolRecorder, fake_listen
-):
-    # Arrange
-    _recent.append({"msg_id": "m1", "from_agent": "carol", "conversation_id": "c-orig"})
-    call_fn = registered_tools.call_tool_fn
-    # Act
-    await call_fn("a2a_reply", {"in_reply_to": "m1", "content": "y"})
-    _, payload = fake_listen.posts[-1]
-    # Assert
-    assert payload["params"]["metadata"]["conversation_id"] == "c-orig"
-
-
-@pytest.mark.asyncio
-async def test_call_tool_a2a_reply_sets_in_reply_to_metadata(
-    registered_tools: _ToolRecorder, fake_listen
-):
-    # Arrange
-    _recent.append({"msg_id": "m1", "from_agent": "carol", "conversation_id": "c-orig"})
-    call_fn = registered_tools.call_tool_fn
-    # Act
-    await call_fn("a2a_reply", {"in_reply_to": "m1", "content": "y"})
-    _, payload = fake_listen.posts[-1]
-    # Assert
-    assert payload["params"]["metadata"]["in_reply_to"] == "m1"
-
-
-@pytest.mark.asyncio
-async def test_call_tool_a2a_reply_unknown_sender_returns_error(
-    registered_tools: _ToolRecorder,
-):
-    # Arrange — event with no from_agent.
-    _recent.append({"msg_id": "m9", "conversation_id": "c"})
-    call_fn = registered_tools.call_tool_fn
-    # Act
-    out = await call_fn("a2a_reply", {"in_reply_to": "m9", "content": "x"})
-    body = json.loads(out[0].text)
-    # Assert
-    assert "error" in body
-
-
-@pytest.mark.asyncio
-async def test_call_tool_a2a_ack_unknown_msg_id_returns_error(
-    registered_tools: _ToolRecorder,
-):
-    # Arrange
-    call_fn = registered_tools.call_tool_fn
-    # Act
-    out = await call_fn("a2a_ack", {"msg_id": "nope"})
-    body = json.loads(out[0].text)
-    # Assert
-    assert "error" in body
-
-
-@pytest.mark.asyncio
-async def test_call_tool_a2a_ack_unknown_sender_returns_error(
-    registered_tools: _ToolRecorder,
-):
-    # Arrange — event present but no from_agent
-    _recent.append({"msg_id": "m11"})
-    call_fn = registered_tools.call_tool_fn
-    # Act
-    out = await call_fn("a2a_ack", {"msg_id": "m11"})
-    body = json.loads(out[0].text)
-    # Assert
-    assert "error" in body
-
-
-@pytest.mark.asyncio
-async def test_call_tool_a2a_ack_posts_ack_metadata(
-    registered_tools: _ToolRecorder, fake_listen
-):
-    # Arrange
-    _recent.append({"msg_id": "m1", "from_agent": "carol", "conversation_id": "c1"})
-    call_fn = registered_tools.call_tool_fn
-    # Act
-    await call_fn("a2a_ack", {"msg_id": "m1"})
-    _, payload = fake_listen.posts[-1]
-    # Assert
-    assert payload["params"]["metadata"]["ack"] is True
-
-
-@pytest.mark.asyncio
-async def test_call_tool_a2a_peers_returns_status(
-    registered_tools: _ToolRecorder, fake_listen
-):
-    # Arrange
-    fake_listen.peers_payload = {"agents": ["alice", "bob"]}
-    call_fn = registered_tools.call_tool_fn
-    # Act
-    out = await call_fn("a2a_peers", {})
-    body = json.loads(out[0].text)
-    # Assert
-    assert body["status"] == 200
-
-
-@pytest.mark.asyncio
-async def test_call_tool_a2a_peers_returns_peers_body(
-    registered_tools: _ToolRecorder, fake_listen
-):
-    # Arrange
-    fake_listen.peers_payload = {"agents": ["alice", "bob"]}
-    call_fn = registered_tools.call_tool_fn
-    # Act
-    out = await call_fn("a2a_peers", {})
-    body = json.loads(out[0].text)
-    # Assert
-    assert body["body"] == {"agents": ["alice", "bob"]}
-
-
-@pytest.mark.asyncio
-async def test_call_tool_a2a_inbox_returns_count(
-    registered_tools: _ToolRecorder,
-):
-    # Arrange
-    _recent.extend(
-        [
-            {"msg_id": "a", "from_agent": "x"},
-            {"msg_id": "b", "from_agent": "x"},
-            {"msg_id": "c", "from_agent": "x"},
-        ]
-    )
-    call_fn = registered_tools.call_tool_fn
-    # Act
-    out = await call_fn("a2a_inbox", {"limit": 10})
-    body = json.loads(out[0].text)
-    # Assert
-    assert body["count"] == 3
-
-
-@pytest.mark.asyncio
-async def test_call_tool_a2a_inbox_respects_limit(
-    registered_tools: _ToolRecorder,
-):
-    # Arrange
-    for i in range(20):
-        _recent.append({"msg_id": str(i), "from_agent": "x"})
-    call_fn = registered_tools.call_tool_fn
-    # Act
-    out = await call_fn("a2a_inbox", {"limit": 5})
-    body = json.loads(out[0].text)
-    # Assert
-    assert body["count"] == 5
-
-
-@pytest.mark.asyncio
-async def test_call_tool_returns_text_content_instance(
-    registered_tools: _ToolRecorder,
-):
-    # Arrange
-    call_fn = registered_tools.call_tool_fn
-    # Act
-    out = await call_fn("a2a_inbox", {})
-    # Assert
-    assert isinstance(out[0], TextContent)
-
-
-# ---------------------------------------------------------------------------
-# bearer plumbing — Authorization header on POST
-# ---------------------------------------------------------------------------
-
-
-class _BearerEchoServer(_FakeListenServer):
-    """Records the Authorization header seen on POST requests."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.last_auth: str | None = None
-
-    async def _handle(self, reader, writer):  # type: ignore[override]
-        try:
-            request_line = await reader.readline()
-            if not request_line:
-                return
-            try:
-                method, path, _ = request_line.decode().rstrip("\r\n").split(" ")
-            except ValueError:
-                return
-            content_length = 0
-            while True:
-                line = await reader.readline()
-                if line in (b"\r\n", b"\n", b""):
-                    break
-                low = line.lower()
-                if low.startswith(b"content-length:"):
-                    content_length = int(line.split(b":", 1)[1].strip())
-                elif low.startswith(b"authorization:"):
-                    self.last_auth = line.split(b":", 1)[1].decode().strip()
-            if content_length:
-                await reader.readexactly(content_length)
-            if method == "POST":
-                await self._serve_json(writer, {"ok": True})
-            else:
-                await self._serve_status(writer, 404, b"x")
-        finally:
-            try:
-                writer.close()
-                await writer.wait_closed()
-            except Exception:
-                pass
-
-
-@pytest_asyncio.fixture
-async def bearer_server():
-    s = _BearerEchoServer()
-    await s.start()
-    try:
-        yield s
-    finally:
-        await s.stop()
-
-
-@pytest.mark.asyncio
-async def test_register_tools_forwards_bearer_token_on_post(bearer_server):
-    # Arrange
-    rec = _ToolRecorder()
+    rec = _Rec()
+    # Act — the wrapper must register the tool surface on the recorder.
     _register_tools(
-        rec,
-        agent_name="alice",
-        listen_url=bearer_server.base_url,
-        bearer="s3cret",
+        rec, agent_name="alice", listen_url=fake_listen.base_url, bearer=None
     )
-    # Act
-    await rec.call_tool_fn("a2a_send", {"target": "bob", "content": "hi"})
-    # Assert
-    assert bearer_server.last_auth == "Bearer s3cret"
+    tools = await rec.list_tools_fn()
+    # Assert — wiring reached _channel_tools.register_tools.
+    assert {t.name for t in tools if isinstance(t, Tool)} == {
+        "a2a_send",
+        "a2a_reply",
+        "a2a_ack",
+        "a2a_peers",
+        "a2a_inbox",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1028,73 +660,6 @@ async def test_consume_sse_skips_malformed_json_frames(
 # ---------------------------------------------------------------------------
 
 
-class _PlainTextServer(_FakeListenServer):
-    """Returns a non-JSON ``text/plain`` body for both POST and GET."""
-
-    async def _handle(self, reader, writer):  # type: ignore[override]
-        try:
-            request_line = await reader.readline()
-            if not request_line:
-                return
-            try:
-                method, _path, _ = request_line.decode().rstrip("\r\n").split(" ")
-            except ValueError:
-                return
-            content_length = 0
-            while True:
-                line = await reader.readline()
-                if line in (b"\r\n", b"\n", b""):
-                    break
-                if line.lower().startswith(b"content-length:"):
-                    content_length = int(line.split(b":", 1)[1].strip())
-            if content_length:
-                await reader.readexactly(content_length)
-            body = b"plain-text-body"
-            writer.write(
-                b"HTTP/1.1 200 OK\r\n"
-                b"Content-Type: text/plain\r\n"
-                b"Content-Length: " + str(len(body)).encode() + b"\r\n"
-                b"Connection: close\r\n\r\n" + body
-            )
-            await writer.drain()
-            del method
-        finally:
-            try:
-                writer.close()
-                await writer.wait_closed()
-            except Exception:
-                pass
-
-
-@pytest_asyncio.fixture
-async def plain_text_server():
-    s = _PlainTextServer()
-    await s.start()
-    try:
-        yield s
-    finally:
-        await s.stop()
-
-
-@pytest.mark.asyncio
-async def test_call_tool_a2a_send_handles_non_json_response_body(
-    plain_text_server: _PlainTextServer,
-):
-    # Arrange
-    rec = _ToolRecorder()
-    _register_tools(
-        rec,
-        agent_name="alice",
-        listen_url=plain_text_server.base_url,
-        bearer=None,
-    )
-    # Act
-    out = await rec.call_tool_fn("a2a_send", {"target": "bob", "content": "x"})
-    body = json.loads(out[0].text)
-    # Assert
-    assert body["body"] == "plain-text-body"
-
-
 @pytest.mark.asyncio
 async def test_consume_sse_retries_after_connection_error():
     """Bind a loopback socket then immediately close to force refused
@@ -1123,25 +688,6 @@ async def test_consume_sse_retries_after_connection_error():
         pass
     # Assert — the consumer survived the connection error and kept looping.
     assert is_alive
-
-
-@pytest.mark.asyncio
-async def test_call_tool_a2a_peers_handles_non_json_response_body(
-    plain_text_server: _PlainTextServer,
-):
-    # Arrange
-    rec = _ToolRecorder()
-    _register_tools(
-        rec,
-        agent_name="alice",
-        listen_url=plain_text_server.base_url,
-        bearer=None,
-    )
-    # Act
-    out = await rec.call_tool_fn("a2a_peers", {})
-    body = json.loads(out[0].text)
-    # Assert
-    assert body["body"] == "plain-text-body"
 
 
 # ---------------------------------------------------------------------------
@@ -1271,3 +817,597 @@ async def test_serve_initialize_declares_claude_channel_capability(
     # Assert — the `claude/channel` capability is advertised, so Claude
     # Code will accept the pushed notifications instead of dropping them.
     assert caps["experimental"] == {"claude/channel": {}}
+
+
+# ---------------------------------------------------------------------------
+# Auto-ack — infra-automatic stage-2 "read" receipt.
+#
+# When the receive-side adapter injects an inbound event into the
+# session, it automatically POSTs an ``a2a_ack`` back to the original
+# sender — the receiving agent calls nothing. These tests pin the
+# enable gate, the loop-guard (acks are never re-acked; no ping-pong),
+# the best-effort failure mode, and the end-to-end POST through a real
+# fake listen server.
+# ---------------------------------------------------------------------------
+
+
+class _CapturingSession:
+    """Real collaborator standing in for an MCP ServerSession.
+
+    Records every ``send_message`` so the injection half of
+    ``_push_channel_event`` is observable. Not a mock — plain capture,
+    no auto-spec or call assertions.
+    """
+
+    def __init__(self) -> None:
+        self.sent: list[Any] = []
+
+    async def send_message(self, msg: Any) -> None:
+        self.sent.append(msg)
+
+
+@contextlib.contextmanager
+def _env(name: str, value: str | None):
+    """Set (or unset) a real ``os.environ`` entry and restore on exit.
+
+    Used in place of the ecosystem-forbidden ``monkeypatch`` fixture
+    (STX-NM002): production reads the genuine ``os.environ``, and we put
+    a real value there, then put the prior state back.
+    """
+    sentinel = object()
+    prior: Any = os.environ.get(name, sentinel)
+    if value is None:
+        os.environ.pop(name, None)
+    else:
+        os.environ[name] = value
+    try:
+        yield
+    finally:
+        if prior is sentinel:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = prior
+
+
+def test_auto_ack_enabled_default_on_when_env_unset():
+    # Arrange
+    from scitex_agent_container._mcp.channel import _auto_ack_enabled
+
+    # Act — with the env var genuinely absent.
+    with _env("SAC_CHANNEL_AUTO_ACK", None):
+        enabled = _auto_ack_enabled()
+    # Assert
+    assert enabled is True
+
+
+@pytest.mark.parametrize("raw", ["0", "false", "FALSE", "no", "off", " Off "])
+def test_auto_ack_disabled_by_falsey_env(raw):
+    # Arrange
+    from scitex_agent_container._mcp.channel import _auto_ack_enabled
+
+    # Act
+    with _env("SAC_CHANNEL_AUTO_ACK", raw):
+        enabled = _auto_ack_enabled()
+    # Assert
+    assert enabled is False
+
+
+def test_should_auto_ack_true_for_normal_inbound_event():
+    # Arrange
+    from scitex_agent_container._mcp.channel import _should_auto_ack
+
+    event = {"from_agent": "bob", "content": "hi", "msg_id": "m1"}
+    # Act
+    decision = _should_auto_ack(event)
+    # Assert
+    assert decision is True
+
+
+def test_should_auto_ack_false_for_event_that_is_itself_an_ack():
+    """Loop-guard: an auto-ack is itself a message; re-acking it would
+    ping-pong forever. An event carrying ``ack`` truthy must be skipped."""
+    # Arrange
+    from scitex_agent_container._mcp.channel import _should_auto_ack
+
+    event = {"from_agent": "bob", "content": "", "msg_id": "m1", "ack": True}
+    # Act
+    decision = _should_auto_ack(event)
+    # Assert
+    assert decision is False
+
+
+def test_should_auto_ack_false_when_sender_missing():
+    # Arrange — no from_agent: nowhere to send the receipt.
+    from scitex_agent_container._mcp.channel import _should_auto_ack
+
+    event = {"content": "x", "msg_id": "m1"}
+    # Act
+    decision = _should_auto_ack(event)
+    # Assert
+    assert decision is False
+
+
+@pytest.mark.asyncio
+async def test_push_channel_event_still_injects_notification(fake_listen):
+    """Existing push behavior is preserved: the notification reaches the
+    session regardless of the auto-ack side-effect."""
+    # Arrange
+    from scitex_agent_container._mcp.channel import _push_channel_event
+
+    session = _CapturingSession()
+    event = {"from_agent": "bob", "content": "hi", "msg_id": "m1"}
+    # Act
+    await _push_channel_event(
+        session,
+        event,
+        agent_name="alice",
+        listen_url=fake_listen.base_url,
+        bearer=None,
+    )
+    # Assert — the channel notification was sent through the session.
+    assert len(session.sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_push_channel_event_auto_acks_to_sender_path(fake_listen):
+    # Arrange
+    from scitex_agent_container._mcp.channel import _push_channel_event
+
+    session = _CapturingSession()
+    event = {"from_agent": "bob", "content": "hi", "msg_id": "m1"}
+    # Act
+    await _push_channel_event(
+        session,
+        event,
+        agent_name="alice",
+        listen_url=fake_listen.base_url,
+        bearer=None,
+    )
+    paths = [p for p, _ in fake_listen.posts]
+    # Assert — the receipt went back to the original sender's send path.
+    assert "/agents/bob/message:send" in paths
+
+
+@pytest.mark.asyncio
+async def test_push_channel_event_auto_ack_carries_ack_marker(fake_listen):
+    """The auto-ack must stamp ``ack=True`` — that flag IS the loop-guard
+    marker the receiving adapter checks before re-acking."""
+    # Arrange
+    from scitex_agent_container._mcp.channel import _push_channel_event
+
+    session = _CapturingSession()
+    event = {"from_agent": "bob", "content": "hi", "msg_id": "m1"}
+    # Act
+    await _push_channel_event(
+        session,
+        event,
+        agent_name="alice",
+        listen_url=fake_listen.base_url,
+        bearer=None,
+    )
+    _, payload = fake_listen.posts[-1]
+    # Assert
+    assert payload["params"]["metadata"]["ack"] is True
+
+
+@pytest.mark.asyncio
+async def test_push_channel_event_auto_ack_references_original_msg_id(fake_listen):
+    # Arrange
+    from scitex_agent_container._mcp.channel import _push_channel_event
+
+    session = _CapturingSession()
+    event = {"from_agent": "bob", "content": "hi", "msg_id": "m1"}
+    # Act
+    await _push_channel_event(
+        session,
+        event,
+        agent_name="alice",
+        listen_url=fake_listen.base_url,
+        bearer=None,
+    )
+    _, payload = fake_listen.posts[-1]
+    # Assert
+    assert payload["params"]["metadata"]["in_reply_to"] == "m1"
+
+
+@pytest.mark.asyncio
+async def test_push_channel_event_does_not_auto_ack_an_ack(fake_listen):
+    """Loop-guard end-to-end: injecting an inbound event that is itself
+    an ack must NOT generate another ack POST."""
+    # Arrange
+    from scitex_agent_container._mcp.channel import _push_channel_event
+
+    session = _CapturingSession()
+    ack_event = {"from_agent": "bob", "content": "", "msg_id": "m1", "ack": True}
+    # Act
+    await _push_channel_event(
+        session,
+        ack_event,
+        agent_name="alice",
+        listen_url=fake_listen.base_url,
+        bearer=None,
+    )
+    # Assert — zero POSTs: an ack does not beget an ack.
+    assert fake_listen.posts == []
+
+
+@pytest.mark.asyncio
+async def test_two_adapters_do_not_ping_pong_to_a_fixed_point(fake_listen):
+    """Drive the full bounce: adapter A injects B's message → auto-acks B;
+    then feed A's ack into adapter B's inject path. B must NOT ack back, so
+    the exchange terminates after exactly one ack rather than diverging."""
+    # Arrange
+    from scitex_agent_container._mcp.channel import _push_channel_event
+
+    session_a = _CapturingSession()
+    session_b = _CapturingSession()
+    inbound_to_a = {"from_agent": "bob", "content": "hi", "msg_id": "m1"}
+    # Act — A receives B's message and auto-acks (1 POST expected).
+    await _push_channel_event(
+        session_a,
+        inbound_to_a,
+        agent_name="alice",
+        listen_url=fake_listen.base_url,
+        bearer=None,
+    )
+    _, ack_payload = fake_listen.posts[-1]
+    # Reconstruct the bus event B's adapter would see from A's ack POST.
+    ack_meta = ack_payload["params"]["metadata"]
+    inbound_to_b = {
+        "from_agent": ack_meta["from_agent"],
+        "content": "",
+        "msg_id": "m2",
+        "ack": ack_meta.get("ack"),
+    }
+    # B injects A's ack — the loop-guard must stop here.
+    await _push_channel_event(
+        session_b,
+        inbound_to_b,
+        agent_name="bob",
+        listen_url=fake_listen.base_url,
+        bearer=None,
+    )
+    # Assert — exactly one ack total; B did not bounce another back.
+    assert len(fake_listen.posts) == 1
+
+
+@pytest.mark.asyncio
+async def test_auto_ack_disabled_via_env_emits_no_post(fake_listen):
+    # Arrange
+    from scitex_agent_container._mcp.channel import _push_channel_event
+
+    session = _CapturingSession()
+    event = {"from_agent": "bob", "content": "hi", "msg_id": "m1"}
+    # Act
+    with _env("SAC_CHANNEL_AUTO_ACK", "0"):
+        await _push_channel_event(
+            session,
+            event,
+            agent_name="alice",
+            listen_url=fake_listen.base_url,
+            bearer=None,
+        )
+    # Assert — injection happened, but no auto-ack POST.
+    assert fake_listen.posts == []
+
+
+@pytest.mark.asyncio
+async def test_push_channel_event_skips_auto_ack_without_send_config(fake_listen):
+    """Backward-compat: called without agent_name/listen_url (the old
+    2-arg signature path) injects but cannot auto-ack — no POST, no crash."""
+    # Arrange
+    from scitex_agent_container._mcp.channel import _push_channel_event
+
+    session = _CapturingSession()
+    event = {"from_agent": "bob", "content": "hi", "msg_id": "m1"}
+    # Act
+    await _push_channel_event(session, event)
+    # Assert
+    assert fake_listen.posts == []
+
+
+@pytest.mark.asyncio
+async def test_auto_ack_failure_is_best_effort_does_not_raise():
+    """A failed auto-ack POST must be swallowed-with-a-loud-log, never
+    re-raised: it can neither block injection nor kill the SSE consumer.
+    Point the adapter at a refused port to force the failure."""
+    # Arrange — a closed loopback port (bind then close) refuses connect.
+    import socket
+
+    from scitex_agent_container._mcp.channel import _push_channel_event
+
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(("127.0.0.1", 0))
+    refused_port = s.getsockname()[1]
+    s.close()
+    session = _CapturingSession()
+    event = {"from_agent": "bob", "content": "hi", "msg_id": "m1"}
+    # Act — must complete without raising despite the ack POST failing.
+    await _push_channel_event(
+        session,
+        event,
+        agent_name="alice",
+        listen_url=f"http://127.0.0.1:{refused_port}",
+        bearer=None,
+    )
+    # Assert — injection still succeeded (the failure was contained).
+    assert len(session.sent) == 1
+
+
+# ---------------------------------------------------------------------------
+# WI-1 wake-on-push — a pushed message to an IDLE agent must DRIVE a turn.
+#
+# The notification-only push (covered above) renders a ``<channel>`` tag for
+# an already-active turn but does NOT advance an idle session. When a
+# ``turn_url`` (the agent's own colocated ``/v1/turn``) is configured, the
+# adapter POSTs each qualifying event there so the runner enqueues it onto
+# the persistent SDK conversation and processes it immediately — push behaves
+# like the lead's Telegram channel. These tests pin: a real POST reaches the
+# turn endpoint, acks/empty events do NOT drive a turn, and the wake path
+# delivers exactly once (no duplicate notification).
+# ---------------------------------------------------------------------------
+
+
+class _FakeTurnServer:
+    """A real asyncio TCP server standing in for the agent's ``/v1/turn``.
+
+    Records every POST body so the wake path is directly observable. Not a
+    mock — a genuine loopback HTTP/1.1 endpoint, same approach as
+    ``_FakeListenServer``.
+    """
+
+    def __init__(self) -> None:
+        self.turns: list[dict[str, Any]] = []
+        self._server: asyncio.base_events.Server | None = None
+        self.host = "127.0.0.1"
+        self.port = 0
+
+    async def start(self) -> None:
+        self._server = await asyncio.start_server(self._handle, host=self.host, port=0)
+        self.port = self._server.sockets[0].getsockname()[1]
+
+    async def stop(self) -> None:
+        if self._server is not None:
+            self._server.close()
+            await self._server.wait_closed()
+            self._server = None
+
+    @property
+    def turn_url(self) -> str:
+        return f"http://{self.host}:{self.port}/v1/turn"
+
+    async def _handle(self, reader, writer) -> None:
+        try:
+            request_line = await reader.readline()
+            if not request_line:
+                return
+            content_length = 0
+            while True:
+                line = await reader.readline()
+                if line in (b"\r\n", b"\n", b""):
+                    break
+                if line.lower().startswith(b"content-length:"):
+                    content_length = int(line.split(b":", 1)[1].strip())
+            body = b""
+            if content_length:
+                body = await reader.readexactly(content_length)
+            try:
+                payload = json.loads(body.decode() or "{}")
+            except json.JSONDecodeError:
+                payload = {}
+            self.turns.append(payload)
+            resp = json.dumps({"text": "ok", "session_id": "s1"}).encode()
+            writer.write(
+                b"HTTP/1.1 200 OK\r\n"
+                b"Content-Type: application/json\r\n"
+                b"Content-Length: " + str(len(resp)).encode() + b"\r\n"
+                b"Connection: close\r\n\r\n" + resp
+            )
+            await writer.drain()
+        finally:
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
+
+
+@pytest_asyncio.fixture
+async def fake_turn():
+    s = _FakeTurnServer()
+    await s.start()
+    try:
+        yield s
+    finally:
+        await s.stop()
+
+
+def test_should_wake_turn_true_for_normal_inbound_event():
+    # Arrange
+    from scitex_agent_container._mcp.channel import _should_wake_turn
+
+    event = {"from_agent": "bob", "content": "do the thing", "msg_id": "m1"}
+    # Act
+    decision = _should_wake_turn(event)
+    # Assert
+    assert decision is True
+
+
+def test_should_wake_turn_false_for_ack_event():
+    """An ack carries no actionable content — driving a turn per receipt
+    would burn turns and risk an auto-ack ping-pong."""
+    # Arrange
+    from scitex_agent_container._mcp.channel import _should_wake_turn
+
+    event = {"from_agent": "bob", "content": "", "msg_id": "m1", "ack": True}
+    # Act
+    decision = _should_wake_turn(event)
+    # Assert
+    assert decision is False
+
+
+def test_should_wake_turn_false_for_empty_content():
+    # Arrange
+    from scitex_agent_container._mcp.channel import _should_wake_turn
+
+    event = {"from_agent": "bob", "content": "   ", "msg_id": "m1"}
+    # Act
+    decision = _should_wake_turn(event)
+    # Assert
+    assert decision is False
+
+
+def test_wake_text_frames_content_with_source_and_msg_id():
+    # Arrange
+    from scitex_agent_container._mcp.channel import _wake_text
+
+    event = {"from_agent": "bob", "content": "hello", "msg_id": "m1"}
+    # Act
+    text = _wake_text(event)
+    # Assert — the sender attribution survives into the driven turn input.
+    assert 'source="bob"' in text and "hello" in text
+
+
+@pytest.mark.asyncio
+async def test_push_with_turn_url_drives_a_turn(fake_turn):
+    """The wake POST reaches the agent's own /v1/turn — the core WI-1 claim:
+    a pushed message to an idle agent advances its turn without any external
+    turn trigger."""
+    # Arrange
+    from scitex_agent_container._mcp.channel import _push_channel_event
+
+    session = _CapturingSession()
+    event = {"from_agent": "bob", "content": "summarize commits", "msg_id": "m1"}
+    # Act — turn_url set: the adapter must drive a turn.
+    await _push_channel_event(
+        session,
+        event,
+        agent_name="alice",
+        listen_url="http://127.0.0.1:1",  # unused on the wake path
+        bearer=None,
+        turn_url=fake_turn.turn_url,
+    )
+    # Assert — exactly one turn was driven on the runner's endpoint.
+    assert len(fake_turn.turns) == 1
+
+
+@pytest.mark.asyncio
+async def test_push_with_turn_url_carries_message_content_as_turn_text(fake_turn):
+    # Arrange
+    from scitex_agent_container._mcp.channel import _push_channel_event
+
+    session = _CapturingSession()
+    event = {"from_agent": "bob", "content": "summarize commits", "msg_id": "m1"}
+    # Act
+    await _push_channel_event(
+        session,
+        event,
+        agent_name="alice",
+        listen_url="http://127.0.0.1:1",
+        bearer=None,
+        turn_url=fake_turn.turn_url,
+    )
+    # Assert — the driven turn carries the original message body.
+    assert "summarize commits" in fake_turn.turns[0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_push_with_turn_url_skips_duplicate_notification(fake_turn):
+    """Wake delivers the message as turn input; the notification push is
+    skipped so the agent does not see the same message twice."""
+    # Arrange
+    from scitex_agent_container._mcp.channel import _push_channel_event
+
+    session = _CapturingSession()
+    event = {"from_agent": "bob", "content": "do it", "msg_id": "m1"}
+    # Act
+    await _push_channel_event(
+        session,
+        event,
+        agent_name="alice",
+        listen_url="http://127.0.0.1:1",
+        bearer=None,
+        turn_url=fake_turn.turn_url,
+    )
+    # Assert — no notification was injected (turn input is the sole delivery).
+    assert session.sent == []
+
+
+@pytest.mark.asyncio
+async def test_push_with_turn_url_ack_event_does_not_drive_turn(fake_turn):
+    """An ack event must NOT wake a turn — it falls back to notification-only
+    so the loop-guard / receipt semantics are unchanged."""
+    # Arrange
+    from scitex_agent_container._mcp.channel import _push_channel_event
+
+    session = _CapturingSession()
+    ack_event = {"from_agent": "bob", "content": "", "msg_id": "m1", "ack": True}
+    # Act
+    await _push_channel_event(
+        session,
+        ack_event,
+        agent_name="alice",
+        listen_url="http://127.0.0.1:1",
+        bearer=None,
+        turn_url=fake_turn.turn_url,
+    )
+    # Assert — zero turns driven for an ack.
+    assert fake_turn.turns == []
+
+
+@pytest.mark.asyncio
+async def test_push_without_turn_url_falls_back_to_notification(fake_listen):
+    """Backward-compat: with no turn_url (external node, no colocated
+    runner) the adapter still pushes the channel notification."""
+    # Arrange
+    from scitex_agent_container._mcp.channel import _push_channel_event
+
+    session = _CapturingSession()
+    event = {"from_agent": "bob", "content": "hi", "msg_id": "m1"}
+    # Act — no turn_url.
+    await _push_channel_event(
+        session,
+        event,
+        agent_name="alice",
+        listen_url=fake_listen.base_url,
+        bearer=None,
+    )
+    # Assert — notification injected as before.
+    assert len(session.sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_wake_failure_propagates_to_caller():
+    """WI-2 fail-loud: when the wake POST cannot reach the runner (refused
+    connection), ``_push_channel_event`` must RAISE rather than silently
+    pretend the message was delivered."""
+    # Arrange — a closed loopback port refuses connect.
+    import socket
+
+    from scitex_agent_container._mcp.channel import _push_channel_event
+
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(("127.0.0.1", 0))
+    refused_port = s.getsockname()[1]
+    s.close()
+    session = _CapturingSession()
+    event = {"from_agent": "bob", "content": "hi", "msg_id": "m1"}
+
+    async def _do() -> None:
+        await _push_channel_event(
+            session,
+            event,
+            agent_name="alice",
+            listen_url="http://127.0.0.1:1",
+            bearer=None,
+            turn_url=f"http://127.0.0.1:{refused_port}/v1/turn",
+        )
+
+    # Act
+    raised = False
+    try:
+        await _do()
+    except Exception:
+        raised = True
+    # Assert — the unreachable wake surfaced loudly, not silently dropped.
+    assert raised is True

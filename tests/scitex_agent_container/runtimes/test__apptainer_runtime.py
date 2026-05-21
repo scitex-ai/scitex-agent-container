@@ -31,6 +31,7 @@ from scitex_agent_container.config._types import (
     A2ASpec,
     ApptainerSpec,
     AutonomousSpec,
+    ClaudeSpec,
     ContainerSpec,
 )
 from scitex_agent_container.runtimes import _apptainer_runtime as mod
@@ -1820,6 +1821,223 @@ def test_config_listen_host_propagates_to_env(tmp_path: Path, env_save_restore) 
     )
     # Assert
     assert _env_pairs(argv).get("SAC_LISTEN_BASE_URL") == "http://100.64.1.2:7878"
+
+
+# ---------------------------------------------------------------------------
+# Bus-auth bearer injection (FIX 1) — SAC_LISTEN_BEARER must be injected
+# into EVERY apptainer spec (including relaxed:true), read from the host
+# token file the listen server writes. Missing token → BASE_URL only +
+# loud warning, no crash, no bearer.
+# ---------------------------------------------------------------------------
+
+
+def _write_listen_token(home: Path, token: str) -> Path:
+    """Materialize the canonical listen token file under a redirected HOME.
+
+    Resolves the path exactly as production does (``default_token_path``),
+    so the test exercises the real resolver rather than a hard-coded path.
+    """
+    from scitex_agent_container._listen.tokens import default_token_path
+
+    tok_path = default_token_path(home=home)
+    tok_path.parent.mkdir(parents=True, exist_ok=True)
+    tok_path.write_text(token, encoding="utf-8")
+    return tok_path
+
+
+def test_argv_injects_listen_bearer_from_token_file(
+    tmp_path: Path, home_redirect: Path
+) -> None:
+    # Arrange — standard spec with a real token file under HOME.
+    _write_listen_token(home_redirect, "tok-abc123")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd")
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    # Assert
+    assert _env_pairs(argv).get("SAC_LISTEN_BEARER") == "tok-abc123"
+
+
+def test_argv_still_injects_base_url_alongside_bearer(
+    tmp_path: Path, home_redirect: Path
+) -> None:
+    # Arrange
+    _write_listen_token(home_redirect, "tok-abc123")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd")
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    # Assert
+    assert _env_pairs(argv).get("SAC_LISTEN_BASE_URL") == "http://127.0.0.1:7878"
+
+
+def test_relaxed_spec_omits_preflight_wrapper(
+    tmp_path: Path, home_redirect: Path
+) -> None:
+    # Arrange — confirm relaxed mode is actually in effect.
+    _write_listen_token(home_redirect, "tok-relaxed-xyz")
+    rt = ApptainerContainerRuntime()
+    cfg = AgentConfig(
+        name="relaxed-agent",
+        runtime="apptainer",
+        workdir=str(tmp_path / "wd"),
+        apptainer=ApptainerSpec(relaxed=True, raw_args=["--userns", "--cleanenv"]),
+    )
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    # Assert
+    assert "--containall" not in argv
+
+
+def test_relaxed_spec_still_injects_listen_bearer(
+    tmp_path: Path, home_redirect: Path
+) -> None:
+    # Arrange — bus-auth injection must be unconditional w.r.t relaxed.
+    _write_listen_token(home_redirect, "tok-relaxed-xyz")
+    rt = ApptainerContainerRuntime()
+    cfg = AgentConfig(
+        name="relaxed-agent",
+        runtime="apptainer",
+        workdir=str(tmp_path / "wd"),
+        apptainer=ApptainerSpec(relaxed=True, raw_args=["--userns", "--cleanenv"]),
+    )
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    # Assert
+    assert _env_pairs(argv).get("SAC_LISTEN_BEARER") == "tok-relaxed-xyz"
+
+
+def test_missing_token_omits_bearer(tmp_path: Path, home_redirect: Path) -> None:
+    # Arrange — no token file under HOME.
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd")
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    # Assert
+    assert "SAC_LISTEN_BEARER" not in _env_pairs(argv)
+
+
+def test_missing_token_still_injects_base_url(
+    tmp_path: Path, home_redirect: Path
+) -> None:
+    # Arrange — no token file under HOME.
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd")
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    # Assert
+    assert _env_pairs(argv).get("SAC_LISTEN_BASE_URL") == "http://127.0.0.1:7878"
+
+
+def test_missing_token_logs_loud_warning(
+    tmp_path: Path, home_redirect: Path, caplog
+) -> None:
+    # Arrange — no token file → loud warning, no silent fallback.
+    import logging
+
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd")
+    # Act
+    with caplog.at_level(logging.WARNING):
+        rt.build_run_argv(
+            cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+        )
+    # Assert
+    assert any(
+        "SAC_LISTEN_BEARER not injected" in rec.getMessage() for rec in caplog.records
+    )
+
+
+# ---------------------------------------------------------------------------
+# Fail-loud: server:sac channel + unresolvable bearer
+# ---------------------------------------------------------------------------
+# When the channel adapter is actually registered (spec.claude.channels has
+# server:sac) but the bus bearer can't be resolved, the runtime must REFUSE
+# to launch rather than start an agent whose adapter can never subscribe
+# (delivered_subscriber_count would always be 0). This is the live blocker.
+
+
+def _relaxed_bus_cfg(workdir: Path) -> AgentConfig:
+    """Production proj-scitex-agent-container shape: relaxed + explicit
+    raw_args carrying NO SAC_LISTEN_*, plus channels=[server:sac]."""
+    return AgentConfig(
+        name="relaxed-bus-agent",
+        runtime="apptainer",
+        workdir=str(workdir),
+        apptainer=ApptainerSpec(relaxed=True, raw_args=["--userns", "--containall"]),
+        claude=ClaudeSpec(channels=["server:sac"]),
+    )
+
+
+def test_relaxed_with_server_sac_channel_injects_bearer(
+    tmp_path: Path, home_redirect: Path
+) -> None:
+    # Arrange
+    _write_listen_token(home_redirect, "tok-relaxed-bus")
+    rt = ApptainerContainerRuntime()
+    cfg = _relaxed_bus_cfg(tmp_path / "wd")
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    # Assert
+    assert _env_pairs(argv).get("SAC_LISTEN_BEARER") == "tok-relaxed-bus"
+
+
+def test_relaxed_with_server_sac_channel_injects_base_url(
+    tmp_path: Path, home_redirect: Path
+) -> None:
+    # Arrange
+    _write_listen_token(home_redirect, "tok-relaxed-bus")
+    rt = ApptainerContainerRuntime()
+    cfg = _relaxed_bus_cfg(tmp_path / "wd")
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    # Assert
+    assert _env_pairs(argv).get("SAC_LISTEN_BASE_URL") == "http://127.0.0.1:7878"
+
+
+def test_server_sac_channel_missing_token_fails_loud(
+    tmp_path: Path, home_redirect: Path
+) -> None:
+    # Arrange
+    rt = ApptainerContainerRuntime()
+    cfg = _relaxed_bus_cfg(tmp_path / "wd")
+    # Act
+    # Assert — refuse to launch (no silent degradation).
+    with pytest.raises(RuntimeError, match="server:sac"):
+        rt.build_run_argv(
+            cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+        )
+
+
+def test_no_channel_missing_token_does_not_raise(
+    tmp_path: Path, home_redirect: Path
+) -> None:
+    # Arrange — no server:sac channel → a missing token is harmless because
+    # nothing subscribes; the runtime warns but must NOT raise.
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd")
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    # Assert
+    assert "SAC_LISTEN_BEARER" not in _env_pairs(argv)
 
 
 # ---------------------------------------------------------------------------

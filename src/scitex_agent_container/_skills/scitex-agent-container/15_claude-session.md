@@ -86,7 +86,8 @@ Per-agent state lives at `<scope>/runtime/<name>/`:
 | File | Contents |
 |---|---|
 | `pid` | Runner's PID (atomic write — tmp + rename). |
-| `heartbeat.json` | `{ts, pid, state}`. State ∈ `starting / idle / working / stopping`. Refreshed every 10 s (`--tick-seconds`). |
+| `heartbeat.json` | `{ts, pid, state}` plus `elapsed_s` (seconds since session start, from `started_at`) and the running token totals `input_tokens / output_tokens / total_tokens` (from `quota.json`). State ∈ `starting / idle / working / stopping`. Refreshed every 10 s (`--tick-seconds`). |
+| `started_at` | Session start time (unix seconds). Written once at startup; preserved across a resumed respawn so `elapsed_s` tracks the conversation, not the process. |
 | `session.jsonl` | One JSON object per turn event: `user / assistant / user_echo / result / error`. The transcript. |
 | `session_id` | Latest SDK session UUID. Auto-resumed by the next `sac agent start`. |
 | `quota.json` | Accumulated per-turn token totals (input / output / cache_creation / cache_read / turns). |
@@ -95,8 +96,7 @@ Scope resolution (highest priority first):
 
 1. **Project-local**: walks up from cwd to a git repo containing
    `.scitex/agent-container/`. State lands in
-   `<repo>/.scitex/agent-container/runtime/<name>/`. Same convention
-   as the slurm runtime + scitex-hpc reservations.
+   `<repo>/.scitex/agent-container/runtime/<name>/`.
 2. **Home**: `~/.scitex/agent-container/runtime/<name>/` (when no
    project scope is available).
 3. Override via `$SCITEX_AGENT_CONTAINER_RUNTIME_DIR` (the runner reads
@@ -108,21 +108,24 @@ Symmetric: agent definitions follow the same resolution order
 
 ## Auth (cost-critical)
 
-The SDK's authentication path, by precedence:
+The SDK's authentication path, by precedence
+(`runtimes/_sdk_common.py::provision_anthropic_auth`):
 
-1. `ANTHROPIC_API_KEY` already set → used verbatim.
-2. `~/.claude/.credentials.json` exists → SDK reads OAuth token
+1. `~/.claude/.credentials.json` exists → SDK reads OAuth token
    automatically (Pro/Max plan, **flat-rate**). The default on every
    workstation that has run `claude /login`.
-3. `SAC_ANTHROPIC_API_KEY` (sac-namespaced handoff for headless
-   contexts — CI, SLURM, cron). Auto-routes by prefix:
-   * `sk-ant-oat*` → OAuth credentials file is synthesised so the SDK
-     uses the flat-rate OAuth path.
-   * `sk-ant-api*` → bridged into `ANTHROPIC_API_KEY` (**pay-per-token**;
-     explicit opt-in only).
+2. `SAC_ANTHROPIC_API_KEY` (sac-namespaced handoff for headless
+   contexts — CI, SLURM, cron). When set it is mirrored into
+   `ANTHROPIC_API_KEY` for the SDK (an `sk-ant-api*` value is
+   **pay-per-token**, explicit opt-in only).
 
-Set neither and you get a clear `SDKCommonError` rather than a silent
-fall-through to API-key billing.
+A bare host `ANTHROPIC_API_KEY` is **never honoured**: the first thing
+`provision_anthropic_auth` does is overwrite it from
+`SAC_ANTHROPIC_API_KEY`, or *pop* it from the env when
+`SAC_ANTHROPIC_API_KEY` is unset — so a stale dotfiles export can't be
+picked up by the SDK auto-reader, shadow a working OAuth credentials
+file, or silently switch you to API-key billing. Set neither input and
+you get a clear `SDKCommonError`.
 
 ## Status JSON addition
 
@@ -141,7 +144,11 @@ agents on this runtime:
       "cache_read_input_tokens": 0,
       "turns": 1
     },
-    "heartbeat": {"ts": 1777766006.95, "pid": 3476972, "state": "idle"},
+    "heartbeat": {
+      "ts": 1777766006.95, "pid": 3476972, "state": "idle",
+      "started_at": 1777765800.0, "elapsed_s": 206.95,
+      "input_tokens": 6000, "output_tokens": 1500, "total_tokens": 40503
+    },
     "state_dir": "/path/to/.scitex/agent-container/runtime/<name>"
   }
 }

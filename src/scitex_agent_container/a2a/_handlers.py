@@ -158,10 +158,11 @@ def handle_claude_session(
     # pass None and the agent uses its own configured persona.
     system = _sac_env("A2A_CLAUDE_SYSTEM", "").strip() or None
     model = _sac_env("A2A_CLAUDE_MODEL")
-    # Forward `spec.claude.channels` + the agent's own A2A port so the
-    # sac MCP sidecar (auto-injected when `server:sac` is in channels)
-    # subscribes to THIS agent's inbox SSE at
-    # ``http://127.0.0.1:<a2a_port>/agents/<name>/inbox/stream``.
+    # Forward `spec.claude.channels` + the agent's own A2A port. The sac
+    # MCP sidecar (auto-injected when `server:sac` is in channels)
+    # subscribes to the inbox SSE on the BUS (`sac listen`, resolved from
+    # SAC_LISTEN_BASE_URL), not the a2a_port. a2a_port is forwarded only so
+    # build_sdk_options has it for the /v1/turn registration path.
     sdk_extra: dict | None = None
     if channels or a2a_port is not None:
         sdk_extra = {}

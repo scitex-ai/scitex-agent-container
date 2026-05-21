@@ -57,7 +57,7 @@ def project_card(name: str, v3: dict[str, Any], base_url: str) -> dict[str, Any]
     spec = v3.get("spec") or {}
     caps_csv = labels.get("capabilities", "") or ""
     capabilities_tags = [c.strip() for c in caps_csv.split(",") if c.strip()]
-    # v3 rejected `spec.skills` (skills moved to dot_claude/skills/).
+    # v3 rejected `spec.skills` (skills moved to to_home/.claude/skills/).
     # Operator-declared skill IDs now come via metadata.labels.skills as a
     # CSV; we still tolerate the legacy spec.skills.required for any v2
     # YAML that reaches the projector before validation strips it.

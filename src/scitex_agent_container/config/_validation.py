@@ -89,7 +89,6 @@ _KNOWN_SPEC_KEYS = frozenset(
         "autonomous",  # F-CS3 — drive-until-done block
         "apptainer",  # F-CS18 — apptainer-specific build extension
         "user",  # container user: "host" | "uid:gid" | "" (image default)
-        "dot_claude",  # F-DC1 — directory merged into workspace/.claude/ (DEPRECATED — see to_home)
         "to_home",  # ADR-0006 — directory mirrored into container $HOME
         # v3 removed (rejected explicitly below with relocation hints):
         # image (→ spec.apptainer.image), mounts (→ spec.apptainer.binds),
@@ -112,7 +111,13 @@ _V3_RELOCATED_FIELDS: dict[str, str] = {
 _V3_REMOVED_FIELDS: dict[str, str] = {
     "skills": (
         "spec.skills is no longer accepted; skills now live under "
-        "dot_claude/skills/ (§3 Removed)."
+        "to_home/.claude/skills/ (§3 Removed)."
+    ),
+    "dot_claude": (
+        "spec.dot_claude is no longer accepted; the dot_claude/ layout "
+        "was removed (see ADR-0006). Use spec.to_home and a 'to_home/' dir "
+        "next to spec.yaml, with the $HOME-relative layout "
+        "to_home/{CLAUDE.md,.mcp.json,.env,.claude/{hooks,skills}}."
     ),
     "remote": (
         "spec.remote is no longer accepted in scitex-agent-container/v3. "

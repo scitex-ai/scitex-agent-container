@@ -285,6 +285,103 @@ def test_subsequent_heartbeat_writes_overwrite_state(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# started_at (session start time) + heartbeat enrichment
+# ---------------------------------------------------------------------------
+
+
+def test_write_started_at_returns_value(tmp_path: Path) -> None:
+    # Arrange
+    started_at = 1000.0
+    # Act
+    result = runner.write_started_at(tmp_path, started_at=started_at)
+    # Assert
+    assert result == 1000.0
+
+
+def test_read_started_at_round_trips(tmp_path: Path) -> None:
+    # Arrange
+    runner.write_started_at(tmp_path, started_at=1234.5)
+    # Act
+    result = runner.read_started_at(tmp_path)
+    # Assert
+    assert result == 1234.5
+
+
+def test_read_started_at_none_when_missing(tmp_path: Path) -> None:
+    # Arrange: no started_at file.
+    # Act
+    result = runner.read_started_at(tmp_path)
+    # Assert
+    assert result is None
+
+
+def test_heartbeat_omits_elapsed_when_start_unknown(tmp_path: Path) -> None:
+    # Arrange: no started_at recorded.
+    runner.write_heartbeat(tmp_path, pid=1, state=runner.STATE_IDLE)
+    # Act
+    hb = runner.read_heartbeat(tmp_path)
+    # Assert
+    assert hb is not None and "elapsed_s" not in hb
+
+
+def test_heartbeat_includes_elapsed_s_from_started_at(tmp_path: Path) -> None:
+    # Arrange: session started 5s ago.
+    runner.write_started_at(tmp_path, started_at=time.time() - 5.0)
+    runner.write_heartbeat(tmp_path, pid=1, state=runner.STATE_WORKING)
+    # Act
+    hb = runner.read_heartbeat(tmp_path)
+    # Assert: elapsed reflects the start time (allow a small scheduling slack).
+    assert hb is not None and 5.0 <= hb["elapsed_s"] < 6.0
+
+
+def test_heartbeat_elapsed_s_is_non_negative(tmp_path: Path) -> None:
+    # Arrange: start time set in the future (clock skew) must not go negative.
+    runner.write_started_at(tmp_path, started_at=time.time() + 100.0)
+    runner.write_heartbeat(tmp_path, pid=1, state=runner.STATE_IDLE)
+    # Act
+    hb = runner.read_heartbeat(tmp_path)
+    # Assert
+    assert hb is not None and hb["elapsed_s"] == 0.0
+
+
+def test_heartbeat_total_tokens_zero_without_quota(tmp_path: Path) -> None:
+    # Arrange: no quota.json yet.
+    runner.write_heartbeat(tmp_path, pid=1, state=runner.STATE_IDLE)
+    # Act
+    hb = runner.read_heartbeat(tmp_path)
+    # Assert
+    assert hb is not None and hb["total_tokens"] == 0
+
+
+def test_heartbeat_includes_total_tokens_from_quota(tmp_path: Path) -> None:
+    # Arrange: a ResultMessage usage block accumulated into quota.json.
+    runner.accumulate_quota(
+        tmp_path,
+        {
+            "input_tokens": 100,
+            "output_tokens": 30,
+            "cache_creation_input_tokens": 10,
+            "cache_read_input_tokens": 5,
+        },
+    )
+    runner.write_heartbeat(tmp_path, pid=1, state=runner.STATE_WORKING)
+    # Act
+    hb = runner.read_heartbeat(tmp_path)
+    # Assert: total = input + output + cache_creation + cache_read.
+    assert hb is not None and hb["total_tokens"] == 145
+
+
+def test_heartbeat_carries_input_and_output_tokens(tmp_path: Path) -> None:
+    # Arrange
+    runner.accumulate_quota(tmp_path, {"input_tokens": 7, "output_tokens": 3})
+    runner.write_heartbeat(tmp_path, pid=1, state=runner.STATE_IDLE)
+    # Act
+    hb = runner.read_heartbeat(tmp_path)
+    # Assert
+    assert hb is not None and (hb["input_tokens"], hb["output_tokens"]) == (7, 3)
+
+
+# ---------------------------------------------------------------------------
 # _heartbeat_loop (in-process)
 # ---------------------------------------------------------------------------
 

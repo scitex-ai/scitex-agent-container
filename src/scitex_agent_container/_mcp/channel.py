@@ -51,6 +51,48 @@ _INBOX_CAP = 200
 _recent: "deque[dict[str, Any]]" = deque(maxlen=_INBOX_CAP)
 
 
+def _auto_ack_enabled() -> bool:
+    """Whether the receive-side adapter emits an automatic ``a2a_ack`` the
+    moment it injects a received bus event into the session.
+
+    Two-stage receipt, infra-automatic: the receiving agent calls nothing —
+    the channel adapter does. Stage 1 ("delivered") is the send response's
+    ``delivered_subscriber_count``; stage 2 ("read") is this auto-ack,
+    emitted on injection. Default ON; set ``SAC_CHANNEL_AUTO_ACK`` to one of
+    ``0/false/no/off`` (case-insensitive) to disable.
+    """
+    raw = os.environ.get("SAC_CHANNEL_AUTO_ACK")
+    if raw is None:
+        return True
+    return raw.strip().lower() not in ("0", "false", "no", "off")
+
+
+# WI-1 wake-on-push primitives live in ``_channel_wake`` (extracted to keep
+# this receive-side adapter under the module size budget). Re-exported here
+# so the historical ``from .channel import _wake_turn`` import path — used by
+# ``_push_channel_event`` below and the test suite — keeps working.
+from ._channel_wake import _should_wake_turn, _wake_text, _wake_turn  # noqa: E402,F401
+
+
+def _should_auto_ack(event: dict[str, Any]) -> bool:
+    """Loop-guard for the auto-ack side-effect.
+
+    An auto-ack is itself a message that lands in the sender's inbox and is
+    injected by *their* adapter — which would auto-ack back, ad infinitum.
+    Break the cycle:
+
+    - never auto-ack an event that is itself an ack (truthy ``ack`` flag —
+      the same metadata flag the ``a2a_ack`` tool stamps), and
+    - never auto-ack an event with no identifiable original sender
+      (``from_agent`` missing/empty): there is nowhere to send the receipt.
+    """
+    if not event.get("from_agent"):
+        return False
+    if event.get("ack"):
+        return False
+    return True
+
+
 async def _consume_sse(
     url: str,
     bearer: str | None,
@@ -158,29 +200,143 @@ def _build_notification(event: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def _push_channel_event(session: Any, event: dict[str, Any]) -> None:
-    """Buffer ``event`` and push it to the client as a
-    ``notifications/claude/channel`` message through ``session``.
+async def _post_auto_ack(
+    event: dict[str, Any],
+    *,
+    agent_name: str,
+    listen_url: str,
+    bearer: str | None,
+) -> None:
+    """POST an automatic ``a2a_ack`` back to the sender of ``event``.
 
-    Split out of the SSE consumer so the receive→inject path is
-    directly testable end-to-end (see ``tests/.../_mcp/test_channel.py``
-    ``test_serve_pushes_sse_event_to_client_as_channel_notification``).
-    That seam used to be untested, which let a silent drop ship.
+    Reuses the exact ``/agents/<sender>/message:send`` path and metadata
+    shape the ``a2a_ack`` tool uses (``ack=True``, ``in_reply_to`` the
+    original ``msg_id``, same ``conversation_id``). ``ack=True`` is the
+    loop-guard marker: the sender's adapter sees it and won't ack back.
+
+    Caller guarantees ``event`` passed :func:`_should_auto_ack` (so
+    ``from_agent`` is present and the event is not itself an ack).
+    """
+    import uuid as _uuid
+
+    import httpx
+
+    target = event["from_agent"]
+    metadata: dict[str, Any] = {"from_agent": agent_name, "ack": True}
+    msg_id = event.get("msg_id")
+    if msg_id:
+        metadata["in_reply_to"] = msg_id
+    conversation_id = event.get("conversation_id")
+    if conversation_id:
+        metadata["conversation_id"] = conversation_id
+    payload = {
+        "jsonrpc": "2.0",
+        "id": _uuid.uuid4().hex,
+        "method": "SendMessage",
+        "params": {
+            "message": {
+                "message_id": _uuid.uuid4().hex,
+                "role": "ROLE_USER",
+                "parts": [{"text": ""}],
+            },
+            "metadata": metadata,
+        },
+    }
+    base = listen_url.rstrip("/")
+    headers = {"Content-Type": "application/json"}
+    if bearer:
+        headers["Authorization"] = f"Bearer {bearer}"
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.post(
+            f"{base}/agents/{target}/message:send", json=payload, headers=headers
+        )
+        resp.raise_for_status()
+
+
+async def _push_channel_event(
+    session: Any,
+    event: dict[str, Any],
+    *,
+    agent_name: str | None = None,
+    listen_url: str | None = None,
+    bearer: str | None = None,
+    turn_url: str | None = None,
+) -> None:
+    """Deliver ``event`` to the agent, then emit the stage-2 read-receipt.
+
+    Delivery has two modes:
+
+    * **Wake-on-push (WI-1)** — when ``turn_url`` is set and the event
+      qualifies (:func:`_should_wake_turn`), POST it to the agent's own
+      ``/v1/turn`` so an IDLE session WAKES and processes the message now.
+      Push then behaves like the lead's Telegram channel. The driven turn
+      carries the message as its input, so the ``notifications/claude/
+      channel`` push is intentionally SKIPPED in this mode — pushing it too
+      would make the agent see the same message twice (once as turn input,
+      once as a buffered ``<channel>`` tag on the next turn boundary).
+    * **Notification-only (legacy / external nodes)** — when no ``turn_url``
+      is configured (a plain ``claude`` node with no colocated runner), push
+      the ``notifications/claude/channel`` message through ``session`` so an
+      already-active turn renders the ``<channel>`` tag. This cannot wake an
+      idle session — that is exactly the limitation ``turn_url`` removes.
+
+    Split out of the SSE consumer so the receive→inject path is directly
+    testable end-to-end (see ``tests/.../_mcp/test_channel.py``). That seam
+    used to be untested, which let a silent drop ship.
+
+    The auto-ack is a best-effort side-effect: it runs only *after* delivery
+    and its failure is logged loudly but never re-raised, so a flaky receipt
+    can neither block delivery nor kill the long-lived SSE consumer.
     """
     from mcp.shared.message import SessionMessage
     from mcp.types import JSONRPCMessage, JSONRPCNotification
 
     # Buffer for a2a_reply / a2a_ack lookups by msg_id.
     _recent.append(event)
-    params = _build_notification(event)
-    msg = JSONRPCMessage(
-        JSONRPCNotification(
-            jsonrpc="2.0",
-            method="notifications/claude/channel",
-            params=params,
+
+    woke = False
+    if turn_url is not None and _should_wake_turn(event):
+        # Wake path: drive a turn on the agent's own runner. A failure here
+        # is NOT silently contained — re-raise so the SSE consumer's
+        # on_event wrapper logs it loudly (WI-2 fail-loud) while keeping the
+        # long-lived stream alive. We must never pretend a wake succeeded.
+        await _wake_turn(event, turn_url=turn_url, bearer=bearer)
+        woke = True
+
+    if not woke:
+        # Notification-only delivery (no colocated runner to wake, or an
+        # ack/empty event that does not warrant a driven turn).
+        params = _build_notification(event)
+        msg = JSONRPCMessage(
+            JSONRPCNotification(
+                jsonrpc="2.0",
+                method="notifications/claude/channel",
+                params=params,
+            )
         )
-    )
-    await session.send_message(SessionMessage(msg))
+        await session.send_message(SessionMessage(msg))
+
+    # Stage-2 receipt: auto-ack AFTER successful delivery. Best-effort —
+    # never let an ack failure propagate past this point.
+    if (
+        agent_name is not None
+        and listen_url is not None
+        and _auto_ack_enabled()
+        and _should_auto_ack(event)
+    ):
+        try:
+            await _post_auto_ack(
+                event,
+                agent_name=agent_name,
+                listen_url=listen_url,
+                bearer=bearer,
+            )
+        except Exception as exc:  # stx-allow: fallback (reason: best-effort auto-ack; a failed receipt must not block injection or kill the SSE consumer — logged loudly, never silent)
+            log.warning(
+                "sac channel: auto-ack to %r failed: %s",
+                event.get("from_agent"),
+                exc,
+            )
 
 
 async def _serve(
@@ -190,9 +346,15 @@ async def _serve(
     name: str,
     listen_url: str,
     bearer: str | None,
+    turn_url: str | None = None,
 ) -> None:
     """Drive the MCP session **and** the SSE consumer over the given
     streams, keeping a handle to the session so the consumer can push.
+
+    ``turn_url`` (WI-1) is the agent's own colocated ``/v1/turn`` endpoint.
+    When set, each received bus event WAKES the session by driving a turn
+    there (push ≡ Telegram); when ``None`` the adapter falls back to the
+    notification-only push that cannot advance an idle turn.
 
     We deliberately do not call ``Server.run``: it constructs its
     ``ServerSession`` internally and never exposes it, so a side
@@ -233,9 +395,16 @@ async def _serve(
 
         async def on_event(event: dict[str, Any]) -> None:
             try:
-                await _push_channel_event(session, event)
-            except Exception as exc:  # stx-allow: fallback (reason: one failed push must not kill the long-lived SSE consumer; logged loudly, never silent)
-                log.warning("sac channel: pushing inbox event failed: %s", exc)
+                await _push_channel_event(
+                    session,
+                    event,
+                    agent_name=name,
+                    listen_url=listen_url,
+                    bearer=bearer,
+                    turn_url=turn_url,
+                )
+            except Exception as exc:  # stx-allow: fallback (reason: one failed push/wake must not kill the long-lived SSE consumer; logged loudly, never silent)
+                log.warning("sac channel: delivering inbox event failed: %s", exc)
 
         sse_task: asyncio.Task[None] = asyncio.create_task(
             _consume_sse(sse_url, bearer, on_event)
@@ -254,7 +423,9 @@ async def _serve(
             sse_task.cancel()
 
 
-async def _run(name: str, listen_url: str, bearer: str | None) -> None:
+async def _run(
+    name: str, listen_url: str, bearer: str | None, turn_url: str | None = None
+) -> None:
     from mcp.server.stdio import stdio_server
 
     async with stdio_server() as (read_stream, write_stream):
@@ -264,251 +435,38 @@ async def _run(name: str, listen_url: str, bearer: str | None) -> None:
             name=name,
             listen_url=listen_url,
             bearer=bearer,
+            turn_url=turn_url,
         )
 
 
 def _register_tools(
     server, *, agent_name: str, listen_url: str, bearer: str | None
 ) -> None:
-    """Wire the a2a_* tools onto the channel server.
+    """Wire the send-side ``a2a_*`` tools onto the channel server.
 
-    All tools speak HTTP to local `sac listen`; receivers' inbox state
-    (for reply/ack lookups) lives in the module-level ``_recent`` ring.
-    Tools-as-contract: each tool sets `from_agent`, `ts`, `msg_id`,
-    `conversation_id` correctly so the calling agent can't get it wrong.
+    Thin re-export of :func:`scitex_agent_container._mcp._channel_tools.register_tools`.
+    The tool surface was extracted to its own module to keep this
+    receive-side adapter under the module size budget; this wrapper
+    preserves the historical import path (callers and tests import
+    ``_register_tools`` from ``channel``).
     """
-    import uuid as _uuid
+    from ._channel_tools import register_tools
 
-    from mcp.types import TextContent, Tool
-
-    base = listen_url.rstrip("/")
-    headers = {"Content-Type": "application/json"}
-    if bearer:
-        headers["Authorization"] = f"Bearer {bearer}"
-
-    async def _post(path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        import httpx
-
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(f"{base}{path}", json=payload, headers=headers)
-            try:
-                return {"status": resp.status_code, "body": resp.json()}
-            except Exception:  # stx-allow: fallback (reason: non-JSON body tolerated)
-                return {"status": resp.status_code, "body": resp.text}
-
-    async def _get(path: str) -> dict[str, Any]:
-        import httpx
-
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(f"{base}{path}", headers=headers)
-            try:
-                return {"status": resp.status_code, "body": resp.json()}
-            except Exception:  # stx-allow: fallback (reason: non-JSON body tolerated)
-                return {"status": resp.status_code, "body": resp.text}
-
-    def _find(msg_id: str) -> dict[str, Any] | None:
-        for ev in reversed(_recent):
-            if ev.get("msg_id") == msg_id:
-                return ev
-        return None
-
-    def _wrap_message_send(content: str, **extra: Any) -> dict[str, Any]:
-        # sac-extension fields (from_agent, conversation_id, ...) live
-        # under ``params.metadata`` per A2A v1 — the SDK's strict proto
-        # validator rejects unknown top-level params fields, so we
-        # CANNOT splat them at the params root.
-        metadata: dict[str, Any] = {"from_agent": agent_name}
-        metadata.update({k: v for k, v in extra.items() if v is not None})
-        params: dict[str, Any] = {
-            "message": {
-                "message_id": _uuid.uuid4().hex,
-                "role": "ROLE_USER",
-                "parts": [{"text": content}],
-            },
-            "metadata": metadata,
-        }
-        return {
-            "jsonrpc": "2.0",
-            "id": _uuid.uuid4().hex,
-            # v1 gRPC-style method name; sac's `_publish_channel_event`
-            # accepts both `SendMessage` and legacy `message/send`.
-            "method": "SendMessage",
-            "params": params,
-        }
-
-    @server.list_tools()
-    async def _list_tools() -> list[Tool]:
-        return [
-            Tool(
-                name="a2a_send",
-                description=(
-                    "Send a message to another agent on this sac listen. "
-                    "Sets from_agent automatically; mints conversation_id "
-                    "when omitted."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "required": ["target", "content"],
-                    "properties": {
-                        "target": {"type": "string"},
-                        "content": {"type": "string"},
-                        "conversation_id": {"type": "string"},
-                        "priority": {
-                            "type": "string",
-                            "enum": ["low", "normal", "high"],
-                        },
-                        "requires_reply": {"type": "boolean"},
-                    },
-                },
-            ),
-            Tool(
-                name="a2a_reply",
-                description=(
-                    "Reply to a received message. Looks up the original "
-                    "sender by msg_id; carries the same conversation_id."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "required": ["in_reply_to", "content"],
-                    "properties": {
-                        "in_reply_to": {"type": "string"},
-                        "content": {"type": "string"},
-                    },
-                },
-            ),
-            Tool(
-                name="a2a_ack",
-                description=(
-                    "Acknowledge a received message without content. "
-                    "Cheap 'got it' to a sender that set requires_reply=true."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "required": ["msg_id"],
-                    "properties": {"msg_id": {"type": "string"}},
-                },
-            ),
-            Tool(
-                name="a2a_peers",
-                description="List reachable agents on this sac listen.",
-                inputSchema={"type": "object", "properties": {}},
-            ),
-            Tool(
-                name="a2a_inbox",
-                description=(
-                    "Return up to `limit` most recent received messages "
-                    "from this agent's inbox buffer (default 20)."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "limit": {"type": "integer", "minimum": 1, "maximum": 200},
-                    },
-                },
-            ),
-        ]
-
-    @server.call_tool()
-    async def _call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
-        if name == "a2a_send":
-            target = arguments["target"]
-            content = arguments["content"]
-            payload = _wrap_message_send(
-                content,
-                conversation_id=arguments.get("conversation_id") or _uuid.uuid4().hex,
-                priority=arguments.get("priority"),
-                requires_reply=arguments.get("requires_reply"),
-            )
-            res = await _post(f"/agents/{target}/message:send", payload)
-            return [TextContent(type="text", text=json.dumps(res))]
-
-        if name == "a2a_reply":
-            mid = arguments["in_reply_to"]
-            orig = _find(mid)
-            if orig is None:
-                return [
-                    TextContent(
-                        type="text",
-                        text=json.dumps(
-                            {"error": f"unknown msg_id {mid} (inbox window)"}
-                        ),
-                    )
-                ]
-            target = orig.get("from_agent", "")
-            if not target:
-                return [
-                    TextContent(
-                        type="text",
-                        text=json.dumps({"error": "original sender unknown"}),
-                    )
-                ]
-            payload = _wrap_message_send(
-                arguments["content"],
-                conversation_id=orig.get("conversation_id"),
-                in_reply_to=mid,
-            )
-            res = await _post(f"/agents/{target}/message:send", payload)
-            return [TextContent(type="text", text=json.dumps(res))]
-
-        if name == "a2a_ack":
-            mid = arguments["msg_id"]
-            orig = _find(mid)
-            if orig is None:
-                return [
-                    TextContent(
-                        type="text",
-                        text=json.dumps(
-                            {"error": f"unknown msg_id {mid} (inbox window)"}
-                        ),
-                    )
-                ]
-            target = orig.get("from_agent", "")
-            if not target:
-                return [
-                    TextContent(
-                        type="text",
-                        text=json.dumps({"error": "original sender unknown"}),
-                    )
-                ]
-            payload = _wrap_message_send(
-                "",
-                conversation_id=orig.get("conversation_id"),
-                in_reply_to=mid,
-                ack=True,
-            )
-            res = await _post(f"/agents/{target}/message:send", payload)
-            return [TextContent(type="text", text=json.dumps(res))]
-
-        if name == "a2a_peers":
-            # No trailing slash: sac listen registers `/agents` and a GET to
-            # `/agents/` 307-redirects, which httpx does not follow by default
-            # (a2a_peers then returns a bare 307 with empty body).
-            res = await _get("/agents")
-            return [TextContent(type="text", text=json.dumps(res))]
-
-        if name == "a2a_inbox":
-            limit = int(arguments.get("limit") or 20)
-            items = list(_recent)[-limit:]
-            return [
-                TextContent(
-                    type="text", text=json.dumps({"count": len(items), "items": items})
-                )
-            ]
-
-        return [
-            TextContent(
-                type="text", text=json.dumps({"error": f"unknown tool: {name}"})
-            )
-        ]
+    register_tools(server, agent_name=agent_name, listen_url=listen_url, bearer=bearer)
 
 
-def main(name: str, listen_url: str | None = None) -> None:
-    """CLI entry point. Bearer comes from ``SAC_LISTEN_BEARER`` env."""
+def main(name: str, listen_url: str | None = None, turn_url: str | None = None) -> None:
+    """CLI entry point. Bearer comes from ``SAC_LISTEN_BEARER`` env.
+
+    ``turn_url`` (WI-1) is the agent's own ``/v1/turn`` endpoint; when set,
+    each received bus event WAKES the session by driving a turn there so a
+    push to an idle agent is processed immediately (push ≡ Telegram).
+    """
     listen = listen_url or os.environ.get(
         "SAC_LISTEN_BASE_URL", "http://127.0.0.1:7878"
     )
     bearer = os.environ.get("SAC_LISTEN_BEARER")
-    asyncio.run(_run(name, listen, bearer))
+    asyncio.run(_run(name, listen, bearer, turn_url))
 
 
 __all__ = ["main"]

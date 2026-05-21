@@ -40,6 +40,12 @@ from starlette.routing import Route
 
 from .._runners._session_state import read_session_id, state_dir_for
 from .._state.registry import Registry
+from .._state.state_db_channel import (
+    list_since_id,
+    list_undelivered,
+    mark_delivered,
+    persist_event,
+)
 from ..a2a._inbox_bus import mint_event
 from ..config import load_config
 from ..config._resolve import resolve_config
@@ -715,6 +721,7 @@ async def node_message_send(request: Request) -> Response:
         in_reply_to=sac_meta.get("in_reply_to"),
         priority=str(sac_meta.get("priority", "normal")),
         requires_reply=bool(sac_meta.get("requires_reply", False)),
+        ack=bool(sac_meta.get("ack", False)),
     )
 
     # Implicit registration — handoff §4 "A2A compliance without a
@@ -723,6 +730,19 @@ async def node_message_send(request: Request) -> Response:
     nodes: NodeRegistry = request.app.state.nodes
     broker: Broker = request.app.state.inbox
     nodes.register(name, base_url)
+
+    # WI-1 finish-work (Q5 — handoff §4 durability acceptance applied
+    # to the ``sac listen`` surface, not just ``a2a/_server.py``).
+    # Persist BEFORE publish so an event POSTed with no subscriber is
+    # not silently dropped (handoff §0 hard rule). The persisted row
+    # id is attached to the envelope as ``_row_id``; the SSE stream
+    # stamps it onto the ``id:`` line so clients can resume with
+    # ``Last-Event-ID``. A denied send (returned earlier with 403)
+    # never reaches this point — denial leaves zero side-effects on
+    # ``channel_events`` and on the broker (handoff §0: "denial is
+    # the policy working").
+    row_id = persist_event(target=name, event=event)
+    event["_row_id"] = row_id
 
     delivered = await broker.publish(name, event)
     return JSONResponse(
@@ -745,6 +765,31 @@ async def node_inbox_stream(request: Request) -> Response:
 
     Implicitly registers ``<name>`` as an external node on first
     connect.
+
+    WI-1 finish-work (Q5 — handoff §4 durability acceptance applied
+    to the ``sac listen`` surface, mirroring ``a2a/_server.py``):
+
+      * On connect, replay missed events from the persistent
+        ``channel_events`` table BEFORE accepting any new live event.
+        Replay source:
+
+          - if the client passed ``Last-Event-ID``, replay every row
+            with ``id > Last-Event-ID``;
+          - otherwise replay every undelivered row (fresh-subscriber
+            case — handoff acceptance "an event POSTed with no
+            subscriber is delivered on connect").
+
+      * Each replay frame stamps the SQLite row id onto the SSE
+        ``id:`` line so the client can echo it back as
+        ``Last-Event-ID`` after a reconnect.
+
+      * After yielding a replay frame the row is marked
+        ``delivered_at`` so a subsequent fresh-subscriber connect
+        does not re-yield it.
+
+      * A malformed ``Last-Event-ID`` header is a loud 400 — a
+        corrupt cursor would silently disable replay if tolerated
+        (handoff §0).
     """
     from starlette.responses import StreamingResponse
 
@@ -754,6 +799,22 @@ async def node_inbox_stream(request: Request) -> Response:
     broker: Broker = request.app.state.inbox
     nodes.register(name, base_url)
 
+    last_event_id_raw = request.headers.get("last-event-id")
+    last_event_id: int | None = None
+    if last_event_id_raw is not None:
+        try:
+            last_event_id = int(last_event_id_raw)
+        except ValueError:
+            return JSONResponse(
+                {
+                    "error": (
+                        "Last-Event-ID header must be an integer; got "
+                        f"{last_event_id_raw!r}"
+                    )
+                },
+                status_code=400,
+            )
+
     queue = await broker.subscribe(name)
 
     async def stream():
@@ -762,12 +823,49 @@ async def node_inbox_stream(request: Request) -> Response:
             # open immediately (and tests can race-free detect "I'm
             # subscribed" before publishing).
             yield b": sac-channel ready\n\n"
+
+            # WI-1 replay: yield every missed durable row first, then
+            # accept live events from the broker.
+            if last_event_id is not None:
+                replay = list_since_id(target=name, since_id=last_event_id)
+            else:
+                replay = list_undelivered(target=name)
+            for entry in replay:
+                if await request.is_disconnected():
+                    return
+                row_id = entry["id"]
+                event = entry["event"]
+                # Strip the internal ``_row_id`` if a previous publish
+                # path stored it inside ``meta_json``; the SSE ``id:``
+                # line is the authoritative cursor.
+                event.pop("_row_id", None)
+                data = json.dumps(event, ensure_ascii=False)
+                yield (
+                    f"id: {row_id}\nevent: message\ndata: {data}\n\n"
+                ).encode("utf-8")
+                mark_delivered([row_id])
+
             while True:
                 if await request.is_disconnected():
                     return
                 event = await queue.get()
+                # The publish path stamps the persisted row id onto
+                # the envelope as ``_row_id`` (see
+                # :func:`node_message_send`). We surface it as the SSE
+                # ``id:`` line and mark the row delivered.
+                row_id = event.pop("_row_id", None)
                 data = json.dumps(event, ensure_ascii=False)
-                yield f"event: message\ndata: {data}\n\n".encode("utf-8")
+                if row_id is not None:
+                    yield (
+                        f"id: {row_id}\nevent: message\ndata: {data}\n\n"
+                    ).encode("utf-8")
+                    mark_delivered([int(row_id)])
+                else:
+                    # No row id means the event was injected by a
+                    # path that did NOT persist (future lifecycle
+                    # fan-out, ACL-reject notice, …). Deliver it but
+                    # skip the marker.
+                    yield f"event: message\ndata: {data}\n\n".encode("utf-8")
         finally:
             await broker.unsubscribe(name, queue)
 

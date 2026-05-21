@@ -74,7 +74,7 @@ The registry is the persistent source of truth for "who's currently running on t
 from scitex_agent_container import AgentConfig
 
 cfg: AgentConfig = load_config("worker")
-cfg.runtime          # "claude-session" | "claude-code" | "slurm" | "slurm-tenant"
+cfg.runtime          # "apptainer"
 cfg.model            # str
 cfg.expanded_workdir # str (~ resolved)
 cfg.a2a.port         # int | None

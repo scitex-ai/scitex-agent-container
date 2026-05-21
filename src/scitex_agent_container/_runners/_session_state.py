@@ -72,6 +72,40 @@ def read_pid(state_dir: Path) -> int | None:
 
 
 # ---------------------------------------------------------------------------
+# Session start time (for heartbeat elapsed_s)
+# ---------------------------------------------------------------------------
+
+
+def write_started_at(state_dir: Path, started_at: float | None = None) -> float:
+    """Persist the runner's session start time (unix seconds) atomically.
+
+    Written once at runner startup so every heartbeat can report
+    ``elapsed_s`` without the heartbeat loop having to carry the
+    start time in memory (it survives a supervised restart of the
+    conversation task too, since the file outlives it). Returns the
+    value written so the caller can reuse it.
+    """
+    if started_at is None:
+        started_at = time.time()
+    state_dir.mkdir(parents=True, exist_ok=True)
+    tmp = state_dir / "started_at.tmp"
+    tmp.write_text(repr(float(started_at)), encoding="utf-8")
+    tmp.replace(state_dir / "started_at")
+    return float(started_at)
+
+
+def read_started_at(state_dir: Path) -> float | None:
+    """Return the persisted session start time, or None if absent / corrupt."""
+    p = state_dir / "started_at"
+    if not p.is_file():
+        return None
+    try:
+        return float(p.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Heartbeat
 # ---------------------------------------------------------------------------
 
@@ -114,6 +148,39 @@ def _resolve_db_writer(db_writer):
     return db_writer if db_writer is not None else _DefaultDBWriter()
 
 
+def _heartbeat_usage_fields(state_dir: Path, now: float) -> dict:
+    """Build the elapsed-time + token-usage enrichment for a heartbeat.
+
+    Sourced PROGRAMMATICALLY from the runner's own state dir — no TUI
+    scraping:
+
+      * ``elapsed_s`` from the persisted ``started_at`` (None until the
+        runner has written it, so legacy / pre-start callers stay clean).
+      * ``input_tokens`` / ``output_tokens`` / ``total_tokens`` from the
+        accumulated ``quota.json`` (the same totals ``accumulate_quota``
+        sums from each ``ResultMessage.usage``). ``total_tokens`` adds the
+        cache tokens so it reflects everything billed against the session.
+
+    Returns only the keys it can populate; ``write_heartbeat`` splats
+    them onto the payload so ``elapsed_s`` is absent (not 0) when the
+    start time is unknown.
+    """
+    out: dict = {}
+    started_at = read_started_at(state_dir)
+    if started_at is not None:
+        out["started_at"] = started_at
+        out["elapsed_s"] = round(max(0.0, now - started_at), 3)
+    quota = read_quota(state_dir)
+    input_tokens = int(quota.get("input_tokens", 0) or 0)
+    output_tokens = int(quota.get("output_tokens", 0) or 0)
+    cache_creation = int(quota.get("cache_creation_input_tokens", 0) or 0)
+    cache_read = int(quota.get("cache_read_input_tokens", 0) or 0)
+    out["input_tokens"] = input_tokens
+    out["output_tokens"] = output_tokens
+    out["total_tokens"] = input_tokens + output_tokens + cache_creation + cache_read
+    return out
+
+
 def write_heartbeat(
     state_dir: Path,
     *,
@@ -123,8 +190,16 @@ def write_heartbeat(
     host: str | None = None,
     db_writer=None,
 ) -> None:
-    """Atomically write ``{ts, pid, state}`` to ``heartbeat.json``
+    """Atomically write the heartbeat record to ``heartbeat.json``
     AND append a row to ``state.db.heartbeats`` (diary).
+
+    The record carries ``{ts, pid, state}`` plus, when the runner has
+    recorded a start time, an ``elapsed_s`` (seconds since session
+    start, derived from the persisted ``started_at``) and the running
+    token totals (``input_tokens`` / ``output_tokens`` / ``total_tokens``)
+    accumulated from each ``ResultMessage.usage`` into ``quota.json``.
+    This lets the operator see, per agent, how long it has been running
+    and how many tokens it has used — straight off the fast-path JSON.
 
     The JSON file is kept as a fast-path cache for local readers
     (``sac agent status`` polls it without opening sqlite); the DB
@@ -135,7 +210,9 @@ def write_heartbeat(
     pass these stay JSON-only, no surprise rows.
     """
     state_dir.mkdir(parents=True, exist_ok=True)
-    payload = {"ts": time.time(), "pid": pid, "state": state}
+    now = time.time()
+    payload = {"ts": now, "pid": pid, "state": state}
+    payload.update(_heartbeat_usage_fields(state_dir, now))
     tmp = state_dir / "heartbeat.json.tmp"
     tmp.write_text(json.dumps(payload), encoding="utf-8")
     tmp.replace(state_dir / "heartbeat.json")

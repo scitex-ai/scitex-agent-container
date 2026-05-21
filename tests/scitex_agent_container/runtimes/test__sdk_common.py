@@ -8,8 +8,16 @@ Covers the three concerns the helper consolidates:
 
 PA-306: no `monkeypatch`. Env vars and module attributes are saved /
 restored via a ``sdk_env`` fixture that yields a small ``Env`` helper.
-``Env.setattr_module(_sdk_common, '_CRED_FILE', path)`` is the
-equivalent of ``monkeypatch.setattr`` with explicit teardown.
+``Env.setattr_module(_sdk_common, name, value)`` is the equivalent of
+``monkeypatch.setattr`` with explicit teardown.
+
+The credentials-file path is resolved at CALL time by
+``_sdk_common._cred_file_path()`` (honouring ``CLAUDE_CONFIG_DIR`` /
+``HOME``), NOT frozen at import. Tests therefore redirect it by pointing
+``CLAUDE_CONFIG_DIR`` at a tmp dir via :func:`_redirect_cred_dir` — this
+keeps the suite hermetic (no leak onto the operator's real
+``~/.claude/.credentials.json``, which is why the old import-frozen
+constant produced false greens locally yet failed in CI).
 
 TQ cleanup: every test follows Arrange / Act / Assert with a single
 assertion. Multi-fact scenarios are split into sibling tests sharing
@@ -20,6 +28,8 @@ from __future__ import annotations
 
 import json
 import os
+import time
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -34,6 +44,58 @@ from scitex_agent_container.runtimes._sdk_common import (
 )
 
 _SAC_KEY = _sdk_common._SAC_API_KEY_ENV
+
+
+def _valid_creds_json() -> str:
+    """Return a credentials.json body with a token valid for ~1 day.
+
+    ``provision_anthropic_auth`` now runs the OAuth expiry check on the
+    file before returning ``"credentials_file"`` (so an expired token
+    fails LOUDLY instead of dying mid-session). Every fixture that writes
+    a ``.credentials.json`` precondition needs a realistically *valid*
+    token; ``expiresAt`` is unix milliseconds, far enough in the future
+    to clear the 5-min skew.
+    """
+    expires_at_ms = int((time.time() + 86_400) * 1_000)
+    return json.dumps(
+        {
+            "claudeAiOauth": {
+                "accessToken": "tok",
+                "refreshToken": "ref",
+                "expiresAt": expires_at_ms,
+                "scopes": ["user:inference"],
+                "subscriptionType": "max",
+            }
+        }
+    )
+
+
+def _redirect_cred_dir(env: _Env, cfg_dir) -> "Path":
+    """Point the call-time cred resolver at ``cfg_dir`` and return the path.
+
+    ``_sdk_common._cred_file_path()`` honours ``CLAUDE_CONFIG_DIR`` first
+    (``<dir>/.credentials.json``). Setting it here redirects
+    ``provision_anthropic_auth`` off the operator's real
+    ``~/.claude/.credentials.json`` and onto the test's tmp dir — so the
+    suite is hermetic whether or not a real cred file exists on the host.
+    Returns the resolved ``.credentials.json`` path under ``cfg_dir``.
+    """
+    env.setenv("CLAUDE_CONFIG_DIR", str(cfg_dir))
+    return Path(cfg_dir) / ".credentials.json"
+
+
+def _write_valid_cred(env: _Env, cfg_dir) -> "Path":
+    """Redirect the cred dir to ``cfg_dir`` and write a VALID token there.
+
+    Convenience for the many fixtures that only need *some* usable cred
+    file present so ``provision_anthropic_auth`` returns
+    ``"credentials_file"`` and lets the test exercise unrelated behaviour
+    (settings flag, channel sidecar, kwargs pass-through, compose).
+    """
+    cred = _redirect_cred_dir(env, cfg_dir)
+    cred.parent.mkdir(parents=True, exist_ok=True)
+    cred.write_text(_valid_creds_json())
+    return cred
 
 
 # ---------------------------------------------------------------------------
@@ -124,9 +186,7 @@ class TestProvisionAuth:
         # Arrange
         sdk_env.setenv("ANTHROPIC_API_KEY", "sk-ant-stale-from-dotfiles")
         sdk_env.delenv(_SAC_KEY)
-        cred = tmp_path / ".credentials.json"
-        cred.write_text('{"claudeAiOauth": {"accessToken": "tok"}}')
-        sdk_env.setattr_module(_sdk_common, "_CRED_FILE", cred)
+        _write_valid_cred(sdk_env, tmp_path)
         return sdk_env
 
     def test_pre_set_anthropic_api_key_returns_credentials_file(
@@ -155,7 +215,8 @@ class TestProvisionAuth:
         # Arrange
         sdk_env.setenv("ANTHROPIC_API_KEY", "sk-ant-stale-from-dotfiles")
         sdk_env.setenv(_SAC_KEY, "sk-ant-api-sac")
-        sdk_env.setattr_module(_sdk_common, "_CRED_FILE", tmp_path / "missing")
+        # Empty cfg dir → no .credentials.json present.
+        _redirect_cred_dir(sdk_env, tmp_path)
         return sdk_env
 
     def test_sac_value_returns_sac_env(self, _sac_overrides_stale):
@@ -186,9 +247,7 @@ class TestProvisionAuth:
     def _cred_and_sac_both_present(self, sdk_env: _Env, tmp_path):
         # Arrange
         sdk_env.setenv("ANTHROPIC_API_KEY", "sk-ant-stale")
-        cred = tmp_path / ".credentials.json"
-        cred.write_text('{"claudeAiOauth": {"accessToken": "tok"}}')
-        sdk_env.setattr_module(_sdk_common, "_CRED_FILE", cred)
+        _write_valid_cred(sdk_env, tmp_path)
         sdk_env.setenv(_SAC_KEY, "sk-ant-oat-sac")
         return sdk_env
 
@@ -217,11 +276,11 @@ class TestProvisionAuth:
 
     @pytest.fixture
     def _only_sac(self, sdk_env: _Env, tmp_path):
-        # Arrange
+        # Arrange — empty cfg dir → no .credentials.json present.
         sdk_env.delenv("ANTHROPIC_API_KEY")
-        sdk_env.setattr_module(_sdk_common, "_CRED_FILE", tmp_path / "missing")
+        cred_target = _redirect_cred_dir(sdk_env, tmp_path)
         sdk_env.setenv(_SAC_KEY, "sk-ant-api-sac")
-        return (sdk_env, tmp_path)
+        return (sdk_env, cred_target)
 
     def test_sac_env_only_returns_sac_env(self, _only_sac):
         # Arrange (handled by fixture)
@@ -239,21 +298,20 @@ class TestProvisionAuth:
 
     def test_sac_env_only_does_not_create_credentials_file(self, _only_sac):
         # Arrange
-        _, tmp_path = _only_sac
+        _, cred_target = _only_sac
         # Act
         provision_anthropic_auth()
         # Assert
-        assert not (tmp_path / "missing").exists()
+        assert not cred_target.exists()
 
     # --- scenario: ``sk-ant-oat*`` SAC value flows through env override
     # only — sac NEVER synthesises credentials.json.
 
     @pytest.fixture
     def _oat_value_only(self, sdk_env: _Env, tmp_path):
-        # Arrange
+        # Arrange — cfg dir has no .credentials.json (and is never created).
         sdk_env.delenv("ANTHROPIC_API_KEY")
-        cred_target = tmp_path / ".claude" / ".credentials.json"
-        sdk_env.setattr_module(_sdk_common, "_CRED_FILE", cred_target)
+        cred_target = _redirect_cred_dir(sdk_env, tmp_path / ".claude")
         sdk_env.setenv(_SAC_KEY, "sk-ant-oat-zzz")
         return (sdk_env, cred_target)
 
@@ -280,15 +338,52 @@ class TestProvisionAuth:
         assert not cred_target.exists()
 
     def test_no_auth_raises(self, sdk_env: _Env, tmp_path):
-        # Arrange
+        # Arrange — empty cfg dir → no .credentials.json present.
         sdk_env.delenv("ANTHROPIC_API_KEY")
         sdk_env.delenv(_SAC_KEY)
-        sdk_env.setattr_module(_sdk_common, "_CRED_FILE", tmp_path / "missing")
+        _redirect_cred_dir(sdk_env, tmp_path)
         # Act
         ctx = pytest.raises(SDKCommonError)
         # Assert
         with ctx:
             provision_anthropic_auth()
+
+    # --- scenario: the credentials file exists but its OAuth token is
+    # already expired. The file merely *existing* must NOT be treated as
+    # usable auth — provision_anthropic_auth runs the expiry check and
+    # fails LOUDLY with the manual-refresh hint, so the agent never opens
+    # a session that dies with an ambiguous 401.
+
+    @pytest.fixture
+    def _expired_cred(self, sdk_env: _Env, tmp_path):
+        # Arrange
+        sdk_env.delenv("ANTHROPIC_API_KEY")
+        sdk_env.delenv(_SAC_KEY)
+        cred = _redirect_cred_dir(sdk_env, tmp_path)
+        expired_ms = int((time.time() - 86_400) * 1_000)
+        cred.write_text(
+            json.dumps({"claudeAiOauth": {"accessToken": "x", "expiresAt": expired_ms}})
+        )
+        return sdk_env
+
+    def test_expired_credentials_file_raises_loudly(self, _expired_cred):
+        # Arrange (handled by fixture)
+        # Act
+        ctx = pytest.raises(SDKCommonError)
+        # Assert
+        with ctx:
+            provision_anthropic_auth()
+
+    def test_expired_credentials_error_carries_refresh_hint(self, _expired_cred):
+        # Arrange (handled by fixture)
+        # Act
+        try:
+            provision_anthropic_auth()
+            message = ""
+        except SDKCommonError as exc:
+            message = str(exc)
+        # Assert
+        assert "claude login" in message
 
 
 # ---------------------------------------------------------------------------
@@ -416,11 +511,11 @@ class TestBuildOptions:
 
     @pytest.fixture
     def _composed_opts(self, sdk_env: _Env, tmp_path):
-        # Arrange: pretend cred file exists so no env mutation.
-        cred = tmp_path / ".credentials.json"
-        cred.write_text("{}")
-        sdk_env.setattr_module(_sdk_common, "_CRED_FILE", cred)
+        # Arrange: a VALID cred file present so auth resolves to the
+        # credentials_file path (no env-key mutation needed).
+        _write_valid_cred(sdk_env, tmp_path)
         sdk_env.delenv("ANTHROPIC_API_KEY")
+        sdk_env.delenv(_SAC_KEY)
         # Arrange: register a fake agent with one MCP server.
         ws = tmp_path / "ws"
         ws.mkdir()
@@ -472,10 +567,9 @@ class TestBuildOptions:
 
     def test_extra_kwargs_pass_through(self, sdk_env: _Env, tmp_path):
         # Arrange
-        cred = tmp_path / ".credentials.json"
-        cred.write_text("{}")
-        sdk_env.setattr_module(_sdk_common, "_CRED_FILE", cred)
+        _write_valid_cred(sdk_env, tmp_path)
         sdk_env.delenv("ANTHROPIC_API_KEY")
+        sdk_env.delenv(_SAC_KEY)
         _swap_registry(sdk_env, None)
         # Act
         opts = build_sdk_options("nope", extra={"continue_conversation": True})
@@ -500,3 +594,165 @@ class TestBuildOptions:
         # Assert
         with ctx:
             build_sdk_options("any")
+
+
+# ---------------------------------------------------------------------------
+# build_sdk_options — explicit --settings load (hooks/settings)
+#
+# setting_sources stays [] (machine-independence: no host ~/.claude
+# auto-discovery). The agent's settings.local.json is delivered into the
+# container $HOME/.claude/ via the to_home mirror; build_sdk_options must
+# point the SDK ``settings`` field (=> --settings, the highest-priority
+# flag-settings layer) at it so hooks load independently of setting_sources.
+# ---------------------------------------------------------------------------
+
+
+class TestSettingsFlag:
+    @pytest.fixture
+    def _opts_with_settings(self, sdk_env: _Env, tmp_path):
+        # Arrange — auth via a VALID cred file (resolved from
+        # CLAUDE_CONFIG_DIR, independent of the $HOME we set below for
+        # settings resolution), and a container $HOME holding the
+        # delivered settings.local.json.
+        _write_valid_cred(sdk_env, tmp_path / "cfg")
+        sdk_env.delenv("ANTHROPIC_API_KEY")
+        sdk_env.delenv(_SAC_KEY)
+        home = tmp_path / "home" / "agent"
+        (home / ".claude").mkdir(parents=True)
+        (home / ".claude" / "settings.local.json").write_text('{"hooks": {}}\n')
+        sdk_env.setenv("HOME", str(home))
+        _swap_registry(sdk_env, None)
+        # Act
+        opts = build_sdk_options("alpha")
+        return opts, home
+
+    def test_settings_points_at_container_home_settings(self, _opts_with_settings):
+        # Arrange
+        opts, home = _opts_with_settings
+        # Act
+        # Assert — the in-container path, derived from $HOME.
+        assert opts.settings == str(home / ".claude" / "settings.local.json")
+
+    def test_setting_sources_stays_empty(self, _opts_with_settings):
+        # Arrange — machine-independence invariant must NOT change.
+        opts, _ = _opts_with_settings
+        # Act
+        # Assert
+        assert opts.setting_sources == []
+
+    def test_no_settings_when_file_absent(self, sdk_env: _Env, tmp_path):
+        # Arrange — $HOME without a settings.local.json → no --settings.
+        # Cred resolves from CLAUDE_CONFIG_DIR, independent of $HOME.
+        _write_valid_cred(sdk_env, tmp_path / "cfg")
+        sdk_env.delenv("ANTHROPIC_API_KEY")
+        sdk_env.delenv(_SAC_KEY)
+        empty_home = tmp_path / "empty_home"
+        empty_home.mkdir()
+        sdk_env.setenv("HOME", str(empty_home))
+        _swap_registry(sdk_env, None)
+        # Act
+        opts = build_sdk_options("alpha")
+        # Assert
+        assert opts.settings is None
+
+
+# ---------------------------------------------------------------------------
+# build_sdk_options — server:sac channel sidecar registration
+# ---------------------------------------------------------------------------
+
+
+class TestChannelSidecar:
+    """``channels=[server:sac]`` registers the ``sac mcp channel`` adapter.
+
+    Regression guard: the adapter subscribes to ``/agents/<name>/inbox/
+    stream`` which is served by the BUS (``sac listen``, resolved from
+    ``SAC_LISTEN_BASE_URL``), NOT the agent's own a2a sidecar port. An
+    earlier version hardcoded ``--listen-url http://127.0.0.1:{a2a_port}``,
+    pointing the SSE GET at a server that 404s on the inbox route, so the
+    bus saw zero subscribers and ``delivered_subscriber_count`` was always
+    0. These tests pin: the ``sac`` stdio MCP is registered, and its args
+    never carry an a2a_port-derived ``--listen-url``.
+    """
+
+    @pytest.fixture
+    def _sac_channel_opts(self, sdk_env: _Env, tmp_path):
+        # Arrange: a VALID cred file present so auth needs no env mutation.
+        _write_valid_cred(sdk_env, tmp_path)
+        sdk_env.delenv("ANTHROPIC_API_KEY")
+        sdk_env.delenv(_SAC_KEY)
+        _swap_registry(sdk_env, None)
+        # Act: thread the same sac-private extra the runner sends, including
+        # an a2a_port that must NOT leak into the channel sidecar args.
+        opts = build_sdk_options(
+            "lead",
+            extra={"_channels": ["server:sac"], "_a2a_port": 9999},
+        )
+        return opts
+
+    def test_registers_sac_stdio_mcp(self, _sac_channel_opts):
+        # Arrange
+        servers = _sac_channel_opts.mcp_servers  # type: ignore[operator]
+        # Act
+        sac = servers.get("sac")
+        # Assert
+        assert sac is not None and sac["command"] == "sac"
+
+    def test_sidecar_args_subscribe_to_named_agent_inbox(self, _sac_channel_opts):
+        # Arrange
+        sac = _sac_channel_opts.mcp_servers["sac"]  # type: ignore[index]
+        # Act
+        args = sac["args"]
+        # Assert
+        assert args[:4] == ["mcp", "channel", "--name", "lead"]
+
+    def test_sidecar_args_omit_a2a_port_listen_url(self, _sac_channel_opts):
+        # Arrange
+        sac = _sac_channel_opts.mcp_servers["sac"]  # type: ignore[index]
+        args = sac["args"]
+        # Act — find the --listen-url value, if any.
+        if "--listen-url" in args:
+            listen_url = args[args.index("--listen-url") + 1]
+        else:
+            listen_url = None
+        # Assert: the a2a_port (9999) must NOT be the BUS listen-url — bus URL
+        # resolution is delegated to the adapter's main() via
+        # SAC_LISTEN_BASE_URL. (It DOES appear as --turn-url, the agent's own
+        # /v1/turn wake target — a distinct concern, covered separately.)
+        assert listen_url is None or "9999" not in str(listen_url)
+
+    def test_sidecar_args_carry_turn_url_for_wake(self, _sac_channel_opts):
+        """WI-1: the a2a_port is threaded as ``--turn-url`` so the adapter can
+        POST received bus events to the agent's own /v1/turn and WAKE an idle
+        session (push ≡ Telegram)."""
+        # Arrange
+        sac = _sac_channel_opts.mcp_servers["sac"]  # type: ignore[index]
+        args = sac["args"]
+        # Act
+        turn_url = args[args.index("--turn-url") + 1] if "--turn-url" in args else None
+        # Assert — points at the agent's own loopback /v1/turn on the a2a_port.
+        assert turn_url == "http://127.0.0.1:9999/v1/turn"
+
+    def test_sidecar_listen_url_when_present_is_not_a2a_port(self, _sac_channel_opts):
+        # Arrange
+        sac = _sac_channel_opts.mcp_servers["sac"]  # type: ignore[index]
+        args = sac["args"]
+        # Act: if a --listen-url is emitted at all, it must be the bus, never
+        # the agent's own a2a sidecar port.
+        if "--listen-url" in args:
+            listen_url = args[args.index("--listen-url") + 1]
+        else:
+            listen_url = None
+        # Assert
+        assert listen_url is None or listen_url == os.environ.get("SAC_LISTEN_BASE_URL")
+
+    def test_no_error_when_a2a_port_absent(self, sdk_env: _Env, tmp_path):
+        # Arrange: valid cred present; channels set but NO _a2a_port threaded.
+        _write_valid_cred(sdk_env, tmp_path)
+        sdk_env.delenv("ANTHROPIC_API_KEY")
+        sdk_env.delenv(_SAC_KEY)
+        _swap_registry(sdk_env, None)
+        # Act: a2a_port is irrelevant to inbox subscription, so its absence
+        # must NOT raise — the adapter resolves the bus from env at runtime.
+        opts = build_sdk_options("lead", extra={"_channels": ["server:sac"]})
+        # Assert
+        assert "sac" in opts.mcp_servers  # type: ignore[operator]

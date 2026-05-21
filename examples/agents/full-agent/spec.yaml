@@ -45,7 +45,7 @@ metadata:
 
     # Card field: skills[0].tags ∪ x-scitex-agent-container.required_skills
     # (CSV — v3 home for declared skill IDs; real skill files live in
-    # dot_claude/skills/ next to this spec.yaml).
+    # to_home/.claude/skills/ next to this spec.yaml).
     skills: scitex-dev, git
 
     # Card field: x-scitex-agent-container.cardinality
@@ -65,11 +65,11 @@ spec:
   # host path (e.g. an existing project tree). Example:
   # workdir: ~/proj/your-project
 
-  # dot_claude/ sibling — materialized into <workdir>/.claude/ at start.
-  # Can contain: CLAUDE.md, .mcp.json, .env, state.md,
-  #              commands/, skills/, hooks/, settings.local.json
-  # Default: auto-discovered ./dot_claude/ next to this spec.yaml.
-  dot_claude: ./dot_claude
+  # to_home/ sibling — its contents mirror the agent's container $HOME
+  # (= runtime/<name>/home/) 1:1 at start. Canonical layout:
+  #   to_home/{CLAUDE.md, .mcp.json, .env, .claude/{hooks,skills,commands}}
+  # Default: auto-discovered ./to_home/ next to this spec.yaml.
+  to_home: ./to_home
 
   # python-venv: pre-activated for startup_commands + hooks.
   # `auto` probes ~/.venv-3.11 then ~/.venv (host conventions).
@@ -185,7 +185,7 @@ spec:
     #   permission_mode: bypassPermissions
 
   # ----------------------------------------------------------------------
-  # mcp_servers — per-agent MCP wiring (also: drop a .mcp.json in dot_claude/).
+  # mcp_servers — per-agent MCP wiring (also: drop a .mcp.json in to_home/).
   # The block below is merged into <workdir>/.mcp.json at start.
   # ----------------------------------------------------------------------
   # mcp_servers:
@@ -290,7 +290,7 @@ spec:
 
   # ----------------------------------------------------------------------
   # Skills:
-  #   * Real skill files: dot_claude/skills/ (materialized into the workspace).
+  #   * Real skill files: to_home/.claude/skills/ (materialized into $HOME).
   #   * AgentCard publication: metadata.labels.skills (CSV, top of this file).
   # `spec.skills` was REMOVED in v3 (validation rejects it).
   # ----------------------------------------------------------------------

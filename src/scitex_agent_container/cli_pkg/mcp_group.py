@@ -146,21 +146,35 @@ def mcp_start(use_http: bool, host: str, port: int, dry_run: bool, yes: bool) ->
     default=None,
     help="sac listen base URL (default: $SAC_LISTEN_BASE_URL or http://127.0.0.1:7878).",
 )
-def mcp_channel(name: str, listen_url: str | None) -> None:
+@click.option(
+    "--turn-url",
+    default=None,
+    help=(
+        "The agent's own colocated /v1/turn endpoint (e.g. "
+        "http://127.0.0.1:18888/v1/turn). When set, each received bus event "
+        "is POSTed here so a push WAKES an idle session and drives a turn "
+        "immediately (push behaves like the lead's Telegram channel). "
+        "Without it the adapter only pushes the channel notification, which "
+        "does not advance an idle agent's turn."
+    ),
+)
+def mcp_channel(name: str, listen_url: str | None, turn_url: str | None) -> None:
     """Run the sac push channel adapter as a stdio MCP subprocess.
 
     Intended to be spawned by Claude Code via
     ``--dangerously-load-development-channels server:sac`` — see
     ``docs/sac-and-orochi.md``. Streams inbox events from sac listen
     as ``notifications/claude/channel`` so the running session sees
-    ``<channel source="..." msg_id="...">`` tags in real time.
+    ``<channel source="..." msg_id="...">`` tags in real time, and (when
+    ``--turn-url`` is set) WAKES the session by POSTing each event to the
+    agent's own ``/v1/turn`` so an idle agent processes it immediately.
 
     \b
     Example (manual):
       $ sac mcp channel --name lead
     """
     _channel_main = _load_channel_main()
-    _channel_main(name=name, listen_url=listen_url)
+    _channel_main(name=name, listen_url=listen_url, turn_url=turn_url)
 
 
 @mcp.command("doctor")

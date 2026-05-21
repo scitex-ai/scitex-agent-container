@@ -41,15 +41,6 @@ sac agent attach <name>                # Attach to the agent's multiplexer sessi
 sac agent find <capability>            # Find agents with a specific capability label across YAML roots
 ```
 
-## SLURM
-
-```bash
-sac template render-sbatch <yaml>         # Print the sbatch wrapper text (debug; doesn't submit)
-sac template render-attach <name>         # Print the srun --pty command that reattaches
-```
-
-For multi-tenant SLURM (`runtime: slurm-tenant`), see `09_slurm-tenant.md` and the companion `scitex-hpc reservations` CLI.
-
 ## Interact (resume an existing session)
 
 ```bash
@@ -145,5 +136,4 @@ The CLI is a thin wrapper over these — every command corresponds to a function
 ## See also
 
 - `01_config-v3.md` — the YAML schema the CLI consumes
-- `09_slurm-tenant.md` — multi-tenant SLURM runtime + `scitex-hpc reservations` CLI
 - `40_troubleshooting.md` — common launch failures

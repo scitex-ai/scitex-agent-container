@@ -91,7 +91,28 @@ def _cred_file_path() -> Path:
     return Path.home() / ".claude" / ".credentials.json"
 
 
-_CRED_FILE = _cred_file_path()
+def _container_settings_path() -> str | None:
+    """Resolve the in-container ``settings.local.json`` path, or ``None``.
+
+    sac mirrors the agent's ``to_home`` tree (including
+    ``.claude/settings.local.json``) into the container ``$HOME`` — both via
+    the workspace-home bind (hardened mode) and via the overlay upper home
+    (relaxed ``--home``/``--overlay`` specs). The runner executes INSIDE the
+    container, so ``$HOME`` already points at ``/home/agent`` (or whatever
+    ``--home`` the spec set). We resolve the settings file against that
+    ``$HOME`` and return its path only when the file is present — so a spec
+    without a ``settings.local.json`` doesn't aim ``--settings`` at a missing
+    file.
+
+    The hook ``command``s inside that settings file use ``$HOME/.claude/...``,
+    so they resolve in-container regardless of what ``$HOME`` resolves to.
+    """
+    home = os.environ.get("HOME")
+    if not home:
+        return None
+    candidate = Path(home) / ".claude" / "settings.local.json"
+    return str(candidate) if candidate.is_file() else None
+
 
 # ---------------------------------------------------------------------------
 # Why we never honour a pre-set ANTHROPIC_API_KEY
@@ -176,6 +197,12 @@ def provision_anthropic_auth() -> str:
     # this point regardless of which path we pick below.
     os.environ.pop("ANTHROPIC_API_KEY", None)
 
+    # Resolve the credentials path at CALL time (not import time) so it
+    # honours the current ``CLAUDE_CONFIG_DIR`` / ``HOME`` — the apptainer
+    # runtime sets these per-dispatch, and tests redirect them at a tmp
+    # dir. An import-frozen constant would leak onto the real host file.
+    cred_file = _cred_file_path()
+
     # Path A: credentials.json wins (Pro/Max OAuth flat-rate, real
     # refresh_token). The SDK reads the file directly. Critically we
     # do NOT set ANTHROPIC_API_KEY here even if SAC is also set —
@@ -183,7 +210,23 @@ def provision_anthropic_auth() -> str:
     # env, so an env override would shadow the working file path
     # and the SDK would fall back to the rejected env value
     # ("Invalid API key").
-    if _CRED_FILE.is_file():
+    if cred_file.is_file():
+        # The file existing is NOT enough: a token that expired (or is
+        # about to) while the file lingers on disk would otherwise sail
+        # past this check and die with an ambiguous 401 the moment the
+        # SDK opens a session. Fail LOUDLY here instead, with the
+        # manual-refresh hint, so the operator gets a clear cause rather
+        # than silent mid-session death.
+        from .._state._preflight_creds import check_oauth_token_expiry
+
+        try:
+            check_oauth_token_expiry(cred_file)
+        except (FileNotFoundError, ValueError, RuntimeError) as exc:
+            raise SDKCommonError(
+                f"Anthropic OAuth credentials at {cred_file} are not "
+                f"usable: {exc} Run `claude login` to refresh the token, "
+                "then restart the agent."
+            ) from exc
         return "credentials_file"
 
     # Path B: SAC env (api-key form for pay-per-token, or oauth where
@@ -196,7 +239,7 @@ def provision_anthropic_auth() -> str:
 
     raise SDKCommonError(
         f"no Anthropic auth available — run `claude /login` so "
-        f"{_CRED_FILE} exists, or export {_SAC_API_KEY_ENV}. "
+        f"{cred_file} exists, or export {_SAC_API_KEY_ENV}. "
         "sac does NOT honour a pre-set ANTHROPIC_API_KEY (see the "
         "module-level comment in runtimes/_sdk_common.py for why), "
         "and never writes/synthesises credentials.json itself."
@@ -374,6 +417,22 @@ def build_sdk_options(
     # this way either, which is the right default for container-as-
     # boundary anyway.)
     kwargs.setdefault("setting_sources", [])
+    # Load hooks/settings explicitly via the SDK ``settings`` field
+    # (emits ``--settings <path>``). This is the "flag settings" layer —
+    # the highest-priority user-controlled layer — and loads INDEPENDENTLY
+    # of ``setting_sources``, which stays ``[]`` for machine-independence
+    # (no host ``~/.claude`` auto-discovery). sac delivers the agent's
+    # ``settings.local.json`` into the container ``$HOME/.claude/`` via the
+    # ``to_home`` mirror; without ``--settings`` the SDK would never load it
+    # (empty ``setting_sources`` skips the $HOME settings layer entirely).
+    #
+    # We resolve the path from the in-container ``$HOME`` (where the runner
+    # actually executes) and only set it when the file is present, so a
+    # spec without a settings.local.json doesn't point ``--settings`` at a
+    # missing file.
+    settings_path = _container_settings_path()
+    if settings_path is not None and "settings" not in kwargs:
+        kwargs["settings"] = settings_path
     # Pop sac-private keys from ``extra`` BEFORE merging into kwargs —
     # ClaudeAgentOptions is strict and rejects unknown fields. The
     # ``_*`` prefix marks these as sac-internal (not SDK fields).
@@ -382,6 +441,13 @@ def build_sdk_options(
     if extra:
         extra = dict(extra)  # shallow copy so we can mutate
         channels = extra.pop("_channels", None)
+        # ``_a2a_port`` is threaded for two purposes:
+        #   1. The /v1/turn registration path (handled by the runner).
+        #   2. The channel sidecar's WAKE path (WI-1) — the adapter POSTs
+        #      received bus events to the agent's OWN ``/v1/turn`` on this
+        #      port so a push WAKES an idle session (push ≡ Telegram). This
+        #      is the agent's loopback turn endpoint, NOT the bus inbox SSE
+        #      (that still lives on SAC_LISTEN_BASE_URL — see below).
         a2a_port = extra.pop("_a2a_port", None)
         if extra:
             kwargs.update(extra)
@@ -408,29 +474,33 @@ def build_sdk_options(
             extra_args.setdefault("dangerously-load-development-channels", "server:sac")
         mcps = kwargs.setdefault("mcp_servers", {})
         if isinstance(mcps, dict) and "sac" not in mcps:
-            # No silent fallback. The sidecar's --listen-url MUST point
-            # at the actual server hosting /agents/<name>/inbox/stream.
-            # If a2a_port wasn't threaded through, the caller forgot to
-            # pass listen_port to build_app — surface that explicitly
-            # rather than letting the sidecar quietly fall back to env
-            # / 127.0.0.1:7878 and produce "Command failed with no
-            # output" tool errors at runtime.
-            if a2a_port is None:
-                raise SDKCommonError(
-                    "spec.claude.channels=[server:sac] is set but no "
-                    "a2a_port was threaded through to build_sdk_options. "
-                    "The MCP sidecar needs the server's actual listen "
-                    "port for its --listen-url. Pass listen_port to "
-                    "build_app(), or set spec.a2a.port in the yaml."
-                )
+            # The sidecar subscribes to /agents/<name>/inbox/stream, which
+            # is served by the BUS (`sac listen`, default :7878), NOT the
+            # agent's own a2a sidecar port. Omit --listen-url here and let
+            # the adapter's main() resolve the bus from SAC_LISTEN_BASE_URL
+            # (its existing default, injected into the container) — the
+            # same source the CLI default and the adapter both use. Passing
+            # the a2a_port here pointed the SSE GET at a server that 404s on
+            # the inbox route, so the bus saw zero subscribers and
+            # delivered_subscriber_count was always 0.
+            #
+            # a2a_port is irrelevant to inbox SUBSCRIPTION but IS the wake
+            # path (WI-1): pass it as ``--turn-url`` so the adapter can POST
+            # received bus events to the agent's OWN ``/v1/turn`` and WAKE an
+            # idle session. The bind host is loopback (the sidecar and the
+            # runner share the container netns); host LAN exposure of the turn
+            # endpoint does not change the in-container wake target.
             sidecar_args = [
                 "mcp",
                 "channel",
                 "--name",
                 agent_name,
-                "--listen-url",
-                f"http://127.0.0.1:{int(a2a_port)}",
             ]
+            if a2a_port is not None:
+                sidecar_args += [
+                    "--turn-url",
+                    f"http://127.0.0.1:{int(a2a_port)}/v1/turn",
+                ]
             mcps["sac"] = {
                 "type": "stdio",
                 "command": "sac",

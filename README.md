@@ -39,7 +39,7 @@
 
 | # | Problem                                                     | Solution                                                                                                                                      |
 |---|-------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------|
-| 1 | Scripting an agentic workflow is hard.                      | `scitex-agent-container` (`sac`) declares the agent as a **single YAML file** ([`spec.yaml`](#yaml-spec-reference-v3)).                                                  |
+| 1 | Scripting an agentic workflow is hard.                      | `scitex-agent-container` (`sac`) declares the agent as a **single YAML file** ([`spec.yaml`](docs/spec-reference.md)).                                                  |
 | 2 | Subagents don't scale across hosts, projects, and contexts. | `sac` lets agents spawn **full agents** on local AND **remote hosts**.                                                                        |
 | 3 | Controlling agent permissions is difficult.                 | `sac` runs every agent **inside Apptainer** — full mount/env/security options exposed in `spec.yaml`.                                         |
 | 4 | Supporting the A2A protocol by hand is time-consuming.      | `sac` needs just one YAML field (`spec.a2a.port`).                                                                                            |
@@ -116,7 +116,7 @@ sac agents delete hello-agent-1 hello-agent-2 -y
 
 ### Tutorial
 
-[`examples/`](examples/) walks through the runtime in 15 lessons (image build, sandbox/update/freeze, versioning, run/send/tail, logs/exec, stop/remove, binds, env+user, writing your first spec.yaml, dot_claude/, A2A endpoint, health+restart, multi-host, debugging). Run them read-only with `bash examples/00_run_all.sh`, or `--apply` to execute the mutating ones.
+[`examples/`](examples/) walks through the runtime in 15 lessons (image build, sandbox/update/freeze, versioning, run/send/tail, logs/exec, stop/remove, binds, env+user, writing your first spec.yaml, to_home/, A2A endpoint, health+restart, multi-host, debugging). Run them read-only with `bash examples/00_run_all.sh`, or `--apply` to execute the mutating ones.
 
 ## How it works
 
@@ -124,7 +124,7 @@ sac agents delete hello-agent-1 hello-agent-2 -y
 
 ```
   spec.yaml   ─┐
-  dot_claude/ ─┴─→ sac agents start ──→ apptainer instance
+  to_home/    ─┴─→ sac agents start ──→ apptainer instance
                                           │
                                           ▼
                               long-lived Claude SDK session
@@ -135,7 +135,7 @@ sac agents delete hello-agent-1 hello-agent-2 -y
                               └─→ POST /v1/turn  (per-agent A2A inbound)
 ```
 
-**[Full architecture →](docs/how-sac-works.md)** — launch flow, dot_claude merge rules, A2A inbound, control plane, restart/health.
+**[Full architecture →](docs/how-sac-works.md)** — launch flow, to_home merge rules, A2A inbound, control plane, restart/health.
 
 **[YAML Spec Reference (v3) →](docs/spec-reference.md)** — annotated full example + field table (apiVersion, spec.apptainer.*, spec.claude.*, a2a, health, restart).
 
@@ -193,7 +193,7 @@ sac image status                          # unified dashboard
 sac image snapshot [-o env.json]          # reproducibility capsule
 
 # Account / quota
-sac account list / save / delete / switch / watch-quota
+sac accounts list / save / delete / switch / watch-quota
 
 # Network / peers
 sac host list / add / remove / set / probe / exec / validate

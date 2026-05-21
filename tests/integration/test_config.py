@@ -463,7 +463,7 @@ class TestSkillsSpec:
 
     @pytest.mark.skip(
         reason="v3-realign: spec.skills was removed (skills now live "
-        "under dot_claude/skills/ per §3)."
+        "under to_home/.claude/skills/ per §3)."
     )
     def test_skills_from_yaml_loads_required(self):
         # Arrange
@@ -475,7 +475,7 @@ class TestSkillsSpec:
 
     @pytest.mark.skip(
         reason="v3-realign: spec.skills was removed (skills now live "
-        "under dot_claude/skills/ per §3)."
+        "under to_home/.claude/skills/ per §3)."
     )
     def test_skills_partial_required_only_set(self):
         # Arrange

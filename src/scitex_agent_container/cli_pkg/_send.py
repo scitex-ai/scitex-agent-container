@@ -25,11 +25,31 @@ the peer probe path is testable without an actual ssh subprocess.
 
 from __future__ import annotations
 
+import shlex
 from typing import Any
 
+from ._send_diagnosis import diagnose_send_failure
 from ._send_preflight import SshRunner, preflight_send_creds
 
-__all__ = ["send_to_agent"]
+__all__ = ["send_to_agent", "build_track_command"]
+
+
+def build_track_command(name: str, prompt: str) -> str:
+    """Return the backgroundable ``sac`` CLI that delivers + awaits a reply.
+
+    The non-blocking dispatch path validates reachability and hands the
+    caller this command instead of POSTing the turn itself. Running it in
+    a backgrounded shell delivers the prompt to the agent's live session
+    and streams the reply — so the lead's MCP turn never blocks on the
+    agent's processing, yet the reply is still trackable.
+
+    The ``sac agents send`` codepath is the SAME library helper this
+    module backs (it routes prompt-style sends through /v1/turn for the
+    running session), so the backgrounded command and the in-process
+    ``wait=True`` path are behaviourally identical — there is no second,
+    drifting delivery implementation.
+    """
+    return f"sac agents send {shlex.quote(name)} {shlex.quote(prompt)}"
 
 
 def _post_turn(url: str, text: str, *, timeout_s: float) -> tuple[str, dict[str, Any]]:
@@ -61,24 +81,53 @@ def send_to_agent(
     timeout_seconds: int = 120,
     model: str | None = None,
     max_turns: int | None = None,
+    wait: bool = False,
     ssh_runner: SshRunner | None = None,
     lead_creds_path: Any = None,
 ) -> dict[str, Any]:
-    """Send a turn to ``name``'s live A2A sidecar; return a structured dict.
+    """Dispatch a turn to ``name``'s live A2A sidecar; return a structured dict.
+
+    Two modes, selected by ``wait``:
+
+    * ``wait=False`` (DEFAULT, non-blocking) — validate that the agent is
+      reachable (running, has a bound a2a_port, fresh creds, sidecar
+      port accepting connections), then return PROMPTLY with
+      ``status="dispatched"`` WITHOUT blocking on the agent's turn. The
+      payload carries a ``track_command`` — a backgroundable ``sac
+      agents send ...`` CLI the caller runs in a background shell to
+      actually deliver the prompt and stream the reply. This is the path
+      the MCP ``agent_send`` tool uses so the lead's turn never hangs on
+      the agent's processing. Validation still fails LOUD: an agent that
+      cannot possibly receive the turn (not running, no a2a_port, expired
+      creds, sidecar port unreachable, recorded pid dead) returns the
+      same ``error`` / ``creds-expired`` payload as the blocking path —
+      never a misleading "dispatched".
+
+    * ``wait=True`` (legacy synchronous) — POST the turn and BLOCK until
+      the agent finishes the turn, then return its reply. Use only when
+      the caller genuinely needs the response inline.
 
     Returns:
+        ``{"status": "dispatched", "agent": str, "host": str, "url": str,
+        "a2a_port": int, "track_command": str, "track_command_argv":
+        [str, ...], "delivered_subscriber_count": 1}`` in the default
+        non-blocking mode once reachability is validated;
         ``{"status": "ok", "response_text": str, "response_metadata":
-        {...}}`` on success;
+        {...}}`` on a successful blocking (``wait=True``) reply;
         ``{"status": "error", "error": "..."}`` when the agent isn't
-        running, the row has no a2a_port, transport fails, or the
-        sidecar returns non-200;
+        running, the row has no a2a_port, the sidecar is unreachable,
+        transport fails, or the sidecar returns non-200;
         ``{"status": "creds-expired", "error": "...", "agent": str}``
         when the lead's OAuth token (or the peer's, via ssh probe) is
         expired / near-expiry. Refuses to dispatch.
-        ``{"status": "timeout", "error": "no response in <N>s"}`` when
-        the sidecar doesn't reply within ``timeout_seconds``.
+        ``{"status": "timeout", "error": "no response in <N>s"}`` when a
+        blocking send's sidecar doesn't reply within ``timeout_seconds``.
 
     Args:
+        wait: When ``True`` block on the agent's turn and return the
+            reply inline (legacy behavior). When ``False`` (default)
+            validate reachability and return a ``dispatched`` payload
+            with a backgroundable ``track_command``.
         ssh_runner: Optional injection seam for the peer-side OAuth
             probe. Defaults to :func:`_send_preflight.default_ssh_runner`
             (real ssh). Tests pass a fake that returns a
@@ -102,12 +151,23 @@ def send_to_agent(
     from .._network.peer import PeerError
     from .._state.state_db import _resolve_host, list_active_instances
 
+    current_host = _resolve_host(None)
     rows = list_active_instances()
     matching = [r for r in rows if r.get("name") == name]
     if not matching:
-        return {"status": "error", "error": f"agent {name!r} not running"}
+        return {
+            "status": "error",
+            "error": f"agent {name!r} not running",
+            "diagnosis": diagnose_send_failure(
+                name,
+                a2a_port=None,
+                peer_host=current_host,
+                current_host=current_host,
+            ),
+        }
     row = matching[0]
     a2a_port = row.get("a2a_port")
+    peer_host = str(row.get("host") or "")
     if not isinstance(a2a_port, int) or a2a_port <= 0:
         return {
             "status": "error",
@@ -115,9 +175,13 @@ def send_to_agent(
                 f"agent {name!r} has no a2a_port recorded "
                 f"(a2a_port={a2a_port!r}); cannot reach /v1/turn"
             ),
+            "diagnosis": diagnose_send_failure(
+                name,
+                a2a_port=a2a_port if isinstance(a2a_port, int) else None,
+                peer_host=peer_host or current_host,
+                current_host=current_host,
+            ),
         }
-    peer_host = str(row.get("host") or "")
-    current_host = _resolve_host(None)
     if peer_host and peer_host != current_host:
         url = f"ssh://{peer_host}:{a2a_port}/v1/turn"
     else:
@@ -156,6 +220,21 @@ def send_to_agent(
     if preflight_result is not None:
         return preflight_result
 
+    if not wait:
+        # Non-blocking dispatch (default). Do NOT POST the blocking turn
+        # — that would hang the caller until the agent finishes. Instead
+        # validate that the agent can actually receive the turn and hand
+        # back a backgroundable CLI that delivers + tracks the reply.
+        return _dispatch_nonblocking(
+            name,
+            prompt or "",
+            a2a_port=a2a_port,
+            peer_host=peer_host,
+            current_host=current_host,
+            url=url,
+            metadata_extras=metadata_extras,
+        )
+
     try:
         reply, body = _post_turn(url, text, timeout_s=float(timeout_seconds))
     except PeerError as exc:
@@ -164,9 +243,24 @@ def send_to_agent(
         # ssh+curl timeouts as "ssh+curl timeout to ...". Sniff either
         # shape so the MCP tool can surface status="timeout" sharply
         # rather than burying the timeout inside a generic "error".
+        #
+        # Both surfaces carry a state-aware ``diagnosis`` gathered at the
+        # moment of failure so the caller can tell "still booting" /
+        # "alive & busy" / "dead" / "port unreachable" apart instead of
+        # getting an opaque "no response".
+        diagnosis = diagnose_send_failure(
+            name,
+            a2a_port=a2a_port,
+            peer_host=peer_host,
+            current_host=current_host,
+        )
         if "timeout" in msg.lower():
-            return {"status": "timeout", "error": f"no response in {timeout_seconds}s"}
-        return {"status": "error", "error": msg}
+            return {
+                "status": "timeout",
+                "error": f"no response in {timeout_seconds}s",
+                "diagnosis": diagnosis,
+            }
+        return {"status": "error", "error": msg, "diagnosis": diagnosis}
 
     metadata: dict[str, Any] = {
         "name": name,
@@ -182,3 +276,91 @@ def send_to_agent(
         "response_text": reply,
         "response_metadata": metadata,
     }
+
+
+def _dispatch_nonblocking(
+    name: str,
+    prompt: str,
+    *,
+    a2a_port: int,
+    peer_host: str,
+    current_host: str,
+    url: str,
+    metadata_extras: dict[str, Any],
+) -> dict[str, Any]:
+    """Validate reachability, then return a non-blocking dispatch payload.
+
+    Reachability is gathered via :func:`diagnose_send_failure`, which
+    runs the SAME state probes (registry row, pid liveness, local sidecar
+    TCP connect) the blocking path attaches on failure. We translate
+    *demonstrable* unreachability into a LOUD ``status="error"`` — never a
+    misleading "dispatched":
+
+      * recorded pid is not alive       -> the process is dead
+      * local sidecar port refuses TCP  -> the sidecar isn't listening
+
+    A cross-host agent (``peer_host != current_host``) cannot be locally
+    port-probed; we don't invent a verdict — the diagnosis records
+    ``port_reachable=None`` and we proceed to ``dispatched`` (the
+    backgrounded ``track_command`` is what ultimately surfaces a
+    cross-host transport failure, loudly, when the caller runs it).
+
+    On success the payload carries ``track_command`` — the backgroundable
+    ``sac agents send`` CLI that delivers the prompt and streams the
+    reply — so the caller fires-and-tracks instead of blocking inline.
+    ``delivered_subscriber_count`` is ``1`` (the validated live sidecar)
+    so callers sharing the channel-send contract can branch uniformly.
+    """
+    diagnosis = diagnose_send_failure(
+        name,
+        a2a_port=a2a_port,
+        peer_host=peer_host,
+        current_host=current_host,
+    )
+
+    # Fail loud on demonstrable unreachability (local probes only — a
+    # cross-host port we cannot probe stays None and is NOT treated as
+    # unreachable, which would be a false-positive failure).
+    if diagnosis.get("pid_alive") is False:
+        return {
+            "status": "error",
+            "error": (
+                f"agent {name!r} recorded pid is not alive; the process "
+                "crashed or was killed — cannot dispatch"
+            ),
+            "diagnosis": diagnosis,
+        }
+    if diagnosis.get("port_reachable") is False:
+        return {
+            "status": "error",
+            "error": (
+                f"agent {name!r} sidecar is not listening on port {a2a_port}; "
+                "it is not booted or the sidecar crashed — cannot dispatch"
+            ),
+            "diagnosis": diagnosis,
+        }
+
+    track_command = build_track_command(name, prompt)
+    payload: dict[str, Any] = {
+        "status": "dispatched",
+        "agent": name,
+        "host": peer_host or current_host,
+        "url": url,
+        "a2a_port": a2a_port,
+        # The validated live sidecar is the single subscriber for this
+        # turn; mirrors the channel-send `delivered_subscriber_count`
+        # contract so callers can branch uniformly.
+        "delivered_subscriber_count": 1,
+        # Backgroundable CLI: run this in a background shell to deliver
+        # the prompt + stream the reply without blocking this turn.
+        "track_command": track_command,
+        "track_command_argv": ["sac", "agents", "send", name, prompt],
+        "note": (
+            "non-blocking dispatch: the prompt was NOT yet delivered. Run "
+            "`track_command` in a backgrounded shell to deliver it and "
+            "stream the reply, or call agent_send(..., wait=True) to block "
+            "inline."
+        ),
+    }
+    payload.update(metadata_extras)
+    return payload

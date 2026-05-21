@@ -20,12 +20,14 @@ The current and only accepted apiVersion. The v3 loader **rejects**:
 <agent-root>/
 └── <name>/
     ├── spec.yaml       # ← agent name comes from this directory
-    └── dot_claude/     # optional; auto-discovered next to spec.yaml
-        ├── CLAUDE.md    # → <workdir>/CLAUDE.md  (marker-protected)
-        ├── .mcp.json    # → <workdir>/.mcp.json  (per-server merge)
-        ├── .env         # → <workdir>/.env       (mode 0600)
-        ├── state.md     # → <workdir>/state.md
-        └── commands/    # → <workdir>/.claude/commands/   (mirror)
+    └── to_home/        # optional; auto-discovered next to spec.yaml; mirrors $HOME
+        ├── CLAUDE.md         # → $HOME/CLAUDE.md   (marker-protected)
+        ├── .mcp.json         # → $HOME/.mcp.json   (full overwrite)
+        ├── .env              # → $HOME/.env        (mode 0600)
+        ├── state.md          # → $HOME/state.md    (marker-protected)
+        └── .claude/
+            ├── hooks/         # → $HOME/.claude/hooks/
+            └── skills/        # → $HOME/.claude/skills/
 ```
 
 `<agent-root>` is one of:
@@ -42,7 +44,7 @@ metadata:
     role: worker
     machine: local
 spec:
-  runtime: claude-code    # claude-code | slurm | slurm-tenant
+  runtime: apptainer      # apptainer (only accepted value)
   model: opus[1m]
   multiplexer: tmux       # tmux (default) or screen
 
@@ -79,22 +81,29 @@ The v3 loader fills in defaults from the agent name (parent-directory stem):
 
 You can override any of these by setting them explicitly in the YAML. The auto-derivation is just a bottom layer of the resolution cascade.
 
-## `dot_claude/` deploy pipeline (replaces the legacy `src_*` siblings)
+## `to_home/` deploy pipeline (ADR-0006)
 
-A sibling directory named `dot_claude/` (override path with
-`spec.dot_claude:`) is materialized into the workspace at
-`sac agent start` time. Four well-known leaves get special handling
-(marker protocol, per-server merge, mode 0600); everything else
-mirrors verbatim into `<workdir>/.claude/`. `${VAR}` and
-`${metadata.name}` are interpolated.
+A sibling directory named `to_home/` (override path with
+`spec.to_home:`, default `./to_home`) is materialized into the agent's
+container `$HOME` (= `runtime/<name>/home/`) at `sac agent start` time.
+Every path under `to_home/` lands at the same relative path under
+`$HOME`. `CLAUDE.md` / `state.md` get a marker-protected merge; `.env`
+gets mode 0600; everything else is a full overwrite. `${VAR}` and
+`${metadata.name}` are interpolated in text files. A shared baseline
+`to_home/` (`<agents_dir>/_base/to_home`, override `$SAC_TO_HOME_BASELINE`)
+is applied first; the per-agent `to_home/` overlays on top.
 
 | Source | Destination | Mode | Semantics |
 |---|---|---|---|
-| `dot_claude/CLAUDE.md` | `<workdir>/CLAUDE.md` | 0644 | Marker-protected; preserves user tail past the End marker |
-| `dot_claude/.mcp.json` | `<workdir>/.mcp.json` | 0644 | Per-server replace; workspace-only servers preserved |
-| `dot_claude/.env` | `<workdir>/.env` | **0600** | Full overwrite; sourceable by spawned shells |
-| `dot_claude/state.md` | `<workdir>/state.md` | 0644 | Full overwrite (handover snapshot) |
-| `dot_claude/<other>/` | `<workdir>/.claude/<other>/` | copy | Generic mirror — `commands/`, `skills/`, `hooks/`, `agents/`, … |
+| `to_home/CLAUDE.md` | `$HOME/CLAUDE.md` | 0644 | Marker-protected; preserves user tail past the End marker |
+| `to_home/.mcp.json` | `$HOME/.mcp.json` | 0644 | Full overwrite |
+| `to_home/.env` | `$HOME/.env` | **0600** | Full overwrite; sourceable by spawned shells |
+| `to_home/state.md` | `$HOME/state.md` | 0644 | Marker-protected (handover snapshot) |
+| `to_home/.claude/<x>/` | `$HOME/.claude/<x>/` | copy | `hooks/`, `skills/`, `commands/`, `agents/`, … |
+
+The legacy `dot_claude/` layout was removed (ADR-0006). A spec that
+still ships a `dot_claude/` dir is rejected with an error pointing at
+`to_home/`.
 
 See `06_env-injection-ports.md` for the four distinct env-injection ports and when to use each.
 
@@ -110,5 +119,4 @@ If you have legacy YAMLs:
 ## See also
 
 - `08_templates.md` — six minimal pattern templates under `examples/agent-templates/`
-- `06_env-injection-ports.md` — yaml.env vs dot_claude/.mcp.json env vs dot_claude/.env vs hooks
-- `09_slurm-tenant.md` — multi-tenant `runtime: slurm-tenant` and `slurm.reservation`
+- `06_env-injection-ports.md` — yaml.env vs to_home/.mcp.json env vs to_home/.env vs hooks

@@ -57,7 +57,6 @@
 <li class="toctree-l1"><a class="reference internal" href="templates.html">Templates and Examples</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="templates.html#pattern-templates">Pattern Templates</a></li>
 <li class="toctree-l2"><a class="reference internal" href="templates.html#instantiating-a-template">Instantiating a Template</a></li>
-<li class="toctree-l2"><a class="reference internal" href="templates.html#examples">Examples</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="status_and_hooks.html">Status and Hook Integration</a><ul>
@@ -73,7 +72,7 @@
 <li class="toctree-l2"><a class="reference internal" href="how-sac-works.html#launch-flow">Launch flow</a></li>
 <li class="toctree-l2"><a class="reference internal" href="how-sac-works.html#what-each-piece-does">What each piece does</a><ul>
 <li class="toctree-l3"><a class="reference internal" href="how-sac-works.html#spec-yaml-ssot"><code class="docutils literal notranslate"><span class="pre">spec.yaml</span></code> (SSoT)</a></li>
-<li class="toctree-l3"><a class="reference internal" href="how-sac-works.html#dot-claude-optional"><code class="docutils literal notranslate"><span class="pre">dot_claude/</span></code> (optional)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="how-sac-works.html#to-home-optional"><code class="docutils literal notranslate"><span class="pre">to_home/</span></code> (optional)</a></li>
 <li class="toctree-l3"><a class="reference internal" href="how-sac-works.html#apptainer-instance">Apptainer instance</a></li>
 <li class="toctree-l3"><a class="reference internal" href="how-sac-works.html#claude-sdk-session">Claude SDK session</a></li>
 <li class="toctree-l3"><a class="reference internal" href="how-sac-works.html#a2a-inbound-spec-a2a-port">A2A inbound (<code class="docutils literal notranslate"><span class="pre">spec.a2a.port</span></code>)</a></li>
@@ -223,8 +222,8 @@
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.extensions"><code class="docutils literal notranslate"><span class="pre">AgentConfig.extensions</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.skills</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.context_management"><code class="docutils literal notranslate"><span class="pre">AgentConfig.context_management</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_commands"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_commands</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_commands"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_commands</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_prompts"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_prompts</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.mcp_servers"><code class="docutils literal notranslate"><span class="pre">AgentConfig.mcp_servers</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.multiplexer"><code class="docutils literal notranslate"><span class="pre">AgentConfig.multiplexer</span></code></a></li>
@@ -236,7 +235,6 @@
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.a2a"><code class="docutils literal notranslate"><span class="pre">AgentConfig.a2a</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.kind"><code class="docutils literal notranslate"><span class="pre">AgentConfig.kind</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.proxy"><code class="docutils literal notranslate"><span class="pre">AgentConfig.proxy</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.dot_claude"><code class="docutils literal notranslate"><span class="pre">AgentConfig.dot_claude</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.to_home"><code class="docutils literal notranslate"><span class="pre">AgentConfig.to_home</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.expanded_workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.expanded_workdir</span></code></a></li>
 </ul>
@@ -454,7 +452,7 @@ no <code class="docutils literal notranslate"><span class="pre">metadata.name</s
 <span class="nt">spec</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">runtime</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">apptainer</span><span class="w">                     </span><span class="c1"># optional; only `apptainer` accepted; empty defaults to `apptainer` (since 2026-05-13)</span>
 <span class="w">  </span><span class="nt">workdir</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">~/proj</span><span class="w">                        </span><span class="c1"># mounted rw at /work</span>
-<span class="w">  </span><span class="nt">dot_claude</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">./dot_claude</span><span class="w">               </span><span class="c1"># merged into &lt;workdir&gt;/.claude/ at start (no auto-discover; default &quot;&quot;)</span>
+<span class="w">  </span><span class="nt">to_home</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">./to_home</span><span class="w">                     </span><span class="c1"># mirrored into the agent $HOME at start (auto-discovers ./to_home; default &quot;./to_home&quot;)</span>
 <span class="w">  </span><span class="nt">python-venv</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">auto</span><span class="w">                      </span><span class="c1"># string or list — fallback chain</span>
 <span class="w">  </span><span class="nt">env-file</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">.env</span><span class="w">                         </span><span class="c1"># string or list of dotenv paths   (VERIFY: validator currently rejects — must be added to _KNOWN_SPEC_KEYS)</span>
 <span class="w">  </span><span class="nt">multiplexer</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tmux</span><span class="w">                      </span><span class="c1"># tmux | screen                    (VERIFY: validator currently rejects — must be added to _KNOWN_SPEC_KEYS)</span>
@@ -523,8 +521,8 @@ orthogonal layers:</p>
 <td><p>A2A <code class="docutils literal notranslate"><span class="pre">skills[0].tags</span></code> + <code class="docutils literal notranslate"><span class="pre">x-scitex-agent-container.required_skills</span></code></p></td>
 <td><p>Advertises capabilities on the card; <strong>no behaviour change inside the agent</strong></p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">spec.dot_claude/skills/&lt;name&gt;/SKILL.md</span></code> (files)</p></td>
-<td><p>Materialised at <code class="docutils literal notranslate"><span class="pre">runtime/&lt;name&gt;/home/.claude/skills/</span></code> (ADR-0003) and surfaced via <code class="docutils literal notranslate"><span class="pre">spec.skills.required[]</span></code> <code class="docutils literal notranslate"><span class="pre">&#64;</span></code>-imports in the auto-generated CLAUDE.md</p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">spec.to_home/.claude/skills/&lt;name&gt;/SKILL.md</span></code> (files)</p></td>
+<td><p>Materialised at <code class="docutils literal notranslate"><span class="pre">runtime/&lt;name&gt;/home/.claude/skills/</span></code> (ADR-0006) and surfaced via <code class="docutils literal notranslate"><span class="pre">spec.skills.required[]</span></code> <code class="docutils literal notranslate"><span class="pre">&#64;</span></code>-imports in the auto-generated CLAUDE.md</p></td>
 <td><p>Loaded into the agent’s prompt by the Claude SDK</p></td>
 </tr>
 </tbody>
@@ -610,9 +608,9 @@ when <code class="docutils literal notranslate"><span class="pre">spec.a2a.port<
 <td><p>path</p></td>
 <td><p>Mounted rw at <code class="docutils literal notranslate"><span class="pre">/work</span></code> (default: <code class="docutils literal notranslate"><span class="pre">~/.scitex/agent-container/runtime/agents/&lt;name&gt;/</span></code>)</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">dot_claude</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">to_home</span></code></p></td>
 <td><p>path</p></td>
-<td><p>Materialized into <code class="docutils literal notranslate"><span class="pre">&lt;workdir&gt;/.claude/</span></code>. Default is empty string — no auto-discovery of a sibling directory; operators must set the path explicitly if they want a <code class="docutils literal notranslate"><span class="pre">dot_claude/</span></code> merged in.</p></td>
+<td><p>Mirrored into the agent’s container <code class="docutils literal notranslate"><span class="pre">$HOME</span></code> (= <code class="docutils literal notranslate"><span class="pre">runtime/&lt;name&gt;/home/</span></code>) at start. Every path under <code class="docutils literal notranslate"><span class="pre">to_home/</span></code> lands at the same relative path under <code class="docutils literal notranslate"><span class="pre">$HOME</span></code>. Default <code class="docutils literal notranslate"><span class="pre">./to_home</span></code> — auto-discovers a sibling <code class="docutils literal notranslate"><span class="pre">to_home/</span></code> next to <code class="docutils literal notranslate"><span class="pre">spec.yaml</span></code>.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">python-venv</span></code></p></td>
 <td><p>string | list</p></td>
@@ -863,8 +861,8 @@ get a URL that survives per-agent port churn.</p>
 <section id="skills">
 <h3>Skills<a class="headerlink" href="#skills" title="Link to this heading"></a></h3>
 <p><code class="docutils literal notranslate"><span class="pre">spec.skills</span></code> was <strong>removed in v3</strong> — skills now live under
-<code class="docutils literal notranslate"><span class="pre">dot_claude/skills/</span></code> (a sibling directory next to <code class="docutils literal notranslate"><span class="pre">spec.yaml</span></code>,
-materialized into the workspace at start).</p>
+<code class="docutils literal notranslate"><span class="pre">to_home/.claude/skills/</span></code> (a sibling directory next to <code class="docutils literal notranslate"><span class="pre">spec.yaml</span></code>,
+materialized into the agent’s <code class="docutils literal notranslate"><span class="pre">$HOME</span></code> at start).</p>
 <p>For AgentCard publication, declare the skill IDs via
 <code class="docutils literal notranslate"><span class="pre">metadata.labels.skills</span></code> as a CSV (e.g. <code class="docutils literal notranslate"><span class="pre">skills:</span> <span class="pre">&quot;scitex-dev,</span> <span class="pre">gh-cli,</span> <span class="pre">git&quot;</span></code>).
 The list ends up in the card’s <code class="docutils literal notranslate"><span class="pre">skills[0].tags</span></code> (unioned with
@@ -874,7 +872,7 @@ The list ends up in the card’s <code class="docutils literal notranslate"><spa
 <h3><code class="docutils literal notranslate"><span class="pre">spec.mcp_servers</span></code><a class="headerlink" href="#spec-mcp-servers" title="Link to this heading"></a></h3>
 <p>A dict-of-dicts merged into <code class="docutils literal notranslate"><span class="pre">&lt;workdir&gt;/.mcp.json</span></code> at start. Mirrors
 the <code class="docutils literal notranslate"><span class="pre">.mcp.json</span></code> shape directly. Use this OR drop a <code class="docutils literal notranslate"><span class="pre">.mcp.json</span></code> into
-<code class="docutils literal notranslate"><span class="pre">dot_claude/</span></code> — both are merged.</p>
+<code class="docutils literal notranslate"><span class="pre">to_home/</span></code> (lands at <code class="docutils literal notranslate"><span class="pre">$HOME/.mcp.json</span></code>).</p>
 </section>
 <section id="spec-telegram-spec-hooks-spec-extensions">
 <h3><code class="docutils literal notranslate"><span class="pre">spec.telegram</span></code> / <code class="docutils literal notranslate"><span class="pre">spec.hooks</span></code> / <code class="docutils literal notranslate"><span class="pre">spec.extensions</span></code><a class="headerlink" href="#spec-telegram-spec-hooks-spec-extensions" title="Link to this heading"></a></h3>
@@ -997,8 +995,8 @@ for a complete minimal example.</p>
 <h2>Examples<a class="headerlink" href="#examples" title="Link to this heading"></a></h2>
 <p>Copy from <a class="reference external" href="https://github.com/ywatanabe1989/scitex-agent-container/tree/develop/examples/agents"><code class="docutils literal notranslate"><span class="pre">examples/agents/</span></code></a>:</p>
 <ul class="simple">
-<li><p><a class="reference external" href="https://github.com/ywatanabe1989/scitex-agent-container/tree/develop/examples/agents/full-agent"><code class="docutils literal notranslate"><span class="pre">full-agent/</span></code></a> — annotated spec exercising every supported field (plus <code class="docutils literal notranslate"><span class="pre">dot_claude/</span></code> layout)</p></li>
-<li><p><a class="reference external" href="https://github.com/ywatanabe1989/scitex-agent-container/tree/develop/examples/agents/minimal-agent"><code class="docutils literal notranslate"><span class="pre">minimal-agent/</span></code></a> — bare minimum, no <code class="docutils literal notranslate"><span class="pre">dot_claude</span></code></p></li>
+<li><p><a class="reference external" href="https://github.com/ywatanabe1989/scitex-agent-container/tree/develop/examples/agents/full-agent"><code class="docutils literal notranslate"><span class="pre">full-agent/</span></code></a> — annotated spec exercising every supported field (plus <code class="docutils literal notranslate"><span class="pre">to_home/</span></code> layout)</p></li>
+<li><p><a class="reference external" href="https://github.com/ywatanabe1989/scitex-agent-container/tree/develop/examples/agents/minimal-agent"><code class="docutils literal notranslate"><span class="pre">minimal-agent/</span></code></a> — bare minimum, no <code class="docutils literal notranslate"><span class="pre">to_home</span></code></p></li>
 <li><p><a class="reference external" href="https://github.com/ywatanabe1989/scitex-agent-container/tree/develop/examples/agents/hello-agent"><code class="docutils literal notranslate"><span class="pre">hello-agent/</span></code></a> — quickstart with <code class="docutils literal notranslate"><span class="pre">startup_prompts</span></code></p></li>
 <li><p><a class="reference external" href="https://github.com/ywatanabe1989/scitex-agent-container/tree/develop/examples/agents/proxy-agent"><code class="docutils literal notranslate"><span class="pre">proxy-agent/</span></code></a> — <code class="docutils literal notranslate"><span class="pre">kind:</span> <span class="pre">AgentProxy</span></code> forwarder example</p></li>
 </ul>

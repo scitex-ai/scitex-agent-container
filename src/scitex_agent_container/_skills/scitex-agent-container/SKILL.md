@@ -1,8 +1,8 @@
 ---
 name: scitex-agent-container
 description: |
-  [WHAT] Declarative YAML-based AI agent lifecycle management — define an agent in one YAML manifest (runtime, model, MCP, env, health, restart, remote SSH host) and `sac agent start` brings it up in tmux/screen with auto-accept TUI handling, SSH remote deployment, sbatch-based SLURM submission with walltime auto-resubmit, A2A protocol sidecar, and live pane-state inspection.
-  [WHEN] Use when the user asks to "launch a Claude Code agent", "spawn a fleet of coding agents", "manage agent lifecycle", "run an agent on a remote host / HPC", "submit an agent as a SLURM job", "auto-accept Claude permission prompts", "wire MCP servers into an agent", or mentions `sac agent start`, `scitex-agent-container`, agent YAML, fleet head/worker, head-mba / head-spartan / head-nas.
+  [WHAT] Declarative YAML-based AI agent lifecycle management — define an agent in one YAML manifest (runtime, model, MCP, env, health, restart, remote SSH host) and `sac agent start` brings it up with auto-accept TUI handling, SSH remote deployment, A2A protocol sidecar, and live pane-state inspection.
+  [WHEN] Use when the user asks to "launch a Claude Code agent", "spawn a fleet of coding agents", "manage agent lifecycle", "run an agent on a remote host", "auto-accept Claude permission prompts", "wire MCP servers into an agent", or mentions `sac agent start`, `scitex-agent-container`, agent YAML, fleet head/worker.
   [HOW] `pip install scitex-agent-container` then `import scitex_agent_container`; see leaf skills for details.
 tags: [scitex-agent-container]
 primary_interface: cli
@@ -29,11 +29,11 @@ rich non-agentic status surface.
 |---|---|
 | Python API | `scitex_agent_container` (`AgentConfig`, `load_config`, `agent_start`/`stop`/`restart`/`status`/`logs`, `Registry`) |
 | CLI | `scitex-agent-container`, `sac` — see [10_cli.md](10_cli.md) |
-| MCP servers | None bundled — agents spawn their own via `dot_claude/.mcp.json` |
-| Runtimes | `runtimes/{tmux,screen,claude_code,apptainer,docker,sbatch_spartan,ssh_remote}.py` |
+| MCP servers | None bundled — agents spawn their own via `to_home/.mcp.json` |
+| Runtimes | `runtimes/claude_session.py` (SDK-native, default); apptainer container build helpers |
 | PaneActions | See [14_pane-actions.md](14_pane-actions.md) |
 | Observability | See [13_observability.md](13_observability.md) |
-| Config format | v3 `scitex-agent-container/v3` (current); v2 still supported |
+| Config format | v3 `scitex-agent-container/v3` only — v2 is rejected |
 
 ## Sub-skills
 
@@ -47,7 +47,7 @@ rich non-agentic status surface.
 
 ### Core
 - [01_config-v3.md](01_config-v3.md) — v3 config format (current); v2+`metadata.name` rejected
-- [02_multiplexer.md](02_multiplexer.md) — tmux vs screen
+- [02_multiplexer.md](02_multiplexer.md) — vestigial for agents (SDK runtime, no tmux); lead-only tmux wrap
 - [03_auto-accept.md](03_auto-accept.md) — Modular prompt handlers
 - [04_resource-management.md](04_resource-management.md) — Resource management
 - [05_resource-heartbeat.md](05_resource-heartbeat.md) — Resource heartbeat
@@ -55,7 +55,6 @@ rich non-agentic status surface.
 - [07_a2a-protocol.md](07_a2a-protocol.md) — Native A2A protocol (`sac a2a serve`)
 - [07_a2a-protocol-extension-fields.md](07_a2a-protocol-extension-fields.md) — `x-scitex-agent-container.*` AgentCard extension fields + JSON example
 - [08_templates.md](08_templates.md) — Six pattern templates + real-world examples
-- [09_slurm-tenant.md](09_slurm-tenant.md) — `runtime: slurm-tenant` for shared HPC allocations
 - [15_claude-session.md](15_claude-session.md) — `runtime: claude-session` SDK-native runtime + `POST /v1/turn` inbound endpoint
 - [16_claude-session-migration.md](16_claude-session-migration.md) — Migrating an agent to claude-session
 - [17_inbound-turn-endpoint.md](17_inbound-turn-endpoint.md) — `POST /v1/turn` wire format + sidecar replacement
@@ -66,6 +65,8 @@ rich non-agentic status surface.
 - [10_cli.md](10_cli.md) — CLI commands and Python API
 - [11_remote-deploy.md](11_remote-deploy.md) — SSH deployment, src files, venv
 - [12_wsl-connectivity.md](12_wsl-connectivity.md) — WSL connectivity notes
+- [24_image-build.md](24_image-build.md) — apptainer `.sif` build/rebuild, `@develop` pin, rebuild-to-ship runner/channel changes (gotcha)
+- [25_claude-setup-delivery.md](25_claude-setup-delivery.md) — how sac passes Claude setup explicitly into apptainer agents: `to_home`→`$HOME` 1:1 mirror, overlay/`--home` delivery, `--settings` hook load, `setting_sources=[]`
 
 ### Reference
 - [13_observability.md](13_observability.md) — `sac agent status` JSON contract

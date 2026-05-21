@@ -33,9 +33,14 @@ def _ensure_subprocess_coverage_shim() -> None:
     """
     purelib = Path(sysconfig.get_paths()["purelib"])
     pth = purelib / "_scitex_agent_container_subprocess_coverage.pth"
+    # ``import coverage`` MUST stay inside the guard: a ``.pth`` runs at
+    # every interpreter startup, so an unconditional import taxes ~120ms
+    # onto each non-coverage `python`/`sac` invocation. Mirror the shape
+    # of the sibling ``a1_coverage.pth``.
     shim = (
-        "import os, coverage\n"
+        "import os\n"
         "if os.environ.get('COVERAGE_PROCESS_START'):\n"
+        "    import coverage\n"
         "    coverage.process_startup()\n"
     )
     try:

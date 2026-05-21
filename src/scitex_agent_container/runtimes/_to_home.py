@@ -1,7 +1,7 @@
 """Materialize ``<spec_dir>/to_home/`` into the agent's workspace ``$HOME``.
 
-Successor to :mod:`_dot_claude` (see ADR-0006). The new layout makes
-the rule explicit:
+The single canonical layout for materializing files into an agent's
+``$HOME`` (see ADR-0006). The layout makes the rule explicit:
 
     agents/<name>/
     ├── spec.yaml          (spec.to_home: ./to_home — default)
@@ -25,8 +25,7 @@ Semantics per entry (see :func:`materialize_to_home`):
   - **CLAUDE.md** / **state.md** — marker-protected merge. Source is
     wrapped between Start/End markers; any user tail after the End
     marker is preserved. Malformed existing markers hard-abort the
-    deploy (re-raised as :class:`WorkspaceCLAUDEMarkerError` from
-    :mod:`_dot_claude`).
+    deploy with :class:`WorkspaceCLAUDEMarkerError`.
   - **.env** — full overwrite; chmod 0600 after write.
   - **Other regular files** — full overwrite (``shutil.copy2``).
   - **Directories** — recursed; structure preserved.
@@ -38,37 +37,129 @@ No fragmented "leaf-vs-mirror" distinction — every path under
 
 Missing ``to_home/`` dir → silent no-op (specs without one just don't
 get materialization).
+
+Baseline layer (shared/common to_home)
+--------------------------------------
+Common hooks/settings shared by every agent live in ONE place instead
+of being copied into every agent's ``to_home/``. Materialization is a
+two-pass overlay:
+
+  1. Apply the COMMON baseline ``to_home/`` first.
+  2. Apply the per-agent ``<spec_dir>/to_home/`` ON TOP.
+
+Per-agent files therefore win on conflict (overlay semantics) — they
+re-run the same per-entry deploy helpers over whatever the baseline
+laid down (full overwrite, marker-protected re-wrap, symlink
+dereference-copy).
+
+Baseline location (see :func:`resolve_baseline_to_home_dir`):
+
+  - ``$SAC_TO_HOME_BASELINE`` — explicit override (absolute dir), or
+  - ``<agents_dir>/_base/to_home/`` — a sibling ``_base`` dir under the
+    agents root (agents live at ``<agents_dir>/<name>/``, so the agents
+    root is the spec dir's parent).
+
+Absent baseline dir → behaves exactly as before (no baseline = current
+behavior; fully backward compatible).
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
+import stat
 from datetime import datetime
 from pathlib import Path
 
 from ..config import AgentConfig
-from ._dot_claude import (
-    END_MARKER,
-    WorkspaceCLAUDEMarkerError,
-    _extract_user_tail,
-    _interpolate_env,
-    _interpolate_metadata,
-    _validate_marker_invariants,
-)
+from ._symlink_resolve import DanglingToHomeSymlinkError, deref_copy_symlink
 
 logger = logging.getLogger(__name__)
 
+END_MARKER = "<!-- End of scitex-agent-container generated section -->"
+START_MARKER_PREFIX = "<!-- Start of scitex-agent-container generated section"
+
+
+class WorkspaceCLAUDEMarkerError(RuntimeError):
+    """Existing workspace marker-protected file has malformed markers.
+
+    The deploy is hard-aborted on this error rather than silently
+    overwriting or guessing — preserving user content past the End
+    marker is a safety contract and any ambiguity in marker placement
+    could destroy work.
+    """
+
+
+def _validate_marker_invariants(text: str, source_name: str) -> None:
+    """Hard-fail if Start/End markers are missing or malformed."""
+    start_count = text.count(START_MARKER_PREFIX)
+    end_count = text.count(END_MARKER)
+    if start_count != 1 or end_count != 1:
+        raise WorkspaceCLAUDEMarkerError(
+            f"{source_name}: expected exactly 1 Start marker and 1 End "
+            f"marker, found Start={start_count} End={end_count}. "
+            "Refusing to deploy to avoid data loss. Restore the markers "
+            "manually before retrying."
+        )
+    if text.find(START_MARKER_PREFIX) > text.find(END_MARKER):
+        raise WorkspaceCLAUDEMarkerError(
+            f"{source_name}: Start marker appears AFTER End marker. "
+            "This indicates a corrupted file. Refusing to deploy."
+        )
+
+
+def _extract_user_tail(workspace_path: Path) -> str:
+    if not workspace_path.exists():
+        return ""
+    try:
+        existing = workspace_path.read_text()
+    except OSError:  # stx-allow: fallback (reason: file system operation failure)
+        return ""
+    idx = existing.rfind(END_MARKER)
+    if idx == -1:
+        return ""
+    return existing[idx + len(END_MARKER) :]
+
+
+def _interpolate_env(text: str) -> str:
+    return re.sub(
+        r"\$\{(\w+)\}",
+        lambda m: os.environ.get(m.group(1), m.group(0)),
+        text,
+    )
+
+
+def _interpolate_metadata(text: str, config: AgentConfig) -> str:
+    def _replace(m: re.Match) -> str:
+        key = m.group(1)
+        if key == "metadata.name":
+            return config.name
+        if key.startswith("metadata.labels."):
+            label = key[len("metadata.labels.") :]
+            return config.labels.get(label) or m.group(0)
+        return m.group(0)
+
+    return re.sub(r"\$\{([^}]+)\}", _replace, text)
+
 
 # Files that get marker-protected merge semantics (vs. full overwrite).
-# Same protection as the legacy dot_claude/CLAUDE.md path — never silent
-# data loss on a hand-edited file.
+# Marker protection guards against silent data loss on a hand-edited file.
 _MARKER_PROTECTED_BASENAMES = frozenset({"CLAUDE.md", "state.md"})
 
 # Files that get chmod 0600 after copy. ``.env`` only by default; the
 # rest preserve source perms via ``shutil.copy2``.
 _TIGHT_PERM_BASENAMES = frozenset({".env"})
+
+# Env var: explicit override for the shared/common baseline to_home dir.
+# Absolute path. When unset we fall back to ``<agents_dir>/_base/to_home``.
+_BASELINE_ENV_VAR = "SAC_TO_HOME_BASELINE"
+
+# Name of the sibling dir (under the agents root) that holds the common
+# baseline. Agents live at ``<agents_dir>/<name>/``, so the agents root
+# is the spec dir's parent and the baseline is ``<parent>/_base/to_home``.
+_BASELINE_DIR_NAME = "_base"
 
 
 # --- public API ------------------------------------------------------------
@@ -77,7 +168,7 @@ _TIGHT_PERM_BASENAMES = frozenset({".env"})
 def resolve_to_home_dir(config: AgentConfig) -> Path | None:
     """Resolve ``spec.to_home`` to an absolute directory.
 
-    Resolution mirrors :func:`_dot_claude.resolve_dot_claude_dir`:
+    Resolution order:
       1. Absolute path: use as-is.
       2. Relative path: resolve against the directory containing
          ``spec.yaml``.
@@ -100,36 +191,83 @@ def resolve_to_home_dir(config: AgentConfig) -> Path | None:
     return p if p.is_dir() else None
 
 
+def resolve_baseline_to_home_dir(spec_dir: Path | None) -> Path | None:
+    """Resolve the shared/common baseline ``to_home/`` directory.
+
+    Resolution order:
+      1. ``$SAC_TO_HOME_BASELINE`` (absolute dir) — explicit override.
+      2. ``<agents_dir>/_base/to_home`` — a sibling ``_base`` dir under
+         the agents root. Agents live at ``<agents_dir>/<name>/``, so the
+         agents root is ``spec_dir.parent``.
+
+    Returns ``None`` when no baseline dir can be resolved (no baseline =
+    current behavior; fully backward compatible).
+    """
+    override = (os.environ.get(_BASELINE_ENV_VAR, "") or "").strip()
+    if override:
+        p = Path(override).expanduser()
+        return p if p.is_dir() else None
+    if spec_dir is None:
+        return None
+    p = spec_dir.parent / _BASELINE_DIR_NAME / "to_home"
+    return p if p.is_dir() else None
+
+
 def materialize_to_home(spec_dir: Path, workspace_home: Path) -> None:
     """Mirror ``<spec_dir>/to_home/`` into ``<workspace_home>/``.
 
-    Walks the tree and applies the per-entry semantics described in the
-    module docstring. Idempotent — safe to call on every agent start.
+    Two-pass overlay:
 
-    No-op when ``<spec_dir>/to_home/`` does not exist.
+      1. The shared/common baseline ``to_home/``.
+      2. ``<spec_dir>/to_home/`` on top — so per-agent files win on
+         conflict.
+
+    Walks each tree and applies the per-entry semantics described in
+    the module docstring (symlinks are dereference-copied to real
+    content). Idempotent — safe to call on every agent start. The
+    runtime never auto-reads host state; the definition is the sole
+    source of truth.
+
+    No-op when neither the baseline nor ``<spec_dir>/to_home/`` exists.
     """
+    baseline = resolve_baseline_to_home_dir(spec_dir)
     root = spec_dir / "to_home"
-    if not root.is_dir():
+    if baseline is None and not root.is_dir():
         return
     workspace_home.mkdir(parents=True, exist_ok=True)
-    _walk_and_apply(root, root, workspace_home, config=None)
+    if baseline is not None:
+        _walk_and_apply(baseline, baseline, workspace_home, config=None)
+    if root.is_dir():
+        _walk_and_apply(root, root, workspace_home, config=None)
 
 
 def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
-    """``AgentConfig``-driven entrypoint, parallel to
-    :func:`_dot_claude.deploy_dot_claude`.
+    """``AgentConfig``-driven entrypoint for to_home materialization.
 
-    Resolves the to_home/ directory via :func:`resolve_to_home_dir`
-    (honours ``spec.to_home`` overrides) and applies metadata-aware
+    Two-pass overlay:
+
+      1. The shared/common baseline ``to_home/``.
+      2. The per-agent ``to_home/`` on top — so per-agent files win on
+         conflict.
+
+    Resolves the per-agent directory via :func:`resolve_to_home_dir`
+    (honours ``spec.to_home`` overrides) and the baseline via
+    :func:`resolve_baseline_to_home_dir`, then applies metadata-aware
     interpolation (${metadata.name}, ${metadata.labels.*}, ${ENV_VAR})
-    to text files. No-op when the directory cannot be resolved.
+    to text files. Symlinks are dereference-copied to real content; the
+    runtime never auto-reads host state. No-op when neither the baseline
+    nor the per-agent to_home resolves.
     """
     root = resolve_to_home_dir(config)
-    if root is None:
+    baseline = resolve_baseline_to_home_dir(_spec_dir(config))
+    if root is None and baseline is None:
         return
     dest = Path(workspace_home)
     dest.mkdir(parents=True, exist_ok=True)
-    _walk_and_apply(root, root, dest, config=config)
+    if baseline is not None:
+        _walk_and_apply(baseline, baseline, dest, config=config)
+    if root is not None:
+        _walk_and_apply(root, root, dest, config=config)
 
 
 # --- traversal -------------------------------------------------------------
@@ -155,9 +293,11 @@ def _walk_and_apply(
 
         # Symlinks first — must not follow into ``is_dir()`` / ``is_file()``
         # decisions, because is_dir(follow=True) would route a symlink to
-        # a directory through the mirror branch.
+        # a directory through the mirror branch. The link is resolved to
+        # its real target content (dereference-copy); a dangling target
+        # hard-aborts via DanglingToHomeSymlinkError.
         if child.is_symlink():
-            _copy_symlink(child, dst)
+            deref_copy_symlink(child, dst)
             continue
 
         if child.is_dir():
@@ -177,26 +317,31 @@ def _walk_and_apply(
 # --- per-entry deploy helpers ----------------------------------------------
 
 
-def _copy_symlink(src: Path, dst: Path) -> None:
-    """Preserve a symlink verbatim — never resolve the target.
+def _clear_readonly_dst(dst: Path) -> None:
+    """Make an existing ``dst`` overwritable before a copy/write.
 
-    If ``dst`` exists (as link, file, or dir) it's removed first so the
-    new symlink can be written in place. Relative and absolute targets
-    both pass through unchanged.
+    Hooks deployed under ``to_home/`` are commonly mode 0755/read-only
+    (e.g. ``hook_switch_helper.sh``). ``shutil.copy2`` / ``Path.write_text``
+    over a read-only existing destination raise
+    ``PermissionError: [Errno 13]`` — the deploy from #142 hit exactly
+    this. We add the owner-write bit so the in-place overwrite succeeds.
+
+    No-op when ``dst`` doesn't exist or is already writable. Symlinks are
+    left untouched (the symlink path unlinks them instead). Genuinely
+    unexpected ``OSError`` (e.g. EROFS, EPERM on a foreign-owned file) is
+    re-raised so the deploy still crashes loud rather than masking a real
+    permissions problem.
     """
-    target = os.readlink(src)
-    if dst.is_symlink() or dst.exists():
-        if dst.is_dir() and not dst.is_symlink():
-            shutil.rmtree(dst)
-        else:
-            try:
-                dst.unlink()
-            except OSError as exc:  # stx-allow: fallback (reason: filesystem race)
-                logger.warning("Failed to unlink %s: %s", dst, exc)
-                return
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    os.symlink(target, dst)
-    logger.info("to_home: symlink %s -> %s", dst, target)
+    if dst.is_symlink() or not dst.exists():
+        return
+    mode = dst.stat().st_mode
+    if not mode & stat.S_IWUSR:
+        os.chmod(dst, mode | stat.S_IWUSR)
+
+
+# Symlinks are dereference-copied to real content — see
+# :func:`_symlink_resolve.deref_copy_symlink`. The traversal calls it
+# directly; this module re-exports the symbol for callers.
 
 
 def _read_and_interpolate(src: Path, config: AgentConfig | None) -> str:
@@ -225,6 +370,7 @@ def _deploy_plain_file(
     """Full overwrite. Uses ``shutil.copy2`` for binary-safe perm preserve
     when no interpolation is needed; otherwise writes interpolated text."""
     dst.parent.mkdir(parents=True, exist_ok=True)
+    _clear_readonly_dst(dst)
     if config is None:
         shutil.copy2(src, dst)
     else:
@@ -249,6 +395,7 @@ def _deploy_tight_perm_file(
     """Full overwrite, then chmod 0600 (e.g. ``.env``)."""
     text = _read_and_interpolate(src, config)
     dst.parent.mkdir(parents=True, exist_ok=True)
+    _clear_readonly_dst(dst)
     if not text.endswith("\n"):
         text += "\n"
     dst.write_text(text)
@@ -268,7 +415,7 @@ def _deploy_marker_protected(
 ) -> None:
     """Marker-protected merge for CLAUDE.md / state.md.
 
-    Mirrors :func:`_dot_claude._deploy_claude_md` invariants:
+    Invariants:
       - Source wrapped in Start/End markers.
       - Existing user content past the End marker is preserved.
       - Malformed existing markers (count != 1 or order swapped)
@@ -287,10 +434,8 @@ def _deploy_marker_protected(
     )
 
     # Strip any embedded sac markers from the source so we don't end up
-    # with nested Start/End pairs after wrapping (same defensive scrub
-    # _dot_claude applies to CLAUDE.md).
-    import re
-
+    # with nested Start/End pairs after wrapping (defensive scrub for
+    # CLAUDE.md).
     section_body = re.sub(
         r"<!--.*?scitex-agent-container.*?-->\n?",
         "",
@@ -306,8 +451,8 @@ def _deploy_marker_protected(
     user_tail = _extract_user_tail(dst)
 
     if END_MARKER not in new_content:
-        # Shouldn't happen — we just wrote END_MARKER — but mirror the
-        # _dot_claude safety net so the contract is identical.
+        # Shouldn't happen — we just wrote END_MARKER — but keep the
+        # safety net so the contract is explicit.
         updated = new_content
     elif user_tail:
         updated = new_content.rstrip("\n") + user_tail
@@ -317,6 +462,7 @@ def _deploy_marker_protected(
         updated = new_content
 
     dst.parent.mkdir(parents=True, exist_ok=True)
+    _clear_readonly_dst(dst)
     dst.write_text(updated)
     logger.info(
         "to_home: marker-protected %s -> %s (user tail preserved: %s)",
@@ -335,11 +481,11 @@ def _spec_dir(config: AgentConfig) -> Path | None:
     return Path(config.config_path).parent
 
 
-# Re-export so callers can ``from _to_home import WorkspaceCLAUDEMarkerError``
-# without also importing _dot_claude.
 __all__ = [
+    "DanglingToHomeSymlinkError",
     "WorkspaceCLAUDEMarkerError",
     "deploy_to_home",
     "materialize_to_home",
+    "resolve_baseline_to_home_dir",
     "resolve_to_home_dir",
 ]

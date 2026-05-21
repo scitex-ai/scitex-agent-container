@@ -84,7 +84,16 @@ re-run the snippet at the top of `cli_pkg/_main.py` (or just inspect
 
 `tests/integration/test_cli_startup_budget.py` measures cold-start
 time of `scitex-agent-container --help` and asserts it's below
-**500 ms**. The test forks a clean Python process so it doesn't
-benefit from the parent's already-warmed `sys.modules`. Set
-`SAC_STARTUP_BUDGET_S` to override the threshold in CI environments
-that need slack (default: 0.5).
+**500 ms** — a flat ceiling, same on a dev box and on CI.
+
+The timing loop runs in a *lean* Python child, not in the pytest
+process: it spawns `sac --help`, times it with `perf_counter`, and
+reports the floor of several runs. Measuring from the bloated pytest
+interpreter (typeguard + hypothesis + playwright + coverage tracing,
+all resident) inflated the wall clock by ~0.3 s — fork/scheduler tax
+of a large parent address space, not a CLI regression. That artifact
+was the historical CI flake. The child env is also scrubbed of
+`COVERAGE_PROCESS_START` / `COVERAGE_FILE` so the coverage `.pth`
+shim doesn't eagerly import `coverage` in the grandchild (it only
+imports inside that guard now). Set `SAC_STARTUP_BUDGET_S` to
+override the threshold (default: 0.5).

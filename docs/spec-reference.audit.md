@@ -24,7 +24,7 @@ in code · `!` implemented but undocumented · `?` design-only / unclear.
 | --- | --- | --- | --- | --- |
 | `spec.runtime` | `apptainer` REQUIRED | Optional; empty defaults to `apptainer`; non-empty must equal `apptainer` | ✗ (REQUIRED → optional with default) | `config/_validation.py:201-207`, `_loaders.py:269` |
 | `spec.workdir` | path, default `~/.scitex/agent-container/runtime/agents/<name>/` | Same default | ✓ | `config/_loaders.py:36,219-221` |
-| `spec.dot_claude` | path merged into `<workdir>/.claude/` | Stored as string; default `""` (not auto-discover) | ✗ (no auto-discover of sibling) | `config/_loaders.py:302`, `_validation.py:93` |
+| `spec.to_home` | path mirrored into agent `$HOME` | Stored as string; default `"./to_home"` (auto-discovers sibling) | ✓ | `config/_loaders.py`, `_validation.py` |
 | `spec.python-venv` | string \| list; `auto` probes `~/.venv-3.11`, `~/.venv` | Matches: `_resolve_python_venv` + `_resolve_venv` | ✓ | `config/_loaders.py:48,57-71,90-139` |
 | `spec.env-file` | string \| list of dotenv paths | Parsed by `_parse_env_files`; **NOT in `_KNOWN_SPEC_KEYS`** | ✗ (validator rejects as unknown) | `config/_loaders.py:142-161`; missing from `_validation.py:64-99` |
 | `spec.user` | container user override | Validated: `"" | "host" | "<uid>:<gid>"` | ✓ | `config/_validation.py:300-310` |
@@ -91,7 +91,7 @@ in code · `!` implemented but undocumented · `?` design-only / unclear.
 
 | Field | Documented | Implemented | Verdict | Source path |
 | --- | --- | --- | --- | --- |
-| `spec.skills` | "removed in v3"; use `metadata.labels.skills` CSV + `dot_claude/skills/` | `_V3_REMOVED_FIELDS["skills"]` rejects it, BUT `parse_skills` still exists and is wired in `_loaders.py:287` (reads `raw.get("skills", {})`). It is never reachable because the validator rejects first. | ✓ doc, ! dead-code path | `_validation.py:113-116`; `_parsers/_skills.py`, `_loaders.py:287` |
+| `spec.skills` | "removed in v3"; use `metadata.labels.skills` CSV + `to_home/.claude/skills/` | `_V3_REMOVED_FIELDS["skills"]` rejects it, BUT `parse_skills` still exists and is wired in `_loaders.py:287` (reads `raw.get("skills", {})`). It is never reachable because the validator rejects first. | ✓ doc, ! dead-code path | `_validation.py:113-116`; `_parsers/_skills.py`, `_loaders.py:287` |
 
 ## `spec.mcp_servers` / `spec.telegram` / `spec.hooks` / `spec.extensions`
 
@@ -125,10 +125,9 @@ in code · `!` implemented but undocumented · `?` design-only / unclear.
 
 ## Summary counters
 
-* `✓` (correct): 30
-* `✗` (mismatched / wrong): 11
+* `✓` (correct): 31
+* `✗` (mismatched / wrong): 10
   * `spec.runtime` REQUIRED → optional with default
-  * `spec.dot_claude` no auto-discover
   * `spec.env-file` missing from `_KNOWN_SPEC_KEYS`
   * `spec.multiplexer` missing from `_KNOWN_SPEC_KEYS`
   * `spec.startup_commands[]` shape (dict items not strings)
