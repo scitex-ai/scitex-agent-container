@@ -507,4 +507,17 @@ def build_sdk_options(
                 "args": sidecar_args,
             }
 
+    # Enable subagents. The Agent (Task) tool is only OFFERED to the model
+    # when it appears in ``allowed_tools`` (Anthropic "Subagents in the SDK"
+    # guide — the built-in general-purpose subagent is invokable once "Agent"
+    # is listed). The runner uses permission_mode=bypassPermissions, where
+    # listing a tool only AUTO-APPROVES it and unlisted tools (Bash/Read/
+    # Edit/…) stay available — so appending "Agent" enables subagent
+    # delegation WITHOUT narrowing the toolset. Merge so any spec-provided
+    # allowed_tools list is preserved.
+    _allowed = list(kwargs.get("allowed_tools") or [])
+    if "Agent" not in _allowed:
+        _allowed.append("Agent")
+    kwargs["allowed_tools"] = _allowed
+
     return ClaudeAgentOptions(**kwargs)

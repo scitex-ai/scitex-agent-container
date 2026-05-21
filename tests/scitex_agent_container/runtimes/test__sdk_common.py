@@ -557,6 +557,53 @@ class TestBuildOptions:
         # Assert
         assert cwd == str(ws)
 
+    def test_compose_enables_agent_tool_for_subagents(self, _composed_opts):
+        # Arrange
+        opts, _ = _composed_opts
+        # Act
+        allowed = list(opts.allowed_tools or [])
+        # Assert
+        assert "Agent" in allowed
+
+    @pytest.fixture
+    def _opts_preset_tools(self, sdk_env: _Env, tmp_path):
+        # Arrange: same auth + workspace setup as _composed_opts, but the
+        # caller pre-sets allowed_tools via ``extra`` to prove the merge
+        # preserves the caller's list AND appends "Agent".
+        _write_valid_cred(sdk_env, tmp_path)
+        sdk_env.delenv("ANTHROPIC_API_KEY")
+        sdk_env.delenv(_SAC_KEY)
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        (ws / ".mcp.json").write_text(
+            json.dumps({"mcpServers": {"stx": {"command": "scitex"}}})
+        )
+        _swap_registry(sdk_env, {"config": "cfg.yaml"})
+        _swap_load_config(sdk_env, str(ws))
+        # Act
+        opts = build_sdk_options(
+            "alpha",
+            permission_mode="bypassPermissions",
+            extra={"allowed_tools": ["Read", "Bash"]},
+        )
+        return list(opts.allowed_tools or [])
+
+    def test_compose_preserves_caller_allowed_tools(self, _opts_preset_tools):
+        # Arrange
+        allowed = _opts_preset_tools
+        # Act
+        preserved = "Read" in allowed and "Bash" in allowed
+        # Assert
+        assert preserved is True
+
+    def test_compose_appends_agent_to_caller_allowed_tools(self, _opts_preset_tools):
+        # Arrange
+        allowed = _opts_preset_tools
+        # Act
+        has_agent = "Agent" in allowed
+        # Assert
+        assert has_agent is True
+
     def test_compose_attaches_mcp_servers(self, _composed_opts):
         # Arrange
         opts, _ = _composed_opts
