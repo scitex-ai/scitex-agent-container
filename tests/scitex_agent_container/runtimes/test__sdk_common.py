@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from types import SimpleNamespace
 from typing import Any
 
@@ -34,6 +35,29 @@ from scitex_agent_container.runtimes._sdk_common import (
 )
 
 _SAC_KEY = _sdk_common._SAC_API_KEY_ENV
+
+
+def _valid_creds_json() -> str:
+    """Return a credentials.json body with a token valid for ~1 day.
+
+    ``provision_anthropic_auth`` now runs the OAuth expiry check on the
+    file before returning ``"credentials_file"`` (so an expired token
+    fails LOUDLY instead of dying mid-session). Path-selection fixtures
+    therefore need a realistically *valid* token; ``expiresAt`` is unix
+    milliseconds, far enough in the future to clear the 5-min skew.
+    """
+    expires_at_ms = int((time.time() + 86_400) * 1_000)
+    return json.dumps(
+        {
+            "claudeAiOauth": {
+                "accessToken": "tok",
+                "refreshToken": "ref",
+                "expiresAt": expires_at_ms,
+                "scopes": ["user:inference"],
+                "subscriptionType": "max",
+            }
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -125,7 +149,7 @@ class TestProvisionAuth:
         sdk_env.setenv("ANTHROPIC_API_KEY", "sk-ant-stale-from-dotfiles")
         sdk_env.delenv(_SAC_KEY)
         cred = tmp_path / ".credentials.json"
-        cred.write_text('{"claudeAiOauth": {"accessToken": "tok"}}')
+        cred.write_text(_valid_creds_json())
         sdk_env.setattr_module(_sdk_common, "_CRED_FILE", cred)
         return sdk_env
 
@@ -187,7 +211,7 @@ class TestProvisionAuth:
         # Arrange
         sdk_env.setenv("ANTHROPIC_API_KEY", "sk-ant-stale")
         cred = tmp_path / ".credentials.json"
-        cred.write_text('{"claudeAiOauth": {"accessToken": "tok"}}')
+        cred.write_text(_valid_creds_json())
         sdk_env.setattr_module(_sdk_common, "_CRED_FILE", cred)
         sdk_env.setenv(_SAC_KEY, "sk-ant-oat-sac")
         return sdk_env
@@ -289,6 +313,44 @@ class TestProvisionAuth:
         # Assert
         with ctx:
             provision_anthropic_auth()
+
+    # --- scenario: the credentials file exists but its OAuth token is
+    # already expired. The file merely *existing* must NOT be treated as
+    # usable auth — provision_anthropic_auth runs the expiry check and
+    # fails LOUDLY with the manual-refresh hint, so the agent never opens
+    # a session that dies with an ambiguous 401.
+
+    @pytest.fixture
+    def _expired_cred(self, sdk_env: _Env, tmp_path):
+        # Arrange
+        sdk_env.delenv("ANTHROPIC_API_KEY")
+        sdk_env.delenv(_SAC_KEY)
+        cred = tmp_path / ".credentials.json"
+        expired_ms = int((time.time() - 86_400) * 1_000)
+        cred.write_text(
+            json.dumps({"claudeAiOauth": {"accessToken": "x", "expiresAt": expired_ms}})
+        )
+        sdk_env.setattr_module(_sdk_common, "_CRED_FILE", cred)
+        return sdk_env
+
+    def test_expired_credentials_file_raises_loudly(self, _expired_cred):
+        # Arrange (handled by fixture)
+        # Act
+        ctx = pytest.raises(SDKCommonError)
+        # Assert
+        with ctx:
+            provision_anthropic_auth()
+
+    def test_expired_credentials_error_carries_refresh_hint(self, _expired_cred):
+        # Arrange (handled by fixture)
+        # Act
+        try:
+            provision_anthropic_auth()
+            message = ""
+        except SDKCommonError as exc:
+            message = str(exc)
+        # Assert
+        assert "claude login" in message
 
 
 # ---------------------------------------------------------------------------

@@ -208,6 +208,22 @@ def provision_anthropic_auth() -> str:
     # and the SDK would fall back to the rejected env value
     # ("Invalid API key").
     if _CRED_FILE.is_file():
+        # The file existing is NOT enough: a token that expired (or is
+        # about to) while the file lingers on disk would otherwise sail
+        # past this check and die with an ambiguous 401 the moment the
+        # SDK opens a session. Fail LOUDLY here instead, with the
+        # manual-refresh hint, so the operator gets a clear cause rather
+        # than silent mid-session death.
+        from .._state._preflight_creds import check_oauth_token_expiry
+
+        try:
+            check_oauth_token_expiry(_CRED_FILE)
+        except (FileNotFoundError, ValueError, RuntimeError) as exc:
+            raise SDKCommonError(
+                f"Anthropic OAuth credentials at {_CRED_FILE} are not "
+                f"usable: {exc} Run `claude login` to refresh the token, "
+                "then restart the agent."
+            ) from exc
         return "credentials_file"
 
     # Path B: SAC env (api-key form for pay-per-token, or oauth where
