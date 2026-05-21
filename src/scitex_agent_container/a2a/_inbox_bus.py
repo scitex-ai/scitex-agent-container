@@ -106,6 +106,7 @@ def mint_event(
     ack: bool = False,
     extra: dict[str, Any] | None = None,
     kind: str | None = None,
+    dispatch_id: str | None = None,
 ) -> dict[str, Any]:
     """Mint the event shape sac's channel publishes.
 
@@ -118,6 +119,13 @@ def mint_event(
     survive minting so the receiving adapter's auto-ack loop-guard
     can recognise an ack and decline to ack it back — otherwise two
     auto-ack adapters ping-pong forever.
+
+    ``dispatch_id`` is the SENDER-minted dispatch-ledger id (see
+    :mod:`scitex_agent_container._state.dispatch_ledger`). It rides on
+    the event so the channel wake path can thread it onto the woken
+    turn's ``/v1/turn`` body, letting the receiver's Stop hook correlate
+    its completion push back to the originating dispatch row. Omitted
+    when the sender did not mint a ledger id.
     """
     event: dict[str, Any] = {
         "msg_id": uuid.uuid4().hex,
@@ -133,6 +141,8 @@ def mint_event(
         event["conversation_id"] = conversation_id
     if in_reply_to:
         event["in_reply_to"] = in_reply_to
+    if dispatch_id:
+        event["dispatch_id"] = dispatch_id
     if extra:
         event["extra"] = extra
     if kind:

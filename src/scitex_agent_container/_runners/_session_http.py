@@ -11,12 +11,21 @@ Wire format:
 
     POST /v1/turn
     Content-Type: application/json
-    {"text": "your message", "exit_after": false}
+    {"text": "your message", "exit_after": false,
+     "dispatch_id": "<sender dispatch-ledger id, optional>",
+     "from_agent": "<requester node id, optional>"}
 
 The request field is ``text`` — that's the sac sidecar shape. Callers
 sending ``{"prompt": "..."}`` (e.g. some early lead helpers) get a
 ``400`` with ``"missing or empty 'text' field"`` so the schema mismatch
 is loud, not a hang. Use ``text`` end-to-end.
+
+``dispatch_id`` and ``from_agent`` are optional requester-identity
+fields: ``from_agent`` names the peer that dispatched this turn and
+``dispatch_id`` correlates it to the sender's dispatch-ledger row. The
+runner threads both onto the ``TurnEnvelope`` so the Stop hook can PUSH
+a completion report ({agent, dispatch_id, status, summary}) back to the
+requester. Absent for a mission boot turn (no peer to answer to).
 
     200 OK
     {
@@ -247,6 +256,15 @@ async def serve_inbound(
         dispatch_id = body.get("dispatch_id") if isinstance(body, dict) else None
         if not isinstance(dispatch_id, str) or not dispatch_id:
             dispatch_id = None
+        # Requester identity (optional). The peer that dispatched this
+        # turn — threaded onto the envelope so the Stop hook can PUSH a
+        # completion report back to it. Generalizes to ANY peer; the lead
+        # is not special-cased. Tolerated-absent: a mission boot turn or a
+        # legacy caller leaves it None and the Stop hook simply has nobody
+        # to address.
+        from_agent = body.get("from_agent") if isinstance(body, dict) else None
+        if not isinstance(from_agent, str) or not from_agent:
+            from_agent = None
 
         loop = asyncio.get_running_loop()
         env = TurnEnvelope(
@@ -254,6 +272,7 @@ async def serve_inbound(
             response=loop.create_future(),
             exit_after=exit_after,
             dispatch_id=dispatch_id,
+            from_agent=from_agent,
         )
         await inbox.put(env)
         try:

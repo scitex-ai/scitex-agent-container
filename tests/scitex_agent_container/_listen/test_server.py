@@ -1047,3 +1047,17 @@ def test_message_send_without_ack_metadata_yields_falsey_ack_event(
     event = _roundtrip_local_send(cross_host_env, metadata=metadata)
     # Assert
     assert not event.get("ack")
+
+
+def test_message_send_threads_dispatch_id_into_published_event(
+    cross_host_env,
+) -> None:
+    # Arrange
+    # The sender-minted dispatch_id must ride from metadata onto the
+    # published inbox event so the channel wake path can thread it onto
+    # the woken turn for requester-completion correlation.
+    metadata = {"from_agent": "bob", "dispatch_id": "d-route-99"}
+    # Act
+    event = _roundtrip_local_send(cross_host_env, metadata=metadata)
+    # Assert
+    assert event.get("dispatch_id") == "d-route-99"

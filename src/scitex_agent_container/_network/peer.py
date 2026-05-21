@@ -120,8 +120,15 @@ def post_turn_to_url(
     )
 
     dispatch_id = new_dispatch_id()
+    # The requester identity stamped on both the ledger row AND the wire
+    # body. Defaults to this container's own name so the receiver's Stop
+    # hook can PUSH a completion report back to us — push-feedback, not a
+    # special-cased lead. ``None`` only when neither an explicit value nor
+    # ``SAC_NAME`` is available (a bare ops script), in which case the
+    # receiver has nobody to address and skips the push.
+    requester = from_agent if from_agent is not None else self_agent_name()
     record_dispatch_safe(
-        from_agent=from_agent if from_agent is not None else self_agent_name(),
+        from_agent=requester,
         to_agent=to_agent,
         text=text,
         conversation_id=conversation_id,
@@ -136,6 +143,7 @@ def post_turn_to_url(
                 exit_after=exit_after,
                 timeout_s=timeout_s,
                 dispatch_id=dispatch_id,
+                from_agent=requester,
             )
         except PeerError as exc:
             terminal = (
@@ -146,13 +154,14 @@ def post_turn_to_url(
         update_dispatch_safe(dispatch_id, STATUS_DELIVERED)
         return reply
 
-    body = json.dumps(
-        {
-            "text": text,
-            "exit_after": bool(exit_after),
-            "dispatch_id": dispatch_id,
-        }
-    ).encode("utf-8")
+    turn_body: dict[str, Any] = {
+        "text": text,
+        "exit_after": bool(exit_after),
+        "dispatch_id": dispatch_id,
+    }
+    if requester is not None:
+        turn_body["from_agent"] = requester
+    body = json.dumps(turn_body).encode("utf-8")
     req = urllib.request.Request(
         url,
         data=body,
@@ -374,6 +383,7 @@ def _post_turn_via_ssh(
     exit_after: bool,
     timeout_s: float,
     dispatch_id: str | None = None,
+    from_agent: str | None = None,
 ) -> str:
     """Dispatch a turn via ``ssh <host> curl ...`` and parse the response.
 
@@ -408,6 +418,8 @@ def _post_turn_via_ssh(
     turn_body: dict[str, Any] = {"text": text, "exit_after": bool(exit_after)}
     if dispatch_id is not None:
         turn_body["dispatch_id"] = dispatch_id
+    if from_agent is not None:
+        turn_body["from_agent"] = from_agent
     body = json.dumps(turn_body)
     try:
         proc = subprocess.run(

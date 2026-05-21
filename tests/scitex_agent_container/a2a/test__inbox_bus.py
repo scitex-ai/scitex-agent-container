@@ -343,6 +343,30 @@ def test_mint_event_defaults_ack_to_false() -> None:
 
 
 # ---------------------------------------------------------------------------
+# mint_event: ``dispatch_id`` rides on the event so the channel wake path
+# can thread it onto the woken turn for requester-completion correlation.
+# ---------------------------------------------------------------------------
+
+
+def test_mint_event_carries_dispatch_id_when_provided() -> None:
+    # Arrange
+    event = mint_event("alice", content="hi", from_agent="bob", dispatch_id="d-123")
+    # Act
+    dispatch_id = event["dispatch_id"]
+    # Assert
+    assert dispatch_id == "d-123"
+
+
+def test_mint_event_omits_dispatch_id_when_absent() -> None:
+    # Arrange
+    event = mint_event("alice", content="hi", from_agent="bob")
+    # Act
+    present = "dispatch_id" in event
+    # Assert
+    assert present is False
+
+
+# ---------------------------------------------------------------------------
 # mint_deny_notification — receiver-side ACL-deny notice (comms item D).
 # Shape contract: marked ``kind="denied_attempt"``, empty content,
 # from/to/reason carried, no message body leak.
