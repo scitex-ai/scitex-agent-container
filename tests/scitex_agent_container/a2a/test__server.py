@@ -58,7 +58,7 @@ def _write_yaml(tmpdir: Path, name: str, handler: str = "echo") -> Path:
                 "team": "scitex",
             },
         },
-        "spec": {"a2a": {"handler": handler, "port": 8888}},
+        "spec": {"a2a": {"handler": handler, "port": 8888}},  # stx-allow: STX-NL001
     }
     p = tmpdir / f"{name}.yaml"
     p.write_text(yaml.safe_dump(body))
@@ -776,8 +776,7 @@ def _durable_publish_row(_isolated_db, tmp_path):
     # Assert handled by per-behaviour tests below.
     with _state_db.open_db(_isolated_db) as conn:
         rows = conn.execute(
-            "SELECT id, target, source, content, delivered_at "
-            "FROM channel_events"
+            "SELECT id, target, source, content, delivered_at FROM channel_events"
         ).fetchall()
     return rows
 
@@ -862,14 +861,11 @@ def test_event_posted_before_subscribe_is_replayed_on_connect(
             )
             if r.status_code not in (200, 201, 202):
                 raise RuntimeError(
-                    f"precondition: publisher POST returned {r.status_code}: "
-                    f"{r.text!r}"
+                    f"precondition: publisher POST returned {r.status_code}: {r.text!r}"
                 )
         # Act — subscribe and read the replay.
         event = _asyncio.run(
-            _consume_first_event(
-                f"http://127.0.0.1:{port}/agents/bob/inbox/stream"
-            )
+            _consume_first_event(f"http://127.0.0.1:{port}/agents/bob/inbox/stream")
         )
     # Assert
     assert event.get("content") == "queued for bob"
@@ -893,9 +889,7 @@ def test_replayed_event_is_marked_delivered_after_first_delivery(
                 json=_send_payload("queued for bob"),
             )
         _asyncio.run(
-            _consume_first_event(
-                f"http://127.0.0.1:{port}/agents/bob/inbox/stream"
-            )
+            _consume_first_event(f"http://127.0.0.1:{port}/agents/bob/inbox/stream")
         )
     # Act
     with _state_db.open_db(_isolated_db) as conn:
@@ -906,9 +900,7 @@ def test_replayed_event_is_marked_delivered_after_first_delivery(
     assert row["delivered_at"] is not None
 
 
-def test_sse_id_line_is_persisted_row_id(
-    _isolated_db, tmp_path: Path
-) -> None:
+def test_sse_id_line_is_persisted_row_id(_isolated_db, tmp_path: Path) -> None:
     """The SSE ``id:`` line carries the channel_events row id — the
     cursor a reconnecting client echoes back as Last-Event-ID."""
     # Arrange
@@ -923,9 +915,7 @@ def test_sse_id_line_is_persisted_row_id(
                 json=_send_payload("first"),
             )
         sse_id, _event = _asyncio.run(
-            _consume_event_with_id(
-                f"http://127.0.0.1:{port}/agents/bob/inbox/stream"
-            )
+            _consume_event_with_id(f"http://127.0.0.1:{port}/agents/bob/inbox/stream")
         )
     with _state_db.open_db(_isolated_db) as conn:
         row = conn.execute(
@@ -935,3 +925,78 @@ def test_sse_id_line_is_persisted_row_id(
     matches = sse_id is not None and int(sse_id) == int(row["id"])
     # Assert
     assert matches
+
+
+# ---------------------------------------------------------------------
+# Regression: the per-agent A2A send path must propagate metadata.ack
+# into the minted event. It previously omitted ``ack=`` (its twin in
+# ``_listen/server.py`` included it), so an auto-ack arriving via this
+# path was minted with ``ack=False`` — the receiver's loop-guard then
+# failed to recognise it and auto-acked back, ping-ponging forever.
+# ---------------------------------------------------------------------
+
+
+def _ack_send_payload(*, from_agent: str = "alice") -> dict:
+    """A ``message:send`` body shaped like an auto-ack (``metadata.ack``)."""
+    return {
+        "jsonrpc": "2.0",
+        "id": "1",
+        "method": "SendMessage",
+        "params": {
+            "message": {
+                "message_id": "m-ack",
+                "role": "ROLE_USER",
+                "parts": [{"text": ""}],
+            },
+            "metadata": {"from_agent": from_agent, "ack": True},
+        },
+    }
+
+
+@pytest.fixture
+def _persisted_ack_event(_isolated_db, tmp_path):
+    """POST an ack-flagged message:send; return the round-tripped event.
+
+    Real end-to-end path (TestClient -> _publish_channel_event ->
+    mint_event -> persist_event), no mocks. ``persist_event`` stores the
+    minted envelope verbatim in ``meta_json``, so the returned dict is
+    exactly what the bus would deliver to a subscriber.
+    """
+    # Arrange
+    yml = _write_yaml(tmp_path, "bob")
+    app = build_app([yml])
+    # Act
+    with TestClient(app) as client:
+        resp = client.post(
+            "/agents/bob/message:send",
+            json=_ack_send_payload(from_agent="alice"),
+        )
+    assert resp.status_code in (200, 201, 202), resp.text
+    # Assert handled by per-behaviour tests below.
+    with _state_db.open_db(_isolated_db) as conn:
+        row = conn.execute(
+            "SELECT meta_json FROM channel_events WHERE target='bob'"
+        ).fetchone()
+    return json.loads(row["meta_json"])
+
+
+def test_a2a_send_path_propagates_ack_flag_into_event(_persisted_ack_event):
+    """The minted event carries top-level ``ack=True`` (was dropped)."""
+    # Arrange
+    event = _persisted_ack_event
+    # Act
+    actual = event.get("ack")
+    # Assert
+    assert actual is True
+
+
+def test_a2a_published_ack_event_is_not_re_acked(_persisted_ack_event):
+    """The loop-guard recognises the round-tripped ack and declines."""
+    # Arrange
+    from scitex_agent_container._mcp.channel import _should_auto_ack
+
+    event = _persisted_ack_event
+    # Act
+    should = _should_auto_ack(event)
+    # Assert
+    assert should is False
