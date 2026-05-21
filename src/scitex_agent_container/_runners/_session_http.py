@@ -240,10 +240,20 @@ async def serve_inbound(
                 {"error": "missing or empty 'text' field"}, status_code=400
             )
         exit_after = bool(body.get("exit_after", False))
+        # Sender-minted dispatch-ledger id (optional). Threaded onto the
+        # envelope so the receiver side can correlate this turn back to
+        # the originating dispatch row. Tolerated-absent: legacy callers
+        # that don't mint a dispatch_id simply leave it None.
+        dispatch_id = body.get("dispatch_id") if isinstance(body, dict) else None
+        if not isinstance(dispatch_id, str) or not dispatch_id:
+            dispatch_id = None
 
         loop = asyncio.get_running_loop()
         env = TurnEnvelope(
-            text=text, response=loop.create_future(), exit_after=exit_after
+            text=text,
+            response=loop.create_future(),
+            exit_after=exit_after,
+            dispatch_id=dispatch_id,
         )
         await inbox.put(env)
         try:

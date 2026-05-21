@@ -55,6 +55,42 @@ def register_tools(
 
     from mcp.types import TextContent, Tool
 
+    from .._state.dispatch_ledger import (
+        STATUS_DELIVERED,
+        STATUS_FAILED,
+        new_dispatch_id,
+        record_dispatch,
+        update_dispatch_status,
+    )
+
+    def _ledger_record(
+        *, to_agent: str, content: str, conversation_id: str | None
+    ) -> str:
+        """Mint + record an outbound dispatch row; return its dispatch_id.
+
+        Ledger writes are observability — a state.db hiccup must not break
+        the actual a2a send, so failures log loudly (never silent) and the
+        send proceeds with a freshly-minted id that simply has no row.
+        """
+        did = new_dispatch_id()
+        try:
+            record_dispatch(
+                from_agent=agent_name,
+                to_agent=to_agent,
+                text=content,
+                conversation_id=conversation_id,
+                dispatch_id=did,
+            )
+        except Exception as exc:  # stx-allow: fallback (reason: ledger is observability; a DB write failure must not break the a2a send — logged loudly, never silent)
+            log.warning("dispatch-ledger record (a2a_send) failed: %s", exc)
+        return did
+
+    def _ledger_update(dispatch_id: str, status: str) -> None:
+        try:
+            update_dispatch_status(dispatch_id, status)
+        except Exception as exc:  # stx-allow: fallback (reason: ledger is observability; a status-update failure must not break the a2a send — logged loudly, never silent)
+            log.warning("dispatch-ledger status update (a2a_send) failed: %s", exc)
+
     base = listen_url.rstrip("/")
     headers = {"Content-Type": "application/json"}
     if bearer:
@@ -267,9 +303,16 @@ def register_tools(
         if name == "a2a_send":
             target = arguments["target"]
             content = arguments["content"]
+            conversation_id = arguments.get("conversation_id") or _uuid.uuid4().hex
+            dispatch_id = _ledger_record(
+                to_agent=target,
+                content=content,
+                conversation_id=conversation_id,
+            )
             payload = _wrap_message_send(
                 content,
-                conversation_id=arguments.get("conversation_id") or _uuid.uuid4().hex,
+                conversation_id=conversation_id,
+                dispatch_id=dispatch_id,
                 priority=arguments.get("priority"),
                 requires_reply=arguments.get("requires_reply"),
             )
@@ -278,7 +321,9 @@ def register_tools(
                     target, f"/agents/{target}/message:send", payload
                 )
             except SendError as exc:
+                _ledger_update(dispatch_id, STATUS_FAILED)
                 return _error_result(exc)
+            _ledger_update(dispatch_id, STATUS_DELIVERED)
             return [TextContent(type="text", text=json.dumps(res))]
 
         if name == "a2a_reply":

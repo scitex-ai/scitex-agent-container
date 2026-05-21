@@ -42,6 +42,7 @@ receiving host").
 from __future__ import annotations
 
 import json
+import logging
 import urllib.error
 import urllib.request
 from typing import Any
@@ -53,6 +54,8 @@ __all__ = [
     "PeerError",
     "PeerTimeoutPending",
 ]
+
+log = logging.getLogger(__name__)
 
 
 class PeerError(RuntimeError):
@@ -74,26 +77,82 @@ def __getattr__(name: str):
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
+from ._peer_dispatch import (  # noqa: E402
+    record_dispatch_safe,
+    self_agent_name,
+    update_dispatch_safe,
+)
+
+
 def post_turn_to_url(
     url: str,
     text: str,
     *,
     exit_after: bool = False,
     timeout_s: float = 600.0,
+    from_agent: str | None = None,
+    to_agent: str | None = None,
+    conversation_id: str | None = None,
 ) -> str:
     """POST a single turn to a known ``/v1/turn`` URL; return the ``text`` string.
 
     Raises ``PeerError`` on transport failure or non-200 status with the
     server's error message included.
+
+    Mints a dispatch-ledger ``dispatch_id`` and records a row with
+    ``status="sent"`` before the POST, stamping the same id into the
+    request body so the receiver can correlate. Once the round-trip
+    resolves the status is moved to ``delivered`` (clean reply),
+    ``timeout`` (deadline tripped), or ``failed`` (any other transport /
+    HTTP error). ``from_agent`` defaults to this container's ``SAC_NAME``.
     """
     if not url.endswith("/v1/turn"):
         raise PeerError(
             f"url must end in /v1/turn (got {url!r}); the runner's inbound "
             "endpoint is the only supported target"
         )
+
+    from .._state.dispatch_ledger import (
+        STATUS_DELIVERED,
+        STATUS_FAILED,
+        STATUS_TIMEOUT,
+        new_dispatch_id,
+    )
+
+    dispatch_id = new_dispatch_id()
+    record_dispatch_safe(
+        from_agent=from_agent if from_agent is not None else self_agent_name(),
+        to_agent=to_agent,
+        text=text,
+        conversation_id=conversation_id,
+        dispatch_id=dispatch_id,
+    )
+
     if url.startswith("ssh://"):
-        return _post_turn_via_ssh(url, text, exit_after=exit_after, timeout_s=timeout_s)
-    body = json.dumps({"text": text, "exit_after": bool(exit_after)}).encode("utf-8")
+        try:
+            reply = _post_turn_via_ssh(
+                url,
+                text,
+                exit_after=exit_after,
+                timeout_s=timeout_s,
+                dispatch_id=dispatch_id,
+            )
+        except PeerError as exc:
+            terminal = (
+                STATUS_TIMEOUT if "timeout" in str(exc).lower() else STATUS_FAILED
+            )
+            update_dispatch_safe(dispatch_id, terminal)
+            raise
+        update_dispatch_safe(dispatch_id, STATUS_DELIVERED)
+        return reply
+
+    body = json.dumps(
+        {
+            "text": text,
+            "exit_after": bool(exit_after),
+            "dispatch_id": dispatch_id,
+        }
+    ).encode("utf-8")
     req = urllib.request.Request(
         url,
         data=body,
@@ -112,20 +171,27 @@ def post_turn_to_url(
             err_body = ""
         if exc.code == 504:
             # A 504 means the peer's bounded HTTP wait elapsed — the turn
-            # is usually still running. Interpret the honest body (PR #169)
-            # for the caller instead of surfacing raw JSON; an older peer
-            # that returns 504 without the honest shape degrades to a
-            # generic "may still be running" message.
+            # is usually still running, NOT failed. Mark the ledger row
+            # 'timeout' and interpret the honest body (PR #169) for the
+            # caller instead of surfacing raw JSON; an older peer that
+            # returns 504 without the honest shape degrades to a generic
+            # "may still be running" message.
+            update_dispatch_safe(dispatch_id, STATUS_TIMEOUT)
             raise _interpret_504(err_body, fallback_label=url) from exc
+        update_dispatch_safe(dispatch_id, STATUS_FAILED)
         raise PeerError(
             f"peer returned HTTP {exc.code}: {err_body or exc.reason}"
         ) from exc
     except urllib.error.URLError as exc:
+        update_dispatch_safe(dispatch_id, STATUS_FAILED)
         raise PeerError(f"peer unreachable at {url}: {exc.reason}") from exc
     except TimeoutError as exc:
+        update_dispatch_safe(dispatch_id, STATUS_TIMEOUT)
         raise PeerError(f"peer timeout at {url} after {timeout_s:.0f}s") from exc
     if not isinstance(payload, dict) or "text" not in payload:
+        update_dispatch_safe(dispatch_id, STATUS_FAILED)
         raise PeerError(f"peer returned malformed body: {payload!r}")
+    update_dispatch_safe(dispatch_id, STATUS_DELIVERED)
     return str(payload["text"])
 
 
@@ -250,15 +316,27 @@ def post_turn(
     *,
     exit_after: bool = False,
     timeout_s: float = 600.0,
+    conversation_id: str | None = None,
 ) -> str:
     """Send a turn to a peer agent by name; return the response ``text``.
 
     Convenience wrapper that combines :func:`resolve_peer_url` and
     :func:`post_turn_to_url`. Use this from one running agent to drive
     another (orochi master → workers, peer collaboration, etc.).
+
+    Records a dispatch-ledger row with ``to_agent=agent_name`` so a later
+    ``list_dispatches(to_agent=...)`` can recall every turn sent to a
+    given agent.
     """
     url = resolve_peer_url(agent_name)
-    return post_turn_to_url(url, text, exit_after=exit_after, timeout_s=timeout_s)
+    return post_turn_to_url(
+        url,
+        text,
+        exit_after=exit_after,
+        timeout_s=timeout_s,
+        to_agent=agent_name,
+        conversation_id=conversation_id,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -295,6 +373,7 @@ def _post_turn_via_ssh(
     *,
     exit_after: bool,
     timeout_s: float,
+    dispatch_id: str | None = None,
 ) -> str:
     """Dispatch a turn via ``ssh <host> curl ...`` and parse the response.
 
@@ -326,7 +405,10 @@ def _post_turn_via_ssh(
         host,
         remote_curl,
     ]
-    body = json.dumps({"text": text, "exit_after": bool(exit_after)})
+    turn_body: dict[str, Any] = {"text": text, "exit_after": bool(exit_after)}
+    if dispatch_id is not None:
+        turn_body["dispatch_id"] = dispatch_id
+    body = json.dumps(turn_body)
     try:
         proc = subprocess.run(
             ssh_cmd,
