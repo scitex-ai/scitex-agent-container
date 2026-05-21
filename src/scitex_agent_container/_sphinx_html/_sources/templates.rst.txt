@@ -3,7 +3,7 @@ Templates and Examples
 
 ``examples/agents/`` ships pattern templates as agent directories
 (``hello-agent``, ``minimal-agent``, ``full-agent``, ``proxy-agent``).
-Each directory holds a ``spec.yaml`` (plus an optional ``dot_claude/``
+Each directory holds a ``spec.yaml`` (plus an optional ``to_home/``
 sibling) and demonstrates one deployment pattern with the smallest
 manifest that exercises it. Copy-and-adapt is the intended workflow.
 
@@ -30,15 +30,15 @@ Pattern Templates
        canonical single-turn pattern.
    * - ``full-agent``
      - Fully-featured agent
-     - Health, restart, A2A, and ``dot_claude/`` wiring all enabled.
+     - Health, restart, A2A, and ``to_home/`` wiring all enabled.
    * - ``proxy-agent``
      - ``kind: AgentProxy``
      - HTTP forwarder with no SDK runner — routes ``/v1/turn`` to
        another agent.
 
 MCP tool wiring is no longer a separate template — drop a
-``.mcp.json`` into the agent's ``dot_claude/`` directory and it'll be
-merged into ``<workdir>/.mcp.json`` at start (F-DC1).
+``.mcp.json`` into the agent's ``to_home/`` directory and it lands at
+``$HOME/.mcp.json`` at start (ADR-0006).
 
 Instantiating a Template
 ------------------------
@@ -51,6 +51,6 @@ instantiate:
 
     cp -r examples/agents/hello-agent \\
        ~/.scitex/agent-container/agents/my-agent
-    # The dot_claude/ sibling (CLAUDE.md / .mcp.json / .env / state.md /
-    # commands/ / skills/ / hooks/) is all optional.
+    # The to_home/ sibling (CLAUDE.md / .mcp.json / .env / state.md /
+    # .claude/{commands,skills,hooks}/) is all optional.
     sac agents start my-agent

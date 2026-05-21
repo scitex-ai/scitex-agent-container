@@ -72,7 +72,7 @@
 <li class="toctree-l2"><a class="reference internal" href="how-sac-works.html#launch-flow">Launch flow</a></li>
 <li class="toctree-l2"><a class="reference internal" href="how-sac-works.html#what-each-piece-does">What each piece does</a><ul>
 <li class="toctree-l3"><a class="reference internal" href="how-sac-works.html#spec-yaml-ssot"><code class="docutils literal notranslate"><span class="pre">spec.yaml</span></code> (SSoT)</a></li>
-<li class="toctree-l3"><a class="reference internal" href="how-sac-works.html#dot-claude-optional"><code class="docutils literal notranslate"><span class="pre">dot_claude/</span></code> (optional)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="how-sac-works.html#to-home-optional"><code class="docutils literal notranslate"><span class="pre">to_home/</span></code> (optional)</a></li>
 <li class="toctree-l3"><a class="reference internal" href="how-sac-works.html#apptainer-instance">Apptainer instance</a></li>
 <li class="toctree-l3"><a class="reference internal" href="how-sac-works.html#claude-sdk-session">Claude SDK session</a></li>
 <li class="toctree-l3"><a class="reference internal" href="how-sac-works.html#a2a-inbound-spec-a2a-port">A2A inbound (<code class="docutils literal notranslate"><span class="pre">spec.a2a.port</span></code>)</a></li>
@@ -222,8 +222,8 @@
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.extensions"><code class="docutils literal notranslate"><span class="pre">AgentConfig.extensions</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.skills</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.context_management"><code class="docutils literal notranslate"><span class="pre">AgentConfig.context_management</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_commands"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_commands</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_commands"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_commands</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_prompts"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_prompts</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.mcp_servers"><code class="docutils literal notranslate"><span class="pre">AgentConfig.mcp_servers</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.multiplexer"><code class="docutils literal notranslate"><span class="pre">AgentConfig.multiplexer</span></code></a></li>
@@ -235,7 +235,6 @@
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.a2a"><code class="docutils literal notranslate"><span class="pre">AgentConfig.a2a</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.kind"><code class="docutils literal notranslate"><span class="pre">AgentConfig.kind</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.proxy"><code class="docutils literal notranslate"><span class="pre">AgentConfig.proxy</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.dot_claude"><code class="docutils literal notranslate"><span class="pre">AgentConfig.dot_claude</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.to_home"><code class="docutils literal notranslate"><span class="pre">AgentConfig.to_home</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.expanded_workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.expanded_workdir</span></code></a></li>
 </ul>
@@ -421,7 +420,7 @@
 <h1>Templates and Examples<a class="headerlink" href="#templates-and-examples" title="Link to this heading"></a></h1>
 <p><code class="docutils literal notranslate"><span class="pre">examples/agents/</span></code> ships pattern templates as agent directories
 (<code class="docutils literal notranslate"><span class="pre">hello-agent</span></code>, <code class="docutils literal notranslate"><span class="pre">minimal-agent</span></code>, <code class="docutils literal notranslate"><span class="pre">full-agent</span></code>, <code class="docutils literal notranslate"><span class="pre">proxy-agent</span></code>).
-Each directory holds a <code class="docutils literal notranslate"><span class="pre">spec.yaml</span></code> (plus an optional <code class="docutils literal notranslate"><span class="pre">dot_claude/</span></code>
+Each directory holds a <code class="docutils literal notranslate"><span class="pre">spec.yaml</span></code> (plus an optional <code class="docutils literal notranslate"><span class="pre">to_home/</span></code>
 sibling) and demonstrates one deployment pattern with the smallest
 manifest that exercises it. Copy-and-adapt is the intended workflow.</p>
 <p>The shipped YAML must round-trip through <code class="docutils literal notranslate"><span class="pre">load_config</span></code> cleanly so
@@ -453,7 +452,7 @@ canonical single-turn pattern.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">full-agent</span></code></p></td>
 <td><p>Fully-featured agent</p></td>
-<td><p>Health, restart, A2A, and <code class="docutils literal notranslate"><span class="pre">dot_claude/</span></code> wiring all enabled.</p></td>
+<td><p>Health, restart, A2A, and <code class="docutils literal notranslate"><span class="pre">to_home/</span></code> wiring all enabled.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">proxy-agent</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">kind:</span> <span class="pre">AgentProxy</span></code></p></td>
@@ -463,8 +462,8 @@ another agent.</p></td>
 </tbody>
 </table>
 <p>MCP tool wiring is no longer a separate template — drop a
-<code class="docutils literal notranslate"><span class="pre">.mcp.json</span></code> into the agent’s <code class="docutils literal notranslate"><span class="pre">dot_claude/</span></code> directory and it’ll be
-merged into <code class="docutils literal notranslate"><span class="pre">&lt;workdir&gt;/.mcp.json</span></code> at start (F-DC1).</p>
+<code class="docutils literal notranslate"><span class="pre">.mcp.json</span></code> into the agent’s <code class="docutils literal notranslate"><span class="pre">to_home/</span></code> directory and it lands at
+<code class="docutils literal notranslate"><span class="pre">$HOME/.mcp.json</span></code> at start (ADR-0006).</p>
 </section>
 <section id="instantiating-a-template">
 <h2>Instantiating a Template<a class="headerlink" href="#instantiating-a-template" title="Link to this heading"></a></h2>
@@ -473,8 +472,8 @@ parent directory of the YAML, not from a <code class="docutils literal notransla
 instantiate:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cp<span class="w"> </span>-r<span class="w"> </span>examples/agents/hello-agent<span class="w"> </span><span class="se">\\</span>
 <span class="w">   </span>~/.scitex/agent-container/agents/my-agent
-<span class="c1"># The dot_claude/ sibling (CLAUDE.md / .mcp.json / .env / state.md /</span>
-<span class="c1"># commands/ / skills/ / hooks/) is all optional.</span>
+<span class="c1"># The to_home/ sibling (CLAUDE.md / .mcp.json / .env / state.md /</span>
+<span class="c1"># .claude/{commands,skills,hooks}/) is all optional.</span>
 sac<span class="w"> </span>agents<span class="w"> </span>start<span class="w"> </span>my-agent
 </pre></div>
 </div>
