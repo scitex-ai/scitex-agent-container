@@ -357,6 +357,61 @@ def test_install_claude_code_emits_mcp_config_snippet():
 
 
 # ---------------------------------------------------------------------------
+# channel — wake-on-push turn-url passthrough (WI-1)
+# ---------------------------------------------------------------------------
+
+
+class _FakeChannelMain:
+    """Real callable recording each ``channel.main(...)`` invocation."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def __call__(self, *, name: str, listen_url=None, turn_url=None) -> None:
+        self.calls.append(
+            {"name": name, "listen_url": listen_url, "turn_url": turn_url}
+        )
+
+
+@contextmanager
+def _use_channel_main(fake: _FakeChannelMain) -> Iterator[_FakeChannelMain]:
+    """Swap ``mcp_group._load_channel_main`` for a loader returning ``fake``."""
+    saved = mg._load_channel_main
+    mg._load_channel_main = lambda: fake
+    try:
+        yield fake
+    finally:
+        mg._load_channel_main = saved
+
+
+def test_channel_forwards_turn_url_to_main():
+    # Arrange
+    fake = _FakeChannelMain()
+    runner = CliRunner()
+    # Act
+    with _use_channel_main(fake):
+        result = runner.invoke(
+            mcp,
+            ["channel", "--name", "lead", "--turn-url", "http://127.0.0.1:9/v1/turn"],
+        )
+    # Assert
+    assert result.exit_code == 0 and fake.calls[0]["turn_url"] == (
+        "http://127.0.0.1:9/v1/turn"
+    )
+
+
+def test_channel_turn_url_defaults_to_none():
+    # Arrange
+    fake = _FakeChannelMain()
+    runner = CliRunner()
+    # Act
+    with _use_channel_main(fake):
+        result = runner.invoke(mcp, ["channel", "--name", "lead"])
+    # Assert
+    assert result.exit_code == 0 and fake.calls[0]["turn_url"] is None
+
+
+# ---------------------------------------------------------------------------
 # _enumerate_tools — version-agnostic shape detection (real classes only)
 # ---------------------------------------------------------------------------
 

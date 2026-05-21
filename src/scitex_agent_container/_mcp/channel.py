@@ -67,6 +67,13 @@ def _auto_ack_enabled() -> bool:
     return raw.strip().lower() not in ("0", "false", "no", "off")
 
 
+# WI-1 wake-on-push primitives live in ``_channel_wake`` (extracted to keep
+# this receive-side adapter under the module size budget). Re-exported here
+# so the historical ``from .channel import _wake_turn`` import path — used by
+# ``_push_channel_event`` below and the test suite — keeps working.
+from ._channel_wake import _should_wake_turn, _wake_text, _wake_turn  # noqa: E402,F401
+
+
 def _should_auto_ack(event: dict[str, Any]) -> bool:
     """Loop-guard for the auto-ack side-effect.
 
@@ -253,38 +260,63 @@ async def _push_channel_event(
     agent_name: str | None = None,
     listen_url: str | None = None,
     bearer: str | None = None,
+    turn_url: str | None = None,
 ) -> None:
-    """Buffer ``event``, push it to the client as a
-    ``notifications/claude/channel`` message through ``session``, then —
-    if auto-ack is enabled and the event qualifies — emit an automatic
-    ``a2a_ack`` back to the sender (stage-2 "read" receipt).
+    """Deliver ``event`` to the agent, then emit the stage-2 read-receipt.
 
-    Split out of the SSE consumer so the receive→inject path is
-    directly testable end-to-end (see ``tests/.../_mcp/test_channel.py``
-    ``test_serve_pushes_sse_event_to_client_as_channel_notification``).
-    That seam used to be untested, which let a silent drop ship.
+    Delivery has two modes:
 
-    The auto-ack is a best-effort side-effect: it runs only *after* the
-    notification is injected and its failure is logged loudly but never
-    re-raised, so a flaky send can neither block injection nor kill the
-    long-lived SSE consumer. The agent is unaware — the adapter acks.
+    * **Wake-on-push (WI-1)** — when ``turn_url`` is set and the event
+      qualifies (:func:`_should_wake_turn`), POST it to the agent's own
+      ``/v1/turn`` so an IDLE session WAKES and processes the message now.
+      Push then behaves like the lead's Telegram channel. The driven turn
+      carries the message as its input, so the ``notifications/claude/
+      channel`` push is intentionally SKIPPED in this mode — pushing it too
+      would make the agent see the same message twice (once as turn input,
+      once as a buffered ``<channel>`` tag on the next turn boundary).
+    * **Notification-only (legacy / external nodes)** — when no ``turn_url``
+      is configured (a plain ``claude`` node with no colocated runner), push
+      the ``notifications/claude/channel`` message through ``session`` so an
+      already-active turn renders the ``<channel>`` tag. This cannot wake an
+      idle session — that is exactly the limitation ``turn_url`` removes.
+
+    Split out of the SSE consumer so the receive→inject path is directly
+    testable end-to-end (see ``tests/.../_mcp/test_channel.py``). That seam
+    used to be untested, which let a silent drop ship.
+
+    The auto-ack is a best-effort side-effect: it runs only *after* delivery
+    and its failure is logged loudly but never re-raised, so a flaky receipt
+    can neither block delivery nor kill the long-lived SSE consumer.
     """
     from mcp.shared.message import SessionMessage
     from mcp.types import JSONRPCMessage, JSONRPCNotification
 
     # Buffer for a2a_reply / a2a_ack lookups by msg_id.
     _recent.append(event)
-    params = _build_notification(event)
-    msg = JSONRPCMessage(
-        JSONRPCNotification(
-            jsonrpc="2.0",
-            method="notifications/claude/channel",
-            params=params,
-        )
-    )
-    await session.send_message(SessionMessage(msg))
 
-    # Stage-2 receipt: auto-ack AFTER successful injection. Best-effort —
+    woke = False
+    if turn_url is not None and _should_wake_turn(event):
+        # Wake path: drive a turn on the agent's own runner. A failure here
+        # is NOT silently contained — re-raise so the SSE consumer's
+        # on_event wrapper logs it loudly (WI-2 fail-loud) while keeping the
+        # long-lived stream alive. We must never pretend a wake succeeded.
+        await _wake_turn(event, turn_url=turn_url, bearer=bearer)
+        woke = True
+
+    if not woke:
+        # Notification-only delivery (no colocated runner to wake, or an
+        # ack/empty event that does not warrant a driven turn).
+        params = _build_notification(event)
+        msg = JSONRPCMessage(
+            JSONRPCNotification(
+                jsonrpc="2.0",
+                method="notifications/claude/channel",
+                params=params,
+            )
+        )
+        await session.send_message(SessionMessage(msg))
+
+    # Stage-2 receipt: auto-ack AFTER successful delivery. Best-effort —
     # never let an ack failure propagate past this point.
     if (
         agent_name is not None
@@ -314,9 +346,15 @@ async def _serve(
     name: str,
     listen_url: str,
     bearer: str | None,
+    turn_url: str | None = None,
 ) -> None:
     """Drive the MCP session **and** the SSE consumer over the given
     streams, keeping a handle to the session so the consumer can push.
+
+    ``turn_url`` (WI-1) is the agent's own colocated ``/v1/turn`` endpoint.
+    When set, each received bus event WAKES the session by driving a turn
+    there (push ≡ Telegram); when ``None`` the adapter falls back to the
+    notification-only push that cannot advance an idle turn.
 
     We deliberately do not call ``Server.run``: it constructs its
     ``ServerSession`` internally and never exposes it, so a side
@@ -363,9 +401,10 @@ async def _serve(
                     agent_name=name,
                     listen_url=listen_url,
                     bearer=bearer,
+                    turn_url=turn_url,
                 )
-            except Exception as exc:  # stx-allow: fallback (reason: one failed push must not kill the long-lived SSE consumer; logged loudly, never silent)
-                log.warning("sac channel: pushing inbox event failed: %s", exc)
+            except Exception as exc:  # stx-allow: fallback (reason: one failed push/wake must not kill the long-lived SSE consumer; logged loudly, never silent)
+                log.warning("sac channel: delivering inbox event failed: %s", exc)
 
         sse_task: asyncio.Task[None] = asyncio.create_task(
             _consume_sse(sse_url, bearer, on_event)
@@ -384,7 +423,9 @@ async def _serve(
             sse_task.cancel()
 
 
-async def _run(name: str, listen_url: str, bearer: str | None) -> None:
+async def _run(
+    name: str, listen_url: str, bearer: str | None, turn_url: str | None = None
+) -> None:
     from mcp.server.stdio import stdio_server
 
     async with stdio_server() as (read_stream, write_stream):
@@ -394,6 +435,7 @@ async def _run(name: str, listen_url: str, bearer: str | None) -> None:
             name=name,
             listen_url=listen_url,
             bearer=bearer,
+            turn_url=turn_url,
         )
 
 
@@ -410,18 +452,21 @@ def _register_tools(
     """
     from ._channel_tools import register_tools
 
-    register_tools(
-        server, agent_name=agent_name, listen_url=listen_url, bearer=bearer
-    )
+    register_tools(server, agent_name=agent_name, listen_url=listen_url, bearer=bearer)
 
 
-def main(name: str, listen_url: str | None = None) -> None:
-    """CLI entry point. Bearer comes from ``SAC_LISTEN_BEARER`` env."""
+def main(name: str, listen_url: str | None = None, turn_url: str | None = None) -> None:
+    """CLI entry point. Bearer comes from ``SAC_LISTEN_BEARER`` env.
+
+    ``turn_url`` (WI-1) is the agent's own ``/v1/turn`` endpoint; when set,
+    each received bus event WAKES the session by driving a turn there so a
+    push to an idle agent is processed immediately (push ≡ Telegram).
+    """
     listen = listen_url or os.environ.get(
         "SAC_LISTEN_BASE_URL", "http://127.0.0.1:7878"
     )
     bearer = os.environ.get("SAC_LISTEN_BEARER")
-    asyncio.run(_run(name, listen, bearer))
+    asyncio.run(_run(name, listen, bearer, turn_url))
 
 
 __all__ = ["main"]

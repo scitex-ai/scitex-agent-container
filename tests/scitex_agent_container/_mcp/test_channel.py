@@ -1132,3 +1132,282 @@ async def test_auto_ack_failure_is_best_effort_does_not_raise():
     )
     # Assert — injection still succeeded (the failure was contained).
     assert len(session.sent) == 1
+
+
+# ---------------------------------------------------------------------------
+# WI-1 wake-on-push — a pushed message to an IDLE agent must DRIVE a turn.
+#
+# The notification-only push (covered above) renders a ``<channel>`` tag for
+# an already-active turn but does NOT advance an idle session. When a
+# ``turn_url`` (the agent's own colocated ``/v1/turn``) is configured, the
+# adapter POSTs each qualifying event there so the runner enqueues it onto
+# the persistent SDK conversation and processes it immediately — push behaves
+# like the lead's Telegram channel. These tests pin: a real POST reaches the
+# turn endpoint, acks/empty events do NOT drive a turn, and the wake path
+# delivers exactly once (no duplicate notification).
+# ---------------------------------------------------------------------------
+
+
+class _FakeTurnServer:
+    """A real asyncio TCP server standing in for the agent's ``/v1/turn``.
+
+    Records every POST body so the wake path is directly observable. Not a
+    mock — a genuine loopback HTTP/1.1 endpoint, same approach as
+    ``_FakeListenServer``.
+    """
+
+    def __init__(self) -> None:
+        self.turns: list[dict[str, Any]] = []
+        self._server: asyncio.base_events.Server | None = None
+        self.host = "127.0.0.1"
+        self.port = 0
+
+    async def start(self) -> None:
+        self._server = await asyncio.start_server(self._handle, host=self.host, port=0)
+        self.port = self._server.sockets[0].getsockname()[1]
+
+    async def stop(self) -> None:
+        if self._server is not None:
+            self._server.close()
+            await self._server.wait_closed()
+            self._server = None
+
+    @property
+    def turn_url(self) -> str:
+        return f"http://{self.host}:{self.port}/v1/turn"
+
+    async def _handle(self, reader, writer) -> None:
+        try:
+            request_line = await reader.readline()
+            if not request_line:
+                return
+            content_length = 0
+            while True:
+                line = await reader.readline()
+                if line in (b"\r\n", b"\n", b""):
+                    break
+                if line.lower().startswith(b"content-length:"):
+                    content_length = int(line.split(b":", 1)[1].strip())
+            body = b""
+            if content_length:
+                body = await reader.readexactly(content_length)
+            try:
+                payload = json.loads(body.decode() or "{}")
+            except json.JSONDecodeError:
+                payload = {}
+            self.turns.append(payload)
+            resp = json.dumps({"text": "ok", "session_id": "s1"}).encode()
+            writer.write(
+                b"HTTP/1.1 200 OK\r\n"
+                b"Content-Type: application/json\r\n"
+                b"Content-Length: " + str(len(resp)).encode() + b"\r\n"
+                b"Connection: close\r\n\r\n" + resp
+            )
+            await writer.drain()
+        finally:
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
+
+
+@pytest_asyncio.fixture
+async def fake_turn():
+    s = _FakeTurnServer()
+    await s.start()
+    try:
+        yield s
+    finally:
+        await s.stop()
+
+
+def test_should_wake_turn_true_for_normal_inbound_event():
+    # Arrange
+    from scitex_agent_container._mcp.channel import _should_wake_turn
+
+    event = {"from_agent": "bob", "content": "do the thing", "msg_id": "m1"}
+    # Act
+    decision = _should_wake_turn(event)
+    # Assert
+    assert decision is True
+
+
+def test_should_wake_turn_false_for_ack_event():
+    """An ack carries no actionable content — driving a turn per receipt
+    would burn turns and risk an auto-ack ping-pong."""
+    # Arrange
+    from scitex_agent_container._mcp.channel import _should_wake_turn
+
+    event = {"from_agent": "bob", "content": "", "msg_id": "m1", "ack": True}
+    # Act
+    decision = _should_wake_turn(event)
+    # Assert
+    assert decision is False
+
+
+def test_should_wake_turn_false_for_empty_content():
+    # Arrange
+    from scitex_agent_container._mcp.channel import _should_wake_turn
+
+    event = {"from_agent": "bob", "content": "   ", "msg_id": "m1"}
+    # Act
+    decision = _should_wake_turn(event)
+    # Assert
+    assert decision is False
+
+
+def test_wake_text_frames_content_with_source_and_msg_id():
+    # Arrange
+    from scitex_agent_container._mcp.channel import _wake_text
+
+    event = {"from_agent": "bob", "content": "hello", "msg_id": "m1"}
+    # Act
+    text = _wake_text(event)
+    # Assert — the sender attribution survives into the driven turn input.
+    assert 'source="bob"' in text and "hello" in text
+
+
+@pytest.mark.asyncio
+async def test_push_with_turn_url_drives_a_turn(fake_turn):
+    """The wake POST reaches the agent's own /v1/turn — the core WI-1 claim:
+    a pushed message to an idle agent advances its turn without any external
+    turn trigger."""
+    # Arrange
+    from scitex_agent_container._mcp.channel import _push_channel_event
+
+    session = _CapturingSession()
+    event = {"from_agent": "bob", "content": "summarize commits", "msg_id": "m1"}
+    # Act — turn_url set: the adapter must drive a turn.
+    await _push_channel_event(
+        session,
+        event,
+        agent_name="alice",
+        listen_url="http://127.0.0.1:1",  # unused on the wake path
+        bearer=None,
+        turn_url=fake_turn.turn_url,
+    )
+    # Assert — exactly one turn was driven on the runner's endpoint.
+    assert len(fake_turn.turns) == 1
+
+
+@pytest.mark.asyncio
+async def test_push_with_turn_url_carries_message_content_as_turn_text(fake_turn):
+    # Arrange
+    from scitex_agent_container._mcp.channel import _push_channel_event
+
+    session = _CapturingSession()
+    event = {"from_agent": "bob", "content": "summarize commits", "msg_id": "m1"}
+    # Act
+    await _push_channel_event(
+        session,
+        event,
+        agent_name="alice",
+        listen_url="http://127.0.0.1:1",
+        bearer=None,
+        turn_url=fake_turn.turn_url,
+    )
+    # Assert — the driven turn carries the original message body.
+    assert "summarize commits" in fake_turn.turns[0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_push_with_turn_url_skips_duplicate_notification(fake_turn):
+    """Wake delivers the message as turn input; the notification push is
+    skipped so the agent does not see the same message twice."""
+    # Arrange
+    from scitex_agent_container._mcp.channel import _push_channel_event
+
+    session = _CapturingSession()
+    event = {"from_agent": "bob", "content": "do it", "msg_id": "m1"}
+    # Act
+    await _push_channel_event(
+        session,
+        event,
+        agent_name="alice",
+        listen_url="http://127.0.0.1:1",
+        bearer=None,
+        turn_url=fake_turn.turn_url,
+    )
+    # Assert — no notification was injected (turn input is the sole delivery).
+    assert session.sent == []
+
+
+@pytest.mark.asyncio
+async def test_push_with_turn_url_ack_event_does_not_drive_turn(fake_turn):
+    """An ack event must NOT wake a turn — it falls back to notification-only
+    so the loop-guard / receipt semantics are unchanged."""
+    # Arrange
+    from scitex_agent_container._mcp.channel import _push_channel_event
+
+    session = _CapturingSession()
+    ack_event = {"from_agent": "bob", "content": "", "msg_id": "m1", "ack": True}
+    # Act
+    await _push_channel_event(
+        session,
+        ack_event,
+        agent_name="alice",
+        listen_url="http://127.0.0.1:1",
+        bearer=None,
+        turn_url=fake_turn.turn_url,
+    )
+    # Assert — zero turns driven for an ack.
+    assert fake_turn.turns == []
+
+
+@pytest.mark.asyncio
+async def test_push_without_turn_url_falls_back_to_notification(fake_listen):
+    """Backward-compat: with no turn_url (external node, no colocated
+    runner) the adapter still pushes the channel notification."""
+    # Arrange
+    from scitex_agent_container._mcp.channel import _push_channel_event
+
+    session = _CapturingSession()
+    event = {"from_agent": "bob", "content": "hi", "msg_id": "m1"}
+    # Act — no turn_url.
+    await _push_channel_event(
+        session,
+        event,
+        agent_name="alice",
+        listen_url=fake_listen.base_url,
+        bearer=None,
+    )
+    # Assert — notification injected as before.
+    assert len(session.sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_wake_failure_propagates_to_caller():
+    """WI-2 fail-loud: when the wake POST cannot reach the runner (refused
+    connection), ``_push_channel_event`` must RAISE rather than silently
+    pretend the message was delivered."""
+    # Arrange — a closed loopback port refuses connect.
+    import socket
+
+    from scitex_agent_container._mcp.channel import _push_channel_event
+
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(("127.0.0.1", 0))
+    refused_port = s.getsockname()[1]
+    s.close()
+    session = _CapturingSession()
+    event = {"from_agent": "bob", "content": "hi", "msg_id": "m1"}
+
+    async def _do() -> None:
+        await _push_channel_event(
+            session,
+            event,
+            agent_name="alice",
+            listen_url="http://127.0.0.1:1",
+            bearer=None,
+            turn_url=f"http://127.0.0.1:{refused_port}/v1/turn",
+        )
+
+    # Act
+    raised = False
+    try:
+        await _do()
+    except Exception:
+        raised = True
+    # Assert — the unreachable wake surfaced loudly, not silently dropped.
+    assert raised is True
