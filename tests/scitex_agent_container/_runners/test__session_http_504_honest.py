@@ -1,22 +1,24 @@
-"""Honest-504-body tests for ``POST /v1/turn``.
+"""Neutral-504-body tests for ``POST /v1/turn``.
 
 A 504 from the inbound-turn endpoint means the BOUNDED HTTP wait
 elapsed — NOT that the turn failed. The SDK call is never cancelled, so
-the turn is usually still queued/draining. The earlier body hardcoded
-an optimistic framing ("loud failure" in the docstring, a bare
-``error`` string in the body). This module pins the contract that the
-504 body now reports the turn's REAL state read from the agent's
-``heartbeat.json``:
+the turn is usually still queued/draining. The body therefore renders
+NO failure/success verdict: it reports the turn's REAL state read from
+the agent's ``heartbeat.json`` plus a neutral ``possibilities`` list,
+and leaves the consumer (who has full context) to judge. This module
+pins that contract:
 
-* ``is_failure`` is COMPUTED from heartbeat-beat staleness — a fresh
-  beat means "still progressing", a stale beat (older than 2x the
-  heartbeat tick) means "possibly wedged". It is never hardcoded.
-* ``detail`` reflects the actual phase + beat age, not a canned label.
+* the body has NO ``is_failure`` key — even computing one from beat
+  staleness would over-claim (a stale beat may just mean a long tool
+  call).
+* the real ``heartbeat.json`` is embedded verbatim under ``heartbeat``.
+* ``detail`` is NEUTRAL — it says the wait elapsed and the turn may
+  still be running, never "failed" / "succeeded".
+* ``possibilities`` lists what the state might mean, not a verdict.
 * a missing / unreadable ``heartbeat.json`` is reported honestly as
-  "state unknown", never fabricated as progress.
-* the ``status`` / ``timeout_s`` / ``session_id`` / ``heartbeat`` fields
-  carry through, and the legacy ``error`` alias is preserved so old
-  callers keep working.
+  "state unknown" (``heartbeat`` is ``null``), never fabricated.
+* the ``status`` / ``timeout_s`` / ``session_id`` carry through, and the
+  legacy ``error`` alias is preserved so old callers keep working.
 
 No mocks, no monkeypatch (STX-NM): every test writes a REAL
 ``heartbeat.json`` into a ``tmp_path`` state dir and asserts the real
@@ -37,7 +39,6 @@ from pathlib import Path
 import pytest
 
 from scitex_agent_container._runners._session_http import (
-    STALL_TICK_FACTOR,
     _build_timeout_body,
     serve_inbound,
 )
@@ -69,85 +70,124 @@ def _write_heartbeat_with_age(state_dir: Path, *, state: str, age_s: float) -> N
 
 
 # ---------------------------------------------------------------------------
-# _build_timeout_body — fresh beat means progressing, not failure
+# _build_timeout_body — no verdict, ever (no is_failure key)
 # ---------------------------------------------------------------------------
 
 
-class TestFreshHeartbeatNotFailure:
-    def test_fresh_heartbeat_is_not_flagged_as_failure(self, tmp_path) -> None:
-        """A heartbeat written just now reads as still-progressing."""
+class TestNoFailureVerdict:
+    def test_fresh_heartbeat_body_has_no_is_failure_key(self, tmp_path) -> None:
+        """A fresh heartbeat must not produce any is_failure verdict."""
         # Arrange
         _write_heartbeat_with_age(tmp_path, state="working", age_s=0.0)
         # Act
-        body = _build_timeout_body(
-            timeout_s=120.0, session_id=None, state_dir=tmp_path, tick_seconds=10.0
-        )
+        body = _build_timeout_body(timeout_s=120.0, session_id=None, state_dir=tmp_path)
         # Assert
-        assert body["is_failure"] is False
+        assert "is_failure" not in body
 
-    def test_fresh_heartbeat_detail_mentions_alive(self, tmp_path) -> None:
-        """The honest detail says the runner is alive, not 'failed'."""
+    def test_stale_heartbeat_body_has_no_is_failure_key(self, tmp_path) -> None:
+        """Even a very stale beat must not produce a failure verdict."""
         # Arrange
-        _write_heartbeat_with_age(tmp_path, state="working", age_s=1.0)
+        _write_heartbeat_with_age(tmp_path, state="working", age_s=100.0)
+        # Act
+        body = _build_timeout_body(timeout_s=120.0, session_id=None, state_dir=tmp_path)
+        # Assert
+        assert "is_failure" not in body
+
+    def test_missing_heartbeat_body_has_no_is_failure_key(self, tmp_path) -> None:
+        """Missing heartbeat must not produce a failure verdict either."""
+        # Arrange
+        empty_dir = tmp_path / "no-beat"
+        empty_dir.mkdir()
         # Act
         body = _build_timeout_body(
-            timeout_s=120.0, session_id=None, state_dir=tmp_path, tick_seconds=10.0
+            timeout_s=120.0, session_id=None, state_dir=empty_dir
         )
         # Assert
-        assert "alive" in body["detail"]
+        assert "is_failure" not in body
 
-    def test_fresh_heartbeat_embeds_real_phase(self, tmp_path) -> None:
+
+# ---------------------------------------------------------------------------
+# _build_timeout_body — real heartbeat embedded verbatim
+# ---------------------------------------------------------------------------
+
+
+class TestHeartbeatEmbedded:
+    def test_body_embeds_real_phase(self, tmp_path) -> None:
         """The 504 body carries the real heartbeat phase from disk."""
         # Arrange
         _write_heartbeat_with_age(tmp_path, state="working", age_s=1.0)
         # Act
-        body = _build_timeout_body(
-            timeout_s=120.0, session_id=None, state_dir=tmp_path, tick_seconds=10.0
-        )
+        body = _build_timeout_body(timeout_s=120.0, session_id=None, state_dir=tmp_path)
         # Assert
         assert body["heartbeat"]["state"] == "working"
 
+    def test_body_embeds_stale_phase_verbatim(self, tmp_path) -> None:
+        """A stale beat's phase is reported verbatim, not relabeled."""
+        # Arrange
+        _write_heartbeat_with_age(tmp_path, state="idle", age_s=100.0)
+        # Act
+        body = _build_timeout_body(timeout_s=120.0, session_id=None, state_dir=tmp_path)
+        # Assert
+        assert body["heartbeat"]["state"] == "idle"
+
 
 # ---------------------------------------------------------------------------
-# _build_timeout_body — stale beat means possible wedge, IS a failure
+# _build_timeout_body — detail is neutral, never a verdict
 # ---------------------------------------------------------------------------
 
 
-class TestStaleHeartbeatIsFailure:
-    def test_stale_heartbeat_is_flagged_as_failure(self, tmp_path) -> None:
-        """A beat older than 2x the tick reads as a possible wedge."""
+class TestNeutralDetail:
+    def test_detail_disclaims_failure_meaning(self, tmp_path) -> None:
+        """The detail explicitly says a timeout is not necessarily failure."""
+        # Arrange
+        _write_heartbeat_with_age(tmp_path, state="working", age_s=1.0)
+        # Act
+        body = _build_timeout_body(timeout_s=120.0, session_id=None, state_dir=tmp_path)
+        # Assert
+        assert "not necessarily mean failure" in body["detail"]
+
+    def test_detail_does_not_assert_wedged(self, tmp_path) -> None:
+        """A stale beat must NOT make the detail assert the runner is wedged."""
         # Arrange
         _write_heartbeat_with_age(tmp_path, state="working", age_s=100.0)
         # Act
-        body = _build_timeout_body(
-            timeout_s=120.0, session_id=None, state_dir=tmp_path, tick_seconds=10.0
-        )
+        body = _build_timeout_body(timeout_s=120.0, session_id=None, state_dir=tmp_path)
         # Assert
-        assert body["is_failure"] is True
+        assert "wedged" not in body["detail"]
 
-    def test_stale_heartbeat_detail_mentions_wedged(self, tmp_path) -> None:
-        """The honest detail names the wedge / investigate signal."""
+    def test_detail_does_not_assert_alive_verdict(self, tmp_path) -> None:
+        """A fresh beat must NOT make the detail assert the runner is alive."""
         # Arrange
-        _write_heartbeat_with_age(tmp_path, state="working", age_s=100.0)
+        _write_heartbeat_with_age(tmp_path, state="working", age_s=1.0)
         # Act
-        body = _build_timeout_body(
-            timeout_s=120.0, session_id=None, state_dir=tmp_path, tick_seconds=10.0
-        )
+        body = _build_timeout_body(timeout_s=120.0, session_id=None, state_dir=tmp_path)
         # Assert
-        assert "wedged" in body["detail"]
+        assert "alive" not in body["detail"]
 
-    def test_beat_just_under_threshold_is_not_failure(self, tmp_path) -> None:
-        """A beat younger than the stall threshold stays not-a-failure."""
+
+# ---------------------------------------------------------------------------
+# _build_timeout_body — possibilities is a neutral list, not a verdict
+# ---------------------------------------------------------------------------
+
+
+class TestPossibilitiesList:
+    def test_possibilities_is_a_list(self, tmp_path) -> None:
+        """The body offers a ``possibilities`` list for the caller to weigh."""
         # Arrange
-        tick = 10.0
-        just_under = STALL_TICK_FACTOR * tick - 1.0
-        _write_heartbeat_with_age(tmp_path, state="working", age_s=just_under)
+        _write_heartbeat_with_age(tmp_path, state="working", age_s=1.0)
         # Act
-        body = _build_timeout_body(
-            timeout_s=120.0, session_id=None, state_dir=tmp_path, tick_seconds=tick
-        )
+        body = _build_timeout_body(timeout_s=120.0, session_id=None, state_dir=tmp_path)
         # Assert
-        assert body["is_failure"] is False
+        assert isinstance(body["possibilities"], list)
+
+    def test_possibilities_mentions_long_tool_call(self, tmp_path) -> None:
+        """The neutral list includes 'long tool call' as one possibility."""
+        # Arrange
+        _write_heartbeat_with_age(tmp_path, state="working", age_s=1.0)
+        # Act
+        body = _build_timeout_body(timeout_s=120.0, session_id=None, state_dir=tmp_path)
+        # Assert
+        assert any("tool call" in p for p in body["possibilities"])
 
 
 # ---------------------------------------------------------------------------
@@ -156,18 +196,6 @@ class TestStaleHeartbeatIsFailure:
 
 
 class TestMissingStateIsHonest:
-    def test_missing_heartbeat_is_not_failure(self, tmp_path) -> None:
-        """No heartbeat.json on disk → unknown, not a hardcoded failure."""
-        # Arrange
-        empty_dir = tmp_path / "no-beat"
-        empty_dir.mkdir()
-        # Act
-        body = _build_timeout_body(
-            timeout_s=120.0, session_id=None, state_dir=empty_dir, tick_seconds=10.0
-        )
-        # Assert
-        assert body["is_failure"] is False
-
     def test_missing_heartbeat_detail_says_unknown(self, tmp_path) -> None:
         """Missing heartbeat is reported honestly as state-unknown."""
         # Arrange
@@ -175,7 +203,7 @@ class TestMissingStateIsHonest:
         empty_dir.mkdir()
         # Act
         body = _build_timeout_body(
-            timeout_s=120.0, session_id=None, state_dir=empty_dir, tick_seconds=10.0
+            timeout_s=120.0, session_id=None, state_dir=empty_dir
         )
         # Assert
         assert "unknown" in body["detail"]
@@ -187,7 +215,7 @@ class TestMissingStateIsHonest:
         empty_dir.mkdir()
         # Act
         body = _build_timeout_body(
-            timeout_s=120.0, session_id=None, state_dir=empty_dir, tick_seconds=10.0
+            timeout_s=120.0, session_id=None, state_dir=empty_dir
         )
         # Assert
         assert body["heartbeat"] is None
@@ -197,29 +225,9 @@ class TestMissingStateIsHonest:
         # Arrange
         timeout_s = 120.0
         # Act
-        body = _build_timeout_body(
-            timeout_s=timeout_s, session_id=None, state_dir=None, tick_seconds=10.0
-        )
+        body = _build_timeout_body(timeout_s=timeout_s, session_id=None, state_dir=None)
         # Assert
         assert "unavailable" in body["detail"]
-
-
-# ---------------------------------------------------------------------------
-# _build_timeout_body — never hardcoded "still_working"
-# ---------------------------------------------------------------------------
-
-
-class TestNoHardcodedOptimisticLabel:
-    def test_body_does_not_contain_still_working_literal(self, tmp_path) -> None:
-        """The body must not stamp the hardcoded 'still_working' label."""
-        # Arrange
-        _write_heartbeat_with_age(tmp_path, state="working", age_s=1.0)
-        # Act
-        body = _build_timeout_body(
-            timeout_s=120.0, session_id=None, state_dir=tmp_path, tick_seconds=10.0
-        )
-        # Assert
-        assert "still_working" not in json.dumps(body)
 
 
 # ---------------------------------------------------------------------------
@@ -236,9 +244,7 @@ class TestSessionIdFallsBackToPersisted:
         _write_heartbeat_with_age(tmp_path, state="working", age_s=1.0)
         write_session_id(tmp_path, "sid-from-disk")
         # Act
-        body = _build_timeout_body(
-            timeout_s=120.0, session_id=None, state_dir=tmp_path, tick_seconds=10.0
-        )
+        body = _build_timeout_body(timeout_s=120.0, session_id=None, state_dir=tmp_path)
         # Assert
         assert body["session_id"] == "sid-from-disk"
 
@@ -254,15 +260,13 @@ class TestLegacyFieldsPreserved:
         # Arrange
         _write_heartbeat_with_age(tmp_path, state="working", age_s=1.0)
         # Act
-        body = _build_timeout_body(
-            timeout_s=120.0, session_id=None, state_dir=tmp_path, tick_seconds=10.0
-        )
+        body = _build_timeout_body(timeout_s=120.0, session_id=None, state_dir=tmp_path)
         # Assert
         assert "120s timeout" in body["error"]
 
 
 # ---------------------------------------------------------------------------
-# End-to-end — the honest body flows through the real HTTP 504 handler
+# End-to-end — the neutral body flows through the real HTTP 504 handler
 # ---------------------------------------------------------------------------
 
 
@@ -340,7 +344,6 @@ def _run_504_against_state_dir(
                 stop=stop,
                 turn_timeout_s=cap,
                 state_dir=state_dir,
-                tick_seconds=10.0,
             )
         )
         try:
@@ -366,7 +369,7 @@ def _run_504_against_state_dir(
     return asyncio.run(_driver())
 
 
-class TestEndToEndHonest504:
+class TestEndToEndNeutral504:
     def test_504_body_carries_real_heartbeat_state(self, tmp_path) -> None:
         """A live 504 over HTTP embeds the real on-disk heartbeat phase."""
         # Arrange
@@ -378,3 +381,13 @@ class TestEndToEndHonest504:
         )
         # Assert
         assert (status, body["heartbeat"]["state"]) == (504, "working")
+
+    def test_504_body_has_no_is_failure_key_over_http(self, tmp_path) -> None:
+        """A live 504 over HTTP must not carry an is_failure verdict."""
+        # Arrange
+        _write_heartbeat_with_age(tmp_path, state="working", age_s=1.0)
+        port = _free_port()
+        # Act
+        _, body = _run_504_against_state_dir(port=port, state_dir=tmp_path, cap=0.3)
+        # Assert
+        assert "is_failure" not in body

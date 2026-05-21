@@ -281,7 +281,6 @@ async def run(
                 agent_name=name,
                 spec_yaml_path=a2a_card_yaml,
                 state_dir=state_dir,
-                tick_seconds=tick_seconds,
             ),
         )
 
