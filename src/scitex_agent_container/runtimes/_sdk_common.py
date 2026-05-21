@@ -91,9 +91,6 @@ def _cred_file_path() -> Path:
     return Path.home() / ".claude" / ".credentials.json"
 
 
-_CRED_FILE = _cred_file_path()
-
-
 def _container_settings_path() -> str | None:
     """Resolve the in-container ``settings.local.json`` path, or ``None``.
 
@@ -200,6 +197,12 @@ def provision_anthropic_auth() -> str:
     # this point regardless of which path we pick below.
     os.environ.pop("ANTHROPIC_API_KEY", None)
 
+    # Resolve the credentials path at CALL time (not import time) so it
+    # honours the current ``CLAUDE_CONFIG_DIR`` / ``HOME`` — the apptainer
+    # runtime sets these per-dispatch, and tests redirect them at a tmp
+    # dir. An import-frozen constant would leak onto the real host file.
+    cred_file = _cred_file_path()
+
     # Path A: credentials.json wins (Pro/Max OAuth flat-rate, real
     # refresh_token). The SDK reads the file directly. Critically we
     # do NOT set ANTHROPIC_API_KEY here even if SAC is also set —
@@ -207,7 +210,7 @@ def provision_anthropic_auth() -> str:
     # env, so an env override would shadow the working file path
     # and the SDK would fall back to the rejected env value
     # ("Invalid API key").
-    if _CRED_FILE.is_file():
+    if cred_file.is_file():
         # The file existing is NOT enough: a token that expired (or is
         # about to) while the file lingers on disk would otherwise sail
         # past this check and die with an ambiguous 401 the moment the
@@ -217,10 +220,10 @@ def provision_anthropic_auth() -> str:
         from .._state._preflight_creds import check_oauth_token_expiry
 
         try:
-            check_oauth_token_expiry(_CRED_FILE)
+            check_oauth_token_expiry(cred_file)
         except (FileNotFoundError, ValueError, RuntimeError) as exc:
             raise SDKCommonError(
-                f"Anthropic OAuth credentials at {_CRED_FILE} are not "
+                f"Anthropic OAuth credentials at {cred_file} are not "
                 f"usable: {exc} Run `claude login` to refresh the token, "
                 "then restart the agent."
             ) from exc
@@ -236,7 +239,7 @@ def provision_anthropic_auth() -> str:
 
     raise SDKCommonError(
         f"no Anthropic auth available — run `claude /login` so "
-        f"{_CRED_FILE} exists, or export {_SAC_API_KEY_ENV}. "
+        f"{cred_file} exists, or export {_SAC_API_KEY_ENV}. "
         "sac does NOT honour a pre-set ANTHROPIC_API_KEY (see the "
         "module-level comment in runtimes/_sdk_common.py for why), "
         "and never writes/synthesises credentials.json itself."
