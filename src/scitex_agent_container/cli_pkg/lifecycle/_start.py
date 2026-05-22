@@ -10,22 +10,12 @@ template fan-out, and the multi-target foreground multiplexer.
 from __future__ import annotations
 
 import sys
-import traceback
 from pathlib import Path
 
 import click
 
-from ..._lifecycle.lifecycle import agent_start
-from ...config import load_config
-from ...config._host import resolve_hostname
-from ...config._resolve import resolve_with_prefix
-from .._helpers import agent_name_complete, console, system_msg
-from ._common import (
-    _iter_agent_yamls,
-    _multiplex_foreground_tails,
-    _singleton_skip_reason,
-)
-from ._dispatch import try_dispatch
+from .._helpers import agent_name_complete, console
+from ._common import _iter_agent_yamls
 
 
 @click.command()
@@ -151,6 +141,14 @@ from ._dispatch import try_dispatch
     help="Replace existing materialised yamls under --params-out.",
 )
 @click.option(
+    "--strict-drift",
+    "strict_drift",
+    is_flag=True,
+    default=False,
+    help="Hard-block (non-zero exit) on a drifted spec-source git repo "
+    "instead of warn-and-launch. Equivalent to SAC_STRICT_DRIFT=1.",
+)
+@click.option(
     "--no-redispatch",
     "no_redispatch",
     is_flag=True,
@@ -175,6 +173,7 @@ def start(
     params_file: Path | None,
     params_out: Path | None,
     params_overwrite: bool,
+    strict_drift: bool,
     no_redispatch: bool,
 ) -> None:
     """Start one or more agents from YAML definitions.
@@ -320,184 +319,25 @@ def start(
         if not single_targets:
             return
 
-    # Per-target single-start loop.
-    if single_targets:
-        _run_preflight_once()
-    any_error = False
-    for target_idx, raw_target in enumerate(single_targets):
-        if target_idx > 0 and not as_json:
-            console.print()  # blank line between agents
+    # Per-target single-start loop. Body lives in ``_start_single`` to
+    # keep this click entry under the per-file line cap.
+    from ._start_single import run_single_targets
 
-        # stx-allow: fallback (reason: config resolution, YAML parse, or agent_start can raise on misconfiguration or launch failure; catching here gives a clean error message and continues to the next target)
-        try:
-            config_path = resolve_with_prefix(raw_target)
-            config = load_config(config_path)
-            try:
-                current_host = resolve_hostname()
-            except (
-                RuntimeError
-            ):  # stx-allow: fallback (reason: runtime state error — handled gracefully)
-                current_host = ""
-            # Cross-host dispatch branch (step 2 of 6 — routing only; the
-            # actual rsync / ssh / drift-check / registry-row work lands
-            # in steps 3-6). Skipped entirely when --no-redispatch is
-            # passed (peer-side invocation uses this to prevent
-            # recursion). Source of ``target_host`` is still
-            # ``spec.host`` per the architectural decision — the
-            # ``--on <host>`` CLI arg arrives in a later step.
-            if not no_redispatch:
-                from ..._state.host_config import load as _load_host_config
-
-                peers = _load_host_config().peers
-                if try_dispatch(
-                    config,
-                    current_host,
-                    peers,
-                    dry_run=dry_run,
-                    force=force,
-                ):
-                    continue
-            skip = _singleton_skip_reason(config, current_host)
-            if skip:
-                if as_json:
-                    _emit_json(
-                        {
-                            "name": config.name,
-                            "status": "skipped",
-                            "reason": skip,
-                            "dry_run": dry_run,
-                        }
-                    )
-                else:
-                    console.print(f"[yellow]Skipping '{config.name}': {skip}[/yellow]")
-                continue
-            # Location reads as `host@<host-workdir>:<container-workdir>`
-            # so the operator sees:
-            #   * which host the agent runs on
-            #   * the host-side dir that gets bind-mounted into the
-            #     container (= spec.workdir)
-            #   * the path the agent sees inside the container
-            # The container side is always /work — fixed by sac
-            # (`--bind <workdir>:/work` in _apptainer_runtime).
-            # ``config.remote`` deleted in WI-6; v3 uses ``spec.host``
-            # for cross-host placement, exposed via ``resolve_hostname``.
-            host = resolve_hostname() or "local"
-            host_workdir = config.expanded_workdir
-            container_workdir = config.apptainer.container_workdir
-            location = f"{host}@{host_workdir}:{container_workdir}"
-            # `--foreground --json` was emitting the JSON summary on the
-            # same line as the runner's tail-of-stdout (Claude's reply
-            # has no trailing newline). Redirect the JSON to stderr in
-            # that combo + lead with a `\n` so interactive ttys (stderr
-            # and stdout glued together) still get visual separation.
-            json_stream_err = as_json and foreground and not dry_run
-
-            def _emit(obj):
-                line = _json.dumps(obj, ensure_ascii=False)
-                if json_stream_err:
-                    line = "\n" + line
-                click.echo(line, err=json_stream_err)
-
-            if not as_json:
-                verb_now = "dry-run" if dry_run else "starting"
-                system_msg(
-                    f"[dim]{verb_now}[/dim] [bold]{config.name}[/bold] "
-                    f"[dim]→ {location}[/dim]"
-                )
-                if no_preflight:
-                    system_msg("preflight skipped (--no-preflight)", style="dim")
-                if force:
-                    system_msg(
-                        "force mode — stopping any existing instance first",
-                        style="dim",
-                    )
-                if session_mode:
-                    msg = f"session override: claude.session = {session_mode}"
-                    if resume_id:
-                        msg += f", resume_id = {resume_id}"
-                    system_msg(msg, style="dim")
-            agent_start(
-                config_path,
-                no_preflight=no_preflight,
-                force=force,
-                dry_run=dry_run,
-                session_override=session_mode,
-                resume_id_override=resume_id,
-                foreground=foreground,
-                one_shot=one_shot,
-            )
-            if as_json:
-                # a2a_port: read the RESOLVED claim from port_allocator
-                # (populated by resolve_a2a_port inside agent_start).
-                # The local config here is a separate AgentConfig from
-                # the one agent_start mutated, so its a2a.port is still
-                # the raw spec value ("auto" / int / None). Lead's
-                # cross-host dispatcher writes this directly into
-                # instances.a2a_port — must be the resolved int.
-                from ..._state.port_allocator import get_port as _get_port
-                from ..._state.state_db import now_iso as _now_iso
-
-                _raw_port = getattr(getattr(config, "a2a", None), "port", None)
-                _resolved_port: int | None = (
-                    None if (dry_run or _raw_port is None) else _get_port(config.name)
-                )
-                _emit(
-                    {
-                        "name": config.name,
-                        "status": "dry_run_ok" if dry_run else "started",
-                        "host": host,
-                        "host_workdir": host_workdir,
-                        "container_workdir": container_workdir,
-                        "dry_run": dry_run,
-                        "a2a_port": _resolved_port,
-                        "started_at": None if dry_run else _now_iso(),
-                    }
-                )
-            else:
-                if foreground and not dry_run:
-                    # Agent stdout often lacks a trailing newline; break
-                    # the join before our success summary lands.
-                    click.echo("")
-                verb = "dry-run prepared the workspace for" if dry_run else "started"
-                tail = "" if dry_run else f" [dim]({location})[/dim]"
-                system_msg(f"[bold]{config.name}[/bold] {verb}{tail}", style="green")
-                if (
-                    not dry_run
-                    and not config.claude.auto_accept
-                    and any(
-                        df in f
-                        for f in config.claude.flags
-                        for df in (
-                            "--dangerously-skip-permissions",
-                            "--dangerously-load-development-channels",
-                        )
-                    )
-                ):
-                    # ``config.remote`` deleted in WI-6; ``host`` was
-                    # resolved above from ``resolve_hostname`` (v3
-                    # ``spec.host``) so reuse it.
-                    console.print(
-                        f"[yellow]auto_accept: false — manual TUI acceptance required on {host}[/yellow]"
-                    )
-        except Exception as exc:
-            any_error = True
-            if as_json:
-                _emit_json(
-                    {
-                        "name": raw_target,
-                        "status": "error",
-                        "error": str(exc),
-                        "dry_run": dry_run,
-                    }
-                )
-            else:
-                console.print(f"[red]Error ({raw_target}): {exc}[/red]")
-                traceback.print_exc()
-    if any_error:
-        sys.exit(1)
-
-    if multi_foreground and not dry_run:
-        _multiplex_foreground_tails(single_targets)
+    run_single_targets(
+        single_targets,
+        no_preflight=no_preflight,
+        force=force,
+        resume_id=resume_id,
+        session_mode=session_mode,
+        dry_run=dry_run,
+        as_json=as_json,
+        foreground=foreground,
+        one_shot=one_shot,
+        strict_drift=strict_drift,
+        no_redispatch=no_redispatch,
+        multi_foreground=multi_foreground,
+        preflight_runner=_run_preflight_once,
+    )
 
 
 __all__ = ["start"]

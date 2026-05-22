@@ -23,6 +23,45 @@ from ._session_reset import _clear_persisted_session_id
 from .health import health_monitor
 
 
+def _resolve_strict_drift(strict_drift: bool | None) -> bool:
+    """Resolve effective strict-drift mode (arg wins, else env).
+
+    ``strict_drift=True/False`` from ``--strict-drift`` takes priority.
+    ``None`` falls back to ``SAC_STRICT_DRIFT`` (``1``/``true``/``yes``
+    → strict). Read through the sac env helper so either prefix works.
+    """
+    if strict_drift is not None:
+        return strict_drift
+    from .._env import getenv as _sac_env
+
+    raw = (_sac_env("STRICT_DRIFT", "") or "").strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
+def _check_spec_source_drift_at_launch(
+    config_path: str, agent_name: str, strict_drift: bool | None
+) -> None:
+    """Run the launch-time drift check; warn loud (or block if strict).
+
+    Fully guarded: the underlying check never raises except the
+    deliberate strict-mode :class:`SpecSourceDriftError`. We let that
+    propagate (the CLI / caller turns it into a non-zero exit); any
+    other unexpected failure here is swallowed so a launch is never
+    crashed by the drift guard.
+    """
+    from .._drift import SpecSourceDriftError, warn_if_spec_source_drifted
+
+    strict = _resolve_strict_drift(strict_drift)
+    try:
+        warn_if_spec_source_drifted(config_path, agent=agent_name, strict=strict)
+    except SpecSourceDriftError:
+        # Deliberate strict-mode block — propagate so the caller exits
+        # non-zero. This is the ONE thing this guard is allowed to raise.
+        raise
+    except Exception:  # stx-allow: fallback (reason: the drift guard must NEVER crash a launch; any unexpected error degrades to "no check ran" and the agent proceeds)
+        traceback.print_exc()
+
+
 def agent_start(
     config_path: str,
     registry: Registry | None = None,
@@ -34,6 +73,7 @@ def agent_start(
     no_preflight: bool = False,
     foreground: bool = False,
     one_shot: bool = False,
+    strict_drift: bool | None = None,
     runtime_factory: Optional[Callable[[AgentConfig], Any]] = None,
     sleep_fn: Callable[[float], None] = time.sleep,
     thread_factory: Callable[..., Any] = threading.Thread,
@@ -52,6 +92,10 @@ def agent_start(
         foreground: Run the runtime in the foreground.
         one_shot: Run the startup prompts once and exit; requires
             ``spec.startup_prompts`` to be non-empty.
+        strict_drift: Escalate a drifted spec-source git repo from a
+            loud warning to a hard block (raise before launch). ``None``
+            (default) reads ``SAC_STRICT_DRIFT`` / ``--strict-drift`` is
+            not set; ``True`` forces strict, ``False`` forces lenient.
         runtime_factory: Injectable real callable that builds an SDK
             runtime from an :class:`AgentConfig`. Default is the real
             :func:`_get_runtime`.
@@ -67,6 +111,17 @@ def agent_start(
     config_path = resolve_config(config_path)
     registry = registry or Registry()
     config = load_config(config_path)
+
+    # Launch-time LOCAL spec-source drift check. Verifies the git repo
+    # backing this spec.yaml (on these hosts ``~/.scitex/agent-container/
+    # agents`` symlinks into ``~/.dotfiles``) is current with its remote.
+    # Stale (BEHIND) → may run an old spec; unpushed (AHEAD/DIVERGED) →
+    # won't propagate. Default = LOUD WARNING, never a block (hosts like
+    # spartan legitimately carry local commits). ``--strict-drift`` /
+    # ``SAC_STRICT_DRIFT=1`` escalate to a hard block. Always best-effort:
+    # a non-git source / unreachable remote / any error warns-and-continues
+    # — the check never crashes a launch (resilience is the contract).
+    _check_spec_source_drift_at_launch(config_path, config.name, strict_drift)
     if session_override:
         config.claude.session = session_override
     if resume_id_override is not None:

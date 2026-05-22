@@ -637,11 +637,16 @@ def _run_start_no_redispatch_json(
 
     from scitex_agent_container.cli_pkg.lifecycle import _start as start_mod
 
+    # ``agent_start`` is invoked inside the per-target loop, which lives
+    # in the ``_start_single`` sibling (split out of ``_start`` to keep
+    # the click entry under the line cap). Swap it there.
+    from scitex_agent_container.cli_pkg.lifecycle import _start_single as single_mod
+
     def _fake_agent_start(*args: Any, **kwargs: Any) -> bool:
         return True
 
     runner = CliRunner()
-    with _swap_attr(start_mod, "agent_start", _fake_agent_start):
+    with _swap_attr(single_mod, "agent_start", _fake_agent_start):
         result = runner.invoke(
             start_mod.start,
             [str(yaml_path), "--no-redispatch", "--json"],
@@ -714,3 +719,12 @@ class TestStartNoRedispatchJsonA2aPort:
         finally:
             importlib.reload(_sdb)
             importlib.reload(_pa)
+
+
+def test_start_command_exposes_strict_drift_flag():
+    # Arrange
+    flag_names = {opt for p in start.params for opt in p.opts}
+    # Act
+    has_flag = "--strict-drift" in flag_names
+    # Assert
+    assert has_flag is True

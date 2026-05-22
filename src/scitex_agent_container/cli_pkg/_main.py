@@ -46,6 +46,7 @@ COMMAND_CATEGORIES = [
     ),
     ("Registry & Events", ["db", "registry", "event"]),
     ("Build & Install", ["image", "installation"]),
+    ("Diagnostics", ["doctor"]),
     ("Introspection", ["mcp", "list-python-apis", "skills"]),
     ("Developer", ["dev"]),
 ]
@@ -78,6 +79,7 @@ class _MainGroup(LazyGroup):
         "peer": f"{_PKG}.peer_group:peer_group",
         "fleet": f"{_PKG}.fleet_group:fleet_group",
         "listen": f"{_PKG}.listen_cmds:listen",
+        "doctor": f"{_PKG}.doctor_cmds:doctor",
         # Top-level standalone
         "list-python-apis": f"{_PKG}.info_cmds:list_python_apis",
         "installation": f"{_PKG}.installation_group:install_group",
@@ -247,6 +249,7 @@ class _MainGroup(LazyGroup):
         "list-python-apis": "List all public Python APIs of scitex-agent-container.",
         "installation": "Bootstrap and install helpers for a new fleet host.",
         "fleet": "Peer-aware multi-agent orchestration across hosts.",
+        "doctor": "Diagnose agent-spec source drift (local, or --fleet across hosts).",
         "listen": "Boot the sac listen HTTP/JSON control-plane server.",
         "install-shell-completion": "Wire up `<TAB>` completion in the user's shell rc.",
         "print-shell-completion": "Print the shell-completion eval line (no install).",
