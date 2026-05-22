@@ -101,6 +101,74 @@ class TestForeignChannelTurnsOnDevChannels:
         assert "sac" not in kwargs.get("mcp_servers", {})
 
 
+class TestTelegrammerWakeWiring:
+    """Concern (c): inject CLAUDE_CODE_TELEGRAMMER_TURN_URL so the agent's own
+    telegrammer bot WAKES an idle SDK session (symmetric with server:sac)."""
+
+    def _kwargs_with_telegrammer_mcp(self) -> dict:
+        return {
+            "mcp_servers": {
+                "claude-code-telegrammer": {
+                    "type": "stdio",
+                    "command": "bash",
+                    "args": ["-c", "exec bun run telegram-server.ts"],
+                    "env": {"CLAUDE_CODE_TELEGRAMMER_TELEGRAM_AGENT_ID": "clew"},
+                }
+            }
+        }
+
+    def test_turn_url_injected_into_telegrammer_env(self):
+        # Arrange
+        kwargs = self._kwargs_with_telegrammer_mcp()
+        # Act
+        apply_channels(kwargs, ["server:claude-code-telegrammer"], 19007, "clew")
+        # Assert
+        env = kwargs["mcp_servers"]["claude-code-telegrammer"]["env"]
+        assert env["CLAUDE_CODE_TELEGRAMMER_TURN_URL"] == (
+            "http://127.0.0.1:19007/v1/turn"
+        )
+
+    def test_no_turn_url_when_a2a_port_missing(self):
+        # Arrange
+        kwargs = self._kwargs_with_telegrammer_mcp()
+        # Act
+        apply_channels(kwargs, ["server:claude-code-telegrammer"], None, "clew")
+        # Assert
+        env = kwargs["mcp_servers"]["claude-code-telegrammer"]["env"]
+        assert "CLAUDE_CODE_TELEGRAMMER_TURN_URL" not in env
+
+    def test_operator_set_turn_url_is_preserved(self):
+        # Arrange
+        kwargs = self._kwargs_with_telegrammer_mcp()
+        kwargs["mcp_servers"]["claude-code-telegrammer"]["env"][
+            "CLAUDE_CODE_TELEGRAMMER_TURN_URL"
+        ] = "http://operator.example/v1/turn"
+        # Act
+        apply_channels(kwargs, ["server:claude-code-telegrammer"], 19007, "clew")
+        # Assert
+        env = kwargs["mcp_servers"]["claude-code-telegrammer"]["env"]
+        assert env["CLAUDE_CODE_TELEGRAMMER_TURN_URL"] == (
+            "http://operator.example/v1/turn"
+        )
+
+    def test_no_injection_without_telegrammer_channel(self):
+        # Arrange
+        kwargs = self._kwargs_with_telegrammer_mcp()
+        # Act — channel not requested, only the MCP entry present
+        apply_channels(kwargs, ["server:sac"], 19007, "clew")
+        # Assert
+        env = kwargs["mcp_servers"]["claude-code-telegrammer"]["env"]
+        assert "CLAUDE_CODE_TELEGRAMMER_TURN_URL" not in env
+
+    def test_no_crash_when_telegrammer_mcp_absent(self):
+        # Arrange — channel requested but no backing MCP entry merged
+        kwargs: dict = {"mcp_servers": {}}
+        # Act
+        apply_channels(kwargs, ["server:claude-code-telegrammer"], 19007, "clew")
+        # Assert
+        assert "claude-code-telegrammer" not in kwargs["mcp_servers"]
+
+
 class TestSacChannelStillWorks:
     """``server:sac`` keeps both the dev flag and the sidecar registration."""
 
