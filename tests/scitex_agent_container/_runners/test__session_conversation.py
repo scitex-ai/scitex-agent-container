@@ -333,3 +333,146 @@ def test_resume_candidate_attempt0_uses_fallback_before_any_history(
     candidate = _resume_candidate(state_dir, attempt=0, fallback="seed-sid")
     # Assert — preserves the pre-history initial-resume behaviour.
     assert candidate == "seed-sid"
+
+
+# ---------------------------------------------------------------------------
+# C2 — run_conversation observes background-subagent task messages
+# ---------------------------------------------------------------------------
+
+
+def _make_sdk_module_with_task() -> types.ModuleType:
+    """SDK module whose one turn interleaves a TaskNotification + result.
+
+    Exposes ``TaskNotificationMessage`` so ``resolve_task_types`` enables
+    background-subagent observation, then the scripted client yields a
+    completion notification between the assistant text and the result.
+    """
+
+    class _Text:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    class _Assistant:
+        def __init__(self, content):
+            self.content = content
+
+    class _User:
+        pass
+
+    class _Result:
+        def __init__(self, sid_, usage):
+            self.session_id = sid_
+            self.usage = usage
+
+    class _TaskNotification:
+        def __init__(self, task_id, status, summary):
+            self.task_id = task_id
+            self.session_id = "s1"
+            self.status = status
+            self.summary = summary
+            self.output_file = "/out"
+
+    class _Client:
+        def __init__(self, *, options):
+            self._messages = [
+                _Assistant([_Text("hi")]),
+                _TaskNotification("bg-1", "completed", "subagent done"),
+                _Result("sid-1", {}),
+            ]
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return None
+
+        async def query(self, prompt):
+            self._prompt = prompt
+
+        async def receive_response(self):
+            for m in self._messages:
+                yield m
+
+        async def interrupt(self):
+            return None
+
+    class _HookMatcher:
+        def __init__(self, *a, **kw):
+            pass
+
+    mod = types.ModuleType("fake_sdk_task")
+    mod.AssistantMessage = _Assistant
+    mod.TextBlock = _Text
+    mod.UserMessage = _User
+    mod.ResultMessage = _Result
+    mod.TaskNotificationMessage = _TaskNotification
+    mod.ClaudeSDKClient = _Client
+    mod.HookMatcher = _HookMatcher
+    return mod
+
+
+def _read_session_jsonl(state_dir: Path) -> list[dict]:
+    import json
+
+    text = (state_dir / "session.jsonl").read_text(encoding="utf-8")
+    return [json.loads(line) for line in text.splitlines() if line.strip()]
+
+
+def _run_conversation_with_task(state_dir: Path) -> None:
+    sdk_mod = _make_sdk_module_with_task()
+
+    async def _run():
+        inbox = await _seed("go")
+        await runner._run_conversation(
+            "alpha",
+            state_dir,
+            pid=1,
+            inbox=inbox,
+            resume_session_id=None,
+            stop=asyncio.Event(),
+            sdk_module=sdk_mod,
+            build_sdk_options_fn=_capturing_build_options({}),
+        )
+
+    asyncio.run(_run())
+
+
+def test_run_conversation_captures_task_completion_to_jsonl(tmp_path: Path) -> None:
+    # Arrange
+    state_dir = tmp_path / "alpha"
+    # Act
+    _run_conversation_with_task(state_dir)
+    # Assert — the background-subagent completion reached the transcript end
+    # to end through the full run_conversation path.
+    notifications = [
+        r for r in _read_session_jsonl(state_dir) if r["type"] == "task_notification"
+    ]
+    assert notifications[0]["summary"] == "subagent done"
+
+
+def test_run_conversation_logs_warning_when_sdk_lacks_task_types(
+    tmp_path: Path, caplog
+) -> None:
+    # Arrange — the default one-turn SDK module exposes NO task classes, so
+    # background-subagent observation is unavailable and must be logged LOUD.
+    state_dir = tmp_path / "beta"
+    sdk_mod = _make_one_turn_sdk_module()
+
+    async def _run():
+        inbox = await _seed("go")
+        await runner._run_conversation(
+            "beta",
+            state_dir,
+            pid=1,
+            inbox=inbox,
+            resume_session_id=None,
+            stop=asyncio.Event(),
+            sdk_module=sdk_mod,
+            build_sdk_options_fn=_capturing_build_options({}),
+        )
+
+    # Act
+    with caplog.at_level(logging.WARNING):
+        asyncio.run(_run())
+    # Assert — the gap is observable, never a silent swallow.
+    assert "background-task observation UNAVAILABLE for beta" in caplog.text
