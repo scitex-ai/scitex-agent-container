@@ -272,6 +272,32 @@ class ApptainerContainerRuntime(RuntimeBase):
             for arg in getattr(ap_for_raw, "raw_args", None) or []:
                 argv.append(str(arg))
 
+        # Relaxed + directory-overlay + explicit ``--home`` shadows the
+        # to_home tree. ``deploy_to_home_overlay`` materialises the tree
+        # into ``<overlay>/upper/<container_home>/``, but a raw-arg
+        # ``--home /home/agent`` makes apptainer mount a FRESH tmpfs at
+        # that path (verified via `mount`: ``tmpfs on /home/agent``),
+        # which shadows the overlay's upper-home — so $HOME/.mcp.json,
+        # $HOME/CLAUDE.md, $HOME/.claude/ are all silently absent in the
+        # container. The SDK runner's ``merge_home_mcp_servers`` then
+        # reads an empty ``$HOME/.mcp.json`` and a per-agent MCP (e.g. an
+        # agent's own telegrammer bot) never reaches the SDK.
+        #
+        # Fix: bind the materialised upper-home OVER the container HOME,
+        # appended AFTER raw_args so it wins over the ``--home`` tmpfs
+        # (apptainer applies user binds after home setup). No-op for
+        # non-relaxed / non-directory-overlay specs (resolver returns
+        # None) and when the upper-home wasn't materialised.
+        from ._to_home_overlay import (
+            resolve_container_home,
+            resolve_overlay_upper_home,
+        )
+
+        upper_home = resolve_overlay_upper_home(config)
+        if upper_home is not None and upper_home.is_dir():
+            container_home = resolve_container_home(config)
+            argv += ["--bind", f"{upper_home}:{container_home}"]
+
         argv.append(str(sif_path))
 
         # Inner command (tini-supervised runner). Dispatched on

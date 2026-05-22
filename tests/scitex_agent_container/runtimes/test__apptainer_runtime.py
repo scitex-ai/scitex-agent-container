@@ -265,6 +265,85 @@ def test_argv_does_not_emit_user_flag(tmp_path: Path) -> None:
     assert "--user" not in argv
 
 
+def test_argv_binds_overlay_upper_home_over_home_tmpfs(tmp_path: Path) -> None:
+    # Arrange — relaxed + directory-overlay + explicit --home. The
+    # raw-arg --home /home/agent mounts a fresh tmpfs that would shadow
+    # the to_home tree materialised into <overlay>/upper/home/agent. The
+    # runtime must bind that upper-home over the container HOME so
+    # $HOME/.mcp.json (per-agent MCP delivery) survives the tmpfs.
+    rt = ApptainerContainerRuntime()
+    overlay_dir = tmp_path / "overlay"
+    upper_home = overlay_dir / "upper" / "home" / "agent"
+    upper_home.mkdir(parents=True, exist_ok=True)  # simulate deploy_to_home_overlay
+    cfg = _config(tmp_path / "wd")
+    cfg.apptainer = ApptainerSpec(
+        relaxed=True,
+        raw_args=[
+            "--containall",
+            "--home",
+            "/home/agent",
+            "--overlay",
+            str(overlay_dir),
+        ],
+    )
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    # Assert — the upper-home bind exists, targeting the container HOME.
+    bind_idxs = [i for i, a in enumerate(argv) if a == "--bind"]
+    binds = [argv[i + 1] for i in bind_idxs]
+    assert f"{upper_home}:/home/agent" in binds
+
+
+def test_argv_overlay_home_bind_appended_after_home_raw_arg(tmp_path: Path) -> None:
+    # Arrange — order matters: the bind must come AFTER the raw-arg
+    # --home so apptainer applies it over the home tmpfs (verified via
+    # `mount`: a late --bind wins over the --home tmpfs).
+    rt = ApptainerContainerRuntime()
+    overlay_dir = tmp_path / "overlay"
+    upper_home = overlay_dir / "upper" / "home" / "agent"
+    upper_home.mkdir(parents=True, exist_ok=True)
+    cfg = _config(tmp_path / "wd")
+    cfg.apptainer = ApptainerSpec(
+        relaxed=True,
+        raw_args=[
+            "--containall",
+            "--home",
+            "/home/agent",
+            "--overlay",
+            str(overlay_dir),
+        ],
+    )
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    # Assert
+    home_idx = argv.index("--home")
+    upper_bind = f"{upper_home}:/home/agent"
+    bind_value_idx = argv.index(upper_bind)
+    assert bind_value_idx > home_idx
+
+
+def test_argv_no_overlay_home_bind_without_overlay(tmp_path: Path) -> None:
+    # Arrange — a relaxed spec WITHOUT an overlay must not get the
+    # upper-home bind (resolver returns None → no-op).
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd")
+    cfg.apptainer = ApptainerSpec(
+        relaxed=True, raw_args=["--containall", "--home", "/home/agent"]
+    )
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    # Assert — no bind whose target is /home/agent originating from an overlay upper.
+    bind_idxs = [i for i, a in enumerate(argv) if a == "--bind"]
+    binds = [argv[i + 1] for i in bind_idxs]
+    assert not any("/overlay/upper/home/agent:/home/agent" in b for b in binds)
+
+
 def test_argv_runs_runner_module_via_tini(tmp_path: Path) -> None:
     # Arrange — use startup_prompts (claude mission). startup_commands
     # now wraps the inner argv in bash -lc, so the runner is no longer
