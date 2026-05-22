@@ -41,6 +41,8 @@ import re as _re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ._sdk_channels import apply_channels
+
 if TYPE_CHECKING:  # pragma: no cover — typing only
     from claude_agent_sdk import ClaudeAgentOptions
 
@@ -452,60 +454,10 @@ def build_sdk_options(
         if extra:
             kwargs.update(extra)
 
-    # spec.claude.channels → claude CLI --channels passthrough.
-    # The SDK runs the bundled claude binary as a subprocess; channels
-    # are CLI-only (research preview, MCP `notifications/claude/channel`
-    # delivery). We forward each entry as a separate ``--channels`` arg
-    # via the SDK's ``extra_args`` escape hatch when available.
-    if channels and any(c.strip() == "server:sac" for c in channels):
-        # Register `sac mcp channel` as a stdio MCP server. claude
-        # exposes its tools (a2a_send/reply/ack/peers/inbox) under the
-        # `mcp__sac__*` namespace AND delivers its push events through
-        # the standard MCP `notifications/claude/channel` method —
-        # provided claude was started with
-        # `--dangerously-load-development-channels`, which is what
-        # turns rendering of those `<channel ...>` tags on in the
-        # session. The `--channels server:sac` flag (without the
-        # dangerously- prefix) caused claude to treat the MCP server
-        # as channel-only and dropped the tool surface; we do NOT set
-        # that one. Net effect: tools + push delivery both work.
-        extra_args = kwargs.setdefault("extra_args", {})
-        if isinstance(extra_args, dict):
-            extra_args.setdefault("dangerously-load-development-channels", "server:sac")
-        mcps = kwargs.setdefault("mcp_servers", {})
-        if isinstance(mcps, dict) and "sac" not in mcps:
-            # The sidecar subscribes to /agents/<name>/inbox/stream, which
-            # is served by the BUS (`sac listen`, default :7878), NOT the
-            # agent's own a2a sidecar port. Omit --listen-url here and let
-            # the adapter's main() resolve the bus from SAC_LISTEN_BASE_URL
-            # (its existing default, injected into the container) — the
-            # same source the CLI default and the adapter both use. Passing
-            # the a2a_port here pointed the SSE GET at a server that 404s on
-            # the inbox route, so the bus saw zero subscribers and
-            # delivered_subscriber_count was always 0.
-            #
-            # a2a_port is irrelevant to inbox SUBSCRIPTION but IS the wake
-            # path (WI-1): pass it as ``--turn-url`` so the adapter can POST
-            # received bus events to the agent's OWN ``/v1/turn`` and WAKE an
-            # idle session. The bind host is loopback (the sidecar and the
-            # runner share the container netns); host LAN exposure of the turn
-            # endpoint does not change the in-container wake target.
-            sidecar_args = [
-                "mcp",
-                "channel",
-                "--name",
-                agent_name,
-            ]
-            if a2a_port is not None:
-                sidecar_args += [
-                    "--turn-url",
-                    f"http://127.0.0.1:{int(a2a_port)}/v1/turn",
-                ]
-            mcps["sac"] = {
-                "type": "stdio",
-                "command": "sac",
-                "args": sidecar_args,
-            }
+    # spec.claude.channels → dev-channels flag + sac MCP sidecar.
+    # See ``_sdk_channels.apply_channels`` for the two gated concerns
+    # (any-channel dev-flag vs server:sac-only sidecar registration).
+    apply_channels(kwargs, channels, a2a_port, agent_name)
 
     # Enable subagents. The Agent (Task) tool is only OFFERED to the model
     # when it appears in ``allowed_tools`` (Anthropic "Subagents in the SDK"
