@@ -8,10 +8,18 @@ the legacy --mission fallback. See commit message
 from __future__ import annotations
 
 from scitex_agent_container.config import AgentConfig
-from scitex_agent_container.config._types import A2ASpec, ClaudeSpec, StartupCommand
+from scitex_agent_container.config._types import (
+    A2ASpec,
+    ClaudeSpec,
+    RestartSpec,
+    StartupCommand,
+)
 from scitex_agent_container.runtimes._apptainer_inner_argv import (
+    _SUPERVISOR_RESTART_FLOOR,
     _agent_runner_argv,
     _format_shell_steps,
+    _resolve_max_restarts,
+    _resolve_restart_backoff_s,
     build_inner_argv,
 )
 
@@ -229,3 +237,100 @@ def test_agent_runner_argv_skips_blank_channel_entries():
     argv = _agent_runner_argv(cfg, one_shot=False)
     # Assert
     assert "--channels" not in argv
+
+
+# ---------------------------------------------------------------------------
+# _agent_runner_argv: supervisor restart cap (resume-recovery enablement).
+# The runner CLI defaults --max-restarts to 0, which disables the
+# history-walk resume recovery for every restart.policy: never agent.
+# The adapter must pass a >0 floor so the recovery path is always live.
+# ---------------------------------------------------------------------------
+
+
+def test_agent_runner_argv_emits_max_restarts_flag():
+    # Arrange
+    cfg = _mk_cfg()
+    # Act
+    argv = _agent_runner_argv(cfg, one_shot=False)
+    # Assert
+    assert "--max-restarts" in argv
+
+
+def test_agent_runner_argv_default_max_restarts_is_above_zero():
+    # Arrange
+    cfg = _mk_cfg()
+    # Act
+    argv = _agent_runner_argv(cfg, one_shot=False)
+    # Assert
+    assert int(argv[argv.index("--max-restarts") + 1]) > 0
+
+
+def test_agent_runner_argv_emits_restart_backoff_flag():
+    # Arrange
+    cfg = _mk_cfg()
+    # Act
+    argv = _agent_runner_argv(cfg, one_shot=False)
+    # Assert
+    assert "--restart-backoff-s" in argv
+
+
+def test_resolve_max_restarts_never_policy_uses_floor():
+    # Arrange — restart.policy: never (the live-agent case) must still
+    # get the floor so resume recovery is live.
+    cfg = _mk_cfg(restart=RestartSpec(policy="never"))
+    # Act
+    resolved = _resolve_max_restarts(cfg)
+    # Assert
+    assert resolved == _SUPERVISOR_RESTART_FLOOR
+
+
+def test_resolve_max_restarts_on_failure_above_floor_raises_cap():
+    # Arrange — an explicit on-failure policy with a higher retry count
+    # raises the cap above the floor.
+    cfg = _mk_cfg(
+        restart=RestartSpec(
+            policy="on-failure", max_retries=_SUPERVISOR_RESTART_FLOOR + 5
+        )
+    )
+    # Act
+    resolved = _resolve_max_restarts(cfg)
+    # Assert
+    assert resolved == _SUPERVISOR_RESTART_FLOOR + 5
+
+
+def test_resolve_max_restarts_on_failure_below_floor_keeps_floor():
+    # Arrange — a small max_retries must not lower the resume-recovery floor.
+    cfg = _mk_cfg(restart=RestartSpec(policy="on-failure", max_retries=1))
+    # Act
+    resolved = _resolve_max_restarts(cfg)
+    # Assert
+    assert resolved == _SUPERVISOR_RESTART_FLOOR
+
+
+def test_resolve_max_restarts_always_policy_uses_max_retries():
+    # Arrange
+    cfg = _mk_cfg(
+        restart=RestartSpec(policy="always", max_retries=_SUPERVISOR_RESTART_FLOOR + 2)
+    )
+    # Act
+    resolved = _resolve_max_restarts(cfg)
+    # Assert
+    assert resolved == _SUPERVISOR_RESTART_FLOOR + 2
+
+
+def test_resolve_restart_backoff_never_policy_uses_runner_default():
+    # Arrange
+    cfg = _mk_cfg(restart=RestartSpec(policy="never", backoff_initial=99))
+    # Act
+    resolved = _resolve_restart_backoff_s(cfg)
+    # Assert
+    assert resolved == 1.0
+
+
+def test_resolve_restart_backoff_on_failure_uses_spec_backoff():
+    # Arrange
+    cfg = _mk_cfg(restart=RestartSpec(policy="on-failure", backoff_initial=7))
+    # Act
+    resolved = _resolve_restart_backoff_s(cfg)
+    # Assert
+    assert resolved == 7.0
