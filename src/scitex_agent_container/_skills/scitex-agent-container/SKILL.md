@@ -67,6 +67,7 @@ through `sac agents list`/`tail`/`health`.
 - [12_wsl-connectivity.md](12_wsl-connectivity.md) — WSL connectivity notes
 - [24_image-build.md](24_image-build.md) — apptainer `.sif` build/rebuild, `@develop` pin, rebuild-to-ship runner/channel changes (gotcha)
 - [25_claude-setup-delivery.md](25_claude-setup-delivery.md) — how sac passes Claude setup explicitly into apptainer agents: `to_home`→`$HOME` 1:1 mirror, overlay/`--home` delivery, `--settings` hook load, `setting_sources=[]`
+- [26_credential-refresh.md](26_credential-refresh.md) — refreshing Anthropic creds without restart churn: a RUNNING agent re-reads the mounted `~/.claude/.credentials.json` on its next turn (`sac agents send "continue"`); cold `start` only for parked agents; Spartan shared-home propagation; `${VAR:+SET}` safe presence check
 
 ### Reference
 - [13_observability.md](13_observability.md) — `sac agents status` JSON contract
