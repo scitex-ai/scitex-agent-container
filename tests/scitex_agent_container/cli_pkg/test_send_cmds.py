@@ -575,3 +575,125 @@ def test_remote_send_prints_reply_from_peer(remote_send_env):
         _peer_mod.post_turn_to_url = saved  # type: ignore[assignment]
     # Assert
     assert "REMOTE-REPLY" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Local send: active state.db row on THIS host with a bound a2a_port →
+# http://127.0.0.1:port/v1/turn POST (NOT host-side claude --resume).
+# The fix for the 2026-05-22 apptainer mis-target diagnosis.
+# ---------------------------------------------------------------------------
+
+
+# Loopback A2A port for the local-send fixtures. A port reads as a
+# whole identifier, so it stays bare (NL001 carve-out); the suppression
+# keeps the file lint-clean since the rule still flags 4+ digit ints.
+_LOCAL_PORT = 19005  # stx-allow: STX-NL001
+
+
+@contextmanager
+def _swap_peer_post_turn_to_url(fn: Callable) -> Iterator[None]:
+    import scitex_agent_container._network.peer as _peer_mod
+
+    saved = _peer_mod.post_turn_to_url
+    _peer_mod.post_turn_to_url = fn  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        _peer_mod.post_turn_to_url = saved  # type: ignore[assignment]
+
+
+def test_local_send_with_a2a_port_dispatches_to_loopback_v1turn(remote_send_env):
+    # Arrange — seed a LOCAL row (host == current SAC_HOST) with a port.
+    from scitex_agent_container._state.state_db import record_instance_start
+
+    record_instance_start(name="local-a", host="lead-host", a2a_port=_LOCAL_PORT)
+    captured: dict = {}
+
+    def fake_post(url, text, *, exit_after=False, timeout_s=600.0):
+        captured["url"] = url
+        return "LOCAL-REPLY"
+
+    # Act
+    with _swap_peer_post_turn_to_url(fake_post):
+        CliRunner().invoke(send, ["local-a", "hi"])
+    # Assert
+    assert captured.get("url") == "http://127.0.0.1:19005/v1/turn"
+
+
+def test_local_send_forwards_the_prompt_text(remote_send_env):
+    # Arrange
+    from scitex_agent_container._state.state_db import record_instance_start
+
+    record_instance_start(name="local-a", host="lead-host", a2a_port=_LOCAL_PORT)
+    captured: dict = {}
+
+    def fake_post(url, text, *, exit_after=False, timeout_s=600.0):
+        captured["text"] = text
+        return "LOCAL-REPLY"
+
+    # Act
+    with _swap_peer_post_turn_to_url(fake_post):
+        CliRunner().invoke(send, ["local-a", "do the thing"])
+    # Assert
+    assert captured.get("text") == "do the thing"
+
+
+def test_local_send_prints_reply_from_loopback(remote_send_env):
+    # Arrange
+    from scitex_agent_container._state.state_db import record_instance_start
+
+    record_instance_start(name="local-a", host="lead-host", a2a_port=_LOCAL_PORT)
+    # Act
+    with _swap_peer_post_turn_to_url(lambda *a, **kw: "LOCAL-REPLY"):
+        result = CliRunner().invoke(send, ["local-a", "hi"])
+    # Assert
+    assert "LOCAL-REPLY" in result.output
+
+
+def test_local_send_exits_zero_on_loopback_reply(remote_send_env):
+    # Arrange
+    from scitex_agent_container._state.state_db import record_instance_start
+
+    record_instance_start(name="local-a", host="lead-host", a2a_port=_LOCAL_PORT)
+    # Act
+    with _swap_peer_post_turn_to_url(lambda *a, **kw: "LOCAL-REPLY"):
+        result = CliRunner().invoke(send, ["local-a", "hi"])
+    # Assert
+    assert result.exit_code == 0
+
+
+def test_local_send_without_a2a_port_falls_through_to_resume(remote_send_env):
+    # Arrange — a LOCAL row WITHOUT a bound port must NOT take the HTTP
+    # path; it falls through to the host-side claude --resume shellout.
+    from scitex_agent_container._state.state_db import record_instance_start
+
+    record_instance_start(name="local-b", host="lead-host", a2a_port=None)
+    posted: dict = {}
+
+    def fake_post(url, text, *, exit_after=False, timeout_s=600.0):
+        posted["url"] = url
+        return "SHOULD-NOT-HAPPEN"
+
+    # Act — no session_id seeded, so resume errors; we only assert the
+    # HTTP path was NOT taken (no post_turn_to_url call captured).
+    with _swap_peer_post_turn_to_url(fake_post):
+        CliRunner().invoke(send, ["local-b", "hi"])
+    # Assert
+    assert "url" not in posted
+
+
+def test_local_send_failure_wraps_peer_error(remote_send_env):
+    # Arrange
+    from scitex_agent_container._network.peer import PeerError
+    from scitex_agent_container._state.state_db import record_instance_start
+
+    record_instance_start(name="local-a", host="lead-host", a2a_port=_LOCAL_PORT)
+
+    def fake_post(url, text, *, exit_after=False, timeout_s=600.0):
+        raise PeerError("connection refused")
+
+    # Act
+    with _swap_peer_post_turn_to_url(fake_post):
+        result = CliRunner().invoke(send, ["local-a", "hi"])
+    # Assert
+    assert "local send failed" in result.output

@@ -95,6 +95,60 @@ def _try_dispatch_remote_send(name: str, prompt: str) -> bool:
     return True
 
 
+def _try_dispatch_local_send(name: str, prompt: str) -> bool:
+    """POST a turn to a LOCAL agent via its loopback /v1/turn endpoint.
+
+    Symmetric to :func:`_try_dispatch_remote_send`: when ``name`` has an
+    active ``state.db.instances`` row on the *current* host with a bound
+    ``a2a_port``, build ``http://127.0.0.1:<port>/v1/turn`` and POST one
+    turn so the running SDK runner re-uses its in-process Claude session.
+
+    This is the fix for the local mis-target diagnosed 2026-05-22: an
+    apptainer agent's SDK session lives inside the container's
+    ``~/.claude/projects/`` store, NOT on the host, so a host-side
+    ``claude --resume <sid>`` cannot see it and exits 1 with "No
+    conversation found". The HTTP path reaches the live in-container
+    session instead.
+
+    Returns:
+        * ``True`` when the dispatch happened (reply printed to stdout).
+        * ``False`` when there is no active local row, or the row exists
+          but records no ``a2a_port`` (a non-A2A runtime) — the caller
+          then falls through to the ``claude --resume`` host shellout,
+          which only makes sense for a non-containerized host-side agent.
+
+    Raises:
+        click.ClickException: When the underlying HTTP call fails. We
+            wrap the PeerError so the user sees the same error shape they
+            get from ``sac peer post-turn``.
+    """
+    from .._network.peer import PeerError, post_turn_to_url
+    from .._state.state_db import _resolve_host, list_active_instances
+
+    current_host = _resolve_host(None)
+    rows = list_active_instances()
+    matching = [
+        r
+        for r in rows
+        if r.get("name") == name and str(r.get("host") or "") == current_host
+    ]
+    if not matching:
+        return False
+    a2a_port = matching[0].get("a2a_port")
+    if not isinstance(a2a_port, int) or a2a_port <= 0:
+        # No bound A2A port: this is a non-A2A runtime. Let the caller
+        # fall through to the host-side claude --resume path.
+        return False
+    url = f"http://127.0.0.1:{a2a_port}/v1/turn"
+    click.echo(f"# send {name}: POST {url}", err=True)
+    try:
+        reply = post_turn_to_url(url, prompt)
+    except PeerError as exc:
+        raise click.ClickException(f"local send failed: {exc}") from exc
+    click.echo(reply)
+    return True
+
+
 def _find_claude_binary() -> str:
     """Locate the ``claude`` CLI binary, preferring the SDK's bundled
     copy under ``/opt/venv-sac/...`` (when running inside the sac
@@ -198,6 +252,17 @@ def send(
     # the running runner re-uses its in-process Claude session, not via
     # a separate `claude --resume` shellout that would race the runner.
     if _try_dispatch_remote_send(name, prompt):
+        return
+
+    # Local A2A: when the agent is running on THIS host with a bound
+    # a2a_port, POST one turn to its loopback /v1/turn so the live
+    # in-container SDK session handles it. A host-side `claude --resume`
+    # cannot see a containerized agent's session (it lives inside the
+    # container's ~/.claude/projects/ store), so the HTTP path is the
+    # only correct local delivery for an apptainer runtime. Falls
+    # through to claude --resume only when no a2a_port is recorded
+    # (non-A2A, host-side runtime).
+    if _try_dispatch_local_send(name, prompt):
         return
 
     spec_path = resolve_config(name)
