@@ -29,6 +29,72 @@ Two separate concerns, gated independently:
 
 from __future__ import annotations
 
+import json as _json
+import os as _os
+from pathlib import Path as _Path
+
+
+def merge_home_mcp_servers(mcp_servers: dict) -> dict:
+    """Merge ``$HOME/.mcp.json`` MCP servers into ``mcp_servers``.
+
+    ``to_home/.mcp.json`` deploys to the container ``$HOME/.mcp.json``
+    (see ``_to_home.py`` / skill 25 — the documented per-agent MCP
+    delivery). But the apptainer SDK runner runs INSIDE the container
+    where ``resolve_agent_workspace`` cannot find the agent's mcp config:
+    the in-container registry lookup fails AND the config's ``workdir``
+    is the HOST path (absent in-container), so it returns ``{}``. The
+    SDK's own project-scope ``.mcp.json`` discovery is also dead because
+    the runner sets ``setting_sources=[]`` (verified: a ``/work/.mcp.json``
+    is NOT loaded under empty setting_sources). So the ONLY reliable way
+    a per-agent MCP (e.g. an agent's own telegrammer bot) reaches the SDK
+    is via ``ClaudeAgentOptions.mcp_servers`` — which this helper
+    populates from the to_home-deployed ``$HOME/.mcp.json``.
+
+    Best-effort: a missing/malformed file yields the input unchanged.
+    ``resolve_agent_workspace`` entries (passed in as ``mcp_servers``)
+    win on key collision — explicit registry config beats the file.
+    ``${VAR}`` refs in entry values resolve from ``os.environ``.
+    """
+    home = _os.environ.get("HOME")
+    if not home:
+        return mcp_servers
+    path = _Path(home) / ".mcp.json"
+    if not path.is_file():
+        return mcp_servers
+    try:
+        raw = _json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, _json.JSONDecodeError):
+        return mcp_servers
+    servers = raw.get("mcpServers", {}) if isinstance(raw, dict) else {}
+    if not isinstance(servers, dict) or not servers:
+        return mcp_servers
+
+    merged = dict(mcp_servers)
+    for name, entry in servers.items():
+        if name in merged or not isinstance(entry, dict):
+            continue  # registry config wins; skip non-dict junk
+        e = _resolve_env_refs_local(dict(entry))
+        e.setdefault("type", "stdio")
+        merged[name] = e
+    return merged
+
+
+def _resolve_env_refs_local(value):
+    """Resolve ``${VAR}`` refs from os.environ, recursively (str/list/dict)."""
+    import re as _re
+
+    if isinstance(value, str):
+        return _re.sub(
+            r"\$\{(\w+)\}",
+            lambda m: _os.environ.get(m.group(1), m.group(0)),
+            value,
+        )
+    if isinstance(value, dict):
+        return {k: _resolve_env_refs_local(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_resolve_env_refs_local(v) for v in value]
+    return value
+
 
 def _dedupe_channels(channels: list[str]) -> list[str]:
     """Return the channel names stripped + deduped, preserving spec order."""
