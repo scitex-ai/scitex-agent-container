@@ -41,7 +41,7 @@ import re as _re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ._sdk_channels import apply_channels
+from ._sdk_channels import apply_channels, merge_home_mcp_servers
 
 if TYPE_CHECKING:  # pragma: no cover — typing only
     from claude_agent_sdk import ClaudeAgentOptions
@@ -371,6 +371,11 @@ def build_sdk_options(
 
     provision_anthropic_auth()
     mcp_servers, workdir = resolve_agent_workspace(agent_name)
+    # Merge to_home-deployed $HOME/.mcp.json (the per-agent MCP delivery
+    # path) — resolve_agent_workspace returns {} inside an apptainer
+    # container, and setting_sources=[] kills the SDK's own project-scope
+    # discovery, so this is the only path a per-agent MCP reaches the SDK.
+    mcp_servers = merge_home_mcp_servers(mcp_servers)
 
     # Apptainer/Docker dispatch binds the host workdir at /work inside
     # the container; the config's workdir field carries the HOST path
