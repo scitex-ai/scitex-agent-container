@@ -76,6 +76,37 @@ spec:
     return yaml_root
 
 
+@contextmanager
+def _empty_state_db(tmp_path: Path) -> Iterator[None]:
+    """Point ``state.db`` at a fresh empty file for the duration.
+
+    The local-send branch in ``send`` consults
+    ``state_db.list_active_instances()`` to decide whether an agent is
+    running locally with a bound a2a_port. Without isolation a row left
+    by an earlier test in the shared default db (CI runs the whole
+    suite) makes ``alpha`` look "running" and the send POSTs to a dead
+    loopback port instead of falling through to ``claude --resume``.
+    Redirecting to an empty db (and reloading the import-time
+    ``DEFAULT_DB_PATH``) keeps these resume-path tests deterministic.
+    """
+    import importlib
+
+    import scitex_agent_container._state.state_db as _state_db_mod
+
+    key = "SCITEX_AGENT_CONTAINER_STATE_DB"
+    saved = os.environ.get(key)
+    os.environ[key] = str(tmp_path / "isolated-state.db")
+    importlib.reload(_state_db_mod)
+    try:
+        yield
+    finally:
+        if saved is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = saved
+        importlib.reload(_state_db_mod)
+
+
 @pytest.fixture
 def isolated_env(tmp_path):
     """PA-306: env + send_mod.state_dir_for save/restore in one fixture.
@@ -83,7 +114,9 @@ def isolated_env(tmp_path):
     Also pins ``resolve_config`` to the seeded yaml root so a pre-existing
     ``~/.scitex/agent-container/agents/<name>/spec.yaml`` on the dev box
     cannot shadow the per-test fixture (resolver search order puts the
-    home install root before ``$SCITEX_AGENT_CONTAINER_YAML_DIRS``).
+    home install root before ``$SCITEX_AGENT_CONTAINER_YAML_DIRS``), and
+    isolates ``state.db`` so the local-send branch sees no stray active
+    row for the seeded agent.
     """
     yaml_root = _seed_agent(tmp_path, "alpha", "abc-123-def")
     key = "SCITEX_AGENT_CONTAINER_YAML_DIRS"
@@ -97,15 +130,16 @@ def isolated_env(tmp_path):
     send_mod.resolve_config = (  # type: ignore[assignment]
         lambda name: str(yaml_root / name / "spec.yaml")
     )
-    try:
-        yield tmp_path
-    finally:
-        send_mod.resolve_config = saved_resolve  # type: ignore[assignment]
-        send_mod.state_dir_for = saved_state  # type: ignore[assignment]
-        if saved_env is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = saved_env
+    with _empty_state_db(tmp_path):
+        try:
+            yield tmp_path
+        finally:
+            send_mod.resolve_config = saved_resolve  # type: ignore[assignment]
+            send_mod.state_dir_for = saved_state  # type: ignore[assignment]
+            if saved_env is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = saved_env
 
 
 # ---------------------------------------------------------------------------
@@ -256,15 +290,16 @@ def isolated_env_without_session_id(tmp_path):
         lambda name: str(yaml_root / name / "spec.yaml")
     )
     (tmp_path / "state" / "alpha" / "session_id").unlink()
-    try:
-        yield tmp_path
-    finally:
-        send_mod.resolve_config = saved_resolve  # type: ignore[assignment]
-        send_mod.state_dir_for = saved_state  # type: ignore[assignment]
-        if saved_env is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = saved_env
+    with _empty_state_db(tmp_path):
+        try:
+            yield tmp_path
+        finally:
+            send_mod.resolve_config = saved_resolve  # type: ignore[assignment]
+            send_mod.state_dir_for = saved_state  # type: ignore[assignment]
+            if saved_env is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = saved_env
 
 
 def _invoke_send_without_session_id():
