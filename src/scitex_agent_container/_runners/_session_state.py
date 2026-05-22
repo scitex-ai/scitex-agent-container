@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import time
 from pathlib import Path
 
@@ -192,6 +193,38 @@ def _heartbeat_usage_fields(state_dir: Path, now: float) -> dict:
     return out
 
 
+# /tmp pressure probe path. The session runner executes inside the
+# container, where /tmp is the RAM-backed tmpfs (apptainer --containall
+# default, unbounded by sac). Heavy run_in_background Bash sessions
+# write per-command + task-output files there; once it fills, every
+# shell command that needs a temp file fails with exit 1 + empty stdout
+# — the silent "Class B" bash wedge (2026-05-22 diagnosis §3). Surfacing
+# the fill % on the heartbeat turns that silent failure into an
+# observable one the operator (and `sac agents status`) can see BEFORE
+# the wedge.
+_TMP_PRESSURE_PATH = "/tmp"  # noqa: S108 — container tmpfs, intentional
+
+
+def _tmp_pressure_fields(probe_path: str = _TMP_PRESSURE_PATH) -> dict:
+    """Return ``{tmp_used_pct}`` for the container tmpfs, best-effort.
+
+    ``tmp_used_pct`` is the percentage of ``probe_path`` consumed
+    (``used / total * 100``, rounded to 1 dp). Any failure — the path
+    not existing (running on the host where there is no container
+    ``/tmp`` tmpfs), a permission error, or a zero-total stat — degrades
+    to an EMPTY dict so the heartbeat loop never crashes and the field
+    is simply ABSENT rather than a misleading 0. Absent ≠ 0%: a reader
+    distinguishes "not probed" from "empty tmpfs".
+    """
+    try:
+        usage = shutil.disk_usage(probe_path)
+    except OSError:
+        return {}
+    if usage.total <= 0:
+        return {}
+    return {"tmp_used_pct": round(usage.used / usage.total * 100.0, 1)}
+
+
 def write_heartbeat(
     state_dir: Path,
     *,
@@ -212,6 +245,13 @@ def write_heartbeat(
     This lets the operator see, per agent, how long it has been running
     and how many tokens it has used — straight off the fast-path JSON.
 
+    When the container tmpfs is probeable it also carries
+    ``tmp_used_pct`` — the ``/tmp`` fill percentage — so a filling
+    tmpfs (the silent "Class B" bash-wedge precursor) is observable
+    on every beat BEFORE it wedges the SDK's Bash tool. Absent (not 0)
+    when the probe fails, e.g. on the host where there is no container
+    ``/tmp`` tmpfs.
+
     The JSON file is kept as a fast-path cache for local readers
     (``sac agent status`` polls it without opening sqlite); the DB
     row is the cross-host queryable record.
@@ -224,6 +264,7 @@ def write_heartbeat(
     now = time.time()
     payload = {"ts": now, "pid": pid, "state": state}
     payload.update(_heartbeat_usage_fields(state_dir, now))
+    payload.update(_tmp_pressure_fields())
     tmp = state_dir / "heartbeat.json.tmp"
     tmp.write_text(json.dumps(payload), encoding="utf-8")
     tmp.replace(state_dir / "heartbeat.json")
