@@ -155,3 +155,61 @@ def apply_channels(
                 "command": "sac",
                 "args": sidecar_args,
             }
+
+    _wire_telegrammer_wake(kwargs, channels, a2a_port)
+
+
+# Channel name for the standalone claude-code-telegrammer MCP a per-agent
+# bot rides on (its backing MCP comes from the agent's to_home/.mcp.json,
+# keyed ``claude-code-telegrammer``).
+_TELEGRAMMER_CHANNEL = "server:claude-code-telegrammer"
+_TELEGRAMMER_MCP_KEY = "claude-code-telegrammer"
+# Env var the telegrammer poller reads to enable wake-on-push (POST inbound
+# to the agent's own /v1/turn). See claude-code-telegrammer ts/lib/wake.ts.
+_TELEGRAMMER_TURN_URL_ENV = "CLAUDE_CODE_TELEGRAMMER_TURN_URL"
+
+
+def _wire_telegrammer_wake(
+    kwargs: dict,
+    channels: list[str],
+    a2a_port: int | None,
+) -> None:
+    """Concern (c): wake-on-push for the ``server:claude-code-telegrammer``
+    channel — symmetric with the ``server:sac`` ``--turn-url`` above.
+
+    The telegrammer MCP (an agent's OWN Telegram bot, backed by the spec's
+    ``to_home/.mcp.json``) only emits ``notifications/claude/channel``. That
+    renders ``<channel>`` for an ACTIVE turn but does NOT advance an IDLE
+    SDK-runner session — the same limitation the ``sac mcp channel``
+    ``--turn-url`` removes for ``server:sac``. Inbound messages then pile up
+    unread (the "store fills, no turn appears" silent-failure class).
+
+    Fix: inject ``CLAUDE_CODE_TELEGRAMMER_TURN_URL`` into the telegrammer MCP
+    entry's env, pointing at the agent's own loopback ``/v1/turn``. The
+    telegrammer poller (ts/lib/wake.ts) then POSTs each inbound message there
+    and the runner drives a turn at once (push ≡ the lead's Telegram channel).
+
+    Gated: only when the channel set requests the telegrammer channel, the
+    merged ``mcp_servers`` actually carries the backing entry, and the runner
+    has an ``a2a_port`` (so a ``/v1/turn`` endpoint exists). No-op otherwise —
+    e.g. an interactive CLI with no a2a port keeps the notification-only path.
+    Never overrides an explicit operator-set TURN_URL in the spec.
+    """
+    if not any(c.strip() == _TELEGRAMMER_CHANNEL for c in channels):
+        return
+    if a2a_port is None:
+        return
+    mcps = kwargs.get("mcp_servers")
+    if not isinstance(mcps, dict):
+        return
+    entry = mcps.get(_TELEGRAMMER_MCP_KEY)
+    if not isinstance(entry, dict):
+        return
+    env = entry.setdefault("env", {})
+    if not isinstance(env, dict):
+        return
+    # Operator-set value wins (explicit > inferred).
+    env.setdefault(
+        _TELEGRAMMER_TURN_URL_ENV,
+        f"http://127.0.0.1:{int(a2a_port)}/v1/turn",
+    )
