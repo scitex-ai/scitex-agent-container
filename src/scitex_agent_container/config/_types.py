@@ -172,6 +172,25 @@ class ApptainerSpec:
     overlays even if size is given (operator must pre-create — sac
     raises FileNotFoundError instead). See ``docs/isolation.md`` §7."""
 
+    tmpfs_size: str = "2G"
+    """Minimum free-space guarantee for the container's ``/tmp`` (and
+    ``/var/tmp``). A ``--containall`` apptainer container otherwise gets
+    a 64 MB session tmpfs at ``/tmp`` — too small for the full test
+    suite, coverage XML generation, or pytest fixtures with file IO,
+    which fill it mid-run with "No space left on device".
+
+    sac emits ``--workdir <state_dir>/tmp-scratch`` to relocate ``/tmp``
+    onto the host filesystem (capacity >> 64 MB) and verifies that
+    filesystem has at least this many bytes free before launch, failing
+    loud otherwise. Accepts apptainer-style sizes with units M/MB/G/GB
+    only (e.g. ``"2G"``, ``"512M"``, ``"2048MB"``); K/KB rejected.
+
+    NOT a hard cap — an unprivileged apptainer user cannot mount a
+    size-capped tmpfs (``--mount type=tmpfs`` is unsupported), so the
+    contract is "at least this much room", backed by host disk. Set to
+    ``""`` to opt out entirely (legacy 64 MB tmpfs). See
+    ``runtimes/_apptainer_tmpfs.py``."""
+
     relaxed: bool = False
     """Opt out of sac's hardened defaults (auto-prepended
     ``--containall``/``--cleanenv``/``--writable-tmpfs``/``--home``).
