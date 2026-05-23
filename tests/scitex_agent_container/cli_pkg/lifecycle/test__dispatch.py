@@ -426,6 +426,51 @@ class TestDispatchSshSuccessPath:
         # Assert
         assert "a2a_port=47213" in scen.captured_stdout
 
+    def test_dispatch_ssh_success_marks_row_remote(
+        self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
+    ):
+        # Arrange — a cross-host dispatch must record remote=1 so
+        # resolve_peer_url / agent_status know to reach the agent on the
+        # peer (sac-agent-spawn design, Rule B/F).
+        _write_peer_config(fake_home, env_save_restore)
+        # Act
+        _act_dispatch(shim_bin, capsys, rsync_kwargs=_RK_OK, ssh_kwargs=_SK_OK)
+        # Assert
+        from scitex_agent_container._state.state_db import list_active_instances
+
+        rows = [r for r in list_active_instances() if r["name"] == "alpha"]
+        assert rows[0]["remote"] == 1
+
+    def test_dispatch_ssh_success_records_bound_port_from_peer_json(
+        self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
+    ):
+        # Arrange — the bound port captured back from the peer's --json
+        # output is the concrete int the peer's allocator resolved (the
+        # crux of the remote-port gap fix).
+        _write_peer_config(fake_home, env_save_restore)
+        # Act
+        _act_dispatch(shim_bin, capsys, rsync_kwargs=_RK_OK, ssh_kwargs=_SK_OK)
+        # Assert
+        from scitex_agent_container._state.state_db import list_active_instances
+
+        rows = [r for r in list_active_instances() if r["name"] == "alpha"]
+        assert rows[0]["bound_port"] == 47213
+
+    def test_dispatch_ssh_success_records_cli_spawned_by(
+        self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
+    ):
+        # Arrange — a bare lead dispatch (no SAC_NAME) records the
+        # lineage edge as "cli".
+        env_save_restore.set("SAC_NAME", "")
+        _write_peer_config(fake_home, env_save_restore)
+        # Act
+        _act_dispatch(shim_bin, capsys, rsync_kwargs=_RK_OK, ssh_kwargs=_SK_OK)
+        # Assert
+        from scitex_agent_container._state.state_db import list_active_instances
+
+        rows = [r for r in list_active_instances() if r["name"] == "alpha"]
+        assert rows[0]["spawned_by"] == "cli"
+
     def test_dispatch_ssh_success_propagates_a2a_port_none_when_spec_omits_it(
         self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
     ):
