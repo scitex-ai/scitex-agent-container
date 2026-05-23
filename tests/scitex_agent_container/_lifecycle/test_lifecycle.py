@@ -1057,8 +1057,12 @@ def test_agent_restart_unknown_raises(tmp_path: Path, registry: Registry) -> Non
 # ---------------------------------------------------------------------------
 
 
-def test_agent_status_unknown_raises(tmp_path: Path, registry: Registry) -> None:
-    # Arrange (empty registry).
+def test_agent_status_unknown_raises(
+    tmp_path: Path, registry: Registry, isolated_state_db: Path
+) -> None:
+    # Arrange — empty file registry AND an isolated empty state.db, so
+    # neither the local registry nor the cross-host instances fallback
+    # has a row for "ghost".
     # Act
     call = lambda: lc.agent_status(  # noqa: E731
         "ghost", registry=registry, runtime_factory=lambda _c: FakeRuntime()
@@ -1066,6 +1070,69 @@ def test_agent_status_unknown_raises(tmp_path: Path, registry: Registry) -> None
     # Assert
     with pytest.raises(RuntimeError, match="not found"):
         call()
+
+
+def test_agent_status_resolves_remote_agent_from_instances_row(
+    tmp_path: Path, registry: Registry, isolated_state_db: Path
+) -> None:
+    # Arrange — a remote-dispatched agent has NO local file-registry
+    # entry; its row lives only in the instances table (remote=1, peer
+    # host, peer-resolved bound_port). Status must resolve it instead of
+    # raising "not found".
+    from scitex_agent_container._state.state_db import record_instance_start
+
+    record_instance_start(
+        name="clew", host="spartan", bound_port=19123, remote=True, spawned_by="lead"
+    )
+    # Act
+    result = lc.agent_status("clew", registry=registry)
+    # Assert
+    assert result["host"] == "spartan"
+
+
+def test_agent_status_remote_row_reports_bound_port(
+    tmp_path: Path, registry: Registry, isolated_state_db: Path
+) -> None:
+    # Arrange
+    from scitex_agent_container._state.state_db import record_instance_start
+
+    record_instance_start(
+        name="clew", host="spartan", bound_port=19123, remote=True, spawned_by="lead"
+    )
+    # Act
+    result = lc.agent_status("clew", registry=registry)
+    # Assert
+    assert result["bound_port"] == 19123
+
+
+def test_agent_status_remote_row_marks_remote_true(
+    tmp_path: Path, registry: Registry, isolated_state_db: Path
+) -> None:
+    # Arrange
+    from scitex_agent_container._state.state_db import record_instance_start
+
+    record_instance_start(
+        name="clew", host="spartan", bound_port=19123, remote=True, spawned_by="lead"
+    )
+    # Act
+    result = lc.agent_status("clew", registry=registry)
+    # Assert
+    assert result["remote"] is True
+
+
+def test_agent_status_remote_row_reports_spawned_by(
+    tmp_path: Path, registry: Registry, isolated_state_db: Path
+) -> None:
+    # Arrange
+    from scitex_agent_container._state.state_db import record_instance_start
+
+    record_instance_start(
+        name="clew", host="spartan", bound_port=19123, remote=True, spawned_by="lead"
+    )
+    # Act
+    result = lc.agent_status("clew", registry=registry)
+    # Assert
+    assert result["spawned_by"] == "lead"
 
 
 def test_agent_status_running_reports_status_running(

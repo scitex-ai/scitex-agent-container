@@ -38,6 +38,19 @@ if TYPE_CHECKING:
     from ..._state.host_config import PeerSpec
 
 
+def _spawned_by() -> str:
+    """Launching identity for the lineage edge (Rule B/D).
+
+    The host that runs ``sac agents start`` and dispatches cross-host is
+    the spawn parent. A parent AGENT shelling out carries ``SAC_NAME``
+    in its env (recorded as ``spawned_by=<parent>``); a bare lead /
+    operator dispatch has none and records ``"cli"``.
+    """
+    from ..._env import getenv
+
+    return getenv("NAME") or "cli"
+
+
 def _is_first_launch_line(line: str) -> bool:
     """Return True when an rsync ``--itemize-changes`` row is a pure-new
     entry (head contains only ``+`` markers, no ``*`` deletion flag).
@@ -234,11 +247,24 @@ def _dispatch_remote_start(
     # Lead-side instances row — mirrors the canonical
     # record_instance_start API used elsewhere. host=peer so cross-host
     # listings see the remote agent; a2a_port comes from the peer's
-    # --json output (None when sidecar is disabled).
+    # --json output (None when sidecar is disabled). This is the BOUND
+    # port the peer's allocator resolved — the crux of the remote-port
+    # gap fix: the peer's ``--json`` ``a2a_port`` field carries the
+    # concrete int the peer's port allocator claimed (auto -> int
+    # happens BEFORE the runtime builds argv, see
+    # ``_lifecycle/_a2a_port.py``). Recorded as both ``a2a_port`` (legacy
+    # readers) and ``bound_port`` (new readers). ``remote=True`` marks
+    # the cross-host locality so ``resolve_peer_url`` / ``agent_status``
+    # know to reach the agent on ``peer``. ``spawned_by`` is the
+    # launching identity (Rule B/D lineage edge).
+    bound = peer_state.get("a2a_port")
     record_instance_start(
         name=name,
         host=peer,
-        a2a_port=peer_state.get("a2a_port"),
+        a2a_port=bound,
+        bound_port=bound,
+        remote=True,
+        spawned_by=_spawned_by(),
     )
     click.echo(
         f"[dispatch] {name!r} started on {peer!r} "
