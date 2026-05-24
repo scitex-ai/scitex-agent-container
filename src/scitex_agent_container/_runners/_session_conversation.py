@@ -199,6 +199,14 @@ async def run_conversation(
             sdk_extra["_a2a_port"] = int(a2a_port)
 
     attempt = 0
+    # Dead-session recoveries are NOT charged to ``max_restarts``: a stale
+    # resume marker is a recoverable, self-healing condition (discard the
+    # dead id → fresh start), not a crash budget. Bound it separately so a
+    # pathological loop (discard somehow fails to purge the id) still
+    # terminates instead of spinning forever. One per distinct dead id is
+    # the realistic ceiling — the latest + every forked id in the history.
+    dead_session_recoveries = 0
+    _MAX_DEAD_SESSION_RECOVERIES = 5
     last_exc: BaseException | None = None
     while True:
         # Resume target, with history fallback. On the first attempt this
@@ -324,6 +332,81 @@ async def run_conversation(
             captured_stderr = stderr_capture.text()
             enriched = enrich_detail_with_stderr(str(exc), captured_stderr)
             write_stderr_log(state_dir, captured_stderr)
+
+            # Dead-session resume — the SDK rejected our --resume target
+            # ("No conversation found with session ID: <uuid>"). This is
+            # SELF-HEALING, not a crash: walking session_id_history toward
+            # the same (or equally-dead forked) id just re-crashes until
+            # max_restarts is exhausted and the conversation loop dies mute
+            # (the clew/neurovista 5h outage, 2026-05-24). Instead, purge
+            # the dead id from BOTH the latest marker and the history, then
+            # retry as a FRESH session (resume=None) — independent of the
+            # max_restarts budget. Bounded by _MAX_DEAD_SESSION_RECOVERIES.
+            from ._dead_session import (
+                DEAD_SESSION_CAUSE,
+                extract_dead_session_id,
+                is_dead_session_resume,
+            )
+            from ._session_id import (
+                discard_dead_session,
+                read_session_id,
+            )
+
+            if (
+                is_dead_session_resume(enriched)
+                and not stop.is_set()
+                and dead_session_recoveries < _MAX_DEAD_SESSION_RECOVERIES
+            ):
+                # ``current_sid`` is the ground truth — it IS the resume
+                # target the SDK just rejected. Prefer it; fall back to the
+                # id parsed out of the error string, then to the on-disk
+                # marker, so we always have a concrete id to purge.
+                dead_id = (
+                    current_sid
+                    or extract_dead_session_id(enriched)
+                    or read_session_id(state_dir)
+                )
+                logger.warning(
+                    "claude-session DEAD SESSION for %s: resume id %s is gone; "
+                    "discarding it from session_id + history and starting FRESH",
+                    name,
+                    dead_id,
+                )
+                if dead_id:
+                    discard_dead_session(state_dir, dead_id)
+                append_session_message(
+                    state_dir,
+                    {
+                        "type": "error",
+                        "kind": "dead_session",
+                        "detail": enriched,
+                        "attempt": attempt,
+                    },
+                )
+                if host:
+                    report_sdk_error(
+                        name=name,
+                        host=host,
+                        cause=DEAD_SESSION_CAUSE,
+                        detail=enriched,
+                        db_writer=db_writer,
+                    )
+                append_session_message(
+                    state_dir,
+                    {
+                        "type": "supervisor",
+                        "event": "dead-session-fresh-start",
+                        "discarded_session_id": dead_id,
+                    },
+                )
+                dead_session_recoveries += 1
+                # Reset the resume-attempt walk to 0: with the dead id now
+                # purged from the history, _resume_candidate(attempt=0)
+                # returns None (no history left) and the next loop opens a
+                # genuinely fresh session.
+                attempt = 0
+                resume_session_id = None
+                continue
 
             auth_detail = classify_auth_failure(enriched)
             if auth_detail is not None:

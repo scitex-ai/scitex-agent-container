@@ -27,7 +27,9 @@ from pathlib import Path
 # existing importers of ``_session_state.{write,read,clear}_session_id``
 # keep working unchanged.
 from ._session_id import append_session_id_history as append_session_id_history
+from ._session_id import clear_session_history as clear_session_history
 from ._session_id import clear_session_id as clear_session_id
+from ._session_id import discard_dead_session as discard_dead_session
 from ._session_id import read_session_id as read_session_id
 from ._session_id import read_session_id_history as read_session_id_history
 from ._session_id import write_session_id as write_session_id
