@@ -6,6 +6,37 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.20.0] — 2026-05-24
+
+### Added
+- **feat(account): per-agent OAuth account assignment
+  (`spec.claude.account`)** — pin an agent to a specific saved
+  Anthropic account (from `sac account list`). Multi-account
+  load-balance enabler: agents on distinct accounts no longer collide
+  on one server-side rate limit. Frozen boot-copy mechanism — the
+  apptainer runtime copies the named account's `.credentials.json`
+  snapshot into the agent's own state dir at start and binds the copy
+  RW, so two agents on two accounts never fight one mount and a host
+  `/login` never moves a pinned agent. Takes effect on next
+  start/restart; `account=""` (default) keeps the host live-file
+  behaviour. New `runtimes/_apptainer_creds.resolve_cred_file`;
+  load-time soft-WARN when the named snapshot is absent (never fails).
+- **feat(account): `sac account list` plan/tier + usage columns** —
+  OFFLINE plan label (Pro / Max 5x / Max 20x) and rate-limit tier for
+  every stored account, read from the snapshot's whitelisted fields;
+  CACHE-ONLY usage (`—` until a per-account usage cache exists). New
+  `_state/account_store.read_account_plan` /
+  `read_account_usage_cache`.
+- **feat(status): pinned-account display** —
+  `resolve_agent_account_label(assigned_account=)` so a pinned agent
+  shows `<name> (<email>)` in `agent list` / `agent status` regardless
+  of the host's current `/login`.
+
+### Fixed
+- **fix(spec): migrate bundled `sdk-test` spec off removed v3
+  top-level fields** (`runtime: docker→apptainer`; `image`/`model`
+  under their engine blocks; dropped `dockerfile`).
+
 ### Changed (BREAKING)
 - **refactor(api): drop ``reply`` field; ``text`` is the single canonical
   field** — the A2A sidecar's ``POST /v1/turn`` response now returns
