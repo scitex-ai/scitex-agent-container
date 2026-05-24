@@ -1037,6 +1037,109 @@ def test_agent_restart_calls_runtime_stop_then_start(
     assert ok is True and len(runtime.stop_calls) == 1 and len(runtime.start_calls) == 1
 
 
+def test_agent_restart_clears_dead_session_marker(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange — a runtime state dir holding a DEAD resume marker + history
+    # (the production shape after a session aged out). PR #190's restart
+    # left the dead uuid in the history to be re-resumed and re-crashed;
+    # a plain restart must now clear it.
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    runtime_root = tmp_path / "rt"
+    prev = os.environ.get("SCITEX_AGENT_CONTAINER_RUNTIME_DIR")
+    os.environ["SCITEX_AGENT_CONTAINER_RUNTIME_DIR"] = str(runtime_root)
+    try:
+        from scitex_agent_container._runners import _session_id as sid
+
+        state_dir = runtime_root / "alpha"
+        sid.write_session_id(state_dir, "dead-uuid")
+        # Act
+        lc.agent_restart(
+            "alpha",
+            registry=registry,
+            runtime_factory=lambda _c: FakeRuntime(start_result=True),
+            sleep_fn=_no_sleep,
+            handover_mod=FakeHandover(),
+        )
+        # Assert — the dead resume marker is gone so the restart is fresh.
+        result = sid.read_session_id(state_dir)
+    finally:
+        if prev is None:
+            os.environ.pop("SCITEX_AGENT_CONTAINER_RUNTIME_DIR", None)
+        else:
+            os.environ["SCITEX_AGENT_CONTAINER_RUNTIME_DIR"] = prev
+    assert result is None
+
+
+def test_agent_restart_clears_dead_session_history(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange — the dead uuid lives in the append-only history that the
+    # runner's resume fallback would otherwise walk and re-resume.
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    runtime_root = tmp_path / "rt"
+    prev = os.environ.get("SCITEX_AGENT_CONTAINER_RUNTIME_DIR")
+    os.environ["SCITEX_AGENT_CONTAINER_RUNTIME_DIR"] = str(runtime_root)
+    try:
+        from scitex_agent_container._runners import _session_id as sid
+
+        state_dir = runtime_root / "alpha"
+        sid.write_session_id(state_dir, "dead-uuid")
+        sid.write_session_id(state_dir, "dead-fork")
+        # Act
+        lc.agent_restart(
+            "alpha",
+            registry=registry,
+            runtime_factory=lambda _c: FakeRuntime(start_result=True),
+            sleep_fn=_no_sleep,
+            handover_mod=FakeHandover(),
+        )
+        # Assert — the whole history is cleared so no dead uuid can be
+        # re-resumed on the next start (the crash-loop is closed).
+        history = sid.read_session_id_history(state_dir)
+    finally:
+        if prev is None:
+            os.environ.pop("SCITEX_AGENT_CONTAINER_RUNTIME_DIR", None)
+        else:
+            os.environ["SCITEX_AGENT_CONTAINER_RUNTIME_DIR"] = prev
+    assert history == []
+
+
+def test_agent_restart_backs_up_dead_session_history(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange — clearing the dead history must preserve it as an audit
+    # side-file, not silently destroy it.
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    runtime_root = tmp_path / "rt"
+    prev = os.environ.get("SCITEX_AGENT_CONTAINER_RUNTIME_DIR")
+    os.environ["SCITEX_AGENT_CONTAINER_RUNTIME_DIR"] = str(runtime_root)
+    try:
+        from scitex_agent_container._runners import _session_id as sid
+
+        state_dir = runtime_root / "alpha"
+        sid.write_session_id(state_dir, "dead-uuid")
+        # Act
+        lc.agent_restart(
+            "alpha",
+            registry=registry,
+            runtime_factory=lambda _c: FakeRuntime(start_result=True),
+            sleep_fn=_no_sleep,
+            handover_mod=FakeHandover(),
+        )
+        # Assert
+        backups = list(state_dir.glob("session_id_history.dead-*"))
+    finally:
+        if prev is None:
+            os.environ.pop("SCITEX_AGENT_CONTAINER_RUNTIME_DIR", None)
+        else:
+            os.environ["SCITEX_AGENT_CONTAINER_RUNTIME_DIR"] = prev
+    assert len(backups) == 1
+
+
 def test_agent_restart_unknown_raises(tmp_path: Path, registry: Registry) -> None:
     # Arrange — empty registry AND a resolver that finds no spec (a
     # genuinely unknown agent): both lookups must fail to raise.

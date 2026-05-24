@@ -237,6 +237,20 @@ def agent_restart(
         handover_mod=handover_mod,
     )
     sleep_fn(2)
+    # Clear BOTH the persisted session_id AND session_id_history before the
+    # restart. A plain ``agent_restart`` previously called ``agent_start``
+    # WITHOUT force=True (so no session reset ran at all), and the
+    # ``--force`` path itself only cleared ``session_id`` — leaving a dead
+    # uuid in the append-only history that the runner's resume fallback
+    # RE-RESUMED and RE-CRASHED. That is why ``sac agents restart`` could
+    # not recover a DEAD session (clew/neurovista, 2026-05-24): the manual
+    # recovery had to clear both and back them up. Doing it here makes a
+    # plain restart self-recovering regardless of the start path's force
+    # flag. ``_clear_persisted_session_id`` backs both up to
+    # ``session_id_history.dead-<ts>`` and is a no-op on a clean state dir.
+    from ._session_reset import _clear_persisted_session_id
+
+    _clear_persisted_session_id(name)
     return agent_start(
         config_path,
         registry,
