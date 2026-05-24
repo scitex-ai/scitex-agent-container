@@ -153,7 +153,35 @@ def list_active_instances(
         return [dict(r) for r in cur.fetchall()]
 
 
+def last_known_instance(
+    name: str,
+    db_path: Path | None = None,
+) -> dict | None:
+    """Return the most-recent ``instances`` row for ``name``, active OR ended.
+
+    Unlike :func:`list_active_instances` (which filters ``ended_at IS
+    NULL``), this returns the latest row regardless of lifecycle state so a
+    fail-loud resolver can report the LAST KNOWN host + ``started_at`` +
+    whether the row has ``ended_at`` set. ``None`` only when the agent name
+    has never appeared in this host's cross-host registry.
+
+    This is the evidence behind the #192 fail-loud message: when an agent
+    cannot be resolved to a live instance, the resolver must name the last
+    known placement rather than silently assume the agent is local.
+    """
+    from .state_db import open_db
+
+    with open_db(db_path) as conn:
+        cur = conn.execute(
+            "SELECT * FROM instances WHERE name=? ORDER BY started_at DESC LIMIT 1",
+            (name,),
+        )
+        row = cur.fetchone()
+        return dict(row) if row is not None else None
+
+
 __all__ = [
+    "last_known_instance",
     "list_active_instances",
     "record_instance_start",
     "record_instance_stop",

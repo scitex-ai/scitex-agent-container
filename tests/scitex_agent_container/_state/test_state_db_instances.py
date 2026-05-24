@@ -200,3 +200,56 @@ def test_migration_is_idempotent_on_replay(db_path: Path):
     init_schema()
     # Assert — reaching here means the replay did not raise.
     assert db_path.exists()
+
+
+# ---------------------------------------------------------------------------
+# last_known_instance — the fail-loud evidence helper (#192).
+# ---------------------------------------------------------------------------
+
+
+def test_last_known_instance_returns_ended_row_when_no_active(db_path: Path):
+    # Arrange — record then end the only instance for the agent.
+    from scitex_agent_container._state.state_db import (
+        last_known_instance,
+        record_instance_start,
+        record_instance_stop,
+    )
+
+    iid = record_instance_start(name="clew", host="spartan-bm043", remote=True)
+    record_instance_stop(iid, exit_reason="superseded")
+    # Act
+    row = last_known_instance("clew")
+    # Assert — the ended row is still returned (active filter would hide it).
+    assert row["host"] == "spartan-bm043"
+
+
+def test_last_known_instance_returns_none_for_unknown_agent(db_path: Path):
+    # Arrange — a fresh isolated db with no rows for this name.
+    from scitex_agent_container._state.state_db import (
+        last_known_instance,
+        record_instance_start,
+    )
+
+    record_instance_start(name="other", host="lead-host", remote=False)
+    # Act
+    row = last_known_instance("never-seen")
+    # Assert
+    assert row is None
+
+
+def test_last_known_instance_returns_latest_by_started_at(db_path: Path):
+    # Arrange — two rows for one name; the second is newer.
+    import time
+
+    from scitex_agent_container._state.state_db import (
+        last_known_instance,
+        record_instance_start,
+    )
+
+    record_instance_start(name="clew", host="spartan-bm043", remote=True)
+    time.sleep(1.05)  # now_iso() is second-resolution; ensure a later started_at
+    record_instance_start(name="clew", host="spartan-bm001", remote=True)
+    # Act
+    row = last_known_instance("clew")
+    # Assert — the most recent placement wins.
+    assert row["host"] == "spartan-bm001"
