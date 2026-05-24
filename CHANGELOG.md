@@ -6,6 +6,37 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **feat(account): credential auto-sync substrate (`sac accounts
+  sync-live` / `watch-live`)** — keep the per-account store fresh the
+  moment the operator runs `claude /login`, with zero manual `sac
+  accounts save`. `sync-live` reads the live `~/.claude/.credentials.json`
+  + the active email from `~/.claude.json`, derives the store-name
+  (email slugified, e.g. `ywatanabe@scitex.ai` → `ywatanabe-scitex-ai`),
+  and atomically snapshots the live cred in when the matching store is
+  absent / older / expired (idempotent no-op otherwise). `watch-live`
+  is the always-on daemon: watches the live credential (inotify via
+  `inotifywait` when available, else a poll loop) and runs the engine on
+  every change, logging each sync to stderr or
+  `~/.scitex/agent-container/runtime/logs/creds-watch.log`. New
+  `_account/creds_sync.py` (engine) + `_account/creds_watch.py`
+  (watcher).
+- **feat(account): `sac accounts list` credential-freshness column** —
+  every stored account now shows `VALID (+Xh)` / `EXPIRED (-Xh)` /
+  `ABSENT` read OFFLINE from the snapshot's `expiresAt`, so rotted
+  stores are visible at a glance. The `--json` output gains `freshness`
+  and `freshness_hours` fields. New `_account/creds_sync.account_freshness`.
+
+### Fixed
+- **fix(account): pinned-account credential resolution now fails loud**
+  — when `spec.claude.account` names a store that is ABSENT or its
+  credential is EXPIRED, `sac agents start` now aborts with
+  `PinnedAccountError` carrying the exact remedy (`claude /login` to
+  that account + `sac accounts sync-live`). Previously it silently fell
+  back to the host live file (a *different* account) or launched with a
+  stale token — handing the agent the wrong identity. A pinned agent
+  must never silently fall back. (`runtimes/_apptainer_creds.py`)
+
 ## [0.20.0] — 2026-05-24
 
 ### Added

@@ -22,6 +22,7 @@ import os
 import shlex
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -35,6 +36,7 @@ from scitex_agent_container.config._types import (
     ContainerSpec,
 )
 from scitex_agent_container.runtimes import _apptainer_runtime as mod
+from scitex_agent_container.runtimes._apptainer_creds import PinnedAccountError
 from scitex_agent_container.runtimes._apptainer_inner_argv import (
     RUNNER_MODULE_AGENT,
     RUNNER_MODULE_PROXY,
@@ -1122,14 +1124,20 @@ def test_argv_startup_prompts_populates_mission(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _save_snapshot(home: Path, name: str, body: str = '{"snap": true}') -> Path:
+def _save_snapshot(home: Path, name: str, body: str | None = None) -> Path:
     """Write a real saved-account snapshot under the home's account store
     and return its ``.credentials.json`` path.
 
     Mirrors the on-disk layout
     ``~/.scitex/agent-container/accounts/<name>/.credentials.json`` that
-    ``sac account save`` produces.
+    ``sac account save`` produces. The default body carries a VALID
+    (far-future) ``claudeAiOauth.expiresAt`` so the fail-loud pin
+    resolver (``_apptainer_creds.resolve_cred_file``) accepts it; tests
+    that need a stale/odd snapshot pass an explicit ``body``.
     """
+    if body is None:
+        far_future_ms = int((time.time() + 86_400) * 1_000)
+        body = '{"claudeAiOauth": {"expiresAt": %d}}' % far_future_ms
     acct_dir = home / ".scitex" / "agent-container" / "accounts" / name
     acct_dir.mkdir(parents=True, exist_ok=True)
     snap = acct_dir / ".credentials.json"
@@ -1160,8 +1168,14 @@ def test_argv_pins_account_binds_state_dir_copy_not_host_file(
 def test_argv_pins_account_copies_snapshot_bytes_into_state_dir(
     tmp_path: Path, home_redirect: Path
 ) -> None:
-    # Arrange — snapshot has distinctive bytes the copy must reproduce.
-    _save_snapshot(home_redirect, "beta", body='{"pinned": "beta-bytes"}')
+    # Arrange — snapshot has distinctive bytes (plus a VALID future
+    # expiresAt so the fail-loud resolver accepts it) the copy must
+    # reproduce verbatim.
+    far_future_ms = int((time.time() + 86_400) * 1_000)
+    body = '{"pinned": "beta-bytes", "claudeAiOauth": {"expiresAt": %d}}' % (
+        far_future_ms
+    )
+    _save_snapshot(home_redirect, "beta", body=body)
     state_dir = tmp_path / "state"
     state_dir.mkdir()
     rt = ApptainerContainerRuntime()
@@ -1170,7 +1184,7 @@ def test_argv_pins_account_copies_snapshot_bytes_into_state_dir(
     rt.build_run_argv(cfg, state_dir=state_dir, sif_path=tmp_path / "x.sif")
     copied = state_dir / "claude" / ".credentials.json"
     # Assert — frozen boot-copy landed with the snapshot's contents.
-    assert copied.read_text() == '{"pinned": "beta-bytes"}'
+    assert copied.read_text() == body
 
 
 def test_argv_no_account_binds_host_live_file(
@@ -1189,20 +1203,42 @@ def test_argv_no_account_binds_host_live_file(
     assert creds_arg.startswith(str(host_creds))
 
 
-def test_argv_pinned_account_missing_snapshot_falls_back_to_host(
+def test_argv_pinned_account_missing_snapshot_raises_pinned_account_error(
     tmp_path: Path, home_redirect: Path
 ) -> None:
     # Arrange — pin names an account with NO snapshot; host file exists.
+    # A pinned agent must NEVER silently fall back to the host live file
+    # (a different account); it must hard-error with the remedy hint.
     host_creds = home_redirect / ".claude" / ".credentials.json"
     host_creds.parent.mkdir(parents=True, exist_ok=True)
     host_creds.write_text("{}")
     rt = ApptainerContainerRuntime()
     cfg = _config(tmp_path, claude=ClaudeSpec(account="ghost"))
-    # Act — fail-soft fallback (warns; never wedges the start).
-    argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
-    creds_arg = next(a for a in argv if "/tmp/sac-claude/.credentials.json" in a)
+    # Act
+    ctx = pytest.raises(PinnedAccountError)
+    # Assert — fail loud, never bind the host file.
+    with ctx:
+        rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+
+
+def test_argv_pinned_account_expired_snapshot_raises_pinned_account_error(
+    tmp_path: Path, home_redirect: Path
+) -> None:
+    # Arrange — snapshot exists but its OAuth token already expired; a
+    # pinned agent must refuse to launch with a stale token.
+    past_ms = int((time.time() - 86_400) * 1_000)
+    _save_snapshot(
+        home_redirect,
+        "stale",
+        body='{"claudeAiOauth": {"expiresAt": %d}}' % past_ms,
+    )
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path, claude=ClaudeSpec(account="stale"))
+    # Act
+    ctx = pytest.raises(PinnedAccountError)
     # Assert
-    assert creds_arg.startswith(str(host_creds))
+    with ctx:
+        rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
 
 
 # ---------------------------------------------------------------------------
