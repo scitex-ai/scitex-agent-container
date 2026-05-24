@@ -118,6 +118,101 @@ def list_accounts(
     return accounts
 
 
+def read_account_plan(
+    name: str,
+    store_dir: Path | None = None,
+    home: Path | None = None,
+) -> dict[str, Any]:
+    """Read the OFFLINE plan/tier of a saved account from its snapshot.
+
+    Opens ``<acct>/.credentials.json`` and pulls ONLY the two non-secret
+    fields ``subscriptionType`` and ``rateLimitTier`` (whitelist — tokens
+    are never touched), then derives a human ``plan_label`` (Pro / Max 5x
+    / Max 20x / Free) via the same mapping ``read_credentials_metadata``
+    uses. No network call — this is free and works for ALL stored
+    accounts, not just the active one.
+
+    Returns a dict with keys ``subscription_type``, ``rate_limit_tier``,
+    ``plan_label`` (any may be ``None``). Never raises — a
+    missing/corrupt snapshot yields all-``None``.
+    """
+    _home = home or Path.home()
+    store = _store_path(store_dir, _home)
+    snapshot = store / name / ".credentials.json"
+    out: dict[str, Any] = {
+        "subscription_type": None,
+        "rate_limit_tier": None,
+        "plan_label": None,
+    }
+    # stx-allow: fallback (reason: snapshot read is best-effort offline
+    # enrichment for `account list`; a missing/corrupt snapshot must
+    # degrade to all-None, never break the listing.)
+    try:
+        with snapshot.open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:  # stx-allow: fallback (reason: see inline comment)
+        return out
+    if not isinstance(data, dict):
+        return out
+    oauth = data.get("claudeAiOauth")
+    if not isinstance(oauth, dict):
+        return out
+    sub = oauth.get("subscriptionType")
+    tier = oauth.get("rateLimitTier")
+    if isinstance(sub, str):
+        out["subscription_type"] = sub
+    if isinstance(tier, str):
+        out["rate_limit_tier"] = tier
+    # Derive label via the canonical credentials mapping.
+    # stx-allow: fallback (reason: label derivation is cosmetic; raw
+    # tier/subscription stay exposed even if the import/derive hiccups.)
+    try:
+        from .._account.credentials import _derive_plan_label
+
+        out["plan_label"] = _derive_plan_label(
+            out["rate_limit_tier"], out["subscription_type"]
+        )
+    except Exception:  # stx-allow: fallback (reason: see inline comment)
+        out["plan_label"] = None
+    return out
+
+
+def read_account_usage_cache(
+    name: str,
+    store_dir: Path | None = None,
+    home: Path | None = None,
+) -> dict[str, Any] | None:
+    """Read a CACHED per-account usage snapshot, if one exists.
+
+    5h/7d usage (``used_pct_5h`` / ``used_pct_7d``) is NOT in the
+    credential snapshot and needs a per-account network call with a
+    credential swap to fetch — too expensive to do synchronously inside
+    ``account list``. This reader is CACHE-ONLY: it returns the contents
+    of ``<acct>/usage.json`` (with an ``as_of`` timestamp) when present,
+    else ``None`` so the caller can render ``"—"``.
+
+    NOTE: nothing writes ``<acct>/usage.json`` yet. ``sac account
+    watch-quota`` is the natural place to persist a per-account usage
+    snapshot per rotation — wiring that writer is intentionally out of
+    scope for the per-agent-account feature (it needs the credential-swap
+    fetch loop). This reader exists so the display path is ready the day
+    that writer lands. Never raises.
+    """
+    _home = home or Path.home()
+    store = _store_path(store_dir, _home)
+    usage_file = store / name / "usage.json"
+    # stx-allow: fallback (reason: cache-only read; missing/corrupt cache
+    # must yield None so `account list` shows "—", never break the list.)
+    try:
+        with usage_file.open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:  # stx-allow: fallback (reason: see inline comment)
+        return None
+    if not isinstance(data, dict):
+        return None
+    return data
+
+
 def save_account(
     name: str,
     metadata: dict[str, Any],

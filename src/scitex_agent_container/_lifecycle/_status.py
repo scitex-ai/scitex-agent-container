@@ -32,7 +32,12 @@ def _resolve_account(config: AgentConfig | None) -> str:
         from .._account.agent_account import resolve_agent_account_label
 
         env = config.env if config is not None else None
-        return resolve_agent_account_label(env)
+        assigned = (
+            getattr(getattr(config, "claude", None), "account", "") or None
+            if config is not None
+            else None
+        )
+        return resolve_agent_account_label(env, assigned_account=assigned)
     except Exception:  # stx-allow: fallback (reason: see inline comment)
         return "unknown"
 

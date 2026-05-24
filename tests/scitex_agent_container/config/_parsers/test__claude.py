@@ -40,6 +40,7 @@ from scitex_agent_container.config._parsers._claude import parse_claude
         ("continue_max_age_minutes", None),
         ("resume_id", ""),
         ("auto_accept", True),
+        ("account", ""),
         ("raw_options", {}),
     ],
 )
@@ -175,3 +176,26 @@ def test_nested_field_is_surfaced_verbatim(attr, expected):
     result = parse_claude(spec)
     # Assert
     assert getattr(result, attr) == expected
+
+
+# ---------------------------------------------------------------------------
+# spec.claude.account — per-agent OAuth account pin
+# ---------------------------------------------------------------------------
+
+
+def test_account_parsed_from_nested_block():
+    # Arrange
+    spec = {"claude": {"account": "work"}}
+    # Act
+    result = parse_claude(spec)
+    # Assert
+    assert result.account == "work"
+
+
+def test_account_none_coerced_to_empty_string():
+    # Arrange — an explicit null must collapse to the host-live-file default.
+    spec = {"claude": {"account": None}}
+    # Act
+    result = parse_claude(spec)
+    # Assert
+    assert result.account == ""
