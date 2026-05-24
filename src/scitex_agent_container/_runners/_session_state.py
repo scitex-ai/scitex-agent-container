@@ -17,8 +17,22 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import time
 from pathlib import Path
+
+# Session-id resume marker + append-only history live in a focused
+# module to keep this file under the 512-line cap. Re-exported here
+# (explicit ``as`` aliases mark the intentional re-export) so the
+# existing importers of ``_session_state.{write,read,clear}_session_id``
+# keep working unchanged.
+from ._session_id import append_session_id_history as append_session_id_history
+from ._session_id import clear_session_history as clear_session_history
+from ._session_id import clear_session_id as clear_session_id
+from ._session_id import discard_dead_session as discard_dead_session
+from ._session_id import read_session_id as read_session_id
+from ._session_id import read_session_id_history as read_session_id_history
+from ._session_id import write_session_id as write_session_id
 
 DEFAULT_STATE_ROOT = Path(
     os.environ.get(
@@ -181,6 +195,38 @@ def _heartbeat_usage_fields(state_dir: Path, now: float) -> dict:
     return out
 
 
+# /tmp pressure probe path. The session runner executes inside the
+# container, where /tmp is the RAM-backed tmpfs (apptainer --containall
+# default, unbounded by sac). Heavy run_in_background Bash sessions
+# write per-command + task-output files there; once it fills, every
+# shell command that needs a temp file fails with exit 1 + empty stdout
+# — the silent "Class B" bash wedge (2026-05-22 diagnosis §3). Surfacing
+# the fill % on the heartbeat turns that silent failure into an
+# observable one the operator (and `sac agents status`) can see BEFORE
+# the wedge.
+_TMP_PRESSURE_PATH = "/tmp"  # noqa: S108 — container tmpfs, intentional
+
+
+def _tmp_pressure_fields(probe_path: str = _TMP_PRESSURE_PATH) -> dict:
+    """Return ``{tmp_used_pct}`` for the container tmpfs, best-effort.
+
+    ``tmp_used_pct`` is the percentage of ``probe_path`` consumed
+    (``used / total * 100``, rounded to 1 dp). Any failure — the path
+    not existing (running on the host where there is no container
+    ``/tmp`` tmpfs), a permission error, or a zero-total stat — degrades
+    to an EMPTY dict so the heartbeat loop never crashes and the field
+    is simply ABSENT rather than a misleading 0. Absent ≠ 0%: a reader
+    distinguishes "not probed" from "empty tmpfs".
+    """
+    try:
+        usage = shutil.disk_usage(probe_path)
+    except OSError:
+        return {}
+    if usage.total <= 0:
+        return {}
+    return {"tmp_used_pct": round(usage.used / usage.total * 100.0, 1)}
+
+
 def write_heartbeat(
     state_dir: Path,
     *,
@@ -201,6 +247,13 @@ def write_heartbeat(
     This lets the operator see, per agent, how long it has been running
     and how many tokens it has used — straight off the fast-path JSON.
 
+    When the container tmpfs is probeable it also carries
+    ``tmp_used_pct`` — the ``/tmp`` fill percentage — so a filling
+    tmpfs (the silent "Class B" bash-wedge precursor) is observable
+    on every beat BEFORE it wedges the SDK's Bash tool. Absent (not 0)
+    when the probe fails, e.g. on the host where there is no container
+    ``/tmp`` tmpfs.
+
     The JSON file is kept as a fast-path cache for local readers
     (``sac agent status`` polls it without opening sqlite); the DB
     row is the cross-host queryable record.
@@ -213,6 +266,7 @@ def write_heartbeat(
     now = time.time()
     payload = {"ts": now, "pid": pid, "state": state}
     payload.update(_heartbeat_usage_fields(state_dir, now))
+    payload.update(_tmp_pressure_fields())
     tmp = state_dir / "heartbeat.json.tmp"
     tmp.write_text(json.dumps(payload), encoding="utf-8")
     tmp.replace(state_dir / "heartbeat.json")
@@ -378,48 +432,15 @@ def accumulate_quota(state_dir: Path, usage: dict | None) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Session id (resume marker)
+# Session id (resume marker) + append-only history
+#
+# Implementation extracted to ``_session_id.py`` (focused module, keeps
+# this file under the 512-line cap) and imported at the top of this
+# module. The names ``write_session_id`` / ``read_session_id`` /
+# ``clear_session_id`` (plus the new ``append_session_id_history`` /
+# ``read_session_id_history``) therefore resolve as
+# ``_session_state.<name>`` unchanged for every existing caller.
 # ---------------------------------------------------------------------------
-
-
-def write_session_id(state_dir: Path, session_id: str) -> None:
-    """Persist the SDK session id so a respawn can resume."""
-    state_dir.mkdir(parents=True, exist_ok=True)
-    tmp = state_dir / "session_id.tmp"
-    tmp.write_text(session_id, encoding="utf-8")
-    tmp.replace(state_dir / "session_id")
-
-
-def read_session_id(state_dir: Path) -> str | None:
-    """Return the persisted session id, or None if absent."""
-    p = state_dir / "session_id"
-    if not p.is_file():
-        return None
-    try:
-        return p.read_text(encoding="utf-8").strip() or None
-    except OSError:
-        return None
-
-
-def clear_session_id(state_dir: Path) -> bool:
-    """Remove the persisted ``session_id`` resume marker.
-
-    Used by ``agent_start(force=True)`` so a stale session id left over
-    from a previous run can't make the SDK try to resume a conversation
-    the server has already aged out (symptom: ``ProcessError: Command
-    failed with exit code 1`` ~90s into the first turn).
-
-    Returns True if a file was removed, False if there was nothing to
-    remove. Never raises FileNotFoundError; never silently swallows
-    other ``OSError``s (callers want a loud failure if e.g. the runtime
-    dir is unreadable due to permissions).
-    """
-    p = state_dir / "session_id"
-    try:
-        p.unlink()
-        return True
-    except FileNotFoundError:
-        return False
 
 
 # ---------------------------------------------------------------------------

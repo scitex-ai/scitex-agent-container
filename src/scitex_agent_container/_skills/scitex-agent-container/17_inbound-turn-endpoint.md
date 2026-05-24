@@ -1,31 +1,44 @@
 ---
 description: |
   [TOPIC] Inbound-turn HTTP endpoint (`POST /v1/turn`)
-  [DETAILS] Reference for the in-runner HTTP inbound-turn endpoint served by the claude-session runtime when ``spec.a2a.port`` is declared. Wire format, semantics, curl examples, and how it differs from the legacy A2A sidecar..
+  [DETAILS] Reference for the in-runner HTTP inbound-turn endpoint served by the in-container claude-session SDK runner when ``spec.a2a.port`` is declared. Wire format, semantics, curl examples, and how it differs from the legacy A2A sidecar. Runs inside the apptainer SIF — `runtime: apptainer` is the operative runtime.
 tags: [scitex-agent-container-inbound-turn-endpoint, claude-session, a2a, inbound]
 ---
 
 # Inbound-turn HTTP endpoint (`POST /v1/turn`)
 
-Long-living `runtime: claude-session` agents accept new turns over HTTP. The endpoint is **colocated with the SDK conversation** (no sidecar process) so each turn lands on the same persistent `ClaudeSDKClient` — the resume id, accumulated quota, and tool history are preserved across turns.
+Long-living agents accept new turns over HTTP. The endpoint is
+**colocated with the SDK conversation** (no separate sidecar process) so
+each turn lands on the same persistent `ClaudeSDKClient` — the resume id,
+accumulated quota, and tool history are preserved across turns.
 
-Lives in `_runners/_session_http.py`; spawned by `_runners/claude_session.py::run` when the runner argv has `--a2a-port N` (the runtime adapter sets that from `spec.a2a.port`).
+The endpoint lives in `_runners/_session_http.py`, spawned by the SDK
+runner (`_runners/claude_session.py::run`) when its argv carries
+`--a2a-port N`. The runner — and therefore this HTTP server — runs
+**inside the apptainer container** (`apptainer exec`); the runtime adapter
+sets `--a2a-port` from `spec.a2a.port`. See
+[15_claude-session.md](15_claude-session.md) for the container shape.
 
 ## YAML
 
+`runtime: apptainer` is the only accepted runtime (sac is apptainer-only;
+the SDK runner is invoked inside the SIF). Enable the endpoint with
+`spec.a2a.port`:
+
 ```yaml
 spec:
-  runtime: claude-session
+  runtime: apptainer
+  apptainer:
+    image: /home/me/.scitex/agent-container/containers/sac-base.sif
+    relaxed: true
   a2a:
-    port: 18888         # required to enable the endpoint
+    port: 18888         # int, or "auto" (default) — set to enable inbound HTTP
     host: 127.0.0.1     # default; set to 0.0.0.0 for LAN exposure
 ```
 
-Existing `claude-code` agents that already have an `a2a.port` (e.g.
-handyman-sonnet at 19108) keep the same port — when you flip
-`runtime: claude-code` → `claude-session`, the runner's HTTP server
-binds the same port the sidecar used to. Telegram bridge / orochi
-clients keep working unchanged.
+`port: auto` (the default) lets sac allocate; clients then reach the agent
+through `sac listen` (one host port, name-in-path) rather than the
+per-agent port directly. Pin an int to bind a fixed port.
 
 ## Wire format
 
@@ -55,11 +68,16 @@ curl -s http://127.0.0.1:18888/health
 
 ## How it differs from the legacy A2A sidecar
 
-| Aspect | Legacy sidecar (`runtime: claude-code`) | In-runner (`runtime: claude-session`) |
+The in-runner endpoint replaced the standalone A2A sidecar that the old
+CLI/TUI runtime used. For SDK agents (`kind: Agent`) the runner hosts
+`/v1/turn` itself; the `sac a2a serve` sidecar path is retained only for
+non-SDK runtimes (see [07_a2a-protocol.md](07_a2a-protocol.md)).
+
+| Aspect | Legacy `sac a2a serve` sidecar | In-runner (current) |
 |---|---|---|
-| Process | Separate `sac a2a serve` process | Asyncio task inside the runner |
+| Process | Separate `sac a2a serve` process | Asyncio task inside the SDK runner (in-container) |
 | Per-request transport | New `query()` per request — fresh conversation each time | `client.query()` on the persistent SDK client — turns share context |
-| Wire | A2A JSON-RPC `message/send` | Plain `{text, exit_after}` (PR4 will add JSON-RPC compat) |
+| Wire | A2A JSON-RPC `message/send` | Plain `{text, exit_after}` |
 | Concurrency | Each request spawns its own SDK call | Serial drain — turns queue |
 | Resume | None (each request is stateless) | Full — session_id persists across runs |
 
@@ -74,50 +92,39 @@ The runner's argv `--a2a-port`/`--a2a-host` is set automatically by `runtimes/cl
 - `src/scitex_agent_container/_runners/claude_session.py::_run_conversation` — drains the inbox into the persistent `ClaudeSDKClient`
 - `tests/scitex_agent_container/_runners/test__session_http.py` — round-trip + 400 + health smoke tests
 
-## Remote launch via `_remote_launch.render_remote_launch`
+## Cross-host placement
 
-For running the SDK runner on a remote host, sac provides a generic bash-script generator that sources a per-host hook before exec. The package stays generic; per-host quirks (Spartan module loads, NAS PATH overrides, etc.) live in private `~/.scitex/agent-container/hosts/$(hostname).sh` on the remote.
+The old host-side bare-Python launch (a `render_remote_launch` bash-script
+generator + `SAC_RUNNER_PREFIX` wrapper, exec'd over ssh) was **removed**
+with the bare-metal/SSH-dispatch ripout (WI-6, 2026-05-20). The runner
+only ever launches via `apptainer exec` now; there is no host-side
+`python -m ... claude_session` path.
+
+> Note: `_runners/_remote_launch.render_remote_launch` still exists as a
+> module with a unit test, but it is **not wired into any live launch
+> path** (no importers in `src/` outside its own test). Treat it as dead
+> code, not as the way agents start on remote hosts.
+
+Cross-host work goes through two mechanisms:
+
+- **`spec.host`** — pin an agent to a host (or a priority list). See
+  [11_remote-deploy.md](11_remote-deploy.md).
+- **`sac --on <peer>`** (F-CS12) — dispatch a `sac` command on a peer
+  defined in `config.yaml`'s `peers:` block.
+
+### Reaching a remote agent's `/v1/turn` — ssh-as-transport
+
+The runner binds `/v1/turn` on `127.0.0.1` inside its container — never on
+a LAN interface. A peer reaches a remote agent through ssh, resolved
+automatically by the peer helper:
 
 ```python
-from scitex_agent_container._runners._remote_launch import render_remote_launch
-
-script = render_remote_launch(
-    runner_argv=["python", "-m", "scitex_agent_container._runners.claude_session",
-                 "--name", "my-agent", "--a2a-port", "18888"],
-    agent_name="my-agent",
-    state_root="/tmp/runtime",
-    detach=True,  # setsid + nohup; emits the runner PID on stdout
-)
-# Pipe over ssh:
-#   ssh -o BatchMode=yes <host> 'bash -l -s' <<< "$script"
-# The login shell ensures Lmod / pyenv / venv-PATH from .bashrc is loaded
-# *before* the per-host hook runs.
+from scitex_agent_container.peer import post_turn
+reply = post_turn("head-mba", "your message")
+# resolves to ssh://mba:18888/v1/turn → ssh + curl on the remote loopback
 ```
 
-The script:
-
-1. (if `state_root` given) `export SCITEX_AGENT_CONTAINER_RUNTIME_DIR=...`
-2. Source `~/.scitex/agent-container/hosts/$(hostname).sh` if it exists (silent skip otherwise)
-3. exec the runner (foreground) or `setsid nohup ... &` (detached) with output redirected to `runner.log`
-
-**Always invoke remote with `bash -l -s` (login shell)** so the user's `.bashrc` loads (Lmod, venv PATH, etc.) before the hook runs. Tested 2026-05-03 on `spartan-bm198`: hook does `module load GCCcore/11.3.0 OpenSSL/1.1; unset SAC_ANTHROPIC_API_KEY` → SDK runner round-trips a turn against the OAuth in `~/.claude/.credentials.json`.
-
-### `SAC_RUNNER_PREFIX` — generic launcher hook
-
-The launch script honors `${SAC_RUNNER_PREFIX:-}` immediately before the runner argv. Per-host hooks can set this to wrap the runner with **anything**:
-
-```bash
-# ~/.scitex/agent-container/hosts/spartan-bm198.hpc.unimelb.edu.au.sh
-# Spartan: re-exec the runner inside an existing SLURM allocation
-module load GCCcore/11.3.0 OpenSSL/1.1 slurm/default
-unset SAC_ANTHROPIC_API_KEY
-if [ -z "$SLURM_JOB_ID" ]; then
-    JOBID=$(squeue --me -h -n head-spartan -o "%i" | head -1)
-    [ -n "$JOBID" ] && export SAC_RUNNER_PREFIX="srun --jobid=$JOBID --overlap"
-fi
-
-# OR: for an apptainer-pinned runner version (any host)
-# export SAC_RUNNER_PREFIX="apptainer exec --bind $HOME/proj:$HOME/proj \"$HOME/scitex-images/sac-0.13.sif\""
-```
-
-This keeps SLURM, apptainer, container-runtime, conda-env-activation, etc. as **user-side concerns** — sac stays generic. The package ships a single env-var honor; users compose their own dispatch. Live-verified 2026-05-03 against `spartan-bm198`: same `sac agents start` command works on plain ssh hosts and Spartan compute nodes simultaneously.
+This works for ssh aliases that aren't DNS-resolvable from the caller
+(e.g. `mba`, `head-spartan`) and survives NAT, while keeping the endpoint
+loopback-only. See [06_http-api.md](06_http-api.md) and
+[07_a2a-protocol.md](07_a2a-protocol.md).

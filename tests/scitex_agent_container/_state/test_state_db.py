@@ -479,7 +479,8 @@ def test_record_instance_stop_returns_false_on_second_call_for_idempotency(
 def test_update_heartbeat_collapses_two_same_second_beats_into_one_row(
     db_path: Path,
 ):
-    # Arrange
+    # Arrange — pin both beats to one ``ts`` via the now_fn seam so the
+    # same-second collapse is deterministic (not a wall-clock coincidence).
     from scitex_agent_container._state.state_db import (
         open_db,
         record_instance_start,
@@ -487,9 +488,14 @@ def test_update_heartbeat_collapses_two_same_second_beats_into_one_row(
     )
 
     iid = record_instance_start("x", host="h")
-    # Act — two beats in the same wall-clock second.
-    update_heartbeat(iid, iter=1, input_tokens=10, output_tokens=20)
-    update_heartbeat(iid, iter=2, input_tokens=30, output_tokens=40)
+    fixed_ts = "2026-05-22T00:00:00Z"
+    # Act
+    update_heartbeat(
+        iid, iter=1, input_tokens=10, output_tokens=20, now_fn=lambda: fixed_ts
+    )
+    update_heartbeat(
+        iid, iter=2, input_tokens=30, output_tokens=40, now_fn=lambda: fixed_ts
+    )
     with open_db() as conn:
         n = conn.execute(
             "SELECT count(*) AS n FROM instance_heartbeats WHERE instance_id=?",
@@ -499,14 +505,10 @@ def test_update_heartbeat_collapses_two_same_second_beats_into_one_row(
     assert n == 1
 
 
-@pytest.mark.parametrize(
-    "column, expected",
-    [("iter", 2), ("input_tokens", 30), ("output_tokens", 40)],
-)
-def test_update_heartbeat_merged_row_advances_to_latest_value(
-    db_path: Path, column: str, expected: int
+def test_update_heartbeat_keeps_two_rows_when_beats_straddle_a_second(
+    db_path: Path,
 ):
-    # Arrange
+    # Arrange — distinct ``ts`` (clock ticked between beats) → no merge.
     from scitex_agent_container._state.state_db import (
         open_db,
         record_instance_start,
@@ -514,16 +516,57 @@ def test_update_heartbeat_merged_row_advances_to_latest_value(
     )
 
     iid = record_instance_start("x", host="h")
-    update_heartbeat(iid, iter=1, input_tokens=10, output_tokens=20)
-    update_heartbeat(iid, iter=2, input_tokens=30, output_tokens=40)
     # Act
+    update_heartbeat(iid, iter=1, now_fn=lambda: "2026-05-22T00:00:00Z")
+    update_heartbeat(iid, iter=2, now_fn=lambda: "2026-05-22T00:00:01Z")
     with open_db() as conn:
-        hb_row = dict(
-            conn.execute(
-                "SELECT * FROM instance_heartbeats WHERE instance_id=?",
-                (iid,),
-            ).fetchone()
-        )
+        n = conn.execute(
+            "SELECT count(*) AS n FROM instance_heartbeats WHERE instance_id=?",
+            (iid,),
+        ).fetchone()["n"]
+    # Assert — two rows; "latest" stays unambiguous via the seq PK.
+    assert n == 2
+
+
+@pytest.mark.parametrize(
+    "column, expected",
+    [("iter", 2), ("input_tokens", 30), ("output_tokens", 40)],
+)
+@pytest.mark.parametrize(
+    "second_ts",
+    ["2026-05-22T00:00:00Z", "2026-05-22T00:00:01Z"],
+    ids=["same-second", "straddle-second"],
+)
+def test_update_heartbeat_latest_row_holds_latest_value(
+    db_path: Path, column: str, expected: int, second_ts: str
+):
+    # Arrange — exercise BOTH the merge path (same ts) and the straddle
+    # path (clock ticked); "latest" must resolve to the iter=2 beat in
+    # either case. ``ts`` is pinned via now_fn so the test is
+    # deterministic instead of racing the wall clock.
+    from scitex_agent_container._state.state_db import (
+        latest_instance_heartbeat,
+        record_instance_start,
+        update_heartbeat,
+    )
+
+    iid = record_instance_start("x", host="h")
+    update_heartbeat(
+        iid,
+        iter=1,
+        input_tokens=10,
+        output_tokens=20,
+        now_fn=lambda: "2026-05-22T00:00:00Z",
+    )
+    update_heartbeat(
+        iid,
+        iter=2,
+        input_tokens=30,
+        output_tokens=40,
+        now_fn=lambda: second_ts,
+    )
+    # Act — latest is MAX(seq), not an arbitrary fetchone().
+    hb_row = latest_instance_heartbeat(iid)
     # Assert
     assert hb_row[column] == expected
 

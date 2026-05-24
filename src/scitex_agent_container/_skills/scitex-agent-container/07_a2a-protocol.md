@@ -40,7 +40,7 @@ kind: Agent
 metadata:
   name: my-agent
 spec:
-  runtime: claude-code
+  runtime: apptainer
   a2a:
     port: 8888
     handler: echo          # echo (default) | claude_cli | exec

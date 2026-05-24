@@ -353,6 +353,56 @@ def test_heartbeat_total_tokens_zero_without_quota(tmp_path: Path) -> None:
     assert hb is not None and hb["total_tokens"] == 0
 
 
+# ---------------------------------------------------------------------------
+# tmp-pressure heartbeat field (Class B bash-wedge instrumentation).
+# The session runner executes in the container, where /tmp is the
+# RAM-backed tmpfs that a heavy background-Bash session can silently
+# fill — surfacing tmp_used_pct on the heartbeat makes that observable.
+# ---------------------------------------------------------------------------
+
+
+def test_tmp_pressure_fields_reports_used_pct_for_real_path(tmp_path: Path) -> None:
+    # Arrange — probe a real filesystem dir (tmp_path) so disk_usage
+    # returns a genuine reading.
+    from scitex_agent_container._runners._session_state import _tmp_pressure_fields
+
+    # Act
+    fields = _tmp_pressure_fields(str(tmp_path))
+    # Assert
+    assert "tmp_used_pct" in fields
+
+
+def test_tmp_pressure_fields_used_pct_is_a_percentage(tmp_path: Path) -> None:
+    # Arrange
+    from scitex_agent_container._runners._session_state import _tmp_pressure_fields
+
+    # Act
+    pct = _tmp_pressure_fields(str(tmp_path))["tmp_used_pct"]
+    # Assert
+    assert 0.0 <= pct <= 100.0
+
+
+def test_tmp_pressure_fields_missing_path_returns_empty_dict(tmp_path: Path) -> None:
+    # Arrange — a path that does not exist must degrade to {} (absent,
+    # not a misleading 0%), so the heartbeat loop never crashes.
+    from scitex_agent_container._runners._session_state import _tmp_pressure_fields
+
+    missing = tmp_path / "does-not-exist"
+    # Act
+    fields = _tmp_pressure_fields(str(missing))
+    # Assert
+    assert fields == {}
+
+
+def test_heartbeat_includes_tmp_used_pct(tmp_path: Path) -> None:
+    # Arrange — the default /tmp probe yields a reading on any Linux runner.
+    runner.write_heartbeat(tmp_path, pid=1, state=runner.STATE_IDLE)
+    # Act
+    hb = runner.read_heartbeat(tmp_path)
+    # Assert
+    assert hb is not None and "tmp_used_pct" in hb
+
+
 def test_heartbeat_includes_total_tokens_from_quota(tmp_path: Path) -> None:
     # Arrange: a ResultMessage usage block accumulated into quota.json.
     runner.accumulate_quota(

@@ -39,8 +39,11 @@ import asyncio
 import json
 import logging
 import os
+import time
 from collections import deque
 from typing import Any
+
+from .._env import getenv as _sac_env
 
 log = logging.getLogger(__name__)
 
@@ -90,6 +93,77 @@ def _should_auto_ack(event: dict[str, Any]) -> bool:
         return False
     if event.get("ack"):
         return False
+    return True
+
+
+# --- Auto-ack rate limiter (belt-and-suspenders loop breaker) -------------
+# Even with the ack-flag loop-guard (``_should_auto_ack``), a future
+# regression in flag propagation could restart an ack-on-ack cycle. This
+# sliding-window cap ensures any such loop self-terminates: once a sender
+# exceeds the budget within the window we stop auto-acking it and log
+# loudly (fail-loud, never a silent drop).
+_AUTO_ACK_RATE_MAX_DEFAULT = 20
+_AUTO_ACK_RATE_WINDOW_DEFAULT = 60.0
+# Per-sender sliding window of auto-ack emission timestamps.
+_auto_ack_window: "dict[str, deque[float]]" = {}
+# Senders currently over budget — latches the loud log to once per trip.
+_auto_ack_tripped: "set[str]" = set()
+
+
+def _auto_ack_rate_limits() -> "tuple[int, float]":
+    """Resolve ``(max_acks, window_seconds)`` for the auto-ack cap.
+
+    Configurable via ``SAC_AUTO_ACK_RATE_MAX`` / ``SAC_AUTO_ACK_RATE_WINDOW_S``
+    (and their ``SCITEX_AGENT_CONTAINER_*`` aliases). A non-positive max
+    disables the cap (explicit opt-out).
+    """
+    raw_max = _sac_env("AUTO_ACK_RATE_MAX")
+    raw_win = _sac_env("AUTO_ACK_RATE_WINDOW_S")
+    try:
+        max_n = int(raw_max) if raw_max is not None else _AUTO_ACK_RATE_MAX_DEFAULT
+    except (TypeError, ValueError):
+        max_n = _AUTO_ACK_RATE_MAX_DEFAULT
+    try:
+        window = (
+            float(raw_win) if raw_win is not None else _AUTO_ACK_RATE_WINDOW_DEFAULT
+        )
+    except (TypeError, ValueError):
+        window = _AUTO_ACK_RATE_WINDOW_DEFAULT
+    return max_n, window
+
+
+def _auto_ack_rate_allow(sender: str, *, now: "float | None" = None) -> bool:
+    """Whether an auto-ack to ``sender`` is within the rate budget.
+
+    Sliding-window cap keyed by sender. Returns ``True`` and records the
+    emission when within budget; returns ``False`` (logging loudly, once
+    per trip) when the cap is exceeded inside the window. After the window
+    clears, emission resumes and the loud-log latch resets so a fresh loop
+    is reported again. ``now`` is injectable for deterministic tests.
+    """
+    max_n, window = _auto_ack_rate_limits()
+    if max_n <= 0:
+        return True
+    ts = time.monotonic() if now is None else now
+    dq = _auto_ack_window.setdefault(sender, deque())
+    cutoff = ts - window
+    while dq and dq[0] < cutoff:
+        dq.popleft()
+    if len(dq) >= max_n:
+        if sender not in _auto_ack_tripped:
+            _auto_ack_tripped.add(sender)
+            log.warning(
+                "sac channel: auto-ack rate cap hit for sender %r "
+                "(%d auto-acks within %.0fs) — suppressing further "
+                "auto-acks to this sender until the window clears. "
+                "Possible ack loop.",
+                sender,
+                len(dq),
+                window,
+            )
+        return False
+    dq.append(ts)
+    _auto_ack_tripped.discard(sender)
     return True
 
 
@@ -323,6 +397,9 @@ async def _push_channel_event(
         and listen_url is not None
         and _auto_ack_enabled()
         and _should_auto_ack(event)
+        # _should_auto_ack guarantees a truthy ``from_agent`` above, so the
+        # short-circuit makes this index safe; the cap is the last gate.
+        and _auto_ack_rate_allow(event["from_agent"])
     ):
         try:
             await _post_auto_ack(

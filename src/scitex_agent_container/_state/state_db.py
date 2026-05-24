@@ -17,28 +17,23 @@ The single-file layout makes backup/sync trivial (one ``cp``) and
 keeps the existing ``actions.db`` table (``attempts``) co-located so
 queries can join across action history and instance lifecycle.
 
-NOTE: The original F-CS11 ``heartbeats`` table (instance-tied time
-series) is renamed to ``instance_heartbeats`` on first open so the
-diary-style ``heartbeats`` (per-agent state ping, no instance_id
-required) can own the canonical name. The rename happens in
-``init_schema`` when an old layout is detected and is idempotent.
+NOTE: The original F-CS11 ``heartbeats`` table is renamed to
+``instance_heartbeats`` on first open (idempotent migration in
+``init_schema``) so the diary-style ``heartbeats`` can own the name.
 
-Large helper groups live in sibling modules:
+Large helper groups live in sibling modules, all re-exported from THIS
+module so ``from ...state_db import X`` imports keep working:
 
-  * :mod:`state_db_export` — export_state / import_state /
-    import_legacy_registry.
+  * :mod:`state_db_export` — export_state / import_state / import_legacy_registry.
   * :mod:`state_db_gc` — gc_dead_instances / _proc_btime.
-  * :mod:`state_db_diary` — record_turn / record_error /
-    record_heartbeat / latest_heartbeats_per_name.
-
-All three are re-exported from THIS module so existing
-``from scitex_agent_container._state.state_db import X`` imports
-keep working.
+  * :mod:`state_db_diary` — record_turn / record_error / record_heartbeat /
+    latest_heartbeats_per_name.
+  * :mod:`state_db_heartbeats` — update_heartbeat / latest_instance_heartbeat.
+  * :mod:`state_db_migrations` — idempotent schema migrations.
 """
 
 from __future__ import annotations
 
-import json
 import os
 import sqlite3
 import uuid
@@ -47,7 +42,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
-from .._env import getenv as _sac_env
+# Re-exported for the 7 modules that ``from ...state_db import
+# _resolve_host`` (claude_session, _node_channel, state_db_export,
+# state_db_gc, _send, send_cmds, _dispatch). The ``instances`` CRUD
+# that used it directly moved to state_db_instances; keep the
+# re-export here so those import sites keep resolving.
+from .state_db_hostname import resolve_host as _resolve_host  # noqa: F401
+from .state_db_migrations import (
+    migrate_instance_heartbeats_add_seq,
+    migrate_instances_add_family_tree_cols,
+    migrate_legacy_heartbeats,
+)
 
 DEFAULT_DB_PATH = Path(
     os.environ.get(
@@ -90,7 +95,16 @@ CREATE TABLE IF NOT EXISTS instances (
     exit_reason         TEXT,
     iter_count          INTEGER DEFAULT 0,
     input_tokens        INTEGER DEFAULT 0,
-    output_tokens       INTEGER DEFAULT 0
+    output_tokens       INTEGER DEFAULT 0,
+    -- Family-tree / cross-host columns (sac-agent-spawn design, Rule
+    -- B/D). ``bound_port`` mirrors ``a2a_port`` for new readers (both
+    -- written together so legacy ``a2a_port`` callers keep working);
+    -- ``remote`` is 1 for a cross-host-dispatched agent; ``spawned_by``
+    -- is the launching identity ("cli"/parent-agent-name) — the lineage
+    -- edge the spawn DAG is reconstructed from.
+    bound_port          INTEGER,
+    remote              INTEGER DEFAULT 0,
+    spawned_by          TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_instances_active
@@ -99,14 +113,20 @@ CREATE INDEX IF NOT EXISTS idx_instances_active
 CREATE INDEX IF NOT EXISTS idx_instances_host
     ON instances(host);
 
+-- ``seq`` (AUTOINCREMENT) gives a total insertion order so "latest
+-- heartbeat" is MAX(seq) — deterministic regardless of ``ts``
+-- (second-resolution) ties. ``UNIQUE(instance_id, ts)`` keeps the
+-- same-second collapse via the ON CONFLICT upsert in update_heartbeat.
+-- See state_db_heartbeats / state_db_migrations for the full rationale.
 CREATE TABLE IF NOT EXISTS instance_heartbeats (
+    seq             INTEGER PRIMARY KEY AUTOINCREMENT,
     instance_id     TEXT NOT NULL REFERENCES instances(id),
     ts              TEXT NOT NULL,
     iter            INTEGER,
     input_tokens    INTEGER,
     output_tokens   INTEGER,
     pane_state      TEXT,
-    PRIMARY KEY (instance_id, ts)
+    UNIQUE (instance_id, ts)
 );
 
 CREATE TABLE IF NOT EXISTS events (
@@ -320,36 +340,6 @@ def _connect(
     return conn
 
 
-def _migrate_legacy_heartbeats(conn: sqlite3.Connection) -> None:
-    """Rename the legacy F-CS11 ``heartbeats`` table → ``instance_heartbeats``.
-
-    Detection: legacy schema has an ``instance_id`` column (NOT NULL,
-    REFERENCES instances). The diary schema has no such column. We
-    only rename when:
-
-      * a table called ``heartbeats`` exists, AND
-      * that table has an ``instance_id`` column, AND
-      * ``instance_heartbeats`` does NOT already exist.
-
-    Idempotent: re-running on an already-migrated DB is a no-op.
-    """
-    existing = {
-        r[0]
-        for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    }
-    if "heartbeats" not in existing:
-        return
-    if "instance_heartbeats" in existing:
-        return
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(heartbeats)").fetchall()}
-    if "instance_id" not in cols:
-        # Already the diary schema (no rename needed).
-        return
-    conn.execute("ALTER TABLE heartbeats RENAME TO instance_heartbeats")
-
-
 def init_schema(db_path: Path | None = None) -> Path:
     """Create state.db with all tables if missing. Idempotent.
 
@@ -357,8 +347,13 @@ def init_schema(db_path: Path | None = None) -> Path:
     """
     path = Path(db_path) if db_path else DEFAULT_DB_PATH
     with _connect(path) as conn:
-        _migrate_legacy_heartbeats(conn)
+        migrate_legacy_heartbeats(conn)
+        migrate_instance_heartbeats_add_seq(conn)
         conn.executescript(_SCHEMA_REGISTRY)
+        # ``executescript`` above creates ``instances`` fresh on a new
+        # DB (with the family-tree columns) but is a no-op on an
+        # existing one; the migration ADD COLUMNs them onto a pre-cols DB.
+        migrate_instances_add_family_tree_cols(conn)
         conn.executescript(_SCHEMA_ATTEMPTS)
         conn.executescript(_SCHEMA_DIARY)
         conn.commit()
@@ -390,170 +385,10 @@ def table_counts(db_path: Path | None = None) -> dict[str, int]:
     return counts
 
 
-def _resolve_host(host: str | None) -> str:
-    """Canonical hostname for state.db writes.
-
-    Resolution chain (F-CS12):
-        1. ``host`` arg (explicit override)
-        2. ``$SAC_HOST`` env var
-        3. ``host.canonical`` from config.yaml
-        4. ``host.aliases[$(hostname -s)]`` from config.yaml
-        5. ``$(hostname -s)`` (or fqdn when fallback=hostname-fqdn)
-    """
-    if host:
-        return host
-    from . import host_config
-
-    # stx-allow: fallback (reason: a malformed config.yaml must not block
-    # state.db writes — degrade to hostname-only resolution.)
-    try:
-        return host_config.load().canonical_host()
-    except Exception:  # stx-allow: fallback (reason: see inline comment)
-        import socket
-
-        return _sac_env("HOST") or socket.gethostname().split(".")[0]
-
-
-def record_instance_start(
-    name: str,
-    *,
-    pid: int | None = None,
-    ppid: int | None = None,
-    screen: str | None = None,
-    workdir: str | None = None,
-    a2a_port: int | None = None,
-    scope: str = "global",
-    host: str | None = None,
-    definition_id: str | None = None,
-    db_path: Path | None = None,
-) -> str:
-    """Insert an ``instances`` row for a freshly-started agent.
-
-    Returns the new ``instance_id`` (uuid7). Also appends a
-    ``kind='start'`` row to ``events``.
-    """
-    instance_id = new_uuid7()
-    started_at = now_iso()
-    canonical_host = _resolve_host(host)
-    with open_db(db_path) as conn:
-        conn.execute(
-            """
-            INSERT INTO instances (
-                id, definition_id, name, host, scope,
-                pid, ppid, screen, workdir, a2a_port, started_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                instance_id,
-                definition_id,
-                name,
-                canonical_host,
-                scope,
-                pid,
-                ppid,
-                screen,
-                workdir,
-                a2a_port,
-                started_at,
-            ),
-        )
-        conn.execute(
-            "INSERT INTO events (ts, instance_id, kind, actor) VALUES (?, ?, 'start', 'sac')",
-            (started_at, instance_id),
-        )
-    return instance_id
-
-
-def record_instance_stop(
-    instance_id: str,
-    *,
-    exit_reason: str = "stopped",
-    db_path: Path | None = None,
-) -> bool:
-    """Mark an instance as ended. Returns True iff a row was updated.
-
-    Idempotent: stopping an already-stopped row is a no-op.
-    """
-    ended_at = now_iso()
-    with open_db(db_path) as conn:
-        cur = conn.execute(
-            "UPDATE instances SET ended_at=?, exit_reason=? "
-            "WHERE id=? AND ended_at IS NULL",
-            (ended_at, exit_reason, instance_id),
-        )
-        if cur.rowcount == 0:
-            return False
-        conn.execute(
-            "INSERT INTO events (ts, instance_id, kind, actor, payload_json) "
-            "VALUES (?, ?, 'stop', 'sac', ?)",
-            (ended_at, instance_id, json.dumps({"exit_reason": exit_reason})),
-        )
-    return True
-
-
-def update_heartbeat(
-    instance_id: str,
-    *,
-    iter: int | None = None,
-    input_tokens: int | None = None,
-    output_tokens: int | None = None,
-    pane_state: str | None = None,
-    db_path: Path | None = None,
-) -> None:
-    """Append an instance-heartbeat row + bump the rolling cache.
-
-    The duplicated state on ``instances`` lets ``sac agent status``
-    answer 'is this agent still doing work?' without a JOIN.
-    """
-    ts = now_iso()
-    with open_db(db_path) as conn:
-        conn.execute(
-            """
-            INSERT INTO instance_heartbeats (
-                instance_id, ts, iter, input_tokens, output_tokens, pane_state
-            )
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(instance_id, ts) DO UPDATE SET
-                iter          = COALESCE(excluded.iter, instance_heartbeats.iter),
-                input_tokens  = COALESCE(excluded.input_tokens, instance_heartbeats.input_tokens),
-                output_tokens = COALESCE(excluded.output_tokens, instance_heartbeats.output_tokens),
-                pane_state    = COALESCE(excluded.pane_state, instance_heartbeats.pane_state)
-            """,
-            (instance_id, ts, iter, input_tokens, output_tokens, pane_state),
-        )
-        conn.execute(
-            """
-            UPDATE instances
-               SET last_heartbeat_at = ?,
-                   iter_count    = COALESCE(?, iter_count),
-                   input_tokens  = COALESCE(?, input_tokens),
-                   output_tokens = COALESCE(?, output_tokens)
-             WHERE id = ?
-            """,
-            (ts, iter, input_tokens, output_tokens, instance_id),
-        )
-
-
-def list_active_instances(
-    host: str | None = None,
-    db_path: Path | None = None,
-) -> list[dict]:
-    """Return every ``ended_at IS NULL`` row, optionally host-filtered."""
-    with open_db(db_path) as conn:
-        if host is None:
-            cur = conn.execute(
-                "SELECT * FROM instances WHERE ended_at IS NULL "
-                "ORDER BY started_at DESC"
-            )
-        else:
-            cur = conn.execute(
-                "SELECT * FROM instances WHERE ended_at IS NULL AND host=? "
-                "ORDER BY started_at DESC",
-                (host,),
-            )
-        return [dict(r) for r in cur.fetchall()]
-
+# ``instances`` lifecycle CRUD (record_instance_start / _stop /
+# list_active_instances) moved to :mod:`state_db_instances` under the
+# per-file line cap; re-exported below so callers keep importing them
+# from :mod:`state_db`.
 
 # Re-export the helpers that used to live in this file but moved
 # into sibling modules under the per-file line cap. Existing callers
@@ -570,12 +405,22 @@ from .state_db_export import (  # noqa: E402,F401
     import_legacy_registry,
     import_state,
 )
-from .state_db_export import (
+from .state_db_export import (  # noqa: E402
     _table_filter_clauses as _table_filter_clauses_impl,
 )
 from .state_db_gc import (  # noqa: E402,F401
     _proc_btime,
     gc_dead_instances,
+)
+from .state_db_heartbeats import (  # noqa: E402,F401
+    latest_instance_heartbeat,
+    update_heartbeat,
+)
+from .state_db_instances import (  # noqa: E402,F401
+    last_known_instance,
+    list_active_instances,
+    record_instance_start,
+    record_instance_stop,
 )
 
 

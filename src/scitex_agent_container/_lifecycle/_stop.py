@@ -157,8 +157,31 @@ def agent_restart(
     runtime_factory: Optional[Callable[[AgentConfig], Any]] = None,
     sleep_fn: Callable[[float], None] = time.sleep,
     handover_mod: Any = None,
+    config_resolver: Optional[Callable[[str], str]] = None,
 ) -> bool:
-    """Restart an agent by name.
+    """Restart an agent by name: resolve spec → stop → settle → start.
+
+    The spec path is resolved with this precedence:
+
+      1. The registry ``instances``/registry row for ``name`` (recorded
+         by a Phase-1-era ``agent_start``), then
+      2. the agent's spec, found via ``config_resolver`` (default
+         :func:`config.resolve_config`) walking the standard discovery
+         chain.
+
+    The spec fallback is the robustness path for **ad-hoc-launched**
+    agents — agents started by a bare runner invocation rather than
+    ``sac agents start`` (so they predate the auto-record and have no
+    registry row). Without it, ``restart`` hard-failed with
+    "not found in registry" for exactly those agents (the Spartan
+    compute-node case, 2026-05-24). The stop leg uses ``force=True`` so
+    a missing/stale registry row never blocks the kill — it mirrors the
+    working manual recipe (``stop --yes`` then ``start --yes``).
+
+    Cross-host routing is the **CLI**'s responsibility
+    (``cli_pkg/lifecycle/_restart.py`` dispatches to the agent's
+    recorded host before reaching here, like ``stop`` does). By the
+    time control reaches this function the target is local.
 
     Args:
         name: Agent name.
@@ -167,23 +190,67 @@ def agent_restart(
         sleep_fn: Real sleep (default ``time.sleep``).
         handover_mod: Real handover collaborator (default ``None``
             resolves to the real module).
+        config_resolver: Real name→spec-path resolver (default
+            :func:`config.resolve_config`). Injected for tests so the
+            no-registry-row fallback can be exercised against a real
+            on-disk spec without monkeypatching internals.
+
+    Raises:
+        RuntimeError: When ``name`` has neither a registry row NOR a
+            resolvable spec — a genuinely unknown agent.
     """
     # Lazy import breaks the ``_start`` <-> ``_stop`` cycle.
     from ._start import agent_start
 
     registry = registry or Registry()
     entry = registry.get(name)
-    if entry is None:
-        raise RuntimeError(f"Agent '{name}' not found in registry")
 
-    config_path = entry["config"]
+    if entry is not None:
+        config_path = entry["config"]
+    else:
+        # No registry row (ad-hoc / pre-autorecord launch). Resolve the
+        # spec from the standard discovery chain rather than hard-failing.
+        resolver = config_resolver
+        if resolver is None:
+            from ..config import resolve_config as resolver
+        # stx-allow: fallback (reason: translate a FileNotFoundError from the
+        # resolver into a single clear "neither registry row nor spec" error;
+        # both lookups genuinely failed, so this is fail-loud, not a silent
+        # default-substitution)
+        try:
+            config_path = resolver(name)
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                f"Agent '{name}' not found in registry and no spec could be "
+                f"resolved by name ({exc}). Pass a spec path, or start the "
+                f"agent once via 'sac agents start' so a registry row exists."
+            ) from exc
+
+    # force=True so a missing/stale registry row never blocks the kill —
+    # this is what makes restart == the manual stop+start recipe even for
+    # ad-hoc-launched agents with no row.
     agent_stop(
         name,
         registry,
+        force=True,
         runtime_factory=runtime_factory,
         handover_mod=handover_mod,
     )
     sleep_fn(2)
+    # Clear BOTH the persisted session_id AND session_id_history before the
+    # restart. A plain ``agent_restart`` previously called ``agent_start``
+    # WITHOUT force=True (so no session reset ran at all), and the
+    # ``--force`` path itself only cleared ``session_id`` — leaving a dead
+    # uuid in the append-only history that the runner's resume fallback
+    # RE-RESUMED and RE-CRASHED. That is why ``sac agents restart`` could
+    # not recover a DEAD session (clew/neurovista, 2026-05-24): the manual
+    # recovery had to clear both and back them up. Doing it here makes a
+    # plain restart self-recovering regardless of the start path's force
+    # flag. ``_clear_persisted_session_id`` backs both up to
+    # ``session_id_history.dead-<ts>`` and is a no-op on a clean state dir.
+    from ._session_reset import _clear_persisted_session_id
+
+    _clear_persisted_session_id(name)
     return agent_start(
         config_path,
         registry,

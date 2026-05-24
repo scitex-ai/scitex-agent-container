@@ -299,9 +299,9 @@ def _build_app(ctx: _ServerCtx) -> Starlette:
                     row_id = entry["id"]
                     event = entry["event"]
                     data = json.dumps(event, ensure_ascii=False)
-                    yield (
-                        f"id: {row_id}\nevent: message\ndata: {data}\n\n"
-                    ).encode("utf-8")
+                    yield (f"id: {row_id}\nevent: message\ndata: {data}\n\n").encode(
+                        "utf-8"
+                    )
                     mark_delivered([row_id])
 
                 while True:
@@ -324,9 +324,7 @@ def _build_app(ctx: _ServerCtx) -> Starlette:
                         # path that did NOT persist (lifecycle event
                         # fan-out, future ACL-reject notice, …).
                         # Deliver it but skip the marker.
-                        yield f"event: message\ndata: {data}\n\n".encode(
-                            "utf-8"
-                        )
+                        yield f"event: message\ndata: {data}\n\n".encode("utf-8")
             finally:
                 await ctx.inbox.unsubscribe(name, queue)
 
@@ -452,6 +450,13 @@ async def _publish_channel_event(
         in_reply_to=sac_meta.get("in_reply_to"),
         priority=str(sac_meta.get("priority", "normal")),
         requires_reply=bool(sac_meta.get("requires_reply", False)),
+        # Propagate the ack flag so an auto-ack arriving via this per-agent
+        # A2A path is minted with top-level ``ack=True`` and the receiver's
+        # ``_should_auto_ack`` loop-guard recognises it. Without this the
+        # flag was silently dropped (mint_event default ``ack=False``) and
+        # two auto-ack adapters ping-ponged forever. Mirrors the host
+        # control-plane path in ``_listen/server.py``.
+        ack=bool(sac_meta.get("ack", False)),
     )
 
     # WI-1 durability: persist BEFORE publishing. If state.db is
@@ -548,7 +553,7 @@ def serve(
     agent_yamls: list[Path],
     *,
     host: str = "127.0.0.1",
-    port: int = 8888,
+    port: int = 8888,  # stx-allow: STX-NL001
     handler: str = "echo",
 ) -> None:
     """Run the A2A HTTP server in the foreground via uvicorn.

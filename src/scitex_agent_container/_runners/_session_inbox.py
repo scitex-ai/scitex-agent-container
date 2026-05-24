@@ -33,6 +33,23 @@ class TurnEnvelope:
     ``read`` / ``responded``) the runner writes into the
     ``state.db.turns`` diary table. ``None`` means the diary is not
     tracking this envelope (legacy / test-only producers).
+
+    ``dispatch_id`` is the SENDER-minted dispatch-ledger id (see
+    :mod:`scitex_agent_container._state.dispatch_ledger`). The sender
+    stamps it onto the ``/v1/turn`` POST body; the inbound HTTP handler
+    threads it here so the receiver side can correlate this turn back to
+    the originating dispatch row. ``None`` when the dispatch was not
+    minted through the ledger (legacy / test-only producers).
+
+    ``from_agent`` is the REQUESTER identity — the peer (any node, not a
+    special-cased lead) that dispatched this turn. The sender stamps it
+    onto the ``/v1/turn`` POST body (``peer.post_turn``) or it rides in
+    via the channel wake path's body; the inbound HTTP handler threads it
+    here so the Stop hook can PUSH a completion report back to whoever
+    asked. ``None`` for a mission boot turn or a legacy caller that does
+    not declare a requester — the Stop hook then has nobody to address
+    and the push is skipped (not an error: a mission turn answers to no
+    peer).
     """
 
     text: str
@@ -40,6 +57,8 @@ class TurnEnvelope:
     exit_after: bool = False
     session_id: str | None = None
     turn_id: str | None = None
+    dispatch_id: str | None = None
+    from_agent: str | None = None
 
 
 @dataclass

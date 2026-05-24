@@ -69,12 +69,25 @@ def peer_post_turn(
         sac peer post-turn head-mba "..." --exit-after
         sac peer post-turn worker "ping" --json | jq -r .text
     """
-    from scitex_agent_container._network.peer import PeerError, post_turn
+    from scitex_agent_container._network.peer import (
+        PeerError,
+        PeerTimeoutPending,
+        post_turn,
+    )
 
     try:
         text_out = post_turn(
             agent_name, text, exit_after=exit_after, timeout_s=timeout_s
         )
+    except PeerTimeoutPending as pending:
+        # A 504-wait-elapsed is NOT a failure — the turn is likely still
+        # running on the peer. Surface the neutral interpretation and
+        # exit 0 so callers don't treat in-progress as an error.
+        if as_json:
+            click.echo(json.dumps(pending.raw_body or {"status": pending.status}))
+        else:
+            click.echo(pending.interpretation)
+        sys.exit(0)
     except PeerError as exc:
         click.echo(f"peer error: {exc}", err=True)
         sys.exit(2)

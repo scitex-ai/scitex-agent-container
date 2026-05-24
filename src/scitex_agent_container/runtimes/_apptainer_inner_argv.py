@@ -21,6 +21,23 @@ RUNNER_MODULE_PROXY = "scitex_agent_container._runners.a2a_proxy"
 
 _TINI_PREFIX = ["/usr/bin/tini", "-s", "--", "python3", "-m"]
 
+# Unconditional supervisor-restart floor for ``kind: Agent`` runners.
+# The session runner auto-resumes the persisted session_id; when that
+# conversation no longer exists in the container's ~/.claude/projects/
+# store (overlay redeployed on restart, or aged out after long idle),
+# ``claude --resume <dead-id>`` exits 1 and EVERY turn crashes — a
+# false-healthy "zombie" (heartbeat + /health keep answering). The
+# runner's history-walk recovery (_resume_candidate steps to older ids,
+# then falls back to a fresh session) plus the supervisor loop only run
+# when ``--max-restarts > 0``; the CLI default is 0, so the recovery is
+# dead code for the common ``restart.policy: never`` agent. We pass a
+# floor of restarts so the recovery path is always live — re-resuming a
+# provably-dead id can never succeed, and the history-walk is the only
+# escape. An explicit on-failure/always policy with a higher
+# ``max_retries`` raises the cap above this floor. Auth failures stay
+# terminal regardless (the supervisor short-circuits them).
+_SUPERVISOR_RESTART_FLOOR = 3
+
 
 def _format_shell_steps(cmds: list) -> list[str]:
     # list[StartupCommand] -> shell statement list. `set -e` so any
@@ -70,6 +87,41 @@ def build_inner_argv(config: "AgentConfig", *, one_shot: bool = False) -> list[s
     return ["/bin/bash", "-lc", inline]
 
 
+def _resolve_max_restarts(config: "AgentConfig") -> int:
+    """Supervisor restart cap for the session runner.
+
+    Always at least :data:`_SUPERVISOR_RESTART_FLOOR` so the runner's
+    resume-recovery (history-walk + fresh-session fallback) is live even
+    for ``restart.policy: never`` agents. An explicit ``on-failure`` /
+    ``always`` policy whose ``max_retries`` exceeds the floor raises the
+    cap; ``never`` never lowers it below the floor (the floor is about
+    *resume recovery*, not the operator's crash-restart policy — a dead
+    session id can only be escaped by re-opening the client).
+    """
+    restart = getattr(config, "restart", None)
+    policy = str(getattr(restart, "policy", "never") or "never")
+    if policy in ("on-failure", "always"):
+        max_retries = int(getattr(restart, "max_retries", 0) or 0)
+        return max(max_retries, _SUPERVISOR_RESTART_FLOOR)
+    return _SUPERVISOR_RESTART_FLOOR
+
+
+def _resolve_restart_backoff_s(config: "AgentConfig") -> float:
+    """Initial supervisor backoff seconds (doubles each retry).
+
+    Uses ``restart.backoff_initial`` when an explicit on-failure/always
+    policy sets one; otherwise the runner CLI default (1.0s) keeps the
+    floor-driven resume recovery fast.
+    """
+    restart = getattr(config, "restart", None)
+    policy = str(getattr(restart, "policy", "never") or "never")
+    if policy in ("on-failure", "always"):
+        backoff = getattr(restart, "backoff_initial", None)
+        if isinstance(backoff, (int, float)) and backoff > 0:
+            return float(backoff)
+    return 1.0
+
+
 def _agent_runner_argv(config: "AgentConfig", *, one_shot: bool) -> list[str]:
     """Argv tail for ``kind: Agent`` (claude_session)."""
     runner_argv: list[str] = [
@@ -77,6 +129,14 @@ def _agent_runner_argv(config: "AgentConfig", *, one_shot: bool) -> list[str]:
         config.name,
         "--state-root",
         "/state",
+        # Keep the supervisor / resume-recovery path live (see
+        # _SUPERVISOR_RESTART_FLOOR). The runner CLI defaults to 0
+        # (no restart), which silently disables recovery for every
+        # restart.policy: never agent.
+        "--max-restarts",
+        str(_resolve_max_restarts(config)),
+        "--restart-backoff-s",
+        str(_resolve_restart_backoff_s(config)),
     ]
     # startup_prompts -> claude SDK mission via --mission. NO fallback
     # from startup_commands; that field is shell-exec only (see

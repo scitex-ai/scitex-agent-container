@@ -40,6 +40,36 @@ This means:
   document in CHANGELOG.
 - Removing a field is a breaking change.
 
+## tmp-pressure field (`sdk_session.heartbeat.tmp_used_pct`)
+
+For `runtime: apptainer` (claude-session) agents the per-beat heartbeat
+carries `tmp_used_pct` — the fill percentage of the container's `/tmp`.
+Surfaces as `sdk_session.heartbeat.tmp_used_pct` in `sac agents status
+--json` (the status surface echoes the heartbeat dict verbatim).
+
+Why it exists: inside the container `/tmp` is the RAM-backed tmpfs
+(apptainer `--containall` default, unbounded by sac). A heavy
+`run_in_background` Bash session writes per-command + task-output files
+there; once it fills, every shell command that needs a temp file fails
+with exit 1 + empty stdout — the silent "Class B" bash wedge (2026-05-22
+diagnosis §3). Watching `tmp_used_pct` climb toward 100 turns that
+silent failure into an observable precursor.
+
+Best-effort: the field is **absent** (not `0`) when the probe fails
+(e.g. read on the host, where there is no container `/tmp` tmpfs). Absent
+≠ 0% — a reader distinguishes "not probed" from "empty tmpfs".
+
+### Deferred: bounding the tmpfs (not in this change)
+
+The companion mitigation — capping `/tmp` so exhaustion surfaces as a
+loud `No space left on device` rather than a silent exit-1 — was
+**deliberately deferred**. It requires threading a
+`--mount type=tmpfs,…,size=…` (or sized `--writable-tmpfs`) into the
+apptainer raw_args, which touches the iso-flags / relaxed-vs-hardened
+launch path and risks regressing the live `--containall` behaviour.
+Instrumentation (this field) is the cheap, non-invasive first half; the
+bounding is tracked separately so it can be reviewed on its own.
+
 ## See also
 
 - README "Rich Status" table — full field list with types and meanings.

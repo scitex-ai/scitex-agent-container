@@ -6,7 +6,11 @@ from __future__ import annotations
 
 import pytest
 
-from scitex_agent_container.a2a._inbox_bus import Broker, mint_event
+from scitex_agent_container.a2a._inbox_bus import (
+    Broker,
+    mint_deny_notification,
+    mint_event,
+)
 
 # ---------------------------------------------------------------------------
 # Broker.publish / subscribe behaviour
@@ -336,3 +340,121 @@ def test_mint_event_defaults_ack_to_false() -> None:
     ack = event["ack"]
     # Assert
     assert ack is False
+
+
+# ---------------------------------------------------------------------------
+# mint_event: ``dispatch_id`` rides on the event so the channel wake path
+# can thread it onto the woken turn for requester-completion correlation.
+# ---------------------------------------------------------------------------
+
+
+def test_mint_event_carries_dispatch_id_when_provided() -> None:
+    # Arrange
+    event = mint_event("alice", content="hi", from_agent="bob", dispatch_id="d-123")
+    # Act
+    dispatch_id = event["dispatch_id"]
+    # Assert
+    assert dispatch_id == "d-123"
+
+
+def test_mint_event_omits_dispatch_id_when_absent() -> None:
+    # Arrange
+    event = mint_event("alice", content="hi", from_agent="bob")
+    # Act
+    present = "dispatch_id" in event
+    # Assert
+    assert present is False
+
+
+# ---------------------------------------------------------------------------
+# mint_deny_notification — receiver-side ACL-deny notice (comms item D).
+# Shape contract: marked ``kind="denied_attempt"``, empty content,
+# from/to/reason carried, no message body leak.
+# ---------------------------------------------------------------------------
+
+
+def test_mint_deny_notification_marks_kind_denied_attempt() -> None:
+    # Arrange
+    event = mint_deny_notification(
+        target="alice", from_agent="mallory", reason="cross-group"
+    )
+    # Act
+    kind = event.get("kind")
+    # Assert
+    assert kind == "denied_attempt"
+
+
+def test_mint_deny_notification_carries_from_agent() -> None:
+    # Arrange
+    event = mint_deny_notification(
+        target="alice",
+        from_agent="mallory",
+        reason="cross-group: mallory may not address alice",
+    )
+    # Act
+    from_agent = event["from_agent"]
+    # Assert
+    assert from_agent == "mallory"
+
+
+def test_mint_deny_notification_carries_to_agent() -> None:
+    # Arrange
+    event = mint_deny_notification(
+        target="alice",
+        from_agent="mallory",
+        reason="cross-group: mallory may not address alice",
+    )
+    # Act
+    to_agent = event["to_agent"]
+    # Assert
+    assert to_agent == "alice"
+
+
+def test_mint_deny_notification_carries_deny_reason_verbatim() -> None:
+    # Arrange
+    event = mint_deny_notification(
+        target="alice",
+        from_agent="mallory",
+        reason="cross-group: mallory may not address alice",
+    )
+    # Act
+    reason = event["extra"]["deny_reason"]
+    # Assert
+    assert reason == "cross-group: mallory may not address alice"
+
+
+def test_mint_deny_notification_has_empty_content() -> None:
+    """Body must NEVER leak — only attempt metadata."""
+    # Arrange
+    event = mint_deny_notification(
+        target="alice", from_agent="mallory", reason="cross-group"
+    )
+    # Act
+    content = event.get("content", None)
+    # Assert
+    assert content == ""
+
+
+def test_mint_deny_notification_records_unknown_when_no_sender_identity() -> None:
+    """The 'no identity at all' deny path: receiver gets ``unknown`` —
+    that's the only honest answer, never a fabricated name.
+    """
+    # Arrange
+    event = mint_deny_notification(
+        target="alice", from_agent=None, reason="no authenticated identity"
+    )
+    # Act
+    from_agent = event["from_agent"]
+    # Assert
+    assert from_agent == "unknown"
+
+
+def test_mint_deny_notification_includes_timestamp() -> None:
+    # Arrange
+    event = mint_deny_notification(
+        target="alice", from_agent="mallory", reason="cross-group"
+    )
+    # Act
+    ts = event.get("ts")
+    # Assert
+    assert isinstance(ts, float) and ts > 0
