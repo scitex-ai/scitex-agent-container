@@ -14,6 +14,29 @@ from ..config import AgentConfig, load_config
 from ._runtime_select import _fallback_workdir, _get_runtime
 
 
+def _resolve_account(config: AgentConfig | None) -> str:
+    """Resolve the agent's effective Anthropic-account label.
+
+    Surfaces which account the agent authenticates as (operator request
+    4581) so the operator can see which agents share one account — and
+    thus one server-side rate limit. Mirrors the runtime auth precedence
+    (agent ``spec.env`` override → host shared OAuth → fallback). See
+    ``_account.agent_account.resolve_agent_account_label``.
+
+    Tolerant: a missing config or any resolver hiccup maps to
+    ``"unknown"`` so status never fails on account lookup.
+    """
+    # stx-allow: fallback (reason: status output must never crash on an
+    # account-resolution hiccup; ``"unknown"`` is the right degraded UX.)
+    try:
+        from .._account.agent_account import resolve_agent_account_label
+
+        env = config.env if config is not None else None
+        return resolve_agent_account_label(env)
+    except Exception:  # stx-allow: fallback (reason: see inline comment)
+        return "unknown"
+
+
 def _remote_instance_status(name: str) -> dict | None:
     """Build a status dict from the active ``instances`` row for ``name``.
 
@@ -51,6 +74,9 @@ def _remote_instance_status(name: str) -> dict | None:
             "status": "running",
             "model": "unknown",
             "runtime": "unknown",
+            # Cross-host agent: its credentials live on the remote host,
+            # not resolvable from here. Keep the key for shape parity.
+            "account": "unknown",
             "host": row.get("host", "") or "",
             "a2a_port": row.get("a2a_port"),
             "bound_port": bound,
@@ -107,6 +133,10 @@ def agent_status(
         "status": "running" if running else "stopped",
         "model": config.model if config else "unknown",
         "runtime": config.runtime if config else "unknown",
+        # Which Anthropic account this agent authenticates as (operator
+        # request 4581). Agents sharing one label share one server-side
+        # rate limit. Resolved from the agent's effective auth source.
+        "account": _resolve_account(config),
     }
     # ``config.remote`` was deleted in WI-6; spec.host (host pinning)
     # is the v3 equivalent and is recorded in state.db's ``instances``

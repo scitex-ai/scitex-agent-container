@@ -31,6 +31,30 @@ def _safe_port_for(name: str) -> int | None:
         return None
 
 
+def _safe_account_for(cfg) -> str:
+    """Resolve the agent's effective Anthropic-account label.
+
+    Surfaces which account the agent authenticates as (operator request
+    4581) so the operator can spot agents sharing one account — and thus
+    one server-side rate limit. Resolution mirrors the runtime auth
+    precedence: agent ``spec.env`` override → host shared OAuth identity
+    → ``default``/``unknown`` fallback. See
+    ``_account.agent_account.resolve_agent_account_label`` for the rule.
+
+    Tolerant: a missing config or any resolver hiccup maps to
+    ``"unknown"`` so the list command never crashes on account lookup.
+    """
+    # stx-allow: fallback (reason: list output must never crash on an
+    # account-resolution hiccup; ``"unknown"`` cell is the right UX.)
+    try:
+        from ..._account.agent_account import resolve_agent_account_label
+
+        env = getattr(cfg, "env", None) if cfg is not None else None
+        return resolve_agent_account_label(env)
+    except Exception:  # stx-allow: fallback (reason: see inline comment)
+        return "unknown"
+
+
 def _probe_local(cfg) -> bool | None:
     """Probe an agent's liveness via ContainerRuntime.
 
@@ -240,6 +264,9 @@ def get_agent_list_data(
             "host": host_label,
             "path": spec_path,
             "a2a_port": a2a_port,
+            # Which Anthropic account this agent authenticates as.
+            # Agents sharing one label share one server-side rate limit.
+            "account": _safe_account_for(cfg),
         }
         if errors:
             row["validation_errors"] = errors
@@ -300,6 +327,7 @@ def get_agent_list_data(
             "host": "local",
             "path": str(spec_path),
             "a2a_port": _safe_port_for(name),
+            "account": _safe_account_for(cfg),
         }
         if errors:
             row["validation_errors"] = errors
@@ -368,10 +396,16 @@ def print_agent_list(
         return
 
     table = Table(title="Agents")
-    table.add_column("Name", style="bold")
+    # ``no_wrap`` keeps the agent name (the primary identifier) intact:
+    # rich shrinks the fold-able Account/Path columns instead of
+    # ellipsising the name when the terminal is narrow.
+    table.add_column("Name", style="bold", no_wrap=True)
     table.add_column("Status")
     table.add_column("YAML")
     table.add_column("Host")
+    # Account labels (e.g. ``<name> (<email>)``) can be long; fold within
+    # the cell rather than stealing width from the name column.
+    table.add_column("Account", overflow="fold")
     table.add_column("Path", overflow="fold")
     table.add_column("Started")
     cmap = {
@@ -392,11 +426,13 @@ def print_agent_list(
             else "[green]✓[/green]"
         )
         started = row["started_at"] if row["started_at"] not in ("-", "?") else "—"
+        account_cell = row.get("account") or "—"
         table.add_row(
             row["name"],
             f"[{col}]{row['status']}[/{col}]",
             yaml_cell,
             host_cell,
+            account_cell,
             row.get("path") or "—",
             started,
         )
