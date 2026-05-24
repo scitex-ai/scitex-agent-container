@@ -73,18 +73,41 @@ def resolve_peer_url(agent_name: str) -> str:
             if inst_host and not dest_host:
                 dest_host = inst_host
     if a2a_port is None:
-        if _yaml_port_is_auto(yaml_path):
-            raise PeerError(
-                f"agent {agent_name!r} has port: auto and no bound port "
-                "recorded in registry; is the agent running?"
-            )
-        raise PeerError(
-            f"agent {agent_name!r} has no spec.a2a.port — add a port to "
-            "its YAML to enable inbound /v1/turn"
+        # FAIL LOUD (#192): no live endpoint resolved. Don't raise a bare
+        # "is the agent running?" — name the last-known host + timestamp +
+        # locality from the cross-host registry, and explicitly refuse to
+        # assume local.
+        from ._peer_faillloud import raise_unresolvable_instance
+
+        raise_unresolvable_instance(
+            agent_name, port_is_auto=_yaml_port_is_auto(yaml_path)
         )
     if dest_host and not _is_local_host(dest_host):
         # Tunnel via ssh — agent's a2a.host can stay loopback (default).
         return f"ssh://{dest_host}:{a2a_port}/v1/turn"
+    # About to resolve LOCAL (spec.host empty or pointing at this machine).
+    # Before trusting that, check the cross-host registry for a FRESH
+    # remote=True instance row that contradicts the local resolution — the
+    # #192 unbreakable wrong state (a stale local-allocator port made the
+    # resolver land on 127.0.0.1 while the agent was actually running on
+    # another host). If one exists, FAIL LOUD rather than silently send to
+    # the wrong endpoint.
+    from ._peer_faillloud import detect_contradicting_remote_instance
+
+    contradiction = detect_contradicting_remote_instance(
+        agent_name, resolved_local=True
+    )
+    if contradiction is not None:
+        c_host = contradiction.get("host") or "<unknown-host>"
+        c_port = contradiction.get("bound_port") or contradiction.get("a2a_port")
+        raise PeerError(
+            f"agent {agent_name!r}: local resolution yielded "
+            f"http://{a2a_host or '127.0.0.1'}:{a2a_port}, but the cross-host "
+            f"registry holds a live remote=True instance on host {c_host!r} "
+            f"(bound_port={c_port}). Refusing to send to a stale local "
+            f"endpoint. Reach it via the holding host, or stop the stale "
+            f"local row if the remote one is wrong."
+        )
     # Local agent (spec.host empty or pointing at this machine).
     host = a2a_host or "127.0.0.1"
     return f"http://{host}:{a2a_port}/v1/turn"
