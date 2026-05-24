@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -366,11 +367,33 @@ async def run_conversation(
                     or extract_dead_session_id(enriched)
                     or read_session_id(state_dir)
                 )
+                # INFORMATIVE (#192, Part B #3): before the last-resort fresh
+                # start, enumerate the conversations that ARE resumable for
+                # this agent and surface them — both to the log (LOUD) and to
+                # session.jsonl, so the operator can `sac agents send --resume
+                # <chosen>` / restart with a chosen id rather than only ever
+                # getting the silent fresh start. The fresh start below is the
+                # documented LAST RESORT for the autonomous runner (it cannot
+                # prompt interactively); the operator-facing CLI path
+                # (`agents start --resume <uuid>`) is where the choice is made
+                # synchronously (see cli_pkg/lifecycle/_resume_preflight.py).
+                from ._session_candidates import (
+                    format_candidates,
+                    list_session_candidates,
+                )
+
+                candidates = list_session_candidates(os.getcwd())
+                candidate_listing = format_candidates(candidates)
                 logger.warning(
-                    "claude-session DEAD SESSION for %s: resume id %s is gone; "
-                    "discarding it from session_id + history and starting FRESH",
+                    "claude-session DEAD SESSION for %s: resume id %s is gone. "
+                    "Resumable conversations for this agent:\n%s\n"
+                    "Last resort: starting a FRESH session (resume=None). To "
+                    "resume a specific one instead, restart with "
+                    "`sac agents start %s --resume <session-id>`.",
                     name,
                     dead_id,
+                    candidate_listing,
+                    name,
                 )
                 if dead_id:
                     discard_dead_session(state_dir, dead_id)
@@ -397,6 +420,14 @@ async def run_conversation(
                         "type": "supervisor",
                         "event": "dead-session-fresh-start",
                         "discarded_session_id": dead_id,
+                        "resumable_candidates": [
+                            {
+                                "session_id": c.session_id,
+                                "mtime_iso": c.mtime_iso,
+                                "first_message": c.first_message,
+                            }
+                            for c in candidates
+                        ],
                     },
                 )
                 dead_session_recoveries += 1
