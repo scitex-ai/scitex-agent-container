@@ -1038,7 +1038,11 @@ def test_agent_restart_calls_runtime_stop_then_start(
 
 
 def test_agent_restart_unknown_raises(tmp_path: Path, registry: Registry) -> None:
-    # Arrange (empty registry).
+    # Arrange — empty registry AND a resolver that finds no spec (a
+    # genuinely unknown agent): both lookups must fail to raise.
+    def _no_spec(_name: str) -> str:
+        raise FileNotFoundError("ghost: no spec on the discovery chain")
+
     # Act
     call = lambda: lc.agent_restart(  # noqa: E731
         "ghost",
@@ -1046,10 +1050,53 @@ def test_agent_restart_unknown_raises(tmp_path: Path, registry: Registry) -> Non
         runtime_factory=lambda _c: FakeRuntime(),
         sleep_fn=_no_sleep,
         handover_mod=FakeHandover(),
+        config_resolver=_no_spec,
     )
     # Assert
     with pytest.raises(RuntimeError, match="not found"):
         call()
+
+
+def test_agent_restart_no_row_falls_back_to_spec_and_starts(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange — NO registry row for "alpha" (ad-hoc / pre-autorecord
+    # launch); a resolver returns the real on-disk spec path so restart
+    # falls back to the spec instead of hard-failing "not found".
+    spec = _write_spec(tmp_path)
+    runtime = FakeRuntime(start_result=True)
+    # Act
+    ok = lc.agent_restart(
+        "alpha",
+        registry=registry,
+        runtime_factory=lambda _c: runtime,
+        sleep_fn=_no_sleep,
+        handover_mod=FakeHandover(),
+        config_resolver=lambda _name: str(spec),
+    )
+    # Assert — the spec-resolved start ran (fallback path reached the runtime).
+    assert ok is True and len(runtime.start_calls) == 1
+
+
+def test_agent_restart_no_row_force_stops_before_start(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange — no registry row; a runtime whose stop() raises. The
+    # fallback's force=True stop must swallow that and still reach start.
+    spec = _write_spec(tmp_path)
+    runtime = FakeRuntime(start_result=True)
+    runtime.stop_should_raise = RuntimeError("session already gone")
+    # Act
+    ok = lc.agent_restart(
+        "alpha",
+        registry=registry,
+        runtime_factory=lambda _c: runtime,
+        sleep_fn=_no_sleep,
+        handover_mod=FakeHandover(),
+        config_resolver=lambda _name: str(spec),
+    )
+    # Assert — force-stop tolerated the dead session and start still ran.
+    assert ok is True and len(runtime.start_calls) == 1
 
 
 # ---------------------------------------------------------------------------
