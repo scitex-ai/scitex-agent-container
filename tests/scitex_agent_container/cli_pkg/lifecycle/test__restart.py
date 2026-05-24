@@ -430,3 +430,123 @@ def test_no_row_agent_restarts_locally_without_ssh(cross_host_state_db, ssh_shim
         result = runner.invoke(restart, ["solo", "-y"])
     # Assert — local path taken (agent_restart called), no ssh dispatched.
     assert called == ["solo"] and _ssh_invocations(ssh_shim) == []
+
+
+def test_local_restart_json_envelope_marks_not_dispatched(
+    cross_host_state_db, ssh_shim
+):
+    import json as _json
+
+    # Arrange — no row; local restart with --json. agent_restart no-op.
+    runner = CliRunner()
+    # Act
+    with _swap("agent_restart", lambda _name: None):
+        result = runner.invoke(restart, ["solo", "-y", "--json"])
+    envelope = _json.loads(result.output.strip().splitlines()[-1])
+    # Assert — JSON envelope reports the local (non-dispatched) restart.
+    assert envelope.get("dispatched") is False and envelope.get("restarted") is True
+
+
+def test_local_restart_failure_json_envelope_carries_error(
+    cross_host_state_db, ssh_shim
+):
+    import json as _json
+
+    # Arrange — local restart raises; --json must surface the error.
+    runner = CliRunner()
+    # Act
+    with _swap("agent_restart", _boom):
+        result = runner.invoke(restart, ["solo", "-y", "--json"])
+    envelope = _json.loads(result.output.strip().splitlines()[-1])
+    # Assert
+    assert "boom" in envelope.get("error", "")
+
+
+# ---------------------------------------------------------------------------
+# Cross-host dispatch error branches: a remote node that exits non-zero, or
+# returns non-JSON stdout, must surface a clear RuntimeError (exit 1) — no
+# silent fallback. Real fake-ssh shims drive each branch.
+# ---------------------------------------------------------------------------
+
+
+def _install_ssh_shim(bin_dir, *, rc: int, stdout: str):
+    """Write a PATH-prepended fake ssh emitting ``stdout`` and exiting ``rc``."""
+    import json
+    import sys
+
+    bin_dir.mkdir(exist_ok=True)
+    script = bin_dir / "ssh"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        f"sys.stdout.write({json.dumps(stdout)})\n"
+        f"sys.exit({rc})\n"
+    )
+    script.chmod(0o755)
+    saved_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = f"{bin_dir}{os.pathsep}{saved_path}"
+    return saved_path
+
+
+@pytest.fixture
+def ssh_shim_rc1(tmp_path):
+    """Fake ssh that exits non-zero (remote restart failed)."""
+    bin_dir = tmp_path / "_shim_rc1"
+    saved_path = _install_ssh_shim(bin_dir, rc=1, stdout="remote boom")
+    try:
+        yield bin_dir
+    finally:
+        os.environ["PATH"] = saved_path
+
+
+@pytest.fixture
+def ssh_shim_nonjson(tmp_path):
+    """Fake ssh that exits zero but emits non-JSON stdout (peer too old)."""
+    bin_dir = tmp_path / "_shim_nonjson"
+    saved_path = _install_ssh_shim(bin_dir, rc=0, stdout="not json at all")
+    try:
+        yield bin_dir
+    finally:
+        os.environ["PATH"] = saved_path
+
+
+def test_cross_host_restart_remote_failure_exits_one(remote_row_for_zeta, ssh_shim_rc1):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(restart, ["zeta", "-y"])
+    # Assert — remote rc=1 surfaces as a local exit-1, not a silent pass.
+    assert result.exit_code == 1
+
+
+def test_cross_host_restart_remote_failure_reports_peer(
+    remote_row_for_zeta, ssh_shim_rc1
+):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(restart, ["zeta", "-y"])
+    # Assert — the failure message names the peer node.
+    assert "peer-x" in result.output
+
+
+def test_cross_host_restart_nonjson_stdout_exits_one(
+    remote_row_for_zeta, ssh_shim_nonjson
+):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(restart, ["zeta", "-y"])
+    # Assert — non-JSON peer stdout is a hard error, not a silent fallback.
+    assert result.exit_code == 1
+
+
+def test_cross_host_restart_nonjson_stdout_reports_non_json(
+    remote_row_for_zeta, ssh_shim_nonjson
+):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(restart, ["zeta", "-y"])
+    # Assert
+    assert "non-JSON" in result.output

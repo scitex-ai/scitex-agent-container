@@ -1099,6 +1099,28 @@ def test_agent_restart_no_row_force_stops_before_start(
     assert ok is True and len(runtime.start_calls) == 1
 
 
+def test_agent_restart_no_row_uses_default_resolver_discovery_chain(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange — no registry row, NO injected resolver: the real default
+    # ``resolve_config`` must find the spec under the standard
+    # ``$HOME/.scitex/agent-container/agents/<name>/spec.yaml`` location.
+    # ``_isolate_home`` (autouse) has already pointed HOME at tmp_path.
+    agents_root = tmp_path / ".scitex" / "agent-container" / "agents"
+    _write_spec(agents_root, name="beta")
+    runtime = FakeRuntime(start_result=True)
+    # Act — config_resolver left at its production default.
+    ok = lc.agent_restart(
+        "beta",
+        registry=registry,
+        runtime_factory=lambda _c: runtime,
+        sleep_fn=_no_sleep,
+        handover_mod=FakeHandover(),
+    )
+    # Assert — the default resolver found the spec and start ran.
+    assert ok is True and len(runtime.start_calls) == 1
+
+
 # ---------------------------------------------------------------------------
 # agent_status
 # ---------------------------------------------------------------------------
