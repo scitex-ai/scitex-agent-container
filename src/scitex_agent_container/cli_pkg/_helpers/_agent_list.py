@@ -50,7 +50,12 @@ def _safe_account_for(cfg) -> str:
         from ..._account.agent_account import resolve_agent_account_label
 
         env = getattr(cfg, "env", None) if cfg is not None else None
-        return resolve_agent_account_label(env)
+        assigned = (
+            getattr(getattr(cfg, "claude", None), "account", "") or None
+            if cfg is not None
+            else None
+        )
+        return resolve_agent_account_label(env, assigned_account=assigned)
     except Exception:  # stx-allow: fallback (reason: see inline comment)
         return "unknown"
 

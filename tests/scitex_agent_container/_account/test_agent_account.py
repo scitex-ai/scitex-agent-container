@@ -174,3 +174,68 @@ def test_none_env_inherits_host_account(tmp_path):
     label = resolve_agent_account_label(None, home=tmp_path)
     # Assert
     assert label == "inherited@example.com"
+
+
+# ---------------------------------------------------------------------------
+# 4. Pinned-account branch — spec.claude.account wins over host OAuth.
+# ---------------------------------------------------------------------------
+
+
+def test_assigned_account_returns_name_and_email(tmp_path):
+    # Arrange — agent pinned to a saved account; resolver pulls its email.
+    save_account("alpha", {"email_address": "alpha@example.com"}, home=tmp_path)
+    # Act
+    label = resolve_agent_account_label({}, home=tmp_path, assigned_account="alpha")
+    # Assert
+    assert label == "alpha (alpha@example.com)"
+
+
+def test_assigned_account_overrides_host_oauth_identity(tmp_path):
+    # Arrange — host /login is a DIFFERENT account; the pin must win
+    # because the runtime copies the pinned snapshot in at start.
+    _write_credentials(tmp_path)
+    _write_claude_json(tmp_path, "host@example.com")
+    save_account("beta", {"email_address": "beta@example.com"}, home=tmp_path)
+    # Act
+    label = resolve_agent_account_label({}, home=tmp_path, assigned_account="beta")
+    # Assert
+    assert label == "beta (beta@example.com)"
+
+
+def test_assigned_account_with_no_saved_email_returns_bare_name(tmp_path):
+    # Arrange — saved account exists but has no recorded email.
+    save_account("gamma", {}, home=tmp_path)
+    # Act
+    label = resolve_agent_account_label({}, home=tmp_path, assigned_account="gamma")
+    # Assert
+    assert label == "gamma"
+
+
+def test_assigned_account_missing_snapshot_returns_bare_name(tmp_path):
+    # Arrange — no saved account dir at all; resolver degrades to the
+    # bare assigned name rather than crashing or falling to host OAuth.
+    # Act
+    label = resolve_agent_account_label({}, home=tmp_path, assigned_account="ghost")
+    # Assert
+    assert label == "ghost"
+
+
+def test_assigned_account_wins_over_env_override(tmp_path):
+    # Arrange — both a pin AND an env key are present; the pin (frozen
+    # snapshot copied in at start) is the definitive account.
+    save_account("delta", {"email_address": "delta@example.com"}, home=tmp_path)
+    env = {"SAC_ANTHROPIC_API_KEY": "sk-ant-api03-zzzz9999"}
+    # Act
+    label = resolve_agent_account_label(env, home=tmp_path, assigned_account="delta")
+    # Assert
+    assert label == "delta (delta@example.com)"
+
+
+def test_empty_assigned_account_falls_through_to_host(tmp_path):
+    # Arrange — assigned_account="" must NOT short-circuit; host OAuth wins.
+    _write_credentials(tmp_path)
+    _write_claude_json(tmp_path, "host@example.com")
+    # Act
+    label = resolve_agent_account_label({}, home=tmp_path, assigned_account="")
+    # Assert
+    assert label == "host@example.com"

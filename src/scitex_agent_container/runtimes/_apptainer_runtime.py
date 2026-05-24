@@ -238,8 +238,18 @@ class ApptainerContainerRuntime(RuntimeBase):
         # a manual scp-from-lead dance to re-seed peers. The CLI's
         # refresh code-path itself is responsible for any concurrency
         # locking — the bind is just a file passthrough.
-        cred_file = Path.home() / ".claude" / ".credentials.json"
-        if cred_file.is_file():
+        # Per-agent OAuth account pinning (spec.claude.account). When set,
+        # we COPY that saved account's .credentials.json into the agent's
+        # own state dir (frozen boot-copy) and bind THAT — so two agents
+        # pinned to two accounts never share one mount, and a host /login
+        # never moves a pinned agent. Changing the assigned account needs
+        # a `sac agent restart` to re-copy. ``account=""`` → host live
+        # file (unchanged behaviour). Bind stays RW so the in-container
+        # CLI can refresh the OAuth token on the agent's private copy.
+        from ._apptainer_creds import resolve_cred_file
+
+        cred_file = resolve_cred_file(config, state_dir)
+        if cred_file is not None and cred_file.is_file():
             argv += [
                 "--bind",
                 f"{cred_file}:/tmp/sac-claude/.credentials.json:rw",

@@ -114,7 +114,11 @@ def account_list(as_json: bool) -> None:
     import json as _json
 
     from .._account.credentials import read_credentials_metadata
-    from .._state.account_store import list_accounts
+    from .._state.account_store import (
+        list_accounts,
+        read_account_plan,
+        read_account_usage_cache,
+    )
     from ._helpers import console
     from .status_cmds import _format_claude_account_block
 
@@ -126,9 +130,17 @@ def account_list(as_json: bool) -> None:
             active = read_credentials_metadata()
         except (OSError, _json.JSONDecodeError):
             active = {}
+        # Enrich each stored account with OFFLINE plan/tier and any
+        # CACHE-ONLY usage snapshot (None when no cache exists yet).
+        stored = []
+        for acct in accounts:
+            entry = dict(acct)
+            entry.update(read_account_plan(acct["name"]))
+            entry["usage"] = read_account_usage_cache(acct["name"])
+            stored.append(entry)
         click.echo(
             _json.dumps(
-                {"active": active, "stored": accounts}, ensure_ascii=False, indent=2
+                {"active": active, "stored": stored}, ensure_ascii=False, indent=2
             )
         )
         return
@@ -152,8 +164,24 @@ def account_list(as_json: bool) -> None:
         return
     click.echo("Stored accounts:")
     for acct in accounts:
+        name = acct["name"]
         email = acct.get("email_address") or "(no email)"
-        click.echo(f"  {acct['name']:20s}  {email}")
+        # OFFLINE plan/tier from the snapshot — free, no network.
+        plan = read_account_plan(name)
+        plan_label = plan.get("plan_label") or "?"
+        tier = plan.get("rate_limit_tier") or "?"
+        # CACHE-ONLY usage (5h/7d). "—" when no cache exists; nothing
+        # writes the per-account cache yet (see read_account_usage_cache).
+        usage = read_account_usage_cache(name)
+        usage_str = "—"
+        if usage:
+            pct5 = usage.get("used_pct_5h")
+            pct7 = usage.get("used_pct_7d")
+            as_of = usage.get("as_of") or usage.get("timestamp") or "?"
+            usage_str = f"5h={pct5}% 7d={pct7}% (as of {as_of})"
+        click.echo(
+            f"  {name:20s}  {email:28s}  {plan_label} [{tier}]  usage: {usage_str}"
+        )
 
 
 @account.command("delete")

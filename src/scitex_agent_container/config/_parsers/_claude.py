@@ -38,5 +38,6 @@ def parse_claude(spec: dict) -> ClaudeSpec:
         continue_max_age_minutes=continue_max_age,
         resume_id=str(raw.get("resume_id", "") or ""),
         auto_accept=raw.get("auto_accept", True),
+        account=str(raw.get("account", "") or ""),
         raw_options=dict(raw_options),
     )
