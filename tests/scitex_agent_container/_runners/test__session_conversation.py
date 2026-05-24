@@ -666,3 +666,57 @@ def test_valid_session_is_still_resumed_not_reset(tmp_path: Path) -> None:
     # Assert — the valid id was the one resume target the client saw; no
     # dead-session reset fired (the only open used the valid id).
     assert recorder.opens == ["valid-uuid"]
+
+
+# ---------------------------------------------------------------------------
+# Dead-session recovery surfaces the resumable candidate list (#192 #3) —
+# the autonomous runner's fresh start is the last resort, but it must be
+# INFORMATIVE: the supervisor event carries the conversations that ARE
+# resumable so the operator can choose one instead.
+# ---------------------------------------------------------------------------
+
+
+def _seed_cwd_conversation(home: Path, session_id: str) -> None:
+    """Write a transcript under the SDK projects dir for the current cwd."""
+    import json
+    import os
+
+    from scitex_agent_container._runners._session_candidates import (
+        encode_claude_project,
+    )
+
+    proj = home / ".claude" / "projects" / encode_claude_project(os.getcwd())
+    proj.mkdir(parents=True, exist_ok=True)
+    (proj / f"{session_id}.jsonl").write_text(
+        json.dumps({"type": "user", "message": {"content": "earlier work"}}) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _dead_session_fresh_start_event(state_dir: Path) -> dict:
+    events = [
+        r
+        for r in _read_session_jsonl(state_dir)
+        if r.get("type") == "supervisor"
+        and r.get("event") == "dead-session-fresh-start"
+    ]
+    return events[0]
+
+
+def test_dead_session_fresh_start_event_lists_resumable_candidates(
+    tmp_path: Path, env_save_restore
+) -> None:
+    # Arrange — point HOME at a tmp dir holding a resumable transcript for
+    # the runner's cwd, then trigger the dead-session recovery.
+    home = tmp_path / "home"
+    env_save_restore.set("HOME", str(home))
+    _seed_cwd_conversation(home, "resumable-uuid")
+    state_dir = tmp_path / "alpha"
+    sid.write_session_id(state_dir, "dead-uuid")
+    recorder = _DeadSessionRecorder("dead-uuid")
+    # Act
+    _run_dead_session_recovery(state_dir, recorder)
+    # Assert — the fresh-start event surfaces the resumable conversation so
+    # the operator can resume it explicitly instead of accepting the reset.
+    event = _dead_session_fresh_start_event(state_dir)
+    assert event["resumable_candidates"][0]["session_id"] == "resumable-uuid"
