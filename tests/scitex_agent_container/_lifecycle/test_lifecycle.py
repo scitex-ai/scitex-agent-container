@@ -1376,6 +1376,103 @@ def test_agent_status_config_load_failure_reports_unknown_model_and_runtime(
     assert result["model"] == "unknown" and result["runtime"] == "unknown"
 
 
+# ---------------------------------------------------------------------------
+# agent_status — account field (operator request 4581).
+#
+# The autouse ``_isolate_home`` fixture points HOME at tmp_path, so an
+# agent with no env override and no credentials.json there resolves to
+# "unknown"; writing a real credentials.json + ~/.claude.json under HOME
+# exercises the host-OAuth path; a spec.env override exercises the
+# distinct-credential path. All real files, no mocks.
+# ---------------------------------------------------------------------------
+
+
+def test_agent_status_account_unknown_when_no_credentials(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange — HOME (=tmp_path) has no credentials.json and the spec
+    # carries no SAC_ANTHROPIC_API_KEY override.
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    # Act
+    result = lc.agent_status(
+        "alpha", registry=registry, runtime_factory=lambda _c: FakeRuntime()
+    )
+    # Assert
+    assert result["account"] == "unknown"
+
+
+def test_agent_status_account_reports_host_oauth_email(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange — real host OAuth files under HOME (=tmp_path).
+    import json as _json
+
+    claude_dir = tmp_path / ".claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
+    (claude_dir / ".credentials.json").write_text(
+        _json.dumps(
+            {
+                "claudeAiOauth": {
+                    "accessToken": "sk-ant-SECRET",
+                    "expiresAt": 9_999_999_999_000,
+                    "subscriptionType": "max",
+                    "rateLimitTier": "default_claude_max_20x",
+                }
+            }
+        )
+    )
+    (tmp_path / ".claude.json").write_text(
+        _json.dumps({"oauthAccount": {"emailAddress": "shared@example.com"}})
+    )
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    # Act
+    result = lc.agent_status(
+        "alpha", registry=registry, runtime_factory=lambda _c: FakeRuntime()
+    )
+    # Assert
+    assert result["account"] == "shared@example.com"
+
+
+def test_agent_status_account_reports_apikey_fingerprint_on_env_override(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange — spec.apptainer.env supplies a distinct API key (the v3
+    # loader promotes it into cfg.env). HOME OAuth (if any) must be
+    # ignored in favour of the agent's own credential.
+    spec = _write_spec(
+        tmp_path,
+        extra_spec=(
+            "  apptainer:\n"
+            "    env:\n"
+            "      SAC_ANTHROPIC_API_KEY: sk-ant-api03-AAAABBBB7777\n"
+        ),
+    )
+    registry.add("alpha", str(spec), "cld-alpha")
+    # Act
+    result = lc.agent_status(
+        "alpha", registry=registry, runtime_factory=lambda _c: FakeRuntime()
+    )
+    # Assert
+    assert result["account"] == "apikey:…7777"
+
+
+def test_agent_status_account_unknown_when_config_load_fails(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange — config path points at a non-existent YAML so load_config
+    # raises; the account resolver must degrade to "unknown" (config is
+    # None), never crash status.
+    registry.add("alpha", str(tmp_path / "alpha" / "spec.yaml"), "cld-alpha")
+    # Act
+    result = lc.agent_status(
+        "alpha", registry=registry, runtime_factory=lambda _c: FakeRuntime()
+    )
+    # Assert
+    assert result["account"] == "unknown"
+
+
 def test_agent_status_omits_remote_host_after_wi6_deletion(
     tmp_path: Path, registry: Registry
 ) -> None:

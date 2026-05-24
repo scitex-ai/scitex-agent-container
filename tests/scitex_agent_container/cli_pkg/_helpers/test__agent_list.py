@@ -498,3 +498,146 @@ def test_discover_defined_agents_skips_dirs_without_spec_yaml(tmp_path):
         pairs = _al._discover_defined_agents()
     # Assert
     assert "no-spec" not in [n for n, _ in pairs]
+
+
+# ---------------------------------------------------------------------------
+# account column (operator request 4581) — per-agent Anthropic-account
+# label so the operator can spot agents sharing one rate limit.
+#
+# ``_safe_account_for`` is called as a bare module-level name inside
+# ``_agent_list``, so swapping ``_al._safe_account_for`` intercepts both
+# row-builder call sites (registered + defined-on-disk). The swap is a
+# real callable returning a fixed label — not a mock.
+# ---------------------------------------------------------------------------
+
+
+@contextmanager
+def _swap_account(impl: Callable[[Any], str]) -> Iterator[None]:
+    """Swap ``_al._safe_account_for`` for a real callable returning a label."""
+    saved = _al._safe_account_for
+    _al._safe_account_for = impl  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        _al._safe_account_for = saved  # type: ignore[assignment]
+
+
+def test_get_data_row_carries_account_field(tmp_path):
+    # Arrange
+    spec = _write_valid_spec(tmp_path / "x")
+    entries = [{"name": "x", "config": str(spec)}]
+    registry = _FakeRegistry(entries)
+    # Act
+    with (
+        _swap_discover(_no_discover),
+        _swap_probe(lambda cfg: True),
+        _swap_account(lambda cfg: "alice@example.com"),
+    ):
+        out = get_agent_list_data(registry)
+    # Assert
+    assert out[0]["account"] == "alice@example.com"
+
+
+def test_get_data_defined_agent_row_carries_account_field(tmp_path):
+    # Arrange — agent on disk only, not in registry.
+    spec = _write_valid_spec(tmp_path / "ondisk")
+    registry = _FakeRegistry([])
+
+    def _discover() -> list[tuple[str, Path]]:
+        return [("ondisk", spec)]
+
+    # Act
+    with _swap_discover(_discover), _swap_account(lambda cfg: "bob@example.com"):
+        out = get_agent_list_data(registry)
+    # Assert
+    row = next(r for r in out if r["name"] == "ondisk")
+    assert row["account"] == "bob@example.com"
+
+
+def test_print_agent_list_renders_account_column_header(capsys, tmp_path):
+    # Arrange
+    spec = _write_valid_spec(tmp_path / "x")
+    registry = _FakeRegistry([{"name": "x", "config": str(spec)}])
+    # Act
+    with (
+        _swap_discover(_no_discover),
+        _swap_probe(lambda cfg: True),
+        _swap_account(lambda cfg: "alice@example.com"),
+    ):
+        print_agent_list(registry)
+    # Assert
+    assert "Account" in capsys.readouterr().out
+
+
+def test_print_agent_list_renders_account_value(capsys, tmp_path):
+    # Arrange — a short label survives the narrow capture-mode terminal
+    # width (a long email gets ellipsised by rich; the JSON test below
+    # covers the full value).
+    spec = _write_valid_spec(tmp_path / "x")
+    registry = _FakeRegistry([{"name": "x", "config": str(spec)}])
+    # Act
+    with (
+        _swap_discover(_no_discover),
+        _swap_probe(lambda cfg: True),
+        _swap_account(lambda cfg: "acct-x"),
+    ):
+        print_agent_list(registry)
+    # Assert
+    assert "acct-x" in capsys.readouterr().out
+
+
+def test_print_agent_list_json_emits_account_in_row(capsys, tmp_path):
+    # Arrange
+    spec = _write_valid_spec(tmp_path / "x")
+    registry = _FakeRegistry([{"name": "x", "config": str(spec)}])
+    # Act
+    with (
+        _swap_discover(_no_discover),
+        _swap_probe(lambda cfg: True),
+        _swap_account(lambda cfg: "alice@example.com"),
+    ):
+        print_agent_list_json(registry)
+    # Assert
+    data = json.loads(capsys.readouterr().out)
+    assert data[0]["account"] == "alice@example.com"
+
+
+def test_safe_account_for_resolves_real_credentials_end_to_end(tmp_path):
+    # Arrange — real credentials + claude.json under a tmp HOME; no env
+    # override on the config, so the real resolver flows through.
+    import json as _json
+
+    from scitex_agent_container.config._types import AgentConfig
+
+    claude_dir = tmp_path / ".claude"
+    claude_dir.mkdir(parents=True)
+    (claude_dir / ".credentials.json").write_text(
+        _json.dumps(
+            {
+                "claudeAiOauth": {
+                    "accessToken": "sk-ant-SECRET",
+                    "expiresAt": 9_999_999_999_000,
+                    "subscriptionType": "max",
+                    "rateLimitTier": "default_claude_max_20x",
+                }
+            }
+        )
+    )
+    (tmp_path / ".claude.json").write_text(
+        _json.dumps({"oauthAccount": {"emailAddress": "real@example.com"}})
+    )
+    cfg = AgentConfig(name="x")  # no SAC_ANTHROPIC_API_KEY in env
+    # Act
+    with _home_set_to(tmp_path):
+        label = _al._safe_account_for(cfg)
+    # Assert
+    assert label == "real@example.com"
+
+
+def test_safe_account_for_returns_string_on_none_config():
+    # Arrange — None config (registry entry whose YAML failed to load).
+    cfg = None
+    # Act — must not crash; contract is "never raises, returns a string".
+    result = _al._safe_account_for(cfg)
+    # Assert
+    assert isinstance(result, str) and result
