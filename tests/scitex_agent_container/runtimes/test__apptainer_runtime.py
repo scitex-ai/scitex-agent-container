@@ -1118,6 +1118,94 @@ def test_argv_startup_prompts_populates_mission(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Per-agent OAuth account pin (spec.claude.account) — frozen boot-copy
+# ---------------------------------------------------------------------------
+
+
+def _save_snapshot(home: Path, name: str, body: str = '{"snap": true}') -> Path:
+    """Write a real saved-account snapshot under the home's account store
+    and return its ``.credentials.json`` path.
+
+    Mirrors the on-disk layout
+    ``~/.scitex/agent-container/accounts/<name>/.credentials.json`` that
+    ``sac account save`` produces.
+    """
+    acct_dir = home / ".scitex" / "agent-container" / "accounts" / name
+    acct_dir.mkdir(parents=True, exist_ok=True)
+    snap = acct_dir / ".credentials.json"
+    snap.write_text(body)
+    return snap
+
+
+def test_argv_pins_account_binds_state_dir_copy_not_host_file(
+    tmp_path: Path, home_redirect: Path
+) -> None:
+    # Arrange — host live file AND a saved snapshot both exist; the pin
+    # must bind the state-dir copy, never the host file.
+    host_creds = home_redirect / ".claude" / ".credentials.json"
+    host_creds.parent.mkdir(parents=True, exist_ok=True)
+    host_creds.write_text('{"host": true}')
+    _save_snapshot(home_redirect, "alpha")
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path, claude=ClaudeSpec(account="alpha"))
+    # Act
+    argv = rt.build_run_argv(cfg, state_dir=state_dir, sif_path=tmp_path / "x.sif")
+    creds_arg = next(a for a in argv if "/tmp/sac-claude/.credentials.json" in a)
+    # Assert — the bound host-side path is the per-agent copy, not host.
+    assert creds_arg.startswith(str(state_dir / "claude" / ".credentials.json"))
+
+
+def test_argv_pins_account_copies_snapshot_bytes_into_state_dir(
+    tmp_path: Path, home_redirect: Path
+) -> None:
+    # Arrange — snapshot has distinctive bytes the copy must reproduce.
+    _save_snapshot(home_redirect, "beta", body='{"pinned": "beta-bytes"}')
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path, claude=ClaudeSpec(account="beta"))
+    # Act
+    rt.build_run_argv(cfg, state_dir=state_dir, sif_path=tmp_path / "x.sif")
+    copied = state_dir / "claude" / ".credentials.json"
+    # Assert — frozen boot-copy landed with the snapshot's contents.
+    assert copied.read_text() == '{"pinned": "beta-bytes"}'
+
+
+def test_argv_no_account_binds_host_live_file(
+    tmp_path: Path, home_redirect: Path
+) -> None:
+    # Arrange — account="" (default) keeps the legacy host-file bind.
+    host_creds = home_redirect / ".claude" / ".credentials.json"
+    host_creds.parent.mkdir(parents=True, exist_ok=True)
+    host_creds.write_text("{}")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path, claude=ClaudeSpec(account=""))
+    # Act
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    creds_arg = next(a for a in argv if "/tmp/sac-claude/.credentials.json" in a)
+    # Assert
+    assert creds_arg.startswith(str(host_creds))
+
+
+def test_argv_pinned_account_missing_snapshot_falls_back_to_host(
+    tmp_path: Path, home_redirect: Path
+) -> None:
+    # Arrange — pin names an account with NO snapshot; host file exists.
+    host_creds = home_redirect / ".claude" / ".credentials.json"
+    host_creds.parent.mkdir(parents=True, exist_ok=True)
+    host_creds.write_text("{}")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path, claude=ClaudeSpec(account="ghost"))
+    # Act — fail-soft fallback (warns; never wedges the start).
+    argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
+    creds_arg = next(a for a in argv if "/tmp/sac-claude/.credentials.json" in a)
+    # Assert
+    assert creds_arg.startswith(str(host_creds))
+
+
+# ---------------------------------------------------------------------------
 # Lifecycle — start / stop / is_running / logs (real subprocesses)
 # ---------------------------------------------------------------------------
 

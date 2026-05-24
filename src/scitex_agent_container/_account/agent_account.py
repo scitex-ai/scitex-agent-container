@@ -108,10 +108,41 @@ def _match_saved_account(
     return None
 
 
+def _assigned_account_label(
+    assigned_account: str,
+    home: Path,
+    store_dir: Path | None,
+) -> str:
+    """Label for an agent pinned to a saved account via
+    ``spec.claude.account``.
+
+    Looks up the saved account's ``email_address`` from the store and
+    returns ``<name> (<email>)`` when found, else bare ``<name>``.
+    Never raises — a missing/corrupt store degrades to the bare name.
+    """
+    # stx-allow: fallback (reason: store read is best-effort enrichment;
+    # a missing/corrupt store must degrade to the bare assigned name,
+    # never break list/status.)
+    try:
+        from .._state.account_store import list_accounts
+
+        for acct in list_accounts(store_dir=store_dir, home=home):
+            if acct.get("name") == assigned_account:
+                email = acct.get("email_address")
+                if isinstance(email, str) and email:
+                    return f"{assigned_account} ({email})"
+                break
+    except Exception:  # stx-allow: fallback (reason: see inline comment)
+        return assigned_account
+    return assigned_account
+
+
 def resolve_agent_account_label(
     env: dict[str, str] | None,
     home: Path | None = None,
     store_dir: Path | None = None,
+    *,
+    assigned_account: str | None = None,
 ) -> str:
     """Resolve a short, human-readable account label for one agent.
 
@@ -126,13 +157,22 @@ def resolve_agent_account_label(
             truth for the shared-OAuth identity. Used by tests.
         store_dir: Override for the saved-accounts store directory
             (defaults to the SciTeX local-state cascade). Used by tests.
+        assigned_account: The agent's ``spec.claude.account`` (saved
+            account name it is pinned to). When set it is the definitive
+            account for this agent — the runtime copies that snapshot in
+            at start (see ``_apptainer_creds.resolve_cred_file``), so it
+            wins over the host shared-OAuth identity regardless of the
+            host's current ``/login``. ``None`` / empty → fall through to
+            the env-override / host-OAuth resolution.
 
     Returns:
         One of:
 
+        * ``<name> (<email>)`` — pinned to a saved account (assigned), or
+          host OAuth matched to a saved account.
+        * ``<name>`` — pinned to a saved account with no email recorded.
         * ``apikey:…<last4>`` — agent brings its own API key.
         * ``sac-env`` — agent brings its own (non-API-key) env credential.
-        * ``<name> (<email>)`` — host OAuth, matched to a saved account.
         * ``<email>`` — host OAuth, no matching saved account.
         * ``default`` — credentials.json present but no email resolvable.
         * ``unknown`` — no credentials file and no env override.
@@ -141,7 +181,12 @@ def resolve_agent_account_label(
     """
     _home = Path(home) if home is not None else Path.home()
 
-    # 1. Agent-level env override wins (distinct credential source).
+    # 0. Pinned account wins — this agent runs on a frozen copy of the
+    #    named snapshot, independent of the host's current /login.
+    if assigned_account:
+        return _assigned_account_label(assigned_account, _home, store_dir)
+
+    # 1. Agent-level env override (distinct credential source).
     env = env or {}
     override = env.get(_SAC_API_KEY_ENV)
     if isinstance(override, str) and override.strip():

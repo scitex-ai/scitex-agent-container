@@ -430,3 +430,51 @@ def test_load_config_v3_multi_host_appends_hostname(tmp_path: Path) -> None:
         _loaders_mod.resolve_hostname = _saved_resolve
     # Assert
     assert cfg.name == "worker-mba"
+
+
+# ---------------------------------------------------------------------------
+# spec.claude.account soft-WARN (missing snapshot warns, never fails)
+# ---------------------------------------------------------------------------
+
+
+def _v3_yaml(tmp_path: Path, name: str, spec_extra: dict) -> Path:
+    spec = {"runtime": "apptainer", "workdir": str(tmp_path / "wd")}
+    spec.update(spec_extra)
+    body = {
+        "apiVersion": "scitex-agent-container/v3",
+        "kind": "Agent",
+        "metadata": {"labels": {"role": "head"}},
+        "spec": spec,
+    }
+    p = tmp_path / name / "spec.yaml"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(yaml.safe_dump(body))
+    return p
+
+
+def test_load_config_warns_when_pinned_account_snapshot_absent(tmp_path: Path):
+    # Arrange — pin an account with no saved snapshot anywhere.
+    p = _v3_yaml(tmp_path, "pinned", {"claude": {"account": "ghost"}})
+    # Act
+    ctx = pytest.warns(UserWarning, match="ghost")
+    # Assert
+    with ctx:
+        load_config(p)
+
+
+def test_load_config_pinned_account_still_loads_despite_missing_snapshot(
+    tmp_path: Path,
+):
+    # Arrange — the soft-WARN must NOT escalate to a load failure. The
+    # warning itself is asserted by the sibling test; here we suppress
+    # it (catch_warnings, not pytest.warns) so the single assertion is
+    # purely "the config loaded with the pin intact".
+    import warnings
+
+    p = _v3_yaml(tmp_path, "pinned", {"claude": {"account": "ghost"}})
+    # Act
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        cfg = load_config(p)
+    # Assert
+    assert cfg.claude.account == "ghost"
