@@ -20,6 +20,7 @@ from ._hook_runner import _fire_forget_hook, _run_hooks
 from ._instances import record_local_instance as _record_local_instance
 from ._runtime_select import _get_runtime
 from ._session_reset import _clear_persisted_session_id
+from ._spawn_gate import enforce_spawn_gate
 from .health import health_monitor
 
 
@@ -131,6 +132,28 @@ def agent_start(
             f"--one-shot requires spec.startup_prompts (or legacy "
             f"startup_commands) on agent '{config.name}'; nothing to run."
         )
+
+    # Spawn-permission gate + lineage record (ADR-0010 Rule B / Phase 2:
+    # "起動経路 = 記録経路 = ACL経路" collapsed to one path). EVERY spawn
+    # path funnels through core ``agent_start`` — the MCP ``agent_start``
+    # tool and the plain ``sac agents start`` CLI both reach here, not
+    # just the ``sac listen`` ``POST /agents`` handler. Enforcing the
+    # gate here (rather than only in the server handler) means an
+    # agent-from-agent spawn is ACL-gated WITHOUT requiring a running
+    # ``sac listen`` daemon — clew on Spartan can spawn capsule children
+    # with no extra process. The caller identity is the parent agent's
+    # ``SAC_NAME`` env (``None`` → admin / operator / lead → always
+    # allowed). On allow with a real caller, the ``caller → child`` edge
+    # is written to the ``lineage`` table — the same identity that
+    # ``record_local_instance`` records as ``instances.spawned_by``, so
+    # the two are no longer split-brained. A denied spawn raises
+    # ``SpawnDeniedError`` HERE, before the runtime is built or touched.
+    # The server handler still passes its request ``caller`` verbatim and
+    # records lineage itself; its subprocess inherits no ``SAC_NAME`` on
+    # the bare host, so this gate sees ``caller=None`` (admin) and does
+    # not double-record — and ``record_lineage`` is idempotent regardless.
+    enforce_spawn_gate(config.name)
+
     # Resolve spec.a2a.port BEFORE the runtime builds argv. ``"auto"``
     # gets a fresh allocator claim; an explicit int is recorded so
     # ``sac listen`` can find the port via state.db without re-parsing
