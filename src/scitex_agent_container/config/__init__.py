@@ -18,6 +18,7 @@ import yaml
 
 from ._host import resolve_hostname, substitute_hostnames
 from ._loaders import compose_effective_name, load_v3
+from ._provider_types import ProviderSpec
 from ._proxy_types import ProxySpec
 from ._resolve import resolve_config
 from ._types import (
@@ -46,6 +47,7 @@ __all__ = [
     "HookSpec",
     "HostsSpec",
     "ListenPort",
+    "ProviderSpec",
     "ProxySpec",
     "RestartSpec",
     "SchedulingSpec",
