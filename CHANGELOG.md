@@ -6,6 +6,31 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.21.0] — 2026-05-25
+
+### Added
+- **feat(provider): vendor-agnostic Anthropic-SDK backend override (PR #208)** —
+  `spec.claude.provider` with `base_url` + `auth_token_env` points a sac
+  agent's Claude-SDK session at any Anthropic-SDK-compatible endpoint
+  (DeepSeek first). Host-side `runtimes/_apptainer_provider.py` emits
+  `ANTHROPIC_BASE_URL` + `SAC_ANTHROPIC_API_KEY` + `CLAUDE_CONFIG_DIR`
+  at start; auth resolution via `scitex_config` cascade
+  (shell-export > `$HOME/.env` > default → fail-loud
+  `ProviderEnvError`). `claude-*` model alias check is relaxed under a
+  provider override; `provider` + `spec.claude.account` are mutually
+  exclusive. New: `config/_provider_types.ProviderSpec`,
+  `runtimes/_apptainer_provider.py`, `runtimes/_apptainer_auth.py`,
+  ADR-0011, `examples/agents/deepseek-agent/spec.yaml`. 73 targeted
+  tests; full pytest matrix green.
+- **chore(audit): exempt sac from §6 MCP-Python parity (PR #209)** —
+  adds `[tool.scitex_dev] mcp_parity_exempt = true` to pyproject for
+  the audit-cli §6 check. sac's MCP tools mirror CLI subcommands, not
+  top-level Python APIs (4 orphan tools: `agent_spawn`,
+  `list_python_apis`, `quota_watch`, `subagent_get_state`). Closes the
+  only develop-shared audit-conformance violation;
+  `tests/develop/test_audit.py::test_audit_all_clean` now green on
+  develop.
+
 ### Added
 - **feat(account): credential auto-sync substrate (`sac accounts
   sync-live` / `watch-live`)** — keep the per-account store fresh the
