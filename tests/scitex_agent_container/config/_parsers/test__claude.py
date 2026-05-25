@@ -199,3 +199,59 @@ def test_account_none_coerced_to_empty_string():
     result = parse_claude(spec)
     # Assert
     assert result.account == ""
+
+
+# ---------------------------------------------------------------------------
+# spec.claude.provider — vendor-agnostic backend override
+# ---------------------------------------------------------------------------
+
+
+def test_missing_provider_block_yields_none_provider():
+    # Arrange — no provider key means the default Anthropic backend.
+    spec = {"claude": {"model": "opus"}}
+    # Act
+    result = parse_claude(spec)
+    # Assert
+    assert result.provider is None
+
+
+def test_provider_block_parses_base_url_field():
+    # Arrange
+    spec = {
+        "claude": {
+            "provider": {
+                "base_url": "https://api.deepseek.com/anthropic",
+                "auth_token_env": "DEEPSEEK_API_KEY",
+            }
+        }
+    }
+    # Act
+    result = parse_claude(spec)
+    # Assert
+    assert result.provider.base_url == "https://api.deepseek.com/anthropic"
+
+
+def test_provider_block_parses_auth_token_env_field():
+    # Arrange
+    spec = {
+        "claude": {
+            "provider": {
+                "base_url": "https://api.deepseek.com/anthropic",
+                "auth_token_env": "DEEPSEEK_API_KEY",
+            }
+        }
+    }
+    # Act
+    result = parse_claude(spec)
+    # Assert
+    assert result.provider.auth_token_env == "DEEPSEEK_API_KEY"
+
+
+def test_provider_non_dict_value_yields_none_provider():
+    # Arrange — a malformed (non-mapping) provider collapses to None so
+    # the validator surfaces the shape error, not the parser.
+    spec = {"claude": {"provider": "garbage"}}
+    # Act
+    result = parse_claude(spec)
+    # Assert
+    assert result.provider is None

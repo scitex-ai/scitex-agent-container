@@ -5,7 +5,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>scitex_agent_container.config._host &mdash; scitex-agent-container v0.21.0</title>
+  <title>scitex_agent_container.config._provider_types &mdash; scitex-agent-container v0.21.0</title>
       <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
       <link rel="stylesheet" type="text/css" href="../../../_static/copybutton.css?v=76b2166b" />
@@ -413,7 +413,7 @@
       <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
           <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
           <li class="breadcrumb-item"><a href="../config.html">scitex_agent_container.config</a></li>
-      <li class="breadcrumb-item active">scitex_agent_container.config._host</li>
+      <li class="breadcrumb-item active">scitex_agent_container.config._provider_types</li>
       <li class="wy-breadcrumbs-aside">
       </li>
   </ul>
@@ -422,160 +422,62 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
            <div itemprop="articleBody">
              
-  <h1>Source code for scitex_agent_container.config._host</h1><div class="highlight"><pre>
-<span></span><span class="sd">&quot;&quot;&quot;Hostname resolution and ${HOSTNAME} substitution for agent YAMLs.</span>
+  <h1>Source code for scitex_agent_container.config._provider_types</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;ProviderSpec dataclass for ``spec.claude.provider`` (backend override).</span>
 
-<span class="sd">Uses ``${SCITEX_AGENT_CONTAINER_HOSTNAME:-$(hostname -s)}`` as the canonical</span>
-<span class="sd">hostname (env var wins, short hostname is the fallback). Shared agent</span>
-<span class="sd">definitions may reference ``${HOSTNAME}`` or ``${SCITEX_AGENT_CONTAINER_HOSTNAME}``</span>
-<span class="sd">so the same YAML can be launched on every host without drift.</span>
-
-<span class="sd">Design constraints:</span>
-<span class="sd">* Missing vars are a loud error (no silent empty string).</span>
-<span class="sd">* Substitution happens after YAML parse, before dataclass construction, so</span>
-<span class="sd">  every string field is covered (metadata labels, env values, hook command</span>
-<span class="sd">  strings, scheduling.preferred-host, etc.).</span>
-<span class="sd">* Only ``${HOSTNAME}`` and ``${SCITEX_AGENT_CONTAINER_HOSTNAME}`` are substituted by</span>
-<span class="sd">  this module — other ``${...}`` placeholders are left alone for downstream</span>
-<span class="sd">  processors (e.g. MCP interpolation, consumer-defined env resolution) to handle.</span>
+<span class="sd">Lives in its own module to keep ``_types.py`` under the project&#39;s</span>
+<span class="sd">512-line cap (mirrors ``_proxy_types.py``). Re-exported from</span>
+<span class="sd">:mod:`scitex_agent_container.config` alongside the rest of the spec</span>
+<span class="sd">dataclasses.</span>
 <span class="sd">&quot;&quot;&quot;</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
 
-<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">socket</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Callable</span>
-
-<span class="kn">from</span><span class="w"> </span><span class="nn">scitex_config._ecosystem</span><span class="w"> </span><span class="kn">import</span> <span class="n">local_state</span> <span class="k">as</span> <span class="n">_local_state</span>
-
-<span class="kn">from</span><span class="w"> </span><span class="nn">.._env</span><span class="w"> </span><span class="kn">import</span> <span class="n">getenv</span> <span class="k">as</span> <span class="n">_sac_env</span>
-
-<span class="n">_HOSTNAME_TOKENS</span> <span class="o">=</span> <span class="p">(</span><span class="s2">&quot;HOSTNAME&quot;</span><span class="p">,</span> <span class="s2">&quot;SCITEX_AGENT_CONTAINER_HOSTNAME&quot;</span><span class="p">)</span>
-<span class="n">_PLACEHOLDER_RE</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\$\{(&quot;</span> <span class="o">+</span> <span class="s2">&quot;|&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">_HOSTNAME_TOKENS</span><span class="p">)</span> <span class="o">+</span> <span class="sa">r</span><span class="s2">&quot;)\}&quot;</span><span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
 
 
-<span class="k">def</span><span class="w"> </span><span class="nf">_config_path</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">Path</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Resolve config.yaml via the SciTeX local-state cascade.</span>
+<div class="viewcode-block" id="ProviderSpec">
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec">[docs]</a>
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">ProviderSpec</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Vendor-agnostic backend override for the Claude SDK session.</span>
 
-<span class="sd">    Project-scope (`&lt;repo&gt;/.scitex/agent-container/config.yaml`) wins</span>
-<span class="sd">    when it exists, else falls back to user-scope under</span>
-<span class="sd">    ``$SCITEX_DIR/agent-container/`` (default ``~/.scitex/...``). See</span>
-<span class="sd">    `01_ecosystem_06_local-state-directories.md`.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-    <span class="k">return</span> <span class="n">_local_state</span><span class="o">.</span><span class="n">path</span><span class="p">(</span><span class="s2">&quot;agent-container&quot;</span><span class="p">,</span> <span class="s2">&quot;config.yaml&quot;</span><span class="p">)</span>
+<span class="sd">    When set under ``spec.claude.provider``, the agent&#39;s SDK session</span>
+<span class="sd">    talks to an Anthropic-SDK-compatible backend OTHER than Anthropic</span>
+<span class="sd">    (DeepSeek, a self-hosted gateway, etc.) using a never-expiring,</span>
+<span class="sd">    login-free API key instead of Anthropic OAuth. Lets bulk fleet</span>
+<span class="sd">    work run on a cheap backend without burning Max-plan quota.</span>
 
+<span class="sd">    The runtime injects three env vars into the container at start</span>
+<span class="sd">    (see ``runtimes/_apptainer_provider.py``):</span>
 
-<span class="k">def</span><span class="w"> </span><span class="nf">_load_hostname_aliases</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Read ``spec.hostname_aliases`` from ``config.yaml``.</span>
+<span class="sd">    * ``ANTHROPIC_BASE_URL`` ← :attr:`base_url`</span>
+<span class="sd">    * ``SAC_ANTHROPIC_API_KEY`` ← the host value of ``$&lt;auth_token_env&gt;``</span>
+<span class="sd">      (bridged to ``ANTHROPIC_API_KEY`` for the SDK by sac&#39;s existing</span>
+<span class="sd">      auth handoff). Fails loud at start if the env var is unset.</span>
+<span class="sd">    * ``CLAUDE_CONFIG_DIR`` ← a clean per-agent dir — the conflict-breaker</span>
+<span class="sd">      so the OAuth ``.credentials.json`` bind cannot win (apptainer</span>
+<span class="sd">      ``--env`` is last-wins).</span>
 
-<span class="sd">    Returns an empty dict if the file is missing, unparseable, lacks the</span>
-<span class="sd">    section, or the map isn&#39;t a dict. Never raises — hostname resolution</span>
-<span class="sd">    must still succeed via the identity fallback on a bare host.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-    <span class="n">cfg_path</span> <span class="o">=</span> <span class="n">_config_path</span><span class="p">()</span>
-    <span class="k">if</span> <span class="ow">not</span> <span class="n">cfg_path</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
-        <span class="k">return</span> <span class="p">{}</span>
-    <span class="k">try</span><span class="p">:</span>
-        <span class="kn">import</span><span class="w"> </span><span class="nn">yaml</span>  <span class="c1"># PyYAML ships with the container; same import sac uses.</span>
-    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: optional dependency not installed; broaden beyond ImportError so misbuilt PyYAML/transitive C-ext failures fall through to identity hostname resolution)</span>
-        <span class="k">return</span> <span class="p">{}</span>
-    <span class="c1"># stx-allow: fallback (reason: malformed YAML config must not break hostname resolution; empty aliases dict is the safe default)</span>
-    <span class="k">try</span><span class="p">:</span>
-        <span class="n">data</span> <span class="o">=</span> <span class="n">yaml</span><span class="o">.</span><span class="n">safe_load</span><span class="p">(</span><span class="n">cfg_path</span><span class="o">.</span><span class="n">read_text</span><span class="p">())</span> <span class="ow">or</span> <span class="p">{}</span>
-    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: catch-all safety net — see inline comment for context)</span>
-        <span class="k">return</span> <span class="p">{}</span>
-    <span class="n">aliases</span> <span class="o">=</span> <span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;spec&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;hostname_aliases&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="p">{}</span>
-    <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">aliases</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
-        <span class="k">return</span> <span class="p">{}</span>
-    <span class="k">return</span> <span class="p">{</span><span class="nb">str</span><span class="p">(</span><span class="n">k</span><span class="p">):</span> <span class="nb">str</span><span class="p">(</span><span class="n">v</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">aliases</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span>
+<span class="sd">    The model id is the provider&#39;s own (e.g. ``deepseek-chat``); the</span>
+<span class="sd">    claude-* regex in :mod:`config._validation` is relaxed whenever a</span>
+<span class="sd">    provider is declared.</span>
 
-
-<div class="viewcode-block" id="resolve_hostname">
-<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.resolve_hostname">[docs]</a>
-<span class="k">def</span><span class="w"> </span><span class="nf">resolve_hostname</span><span class="p">(</span>
-    <span class="n">gethostname</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[],</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">socket</span><span class="o">.</span><span class="n">gethostname</span><span class="p">,</span>
-<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the canonical host label for this machine.</span>
-
-<span class="sd">    Resolution order (first non-empty wins):</span>
-<span class="sd">      1. ``SCITEX_AGENT_CONTAINER_HOSTNAME`` env var (manual override).</span>
-<span class="sd">      2. ``SCITEX_AGENT_CONTAINER_HOSTNAME`` env var.</span>
-<span class="sd">      3. ``hostname_aliases[short hostname]`` from</span>
-<span class="sd">         ``shared/config.yaml`` or ``~/.scitex/agent-container/config.yaml``.</span>
-<span class="sd">      4. ``socket.gethostname()`` short form (identity fallback).</span>
-
-<span class="sd">    Args:</span>
-<span class="sd">        gethostname: Callable returning the raw OS hostname. Defaults to</span>
-<span class="sd">            ``socket.gethostname`` (production). Tests inject a callable</span>
-<span class="sd">            returning a fixed string instead of patching ``socket``.</span>
-
-<span class="sd">    Raises:</span>
-<span class="sd">        RuntimeError: If none of the sources produces a non-empty value. This</span>
-<span class="sd">            should be practically impossible (``gethostname()`` returns</span>
-<span class="sd">            something on any configured box) but is handled loudly rather</span>
-<span class="sd">            than returning the empty string.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-    <span class="n">env</span> <span class="o">=</span> <span class="n">_sac_env</span><span class="p">(</span><span class="s2">&quot;HOSTNAME&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
-    <span class="k">if</span> <span class="n">env</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">env</span>
-    <span class="n">env</span> <span class="o">=</span> <span class="n">_sac_env</span><span class="p">(</span><span class="s2">&quot;HOSTNAME&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
-    <span class="k">if</span> <span class="n">env</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">env</span>
-    <span class="n">hn</span> <span class="o">=</span> <span class="n">gethostname</span><span class="p">()</span>
-    <span class="n">short</span> <span class="o">=</span> <span class="n">hn</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;.&quot;</span><span class="p">,</span> <span class="mi">1</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span> <span class="k">if</span> <span class="n">hn</span> <span class="k">else</span> <span class="s2">&quot;&quot;</span>
-    <span class="n">aliases</span> <span class="o">=</span> <span class="n">_load_hostname_aliases</span><span class="p">()</span>
-    <span class="k">if</span> <span class="n">short</span> <span class="ow">and</span> <span class="n">short</span> <span class="ow">in</span> <span class="n">aliases</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">aliases</span><span class="p">[</span><span class="n">short</span><span class="p">]</span>
-    <span class="k">if</span> <span class="n">short</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">short</span>
-    <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
-        <span class="s2">&quot;Cannot resolve hostname: SCITEX_AGENT_CONTAINER_HOSTNAME and &quot;</span>
-        <span class="s2">&quot;SCITEX_AGENT_CONTAINER_HOSTNAME unset, socket.gethostname() empty, &quot;</span>
-        <span class="s2">&quot;no config.yaml alias applicable.&quot;</span>
-    <span class="p">)</span></div>
-
-
-
-<span class="k">def</span><span class="w"> </span><span class="nf">_substitute_string</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">hostname</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Replace ${HOSTNAME} / ${SCITEX_AGENT_CONTAINER_HOSTNAME} occurrences in a string.</span>
-
-<span class="sd">    Other ``${...}`` placeholders are preserved as-is so downstream code</span>
-<span class="sd">    (e.g. mcp interpolation) keeps working.</span>
+<span class="sd">    Mutually exclusive with :attr:`ClaudeSpec.account` (OAuth pin) — an</span>
+<span class="sd">    API-key backend needs no OAuth, so declaring both is a config error</span>
+<span class="sd">    the runtime rejects loudly.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">_repl</span><span class="p">(</span><span class="n">match</span><span class="p">:</span> <span class="s2">&quot;re.Match[str]&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-        <span class="c1"># hostname always resolves — resolve_hostname() has already succeeded</span>
-        <span class="c1"># or raised. The placeholder set is closed, so we don&#39;t need to</span>
-        <span class="c1"># handle &quot;missing var&quot; inside the callback.</span>
-        <span class="k">return</span> <span class="n">hostname</span>
+    <span class="n">base_url</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Anthropic-compatible base URL, e.g.</span>
+<span class="sd">    ``https://api.deepseek.com/anthropic``. Required when the provider</span>
+<span class="sd">    block is present.&quot;&quot;&quot;</span>
 
-    <span class="k">return</span> <span class="n">_PLACEHOLDER_RE</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="n">_repl</span><span class="p">,</span> <span class="n">value</span><span class="p">)</span>
-
-
-<div class="viewcode-block" id="substitute_hostnames">
-<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.substitute_hostnames">[docs]</a>
-<span class="k">def</span><span class="w"> </span><span class="nf">substitute_hostnames</span><span class="p">(</span><span class="n">obj</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">hostname</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Recursively walk a dict/list/str and substitute hostname placeholders.</span>
-
-<span class="sd">    Non-string leaves (int, bool, None) are returned unchanged. The walk is</span>
-<span class="sd">    pure-functional — the input is not mutated; a new structure is returned.</span>
-
-<span class="sd">    Args:</span>
-<span class="sd">        obj: YAML-parsed structure (dict/list/scalar).</span>
-<span class="sd">        hostname: Override hostname (for tests). If None, calls</span>
-<span class="sd">            ``resolve_hostname()``.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-    <span class="k">if</span> <span class="n">hostname</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="n">hostname</span> <span class="o">=</span> <span class="n">resolve_hostname</span><span class="p">()</span>
-
-    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
-        <span class="k">return</span> <span class="n">_substitute_string</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="n">hostname</span><span class="p">)</span>
-    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
-        <span class="k">return</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">substitute_hostnames</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="n">hostname</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">obj</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span>
-    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="nb">list</span><span class="p">):</span>
-        <span class="k">return</span> <span class="p">[</span><span class="n">substitute_hostnames</span><span class="p">(</span><span class="n">item</span><span class="p">,</span> <span class="n">hostname</span><span class="p">)</span> <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">obj</span><span class="p">]</span>
-    <span class="k">return</span> <span class="n">obj</span></div>
+    <span class="n">auth_token_env</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;NAME of the host env var holding the API key (e.g.</span>
+<span class="sd">    ``DEEPSEEK_API_KEY``) — NOT the key value. The operator sources the</span>
+<span class="sd">    secret file; sac reads the env var&#39;s value at start and never logs</span>
+<span class="sd">    it. Required when the provider block is present.&quot;&quot;&quot;</span></div>
 
 </pre></div>
 
