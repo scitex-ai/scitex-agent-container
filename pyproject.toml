@@ -190,6 +190,31 @@ Documentation = "https://scitex-agent-container.readthedocs.io"
 # legitimately expose far more MCP tools than Python-API functions").
 mcp_parity_exempt = true
 
+# §6a (audit-cli, env-var prefix) — per-package opt-out for legacy
+# operator-facing `SAC_*` env-var namespace.
+#
+# sac ships 8 operator-facing `SAC_*` env vars
+# (SAC_ANTHROPIC_API_KEY, SAC_LISTEN_BASE_URL, SAC_LISTEN_BEARER,
+# SAC_STATUSLINE_STATE_DIR, SAC_PROBE_LOG_ROOT, SAC_HOST_IDENTITY_PATH,
+# SAC_CHANNEL_AUTO_ACK, SAC_WORKDIR_CLAUDE_WARN_BYTES) with 186
+# in-repo occurrences across 75 files plus undefined downstream
+# operator shell / dotfile / hook / agent-spec / skill breakage.
+# Renaming to `SCITEX_AGENT_CONTAINER_*` would break every running
+# deployment, so the operator-approved real fix is the per-package
+# allowlist mechanism added in scitex-dev PR #69.
+#
+# Entries apply "equal-to-stripped or prefix-match" semantics
+# (identical to the universal allowlist) — `"SAC_"` covers every
+# `SAC_*` var sac uses.
+#
+# Forward-compatible: TOML extra keys are silently ignored by older
+# scitex-dev releases (≤0.12.2 does not read this key), so this
+# line is a no-op until the env_allowlist support ships. Once
+# scitex-dev's next release ships, audit-all on sac will clear §6a
+# automatically — `test_audit_all_clean` stays honestly red on this
+# PR's CI in the interim (no `skip_rules` masking).
+env_allowlist = ["SAC_"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/scitex_agent_container"]
 
