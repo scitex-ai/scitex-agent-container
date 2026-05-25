@@ -23,24 +23,45 @@ OAuth ``.credentials.json`` bind entirely when a provider is active —
 an API-key backend needs no OAuth. :func:`provider_active` is the
 single predicate that gates both the env injection and the bind skip.
 
-Key-resolution order (first non-empty wins):
+Key-resolution via scitex-config
+--------------------------------
 
-  1. ``os.environ[<auth_token_env>]`` — the host process env of the
-     shell that ran ``sac agents start``.
-  2. ``<spec_dir>/to_home/.env`` — overlaid on top of the shared
-     baseline ``to_home/.env`` (per-agent wins on conflict). Operators
-     commonly drop provider keys here rather than exporting them in
-     the launch shell; the file ships into the container as
-     ``$HOME/.env`` via ``runtimes/_to_home.py`` anyway, so the same
-     file is the single source of truth for both host-side resolution
-     and in-container ``.env``.
+The provider API key is resolved through the SciTeX-ecosystem standard
+``direct → config → env → default`` cascade exposed by
+``scitex_config``:
+
+  1. ``scitex_config.load_dotenv(dotenv_path=$HOME/.env)`` merges the
+     host-level ``$HOME/.env`` into ``os.environ`` **without overriding
+     any already-set var** — an explicit ``export DEEPSEEK_API_KEY=...``
+     in the launch shell still wins. Path is pinned to ``$HOME/.env``
+     on purpose: the default ``load_dotenv`` order also checks
+     ``cwd/.env`` first, which would be a surprise for an operator
+     running ``sac agents start`` from an unrelated project dir.
+  2. ``scitex_config.PriorityConfig(auto_uppercase=False).resolve(
+     key=auth_token_env, default="")`` then reads the value from
+     ``os.environ`` (the only layer populated for this resolver —
+     no YAML config_dict by design; secrets do not belong in YAML).
+     ``auto_uppercase=False`` because ``auth_token_env`` is already
+     the literal env-var name declared in ``spec.claude.provider``.
+     ``PriorityConfig`` auto-masks ``API_KEY`` / ``TOKEN`` / ``SECRET``
+     style keys in its resolution log, so the value is never logged.
+
+Where the key lives, in operator-facing terms:
+
+  * ``export DEEPSEEK_API_KEY=sk-...`` in the launch shell, OR
+  * ``DEEPSEEK_API_KEY=sk-...`` as a line in ``$HOME/.env`` (chmod 0600).
+
+The in-container ``$HOME/.env`` materialized by ``runtimes/_to_home.py``
+from each agent's ``to_home/.env`` is a SEPARATE flow (it equips the
+agent INSIDE the container with a ``.env``) and is not consulted for
+host-side provider env resolution.
 
 Fail-loud (never silent fallback):
 
-* ``auth_token_env`` names an env var that is unset/empty in BOTH
-  sources → :class:`ProviderEnvError`. A silent fallback would route
-  the agent to Anthropic on no key (every turn 401s) with a
-  fresh-looking heartbeat.
+* ``auth_token_env`` resolves to empty after the scitex-config cascade
+  → :class:`ProviderEnvError`. A silent fallback would route the agent
+  to Anthropic on no key (every turn 401s) with a fresh-looking
+  heartbeat.
 * ``spec.claude.provider`` AND ``spec.claude.account`` both set →
   :class:`ProviderEnvError`. The two auth paths are mutually exclusive;
   the validator already rejects this at load time, but the runtime
@@ -49,8 +70,9 @@ Fail-loud (never silent fallback):
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
+
+from scitex_config import PriorityConfig, load_dotenv
 
 from ..config import AgentConfig
 
@@ -63,65 +85,6 @@ def _provider_spec(config: AgentConfig):
     """Return ``config.claude.provider`` or ``None`` (defensive getattr)."""
     claude = getattr(config, "claude", None)
     return getattr(claude, "provider", None) if claude is not None else None
-
-
-def _parse_dotenv(path: Path) -> dict[str, str]:
-    """Parse a ``KEY=VALUE`` ``.env`` file into a dict.
-
-    Lenient by design — comments, blanks and an optional ``export``
-    prefix are tolerated; matching surrounding quotes are stripped.
-    Lines without ``=`` are ignored. Missing/unreadable file → ``{}``
-    (the caller treats that as "no key here" and falls through to the
-    fail-loud raise).
-    """
-    out: dict[str, str] = {}
-    if not path.is_file():
-        return out
-    try:
-        text = path.read_text()
-    except OSError:  # stx-allow: fallback (reason: unreadable .env → no key)
-        return out
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("export "):
-            line = line[len("export ") :].lstrip()
-        if "=" not in line:
-            continue
-        key, _, val = line.partition("=")
-        key = key.strip()
-        val = val.strip()
-        if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
-            val = val[1:-1]
-        if key:
-            out[key] = val
-    return out
-
-
-def _to_home_env(config: AgentConfig) -> dict[str, str]:
-    """Merge baseline + per-agent ``to_home/.env`` into a dict.
-
-    Mirrors the materialization overlay in :mod:`_to_home`: the shared
-    baseline is loaded first, then the per-agent file on top, so a
-    per-agent ``.env`` wins on key conflict. ``{}`` when neither file
-    is present or when ``config.config_path`` is unset (hand-built
-    AgentConfig with no spec on disk).
-    """
-    # Local import to avoid a cycle at module load (``_to_home`` may
-    # import other runtime helpers in the future).
-    from ._to_home import resolve_baseline_to_home_dir, resolve_to_home_dir
-
-    merged: dict[str, str] = {}
-    cfg_path = getattr(config, "config_path", "") or ""
-    spec_dir = Path(cfg_path).parent if cfg_path else None
-    baseline = resolve_baseline_to_home_dir(spec_dir)
-    if baseline is not None:
-        merged.update(_parse_dotenv(baseline / ".env"))
-    per_agent = resolve_to_home_dir(config)
-    if per_agent is not None:
-        merged.update(_parse_dotenv(per_agent / ".env"))
-    return merged
 
 
 def provider_active(config: AgentConfig) -> bool:
@@ -142,10 +105,11 @@ def provider_env_flags(config: AgentConfig) -> list[str]:
     :class:`ProviderEnvError` (fail-loud) when:
 
     * the agent also pins ``spec.claude.account`` (mutually exclusive), or
-    * ``provider.auth_token_env`` names an unset/empty host env var.
+    * ``provider.auth_token_env`` resolves to empty after the
+      scitex-config cascade (see module docstring).
 
     The API key VALUE is read here and embedded in the argv but never
-    logged by sac.
+    logged by sac (``PriorityConfig`` masks it in its resolution log).
     """
     if not provider_active(config):
         return []
@@ -169,20 +133,23 @@ def provider_env_flags(config: AgentConfig) -> list[str]:
             "holding the key (e.g. DEEPSEEK_API_KEY)."
         )
 
-    # Resolution order: host process env first, then the agent's
-    # to_home/.env (baseline + per-agent overlay). The to_home/.env
-    # path is the operator-friendly default — same file that ships
-    # into the container as $HOME/.env at start.
-    api_key = os.environ.get(auth_token_env, "")
-    if not api_key:
-        api_key = _to_home_env(config).get(auth_token_env, "")
+    # SciTeX-ecosystem precedence: shell-export > $HOME/.env > default.
+    # load_dotenv() is no-op-safe — already-set process env always wins,
+    # so calling it on every provider-env resolution is cheap and
+    # idempotent. Path is pinned to $HOME/.env to avoid the cwd-first
+    # surprise of the default load_dotenv() search order.
+    load_dotenv(dotenv_path=str(Path.home() / ".env"))
+    resolver = PriorityConfig(auto_uppercase=False)
+    api_key = resolver.resolve(key=auth_token_env, default="")
     if not api_key:
         raise ProviderEnvError(
-            f"spec.claude.provider.auth_token_env='{auth_token_env}' names a "
-            "secret that sac could not resolve. Set it in EITHER the host "
-            f"env of `sac agents start` (export {auth_token_env}=...) OR "
-            f"the agent's to_home/.env (line `{auth_token_env}=...`). "
-            "sac reads the value at start and never logs it."
+            f"spec.claude.provider.auth_token_env='{auth_token_env}' could "
+            "not be resolved through scitex-config (direct → config → env "
+            "→ default cascade). Set the key by EITHER exporting "
+            f"{auth_token_env} in the shell that runs `sac agents start` "
+            f"OR adding the line `{auth_token_env}=...` to $HOME/.env "
+            "(chmod 0600). sac reads the value at start and never logs "
+            "it; PriorityConfig auto-masks it in the resolution log."
         )
 
     # Per-agent clean config dir — the conflict-breaker. Distinct from the

@@ -166,62 +166,61 @@ def test_provider_with_account_raises_provider_env_error(env_save_restore):
 
 
 # ---------------------------------------------------------------------------
-# to_home/.env fallback — operator-friendly key location
+# scitex-config cascade — $HOME/.env feeds the env layer
 # ---------------------------------------------------------------------------
+#
+# The runtime delegates auth-token resolution to scitex_config:
+#   load_dotenv(dotenv_path=$HOME/.env) merges $HOME/.env into os.environ
+#   WITHOUT overriding already-set vars, then PriorityConfig.resolve()
+#   reads the value from os.environ. The tests below pin $HOME to a
+#   tmp_path so the real ~/.env is never touched.
 
 
-def _spec_with_to_home_env(tmp_path, dotenv_body: str):
-    """Write a minimal spec dir with a ``to_home/.env`` file under tmp."""
-    spec_dir = tmp_path / "agent"
-    (spec_dir / "to_home").mkdir(parents=True)
-    (spec_dir / "to_home" / ".env").write_text(dotenv_body)
-    spec_yaml = spec_dir / "spec.yaml"
-    spec_yaml.write_text("# placeholder — config_path only, never loaded\n")
-    return spec_yaml
+def _write_home_dotenv(home: "Path", body: str) -> None:
+    """Write ``$HOME/.env`` under the test's tmp home."""
+    (home / ".env").write_text(body)
 
 
-def test_auth_token_resolved_from_to_home_env_when_host_env_unset(
+def test_auth_token_resolved_from_home_dotenv_via_scitex_config(
     env_save_restore, tmp_path
 ):
-    # Arrange — host env intentionally empty; the operator dropped the
-    # key in to_home/.env, which is the same file that ships into
-    # $HOME/.env inside the container.
+    # Arrange — pin HOME to tmp, drop the key in $HOME/.env only.
+    # Host env intentionally lacks DEEPSEEK_API_KEY so the value MUST
+    # come from the .env via scitex_config.load_dotenv.
+    env_save_restore.set("HOME", str(tmp_path))
     env_save_restore.delete("DEEPSEEK_API_KEY")
-    env_save_restore.delete("SAC_TO_HOME_BASELINE")
-    spec_yaml = _spec_with_to_home_env(tmp_path, "DEEPSEEK_API_KEY=sk-from-to-home\n")
+    _write_home_dotenv(tmp_path, "DEEPSEEK_API_KEY=sk-from-home-dotenv\n")
     cfg = _provider_config()
-    cfg.config_path = str(spec_yaml)
     # Act
     env = _env_dict(provider_env_flags(cfg))
-    # Assert — key bridged from to_home/.env into SAC_ANTHROPIC_API_KEY.
-    assert env["SAC_ANTHROPIC_API_KEY"] == "sk-from-to-home"
+    # Assert — key bridged from $HOME/.env into SAC_ANTHROPIC_API_KEY
+    # through the scitex-config cascade.
+    assert env["SAC_ANTHROPIC_API_KEY"] == "sk-from-home-dotenv"
 
 
-def test_host_env_wins_over_to_home_env_when_both_set(env_save_restore, tmp_path):
-    # Arrange — both sources populated with DIFFERENT values; the host
-    # process env is the higher-priority source per the resolution
-    # order documented in the module.
-    env_save_restore.set("DEEPSEEK_API_KEY", "sk-from-host")
-    env_save_restore.delete("SAC_TO_HOME_BASELINE")
-    spec_yaml = _spec_with_to_home_env(tmp_path, "DEEPSEEK_API_KEY=sk-from-to-home\n")
+def test_shell_export_wins_over_home_dotenv(env_save_restore, tmp_path):
+    # Arrange — both layers populated with DIFFERENT values. The shell
+    # export should win because scitex_config.load_dotenv never
+    # overrides an already-set process env var.
+    env_save_restore.set("HOME", str(tmp_path))
+    env_save_restore.set("DEEPSEEK_API_KEY", "sk-from-shell-export")
+    _write_home_dotenv(tmp_path, "DEEPSEEK_API_KEY=sk-from-home-dotenv\n")
     cfg = _provider_config()
-    cfg.config_path = str(spec_yaml)
     # Act
     env = _env_dict(provider_env_flags(cfg))
     # Assert
-    assert env["SAC_ANTHROPIC_API_KEY"] == "sk-from-host"
+    assert env["SAC_ANTHROPIC_API_KEY"] == "sk-from-shell-export"
 
 
-def test_unset_in_both_sources_still_raises_provider_env_error(
+def test_unset_in_both_layers_still_raises_provider_env_error(
     env_save_restore, tmp_path
 ):
-    # Arrange — host env empty, to_home/.env exists but does NOT set the
-    # named key. Fail-loud must survive the new fallback path.
+    # Arrange — host env empty, $HOME/.env exists but does NOT set the
+    # named key. Fail-loud must survive the scitex-config cascade.
+    env_save_restore.set("HOME", str(tmp_path))
     env_save_restore.delete("DEEPSEEK_API_KEY")
-    env_save_restore.delete("SAC_TO_HOME_BASELINE")
-    spec_yaml = _spec_with_to_home_env(tmp_path, "OTHER_KEY=irrelevant\n")
+    _write_home_dotenv(tmp_path, "OTHER_KEY=irrelevant\n")
     cfg = _provider_config()
-    cfg.config_path = str(spec_yaml)
     # Act
     ctx = pytest.raises(ProviderEnvError)
     # Assert
@@ -229,19 +228,19 @@ def test_unset_in_both_sources_still_raises_provider_env_error(
         provider_env_flags(cfg)
 
 
-def test_to_home_env_supports_quoted_and_export_prefixed_lines(
+def test_home_dotenv_supports_quoted_and_export_prefixed_lines(
     env_save_restore, tmp_path
 ):
     # Arrange — common .env shapes operators copy from dotfiles: an
     # ``export FOO="bar"`` style line with surrounding double quotes.
+    # scitex_config.load_dotenv strips both forms.
+    env_save_restore.set("HOME", str(tmp_path))
     env_save_restore.delete("DEEPSEEK_API_KEY")
-    env_save_restore.delete("SAC_TO_HOME_BASELINE")
-    spec_yaml = _spec_with_to_home_env(
+    _write_home_dotenv(
         tmp_path,
         '# comment line\nexport DEEPSEEK_API_KEY="sk-quoted-export"\n',
     )
     cfg = _provider_config()
-    cfg.config_path = str(spec_yaml)
     # Act
     env = _env_dict(provider_env_flags(cfg))
     # Assert — quotes stripped, ``export`` prefix tolerated.
