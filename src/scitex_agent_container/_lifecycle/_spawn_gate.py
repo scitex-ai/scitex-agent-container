@@ -38,8 +38,41 @@ root/child policy is kept verbatim.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
-__all__ = ["SpawnDeniedError", "enforce_spawn_gate", "resolve_spawn_caller"]
+__all__ = [
+    "SpawnDeniedError",
+    "enforce_spawn_gate",
+    "persist_acl_policy",
+    "resolve_spawn_caller",
+]
+
+
+def persist_acl_policy(config: Any, db_path: Path | None = None) -> None:
+    """Write the loaded spec's Phase-3 ACL policy into ``node_comms_policy``.
+
+    Idempotent upsert keyed by ``config.name``. Called from core
+    ``agent_start`` after :func:`enforce_spawn_gate` runs so a re-start
+    after a spec edit re-publishes the policy. ``config`` is the
+    :class:`scitex_agent_container.config._types.AgentConfig` produced
+    by ``load_config`` — only ``name``, ``comms``, and ``lineage`` are
+    touched. ``AgentProxy`` kinds (no SDK, no inbound) are written too
+    so ``read_comms_policy`` always finds a row for any started agent.
+    """
+    from .._state.state_db_nodes import record_comms_policy
+
+    comms = config.comms
+    lineage = config.lineage
+    record_comms_policy(
+        name=config.name,
+        outbound_siblings=comms.outbound.siblings,
+        outbound_parent=comms.outbound.parent,
+        inbound_siblings=comms.inbound.siblings,
+        inbound_parent=comms.inbound.parent,
+        lineage_group=lineage.group,
+        may_spawn=lineage.may_spawn,
+        db_path=db_path,
+    )
 
 
 class SpawnDeniedError(RuntimeError):

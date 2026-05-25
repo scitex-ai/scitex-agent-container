@@ -12,12 +12,14 @@ from ._parsers import (
     parse_apptainer,
     parse_autonomous,
     parse_claude,
+    parse_comms,
     parse_container,
     parse_context_management,
     parse_extensions,
     parse_health,
     parse_hooks,
     parse_hosts_spec,
+    parse_lineage,
     parse_listen,
     parse_proxy,
     parse_restart,
@@ -262,6 +264,17 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     kind = str(raw.get("kind", "Agent"))
     proxy_spec = parse_proxy(spec, kind=kind)
 
+    # Phase-3 capsule-isolation policy (ADR-0010 Step 2). The
+    # ``spec.comms.a2a.listen: false`` toggle is an operator-friendly
+    # alias for ``spec.a2a.port: null`` — translate it here so the
+    # existing sidecar-disable path (A2ASpec.is_disabled) carries
+    # both surfaces without a second code branch downstream.
+    comms_spec = parse_comms(spec)
+    lineage_spec = parse_lineage(spec)
+    a2a_spec = parse_a2a(spec)
+    if not comms_spec.a2a.listen:
+        a2a_spec = type(a2a_spec)(host=a2a_spec.host, port=None)
+
     return AgentConfig(
         name=name,
         runtime=str(spec.get("runtime") or "apptainer"),
@@ -292,7 +305,9 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         hosts_spec=hosts_spec,
         config_path=str(path),
         user=str(spec.get("user", "")),
-        a2a=parse_a2a(spec),
+        a2a=a2a_spec,
+        comms=comms_spec,
+        lineage=lineage_spec,
         kind=kind,
         proxy=proxy_spec,
         # ADR-0006: default to ``./to_home`` when the key is absent so a

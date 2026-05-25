@@ -247,6 +247,24 @@ def _isolation_level(spec: dict[str, Any]) -> str:
     return "hardened"
 
 
+def _lineage_may_spawn(spec: dict[str, Any]) -> bool:
+    """Project ``spec.lineage.may_spawn`` (Phase-3 Gap-5) for the card.
+
+    Default ``True`` matches the dataclass default — absence of the
+    block preserves pre-Phase-3 behaviour. Surfaced in the isolation
+    block so external verifiers (Clew, orochi attestation) can attest
+    whether the agent is allowed to spawn children at all without
+    parsing the YAML themselves.
+    """
+    lineage = spec.get("lineage")
+    if not isinstance(lineage, dict):
+        return True
+    val = lineage.get("may_spawn", True)
+    if not isinstance(val, bool):
+        return True
+    return val
+
+
 def _isolation_block(spec: dict[str, Any]) -> dict[str, Any]:
     return {
         "level": _isolation_level(spec),
@@ -257,6 +275,9 @@ def _isolation_block(spec: dict[str, Any]) -> dict[str, Any]:
         "preflight_allowed": _preflight_allowed(spec),
         "binds_count": _binds_count(spec),
         "binds_writable_count": _binds_writable_count(spec),
+        # Phase-3 (ADR-0010 Step 2) — surface per-spec spawn permission so
+        # capsule attestation can see whether a child may itself spawn.
+        "lineage": {"may_spawn": _lineage_may_spawn(spec)},
     }
 
 

@@ -20,7 +20,7 @@ from ._hook_runner import _fire_forget_hook, _run_hooks
 from ._instances import record_local_instance as _record_local_instance
 from ._runtime_select import _get_runtime
 from ._session_reset import _clear_persisted_session_id
-from ._spawn_gate import enforce_spawn_gate
+from ._spawn_gate import enforce_spawn_gate, persist_acl_policy
 from .health import health_monitor
 
 
@@ -153,6 +153,16 @@ def agent_start(
     # the bare host, so this gate sees ``caller=None`` (admin) and does
     # not double-record — and ``record_lineage`` is idempotent regardless.
     enforce_spawn_gate(config.name)
+
+    # Phase-3 (ADR-0010 Step 2) — publish the loaded spec's per-spec
+    # ACL policy into ``node_comms_policy`` so check_send_acl /
+    # check_spawn / derive_group see the current outbound, inbound,
+    # group=solitary, and may_spawn rules on the next request. The
+    # upsert is idempotent and re-runs on every start so a spec edit
+    # becomes live without manual state.db surgery. Defaults preserve
+    # pre-Phase-3 behaviour, so an existing YAML with no spec.comms /
+    # spec.lineage blocks writes the all-allow / may_spawn=True row.
+    persist_acl_policy(config)
 
     # Resolve spec.a2a.port BEFORE the runtime builds argv. ``"auto"``
     # gets a fresh allocator claim; an explicit int is recorded so
