@@ -41,6 +41,17 @@ dependencies = [
     # bookkeeping).
     "ruamel.yaml>=0.18",
     "rich>=13.0",
+    # Two distinct uses:
+    #   1. `scitex_config._ecosystem.local_state` — canonical local-state
+    #      directory helper (project-scope override + auto runtime/ seed
+    #      creation) per scitex-python skill
+    #      01_arch_06_local-state-directories.md.
+    #   2. Public `PriorityConfig` + `load_dotenv` surface — used by
+    #      `runtimes/_apptainer_provider.py` to resolve the provider
+    #      auth token via the SciTeX-ecosystem `direct → config → env
+    #      → default` cascade (see ADR-0011).
+    # v0.3.0 was the release that split public from ecosystem-internal
+    # and exposed both surfaces — that is our hard minimum.
     "scitex-config>=0.3.0",
     "scitex-container>=0.1.0",
     "scitex-logging>=0.1.5",
@@ -57,10 +68,6 @@ dependencies = [
     # validate_proto_required_fields still references — pin until upstream
     # adopts the descriptor pool API. See CI failure 2026-04-27.
     "protobuf<6",
-    # Canonical local-state directory helper (project-scope override +
-    # auto runtime/ seed creation). Per scitex-python skill
-    # 01_arch_06_local-state-directories.md.
-    "scitex-config>=0.3.0",
 ]
 
 [project.optional-dependencies]
