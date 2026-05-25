@@ -28,6 +28,7 @@ from pathlib import Path
 import click
 
 from .._state.host_config import build_ssh_argv, load
+from ._fleet_sync import fleet_sync
 from ._helpers import _json_flag, console
 
 
@@ -236,6 +237,12 @@ def fleet_launch(
     failures = sum(1 for r in rows if r["exit"] != 0)
     if failures:
         raise SystemExit(1)
+
+
+# Cross-host spec audit — registered after the launch verb so the
+# import-time wiring stays linear. ``sync`` lives in its own module
+# (``_fleet_sync.py``) to keep this file under the project line-budget.
+fleet_group.add_command(fleet_sync)
 
 
 # EOF
