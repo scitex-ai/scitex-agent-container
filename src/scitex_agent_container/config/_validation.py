@@ -128,6 +128,32 @@ _V3_REMOVED_FIELDS: dict[str, str] = {
 }
 
 
+def _validate_provider(provider_block: object) -> list[str]:
+    """Validate ``spec.claude.provider`` (vendor backend override).
+
+    Absent / non-dict → no errors (provider feature unused). When the
+    block is a dict, both ``base_url`` and ``auth_token_env`` must be
+    non-empty strings — an incomplete override would silently fall back
+    to Anthropic at runtime, which we refuse to allow.
+    """
+    if not isinstance(provider_block, dict):
+        return []
+    errors: list[str] = []
+    for field_name in ("base_url", "auth_token_env"):
+        val = provider_block.get(field_name)
+        if val is None or val == "":
+            errors.append(
+                f"spec.claude.provider.{field_name} is required and must be "
+                "non-empty when spec.claude.provider is declared."
+            )
+        elif not isinstance(val, str):
+            errors.append(
+                f"spec.claude.provider.{field_name} must be a string, got "
+                f"{type(val).__name__}"
+            )
+    return errors
+
+
 def validate_raw(raw: dict, path: str) -> list[str]:
     """Validate raw YAML dict. Returns list of error strings (empty means valid)."""
     errors: list[str] = []
@@ -238,13 +264,23 @@ def validate_raw(raw: dict, path: str) -> list[str]:
         # validate time. Empty / missing is allowed — runtime falls back
         # to its default.
         claude_block = spec.get("claude", {}) or {}
-        model = claude_block.get("model") if isinstance(claude_block, dict) else None
+        if not isinstance(claude_block, dict):
+            claude_block = {}
+        # spec.claude.provider — vendor-agnostic backend override
+        # (ProviderSpec). When present, the SDK session runs against an
+        # Anthropic-SDK-compatible backend on an API key, so the model id
+        # is the provider's own (e.g. 'deepseek-chat') and the claude-*
+        # regex below is skipped. Absent → behaviour unchanged.
+        provider_block = claude_block.get("provider")
+        has_provider = isinstance(provider_block, dict)
+        errors.extend(_validate_provider(provider_block))
+        model = claude_block.get("model")
         if model is not None:
             if not isinstance(model, str):
                 errors.append(
                     f"spec.claude.model must be a string, got {type(model).__name__}"
                 )
-            elif model and not _VALID_MODEL_RE.match(model):
+            elif model and not has_provider and not _VALID_MODEL_RE.match(model):
                 errors.append(
                     f"spec.claude.model '{model}' is not an accepted alias. "
                     "Use a bare alias ('opus', 'sonnet', 'haiku', 'inherit', "
@@ -254,8 +290,20 @@ def validate_raw(raw: dict, path: str) -> list[str]:
                     "'claude-opus-4-7[1m]', 'claude-haiku-4-5-20251001'). "
                     "Abbreviated forms like 'claude-opus[1m]' are rejected "
                     "by the SDK without raising — every turn returns 0 "
-                    "tokens."
+                    "tokens. (When spec.claude.provider is set, the model "
+                    "field accepts the provider's own model id instead.)"
                 )
+
+        # spec.claude.provider + spec.claude.account are mutually
+        # exclusive — an API-key backend needs no OAuth. Declaring both
+        # is a config error (the runtime would otherwise have to guess
+        # which auth path wins). Reject loudly at validate time.
+        if has_provider and (claude_block.get("account") or ""):
+            errors.append(
+                "spec.claude.provider and spec.claude.account are mutually "
+                "exclusive — a provider backend uses an API key, not "
+                "Anthropic OAuth. Set exactly one."
+            )
 
         # container.runtime
         container = spec.get("container", {}) or {}
