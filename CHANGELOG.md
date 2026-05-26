@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.21.1] — 2026-05-26
+
 ### Added
 - **feat(ssh): connection multiplexing across all sac→peer ssh calls**
   — every sac call that shells out to ssh now prepends
