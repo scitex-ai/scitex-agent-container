@@ -45,21 +45,21 @@ metadata:
     machine: local
 spec:
   runtime: apptainer      # apptainer (only accepted value)
-  model: opus[1m]
-  multiplexer: tmux       # tmux (default) or screen
 
   claude:
+    model: opus[1m]            # v3-realign: moved from top-level spec.model
     flags:
       - --dangerously-skip-permissions
     session: continue-or-new   # continue-or-new (default) | continue | new | resume
 
-  skills:
-    required: [scitex]
+  # Skills are file-based in v3: drop SKILL.md trees under
+  # to_home/.claude/skills/<id>/ and list ids in metadata.labels.skills.
+  # The validator rejects spec.skills.
 
   health:
     enabled: true
     interval: 60
-    method: multiplexer-alive
+    method: sdk-alive          # sole supported probe (heartbeat-file/healthz)
 
   restart:
     policy: on-failure

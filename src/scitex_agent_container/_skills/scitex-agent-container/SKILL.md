@@ -45,7 +45,7 @@ through `sac agents list`/`tail`/`health`.
 - [06_http-api.md](06_http-api.md) — `POST /v1/turn` wire format (set `spec.a2a.port` to enable)
 
 ### Core
-- [01_config-v3.md](01_config-v3.md) — v3 config format (current); v2+`metadata.name` rejected
+- [01_config-v3.md](01_config-v3.md) — v3 config format (current); `apiVersion: scitex-agent-container/v3`, dir-as-SSoT (no `metadata.name`); legacy v2-era fields (`spec.remote`, `spec.skills`, `dot_claude/`, top-level `spec.model`) are rejected by the validator
 - [02_multiplexer.md](02_multiplexer.md) — vestigial for agents (SDK runtime, no tmux); lead-only tmux wrap
 - [03_auto-accept.md](03_auto-accept.md) — Modular prompt handlers
 - [04_resource-management.md](04_resource-management.md) — Resource management

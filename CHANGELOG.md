@@ -6,6 +6,22 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **docs(skills): purge v2-era field references from `_skills/scitex-agent-container/`** —
+  brought seven skills in lockstep with the v3 validator (`config/_validation.py`),
+  which strictly rejects `spec.remote`, `metadata.name`, top-level
+  `spec.model`, `spec.skills`, and `dot_claude`. Highlights: full rewrite
+  of `11_remote-deploy.md` to `spec.host` / `spec.hosts` + `sac --on <peer>`
+  dispatch; YAML example in `01_config-v3.md` no longer ships
+  `spec.skills` / top-level `spec.model` / `multiplexer-alive`; A2A
+  AgentCard mapping in `07_a2a-protocol-extension-fields.md` points at
+  the dir-as-SSoT name source and the file-based skill layout;
+  `19_full-agent-troubleshooting.md` replaces the `spec.skills.required` /
+  `spec.skills.available` table with the `to_home/.claude/skills/<id>/`
+  delivery mechanism. Added validator tests covering the unknown-spec-field
+  catch-all and the `metadata.name` / `dot_claude` / `spec.skills`
+  rejection messages; relocation-vs-unknown messages stay distinct.
+
 ## [0.21.0] — 2026-05-25
 
 ### Added

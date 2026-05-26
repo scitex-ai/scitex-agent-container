@@ -23,7 +23,7 @@ Global flags:
 
 | Command | Purpose |
 |---|---|
-| `sac agents start <agent> [--foreground]` | Start the agent. Daemon by default; `--foreground` streams stdio + blocks. Honors `spec.remote.host` (ssh dispatch) and `spec.a2a.port` (HTTP inbound). |
+| `sac agents start <agent> [--foreground]` | Start the agent. Daemon by default; `--foreground` streams stdio + blocks. Honors `spec.host` / `spec.hosts` (cross-host placement; see [11_remote-deploy.md](11_remote-deploy.md)) and `spec.a2a.port` (HTTP inbound). |
 | `sac agents stop <agent>` | SIGTERM the runner; escalate to SIGKILL after 5 s. ssh-mediated for remote agents. |
 | `sac agents restart <agent>` | Stop + start, preserving session_id resume. |
 | `sac agents status [<agent>]` | Per-agent rich payload, or fleet view if no name. `--snapshot` persists a state capsule, `--priority` adds the singleton-yield report. |

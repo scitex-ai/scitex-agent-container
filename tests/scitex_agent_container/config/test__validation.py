@@ -617,3 +617,120 @@ def test_spec_remote_rejection_drops_stale_section_reference():
     assert "§2" not in message, (
         f"spec.remote rejection must not cite stale §2; got {message!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Unknown spec field — generic catch-all for typos / undeclared keys.
+#
+# The validator must reject any spec key outside ``_KNOWN_SPEC_KEYS`` plus
+# the v3-relocated/removed sets. This guards against typos silently
+# disappearing into ``spec.extensions`` semantics, and keeps the docs and
+# validator in lockstep — every example in the skills must use only known
+# field names.
+# ---------------------------------------------------------------------------
+
+
+def test_validate_raw_rejects_unknown_spec_field():
+    """An undeclared top-level spec key is rejected with a helpful error."""
+    # Arrange
+    raw = {
+        "apiVersion": "scitex-agent-container/v3",
+        "kind": "Agent",
+        "spec": {"runtime": "apptainer", "totally_made_up_field": 42},
+    }
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert — the rejection names the offending key and points at the
+    # canonical escape hatch (spec.extensions for custom data).
+    bad = [e for e in errors if "totally_made_up_field" in e]
+    assert bad, f"unknown spec field must be rejected; got errors={errors!r}"
+    assert "spec.extensions" in bad[0], (
+        "unknown-spec-field error must point users at spec.extensions; "
+        f"got {bad[0]!r}"
+    )
+
+
+def test_validate_raw_unknown_spec_field_does_not_collide_with_relocated_message():
+    """Relocated fields get a specific redirect message, not the generic
+    'unknown field' one. Keep the two messages distinct so operators
+    fixing a v2 spec see the relocation hint instead of a vague typo
+    complaint."""
+    # Arrange — spec.model is a v3-RELOCATED field (→ spec.claude.model).
+    raw = {
+        "apiVersion": "scitex-agent-container/v3",
+        "kind": "Agent",
+        "spec": {"runtime": "apptainer", "model": "opus"},
+    }
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert — the message mentions the new home, not "Unknown spec field".
+    relocations = [e for e in errors if "spec.claude.model" in e]
+    assert relocations, (
+        f"spec.model must produce a relocation hint; got {errors!r}"
+    )
+    generic = [e for e in errors if "Unknown spec field 'model'" in e]
+    assert not generic, (
+        "spec.model must NOT also trigger the generic unknown-field "
+        f"message; got {generic!r}"
+    )
+
+
+def test_validate_raw_rejects_metadata_name():
+    """The v2-era ``metadata.name`` field is rejected with a redirect to
+    the dir-as-SSoT layout."""
+    # Arrange
+    raw = {
+        "apiVersion": "scitex-agent-container/v3",
+        "kind": "Agent",
+        "metadata": {"name": "legacy-agent"},
+        "spec": {"runtime": "apptainer"},
+    }
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert — the message mentions the SSoT replacement.
+    bad = [e for e in errors if "metadata.name" in e]
+    assert bad, f"metadata.name must be rejected; got {errors!r}"
+    assert "parent directory" in bad[0], (
+        "metadata.name rejection must point at dir-as-SSoT; "
+        f"got {bad[0]!r}"
+    )
+
+
+def test_validate_raw_rejects_dot_claude():
+    """The legacy ``spec.dot_claude`` layout key is rejected with a
+    redirect to the ``to_home/`` deploy pipeline (ADR-0006)."""
+    # Arrange
+    raw = {
+        "apiVersion": "scitex-agent-container/v3",
+        "kind": "Agent",
+        "spec": {"runtime": "apptainer", "dot_claude": {"skills": []}},
+    }
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    bad = [e for e in errors if "dot_claude" in e]
+    assert bad, f"spec.dot_claude must be rejected; got {errors!r}"
+    assert "to_home" in bad[0], (
+        "dot_claude rejection must point at the to_home pipeline; "
+        f"got {bad[0]!r}"
+    )
+
+
+def test_validate_raw_rejects_spec_skills():
+    """The v2-era ``spec.skills`` block is rejected; skills now live as
+    files under ``to_home/.claude/skills/``."""
+    # Arrange
+    raw = {
+        "apiVersion": "scitex-agent-container/v3",
+        "kind": "Agent",
+        "spec": {"runtime": "apptainer", "skills": {"required": ["foo"]}},
+    }
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    bad = [e for e in errors if "spec.skills" in e]
+    assert bad, f"spec.skills must be rejected; got {errors!r}"
+    assert "to_home" in bad[0], (
+        "spec.skills rejection must point at the to_home/.claude/skills/ "
+        f"layout; got {bad[0]!r}"
+    )
