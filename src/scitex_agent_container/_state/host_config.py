@@ -419,6 +419,16 @@ def build_ssh_argv(
     (probe-friendly), and ``-o ServerAliveInterval=15`` (keepalive
     so a wedged middle-hop is detectable).
 
+    **ControlMaster multiplexing** (PA-???, 2026-05-27): every ssh argv
+    produced by this function includes ``-o ControlMaster=auto``,
+    ``-o ControlPersist=60s``, and a ``ControlPath`` pointing at
+    ``${TMPDIR:-/tmp}/.sac-ssh-cm/%%C`` (a writable path inside the
+    container, circumventing the read-only SIF home directory).  This
+    ensures that parallel SSH invocations to the same host reuse a
+    single multiplexed TCP connection, respecting Spartan's per-user
+    ``MaxSessions`` limit and avoiding "control socket dir is read-only"
+    errors.  See :mod:`scitex_agent_container._ssh` for details.
+
     When the peer carries an ``env_preamble`` (e.g. Spartan, where
     ``apptainer`` is only on $PATH after two ``module load`` calls),
     the dispatched command is wrapped in ``bash -c '<preamble> &&
@@ -441,6 +451,8 @@ def build_ssh_argv(
     """
     import shlex
 
+    from .._ssh import ensure_control_path_dir, ssh_control_opts
+
     peer = peers[peer_name]
     argv: list[str] = [ssh_binary]
     if peer.via:
@@ -455,9 +467,16 @@ def build_ssh_argv(
         "-o",
         "ServerAliveInterval=15",
     ]
+    # ControlMaster multiplexing: reuse one TCP connection per host so
+    # parallel SSH invocations don't exceed the remote MaxSessions limit
+    # or fail due to a read-only control-socket directory inside the SIF.
+    argv += ssh_control_opts()
     if extra_opts:
         argv += list(extra_opts)
     argv += [peer.ssh, "--"]
+    # Ensure the ControlPath directory exists before anything tries to
+    # write a socket there.  Idempotent — safe to call every time.
+    ensure_control_path_dir()
     preamble = peer.joined_preamble()
     if preamble:
         # OpenSSH joins every token after the host with spaces and feeds

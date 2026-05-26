@@ -19,6 +19,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 
@@ -41,11 +42,23 @@ _SSH_PROBE_OPTS = [
     "StrictHostKeyChecking=no",
     "-o",
     "LogLevel=ERROR",
+    # ControlMaster multiplexing (see scitex_agent_container._ssh): reuse
+    # one TCP connection per host so parallel probes don't exceed the
+    # remote MaxSessions limit or fail due to a read-only control-socket
+    # dir inside the SIF.
+    "-o",
+    "ControlMaster=auto",
+    "-o",
+    "ControlPersist=60s",
+    "-o",
+    "ControlPath="
+    + os.path.join(os.environ.get("TMPDIR", "/tmp"), ".sac-ssh-cm", "%C"),
 ]
 
 
 def _probe_ssh(host: str) -> bool:
     """Return True if ``host`` is reachable via SSH (``hostname`` exits 0)."""
+    _ensure_ssh_control_dir()
     try:
         result = subprocess.run(
             ["ssh"] + _SSH_PROBE_OPTS + [host, "hostname"],
@@ -55,6 +68,13 @@ def _probe_ssh(host: str) -> bool:
         return result.returncode == 0
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return False
+
+
+def _ensure_ssh_control_dir() -> None:
+    """Ensure the SSH ControlMaster socket dir exists, importing _ssh lazily."""
+    from .._ssh import ensure_control_path_dir
+
+    ensure_control_path_dir()
 
 
 def _priority_report(
@@ -250,19 +270,27 @@ def _ssh_start_agent(host: str, agent_name: str) -> bool:
 
     Returns True if the remote command exited 0.
     """
-    cmd = [
-        "ssh",
-        "-o",
-        "ConnectTimeout=10",
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        "StrictHostKeyChecking=no",
-        "-o",
-        "LogLevel=ERROR",
-        host,
-        f"sac agent start {agent_name}",
-    ]
+    from .._ssh import ensure_control_path_dir, ssh_control_opts
+
+    ensure_control_path_dir()
+    cmd = (
+        [
+            "ssh",
+            "-o",
+            "ConnectTimeout=10",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "LogLevel=ERROR",
+        ]
+        + ssh_control_opts()
+        + [
+            host,
+            f"sac agent start {agent_name}",
+        ]
+    )
     try:
         result = subprocess.run(
             cmd,
