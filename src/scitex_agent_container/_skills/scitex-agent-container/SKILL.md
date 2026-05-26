@@ -1,8 +1,8 @@
 ---
 name: scitex-agent-container
 description: |
-  [WHAT] Declarative YAML AI-agent lifecycle — define an agent in one `spec.yaml` (apptainer image, model, MCP, mounts/env, health, restart, A2A port, remote host); `sac agents start` runs it as a long-lived Claude SDK session inside Apptainer, with A2A inbound (`POST /v1/turn`), SSH remote deploy, and JSON status.
-  [WHEN] Launching/managing a Claude Code agent or fleet, running an agent on a remote host, wiring MCP into an agent, talking to one over A2A, or any mention of `sac agents start`, `scitex-agent-container`, `spec.yaml`, fleet head/worker.
+  [WHAT] Declarative YAML AI-agent lifecycle — define an agent in one `spec.yaml` (apptainer image, model, MCP, mounts/env, health, restart, A2A port, host placement); `sac agents start` runs it as a long-lived Claude SDK session inside Apptainer, with A2A inbound (`POST /v1/turn`) and JSON status.
+  [WHEN] Launching/managing a Claude Code agent or fleet, wiring MCP into an agent, talking to one over A2A, or any mention of `sac agents start`, `scitex-agent-container`, `spec.yaml`, fleet head/worker.
   [HOW] `pip install scitex-agent-container` then `sac agents start <name>` (CLI) or `import scitex_agent_container`.
 tags: [scitex-agent-container]
 primary_interface: cli
@@ -46,7 +46,7 @@ through `sac agents list`/`tail`/`health`.
 
 ### Core
 - [01_config-v3.md](01_config-v3.md) — v3 config format (current); v2+`metadata.name` rejected
-- [02_multiplexer.md](02_multiplexer.md) — vestigial for agents (SDK runtime, no tmux); lead-only tmux wrap
+- [02_multiplexer.md](02_multiplexer.md) — vestigial for agents (SDK runtime); lead-only tmux wrap
 - [03_auto-accept.md](03_auto-accept.md) — Modular prompt handlers
 - [04_resource-management.md](04_resource-management.md) — Resource management
 - [05_resource-heartbeat.md](05_resource-heartbeat.md) — Resource heartbeat
@@ -54,20 +54,20 @@ through `sac agents list`/`tail`/`health`.
 - [07_a2a-protocol.md](07_a2a-protocol.md) — Native A2A protocol (`sac a2a serve`)
 - [07_a2a-protocol-extension-fields.md](07_a2a-protocol-extension-fields.md) — `x-scitex-agent-container.*` AgentCard extension fields + JSON example
 - [08_templates.md](08_templates.md) — Six pattern templates + real-world examples
-- [14_claude-session-state.md](14_claude-session-state.md) — claude-session runner reference: state-dir layout, auth precedence, `sdk_session` status JSON, supervisor
-- [15_claude-session.md](15_claude-session.md) — the claude-session SDK runner (inside the apptainer SIF) + `POST /v1/turn` inbound endpoint; `runtime: apptainer` is the operative runtime
-- [16_claude-session-migration.md](16_claude-session-migration.md) — historical: the claude-code → SDK migration is complete; `runtime` is apptainer-only now
+- [14_claude-session-state.md](14_claude-session-state.md) — claude-session state-dir layout, auth precedence, `sdk_session` status JSON
+- [15_claude-session.md](15_claude-session.md) — claude-session SDK runner inside the apptainer SIF + `POST /v1/turn` inbound endpoint
+- [16_claude-session-migration.md](16_claude-session-migration.md) — historical: claude-code→SDK migration complete; `runtime` apptainer-only
 - [17_inbound-turn-endpoint.md](17_inbound-turn-endpoint.md) — `POST /v1/turn` wire format + sidecar replacement
 - [18_full-agent-delegation.md](18_full-agent-delegation.md) — Delegate multi-step work to another *full* Claude Code agent (vs Task subagent)
-- [19_full-agent-troubleshooting.md](19_full-agent-troubleshooting.md) — Operational deep-dives for sac peer fleets: stuck-peer recovery, reaper pattern, hard/soft skills, Monitor over polling
+- [19_full-agent-troubleshooting.md](19_full-agent-troubleshooting.md) — sac peer-fleet deep-dives: stuck-peer recovery, reaper pattern, Monitor over polling
 
 ### Workflows
 - [10_cli.md](10_cli.md) — CLI commands and Python API
 - [11_remote-deploy.md](11_remote-deploy.md) — SSH deployment, src files, venv
 - [12_wsl-connectivity.md](12_wsl-connectivity.md) — WSL connectivity notes
 - [24_image-build.md](24_image-build.md) — apptainer `.sif` build/rebuild, `@develop` pin, rebuild-to-ship runner/channel changes (gotcha)
-- [25_claude-setup-delivery.md](25_claude-setup-delivery.md) — how sac passes Claude setup explicitly into apptainer agents: `to_home`→`$HOME` 1:1 mirror, overlay/`--home` delivery, `--settings` hook load, `setting_sources=[]`
-- [26_credentials-rotation.md](26_credentials-rotation.md) — SAC OAuth credentials rotation/refresh/recovery: per-account canonicals + symlinks, the `:rw` bind that enables live refresh, the per-account COPY caveat that loses write-back, preflight (300s skew, access-token only), and the verified headless re-login flow
+- [25_claude-setup-delivery.md](25_claude-setup-delivery.md) — passing Claude setup into apptainer agents: `to_home`→`$HOME` mirror, `--home` delivery, `--settings` hook load, `setting_sources=[]`
+- [26_credentials-rotation.md](26_credentials-rotation.md) — SAC OAuth credentials rotation/refresh/recovery: per-account canonicals, the `:rw` live-refresh bind, the COPY write-back caveat, preflight, headless re-login
 
 ### Reference
 - [13_observability.md](13_observability.md) — `sac agents status` JSON contract

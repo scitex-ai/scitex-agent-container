@@ -76,7 +76,7 @@ Auth precedence (highest → lowest) in `runtimes/_sdk_common.py::provision_anth
 | Variable | Purpose | Default | Type |
 |---|---|---|---|
 | `ANTHROPIC_API_KEY` | Read directly by the SDK if pre-set. The runner does NOT export this; the SDK calls `claude` CLI which falls back to `~/.claude/.credentials.json` OAuth when this is unset. | `—` | string |
-| `SAC_ANTHROPIC_API_KEY` | Sac-namespaced auth handoff. Accepts both OAuth (`sk-ant-oat*`) and API-key (`sk-ant-api*`) forms; runner detects by prefix. Local shells populate via `sac dev credential2apikey`; CI populates via the GitHub Actions secret of the same name (rotate with `sac dev upload-apikey-from-credentials-to-github`). | `—` | string |
+| `SAC_ANTHROPIC_API_KEY` | Sac-namespaced auth handoff. Accepts both OAuth (`sk-ant-oat*`) and API-key (`sk-ant-api*`) forms; runner detects by prefix. Local shells populate via `sac dev extract-apikey-from-credentials`; CI populates via the GitHub Actions secret of the same name (rotate with `sac dev upload-apikey-from-credentials-to-github`). | `—` | string |
 | `SCITEX_AGENT_CONTAINER_TELEGRAM_BOT_TOKEN` | Telegram bot token for agent bridge. | `—` | string |
 
 ## Context compaction

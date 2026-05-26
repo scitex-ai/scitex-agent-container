@@ -51,7 +51,8 @@ spec:
   claude:
     flags:
       - --dangerously-skip-permissions
-    session: continue-or-new   # continue-or-new (default) | continue | new | resume
+    session: continue   # continue (default) | new-session | resume
+                        # (legacy aliases: continue-or-new→continue, new→new-session)
 
   skills:
     required: [scitex]
@@ -65,6 +66,42 @@ spec:
     policy: on-failure
     max_retries: 3
 ```
+
+## `spec.claude` — model, session, OAuth account, provider override
+
+Beyond `model` / `flags` / `session`, two fields control which backend
+the agent's SDK session authenticates against:
+
+```yaml
+spec:
+  claude:
+    model: opus[1m]
+
+    # OAuth account pinning. Name from `sac accounts list`. The runtime
+    # COPIES that account's .credentials.json into the agent's state dir
+    # at start (frozen boot-copy, bound RW so ~1h token refresh works) —
+    # so two agents pinned to two accounts never fight one mount.
+    # "" (default) = the host's live ~/.claude/.credentials.json.
+    # Changing it needs `sac agent restart` to re-copy the snapshot.
+    account: max-personal
+
+    # Vendor-agnostic backend override. Runs the session against an
+    # Anthropic-SDK-compatible backend (DeepSeek, a gateway, …) on a
+    # never-expiring API key instead of Anthropic OAuth — cheap bulk
+    # fleet work without burning Max quota. Mutually exclusive with
+    # `account` (an API-key backend needs no OAuth; declaring both is a
+    # config error rejected at start).
+    provider:
+      base_url: https://api.deepseek.com/anthropic  # required
+      auth_token_env: DEEPSEEK_API_KEY              # NAME of host env var (not the key)
+```
+
+With a `provider` set, the `model` is the provider's own id (e.g.
+`deepseek-chat`) — the `claude-*` model regex relaxes when a provider
+is declared. The runtime injects `ANTHROPIC_BASE_URL`, the API key (via
+sac's `SAC_ANTHROPIC_API_KEY` handoff), and a clean per-agent
+`CLAUDE_CONFIG_DIR` into the container, and fails loud if
+`$<auth_token_env>` is unset on the host.
 
 ## Auto-derived fields
 

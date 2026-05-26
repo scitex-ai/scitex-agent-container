@@ -383,8 +383,10 @@ def test_account_show_dispatches_nonempty_argv():
     with _recording() as captured:
         # Act
         _account.account_show()
-    # Assert
-    assert captured[-1][1] and isinstance(captured[-1][1], list)
+    # Assert — must target a real CLI command (`sac accounts status`),
+    # not a deleted one. A bare nonempty check let `["account"]` (no
+    # such command) slip through until 2026-05.
+    assert captured[-1][1][:2] == ["accounts", "status"]
 
 
 def test_quota_watch_dispatches_nonempty_argv():
@@ -392,8 +394,9 @@ def test_quota_watch_dispatches_nonempty_argv():
     with _recording() as captured:
         # Act
         _account.quota_watch()
-    # Assert
-    assert captured[-1][1] and isinstance(captured[-1][1], list)
+    # Assert — must target the real `sac accounts watch-quota`, not the
+    # deleted `sac quota watch`.
+    assert captured[-1][1][:2] == ["accounts", "watch-quota"]
 
 
 def test_mcp_doctor_dispatches_nonempty_argv():

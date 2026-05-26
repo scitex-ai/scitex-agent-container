@@ -44,7 +44,7 @@ For agent-to-agent communication (orochi master → workers, peer collaboration)
 ```python
 from scitex_agent_container.peer import post_turn, post_turn_to_url, resolve_peer_url
 
-# By agent name — auto-resolves URL from spec.remote.host + spec.a2a.port
+# By agent name — auto-resolves URL from spec.host + spec.a2a.port
 reply = post_turn("worker", "summarize today's commits")
 
 # By URL — useful for ad-hoc peers
@@ -81,8 +81,8 @@ cfg.runtime          # "apptainer"
 cfg.model            # str
 cfg.expanded_workdir # str (~ resolved)
 cfg.a2a.port         # int | None
-cfg.remote.host      # str ("" if local)
-cfg.remote.is_remote # bool
+cfg.hosts_spec.host  # str | list[str] ("" if unpinned/local; spec.host)
+cfg.hosts_spec.hosts # str | list[str] (fleet fan-out; spec.hosts)
 cfg.startup_commands # list[StartupCommand]
 ```
 

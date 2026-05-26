@@ -2,8 +2,8 @@
 description: |
   [TOPIC] sac MCP server — exposed tools, transport, install snippet
   [DETAILS] Convention §3-§5 surface: every `sac mcp <verb>` plus the
-  bare-name MCP tools (`agent_*`, `db_*`, `host_*`, `image_*`,
-  `template_*`, `account_*`, `quota_*`, `skills_*`, `mcp_*`,
+  bare-name MCP tools (`agent_*`, `subagent_*`, `db_*`, `host_*`,
+  `image_*`, `template_*`, `account_*`, `quota_*`, `skills_*`, `mcp_*`,
   `list_python_apis`). Both stdio and HTTP transports. Install with
   `pip install scitex-agent-container[mcp]`.
 tags: [scitex-agent-container-mcp-tools]
@@ -53,7 +53,8 @@ adds the `agent_container_` prefix at scitex aggregator time.
 
 | Group       | Tools                                                                                                                                                                                                                                  |
 |-------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `agent`     | `list`, `status`, `logs`, `health`, `find`, `check`, `validate`, `inspect`, `recall`, `check_priority`, `take_snapshot`, `start`, `stop`, `restart`, `attach`                                                                          |
+| `agent`     | `list`, `status`, `logs`, `health`, `find`, `check`, `recall`, `start`, `spawn`, `stop`, `restart`, `send`                                                                                                                             |
+| `subagent`  | `subagent_get_state`                                                                                                                                                                                                                   |
 | `db`        | `show`, `query`, `clean`, `tick`, `migrate`, `export`, `import`                                                                                                                                                                        |
 | `host`      | `list`, `validate`, `probe`, `exec`                                                                                                                                                                                            |
 | `image`     | `build`                                                                                                                                                                                                                                |
