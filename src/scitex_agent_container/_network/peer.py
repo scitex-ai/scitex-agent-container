@@ -291,12 +291,16 @@ def _post_turn_via_ssh(
         "-X POST -H 'Content-Type: application/json' -d @- "
         f"http://127.0.0.1:{port}/v1/turn"
     )
+    from .._ssh import ensure_control_path_dir, ssh_control_opts
+
+    ensure_control_path_dir()
     ssh_cmd = [
         "ssh",
         "-o",
         "BatchMode=yes",
         "-o",
         "ConnectTimeout=15",
+        *ssh_control_opts(),
         host,
         remote_curl,
     ]

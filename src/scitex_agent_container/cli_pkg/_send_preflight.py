@@ -69,8 +69,20 @@ def default_ssh_runner(
     Kept as a module-level function (not a closure) so tests can swap
     it via the ``ssh_runner=`` parameter without monkeypatching.
     """
+    from .._ssh import ensure_control_path_dir, ssh_control_opts
+
+    ensure_control_path_dir()
+    ssh_argv = [
+        "ssh",
+        *ssh_control_opts(),
+        peer_host,
+        "python3",
+        "-c",
+        PROBE_PYTHON_SCRIPT,
+        remote_creds_path,
+    ]
     return subprocess.run(
-        ["ssh", peer_host, "python3", "-c", PROBE_PYTHON_SCRIPT, remote_creds_path],
+        ssh_argv,
         capture_output=True,
         text=True,
         check=False,
