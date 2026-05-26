@@ -250,6 +250,10 @@ def _ssh_start_agent(host: str, agent_name: str) -> bool:
 
     Returns True if the remote command exited 0.
     """
+    # Singleton-reconcile fans out across many hosts in parallel; share
+    # one ssh master per peer so MaxSessions / MaxStartups stay happy.
+    from .._state.host_config import ssh_control_options
+
     cmd = [
         "ssh",
         "-o",
@@ -260,6 +264,7 @@ def _ssh_start_agent(host: str, agent_name: str) -> bool:
         "StrictHostKeyChecking=no",
         "-o",
         "LogLevel=ERROR",
+        *ssh_control_options(),
         host,
         f"sac agent start {agent_name}",
     ]
