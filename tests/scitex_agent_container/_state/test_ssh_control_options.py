@@ -22,11 +22,9 @@ Coverage:
 
 from __future__ import annotations
 
-import os
 import shlex
 import stat
 import sys
-from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
