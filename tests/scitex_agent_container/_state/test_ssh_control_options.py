@@ -31,7 +31,6 @@ from __future__ import annotations
 import shlex
 import stat
 import tempfile
-from pathlib import Path
 
 import pytest
 from click.testing import CliRunner

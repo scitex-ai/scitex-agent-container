@@ -403,8 +403,10 @@ def _parse_env_preamble(name: str, raw) -> tuple[str, ...]:
 # ssh ControlMaster option rendering lives in its own module so the test
 # file mirror is 1:1 (project rule PS-204). This re-export keeps the
 # existing import surface (`from ..._state.host_config import
-# ssh_control_options`) working unchanged.
-from .ssh_control_options import (  # noqa: E402
+# ssh_control_options`) working unchanged for downstream callers, even
+# though only ``ssh_control_options`` is used by ``build_ssh_argv``
+# below (hence the F401 ignore on the second name).
+from .ssh_control_options import (  # noqa: E402,F401
     ssh_control_options,
     ssh_control_options_str,
 )
