@@ -21,6 +21,7 @@ from .._state.host_config import (
     build_ssh_argv,
     host_interfaces,
     load,
+    ssh_control_options_str,
 )
 from ._helpers import _json_flag, console
 
@@ -336,6 +337,27 @@ def host_probe(ctx: click.Context, peer: str, timeout: int, as_json: bool) -> No
             console.print(f"[dim]{proc.stderr.strip()[:200]}[/dim]")
     if not reachable:
         raise SystemExit(1)
+
+
+@host_group.command("ssh-opts")
+def host_ssh_opts() -> None:
+    """Print sac's ssh ControlMaster options as a shell-quoted string.
+
+    Splat this into an ad-hoc ssh / scp / rsync command so multi-host
+    automation reuses sac's existing multiplexed master per peer
+    instead of opening a fresh connection per call. The output is
+    shell-safe — just pass it through ``$(...)``::
+
+        ssh $(sac host ssh-opts) myhost cmd
+        rsync -e "ssh $(sac host ssh-opts)" src/ myhost:dst/
+        parallel ssh $(sac host ssh-opts) myhost ::: cmd1 cmd2 cmd3
+
+    Prints an empty line when multiplexing is opted out
+    (``SAC_SSH_CONTROL_MASTER=0``) so the splat is a no-op. The
+    underlying flags are documented under
+    :func:`scitex_agent_container._state.host_config.ssh_control_options`.
+    """
+    click.echo(ssh_control_options_str())
 
 
 # WSL → fleet-hub layered probe (folded from ``sac network probe``).

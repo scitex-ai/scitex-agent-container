@@ -102,7 +102,15 @@ def resolve_cred_file(
 
     dest = Path(state_dir).expanduser() / "claude" / ".credentials.json"
     dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(snapshot, dest)
+    # Preserve the per-agent dest if it is already fresher than the
+    # snapshot. Without this guard, an agent restart would clobber a
+    # token the in-container Claude CLI just refreshed (on its private
+    # ``:rw`` copy) with the stale boot-time snapshot — and auth would
+    # die at the next refresh cycle. Only overwrite when dest is
+    # absent OR the snapshot's OAuth expiresAt is strictly newer.
+    dest_expiry = _read_oauth_expiry_seconds(dest) if dest.is_file() else None
+    if dest_expiry is None or expiry > dest_expiry:
+        shutil.copy2(snapshot, dest)
     return dest
 
 

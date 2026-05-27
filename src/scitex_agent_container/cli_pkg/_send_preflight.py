@@ -68,9 +68,24 @@ def default_ssh_runner(
 
     Kept as a module-level function (not a closure) so tests can swap
     it via the ``ssh_runner=`` parameter without monkeypatching.
+
+    The probe shares the package-wide ssh ControlMaster pool (see
+    :func:`scitex_agent_container._state.host_config.ssh_control_options`)
+    so a `sac send` storm against the same peer doesn't pay N TCP
+    handshakes nor blow through Spartan's MaxSessions cap.
     """
+    from .._state.host_config import ssh_control_options
+
     return subprocess.run(
-        ["ssh", peer_host, "python3", "-c", PROBE_PYTHON_SCRIPT, remote_creds_path],
+        [
+            "ssh",
+            *ssh_control_options(),
+            peer_host,
+            "python3",
+            "-c",
+            PROBE_PYTHON_SCRIPT,
+            remote_creds_path,
+        ],
         capture_output=True,
         text=True,
         check=False,

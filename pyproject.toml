@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "scitex-agent-container"
-version = "0.20.0"
+version = "0.21.1"
 description = "Declarative YAML-based framework for defining, managing, and orchestrating AI coding agent instances"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -41,6 +41,17 @@ dependencies = [
     # bookkeeping).
     "ruamel.yaml>=0.18",
     "rich>=13.0",
+    # Two distinct uses:
+    #   1. `scitex_config._ecosystem.local_state` — canonical local-state
+    #      directory helper (project-scope override + auto runtime/ seed
+    #      creation) per scitex-python skill
+    #      01_arch_06_local-state-directories.md.
+    #   2. Public `PriorityConfig` + `load_dotenv` surface — used by
+    #      `runtimes/_apptainer_provider.py` to resolve the provider
+    #      auth token via the SciTeX-ecosystem `direct → config → env
+    #      → default` cascade (see ADR-0011).
+    # v0.3.0 was the release that split public from ecosystem-internal
+    # and exposed both surfaces — that is our hard minimum.
     "scitex-config>=0.3.0",
     "scitex-container>=0.1.0",
     "scitex-logging>=0.1.5",
@@ -57,10 +68,6 @@ dependencies = [
     # validate_proto_required_fields still references — pin until upstream
     # adopts the descriptor pool API. See CI failure 2026-04-27.
     "protobuf<6",
-    # Canonical local-state directory helper (project-scope override +
-    # auto runtime/ seed creation). Per scitex-python skill
-    # 01_arch_06_local-state-directories.md.
-    "scitex-config>=0.3.0",
 ]
 
 [project.optional-dependencies]
@@ -79,7 +86,7 @@ slurm = [
     "scitex-hpc>=0.6.2",
 ]
 dev = [
-    "scitex-dev>=0.11.7",
+    "scitex-dev>=0.14.0",  # tests/results/ accepted as a known tests subdir (PS-302)
     # PS210: tests import scitex_hpc unguarded, so [dev] must include it
     # (otherwise `pip install -e .[dev]` can't run the full suite).
     "scitex-hpc>=0.6.2",
@@ -142,6 +149,53 @@ Homepage = "https://github.com/ywatanabe1989/scitex-agent-container"
 Repository = "https://github.com/ywatanabe1989/scitex-agent-container.git"
 Issues = "https://github.com/ywatanabe1989/scitex-agent-container/issues"
 Documentation = "https://scitex-agent-container.readthedocs.io"
+
+# scitex-dev audit configuration. Per-package opt-outs sit here per
+# scitex-dev's documented precedent (the same [tool.scitex_dev] block
+# is read by `is_mcp_parity_exempt` in
+# scitex_dev/_cli/audit/_summary/_mcp_parity.py).
+[tool.scitex_dev]
+# §6 (audit-mcp-tools, Python-API ↔ MCP parity) — exempt by design.
+#
+# sac's MCP tool surface mirrors its CLI subcommand surface (which in
+# turn wraps internal handlers); the public Python API
+# (`scitex_agent_container.<noun>.<verb>`) is a thin re-export of the
+# SAME handlers, not a 1:1 parent of the MCP tools. The auditor's
+# name-derivation algorithm (`<noun>_<verb>` flatten) consequently sees
+# 4 "orphan" MCP tools that are real working features with their own
+# canonical names:
+#
+#   * agent_spawn         — in-container spawn → spawn-proxy (ADR-0010).
+#                           MCP-only by design; no CLI/Python counterpart.
+#   * list_python_apis    — introspection helper. CLI path:
+#                           `sac info list-python-apis`. The closest
+#                           Python noun is `sac.mcp.list_tools`, which
+#                           is a different concept (FastMCP server's
+#                           registered tools, not "all Python APIs").
+#   * quota_watch         — account-quota watcher. CLI path:
+#                           `sac account watch-quota`. The matching
+#                           Python noun is `sac.account.watch_quota`
+#                           (flattened: `account_watch_quota`) — the
+#                           MCP tool's word order is intentionally the
+#                           verb-first form that MCP clients read more
+#                           naturally.
+#   * subagent_get_state  — subagent state introspection. CLI path:
+#                           `sac subagent get-state`. There is no
+#                           `sac.subagent` noun submodule today; adding
+#                           one purely to satisfy the auditor's
+#                           name-derivation would be ceremony.
+#
+# Renaming either the MCP tools or adding the missing noun submodule
+# would be a breaking change for MCP clients calling by tool name AND
+# would broaden the Python public API surface beyond what sac actually
+# intends (sac is a CLI/MCP-first tool, not a Python library — the
+# noun-submodule `__all__`s are convenience re-exports for script
+# users, not the canonical command surface).
+#
+# This is the exact shape `mcp_parity_exempt` was designed for; see
+# scitex_dev/_cli/audit/_summary/_mcp_parity.py:9-13 ("Some packages
+# legitimately expose far more MCP tools than Python-API functions").
+mcp_parity_exempt = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/scitex_agent_container"]
