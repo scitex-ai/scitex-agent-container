@@ -127,27 +127,30 @@ def test_envelope_includes_conversation_id_when_set() -> None:
 
 
 def test_envelope_rejects_unknown_kind() -> None:
-    # Arrange / Act
-    with pytest.raises(LeadInboxError, match="event kind") as raised:
-        build_lead_envelope(kind="frobnicate", summary="x", from_agent="alice")
-    # Assert
-    assert raised.value is not None
+    # Arrange
+    kwargs = dict(kind="frobnicate", summary="x", from_agent="alice")
+    # Act
+    # Assert — pytest.raises is the assertion (TQ007: one per test).
+    with pytest.raises(LeadInboxError, match="event kind"):
+        build_lead_envelope(**kwargs)
 
 
 def test_envelope_rejects_empty_from_agent() -> None:
-    # Arrange / Act
-    with pytest.raises(LeadInboxError, match="from_agent") as raised:
-        build_lead_envelope(kind="done", summary="x", from_agent="")
-    # Assert
-    assert raised.value is not None
+    # Arrange
+    kwargs = dict(kind="done", summary="x", from_agent="")
+    # Act
+    # Assert — pytest.raises is the assertion (TQ007: one per test).
+    with pytest.raises(LeadInboxError, match="from_agent"):
+        build_lead_envelope(**kwargs)
 
 
 def test_envelope_rejects_non_string_summary() -> None:
-    # Arrange / Act
-    with pytest.raises(LeadInboxError, match="summary") as raised:
-        build_lead_envelope(kind="done", summary=42, from_agent="alice")  # type: ignore[arg-type]
-    # Assert
-    assert raised.value is not None
+    # Arrange
+    kwargs = dict(kind="done", summary=42, from_agent="alice")
+    # Act
+    # Assert — pytest.raises is the assertion (TQ007: one per test).
+    with pytest.raises(LeadInboxError, match="summary"):
+        build_lead_envelope(**kwargs)  # type: ignore[arg-type]
 
 
 def test_lead_event_kinds_exposes_three_kinds() -> None:
@@ -187,10 +190,9 @@ def test_resolve_lead_raises_when_block_missing(
     cfg.write_text("peers: {}\n")
     env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg))
     # Act
-    with pytest.raises(LeadInboxError, match="no lead inbox configured") as raised:
+    # Assert — pytest.raises is the assertion (TQ007: one per test).
+    with pytest.raises(LeadInboxError, match="no lead inbox configured"):
         resolve_lead()
-    # Assert
-    assert raised.value is not None
 
 
 # ---------------------------------------------------------------------------
@@ -381,17 +383,16 @@ def test_push_to_lead_loud_on_missing_peer_token(lead_env) -> None:
     )
     app = create_app(token=TOKEN, local_host="127.0.0.1")
     # Act
+    # Assert — pytest.raises is the assertion (TQ007: one per test).
     with _run_listen(app, port), pytest.raises(
         LeadInboxError, match="peer token"
-    ) as raised:
+    ):
         push_to_lead(
             kind="done",
             summary="x",
             from_agent="alice",
             timeout_s=2.0,
         )
-    # Assert
-    assert raised.value is not None
 
 
 def test_push_to_lead_loud_on_unreachable_lead(lead_env) -> None:
@@ -399,16 +400,15 @@ def test_push_to_lead_loud_on_unreachable_lead(lead_env) -> None:
     # then point at a port nothing is bound to.
     port = _free_port()
     _setup_lead_at_port(lead_env, port)
-    # Act — no server started; connection refused on the bound port.
-    with pytest.raises(LeadInboxError, match="unreachable") as raised:
+    # Act
+    # Assert — no server started; pytest.raises is the assertion (TQ007).
+    with pytest.raises(LeadInboxError, match="unreachable"):
         push_to_lead(
             kind="status",
             summary="x",
             from_agent="alice",
             timeout_s=2.0,
         )
-    # Assert
-    assert raised.value is not None
 
 
 # ---------------------------------------------------------------------------
@@ -451,15 +451,17 @@ def test_regression_agent_completion_event_lands_in_lead_inbox(lead_env) -> None
     # preserved. ``msg_id`` from the server reply must match the row's
     # msg_id, proving the persisted row is THIS push (not a stale row
     # from a leaked fixture). One compound assert covers the full
-    # regression contract that previously failed silently.
-    assert rows, "lead inbox is empty — completion event was not delivered"
-    event = rows[0]["event"]
+    # regression contract (TQ007: one assertion per test). The leading
+    # ``rows`` clause short-circuits the rest when the inbox is empty,
+    # so the failure message names that case without a second assert.
+    event = rows[0]["event"] if rows else {}
     assert (
-        event.get("kind") == "done"
+        rows
+        and event.get("kind") == "done"
         and event.get("from_agent") == "alice"
         and event.get("content") == "PR #224 merged"
         and event.get("msg_id") == reply.get("msg_id")
     ), (
         f"completion event did not land in lead inbox as expected: "
-        f"event={event!r} reply={reply!r}"
+        f"rows={rows!r} reply={reply!r}"
     )
