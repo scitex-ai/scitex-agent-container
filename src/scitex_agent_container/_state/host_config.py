@@ -21,6 +21,12 @@ YAML shape::
       bm198:   { ssh: bm198, via: [mba, spartan] }
       nas:     { ssh: admin@192.168.11.22 }
 
+    lead:                           # ADR-0013 Phase 1 — agent→lead push inbox.
+      name: lead                    # Target name on the lead's `sac listen`
+                                    #   (POST /agents/<name>/message:send).
+      host: mba                     # Peer key for transport + peer-tokens.
+      a2a_port: 8642                # Lead's sac listen port (host-bound).
+
 Resolution chain for the local canonical hostname (used by every
 state.db write so cross-host queries scope correctly):
 
@@ -171,9 +177,46 @@ class HostBlock:
 
 
 @dataclass(frozen=True)
+class LeadConfig:
+    """``lead:`` block — agent→lead push inbox target (ADR-0013 Phase 1).
+
+    Identifies the lead's ``sac listen`` instance so an agent can POST a
+    typed completion/blocker/status event to it via
+    ``/agents/<name>/message:send``. The lead is just another A2A node
+    on the existing control plane; this block is the one place every
+    agent learns where it lives.
+
+    Fields:
+      name: target name on the lead's listen (used as ``<name>`` in
+        the POST path and as the ACL identity the lead's listen sees).
+      host: peer key (must exist under ``peers:``) used for two
+        independent jobs — looking up the per-host bearer token under
+        ``peer-tokens/<host>.token`` (the credential the agent
+        authenticates with) and naming the destination host for the
+        outbound HTTP request. Reusing the peer key keeps the lead
+        consistent with how every other cross-host node is addressed.
+      a2a_port: TCP port the lead's ``sac listen`` is bound to (the
+        host-wide listen, not a per-agent sidecar). Required because
+        the lead's listen is not registered in any state.db's
+        ``instances`` table — it is not an agent and has no
+        ``record_instance_start`` call.
+
+    Loud failure is the only failure mode. Phase 1 ships the helper
+    plus CLI; the lead-inbox push refuses to dispatch when any of
+    ``name`` / ``host`` / ``a2a_port`` is missing rather than guessing.
+    See :mod:`scitex_agent_container._state.lead_inbox`.
+    """
+
+    name: str
+    host: str
+    a2a_port: int
+
+
+@dataclass(frozen=True)
 class Config:
     host: HostBlock = field(default_factory=HostBlock)
     peers: dict[str, PeerSpec] = field(default_factory=dict)
+    lead: LeadConfig | None = None
     source_path: Path | None = None
 
     def canonical_host(self) -> str:
@@ -312,10 +355,52 @@ def load(path: Path | None = None) -> Config:
             resolve=_parse_resolve(name, spec.get("resolve")),
         )
 
-    return Config(host=host, peers=peers, source_path=p)
+    lead = _parse_lead(raw.get("lead"), source_path=p)
+
+    return Config(host=host, peers=peers, lead=lead, source_path=p)
 
 
 _RESOLVE_ALLOWED_SOURCES = ("scitex-hpc",)
+
+
+def _parse_lead(raw, *, source_path: Path) -> LeadConfig | None:
+    """Normalize the optional ``lead:`` YAML block into a :class:`LeadConfig`.
+
+    Missing block → ``None`` (config-load stays missing-tolerant; the
+    lead-inbox helpers raise their own loud error when an agent tries
+    to push with no lead configured). Present block → strict
+    validation: ``name`` (non-empty string), ``host`` (non-empty
+    string), ``a2a_port`` (positive int). Any other shape raises
+    ``ValueError`` naming ``source_path`` so operator typos surface
+    at config-load time rather than as opaque HTTP failures from the
+    push helper.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"config.yaml at {source_path}: 'lead' must be a mapping with "
+            f"name:/host:/a2a_port:, got {type(raw).__name__}"
+        )
+    name = raw.get("name")
+    host = raw.get("host")
+    port = raw.get("a2a_port")
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError(
+            f"config.yaml at {source_path}: 'lead.name' is required and "
+            f"must be a non-empty string (got {name!r})"
+        )
+    if not isinstance(host, str) or not host.strip():
+        raise ValueError(
+            f"config.yaml at {source_path}: 'lead.host' is required and "
+            f"must be a non-empty string (got {host!r})"
+        )
+    if not isinstance(port, int) or isinstance(port, bool) or port <= 0:
+        raise ValueError(
+            f"config.yaml at {source_path}: 'lead.a2a_port' is required "
+            f"and must be a positive integer (got {port!r})"
+        )
+    return LeadConfig(name=name, host=host, a2a_port=port)
 
 
 def _parse_resolve(name: str, raw) -> ResolveSpec | None:
@@ -403,151 +488,18 @@ def _parse_env_preamble(name: str, raw) -> tuple[str, ...]:
 # ssh ControlMaster option rendering lives in its own module so the test
 # file mirror is 1:1 (project rule PS-204). This re-export keeps the
 # existing import surface (`from ..._state.host_config import
-# ssh_control_options`) working unchanged for downstream callers, even
-# though only ``ssh_control_options`` is used by ``build_ssh_argv``
-# below (hence the F401 ignore on the second name).
+# ssh_control_options`) working unchanged for downstream callers.
 from .ssh_control_options import (  # noqa: E402,F401
     ssh_control_options,
     ssh_control_options_str,
 )
 
-
-def build_ssh_argv(
-    peer_name: str,
-    command: list[str],
-    peers: dict[str, PeerSpec],
-    *,
-    ssh_binary: str = "ssh",
-    extra_opts: list[str] | None = None,
-) -> list[str]:
-    """Render the ssh argv that runs ``command`` on ``peer_name``.
-
-    Multi-hop is handled via OpenSSH's ``-J`` (ProxyJump) flag, which
-    chains intermediate hosts without sac needing its own ssh tunnel
-    code. ``via: [mba, spartan]`` becomes ``-J <mba.ssh>,<spartan.ssh>``.
-
-    Conservative defaults pick: ``-o BatchMode=yes`` (no interactive
-    password / known-hosts prompts), ``-o ConnectTimeout=10``
-    (probe-friendly), and ``-o ServerAliveInterval=15`` (keepalive
-    so a wedged middle-hop is detectable).
-
-    When the peer carries an ``env_preamble`` (e.g. Spartan, where
-    ``apptainer`` is only on $PATH after two ``module load`` calls),
-    the dispatched command is wrapped in ``bash -c '<preamble> &&
-    <quoted-cmd>'`` so the preamble runs before the real command. The
-    wrapper deliberately uses ``-c`` (NOT ``-lc``) to skip the full
-    login profile — sourcing ``.bashrc`` on some HPC compute nodes
-    (verified 2026-05-17 on spartan-bm152) triggers cgroup/PAM
-    process kills during user-init scripts (e.g. ``gh config`` from
-    ``~/.bash.d/``), aborting the login before the real command runs.
-    The cost: ``module`` is no longer auto-defined; the peer's
-    ``env_preamble`` must source the Lmod init script explicitly
-    (e.g. ``source /usr/share/lmod/lmod/init/bash`` as its first
-    line on Spartan).  The wrapper collapses into a single argv
-    element so ssh's post-host word-join preserves the inner quoting.
-    Peers without an ``env_preamble`` keep the byte-identical
-    pre-existing argv shape — mba / nas invocations are unchanged.
-
-    Returns the argv list ready for ``subprocess.run``. Raises
-    ``KeyError`` when ``peer_name`` isn't in ``peers``.
-    """
-    import shlex
-
-    peer = peers[peer_name]
-    argv: list[str] = [ssh_binary]
-    if peer.via:
-        chain = peer.jump_chain(peers)
-        if chain:
-            argv += ["-J", ",".join(chain)]
-    argv += [
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        "ConnectTimeout=10",
-        "-o",
-        "ServerAliveInterval=15",
-    ]
-    # Connection multiplexing — must come before extra_opts so caller
-    # overrides win. See :func:`ssh_control_options` for the rationale
-    # (Spartan MaxSessions cap + apptainer overlay ControlPath issue).
-    argv += ssh_control_options()
-    if extra_opts:
-        argv += list(extra_opts)
-    argv += [peer.ssh, "--"]
-    preamble = peer.joined_preamble()
-    if preamble:
-        # OpenSSH joins every token after the host with spaces and feeds
-        # the result to the remote user's login shell, which re-parses
-        # it. To get the remote shell to launch `bash -c 'CMD'` we
-        # therefore must collapse the wrapping into a single argv
-        # element whose contents are pre-quoted at *both* layers: the
-        # inner CMD (preamble && user-cmd) is shlex-quoted so the
-        # `bash -c` parse sees one token, and the resulting string is
-        # appended whole so ssh's word-join preserves it. Note the
-        # *lack* of `-l` — bypassing the login profile avoids HPC
-        # compute-node bashrc kills (see docstring). The preamble is
-        # responsible for sourcing Lmod (or any other env layer) on
-        # its own.
-        inner = f"{preamble} && {shlex.join(list(command))}"
-        argv.append(f"bash -c {shlex.quote(inner)}")
-    else:
-        argv += list(command)
-    return argv
-
-
-def host_interfaces() -> list[dict]:
-    """Best-effort inventory of local network interfaces.
-
-    Surfaced by ``sac host list`` and (eventually) recorded in
-    ``state.db.host_interfaces``. Tailscale / wireguard / ssh-tunnel
-    detection is heuristic — parses ``ip -j addr`` when available,
-    falls back to a single ``hostname -I`` summary on failure.
-    """
-    import json
-    import subprocess
-
-    rows: list[dict] = []
-    # stx-allow: fallback (reason: ip(8) missing on macOS / minimal
-    # containers; we degrade to a single summary row)
-    try:
-        out = subprocess.run(
-            ["ip", "-j", "addr"],
-            capture_output=True,
-            text=True,
-            timeout=2,
-            check=False,
-        ).stdout
-        for iface in json.loads(out or "[]"):
-            name = iface.get("ifname")
-            for ai in iface.get("addr_info", []) or []:
-                addr = ai.get("local")
-                family = ai.get("family")
-                if addr and family in ("inet", "inet6"):
-                    rows.append({"iface": name, "addr": addr, "family": family})
-    except (
-        FileNotFoundError,
-        subprocess.SubprocessError,
-        ValueError,
-    ):  # stx-allow: fallback (reason: see inline comment)
-        pass
-
-    if not rows:
-        # stx-allow: fallback (reason: hostname -I is universal but
-        # collapses every interface; better than nothing)
-        try:
-            out = subprocess.run(
-                ["hostname", "-I"],
-                capture_output=True,
-                text=True,
-                timeout=2,
-                check=False,
-            ).stdout
-            for addr in (out or "").split():
-                rows.append({"iface": "?", "addr": addr, "family": "inet"})
-        except (
-            FileNotFoundError,
-            subprocess.SubprocessError,
-        ):  # stx-allow: fallback (reason: see inline comment)
-            pass
-
-    return rows
+# Transport rendering (``build_ssh_argv``) and interface inventory
+# (``host_interfaces``) live in focused sibling modules so the config
+# schema file stays under the per-file line cap. Re-exports preserve
+# the existing import path
+# ``from scitex_agent_container._state.host_config import build_ssh_argv``
+# / ``host_interfaces``. Tests for those functions sit unchanged
+# against the old import path.
+from ._host_ssh import build_ssh_argv  # noqa: E402,F401
+from ._host_interfaces import host_interfaces  # noqa: E402,F401
