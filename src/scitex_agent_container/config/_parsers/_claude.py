@@ -2,7 +2,24 @@
 
 from __future__ import annotations
 
+from .._provider_types import ProviderSpec
 from .._types import ClaudeSpec
+
+
+def _parse_provider(raw: dict) -> ProviderSpec | None:
+    """Parse ``spec.claude.provider`` into a ``ProviderSpec`` or ``None``.
+
+    Absent / explicit-null block → ``None`` (default Anthropic backend).
+    Non-empty fields are surfaced verbatim; the validator enforces that
+    ``base_url`` + ``auth_token_env`` are non-empty when the block exists.
+    """
+    block = raw.get("provider")
+    if not isinstance(block, dict):
+        return None
+    return ProviderSpec(
+        base_url=str(block.get("base_url", "") or ""),
+        auth_token_env=str(block.get("auth_token_env", "") or ""),
+    )
 
 
 def parse_claude(spec: dict) -> ClaudeSpec:
@@ -38,5 +55,7 @@ def parse_claude(spec: dict) -> ClaudeSpec:
         continue_max_age_minutes=continue_max_age,
         resume_id=str(raw.get("resume_id", "") or ""),
         auto_accept=raw.get("auto_accept", True),
+        account=str(raw.get("account", "") or ""),
+        provider=_parse_provider(raw),
         raw_options=dict(raw_options),
     )

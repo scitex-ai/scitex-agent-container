@@ -212,40 +212,16 @@ class ApptainerContainerRuntime(RuntimeBase):
                         )
                 argv += ["--overlay", str(overlay_p)]
 
-        # Forward Anthropic auth (mirrors container.py). Order matters:
-        # see runtimes/_sdk_common.py:provision_anthropic_auth — when
-        # `~/.claude/.credentials.json` exists (Pro/Max OAuth flow), the
-        # SDK reads the file directly and a bare `ANTHROPIC_API_KEY`
-        # env shadows it (Anthropic rejects sk-ant-oat* OAuth tokens as
-        # bare env). So we only pass *pay-per-token* env values; the
-        # credentials.json is bind-mounted below.
-        for auth_env in ("ANTHROPIC_API_KEY", "SAC_ANTHROPIC_API_KEY"):
-            val = os.environ.get(auth_env)
-            if val:
-                argv += ["--env", f"{auth_env}={val}"]
+        # Anthropic-auth argv — emits the backend wiring (env + creds
+        # bind). Branches internally on whether spec.claude.provider is
+        # active: provider → API-key backend (ANTHROPIC_BASE_URL +
+        # SAC_ANTHROPIC_API_KEY + clean CLAUDE_CONFIG_DIR, OAuth bind
+        # skipped); otherwise → the OAuth path (forward host auth env +
+        # bind the resolved .credentials.json). Extracted to
+        # _apptainer_auth so this runtime file stays under the line cap.
+        from ._apptainer_auth import auth_argv
 
-        # Mount operator's Pro/Max credentials when present.
-        # Target lives under /tmp/ (writable tmpfs / overlay) rather
-        # than $HOME — the D2 preflight requires $HOME to be empty, and
-        # binding under $HOME would scaffold a host-mirroring directory.
-        # CLAUDE_CONFIG_DIR points the SDK at this dir so it finds the
-        # credentials file without needing $HOME pollution.
-        #
-        # Mounted RW (no ``:ro``) so the in-container Claude CLI can
-        # refresh the OAuth ``accessToken`` in place when the host's
-        # token expires (~1h cadence). Without RW the bind-mounted file
-        # is frozen and every container 401s after token-expiry, forcing
-        # a manual scp-from-lead dance to re-seed peers. The CLI's
-        # refresh code-path itself is responsible for any concurrency
-        # locking — the bind is just a file passthrough.
-        cred_file = Path.home() / ".claude" / ".credentials.json"
-        if cred_file.is_file():
-            argv += [
-                "--bind",
-                f"{cred_file}:/tmp/sac-claude/.credentials.json:rw",
-                "--env",
-                "CLAUDE_CONFIG_DIR=/tmp/sac-claude",
-            ]
+        argv += auth_argv(config, state_dir)
 
         for key, val in (config.env or {}).items():
             argv += ["--env", f"{key}={val}"]

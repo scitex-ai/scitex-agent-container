@@ -33,11 +33,14 @@ metadata:
     in-repo: "true"
 
 spec:
-  runtime: docker
-  image: scitex-agent-container:sdk-persistent
-  dockerfile: ./containers/Dockerfile
-  model: claude-haiku-4-5
+  runtime: apptainer
   workdir: /tmp/sac-sdk-test-workspace
+
+  apptainer:
+    image: scitex-agent-container:sdk-persistent
+
+  claude:
+    model: claude-haiku-4-5
 
   startup_commands:
     - command: "Reply with exactly the string 'sdk-runtime-ok' and nothing else."

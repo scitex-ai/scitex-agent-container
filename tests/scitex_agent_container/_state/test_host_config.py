@@ -29,6 +29,38 @@ from scitex_agent_container._state.host_config import (
 )
 
 
+def _parse_probe_json(result, *, expect_exit: int = 0) -> dict:
+    """Resiliently parse a ``host probe --json`` invocation.
+
+    Guards both failure surfaces so a flaky run produces an actionable
+    diagnostic instead of an opaque ``JSONDecodeError`` or a bare
+    ``AssertionError`` with no context:
+
+    1. The CLI exit code matches ``expect_exit`` (probe payload is only
+       trustworthy when the command ran to completion).
+    2. ``result.output`` parses as a JSON object.
+
+    Returns the parsed payload so callers assert on a structured field
+    (``payload["remote_canonical"]``) rather than on exact / ordered
+    output text.
+    """
+    assert result.exit_code == expect_exit, (
+        f"host probe exit_code={result.exit_code} (expected {expect_exit}); "
+        f"exception={result.exception!r}; output={result.output!r}"
+    )
+    try:
+        payload = json.loads(result.output)
+    except ValueError as exc:  # JSONDecodeError subclasses ValueError
+        raise AssertionError(
+            f"host probe --json did not emit parseable JSON: {exc}; "
+            f"raw output={result.output!r}"
+        ) from exc
+    assert isinstance(payload, dict), (
+        f"host probe --json payload is not an object: {payload!r}"
+    )
+    return payload
+
+
 @pytest.fixture
 def cfg_path(tmp_path: Path, env_save_restore) -> Path:
     """Real config.yaml at tmp_path, surfaced via the env override."""
@@ -439,7 +471,7 @@ def test_host_probe_reports_reachable_with_remote_canonical(
     # Act
     result = CliRunner().invoke(host_probe, ["mba", "--json"])
     # Assert
-    assert json.loads(result.output)["reachable"] is True
+    assert _parse_probe_json(result)["reachable"] is True
 
 
 def test_host_probe_surfaces_parsed_remote_canonical(cfg_path: Path, subprocess_shim):
@@ -456,7 +488,7 @@ def test_host_probe_surfaces_parsed_remote_canonical(cfg_path: Path, subprocess_
     # Act
     result = CliRunner().invoke(host_probe, ["mba", "--json"])
     # Assert
-    assert json.loads(result.output)["remote_canonical"] == "mba"
+    assert _parse_probe_json(result)["remote_canonical"] == "mba"
 
 
 def test_host_probe_reports_unreachable_on_nonzero_exit(
@@ -474,7 +506,7 @@ def test_host_probe_reports_unreachable_on_nonzero_exit(
     # Act
     result = CliRunner().invoke(host_probe, ["mba", "--json"])
     # Assert
-    assert json.loads(result.output)["reachable"] is False
+    assert _parse_probe_json(result, expect_exit=1)["reachable"] is False
 
 
 def test_host_probe_surfaces_ssh_exit_code(cfg_path: Path, subprocess_shim):
@@ -486,7 +518,7 @@ def test_host_probe_surfaces_ssh_exit_code(cfg_path: Path, subprocess_shim):
     # Act
     result = CliRunner().invoke(host_probe, ["mba", "--json"])
     # Assert
-    assert json.loads(result.output)["exit_code"] == 255
+    assert _parse_probe_json(result, expect_exit=1)["exit_code"] == 255
 
 
 # ---------------------------------------------------------------------------

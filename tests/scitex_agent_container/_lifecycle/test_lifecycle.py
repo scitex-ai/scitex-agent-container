@@ -1037,8 +1037,115 @@ def test_agent_restart_calls_runtime_stop_then_start(
     assert ok is True and len(runtime.stop_calls) == 1 and len(runtime.start_calls) == 1
 
 
+def test_agent_restart_clears_dead_session_marker(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange — a runtime state dir holding a DEAD resume marker + history
+    # (the production shape after a session aged out). PR #190's restart
+    # left the dead uuid in the history to be re-resumed and re-crashed;
+    # a plain restart must now clear it.
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    runtime_root = tmp_path / "rt"
+    prev = os.environ.get("SCITEX_AGENT_CONTAINER_RUNTIME_DIR")
+    os.environ["SCITEX_AGENT_CONTAINER_RUNTIME_DIR"] = str(runtime_root)
+    try:
+        from scitex_agent_container._runners import _session_id as sid
+
+        state_dir = runtime_root / "alpha"
+        sid.write_session_id(state_dir, "dead-uuid")
+        # Act
+        lc.agent_restart(
+            "alpha",
+            registry=registry,
+            runtime_factory=lambda _c: FakeRuntime(start_result=True),
+            sleep_fn=_no_sleep,
+            handover_mod=FakeHandover(),
+        )
+        # Assert — the dead resume marker is gone so the restart is fresh.
+        result = sid.read_session_id(state_dir)
+    finally:
+        if prev is None:
+            os.environ.pop("SCITEX_AGENT_CONTAINER_RUNTIME_DIR", None)
+        else:
+            os.environ["SCITEX_AGENT_CONTAINER_RUNTIME_DIR"] = prev
+    assert result is None
+
+
+def test_agent_restart_clears_dead_session_history(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange — the dead uuid lives in the append-only history that the
+    # runner's resume fallback would otherwise walk and re-resume.
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    runtime_root = tmp_path / "rt"
+    prev = os.environ.get("SCITEX_AGENT_CONTAINER_RUNTIME_DIR")
+    os.environ["SCITEX_AGENT_CONTAINER_RUNTIME_DIR"] = str(runtime_root)
+    try:
+        from scitex_agent_container._runners import _session_id as sid
+
+        state_dir = runtime_root / "alpha"
+        sid.write_session_id(state_dir, "dead-uuid")
+        sid.write_session_id(state_dir, "dead-fork")
+        # Act
+        lc.agent_restart(
+            "alpha",
+            registry=registry,
+            runtime_factory=lambda _c: FakeRuntime(start_result=True),
+            sleep_fn=_no_sleep,
+            handover_mod=FakeHandover(),
+        )
+        # Assert — the whole history is cleared so no dead uuid can be
+        # re-resumed on the next start (the crash-loop is closed).
+        history = sid.read_session_id_history(state_dir)
+    finally:
+        if prev is None:
+            os.environ.pop("SCITEX_AGENT_CONTAINER_RUNTIME_DIR", None)
+        else:
+            os.environ["SCITEX_AGENT_CONTAINER_RUNTIME_DIR"] = prev
+    assert history == []
+
+
+def test_agent_restart_backs_up_dead_session_history(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange — clearing the dead history must preserve it as an audit
+    # side-file, not silently destroy it.
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    runtime_root = tmp_path / "rt"
+    prev = os.environ.get("SCITEX_AGENT_CONTAINER_RUNTIME_DIR")
+    os.environ["SCITEX_AGENT_CONTAINER_RUNTIME_DIR"] = str(runtime_root)
+    try:
+        from scitex_agent_container._runners import _session_id as sid
+
+        state_dir = runtime_root / "alpha"
+        sid.write_session_id(state_dir, "dead-uuid")
+        # Act
+        lc.agent_restart(
+            "alpha",
+            registry=registry,
+            runtime_factory=lambda _c: FakeRuntime(start_result=True),
+            sleep_fn=_no_sleep,
+            handover_mod=FakeHandover(),
+        )
+        # Assert
+        backups = list(state_dir.glob("session_id_history.dead-*"))
+    finally:
+        if prev is None:
+            os.environ.pop("SCITEX_AGENT_CONTAINER_RUNTIME_DIR", None)
+        else:
+            os.environ["SCITEX_AGENT_CONTAINER_RUNTIME_DIR"] = prev
+    assert len(backups) == 1
+
+
 def test_agent_restart_unknown_raises(tmp_path: Path, registry: Registry) -> None:
-    # Arrange (empty registry).
+    # Arrange — empty registry AND a resolver that finds no spec (a
+    # genuinely unknown agent): both lookups must fail to raise.
+    def _no_spec(_name: str) -> str:
+        raise FileNotFoundError("ghost: no spec on the discovery chain")
+
     # Act
     call = lambda: lc.agent_restart(  # noqa: E731
         "ghost",
@@ -1046,10 +1153,75 @@ def test_agent_restart_unknown_raises(tmp_path: Path, registry: Registry) -> Non
         runtime_factory=lambda _c: FakeRuntime(),
         sleep_fn=_no_sleep,
         handover_mod=FakeHandover(),
+        config_resolver=_no_spec,
     )
     # Assert
     with pytest.raises(RuntimeError, match="not found"):
         call()
+
+
+def test_agent_restart_no_row_falls_back_to_spec_and_starts(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange — NO registry row for "alpha" (ad-hoc / pre-autorecord
+    # launch); a resolver returns the real on-disk spec path so restart
+    # falls back to the spec instead of hard-failing "not found".
+    spec = _write_spec(tmp_path)
+    runtime = FakeRuntime(start_result=True)
+    # Act
+    ok = lc.agent_restart(
+        "alpha",
+        registry=registry,
+        runtime_factory=lambda _c: runtime,
+        sleep_fn=_no_sleep,
+        handover_mod=FakeHandover(),
+        config_resolver=lambda _name: str(spec),
+    )
+    # Assert — the spec-resolved start ran (fallback path reached the runtime).
+    assert ok is True and len(runtime.start_calls) == 1
+
+
+def test_agent_restart_no_row_force_stops_before_start(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange — no registry row; a runtime whose stop() raises. The
+    # fallback's force=True stop must swallow that and still reach start.
+    spec = _write_spec(tmp_path)
+    runtime = FakeRuntime(start_result=True)
+    runtime.stop_should_raise = RuntimeError("session already gone")
+    # Act
+    ok = lc.agent_restart(
+        "alpha",
+        registry=registry,
+        runtime_factory=lambda _c: runtime,
+        sleep_fn=_no_sleep,
+        handover_mod=FakeHandover(),
+        config_resolver=lambda _name: str(spec),
+    )
+    # Assert — force-stop tolerated the dead session and start still ran.
+    assert ok is True and len(runtime.start_calls) == 1
+
+
+def test_agent_restart_no_row_uses_default_resolver_discovery_chain(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange — no registry row, NO injected resolver: the real default
+    # ``resolve_config`` must find the spec under the standard
+    # ``$HOME/.scitex/agent-container/agents/<name>/spec.yaml`` location.
+    # ``_isolate_home`` (autouse) has already pointed HOME at tmp_path.
+    agents_root = tmp_path / ".scitex" / "agent-container" / "agents"
+    _write_spec(agents_root, name="beta")
+    runtime = FakeRuntime(start_result=True)
+    # Act — config_resolver left at its production default.
+    ok = lc.agent_restart(
+        "beta",
+        registry=registry,
+        runtime_factory=lambda _c: runtime,
+        sleep_fn=_no_sleep,
+        handover_mod=FakeHandover(),
+    )
+    # Assert — the default resolver found the spec and start ran.
+    assert ok is True and len(runtime.start_calls) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -1057,8 +1229,12 @@ def test_agent_restart_unknown_raises(tmp_path: Path, registry: Registry) -> Non
 # ---------------------------------------------------------------------------
 
 
-def test_agent_status_unknown_raises(tmp_path: Path, registry: Registry) -> None:
-    # Arrange (empty registry).
+def test_agent_status_unknown_raises(
+    tmp_path: Path, registry: Registry, isolated_state_db: Path
+) -> None:
+    # Arrange — empty file registry AND an isolated empty state.db, so
+    # neither the local registry nor the cross-host instances fallback
+    # has a row for "ghost".
     # Act
     call = lambda: lc.agent_status(  # noqa: E731
         "ghost", registry=registry, runtime_factory=lambda _c: FakeRuntime()
@@ -1066,6 +1242,69 @@ def test_agent_status_unknown_raises(tmp_path: Path, registry: Registry) -> None
     # Assert
     with pytest.raises(RuntimeError, match="not found"):
         call()
+
+
+def test_agent_status_resolves_remote_agent_from_instances_row(
+    tmp_path: Path, registry: Registry, isolated_state_db: Path
+) -> None:
+    # Arrange — a remote-dispatched agent has NO local file-registry
+    # entry; its row lives only in the instances table (remote=1, peer
+    # host, peer-resolved bound_port). Status must resolve it instead of
+    # raising "not found".
+    from scitex_agent_container._state.state_db import record_instance_start
+
+    record_instance_start(
+        name="clew", host="spartan", bound_port=19123, remote=True, spawned_by="lead"
+    )
+    # Act
+    result = lc.agent_status("clew", registry=registry)
+    # Assert
+    assert result["host"] == "spartan"
+
+
+def test_agent_status_remote_row_reports_bound_port(
+    tmp_path: Path, registry: Registry, isolated_state_db: Path
+) -> None:
+    # Arrange
+    from scitex_agent_container._state.state_db import record_instance_start
+
+    record_instance_start(
+        name="clew", host="spartan", bound_port=19123, remote=True, spawned_by="lead"
+    )
+    # Act
+    result = lc.agent_status("clew", registry=registry)
+    # Assert
+    assert result["bound_port"] == 19123
+
+
+def test_agent_status_remote_row_marks_remote_true(
+    tmp_path: Path, registry: Registry, isolated_state_db: Path
+) -> None:
+    # Arrange
+    from scitex_agent_container._state.state_db import record_instance_start
+
+    record_instance_start(
+        name="clew", host="spartan", bound_port=19123, remote=True, spawned_by="lead"
+    )
+    # Act
+    result = lc.agent_status("clew", registry=registry)
+    # Assert
+    assert result["remote"] is True
+
+
+def test_agent_status_remote_row_reports_spawned_by(
+    tmp_path: Path, registry: Registry, isolated_state_db: Path
+) -> None:
+    # Arrange
+    from scitex_agent_container._state.state_db import record_instance_start
+
+    record_instance_start(
+        name="clew", host="spartan", bound_port=19123, remote=True, spawned_by="lead"
+    )
+    # Act
+    result = lc.agent_status("clew", registry=registry)
+    # Assert
+    assert result["spawned_by"] == "lead"
 
 
 def test_agent_status_running_reports_status_running(
@@ -1135,6 +1374,103 @@ def test_agent_status_config_load_failure_reports_unknown_model_and_runtime(
     )
     # Assert
     assert result["model"] == "unknown" and result["runtime"] == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# agent_status — account field (operator request 4581).
+#
+# The autouse ``_isolate_home`` fixture points HOME at tmp_path, so an
+# agent with no env override and no credentials.json there resolves to
+# "unknown"; writing a real credentials.json + ~/.claude.json under HOME
+# exercises the host-OAuth path; a spec.env override exercises the
+# distinct-credential path. All real files, no mocks.
+# ---------------------------------------------------------------------------
+
+
+def test_agent_status_account_unknown_when_no_credentials(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange — HOME (=tmp_path) has no credentials.json and the spec
+    # carries no SAC_ANTHROPIC_API_KEY override.
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    # Act
+    result = lc.agent_status(
+        "alpha", registry=registry, runtime_factory=lambda _c: FakeRuntime()
+    )
+    # Assert
+    assert result["account"] == "unknown"
+
+
+def test_agent_status_account_reports_host_oauth_email(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange — real host OAuth files under HOME (=tmp_path).
+    import json as _json
+
+    claude_dir = tmp_path / ".claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
+    (claude_dir / ".credentials.json").write_text(
+        _json.dumps(
+            {
+                "claudeAiOauth": {
+                    "accessToken": "sk-ant-SECRET",
+                    "expiresAt": 9_999_999_999_000,
+                    "subscriptionType": "max",
+                    "rateLimitTier": "default_claude_max_20x",
+                }
+            }
+        )
+    )
+    (tmp_path / ".claude.json").write_text(
+        _json.dumps({"oauthAccount": {"emailAddress": "shared@example.com"}})
+    )
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    # Act
+    result = lc.agent_status(
+        "alpha", registry=registry, runtime_factory=lambda _c: FakeRuntime()
+    )
+    # Assert
+    assert result["account"] == "shared@example.com"
+
+
+def test_agent_status_account_reports_apikey_fingerprint_on_env_override(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange — spec.apptainer.env supplies a distinct API key (the v3
+    # loader promotes it into cfg.env). HOME OAuth (if any) must be
+    # ignored in favour of the agent's own credential.
+    spec = _write_spec(
+        tmp_path,
+        extra_spec=(
+            "  apptainer:\n"
+            "    env:\n"
+            "      SAC_ANTHROPIC_API_KEY: sk-ant-api03-AAAABBBB7777\n"
+        ),
+    )
+    registry.add("alpha", str(spec), "cld-alpha")
+    # Act
+    result = lc.agent_status(
+        "alpha", registry=registry, runtime_factory=lambda _c: FakeRuntime()
+    )
+    # Assert
+    assert result["account"] == "apikey:…7777"
+
+
+def test_agent_status_account_unknown_when_config_load_fails(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange — config path points at a non-existent YAML so load_config
+    # raises; the account resolver must degrade to "unknown" (config is
+    # None), never crash status.
+    registry.add("alpha", str(tmp_path / "alpha" / "spec.yaml"), "cld-alpha")
+    # Act
+    result = lc.agent_status(
+        "alpha", registry=registry, runtime_factory=lambda _c: FakeRuntime()
+    )
+    # Assert
+    assert result["account"] == "unknown"
 
 
 def test_agent_status_omits_remote_host_after_wi6_deletion(

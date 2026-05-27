@@ -12,6 +12,9 @@ every :func:`state_db.init_schema`.
     ``instance_heartbeats`` to add the monotonic ``seq`` PK that makes
     "latest heartbeat" deterministic (see the table DDL in
     :mod:`state_db` and :mod:`state_db_heartbeats`).
+  * :func:`migrate_instances_add_family_tree_cols` — ADD COLUMN the
+    sac-agent-spawn family-tree columns (``bound_port``, ``remote``,
+    ``spawned_by``) onto a pre-existing ``instances`` table.
 """
 
 from __future__ import annotations
@@ -99,3 +102,38 @@ def migrate_instance_heartbeats_add_seq(conn: sqlite3.Connection) -> None:
         ALTER TABLE instance_heartbeats__new RENAME TO instance_heartbeats;
         """
     )
+
+
+def migrate_instances_add_family_tree_cols(conn: sqlite3.Connection) -> None:
+    """ADD the sac-agent-spawn family-tree columns to ``instances``.
+
+    New columns (see :mod:`state_db` DDL + :mod:`state_db_instances`):
+
+      * ``bound_port`` INTEGER — the actual bound a2a port.
+      * ``remote``     INTEGER DEFAULT 0 — 1 for a cross-host agent.
+      * ``spawned_by`` TEXT — launching identity (lineage edge).
+
+    A fresh DB gets these from the ``CREATE TABLE`` DDL; this migration
+    is for an EXISTING ``instances`` table created before the columns
+    existed. ``ALTER TABLE ... ADD COLUMN`` is cheap and SQLite-native.
+
+    Detection: ``instances`` exists AND is missing one of the three
+    columns. Per-column guarded so a partially-migrated DB completes.
+    Idempotent: a no-op once all three columns are present (or the
+    table is absent).
+    """
+    existing = {
+        r[0]
+        for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    if "instances" not in existing:
+        return
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(instances)").fetchall()}
+    if "bound_port" not in cols:
+        conn.execute("ALTER TABLE instances ADD COLUMN bound_port INTEGER")
+    if "remote" not in cols:
+        conn.execute("ALTER TABLE instances ADD COLUMN remote INTEGER DEFAULT 0")
+    if "spawned_by" not in cols:
+        conn.execute("ALTER TABLE instances ADD COLUMN spawned_by TEXT")

@@ -476,3 +476,247 @@ def test_run_conversation_logs_warning_when_sdk_lacks_task_types(
         asyncio.run(_run())
     # Assert — the gap is observable, never a silent swallow.
     assert "background-task observation UNAVAILABLE for beta" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Dead-session self-heal — a stale --resume target must NOT crash-loop
+# ---------------------------------------------------------------------------
+
+
+class _DeadSessionRecorder:
+    """Records each client open with the resume id it was asked to use."""
+
+    def __init__(self, dead_id: str) -> None:
+        self.dead_id = dead_id
+        self.opens: list[str | None] = []
+
+
+def _make_dead_session_sdk_module(recorder: _DeadSessionRecorder) -> types.ModuleType:
+    """SDK module that rejects a resume of ``recorder.dead_id``, else succeeds.
+
+    The injected ``build_sdk_options_fn`` (below) carries the ``resume``
+    value onto the returned options object so the scripted client can
+    branch on it — exactly what the real claude subprocess does (it fails
+    "No conversation found with session ID: <uuid>" only when --resume
+    targets a gone session, and starts fresh when --resume is absent).
+    """
+
+    class _Text:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    class _Assistant:
+        def __init__(self, content):
+            self.content = content
+
+    class _User:
+        pass
+
+    class _Result:
+        def __init__(self, sid_, usage):
+            self.session_id = sid_
+            self.usage = usage
+
+    class _Client:
+        def __init__(self, *, options):
+            resume = getattr(options, "resume", None)
+            recorder.opens.append(resume)
+            self._resume = resume
+
+        async def __aenter__(self):
+            # A resume of the dead id is rejected at open time, just like
+            # the real SDK's stale --resume ProcessError.
+            if self._resume == recorder.dead_id:
+                raise RuntimeError(
+                    f"Error: No conversation found with session ID: {recorder.dead_id}"
+                )
+            return self
+
+        async def __aexit__(self, *a):
+            return None
+
+        async def query(self, prompt):
+            self._prompt = prompt
+
+        async def receive_response(self):
+            # Fresh session: the agent answers normally with a NEW id.
+            yield _Assistant([_Text("recovered")])
+            yield _Result("fresh-sid", {})
+
+        async def interrupt(self):
+            return None
+
+    class _HookMatcher:
+        def __init__(self, *a, **kw):
+            pass
+
+    mod = types.ModuleType("fake_sdk_dead")
+    mod.AssistantMessage = _Assistant
+    mod.TextBlock = _Text
+    mod.UserMessage = _User
+    mod.ResultMessage = _Result
+    mod.ClaudeSDKClient = _Client
+    mod.HookMatcher = _HookMatcher
+    return mod
+
+
+def _resume_threading_build_options(name: str, **kw) -> object:
+    """Build-options stub that surfaces the ``resume`` kwarg on the options.
+
+    The scripted dead-session client reads ``options.resume`` to decide
+    whether to reject (stale resume) or start fresh — so the resume value
+    the supervisor chose per attempt must be observable on the object.
+    """
+    opts = types.SimpleNamespace()
+    opts.resume = kw.get("resume")
+    return opts
+
+
+def _run_dead_session_recovery(state_dir: Path, recorder: _DeadSessionRecorder) -> None:
+    sdk_mod = _make_dead_session_sdk_module(recorder)
+
+    async def _run():
+        inbox = await _seed("go")
+        # max_restarts=0 — the PRODUCTION default. Dead-session recovery
+        # must NOT depend on a restart budget.
+        await runner._run_conversation(
+            "alpha",
+            state_dir,
+            pid=1,
+            inbox=inbox,
+            resume_session_id=None,
+            stop=asyncio.Event(),
+            sdk_module=sdk_mod,
+            build_sdk_options_fn=_resume_threading_build_options,
+            max_restarts=0,
+        )
+
+    asyncio.run(_run())
+
+
+def test_dead_session_resume_recovers_with_fresh_start(tmp_path: Path) -> None:
+    # Arrange — both the latest marker AND the history hold the SAME dead
+    # uuid (the production shape: the only recorded id is the dead one).
+    state_dir = tmp_path / "alpha"
+    sid.write_session_id(state_dir, "dead-uuid")
+    recorder = _DeadSessionRecorder("dead-uuid")
+    # Act
+    _run_dead_session_recovery(state_dir, recorder)
+    # Assert — the runner opened a FRESH session (resume=None) after the
+    # dead-id rejection rather than dying; the recovered turn wrote a new id.
+    assert sid.read_session_id(state_dir) == "fresh-sid"
+
+
+def test_dead_session_resume_does_not_re_resume_dead_uuid(tmp_path: Path) -> None:
+    # Arrange — latest marker AND history both contain only the dead uuid.
+    state_dir = tmp_path / "alpha"
+    sid.write_session_id(state_dir, "dead-uuid")
+    recorder = _DeadSessionRecorder("dead-uuid")
+    # Act
+    _run_dead_session_recovery(state_dir, recorder)
+    # Assert — exactly ONE open used the dead uuid; the recovery opened a
+    # fresh session (resume=None) instead of re-resuming the dead id (the
+    # crash-loop). No second dead-uuid open.
+    assert recorder.opens.count("dead-uuid") == 1
+
+
+def test_dead_session_purges_dead_id_from_history(tmp_path: Path) -> None:
+    # Arrange — the dead uuid sits in the append-only history that the
+    # supervisor's resume fallback would otherwise walk and re-resume.
+    state_dir = tmp_path / "alpha"
+    sid.write_session_id(state_dir, "dead-uuid")
+    recorder = _DeadSessionRecorder("dead-uuid")
+    # Act
+    _run_dead_session_recovery(state_dir, recorder)
+    # Assert — the dead uuid is gone from the history so a later restart
+    # cannot re-resume it either.
+    assert "dead-uuid" not in sid.read_session_id_history(state_dir)
+
+
+def _make_valid_resume_sdk_module(recorder: _DeadSessionRecorder) -> types.ModuleType:
+    """SDK module that ACCEPTS the resume id (happy path — valid session)."""
+    return _make_dead_session_sdk_module(recorder)
+
+
+def test_valid_session_is_still_resumed_not_reset(tmp_path: Path) -> None:
+    # Arrange — the stored id is VALID (the recorder's dead_id is something
+    # else), so the client accepts the resume and the supervisor must NOT
+    # reset it. This guards the happy path against an over-eager reset.
+    state_dir = tmp_path / "alpha"
+    sid.write_session_id(state_dir, "valid-uuid")
+    recorder = _DeadSessionRecorder("a-different-dead-id")
+    sdk_mod = _make_valid_resume_sdk_module(recorder)
+
+    async def _run():
+        inbox = await _seed("go")
+        await runner._run_conversation(
+            "alpha",
+            state_dir,
+            pid=1,
+            inbox=inbox,
+            resume_session_id=None,
+            stop=asyncio.Event(),
+            sdk_module=sdk_mod,
+            build_sdk_options_fn=_resume_threading_build_options,
+            max_restarts=0,
+        )
+
+    # Act
+    asyncio.run(_run())
+    # Assert — the valid id was the one resume target the client saw; no
+    # dead-session reset fired (the only open used the valid id).
+    assert recorder.opens == ["valid-uuid"]
+
+
+# ---------------------------------------------------------------------------
+# Dead-session recovery surfaces the resumable candidate list (#192 #3) —
+# the autonomous runner's fresh start is the last resort, but it must be
+# INFORMATIVE: the supervisor event carries the conversations that ARE
+# resumable so the operator can choose one instead.
+# ---------------------------------------------------------------------------
+
+
+def _seed_cwd_conversation(home: Path, session_id: str) -> None:
+    """Write a transcript under the SDK projects dir for the current cwd."""
+    import json
+    import os
+
+    from scitex_agent_container._runners._session_candidates import (
+        encode_claude_project,
+    )
+
+    proj = home / ".claude" / "projects" / encode_claude_project(os.getcwd())
+    proj.mkdir(parents=True, exist_ok=True)
+    (proj / f"{session_id}.jsonl").write_text(
+        json.dumps({"type": "user", "message": {"content": "earlier work"}}) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _dead_session_fresh_start_event(state_dir: Path) -> dict:
+    events = [
+        r
+        for r in _read_session_jsonl(state_dir)
+        if r.get("type") == "supervisor"
+        and r.get("event") == "dead-session-fresh-start"
+    ]
+    return events[0]
+
+
+def test_dead_session_fresh_start_event_lists_resumable_candidates(
+    tmp_path: Path, env_save_restore
+) -> None:
+    # Arrange — point HOME at a tmp dir holding a resumable transcript for
+    # the runner's cwd, then trigger the dead-session recovery.
+    home = tmp_path / "home"
+    env_save_restore.set("HOME", str(home))
+    _seed_cwd_conversation(home, "resumable-uuid")
+    state_dir = tmp_path / "alpha"
+    sid.write_session_id(state_dir, "dead-uuid")
+    recorder = _DeadSessionRecorder("dead-uuid")
+    # Act
+    _run_dead_session_recovery(state_dir, recorder)
+    # Assert — the fresh-start event surfaces the resumable conversation so
+    # the operator can resume it explicitly instead of accepting the reset.
+    event = _dead_session_fresh_start_event(state_dir)
+    assert event["resumable_candidates"][0]["session_id"] == "resumable-uuid"

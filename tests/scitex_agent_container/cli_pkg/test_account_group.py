@@ -706,3 +706,79 @@ def test_watch_quota_once_echoes_survival_banner_when_single_account_over_thresh
     result = runner.invoke(account, ["watch-quota", "--once"])
     # Assert
     assert "[SURVIVAL]" in result.output
+
+
+# ---------------------------------------------------------------------------
+# account list — offline plan/tier + cache-only usage enrichment
+# ---------------------------------------------------------------------------
+
+
+def _store_dir(home: Path) -> Path:
+    return home / ".scitex" / "agent-container" / "accounts"
+
+
+def _write_plan_snapshot(home: Path, name: str, *, subscription: str, tier: str):
+    """Write a real account snapshot .credentials.json with the two
+    non-secret plan fields."""
+    save_account(name, {"email_address": f"{name}@x"}, home=home)
+    (_store_dir(home) / name / ".credentials.json").write_text(
+        json.dumps(
+            {
+                "claudeAiOauth": {
+                    "accessToken": "sk-ant-SECRET",
+                    "subscriptionType": subscription,
+                    "rateLimitTier": tier,
+                }
+            }
+        )
+    )
+
+
+def test_account_list_human_shows_offline_plan_label(sandbox_home):
+    # Arrange
+    _write_plan_snapshot(
+        sandbox_home, "work", subscription="max", tier="default_claude_max_20x"
+    )
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(account, ["list"])
+    # Assert
+    assert "Max 20x" in result.output
+
+
+def test_account_list_human_shows_usage_dash_when_no_cache(sandbox_home):
+    # Arrange — snapshot present, but no per-account usage.json cache.
+    _write_plan_snapshot(
+        sandbox_home, "work", subscription="pro", tier="default_claude_pro"
+    )
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(account, ["list"])
+    # Assert — cache-only usage renders the em-dash placeholder.
+    assert "usage: —" in result.output
+
+
+def test_account_list_json_includes_plan_label(sandbox_home):
+    # Arrange
+    _write_plan_snapshot(
+        sandbox_home, "work", subscription="max", tier="default_claude_max_5x"
+    )
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(account, ["list", "--json"])
+    payload = json.loads(result.output)
+    # Assert
+    assert payload["stored"][0]["plan_label"] == "Max 5x"
+
+
+def test_account_list_json_usage_is_none_when_no_cache(sandbox_home):
+    # Arrange
+    _write_plan_snapshot(
+        sandbox_home, "work", subscription="pro", tier="default_claude_pro"
+    )
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(account, ["list", "--json"])
+    payload = json.loads(result.output)
+    # Assert
+    assert payload["stored"][0]["usage"] is None

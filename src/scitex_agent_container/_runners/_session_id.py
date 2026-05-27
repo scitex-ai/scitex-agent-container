@@ -123,3 +123,105 @@ def clear_session_id(state_dir: Path) -> bool:
         return True
     except FileNotFoundError:
         return False
+
+
+def discard_dead_session(state_dir: Path, dead_id: str) -> bool:
+    """Purge a *known-dead* session id from BOTH the latest marker and history.
+
+    Unlike :func:`clear_session_id` (which clears only the latest marker
+    and deliberately keeps the append-only history for audit), this is
+    the recovery path for an id the SDK has confirmed is gone (resume
+    rejected with "No conversation found with session ID"). Leaving a
+    dead id in ``session_id_history`` makes a plain restart (and the
+    supervisor's history-walking resume fallback in
+    :mod:`._session_conversation`) RE-RESUME the dead uuid and
+    RE-CRASH — the production crash-loop that left clew/neurovista mute
+    for ~5h (2026-05-24).
+
+    The whole history is first copied to ``session_id_history.dead-<ts>``
+    so the audit trail is preserved, then:
+
+    - the latest ``session_id`` marker is removed iff it equals
+      ``dead_id`` (a newer valid id is left untouched), and
+    - every line equal to ``dead_id`` is stripped from
+      ``session_id_history`` (the file is removed when nothing valid
+      remains).
+
+    Returns True if anything was changed (marker cleared or a history
+    line removed), False if ``dead_id`` was empty or appeared nowhere.
+
+    Loud-by-design: the caller logs the discard. Never silently swallows
+    an OSError other than the missing-file no-op (a busted runtime dir
+    must surface).
+    """
+    if not dead_id:
+        return False
+
+    changed = False
+
+    # Drop the latest marker only when it IS the dead id — a restart that
+    # already wrote a fresher valid id must not be clobbered.
+    if read_session_id(state_dir) == dead_id:
+        changed = clear_session_id(state_dir) or changed
+
+    history = read_session_id_history(state_dir)
+    if dead_id not in history:
+        return changed
+
+    # Back up the full history before rewriting, so the dead id stays
+    # auditable off to the side rather than vanishing.
+    import time
+
+    backup = state_dir / f"session_id_history.dead-{int(time.time())}"
+    history_path = _session_id_history_path(state_dir)
+    try:
+        backup.write_text("\n".join(history) + "\n", encoding="utf-8")
+    except OSError:
+        # A failed backup must not block the recovery — the dead id MUST
+        # be purged so the agent can self-heal. Losing the side-file
+        # audit copy is the lesser evil; the discard itself is logged.
+        pass
+
+    survivors = [sid for sid in history if sid != dead_id]
+    if survivors:
+        tmp = state_dir / "session_id_history.tmp"
+        tmp.write_text("\n".join(survivors) + "\n", encoding="utf-8")
+        tmp.replace(history_path)
+    else:
+        try:
+            history_path.unlink()
+        except FileNotFoundError:
+            pass
+    return True
+
+
+def clear_session_history(state_dir: Path) -> bool:
+    """Clear the entire ``session_id_history`` (backed up first).
+
+    The force-start / restart recovery path: a ``--force`` start means
+    "I want a clean slate", so the resume fallback must not walk a
+    history that may contain a dead id (the bug that made
+    ``sac agents restart`` unable to recover a dead session — PR #190
+    cleared only ``session_id``, leaving the dead uuid in history to be
+    re-resumed). The whole history is copied to
+    ``session_id_history.dead-<ts>`` before removal so nothing is lost.
+
+    Returns True if a history file was removed, False if there was none.
+    """
+    history_path = _session_id_history_path(state_dir)
+    if not history_path.is_file():
+        return False
+    history = read_session_id_history(state_dir)
+    if history:
+        import time
+
+        backup = state_dir / f"session_id_history.dead-{int(time.time())}"
+        try:
+            backup.write_text("\n".join(history) + "\n", encoding="utf-8")
+        except OSError:
+            pass
+    try:
+        history_path.unlink()
+        return True
+    except FileNotFoundError:
+        return False

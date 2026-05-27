@@ -52,14 +52,14 @@ through `sac agents list`/`tail`/`health`.
 - [05_resource-heartbeat.md](05_resource-heartbeat.md) — Resource heartbeat
 - [06_env-injection-ports.md](06_env-injection-ports.md) — Four env-injection ports + decision tree
 - [07_a2a-protocol.md](07_a2a-protocol.md) — Native A2A protocol (`sac a2a serve`)
-- [07_a2a-protocol-extension-fields.md](07_a2a-protocol-extension-fields.md) — `x-scitex-agent-container.*` AgentCard extension fields + JSON example
-- [08_templates.md](08_templates.md) — Six pattern templates + real-world examples
-- [14_claude-session-state.md](14_claude-session-state.md) — claude-session runner reference: state-dir layout, auth precedence, `sdk_session` status JSON, supervisor
-- [15_claude-session.md](15_claude-session.md) — the claude-session SDK runner (inside the apptainer SIF) + `POST /v1/turn` inbound endpoint; `runtime: apptainer` is the operative runtime
-- [16_claude-session-migration.md](16_claude-session-migration.md) — historical: the claude-code → SDK migration is complete; `runtime` is apptainer-only now
+- [07_a2a-protocol-extension-fields.md](07_a2a-protocol-extension-fields.md) — `x-scitex-agent-container.*` AgentCard extension fields
+- [08_templates.md](08_templates.md) — Six pattern templates + examples
+- [14_claude-session-state.md](14_claude-session-state.md) — state-dir layout, auth precedence, `sdk_session` status, supervisor
+- [15_claude-session.md](15_claude-session.md) — the claude-session SDK runner (inside the apptainer SIF) + `POST /v1/turn` inbound
+- [16_claude-session-migration.md](16_claude-session-migration.md) — historical: claude-code → SDK migration (apptainer-only now)
 - [17_inbound-turn-endpoint.md](17_inbound-turn-endpoint.md) — `POST /v1/turn` wire format + sidecar replacement
-- [18_full-agent-delegation.md](18_full-agent-delegation.md) — Delegate multi-step work to another *full* Claude Code agent (vs Task subagent)
-- [19_full-agent-troubleshooting.md](19_full-agent-troubleshooting.md) — Operational deep-dives for sac peer fleets: stuck-peer recovery, reaper pattern, hard/soft skills, Monitor over polling
+- [18_full-agent-delegation.md](18_full-agent-delegation.md) — Delegate to another *full* Claude Code agent (vs Task subagent)
+- [19_full-agent-troubleshooting.md](19_full-agent-troubleshooting.md) — Deep-dives: stuck-peer recovery, reaper pattern, hard/soft skills
 
 ### Workflows
 - [10_cli.md](10_cli.md) — CLI commands and Python API
@@ -67,7 +67,9 @@ through `sac agents list`/`tail`/`health`.
 - [12_wsl-connectivity.md](12_wsl-connectivity.md) — WSL connectivity notes
 - [24_image-build.md](24_image-build.md) — apptainer `.sif` build/rebuild, `@develop` pin, rebuild-to-ship runner/channel changes (gotcha)
 - [25_claude-setup-delivery.md](25_claude-setup-delivery.md) — how sac passes Claude setup explicitly into apptainer agents: `to_home`→`$HOME` 1:1 mirror, overlay/`--home` delivery, `--settings` hook load, `setting_sources=[]`
-- [26_credential-refresh.md](26_credential-refresh.md) — refreshing Anthropic creds without restart churn: a RUNNING agent re-reads the mounted `~/.claude/.credentials.json` on its next turn (`sac agents send "continue"`); cold `start` only for parked agents; Spartan shared-home propagation; `${VAR:+SET}` safe presence check
+- [26_credentials-rotation.md](26_credentials-rotation.md) — OAuth model: per-account symlinks, `:rw` bind, preflight, COPY caveat
+- [27_credentials-relogin.md](27_credentials-relogin.md) — verified re-login flow (tmux code-paste) + 401-recovery design
+- [28_credential-refresh.md](28_credential-refresh.md) — refreshing Anthropic creds without restart churn: a RUNNING agent re-reads the mounted `~/.claude/.credentials.json` on its next turn (`sac agents send "continue"`); cold `start` only for parked agents; Spartan shared-home propagation; `${VAR:+SET}` safe presence check
 
 ### Reference
 - [13_observability.md](13_observability.md) — `sac agents status` JSON contract

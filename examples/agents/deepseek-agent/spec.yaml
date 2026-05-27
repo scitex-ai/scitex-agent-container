@@ -1,0 +1,43 @@
+# deepseek — sac v3 agent running on DeepSeek instead of Anthropic.
+#
+# spec.claude.provider points the SDK session at an Anthropic-SDK-
+# compatible backend (DeepSeek here) using a never-expiring, login-free
+# API key. Ideal for bulk fleet work where Max-plan quota / OAuth token
+# refresh would otherwise be the bottleneck.
+#
+# How it works at start (see runtimes/_apptainer_provider.py):
+#   * ANTHROPIC_BASE_URL  ← provider.base_url
+#   * SAC_ANTHROPIC_API_KEY ← the HOST value of $DEEPSEEK_API_KEY
+#       (sac bridges it to ANTHROPIC_API_KEY for the SDK)
+#   * CLAUDE_CONFIG_DIR   ← a clean per-agent dir (conflict-breaker so
+#       the OAuth credentials bind cannot win); the OAuth bind is skipped.
+#
+# Prerequisite: export the API key on the host BEFORE `sac agents start`:
+#   source ~/.dotfiles/.../api_keys/10_llm_deepseek.src   # exports DEEPSEEK_API_KEY
+# sac reads $DEEPSEEK_API_KEY's value at start and never logs it. If the
+# env var is unset, start fails loud (no silent fallback to Anthropic).
+#
+# Mutually exclusive with spec.claude.account (an API-key backend needs
+# no Anthropic OAuth) — declaring both is a config error.
+
+apiVersion: scitex-agent-container/v3
+kind: Agent
+
+spec:
+  runtime: apptainer
+
+  apptainer:
+    image: ~/.scitex/agent-container/containers/sac-scitex.sif
+
+  claude:
+    # The provider's own model id — accepted because provider is set
+    # (the claude-* alias check is relaxed under a provider override).
+    model: deepseek-chat
+    flags:
+      - --dangerously-skip-permissions
+    provider:
+      base_url: https://api.deepseek.com/anthropic
+      # NAME of the host env var holding the key — NOT the key value.
+      auth_token_env: DEEPSEEK_API_KEY
+
+# EOF
