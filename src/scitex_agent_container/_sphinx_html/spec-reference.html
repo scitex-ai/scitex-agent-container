@@ -734,6 +734,14 @@ when <code class="docutils literal notranslate"><span class="pre">spec.a2a.port<
 <td><p><code class="docutils literal notranslate"><span class="pre">haiku</span></code> | <code class="docutils literal notranslate"><span class="pre">sonnet</span></code> | <code class="docutils literal notranslate"><span class="pre">opus</span></code> | …</p></td>
 <td><p>Claude model</p></td>
 </tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">account</span></code></p></td>
+<td><p>string</p></td>
+<td><p>Pin this agent to a stored OAuth account (<code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">accounts</span></code> store-name). Mutually exclusive with <code class="docutils literal notranslate"><span class="pre">provider</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">provider</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{</span> <span class="pre">base_url,</span> <span class="pre">auth_token_env</span> <span class="pre">}</span></code></p></td>
+<td><p>Point the SDK session at any Anthropic-compatible endpoint (e.g. DeepSeek). <code class="docutils literal notranslate"><span class="pre">base_url</span></code> is the endpoint; <code class="docutils literal notranslate"><span class="pre">auth_token_env</span></code> is the NAME of the host env var holding the key (never the key). Mutually exclusive with <code class="docutils literal notranslate"><span class="pre">account</span></code>; relaxes the <code class="docutils literal notranslate"><span class="pre">claude-*</span></code> model-alias check. See ADR-0011.</p></td>
+</tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">session</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">continue</span></code> | <code class="docutils literal notranslate"><span class="pre">new-session</span></code> | <code class="docutils literal notranslate"><span class="pre">resume</span></code></p></td>
 <td><p>Session strategy (default <code class="docutils literal notranslate"><span class="pre">continue</span></code> — safe fallback). Legacy aliases <code class="docutils literal notranslate"><span class="pre">continue-or-new</span></code>, <code class="docutils literal notranslate"><span class="pre">new</span></code> accepted</p></td>
