@@ -162,6 +162,8 @@ when `spec.a2a.port` is set) and `GET /agents/<name>/card`
 | Field                       | Type                                  | Description                                                       |
 |-----------------------------|---------------------------------------|-------------------------------------------------------------------|
 | `model`                     | `haiku` \| `sonnet` \| `opus` \| ...  | Claude model                                                      |
+| `account`                   | string                                | Pin this agent to a stored OAuth account (`sac accounts` store-name). Mutually exclusive with `provider`. |
+| `provider`                  | `{ base_url, auth_token_env }`        | Point the SDK session at any Anthropic-compatible endpoint (e.g. DeepSeek). `base_url` is the endpoint; `auth_token_env` is the NAME of the host env var holding the key (never the key). Mutually exclusive with `account`; relaxes the `claude-*` model-alias check. See ADR-0011. |
 | `session`                   | `continue` \| `new-session` \| `resume`| Session strategy (default `continue` — safe fallback). Legacy aliases `continue-or-new`, `new` accepted |
 | `resume_id`                 | string                                | Explicit session UUID for `session: resume`                       |
 | `continue_max_age_minutes`  | int                                   | Only resume if session.jsonl is newer than N minutes              |

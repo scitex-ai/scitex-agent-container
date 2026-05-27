@@ -193,16 +193,31 @@ sac image status                          # unified dashboard
 sac image snapshot [-o env.json]          # reproducibility capsule
 
 # Account / quota
-sac accounts list / save / delete / switch / watch-quota
+sac accounts list / save / delete / switch        # stored-credential rotation
+sac accounts status                       # one-shot quota snapshot (5h%, 7d%, tier)
+sac accounts sync-live / watch-live       # auto-snapshot live cred on `claude /login`
+sac accounts watch-quota                  # auto-rotate when quota threshold hit
 
 # Network / peers
 sac host list / add / remove / set / probe / exec / validate
-sac peer post-turn AGENT TEXT             # A2A outbound
+sac host ssh-opts                         # print sac's ssh ControlMaster flags (shell-quoted)
+sac host add-peer / list-peers / remove-peer      # cross-host listen-bearer registry
+sac host probe-hub                        # WSL → fleet-hub layered connectivity probe
+sac peer post-turn AGENT TEXT             # A2A outbound (loopback or cross-host)
 sac a2a serve <yamls...>                  # A2A inbound for non-SDK runtimes
 
+# Fleet (peer-aware multi-agent orchestration)
+sac fleet launch  PEER <name>...          # rsync specs to PEER, start each remotely
+sac fleet notify  done|blocker|status --summary "..."   # agent→lead push (ADR-0013)
+
+# Diagnostics / introspection
+sac doctor [--fleet]                      # diagnose agent-spec source drift
+sac subagent get-state                    # Claude Code Agent-tool subagent state
+
 # Misc
+sac installation boot                     # first-time host bootstrap (venv, PATH, cron)
 sac event ingest                          # Claude Code hook event ingestor
-sac db   query / show / clean / migrate   # state.db inspection
+sac db   query / show / clean / export / import / migrate   # state.db inspection
 sac registry reconcile                    # singleton placement reconcile across fleet
 sac --help-recursive                      # full subcommand tree
 ```
