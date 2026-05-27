@@ -118,6 +118,18 @@ sac agents delete hello-agent-1 hello-agent-2 -y
 
 [`examples/`](examples/) walks through the runtime in 15 lessons (image build, sandbox/update/freeze, versioning, run/send/tail, logs/exec, stop/remove, binds, env+user, writing your first spec.yaml, to_home/, A2A endpoint, health+restart, multi-host, debugging). Run them read-only with `bash examples/00_run_all.sh`, or `--apply` to execute the mutating ones.
 
+### Models
+
+Pick the model per agent under `spec.claude.model`:
+
+| Alias    | Model (current)             | Use for                         |
+|----------|-----------------------------|---------------------------------|
+| `opus`   | Claude Opus 4.7             | Hardest reasoning; slowest      |
+| `sonnet` | Claude Sonnet 4.6 *(default)* | Balanced capability and speed |
+| `haiku`  | Claude Haiku 4.5            | Fast, cheap, light tasks        |
+
+Aliases auto-track the latest version of each family; append `[1m]` for the 1M-token context window (`opus[1m]`, `sonnet[1m]`). Pin an exact build with a full ID like `claude-opus-4-7` or `claude-haiku-4-5-20251001`. To target a non-Anthropic, Anthropic-compatible backend (e.g. DeepSeek), use `spec.claude.provider` instead. **[Full model reference →](docs/spec-reference.md)**
+
 ## How it works
 
 `scitex-agent-container` (`sac`) materializes a `spec.yaml` into a long-lived, externally addressable Claude agent:
