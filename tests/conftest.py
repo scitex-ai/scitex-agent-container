@@ -20,10 +20,14 @@ from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-# Pin coverage's data file at the repo root and point process_startup
-# at our pyproject so child interpreters configure themselves correctly.
+# Pin coverage's data file under tests/results/coverage/ (keeps the repo
+# root clean) and point process_startup at our pyproject so child
+# interpreters configure themselves correctly. COVERAGE_FILE is absolute
+# so every child writes here regardless of its working directory.
+_COVERAGE_DIR = _PROJECT_ROOT / "tests" / "results" / "coverage"
+_COVERAGE_DIR.mkdir(parents=True, exist_ok=True)
 os.environ["COVERAGE_PROCESS_START"] = str(_PROJECT_ROOT / "pyproject.toml")
-os.environ["COVERAGE_FILE"] = str(_PROJECT_ROOT / ".coverage")
+os.environ["COVERAGE_FILE"] = str(_COVERAGE_DIR / ".coverage")
 
 
 def _ensure_subprocess_coverage_shim() -> None:

@@ -6,7 +6,7 @@
   <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>YAML Spec Reference (v3) &mdash; scitex-agent-container v0.21.0</title>
+  <title>YAML Spec Reference (v3) &mdash; scitex-agent-container v0.21.1</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=9edc463e" />
       <link rel="stylesheet" type="text/css" href="_static/copybutton.css?v=76b2166b" />
@@ -14,7 +14,7 @@
   
       <script src="_static/jquery.js?v=5d32c60e"></script>
       <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
-      <script src="_static/documentation_options.js?v=c4f92b34"></script>
+      <script src="_static/documentation_options.js?v=6081af2d"></script>
       <script src="_static/doctools.js?v=fd6eb6e6"></script>
       <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
       <script src="_static/clipboard.min.js?v=a7894cd8"></script>
@@ -90,7 +90,10 @@
 <li class="toctree-l3"><a class="reference internal" href="#metadata-labels-agentcard-fields"><code class="docutils literal notranslate"><span class="pre">metadata.labels</span></code> → AgentCard fields</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#spec-top-level"><code class="docutils literal notranslate"><span class="pre">spec</span></code> — top-level</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#spec-apptainer-engine-knobs"><code class="docutils literal notranslate"><span class="pre">spec.apptainer</span></code> — engine knobs</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#spec-claude-sdk-knobs"><code class="docutils literal notranslate"><span class="pre">spec.claude</span></code> — SDK knobs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#spec-claude-sdk-knobs"><code class="docutils literal notranslate"><span class="pre">spec.claude</span></code> — SDK knobs</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#available-models-spec-claude-model">Available models (<code class="docutils literal notranslate"><span class="pre">spec.claude.model</span></code>)</a></li>
+</ul>
+</li>
 <li class="toctree-l3"><a class="reference internal" href="#spec-health-spec-restart-spec-watchdog-spec-autonomous"><code class="docutils literal notranslate"><span class="pre">spec.health</span></code> / <code class="docutils literal notranslate"><span class="pre">spec.restart</span></code> / <code class="docutils literal notranslate"><span class="pre">spec.watchdog</span></code> / <code class="docutils literal notranslate"><span class="pre">spec.autonomous</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="#spec-a2a-spec-listen-network-endpoints"><code class="docutils literal notranslate"><span class="pre">spec.a2a</span></code> / <code class="docutils literal notranslate"><span class="pre">spec.listen</span></code> — network endpoints</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#scitex-agent-container-config-yaml"><code class="docutils literal notranslate"><span class="pre">~/.scitex/agent-container/config.yaml</span></code></a></li>
@@ -731,8 +734,16 @@ when <code class="docutils literal notranslate"><span class="pre">spec.a2a.port<
 </thead>
 <tbody>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">model</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">haiku</span></code> | <code class="docutils literal notranslate"><span class="pre">sonnet</span></code> | <code class="docutils literal notranslate"><span class="pre">opus</span></code> | …</p></td>
-<td><p>Claude model</p></td>
+<td><p>alias or full ID (default <code class="docutils literal notranslate"><span class="pre">sonnet</span></code>)</p></td>
+<td><p>Claude model — see <strong>Available models</strong> below</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">account</span></code></p></td>
+<td><p>string</p></td>
+<td><p>Pin this agent to a stored OAuth account (<code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">accounts</span></code> store-name). Mutually exclusive with <code class="docutils literal notranslate"><span class="pre">provider</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">provider</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{</span> <span class="pre">base_url,</span> <span class="pre">auth_token_env</span> <span class="pre">}</span></code></p></td>
+<td><p>Point the SDK session at any Anthropic-compatible endpoint (e.g. DeepSeek). <code class="docutils literal notranslate"><span class="pre">base_url</span></code> is the endpoint; <code class="docutils literal notranslate"><span class="pre">auth_token_env</span></code> is the NAME of the host env var holding the key (never the key). Mutually exclusive with <code class="docutils literal notranslate"><span class="pre">account</span></code>; relaxes the <code class="docutils literal notranslate"><span class="pre">claude-*</span></code> model-alias check. See ADR-0011.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">session</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">continue</span></code> | <code class="docutils literal notranslate"><span class="pre">new-session</span></code> | <code class="docutils literal notranslate"><span class="pre">resume</span></code></p></td>
@@ -764,6 +775,52 @@ when <code class="docutils literal notranslate"><span class="pre">spec.a2a.port<
 </tr>
 </tbody>
 </table>
+<section id="available-models-spec-claude-model">
+<h4>Available models (<code class="docutils literal notranslate"><span class="pre">spec.claude.model</span></code>)<a class="headerlink" href="#available-models-spec-claude-model" title="Link to this heading"></a></h4>
+<p>sac validates <code class="docutils literal notranslate"><span class="pre">model</span></code> at YAML-load time, then hands it to the Claude Code
+SDK (<code class="docutils literal notranslate"><span class="pre">claude</span> <span class="pre">--model</span></code>), which resolves the value to a concrete model. Two
+shapes are accepted:</p>
+<p><strong>1. Bare alias</strong> — recommended; auto-tracks the latest version of that family:</p>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Alias</p></th>
+<th class="head"><p>Resolves to (current, 2026-05)</p></th>
+<th class="head"><p>When to use</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">opus</span></code></p></td>
+<td><p>Claude Opus 4.7</p></td>
+<td><p>Most capable; heaviest / slowest</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">sonnet</span></code></p></td>
+<td><p>Claude Sonnet 4.6 — <strong>default</strong></p></td>
+<td><p>Balanced capability and speed</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">haiku</span></code></p></td>
+<td><p>Claude Haiku 4.5</p></td>
+<td><p>Fastest, cheapest; light tasks</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">inherit</span></code> / <code class="docutils literal notranslate"><span class="pre">default</span></code></p></td>
+<td><p>SDK / host default</p></td>
+<td><p>Don’t pin a family explicitly</p></td>
+</tr>
+</tbody>
+</table>
+<p>Append <code class="docutils literal notranslate"><span class="pre">[1m]</span></code> for the 1M-token context window where the model offers it —
+e.g. <code class="docutils literal notranslate"><span class="pre">opus[1m]</span></code>, <code class="docutils literal notranslate"><span class="pre">sonnet[1m]</span></code>.</p>
+<p><strong>2. Full versioned ID</strong> — pins one exact model, no auto-tracking:
+<code class="docutils literal notranslate"><span class="pre">claude-&lt;family&gt;-N-M[-&lt;date&gt;][[ctx]]</span></code>, e.g. <code class="docutils literal notranslate"><span class="pre">claude-opus-4-7</span></code>,
+<code class="docutils literal notranslate"><span class="pre">claude-opus-4-7[1m]</span></code>, <code class="docutils literal notranslate"><span class="pre">claude-sonnet-4-6</span></code>, <code class="docutils literal notranslate"><span class="pre">claude-haiku-4-5-20251001</span></code>.</p>
+<p>Abbreviated forms missing the version digits (e.g. <code class="docutils literal notranslate"><span class="pre">claude-opus[1m]</span></code>) are
+<strong>rejected at validate-time</strong> — they pass the YAML loader but the SDK
+silently returns zero tokens (no API call), so the agent looks hung. The
+pinned regex catches this early.</p>
+<blockquote>
+<div><p>Under a <code class="docutils literal notranslate"><span class="pre">provider</span></code> override (e.g. DeepSeek) the <code class="docutils literal notranslate"><span class="pre">claude-*</span></code> alias check
+is relaxed — use the provider’s own model names instead.</p>
+</div></blockquote>
+</section>
 </section>
 <section id="spec-health-spec-restart-spec-watchdog-spec-autonomous">
 <h3><code class="docutils literal notranslate"><span class="pre">spec.health</span></code> / <code class="docutils literal notranslate"><span class="pre">spec.restart</span></code> / <code class="docutils literal notranslate"><span class="pre">spec.watchdog</span></code> / <code class="docutils literal notranslate"><span class="pre">spec.autonomous</span></code><a class="headerlink" href="#spec-health-spec-restart-spec-watchdog-spec-autonomous" title="Link to this heading"></a></h3>

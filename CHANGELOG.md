@@ -22,6 +22,34 @@ versioning follows [SemVer](https://semver.org/).
   catch-all and the `metadata.name` / `dot_claude` / `spec.skills`
   rejection messages; relocation-vs-unknown messages stay distinct.
 
+## [0.21.1] — 2026-05-26
+
+### Added
+- **feat(ssh): connection multiplexing across all sac→peer ssh calls**
+  — every sac call that shells out to ssh now prepends
+  `-o ControlMaster=auto -o ControlPersist=60s -o ControlPath=<dir>/%C`
+  so concurrent calls against the same peer share one TCP+SSH master.
+  Fixes (a) "control socket dir is read-only" inside apptainer SIFs
+  where the default `~/.ssh/sockets` ControlPath lands on the overlay,
+  and (b) silent drops when fanning out across hosts that cap
+  per-user concurrent sessions (Spartan `MaxSessions`,
+  sshd `MaxStartups`). The ControlPath dir defaults to
+  `${TMPDIR:-/tmp}/.sac-ssh-cm` (writable inside apptainer); override
+  with `$SAC_SSH_CONTROL_DIR`; opt out entirely with
+  `SAC_SSH_CONTROL_MASTER=0`. New helpers
+  `scitex_agent_container._state.host_config.ssh_control_options()`
+  and `ssh_control_options_str()`, applied centrally in `build_ssh_argv`
+  and at three direct-ssh call sites (`_network.peer._post_turn_via_ssh`,
+  `cli_pkg.priority_cmds._ssh_start_agent`,
+  `cli_pkg._send_preflight.default_ssh_runner`). New CLI
+  `sac host ssh-opts` prints the flags shell-quoted for use in agent
+  prompts as `ssh $(sac host ssh-opts) host cmd`. See
+  `_skills/scitex-agent-container/11_remote-deploy.md` §
+  "SSH connection multiplexing". Failure mode is fall-through: if the
+  control dir can't be created (read-only mount, ENOSPC) the helper
+  returns `[]` and ssh argv stays byte-identical to pre-patch.
+>>>>>>> origin/develop
+
 ## [0.21.0] — 2026-05-25
 
 ### Added

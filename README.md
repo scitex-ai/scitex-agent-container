@@ -118,6 +118,18 @@ sac agents delete hello-agent-1 hello-agent-2 -y
 
 [`examples/`](examples/) walks through the runtime in 15 lessons (image build, sandbox/update/freeze, versioning, run/send/tail, logs/exec, stop/remove, binds, env+user, writing your first spec.yaml, to_home/, A2A endpoint, health+restart, multi-host, debugging). Run them read-only with `bash examples/00_run_all.sh`, or `--apply` to execute the mutating ones.
 
+### Models
+
+Pick the model per agent under `spec.claude.model`:
+
+| Alias    | Model (current)             | Use for                         |
+|----------|-----------------------------|---------------------------------|
+| `opus`   | Claude Opus 4.7             | Hardest reasoning; slowest      |
+| `sonnet` | Claude Sonnet 4.6 *(default)* | Balanced capability and speed |
+| `haiku`  | Claude Haiku 4.5            | Fast, cheap, light tasks        |
+
+Aliases auto-track the latest version of each family; append `[1m]` for the 1M-token context window (`opus[1m]`, `sonnet[1m]`). Pin an exact build with a full ID like `claude-opus-4-7` or `claude-haiku-4-5-20251001`. To target a non-Anthropic, Anthropic-compatible backend (e.g. DeepSeek), use `spec.claude.provider` instead. **[Full model reference →](docs/spec-reference.md)**
+
 ## How it works
 
 `scitex-agent-container` (`sac`) materializes a `spec.yaml` into a long-lived, externally addressable Claude agent:
@@ -193,16 +205,31 @@ sac image status                          # unified dashboard
 sac image snapshot [-o env.json]          # reproducibility capsule
 
 # Account / quota
-sac accounts list / save / delete / switch / watch-quota
+sac accounts list / save / delete / switch        # stored-credential rotation
+sac accounts status                       # one-shot quota snapshot (5h%, 7d%, tier)
+sac accounts sync-live / watch-live       # auto-snapshot live cred on `claude /login`
+sac accounts watch-quota                  # auto-rotate when quota threshold hit
 
 # Network / peers
 sac host list / add / remove / set / probe / exec / validate
-sac peer post-turn AGENT TEXT             # A2A outbound
+sac host ssh-opts                         # print sac's ssh ControlMaster flags (shell-quoted)
+sac host add-peer / list-peers / remove-peer      # cross-host listen-bearer registry
+sac host probe-hub                        # WSL → fleet-hub layered connectivity probe
+sac peer post-turn AGENT TEXT             # A2A outbound (loopback or cross-host)
 sac a2a serve <yamls...>                  # A2A inbound for non-SDK runtimes
 
+# Fleet (peer-aware multi-agent orchestration)
+sac fleet launch  PEER <name>...          # rsync specs to PEER, start each remotely
+sac fleet notify  done|blocker|status --summary "..."   # agent→lead push (ADR-0013)
+
+# Diagnostics / introspection
+sac doctor [--fleet]                      # diagnose agent-spec source drift
+sac subagent get-state                    # Claude Code Agent-tool subagent state
+
 # Misc
+sac installation boot                     # first-time host bootstrap (venv, PATH, cron)
 sac event ingest                          # Claude Code hook event ingestor
-sac db   query / show / clean / migrate   # state.db inspection
+sac db   query / show / clean / export / import / migrate   # state.db inspection
 sac registry reconcile                    # singleton placement reconcile across fleet
 sac --help-recursive                      # full subcommand tree
 ```
