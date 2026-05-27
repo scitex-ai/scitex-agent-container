@@ -284,6 +284,22 @@ async def node_message_send(request: Request) -> Response:
             await broker.publish(name, notif)
         return deny_response(reason or "ACL deny")
 
+    # ADR-0013 Phase 1: typed event ``kind`` (``done`` / ``blocker`` /
+    # ``status``) rides on metadata so the lead's inbox can filter
+    # agent push events without parsing the free-form content. The
+    # receiver accepts ANY string here — the sender side
+    # (:mod:`scitex_agent_container._state.lead_inbox`) enforces the
+    # allow-list so a typo fails at mint time, never after it has
+    # landed in ``channel_events`` under the wrong label. Non-string
+    # values are a loud 400 — silently coercing would let bad senders
+    # poison the inbox shape.
+    kind_meta = sac_meta.get("kind")
+    if kind_meta is not None and not isinstance(kind_meta, str):
+        return JSONResponse(
+            {"error": "params.metadata.kind must be a string when set"},
+            status_code=400,
+        )
+
     event = mint_event(
         name,
         content=text,
@@ -294,6 +310,7 @@ async def node_message_send(request: Request) -> Response:
         requires_reply=bool(sac_meta.get("requires_reply", False)),
         ack=bool(sac_meta.get("ack", False)),
         dispatch_id=sac_meta.get("dispatch_id"),
+        kind=kind_meta,
     )
 
     # Implicit registration — handoff §4 "A2A compliance without a
