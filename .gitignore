@@ -5,7 +5,15 @@ __pycache__/
 dist/
 build/
 .eggs/
+
+# Apptainer images + writable rootfs sandboxes (large, regenerable;
+# byte storage lives under ~/.scitex/<pkg>/containers/ → punim2354 on
+# Spartan per SIF-CONSOLIDATION).
 *.sif
+**/*.sif
+*.sandbox/
+**/*.sandbox/
+
 .pytest_cache/
 GITIGNORED/
 .env
