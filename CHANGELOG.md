@@ -6,6 +6,89 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.21.1] — 2026-05-26
+
+### Added
+- **feat(ssh): connection multiplexing across all sac→peer ssh calls**
+  — every sac call that shells out to ssh now prepends
+  `-o ControlMaster=auto -o ControlPersist=60s -o ControlPath=<dir>/%C`
+  so concurrent calls against the same peer share one TCP+SSH master.
+  Fixes (a) "control socket dir is read-only" inside apptainer SIFs
+  where the default `~/.ssh/sockets` ControlPath lands on the overlay,
+  and (b) silent drops when fanning out across hosts that cap
+  per-user concurrent sessions (Spartan `MaxSessions`,
+  sshd `MaxStartups`). The ControlPath dir defaults to
+  `${TMPDIR:-/tmp}/.sac-ssh-cm` (writable inside apptainer); override
+  with `$SAC_SSH_CONTROL_DIR`; opt out entirely with
+  `SAC_SSH_CONTROL_MASTER=0`. New helpers
+  `scitex_agent_container._state.host_config.ssh_control_options()`
+  and `ssh_control_options_str()`, applied centrally in `build_ssh_argv`
+  and at three direct-ssh call sites (`_network.peer._post_turn_via_ssh`,
+  `cli_pkg.priority_cmds._ssh_start_agent`,
+  `cli_pkg._send_preflight.default_ssh_runner`). New CLI
+  `sac host ssh-opts` prints the flags shell-quoted for use in agent
+  prompts as `ssh $(sac host ssh-opts) host cmd`. See
+  `_skills/scitex-agent-container/11_remote-deploy.md` §
+  "SSH connection multiplexing". Failure mode is fall-through: if the
+  control dir can't be created (read-only mount, ENOSPC) the helper
+  returns `[]` and ssh argv stays byte-identical to pre-patch.
+
+## [0.21.0] — 2026-05-25
+
+### Added
+- **feat(provider): vendor-agnostic Anthropic-SDK backend override (PR #208)** —
+  `spec.claude.provider` with `base_url` + `auth_token_env` points a sac
+  agent's Claude-SDK session at any Anthropic-SDK-compatible endpoint
+  (DeepSeek first). Host-side `runtimes/_apptainer_provider.py` emits
+  `ANTHROPIC_BASE_URL` + `SAC_ANTHROPIC_API_KEY` + `CLAUDE_CONFIG_DIR`
+  at start; auth resolution via `scitex_config` cascade
+  (shell-export > `$HOME/.env` > default → fail-loud
+  `ProviderEnvError`). `claude-*` model alias check is relaxed under a
+  provider override; `provider` + `spec.claude.account` are mutually
+  exclusive. New: `config/_provider_types.ProviderSpec`,
+  `runtimes/_apptainer_provider.py`, `runtimes/_apptainer_auth.py`,
+  ADR-0011, `examples/agents/deepseek-agent/spec.yaml`. 73 targeted
+  tests; full pytest matrix green.
+- **chore(audit): exempt sac from §6 MCP-Python parity (PR #209)** —
+  adds `[tool.scitex_dev] mcp_parity_exempt = true` to pyproject for
+  the audit-cli §6 check. sac's MCP tools mirror CLI subcommands, not
+  top-level Python APIs (4 orphan tools: `agent_spawn`,
+  `list_python_apis`, `quota_watch`, `subagent_get_state`). Closes the
+  only develop-shared audit-conformance violation;
+  `tests/develop/test_audit.py::test_audit_all_clean` now green on
+  develop.
+
+### Added
+- **feat(account): credential auto-sync substrate (`sac accounts
+  sync-live` / `watch-live`)** — keep the per-account store fresh the
+  moment the operator runs `claude /login`, with zero manual `sac
+  accounts save`. `sync-live` reads the live `~/.claude/.credentials.json`
+  + the active email from `~/.claude.json`, derives the store-name
+  (email slugified, e.g. `ywatanabe@scitex.ai` → `ywatanabe-scitex-ai`),
+  and atomically snapshots the live cred in when the matching store is
+  absent / older / expired (idempotent no-op otherwise). `watch-live`
+  is the always-on daemon: watches the live credential (inotify via
+  `inotifywait` when available, else a poll loop) and runs the engine on
+  every change, logging each sync to stderr or
+  `~/.scitex/agent-container/runtime/logs/creds-watch.log`. New
+  `_account/creds_sync.py` (engine) + `_account/creds_watch.py`
+  (watcher).
+- **feat(account): `sac accounts list` credential-freshness column** —
+  every stored account now shows `VALID (+Xh)` / `EXPIRED (-Xh)` /
+  `ABSENT` read OFFLINE from the snapshot's `expiresAt`, so rotted
+  stores are visible at a glance. The `--json` output gains `freshness`
+  and `freshness_hours` fields. New `_account/creds_sync.account_freshness`.
+
+### Fixed
+- **fix(account): pinned-account credential resolution now fails loud**
+  — when `spec.claude.account` names a store that is ABSENT or its
+  credential is EXPIRED, `sac agents start` now aborts with
+  `PinnedAccountError` carrying the exact remedy (`claude /login` to
+  that account + `sac accounts sync-live`). Previously it silently fell
+  back to the host live file (a *different* account) or launched with a
+  stale token — handing the agent the wrong identity. A pinned agent
+  must never silently fall back. (`runtimes/_apptainer_creds.py`)
+
 ## [0.20.0] — 2026-05-24
 
 ### Added

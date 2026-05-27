@@ -92,11 +92,82 @@ def agent_start(name: str, foreground: bool = False) -> dict[str, Any]:
     that need to share a Registry instance, use
     :func:`scitex_agent_container._lifecycle.lifecycle.agent_start`
     directly.
+
+    .. note::
+       Runs the CLI **inside the current container**. Inside an
+       apptainer-isolated agent that means apptainer-in-apptainer
+       (blocked on most HPCs) or a bare-runner fallback. Use
+       :func:`agent_spawn` instead to ask the bare HOST to start the
+       child via the sac-listen control plane — that path goes through
+       the server-side ACL gate and records the parent→child lineage
+       edge automatically (ADR-0010 mechanism #3).
     """
     argv = ["agents", "start", name]
     if foreground:
         argv.append("--foreground")
     return invoke_cli_text(argv)
+
+
+def agent_spawn(
+    name: str,
+    spec: dict | None = None,
+    overwrite: bool = False,
+    caller: str | None = None,
+) -> dict[str, Any]:
+    """Ask the HOST sac-listen to spawn ``name`` on the bare host.
+
+    This is the ADR-0010 mechanism-#3 spawn path — the only sanctioned
+    agent-driven spawn surface. Every accepted request runs through
+    the server-side ``check_spawn`` ACL gate and is recorded in the
+    ``lineage`` table BEFORE any runtime work happens. The child is
+    booted on the bare host (no apptainer-in-apptainer).
+
+    Compared to :func:`agent_start` (which shells ``sac agents start``
+    in the CURRENT container), ``agent_spawn`` POSTs to the host's
+    ``/agents`` endpoint via :mod:`_lifecycle._spawn_client`. The
+    container needs ``SAC_LISTEN_BASE_URL`` (+ optional
+    ``SAC_LISTEN_BEARER``) injected by the apptainer runtime; both
+    are standard on sac-managed agents.
+
+    Args:
+        name: The child agent to start (must be registered on the
+            host OR provided inline via ``spec``).
+        spec: Optional inline spec dict ``{apiVersion, kind, spec}``.
+            When provided, the server materialises it under
+            ``~/.scitex/agent-container/agents/<name>/spec.yaml`` and
+            then starts it. Use for ephemeral / per-turn children.
+        overwrite: Only meaningful with ``spec`` — overwrite an
+            existing on-disk spec instead of returning 409.
+        caller: Override the auto-resolved caller identity. Defaults
+            to ``SAC_NAME`` from the container env (resolved inside
+            :mod:`_lifecycle._spawn_client`), which is what the
+            server-side ``check_spawn`` gate keys off.
+
+    Returns:
+        On success: ``{"status": "ok", "result": {...server body...}}``
+        where the inner body is the agents_start response
+        ``{name, returncode, stdout, stderr}``. The MCP host can branch
+        on ``result.returncode``.
+
+        On failure (transport / 4xx-5xx / missing env): ``{"status":
+        "error", "reason": "...", "http_status": <int|null>,
+        "body": <server body or null>}`` — fail loud, never silently
+        swallowed (ADR-0010 / handoff §0).
+    """
+    from ..._lifecycle._spawn_client import SpawnRequestError, request_spawn
+
+    try:
+        result = request_spawn(
+            name, caller=caller, spec=spec, overwrite=overwrite
+        )
+    except SpawnRequestError as exc:
+        return {
+            "status": "error",
+            "reason": str(exc),
+            "http_status": exc.status,
+            "body": exc.body,
+        }
+    return {"status": "ok", "result": result}
 
 
 def agent_stop(name: str) -> dict[str, Any]:
@@ -175,6 +246,7 @@ def register_agent_tools(mcp) -> None:
         agent_check,
         agent_recall,
         agent_start,
+        agent_spawn,
         agent_stop,
         agent_restart,
         agent_send,
@@ -191,6 +263,7 @@ __all__ = [
     "agent_check",
     "agent_recall",
     "agent_start",
+    "agent_spawn",
     "agent_stop",
     "agent_restart",
     "agent_send",

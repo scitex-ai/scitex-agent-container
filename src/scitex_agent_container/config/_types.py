@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict
 
+from ._provider_types import ProviderSpec
+
 
 @dataclass
 class ContainerSpec:
@@ -61,6 +63,12 @@ class ClaudeSpec:
     # move a pinned agent (that is the point of pinning), and changing
     # this field requires ``sac agent restart`` to re-copy the snapshot.
     account: str = ""
+    # Vendor-agnostic backend override (see :class:`ProviderSpec`).
+    # When set, the SDK session runs against an Anthropic-SDK-compatible
+    # backend (DeepSeek, a gateway, ...) on an API key instead of
+    # Anthropic OAuth. ``None`` = default Anthropic backend. Mutually
+    # exclusive with ``account`` (an API-key backend needs no OAuth).
+    provider: ProviderSpec | None = None
 
 
 @dataclass
