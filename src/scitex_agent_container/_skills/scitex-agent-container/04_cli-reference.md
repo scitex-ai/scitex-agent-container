@@ -66,8 +66,10 @@ sac image switch X
 
 | Command | Purpose |
 |---|---|
-| `sac accounts list` | Stored Claude Code accounts + the active credentials block. |
+| `sac accounts list` | Stored Claude Code accounts + active block; per-store freshness column (`VALID (+Xh)` / `EXPIRED (-Xh)` / `ABSENT`). |
 | `sac accounts save <name>` | Snapshot current credentials under `<name>` for later rotation. |
+| `sac accounts sync-live` | Snapshot the live credential into its matching store (store-name = email slugified). Idempotent; fails loud on an expired/absent live cred (never saves a stale token). |
+| `sac accounts watch-live` | Daemon: watch `~/.claude/.credentials.json` (inotify or poll) and auto-run `sync-live` on every change — "the moment I log in → auto-saved". |
 | `sac accounts switch <name>` | Switch active credentials to a stored account. |
 | `sac accounts delete <name>` | Remove a stored account. |
 | `sac accounts status` | One-shot quota snapshot (5h%, 7d%, account email + tier). |
@@ -78,16 +80,27 @@ sac image switch X
 | Command | Purpose |
 |---|---|
 | `sac host list / add / remove / set / probe / exec / validate` | Local hostname + peer machine routing (ssh round-trip / exec on PEER). |
+| `sac host add-peer / list-peers / remove-peer` | Cross-host `sac listen` bearer registry (who may push into this host). |
+| `sac host ssh-opts` | Print sac's ssh ControlMaster flags shell-quoted — use as `ssh $(sac host ssh-opts) host cmd`. |
+| `sac host probe-hub` | WSL → fleet-hub layered connectivity probe (DNS, gateway, TCP, HTTPS). |
 | `sac peer post-turn AGENT TEXT` | Outbound A2A — POST a turn to another agent's `/v1/turn`. |
 | `sac peer resolve-url AGENT` | Print the URL `peer post-turn` would target. |
 | `sac a2a serve <yamls...>` | A2A inbound HTTP server (sidecar mode for non-SDK runtimes). For `runtime: apptainer` agents the runner hosts `POST /v1/turn` itself. |
-| `sac host probe-hub` | WSL → fleet-hub layered connectivity probe (DNS, gateway, TCP, HTTPS). |
+| `sac a2a doctor AGENT` | Probe an agent's A2A AgentCard endpoint and report health. |
+
+## Fleet (`sac fleet`)
+
+| Command | Purpose |
+|---|---|
+| `sac fleet launch PEER <name>...` | Rsync each agent's spec to PEER and run `sac agents start <name>` there. |
+| `sac fleet notify done\|blocker\|status --summary "..."` | Agent→lead push channel (ADR-0013 Phase 1) — POST a typed event to the lead's `sac listen` inbox. `--detail`, `--conversation-id`, `--dry-run`, `--json`. |
 
 ## State database / registry / events
 
 | Command | Purpose |
 |---|---|
 | `sac db query / show / clean / migrate / tick` | Inspect and maintain the sac state database (`state.db`). `db clean` replaces the legacy `registry clean`. |
+| `sac db export / import` | Dump state.db rows as a JSON delta / ingest a dump (cross-host registry sync). |
 | `sac registry reconcile` | Reconcile singleton agent placement across the fleet. |
 | `sac event ingest` | Append a Claude Code hook event to the per-agent ring buffer. |
 
@@ -103,6 +116,8 @@ sac image switch X
 
 | Command | Purpose |
 |---|---|
+| `sac doctor [--fleet]` | Diagnose agent-spec source drift (locally, or `--fleet` across peers). |
+| `sac subagent get-state` | Pure state data for every matching Claude Code Agent-tool subagent (Type 2). |
 | `sac mcp list-tools` | Local MCP introspection (no MCP server bundled — sac agents spawn their own via `to_home/.mcp.json`). |
 | `sac skills list / get` | Bundled agent-facing skills. |
 | `sac list-python-apis` | Enumerate the public Python API. |

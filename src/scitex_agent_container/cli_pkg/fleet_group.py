@@ -28,6 +28,7 @@ from pathlib import Path
 import click
 
 from .._state.host_config import build_ssh_argv, load
+from ._fleet_notify import fleet_notify as _fleet_notify_cmd
 from ._helpers import _json_flag, console
 
 
@@ -43,7 +44,14 @@ def fleet_group() -> None:
       $ sac fleet launch ~/specs/quality-fanout/ --peer spartan
       $ sac fleet launch --peer spartan --spec res-canary --no-rsync
       $ sac fleet launch ~/specs/ --peer spartan --dry-run
+      $ sac fleet notify done --summary "PR #224 merged"
     """
+
+
+# ADR-0013 Phase 1: agent→lead push verb. Defined in ``_fleet_notify``
+# and attached here so ``sac fleet notify ...`` lives under the same
+# command group as ``sac fleet launch`` / ``sac fleet sync``.
+fleet_group.add_command(_fleet_notify_cmd)
 
 
 def _discover_specs(specdir: Path) -> list[str]:

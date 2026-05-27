@@ -9,6 +9,7 @@ from typing import Any, Dict
 # Phase-3 ACL dataclasses (kept in a sibling module under the per-file
 # line cap; re-exported here for the :class:`AgentConfig` field defaults).
 from ._acl_types import CommsSpec, LineageSpec  # noqa: E402,F401
+from ._provider_types import ProviderSpec
 
 
 @dataclass
@@ -65,6 +66,12 @@ class ClaudeSpec:
     # move a pinned agent (that is the point of pinning), and changing
     # this field requires ``sac agent restart`` to re-copy the snapshot.
     account: str = ""
+    # Vendor-agnostic backend override (see :class:`ProviderSpec`).
+    # When set, the SDK session runs against an Anthropic-SDK-compatible
+    # backend (DeepSeek, a gateway, ...) on an API key instead of
+    # Anthropic OAuth. ``None`` = default Anthropic backend. Mutually
+    # exclusive with ``account`` (an API-key backend needs no OAuth).
+    provider: ProviderSpec | None = None
 
 
 @dataclass

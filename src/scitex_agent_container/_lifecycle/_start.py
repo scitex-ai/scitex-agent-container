@@ -6,6 +6,7 @@ Extracted from the former monolithic ``lifecycle.py`` (split for the
 
 from __future__ import annotations
 
+import sys
 import threading
 import time
 import traceback
@@ -37,6 +38,58 @@ def _resolve_strict_drift(strict_drift: bool | None) -> bool:
 
     raw = (_sac_env("STRICT_DRIFT", "") or "").strip().lower()
     return raw in ("1", "true", "yes", "on")
+
+
+def _rotate_to_healthy_account(
+    config: AgentConfig,
+    *,
+    log_stream: Any = None,
+) -> None:
+    """Rotate ``config.claude.account`` to a healthy stored account.
+
+    CREDS-PHASE1 wiring. Only acts on PINNED agents
+    (``spec.claude.account`` non-empty). For an unpinned agent the
+    runtime continues to bind the host's live ``.credentials.json``
+    untouched.
+
+    On a pinned agent:
+
+    * If the pinned snapshot is healthy → no-op (config unchanged).
+    * If the pinned snapshot is EXPIRED/ABSENT but another stored
+      account has a fresh snapshot → ``config.claude.account`` is
+      mutated to that account and a one-line rotation notice is
+      printed to ``log_stream`` (default ``sys.stderr``). The runtime
+      then re-copies that account's snapshot into the per-agent
+      writable boot-copy via the existing
+      :func:`runtimes._apptainer_creds.resolve_cred_file` path — the
+      in-container ~1h token refresh on that copy keeps working.
+    * If NOTHING is healthy → :class:`_creds.NoHealthyAccountError`
+      propagates (fail loud, no silent stale-token launch). Agent is
+      NOT started.
+
+    See :mod:`scitex_agent_container._creds._pick_healthy` for the
+    health model — non-expired snapshot = healthy. Cap-induced 429s
+    still surface from claude in-turn; the picker only avoids
+    known-stale auth at boot.
+    """
+    pinned = getattr(getattr(config, "claude", None), "account", "") or ""
+    if not pinned:
+        return  # unpinned agent — host live OAuth, untouched.
+
+    from .._creds import pick_healthy_account
+
+    picked = pick_healthy_account(pinned)
+    if picked == pinned:
+        return  # pinned is healthy — no rotation, no log line.
+
+    config.claude.account = picked
+    stream = log_stream if log_stream is not None else sys.stderr
+    print(
+        f"[sac:creds] agent '{config.name}' rotated account: "
+        f"{pinned!r} -> {picked!r} (pinned snapshot unhealthy; "
+        f"rotated to the first healthy stored account)",
+        file=stream,
+    )
 
 
 def _check_spec_source_drift_at_launch(
@@ -123,6 +176,16 @@ def agent_start(
     # a non-git source / unreachable remote / any error warns-and-continues
     # — the check never crashes a launch (resilience is the contract).
     _check_spec_source_drift_at_launch(config_path, config.name, strict_drift)
+
+    # CREDS-PHASE1 — auto-rotate ``spec.claude.account`` to a healthy
+    # stored account when the pinned one's snapshot is EXPIRED/ABSENT.
+    # Runs before forced_stop / runtime build so a "no healthy account"
+    # error never tears down a running agent we cannot restart. Unpinned
+    # agents (account="") are untouched: they continue to use the host
+    # live ``.credentials.json`` via the existing bind. See
+    # :func:`_rotate_to_healthy_account` for the contract.
+    _rotate_to_healthy_account(config)
+
     if session_override:
         config.claude.session = session_override
     if resume_id_override is not None:
