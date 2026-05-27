@@ -14,6 +14,84 @@ from ..config import AgentConfig, load_config
 from ._runtime_select import _fallback_workdir, _get_runtime
 
 
+def _resolve_account(config: AgentConfig | None) -> str:
+    """Resolve the agent's effective Anthropic-account label.
+
+    Surfaces which account the agent authenticates as (operator request
+    4581) so the operator can see which agents share one account — and
+    thus one server-side rate limit. Mirrors the runtime auth precedence
+    (agent ``spec.env`` override → host shared OAuth → fallback). See
+    ``_account.agent_account.resolve_agent_account_label``.
+
+    Tolerant: a missing config or any resolver hiccup maps to
+    ``"unknown"`` so status never fails on account lookup.
+    """
+    # stx-allow: fallback (reason: status output must never crash on an
+    # account-resolution hiccup; ``"unknown"`` is the right degraded UX.)
+    try:
+        from .._account.agent_account import resolve_agent_account_label
+
+        env = config.env if config is not None else None
+        assigned = (
+            getattr(getattr(config, "claude", None), "account", "") or None
+            if config is not None
+            else None
+        )
+        return resolve_agent_account_label(env, assigned_account=assigned)
+    except Exception:  # stx-allow: fallback (reason: see inline comment)
+        return "unknown"
+
+
+def _remote_instance_status(name: str) -> dict | None:
+    """Build a status dict from the active ``instances`` row for ``name``.
+
+    Used when the LOCAL file registry has no entry — the case for a
+    cross-host-dispatched agent, whose row was written into the
+    ``instances`` table by the dispatcher (``remote=1`` + peer ``host``
+    + peer-resolved ``bound_port``). Returns ``None`` when no active row
+    exists (caller raises the normal "not found" error), or on any
+    lookup failure.
+
+    The shape mirrors the canonical ``agent_status`` keys callers
+    expect, surfacing the family-tree fields (``host``, ``a2a_port`` /
+    ``bound_port``, ``remote``, ``spawned_by``) so a remote agent
+    resolves rather than erroring.
+    """
+    try:
+        from .._state.state_db import list_active_instances
+
+        rows = [r for r in list_active_instances() if r.get("name") == name]
+        if not rows:
+            return None
+        # list_active_instances orders started_at DESC → newest first.
+        row = rows[0]
+        bound = row.get("bound_port")
+        if bound is None:
+            bound = row.get("a2a_port")
+        return {
+            "name": name,
+            "config": "",
+            "screen": row.get("screen", "") or "",
+            "started_at": row.get("started_at", "") or "",
+            # The instances row says the agent is active (ended_at IS
+            # NULL); reaching the remote runtime to confirm is the
+            # cross-host dispatcher's job, not this read-side resolver.
+            "status": "running",
+            "model": "unknown",
+            "runtime": "unknown",
+            # Cross-host agent: its credentials live on the remote host,
+            # not resolvable from here. Keep the key for shape parity.
+            "account": "unknown",
+            "host": row.get("host", "") or "",
+            "a2a_port": row.get("a2a_port"),
+            "bound_port": bound,
+            "remote": bool(row.get("remote")),
+            "spawned_by": row.get("spawned_by"),
+        }
+    except Exception:  # stx-allow: fallback (reason: best-effort cross-host status — caller raises the normal "not found" error when None)
+        return None
+
+
 def agent_status(
     name: str,
     registry: Registry | None = None,
@@ -30,6 +108,15 @@ def agent_status(
     registry = registry or Registry()
     entry = registry.get(name)
     if entry is None:
+        # Cross-host fallback (sac-agent-spawn design, Rule B/F): a
+        # remote-dispatched agent has no LOCAL file-registry entry — its
+        # row lives in the ``instances`` table written by the cross-host
+        # dispatcher. Resolve status from there so ``sac agents status
+        # <remote>`` reports host + bound_port + remote + spawned_by
+        # instead of raising "not found in registry".
+        remote_status = _remote_instance_status(name)
+        if remote_status is not None:
+            return remote_status
         raise RuntimeError(f"Agent '{name}' not found in registry")
 
     runtime_factory = runtime_factory or _get_runtime
@@ -51,6 +138,10 @@ def agent_status(
         "status": "running" if running else "stopped",
         "model": config.model if config else "unknown",
         "runtime": config.runtime if config else "unknown",
+        # Which Anthropic account this agent authenticates as (operator
+        # request 4581). Agents sharing one label share one server-side
+        # rate limit. Resolved from the agent's effective auth source.
+        "account": _resolve_account(config),
     }
     # ``config.remote`` was deleted in WI-6; spec.host (host pinning)
     # is the v3 equivalent and is recorded in state.db's ``instances``

@@ -26,6 +26,14 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Install fd (Rust) for the scitex-dev audit gate
+        # `scitex-dev ecosystem audit-project` (run by the mandatory
+        # tests/develop/test_audit.py gate) walks src/ via the Rust `fd`
+        # tool and HARD-CRASHES with FdNotFoundError when it is absent —
+        # ubuntu-latest does not ship it. Debian/Ubuntu installs the
+        # binary as `fdfind`, which the auditor's fd_binary() accepts as
+        # a fallback name, so no symlink is needed.
+        run: sudo apt-get update -qq && sudo apt-get install -y fd-find
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip

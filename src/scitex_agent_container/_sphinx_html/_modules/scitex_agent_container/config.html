@@ -5,7 +5,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>scitex_agent_container.config &mdash; scitex-agent-container v0.18.0</title>
+  <title>scitex_agent_container.config &mdash; scitex-agent-container v0.21.1</title>
       <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=9edc463e" />
       <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
@@ -13,7 +13,7 @@
   
       <script src="../../_static/jquery.js?v=5d32c60e"></script>
       <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
-      <script src="../../_static/documentation_options.js?v=ba2e7b09"></script>
+      <script src="../../_static/documentation_options.js?v=6081af2d"></script>
       <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
       <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
       <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -87,7 +87,10 @@
 <li class="toctree-l3"><a class="reference internal" href="../../spec-reference.html#metadata-labels-agentcard-fields"><code class="docutils literal notranslate"><span class="pre">metadata.labels</span></code> → AgentCard fields</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../spec-reference.html#spec-top-level"><code class="docutils literal notranslate"><span class="pre">spec</span></code> — top-level</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../spec-reference.html#spec-apptainer-engine-knobs"><code class="docutils literal notranslate"><span class="pre">spec.apptainer</span></code> — engine knobs</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../spec-reference.html#spec-claude-sdk-knobs"><code class="docutils literal notranslate"><span class="pre">spec.claude</span></code> — SDK knobs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../spec-reference.html#spec-claude-sdk-knobs"><code class="docutils literal notranslate"><span class="pre">spec.claude</span></code> — SDK knobs</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../spec-reference.html#available-models-spec-claude-model">Available models (<code class="docutils literal notranslate"><span class="pre">spec.claude.model</span></code>)</a></li>
+</ul>
+</li>
 <li class="toctree-l3"><a class="reference internal" href="../../spec-reference.html#spec-health-spec-restart-spec-watchdog-spec-autonomous"><code class="docutils literal notranslate"><span class="pre">spec.health</span></code> / <code class="docutils literal notranslate"><span class="pre">spec.restart</span></code> / <code class="docutils literal notranslate"><span class="pre">spec.watchdog</span></code> / <code class="docutils literal notranslate"><span class="pre">spec.autonomous</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../spec-reference.html#spec-a2a-spec-listen-network-endpoints"><code class="docutils literal notranslate"><span class="pre">spec.a2a</span></code> / <code class="docutils literal notranslate"><span class="pre">spec.listen</span></code> — network endpoints</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../spec-reference.html#scitex-agent-container-config-yaml"><code class="docutils literal notranslate"><span class="pre">~/.scitex/agent-container/config.yaml</span></code></a></li>
@@ -245,6 +248,8 @@
 <li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.continue_max_age_minutes"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.continue_max_age_minutes</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.resume_id"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.resume_id</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.auto_accept"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.auto_accept</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.account"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.account</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.provider"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.provider</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.__init__"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.__init__()</span></code></a></li>
 </ul>
 </li>
@@ -300,6 +305,12 @@
 <li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ListenPort.name"><code class="docutils literal notranslate"><span class="pre">ListenPort.name</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ListenPort.owner"><code class="docutils literal notranslate"><span class="pre">ListenPort.owner</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ListenPort.__init__"><code class="docutils literal notranslate"><span class="pre">ListenPort.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec"><code class="docutils literal notranslate"><span class="pre">ProviderSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.base_url"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.base_url</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.__init__"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.__init__()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.auth_token_env"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.auth_token_env</span></code></a></li>
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="../../api/scitex_agent_container.html#scitex_agent_container.config.ProxySpec"><code class="docutils literal notranslate"><span class="pre">ProxySpec</span></code></a><ul>
@@ -434,6 +445,7 @@
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">._host</span><span class="w"> </span><span class="kn">import</span> <span class="n">resolve_hostname</span><span class="p">,</span> <span class="n">substitute_hostnames</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">._loaders</span><span class="w"> </span><span class="kn">import</span> <span class="n">compose_effective_name</span><span class="p">,</span> <span class="n">load_v3</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._provider_types</span><span class="w"> </span><span class="kn">import</span> <span class="n">ProviderSpec</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">._proxy_types</span><span class="w"> </span><span class="kn">import</span> <span class="n">ProxySpec</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">._resolve</span><span class="w"> </span><span class="kn">import</span> <span class="n">resolve_config</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">._types</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
@@ -462,6 +474,7 @@
     <span class="s2">&quot;HookSpec&quot;</span><span class="p">,</span>
     <span class="s2">&quot;HostsSpec&quot;</span><span class="p">,</span>
     <span class="s2">&quot;ListenPort&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;ProviderSpec&quot;</span><span class="p">,</span>
     <span class="s2">&quot;ProxySpec&quot;</span><span class="p">,</span>
     <span class="s2">&quot;RestartSpec&quot;</span><span class="p">,</span>
     <span class="s2">&quot;SchedulingSpec&quot;</span><span class="p">,</span>
@@ -496,8 +509,44 @@
             <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  - </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span> <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="n">errors</span><span class="p">)</span>
         <span class="p">)</span>
 
-    <span class="k">return</span> <span class="n">load_v3</span><span class="p">(</span><span class="n">raw</span><span class="p">,</span> <span class="n">path</span><span class="p">)</span></div>
+    <span class="n">config</span> <span class="o">=</span> <span class="n">load_v3</span><span class="p">(</span><span class="n">raw</span><span class="p">,</span> <span class="n">path</span><span class="p">)</span>
+    <span class="n">_warn_if_assigned_account_missing</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">config</span></div>
 
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_warn_if_assigned_account_missing</span><span class="p">(</span><span class="n">config</span><span class="p">:</span> <span class="n">AgentConfig</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Soft-WARN (never fail) when ``spec.claude.account`` names an</span>
+<span class="sd">    account whose snapshot dir is absent at load time.</span>
+
+<span class="sd">    Accounts may be created later or live on another host, so a missing</span>
+<span class="sd">    snapshot is not a hard error — but surfacing it at load time catches</span>
+<span class="sd">    typos before the agent silently falls back to the host live file at</span>
+<span class="sd">    start. Best-effort: any resolution hiccup is swallowed.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">acct</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="nb">getattr</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="s2">&quot;claude&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">),</span> <span class="s2">&quot;account&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">acct</span><span class="p">:</span>
+        <span class="k">return</span>
+    <span class="c1"># stx-allow: fallback (reason: store-path resolution is best-effort</span>
+    <span class="c1"># advisory only; a hiccup must never break config loading.)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="kn">import</span><span class="w"> </span><span class="nn">warnings</span>
+
+        <span class="kn">from</span><span class="w"> </span><span class="nn">.._state.account_store</span><span class="w"> </span><span class="kn">import</span> <span class="n">_store_path</span>
+
+        <span class="n">store</span> <span class="o">=</span> <span class="n">_store_path</span><span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="n">Path</span><span class="o">.</span><span class="n">home</span><span class="p">())</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="p">(</span><span class="n">store</span> <span class="o">/</span> <span class="n">acct</span><span class="p">)</span><span class="o">.</span><span class="n">is_dir</span><span class="p">():</span>
+            <span class="n">warnings</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;spec.claude.account=&#39;</span><span class="si">{</span><span class="n">acct</span><span class="si">}</span><span class="s2">&#39; has no saved-account &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;snapshot at </span><span class="si">{</span><span class="n">store</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">acct</span><span class="si">}</span><span class="s2">; the agent will fall back &quot;</span>
+                <span class="s2">&quot;to the host live ~/.claude/.credentials.json at start. &quot;</span>
+                <span class="s2">&quot;Create it with `sac account save </span><span class="si">{acct}</span><span class="s2">` (on the host &quot;</span>
+                <span class="s2">&quot;that holds those credentials), or ignore if the account &quot;</span>
+                <span class="s2">&quot;is provisioned on the target host.&quot;</span><span class="p">,</span>
+                <span class="n">stacklevel</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+            <span class="p">)</span>
+    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: see inline comment)</span>
+        <span class="k">pass</span>
 </pre></div>
 
            </div>

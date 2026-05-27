@@ -34,7 +34,6 @@ module so ``from ...state_db import X`` imports keep working:
 
 from __future__ import annotations
 
-import json
 import os
 import sqlite3
 import uuid
@@ -43,9 +42,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
-from .state_db_hostname import resolve_host as _resolve_host
+# Re-exported for the 7 modules that ``from ...state_db import
+# _resolve_host`` (claude_session, _node_channel, state_db_export,
+# state_db_gc, _send, send_cmds, _dispatch). The ``instances`` CRUD
+# that used it directly moved to state_db_instances; keep the
+# re-export here so those import sites keep resolving.
+from .state_db_hostname import resolve_host as _resolve_host  # noqa: F401
 from .state_db_migrations import (
     migrate_instance_heartbeats_add_seq,
+    migrate_instances_add_family_tree_cols,
     migrate_legacy_heartbeats,
 )
 
@@ -90,7 +95,16 @@ CREATE TABLE IF NOT EXISTS instances (
     exit_reason         TEXT,
     iter_count          INTEGER DEFAULT 0,
     input_tokens        INTEGER DEFAULT 0,
-    output_tokens       INTEGER DEFAULT 0
+    output_tokens       INTEGER DEFAULT 0,
+    -- Family-tree / cross-host columns (sac-agent-spawn design, Rule
+    -- B/D). ``bound_port`` mirrors ``a2a_port`` for new readers (both
+    -- written together so legacy ``a2a_port`` callers keep working);
+    -- ``remote`` is 1 for a cross-host-dispatched agent; ``spawned_by``
+    -- is the launching identity ("cli"/parent-agent-name) — the lineage
+    -- edge the spawn DAG is reconstructed from.
+    bound_port          INTEGER,
+    remote              INTEGER DEFAULT 0,
+    spawned_by          TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_instances_active
@@ -336,6 +350,10 @@ def init_schema(db_path: Path | None = None) -> Path:
         migrate_legacy_heartbeats(conn)
         migrate_instance_heartbeats_add_seq(conn)
         conn.executescript(_SCHEMA_REGISTRY)
+        # ``executescript`` above creates ``instances`` fresh on a new
+        # DB (with the family-tree columns) but is a no-op on an
+        # existing one; the migration ADD COLUMNs them onto a pre-cols DB.
+        migrate_instances_add_family_tree_cols(conn)
         conn.executescript(_SCHEMA_ATTEMPTS)
         conn.executescript(_SCHEMA_DIARY)
         conn.commit()
@@ -367,103 +385,10 @@ def table_counts(db_path: Path | None = None) -> dict[str, int]:
     return counts
 
 
-def record_instance_start(
-    name: str,
-    *,
-    pid: int | None = None,
-    ppid: int | None = None,
-    screen: str | None = None,
-    workdir: str | None = None,
-    a2a_port: int | None = None,
-    scope: str = "global",
-    host: str | None = None,
-    definition_id: str | None = None,
-    db_path: Path | None = None,
-) -> str:
-    """Insert an ``instances`` row for a freshly-started agent.
-
-    Returns the new ``instance_id`` (uuid7). Also appends a
-    ``kind='start'`` row to ``events``.
-    """
-    instance_id = new_uuid7()
-    started_at = now_iso()
-    canonical_host = _resolve_host(host)
-    with open_db(db_path) as conn:
-        conn.execute(
-            """
-            INSERT INTO instances (
-                id, definition_id, name, host, scope,
-                pid, ppid, screen, workdir, a2a_port, started_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                instance_id,
-                definition_id,
-                name,
-                canonical_host,
-                scope,
-                pid,
-                ppid,
-                screen,
-                workdir,
-                a2a_port,
-                started_at,
-            ),
-        )
-        conn.execute(
-            "INSERT INTO events (ts, instance_id, kind, actor) VALUES (?, ?, 'start', 'sac')",
-            (started_at, instance_id),
-        )
-    return instance_id
-
-
-def record_instance_stop(
-    instance_id: str,
-    *,
-    exit_reason: str = "stopped",
-    db_path: Path | None = None,
-) -> bool:
-    """Mark an instance as ended. Returns True iff a row was updated.
-
-    Idempotent: stopping an already-stopped row is a no-op.
-    """
-    ended_at = now_iso()
-    with open_db(db_path) as conn:
-        cur = conn.execute(
-            "UPDATE instances SET ended_at=?, exit_reason=? "
-            "WHERE id=? AND ended_at IS NULL",
-            (ended_at, exit_reason, instance_id),
-        )
-        if cur.rowcount == 0:
-            return False
-        conn.execute(
-            "INSERT INTO events (ts, instance_id, kind, actor, payload_json) "
-            "VALUES (?, ?, 'stop', 'sac', ?)",
-            (ended_at, instance_id, json.dumps({"exit_reason": exit_reason})),
-        )
-    return True
-
-
-def list_active_instances(
-    host: str | None = None,
-    db_path: Path | None = None,
-) -> list[dict]:
-    """Return every ``ended_at IS NULL`` row, optionally host-filtered."""
-    with open_db(db_path) as conn:
-        if host is None:
-            cur = conn.execute(
-                "SELECT * FROM instances WHERE ended_at IS NULL "
-                "ORDER BY started_at DESC"
-            )
-        else:
-            cur = conn.execute(
-                "SELECT * FROM instances WHERE ended_at IS NULL AND host=? "
-                "ORDER BY started_at DESC",
-                (host,),
-            )
-        return [dict(r) for r in cur.fetchall()]
-
+# ``instances`` lifecycle CRUD (record_instance_start / _stop /
+# list_active_instances) moved to :mod:`state_db_instances` under the
+# per-file line cap; re-exported below so callers keep importing them
+# from :mod:`state_db`.
 
 # Re-export the helpers that used to live in this file but moved
 # into sibling modules under the per-file line cap. Existing callers
@@ -490,6 +415,12 @@ from .state_db_gc import (  # noqa: E402,F401
 from .state_db_heartbeats import (  # noqa: E402,F401
     latest_instance_heartbeat,
     update_heartbeat,
+)
+from .state_db_instances import (  # noqa: E402,F401
+    last_known_instance,
+    list_active_instances,
+    record_instance_start,
+    record_instance_stop,
 )
 
 

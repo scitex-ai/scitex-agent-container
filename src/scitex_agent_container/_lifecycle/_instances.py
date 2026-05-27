@@ -25,6 +25,21 @@ from typing import Any
 from ..config import AgentConfig
 
 
+def _spawned_by() -> str:
+    """Return the launching identity for the lineage edge (Rule B/D).
+
+    When a PARENT agent shells out ``sac agents start <child>``, its
+    container env carries ``SAC_NAME`` (the parent's own name), so the
+    child's row records ``spawned_by=<parent>``. A bare CLI / lead /
+    operator launch has no ``SAC_NAME`` and records ``"cli"``. Richer
+    attribution (operator vs lead vs a specific human) is a documented
+    follow-on phase; the schema column is ready for it now.
+    """
+    from .._env import getenv
+
+    return getenv("NAME") or "cli"
+
+
 def _state_dir_for(config: AgentConfig, runtime: Any):
     """Per-agent runtime state dir, via the runtime's own resolver.
 
@@ -68,10 +83,20 @@ def record_local_instance(config: AgentConfig, runtime: Any) -> str | None:
     workdir = getattr(config, "expanded_workdir", None) or getattr(
         config, "workdir", None
     )
+    # Rule B (sac-agent-spawn design): recording the lineage + bound
+    # port is an intrinsic side-effect of the start codepath, never a
+    # caller responsibility. ``spawned_by`` is the launching identity:
+    # the parent agent's SAC_NAME when a parent shelled out, else "cli"
+    # for a bare lead/operator launch. ``remote=False`` — this helper is
+    # only reached on the host where the agent actually runs; the
+    # cross-host dispatcher records the remote=True lead-side row.
     instance_id = record_instance_start(
         name=config.name,
         host=host,
         a2a_port=a2a_port,
+        bound_port=a2a_port,
+        remote=False,
+        spawned_by=_spawned_by(),
         workdir=str(workdir) if workdir else None,
     )
 

@@ -24,6 +24,7 @@ from ...config._resolve import resolve_with_prefix
 from .._helpers import console, system_msg
 from ._common import _multiplex_foreground_tails, _singleton_skip_reason
 from ._dispatch import try_dispatch
+from ._resume_preflight import ResumePreflightError
 
 
 def run_single_targets(
@@ -52,7 +53,6 @@ def run_single_targets(
 
     def _emit_json(payload: dict) -> None:
         click.echo(_json.dumps(payload, ensure_ascii=False))
-
 
     if single_targets:
         preflight_runner()
@@ -133,6 +133,27 @@ def run_single_targets(
                     if resume_id:
                         msg += f", resume_id = {resume_id}"
                     system_msg(msg, style="dim")
+            # Operator-facing --resume preflight (#192, Part B #3): when the
+            # operator explicitly names a resume id, validate it against the
+            # agent's projects store BEFORE launch. On a miss it fails loud
+            # + informative (lists resumable conversations) so the choice is
+            # explicit — never a silent fresh start. Skipped on --no-preflight
+            # and dry-run.
+            if resume_id and not no_preflight and not dry_run:
+                from ._resume_preflight import preflight_resume_id
+
+                try:
+                    current_host = resolve_hostname()
+                except RuntimeError:  # stx-allow: fallback (reason: hostname resolution failure — treat as local for the preflight)
+                    current_host = ""
+                spec_host = config.hosts_spec.host
+                target_host = (
+                    (spec_host[0] if spec_host else None)
+                    if isinstance(spec_host, list)
+                    else (spec_host or None)
+                )
+                is_remote = bool(target_host) and target_host != current_host
+                preflight_resume_id(config, resume_id, is_remote=is_remote)
             agent_start(
                 config_path,
                 no_preflight=no_preflight,
@@ -186,6 +207,23 @@ def run_single_targets(
                     console.print(
                         f"[yellow]auto_accept: false — manual TUI acceptance required on {host}[/yellow]"
                     )
+        except ResumePreflightError as exc:
+            # Informative, operator-facing --resume miss (#192, Part B #3).
+            # The message body IS the candidate listing + next-step hint;
+            # print it cleanly without a traceback (it is not a crash, it
+            # is a refusal to silently fresh-start).
+            any_error = True
+            if as_json:
+                _emit_json(
+                    {
+                        "name": raw_target,
+                        "status": "resume-not-found",
+                        "error": str(exc),
+                        "dry_run": dry_run,
+                    }
+                )
+            else:
+                console.print(f"[red]{exc}[/red]")
         except Exception as exc:
             any_error = True
             if as_json:

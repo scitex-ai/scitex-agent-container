@@ -21,6 +21,7 @@ from .._state.host_config import (
     build_ssh_argv,
     host_interfaces,
     load,
+    ssh_control_options_str,
 )
 from ._helpers import _json_flag, console
 
@@ -200,6 +201,16 @@ def dispatch_remote(peer: str, argv: list[str], ssh_argv0: str = "sac") -> int:
     remote command is always ``sac <argv>`` — orchestrators rely on
     that prefix so peers can be set up to alias ``sac`` to the right
     binary path on hosts where it isn't on $PATH.
+
+    Special case ``agents start``: the verbatim pass-through would record
+    the new instance ONLY in the REMOTE peer's local registry, leaving the
+    dispatching (lead) host's cross-host ``instances`` table unaware of the
+    override-host placement (issue #192 — clew restarted via
+    ``sac --on spartan-bm001 agents start`` was invisible to the lead).
+    For that verb we delegate to :func:`._on_start_propagate.propagate_remote_start`,
+    which runs the remote start with ``--json --no-redispatch`` and writes
+    a lead-side row capturing the ACTUAL override host + bound port +
+    ``remote=True``.
     """
     cfg = load()
     if peer not in cfg.peers:
@@ -209,6 +220,10 @@ def dispatch_remote(peer: str, argv: list[str], ssh_argv0: str = "sac") -> int:
             err=True,
         )
         return 2
+    from ._on_start_propagate import is_agents_start_argv, propagate_remote_start
+
+    if is_agents_start_argv(argv):
+        return propagate_remote_start(peer, argv, ssh_argv0=ssh_argv0)
     ssh_argv = build_ssh_argv(peer, [ssh_argv0, *argv], cfg.peers)
     proc = subprocess.run(ssh_argv)
     return proc.returncode
@@ -322,6 +337,27 @@ def host_probe(ctx: click.Context, peer: str, timeout: int, as_json: bool) -> No
             console.print(f"[dim]{proc.stderr.strip()[:200]}[/dim]")
     if not reachable:
         raise SystemExit(1)
+
+
+@host_group.command("ssh-opts")
+def host_ssh_opts() -> None:
+    """Print sac's ssh ControlMaster options as a shell-quoted string.
+
+    Splat this into an ad-hoc ssh / scp / rsync command so multi-host
+    automation reuses sac's existing multiplexed master per peer
+    instead of opening a fresh connection per call. The output is
+    shell-safe — just pass it through ``$(...)``::
+
+        ssh $(sac host ssh-opts) myhost cmd
+        rsync -e "ssh $(sac host ssh-opts)" src/ myhost:dst/
+        parallel ssh $(sac host ssh-opts) myhost ::: cmd1 cmd2 cmd3
+
+    Prints an empty line when multiplexing is opted out
+    (``SAC_SSH_CONTROL_MASTER=0``) so the splat is a no-op. The
+    underlying flags are documented under
+    :func:`scitex_agent_container._state.host_config.ssh_control_options`.
+    """
+    click.echo(ssh_control_options_str())
 
 
 # WSL → fleet-hub layered probe (folded from ``sac network probe``).

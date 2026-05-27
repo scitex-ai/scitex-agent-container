@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict
 
+from ._provider_types import ProviderSpec
+
 
 @dataclass
 class ContainerSpec:
@@ -47,6 +49,26 @@ class ClaudeSpec:
     # Explicit session ID to pass to --resume. Only used when session="resume".
     resume_id: str = ""
     auto_accept: bool = True
+    # Saved-account name (from ``sac account list``) whose credential
+    # snapshot this agent runs on. ``""`` = the host's live
+    # ``~/.claude/.credentials.json`` (current default).
+    #
+    # When set, the runtime COPIES that account's ``.credentials.json``
+    # into the agent's own state dir at start (frozen boot-copy, not a
+    # live bind), so two agents pinned to two accounts never fight one
+    # mount. The copy is bound RW so in-container ~1h token refresh keeps
+    # working on the agent's private copy.
+    #
+    # Takes effect on next start/restart — a host ``/login`` does NOT
+    # move a pinned agent (that is the point of pinning), and changing
+    # this field requires ``sac agent restart`` to re-copy the snapshot.
+    account: str = ""
+    # Vendor-agnostic backend override (see :class:`ProviderSpec`).
+    # When set, the SDK session runs against an Anthropic-SDK-compatible
+    # backend (DeepSeek, a gateway, ...) on an API key instead of
+    # Anthropic OAuth. ``None`` = default Anthropic backend. Mutually
+    # exclusive with ``account`` (an API-key backend needs no OAuth).
+    provider: ProviderSpec | None = None
 
 
 @dataclass
