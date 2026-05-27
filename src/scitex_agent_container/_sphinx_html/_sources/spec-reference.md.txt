@@ -161,7 +161,7 @@ when `spec.a2a.port` is set) and `GET /agents/<name>/card`
 
 | Field                       | Type                                  | Description                                                       |
 |-----------------------------|---------------------------------------|-------------------------------------------------------------------|
-| `model`                     | `haiku` \| `sonnet` \| `opus` \| ...  | Claude model                                                      |
+| `model`                     | alias or full ID (default `sonnet`)   | Claude model — see **Available models** below |
 | `account`                   | string                                | Pin this agent to a stored OAuth account (`sac accounts` store-name). Mutually exclusive with `provider`. |
 | `provider`                  | `{ base_url, auth_token_env }`        | Point the SDK session at any Anthropic-compatible endpoint (e.g. DeepSeek). `base_url` is the endpoint; `auth_token_env` is the NAME of the host env var holding the key (never the key). Mutually exclusive with `account`; relaxes the `claude-*` model-alias check. See ADR-0011. |
 | `session`                   | `continue` \| `new-session` \| `resume`| Session strategy (default `continue` — safe fallback). Legacy aliases `continue-or-new`, `new` accepted |
@@ -171,6 +171,36 @@ when `spec.a2a.port` is set) and `GET /agents/<name>/card`
 | `channels[]`                | `server:<name>` / `plugin:<id>@<v>`   | MCP push channels (passed as `claude --channels`)                 |
 | `auto_accept`               | bool (default `True`)                 | Auto-confirm permission prompts in the TUI                        |
 | `raw_options`               | dict                                  | **Escape hatch** — splatted into `ClaudeAgentOptions(**raw_options)` |
+
+#### Available models (`spec.claude.model`)
+
+sac validates `model` at YAML-load time, then hands it to the Claude Code
+SDK (`claude --model`), which resolves the value to a concrete model. Two
+shapes are accepted:
+
+**1. Bare alias** — recommended; auto-tracks the latest version of that family:
+
+| Alias               | Resolves to (current, 2026-05)        | When to use                         |
+|---------------------|---------------------------------------|-------------------------------------|
+| `opus`              | Claude Opus 4.7                        | Most capable; heaviest / slowest    |
+| `sonnet`            | Claude Sonnet 4.6 — **default**        | Balanced capability and speed       |
+| `haiku`             | Claude Haiku 4.5                       | Fastest, cheapest; light tasks      |
+| `inherit` / `default` | SDK / host default                  | Don't pin a family explicitly       |
+
+Append `[1m]` for the 1M-token context window where the model offers it —
+e.g. `opus[1m]`, `sonnet[1m]`.
+
+**2. Full versioned ID** — pins one exact model, no auto-tracking:
+`claude-<family>-N-M[-<date>][[ctx]]`, e.g. `claude-opus-4-7`,
+`claude-opus-4-7[1m]`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`.
+
+Abbreviated forms missing the version digits (e.g. `claude-opus[1m]`) are
+**rejected at validate-time** — they pass the YAML loader but the SDK
+silently returns zero tokens (no API call), so the agent looks hung. The
+pinned regex catches this early.
+
+> Under a `provider` override (e.g. DeepSeek) the `claude-*` alias check
+> is relaxed — use the provider's own model names instead.
 
 ### `spec.health` / `spec.restart` / `spec.watchdog` / `spec.autonomous`
 
