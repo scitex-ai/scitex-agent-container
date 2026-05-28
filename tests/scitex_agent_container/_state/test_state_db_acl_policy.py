@@ -96,9 +96,7 @@ def test_record_comms_policy_rejects_unknown_outbound_value(db_path: Path) -> No
     # Act
     # Assert
     with pytest.raises(ValueError):
-        record_comms_policy(
-            name="cap-a", outbound_siblings="maybe", db_path=db_path
-        )
+        record_comms_policy(name="cap-a", outbound_siblings="maybe", db_path=db_path)
 
 
 # ---------------------------------------------------------------------------
@@ -112,9 +110,7 @@ def test_sender_target_relationship_sibling(db_path: Path) -> None:
     record_lineage(child="cap-a", parent="root", db_path=db_path)
     record_lineage(child="cap-b", parent="root", db_path=db_path)
     # Act
-    rel = sender_target_relationship(
-        sender="cap-a", target="cap-b", db_path=db_path
-    )
+    rel = sender_target_relationship(sender="cap-a", target="cap-b", db_path=db_path)
     # Assert
     assert rel == "sibling"
 
@@ -124,9 +120,7 @@ def test_sender_target_relationship_parent(db_path: Path) -> None:
     # Arrange
     record_lineage(child="cap-a", parent="root", db_path=db_path)
     # Act
-    rel = sender_target_relationship(
-        sender="cap-a", target="root", db_path=db_path
-    )
+    rel = sender_target_relationship(sender="cap-a", target="root", db_path=db_path)
     # Assert
     assert rel == "parent"
 
@@ -136,9 +130,7 @@ def test_sender_target_relationship_child(db_path: Path) -> None:
     # Arrange
     record_lineage(child="cap-a", parent="root", db_path=db_path)
     # Act
-    rel = sender_target_relationship(
-        sender="root", target="cap-a", db_path=db_path
-    )
+    rel = sender_target_relationship(sender="root", target="cap-a", db_path=db_path)
     # Assert
     assert rel == "child"
 
@@ -147,9 +139,7 @@ def test_sender_target_relationship_other(db_path: Path) -> None:
     """Unrelated nodes (no shared parent, no direct edge) → 'other'."""
     # Arrange — no lineage edges.
     # Act
-    rel = sender_target_relationship(
-        sender="cap-a", target="cap-z", db_path=db_path
-    )
+    rel = sender_target_relationship(sender="cap-a", target="cap-z", db_path=db_path)
     # Assert
     assert rel == "other"
 
@@ -186,3 +176,89 @@ def test_derive_group_default_includes_siblings(db_path: Path) -> None:
     group = derive_group(name="cap-a", db_path=db_path)
     # Assert
     assert "cap-b" in group
+
+
+# ---------------------------------------------------------------------------
+# record_comms_policy — per-field out-of-domain rejection (defence-in-depth)
+# ---------------------------------------------------------------------------
+
+
+def test_record_comms_policy_rejects_unknown_outbound_parent(db_path: Path) -> None:
+    """A bad ``outbound_parent`` is rejected."""
+    # Arrange
+    # Act
+    # Assert
+    with pytest.raises(ValueError):
+        record_comms_policy(name="cap-a", outbound_parent="maybe", db_path=db_path)
+
+
+def test_record_comms_policy_rejects_unknown_inbound_siblings(db_path: Path) -> None:
+    """A bad ``inbound_siblings`` is rejected."""
+    # Arrange
+    # Act
+    # Assert
+    with pytest.raises(ValueError):
+        record_comms_policy(name="cap-a", inbound_siblings="maybe", db_path=db_path)
+
+
+def test_record_comms_policy_rejects_unknown_inbound_parent(db_path: Path) -> None:
+    """A bad ``inbound_parent`` is rejected."""
+    # Arrange
+    # Act
+    # Assert
+    with pytest.raises(ValueError):
+        record_comms_policy(name="cap-a", inbound_parent="maybe", db_path=db_path)
+
+
+def test_record_comms_policy_rejects_unknown_lineage_group(db_path: Path) -> None:
+    """A bad ``lineage_group`` is rejected."""
+    # Arrange
+    # Act
+    # Assert
+    with pytest.raises(ValueError):
+        record_comms_policy(name="cap-a", lineage_group="cluster", db_path=db_path)
+
+
+def test_record_comms_policy_rejects_non_bool_may_spawn(db_path: Path) -> None:
+    """A non-boolean ``may_spawn`` is rejected."""
+    # Arrange
+    # Act
+    # Assert
+    with pytest.raises(ValueError):
+        record_comms_policy(name="cap-a", may_spawn="nope", db_path=db_path)
+
+
+def test_record_comms_policy_rejects_empty_name(db_path: Path) -> None:
+    """An empty agent name is rejected."""
+    # Arrange
+    # Act
+    # Assert
+    with pytest.raises(ValueError):
+        record_comms_policy(name="", db_path=db_path)
+
+
+def test_read_comms_policy_empty_name_yields_defaults(db_path: Path) -> None:
+    """An empty name short-circuits to the legacy all-allow default."""
+    # Arrange
+    # Act
+    policy = read_comms_policy(name="", db_path=db_path)
+    # Assert
+    assert policy["may_spawn"] is True
+
+
+def test_sender_target_relationship_self(db_path: Path) -> None:
+    """A node addressing itself classifies as 'self'."""
+    # Arrange
+    # Act
+    rel = sender_target_relationship(sender="cap-a", target="cap-a", db_path=db_path)
+    # Assert
+    assert rel == "self"
+
+
+def test_sender_target_relationship_empty_sender_is_other(db_path: Path) -> None:
+    """A missing sender/target classifies as 'other' (no edge to read)."""
+    # Arrange
+    # Act
+    rel = sender_target_relationship(sender="", target="cap-a", db_path=db_path)
+    # Assert
+    assert rel == "other"
