@@ -13,6 +13,8 @@ from pathlib import Path
 
 import yaml
 
+from ._acl_validation import validate_phase3_acl
+
 # Accepted shapes for ``spec.model`` (F-CS7).
 #
 # claude-agent-sdk silently rejects unknown aliases — the runner stays
@@ -90,6 +92,8 @@ _KNOWN_SPEC_KEYS = frozenset(
         "apptainer",  # F-CS18 — apptainer-specific build extension
         "user",  # container user: "host" | "uid:gid" | "" (image default)
         "to_home",  # ADR-0006 — directory mirrored into container $HOME
+        "comms",  # Phase-3 ACL: outbound/inbound + a2a listen toggle
+        "lineage",  # Phase-3 ACL: group=solitary + may_spawn
         # v3 removed (rejected explicitly below with relocation hints):
         # image (→ spec.apptainer.image), mounts (→ spec.apptainer.binds),
         # env (→ spec.apptainer.env), model (→ spec.claude.model),
@@ -461,6 +465,12 @@ def validate_raw(raw: dict, path: str) -> list[str]:
                     "spec.proxy is only meaningful when kind: AgentProxy; "
                     "remove it for kind: Agent."
                 )
+
+        # Phase-3 capsule-isolation: type-check ``spec.comms`` +
+        # ``spec.lineage`` shapes. Detailed rules live in the
+        # sibling ``_acl_validation`` module (keeps this file under
+        # the per-file cap). Defaults preserve current behaviour.
+        errors.extend(validate_phase3_acl(spec))
 
         # Reject the old `scheduling:` block — replaced by host/hosts.
         if "scheduling" in spec:

@@ -12,6 +12,7 @@ from ._a2a import parse_a2a
 from ._apptainer import parse_apptainer
 from ._autonomous import parse_autonomous
 from ._claude import parse_claude
+from ._comms import parse_comms, parse_lineage
 from ._container import parse_container
 from ._context_management import parse_context_management
 from ._extensions import parse_extensions
@@ -43,12 +44,14 @@ __all__ = [
     "parse_apptainer",
     "parse_autonomous",
     "parse_claude",
+    "parse_comms",
     "parse_container",
     "parse_context_management",
     "parse_extensions",
     "parse_health",
     "parse_hooks",
     "parse_hosts_spec",
+    "parse_lineage",
     "parse_listen",
     "parse_proxy",
     "parse_restart",

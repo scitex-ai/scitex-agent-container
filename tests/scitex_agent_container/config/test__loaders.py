@@ -478,3 +478,44 @@ def test_load_config_pinned_account_still_loads_despite_missing_snapshot(
         cfg = load_config(p)
     # Assert
     assert cfg.claude.account == "ghost"
+
+
+# ---------------------------------------------------------------------------
+# Phase-3 ACL (ADR-0010) — spec.comms / spec.lineage reach AgentConfig
+# ---------------------------------------------------------------------------
+
+
+def test_load_config_a2a_listen_false_disables_a2a_port(tmp_path: Path) -> None:
+    """Gap-3 end-to-end: ``spec.comms.a2a.listen: false`` yields an
+    AgentConfig whose ``a2a.port`` is None (sidecar disabled, identical
+    to legacy ``spec.a2a.port: null``)."""
+    # Arrange
+    p = _v3_yaml(tmp_path, "cap-a", {"comms": {"a2a": {"listen": False}}})
+    # Act
+    cfg = load_config(p)
+    # Assert
+    assert cfg.a2a.port is None
+
+
+def test_load_config_default_a2a_port_preserved_when_listen_absent(
+    tmp_path: Path,
+) -> None:
+    """Default-preservation: with no ``spec.comms.a2a`` block the
+    ``a2a.port`` keeps its legacy 'auto' default."""
+    # Arrange
+    p = _v3_yaml(tmp_path, "cap-b", {})
+    # Act
+    cfg = load_config(p)
+    # Assert
+    assert cfg.a2a.port == "auto"
+
+
+def test_load_config_lineage_may_spawn_false_round_trips(tmp_path: Path) -> None:
+    """Gap-5 end-to-end: ``spec.lineage.may_spawn: false`` reaches the
+    loaded AgentConfig so core agent_start can persist it."""
+    # Arrange
+    p = _v3_yaml(tmp_path, "cap-c", {"lineage": {"may_spawn": False}})
+    # Act
+    cfg = load_config(p)
+    # Assert
+    assert cfg.lineage.may_spawn is False

@@ -6,6 +6,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict
 
+# Phase-3 ACL dataclasses (kept in a sibling module under the per-file
+# line cap; re-exported here for the :class:`AgentConfig` field defaults).
+from ._acl_types import CommsSpec, LineageSpec  # noqa: E402,F401
 from ._provider_types import ProviderSpec
 
 
@@ -470,6 +473,10 @@ class AgentConfig:
     user: str = ""
     # Inbound A2A endpoint (HTTP /v1/turn + AgentCard).
     a2a: A2ASpec = field(default_factory=A2ASpec)
+    # Phase-3 capsule-isolation: per-spec ACL policy + spawn gating.
+    # Defaults preserve pre-Phase-3 behaviour (everything allow / true).
+    comms: CommsSpec = field(default_factory=CommsSpec)
+    lineage: LineageSpec = field(default_factory=LineageSpec)
     # v3 ``kind`` discriminator: "Agent" (SDK runner) or "AgentProxy"
     # (HTTP forwarder — see :class:`ProxySpec`). Validator rejects any
     # other value. Loader populates from raw["kind"].
