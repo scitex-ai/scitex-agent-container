@@ -221,9 +221,9 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.listen"><code class="docutils literal notranslate"><span class="pre">AgentConfig.listen</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.extensions"><code class="docutils literal notranslate"><span class="pre">AgentConfig.extensions</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.skills</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.context_management"><code class="docutils literal notranslate"><span class="pre">AgentConfig.context_management</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_commands"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_commands</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_prompts"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_prompts</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.mcp_servers"><code class="docutils literal notranslate"><span class="pre">AgentConfig.mcp_servers</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.multiplexer"><code class="docutils literal notranslate"><span class="pre">AgentConfig.multiplexer</span></code></a></li>
@@ -233,6 +233,8 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.mounts"><code class="docutils literal notranslate"><span class="pre">AgentConfig.mounts</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.user"><code class="docutils literal notranslate"><span class="pre">AgentConfig.user</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.a2a"><code class="docutils literal notranslate"><span class="pre">AgentConfig.a2a</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.comms"><code class="docutils literal notranslate"><span class="pre">AgentConfig.comms</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.lineage"><code class="docutils literal notranslate"><span class="pre">AgentConfig.lineage</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.kind"><code class="docutils literal notranslate"><span class="pre">AgentConfig.kind</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.proxy"><code class="docutils literal notranslate"><span class="pre">AgentConfig.proxy</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.to_home"><code class="docutils literal notranslate"><span class="pre">AgentConfig.to_home</span></code></a></li>
@@ -441,6 +443,8 @@
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">yaml</span>
 
+<span class="kn">from</span><span class="w"> </span><span class="nn">._acl_validation</span><span class="w"> </span><span class="kn">import</span> <span class="n">validate_phase3_acl</span>
+
 <span class="c1"># Accepted shapes for ``spec.model`` (F-CS7).</span>
 <span class="c1">#</span>
 <span class="c1"># claude-agent-sdk silently rejects unknown aliases — the runner stays</span>
@@ -518,6 +522,8 @@
         <span class="s2">&quot;apptainer&quot;</span><span class="p">,</span>  <span class="c1"># F-CS18 — apptainer-specific build extension</span>
         <span class="s2">&quot;user&quot;</span><span class="p">,</span>  <span class="c1"># container user: &quot;host&quot; | &quot;uid:gid&quot; | &quot;&quot; (image default)</span>
         <span class="s2">&quot;to_home&quot;</span><span class="p">,</span>  <span class="c1"># ADR-0006 — directory mirrored into container $HOME</span>
+        <span class="s2">&quot;comms&quot;</span><span class="p">,</span>  <span class="c1"># Phase-3 ACL: outbound/inbound + a2a listen toggle</span>
+        <span class="s2">&quot;lineage&quot;</span><span class="p">,</span>  <span class="c1"># Phase-3 ACL: group=solitary + may_spawn</span>
         <span class="c1"># v3 removed (rejected explicitly below with relocation hints):</span>
         <span class="c1"># image (→ spec.apptainer.image), mounts (→ spec.apptainer.binds),</span>
         <span class="c1"># env (→ spec.apptainer.env), model (→ spec.claude.model),</span>
@@ -889,6 +895,12 @@
                     <span class="s2">&quot;spec.proxy is only meaningful when kind: AgentProxy; &quot;</span>
                     <span class="s2">&quot;remove it for kind: Agent.&quot;</span>
                 <span class="p">)</span>
+
+        <span class="c1"># Phase-3 capsule-isolation: type-check ``spec.comms`` +</span>
+        <span class="c1"># ``spec.lineage`` shapes. Detailed rules live in the</span>
+        <span class="c1"># sibling ``_acl_validation`` module (keeps this file under</span>
+        <span class="c1"># the per-file cap). Defaults preserve current behaviour.</span>
+        <span class="n">errors</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">validate_phase3_acl</span><span class="p">(</span><span class="n">spec</span><span class="p">))</span>
 
         <span class="c1"># Reject the old `scheduling:` block — replaced by host/hosts.</span>
         <span class="k">if</span> <span class="s2">&quot;scheduling&quot;</span> <span class="ow">in</span> <span class="n">spec</span><span class="p">:</span>
