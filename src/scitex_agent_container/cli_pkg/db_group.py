@@ -296,6 +296,18 @@ def db_tick(ctx: click.Context, heartbeat_stale_seconds: int) -> None:
     help="Stamp this canonical host into the dump header.",
 )
 @click.option(
+    "--tables",
+    "tables_csv",
+    type=str,
+    default=None,
+    help=(
+        "Comma-separated subset of KNOWN_TABLES to include in the dump "
+        "(non-listed tables emit as empty arrays). Used by "
+        "`sac registry sync` to ship only the comms_nodes delta. "
+        "Unknown names fail loud at parse time."
+    ),
+)
+@click.option(
     "--dry-run",
     is_flag=True,
     default=False,
@@ -313,6 +325,7 @@ def db_export(
     since: str | None,
     output: Path | None,
     host: str | None,
+    tables_csv: str | None,
     dry_run: bool,
     yes: bool,
 ) -> None:
@@ -332,10 +345,21 @@ def db_export(
     Example:
       $ sac db export
       $ sac db export --since 2026-05-01T00:00:00Z --output dump.json
+      $ sac db export --tables comms_nodes        # ADR-0014 registry sync
       $ sac db export --dry-run
     """
     del yes  # reserved
-    payload = export_state(since=since, host=host)
+    tables: list[str] | None = None
+    if tables_csv is not None:
+        tables = [t.strip() for t in tables_csv.split(",") if t.strip()]
+        unknown = [t for t in tables if t not in KNOWN_TABLES]
+        if unknown:
+            raise click.BadParameter(
+                f"unknown table(s) {unknown!r}; "
+                f"valid names are {list(KNOWN_TABLES)}",
+                param_hint="--tables",
+            )
+    payload = export_state(since=since, host=host, tables=tables)
     if dry_run:
         click.echo(
             json.dumps(

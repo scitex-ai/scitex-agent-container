@@ -43,18 +43,23 @@ from pathlib import Path
 from typing import Any
 
 __all__ = [
+    "CommsNodeConflictError",
     "derive_group",
     "grant_send",
     "has_grant",
     "is_local_node",
     "list_comms_grants",
+    "list_comms_nodes",
     "list_node_tokens",
+    "lookup_comms_node",
     "mint_node_token",
     "record_lineage",
+    "register_comms_node",
     "resolve_node_host",
     "resolve_node_token",
     "revoke_send",
     "spawn_allowed",
+    "unregister_comms_node",
 ]
 
 
@@ -401,17 +406,26 @@ def resolve_node_host(
     name: str,
     db_path: Path | None = None,
 ) -> dict[str, Any] | None:
-    """Map a node ``name`` to ``{host, a2a_port}`` from the
-    ``instances`` table.
+    """Map a node ``name`` to ``{host, a2a_port}``.
 
-    Returns ``None`` when the name does not match a *live* instance
-    (``ended_at IS NULL``). When several live records exist for the
-    same name (e.g., a restart race), the most recently started one
-    wins — cross-host forwarding cannot pick non-deterministically.
+    Resolution order (ADR-0014):
+
+    1. ``instances`` table — the canonical "live agent" registry. Picks
+       the most recently started live (``ended_at IS NULL``) row.
+    2. ``comms_nodes`` table (ADR-0014 federated comms graph) — used
+       for nodes that are NOT sac-managed agents (operator identities
+       like ``lead``, peer hosts' listen-targets, cross-host
+       registrations sync'd via ``sac registry sync``).
+
+    Returns ``None`` only when neither table knows the name. Callers
+    treat ``None`` as "this is a local-only/unknown node; do not
+    cross-host forward" — the ``NodeRegistry`` implicit-registration
+    path in ``_listen/_node_channel.py`` handles that case.
     """
     if not name:
         return None
     from .state_db import open_db
+    from .state_db_comms_nodes import resolve_comms_node_host
 
     with open_db(db_path) as conn:
         row = conn.execute(
@@ -424,12 +438,13 @@ def resolve_node_host(
             """,
             (name,),
         ).fetchone()
-    if row is None:
-        return None
-    return {
-        "host": str(row["host"]),
-        "a2a_port": int(row["a2a_port"]) if row["a2a_port"] is not None else None,
-    }
+    if row is not None:
+        return {
+            "host": str(row["host"]),
+            "a2a_port": int(row["a2a_port"]) if row["a2a_port"] is not None else None,
+        }
+    # Fall through to comms_nodes (ADR-0014).
+    return resolve_comms_node_host(name=name, db_path=db_path)
 
 
 def is_local_node(
@@ -442,13 +457,36 @@ def is_local_node(
 
     Local cases:
 
-    * The name resolves to ``local_host`` via :func:`resolve_node_host`.
+    * The name resolves to ``local_host`` via :func:`resolve_node_host`
+      (either ``instances`` or ``comms_nodes`` per ADR-0014).
     * The name does NOT resolve to any host (unknown / external node) —
       defer to the local ``NodeRegistry`` implicit-registration path.
       Forwarding a never-seen name would synthesise an SSRF target
       from a self-claimed string; the host-local path is correct.
+
+    Critically: when the name IS in ``comms_nodes`` with a host that
+    is NOT ``local_host``, this returns ``False`` — that is the bug
+    fix the federated graph closes (cross-host targets like ``lead``
+    on a Spartan host are now correctly forwarded instead of being
+    treated as local).
     """
     info = resolve_node_host(name=name, db_path=db_path)
     if info is None:
         return True
     return info["host"] == local_host
+
+
+# ---------------------------------------------------------------------------
+# ADR-0014 — comms_nodes federated graph. Primitives live in a sibling
+# module (state_db_comms_nodes) under the per-file line cap; re-exported
+# here so the natural import path
+# ``from ..._state.state_db_nodes import register_comms_node`` works.
+# ---------------------------------------------------------------------------
+
+from .state_db_comms_nodes import (  # noqa: E402, F401
+    CommsNodeConflictError,
+    list_comms_nodes,
+    lookup_comms_node,
+    register_comms_node,
+    unregister_comms_node,
+)

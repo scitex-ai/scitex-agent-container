@@ -15,6 +15,7 @@ from __future__ import annotations
 import click
 
 from ._helpers import HelpRecursiveGroup, renamed_redirect
+from ._registry_sync import registry_sync as _registry_sync_cmd
 from .priority_cmds import singleton_reconcile as _reconcile_impl
 
 
@@ -61,6 +62,8 @@ registry_group.add_command(
     )
 )
 registry_group.add_command(_rebind(_reconcile_impl, "reconcile"))
+# ADR-0014 Stage 1 — symmetric federated comms_nodes anti-entropy sync.
+registry_group.add_command(_registry_sync_cmd)
 
 
 __all__ = ["registry_group"]

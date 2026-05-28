@@ -71,6 +71,10 @@ def _table_filter_clauses(
         "node_tokens": ("WHERE created_at >= ?", (since,)),
         "lineage": ("WHERE created_at >= ?", (since,)),
         "comms_grants": ("WHERE created_at >= ?", (since,)),
+        # ADR-0014 — anti-entropy filter advances on ``updated_at`` so
+        # a tombstoned row (``ended_at`` set) still ships on the next
+        # pull until both sides converge.
+        "comms_nodes": ("WHERE updated_at >= ?", (since,)),
     }
     return {t: explicit.get(t, ("WHERE ts >= ?", (since,))) for t in known_tables}
 
@@ -79,29 +83,51 @@ def export_state(
     since: str | None = None,
     db_path: Path | None = None,
     host: str | None = None,
+    tables: list[str] | tuple[str, ...] | None = None,
 ) -> dict:
     """Dump the registry tables (and ``attempts``) into a JSON-able dict.
 
     Used by ``sac db export``; orochi consumes the result via
     ``sac db import`` (or its own importer).
+
+    ``tables`` (added 2026-05 alongside ADR-0014's anti-entropy sync)
+    optionally restricts the dump to a subset of :data:`KNOWN_TABLES`.
+    Tables NOT listed are emitted as empty arrays so the wire shape
+    stays stable for :func:`import_state` (which iterates over
+    ``KNOWN_TABLES``). Raises ``ValueError`` on an unknown table name
+    — caller (``sac db export --tables ...``) maps that to a
+    ``click.BadParameter`` so operator typos surface at parse time.
     """
     from .state_db import KNOWN_TABLES, _resolve_host, now_iso, open_db
 
     canonical_host = _resolve_host(host)
+    if tables is None:
+        selected = tuple(KNOWN_TABLES)
+    else:
+        selected = tuple(tables)
+        unknown = [t for t in selected if t not in KNOWN_TABLES]
+        if unknown:
+            raise ValueError(
+                f"export_state: unknown table(s) {unknown!r}; "
+                f"valid names are {list(KNOWN_TABLES)}"
+            )
     filters = _table_filter_clauses(since, KNOWN_TABLES)
-    tables: dict[str, list[dict]] = {}
+    out: dict[str, list[dict]] = {}
     with open_db(db_path) as conn:
         for table in KNOWN_TABLES:
+            if table not in selected:
+                out[table] = []
+                continue
             where, params = filters[table]
             sql = f"SELECT * FROM {table} {where}".strip()
             rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
-            tables[table] = rows
+            out[table] = rows
     return {
         "schema": EXPORT_SCHEMA_VERSION,
         "exported_at": now_iso(),
         "since": since,
         "host": canonical_host,
-        "tables": tables,
+        "tables": out,
     }
 
 

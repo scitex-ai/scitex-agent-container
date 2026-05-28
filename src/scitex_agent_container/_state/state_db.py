@@ -275,6 +275,36 @@ CREATE TABLE IF NOT EXISTS comms_grants (
     PRIMARY KEY (sender_name, target_name)
 );
 CREATE INDEX IF NOT EXISTS idx_comms_grants_target ON comms_grants(target_name);
+
+-- ADR-0014 — symmetric federated comms graph.
+--
+-- ``comms_nodes`` is the cross-host name → (host, a2a_port) directory
+-- that resolves cross-host A2A targets. Every host writes locally;
+-- ``sac registry sync`` ssh-pulls from peers and feeds ``import_state``
+-- which idempotently merges rows (INSERT OR IGNORE on the ``name`` PK).
+--
+-- ``source_host`` is NULL for rows registered locally (operator
+-- identity at listen startup, or agent-start hook). It is set to the
+-- peer's canonical hostname when the row was pulled via
+-- ``sac registry sync --from PEER`` — used by the conflict detector
+-- in :func:`state_db_nodes.register_comms_node` to distinguish a
+-- benign re-pull (same source) from a true name-collision (different
+-- source claiming the same name with a different host/port).
+--
+-- ``ended_at`` is a soft tombstone — preserved on
+-- :func:`unregister_comms_node` so the next ``export_state`` carries
+-- the deletion to peers. A GC pass (not in Stage 1) will eventually
+-- physically delete tombstoned rows older than a TTL.
+CREATE TABLE IF NOT EXISTS comms_nodes (
+    name           TEXT PRIMARY KEY,
+    host           TEXT NOT NULL,
+    a2a_port       INTEGER NOT NULL,
+    registered_at  REAL NOT NULL,
+    updated_at     REAL NOT NULL,
+    source_host    TEXT,
+    ended_at       REAL
+);
+CREATE INDEX IF NOT EXISTS idx_comms_nodes_host ON comms_nodes(host);
 """
 
 # Tables exposed by `sac db query --table=<t>`. Whitelisted so users
@@ -292,6 +322,7 @@ KNOWN_TABLES = (
     "node_tokens",
     "lineage",
     "comms_grants",
+    "comms_nodes",
 )
 
 
