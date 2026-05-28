@@ -2,7 +2,7 @@
 description: |
   [TOPIC] Push progress reports to the lead's a2a inbox at every milestone, so fleet coordination stops requiring polls.
   [DETAILS] sac agents send `mcp__sac__a2a_send(target='lead', ...)` push updates on PR open/merge/close, BLOCKED, DONE, or any significant context change. The lead reads its inbox to coordinate the fleet without reading every agent's `agent_logs` / `gh` state by hand. Speak/Telegram are for the OPERATOR; a2a push is for the LEAD. Both happen at milestones — not exclusive channels. Includes the KIND vocabulary, when-to / when-not-to thresholds, the one-time per-agent ACL grant the lead has to issue (`sac a2a grant --sender <name> --target lead`), and pointers to the companion Stop-hook reminder shipped via the dotfiles `_base/to_home/` overlay.
-tags: [scitex-agent-container-agent-progress-reporting]
+tags: [scitex-agent-container-progress-reporting-to-lead]
 ---
 
 # Progress reporting to the lead
