@@ -221,8 +221,8 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.listen"><code class="docutils literal notranslate"><span class="pre">AgentConfig.listen</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.extensions"><code class="docutils literal notranslate"><span class="pre">AgentConfig.extensions</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.skills</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.context_management"><code class="docutils literal notranslate"><span class="pre">AgentConfig.context_management</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.context_management"><code class="docutils literal notranslate"><span class="pre">AgentConfig.context_management</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_commands"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_commands</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_prompts"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_prompts</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.mcp_servers"><code class="docutils literal notranslate"><span class="pre">AgentConfig.mcp_servers</span></code></a></li>
@@ -633,6 +633,25 @@
 <span class="sd">    &lt;MB&gt; &lt;path&gt;`` before launching. When False, sac never creates</span>
 <span class="sd">    overlays even if size is given (operator must pre-create — sac</span>
 <span class="sd">    raises FileNotFoundError instead). See ``docs/isolation.md`` §7.&quot;&quot;&quot;</span>
+
+    <span class="n">tmpfs_size</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;2G&quot;</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Minimum free-space guarantee for the container&#39;s ``/tmp`` (and</span>
+<span class="sd">    ``/var/tmp``). A ``--containall`` apptainer container otherwise gets</span>
+<span class="sd">    a 64 MB session tmpfs at ``/tmp`` — too small for the full test</span>
+<span class="sd">    suite, coverage XML generation, or pytest fixtures with file IO,</span>
+<span class="sd">    which fill it mid-run with &quot;No space left on device&quot;.</span>
+
+<span class="sd">    sac emits ``--workdir &lt;state_dir&gt;/tmp-scratch`` to relocate ``/tmp``</span>
+<span class="sd">    onto the host filesystem (capacity &gt;&gt; 64 MB) and verifies that</span>
+<span class="sd">    filesystem has at least this many bytes free before launch, failing</span>
+<span class="sd">    loud otherwise. Accepts apptainer-style sizes with units M/MB/G/GB</span>
+<span class="sd">    only (e.g. ``&quot;2G&quot;``, ``&quot;512M&quot;``, ``&quot;2048MB&quot;``); K/KB rejected.</span>
+
+<span class="sd">    NOT a hard cap — an unprivileged apptainer user cannot mount a</span>
+<span class="sd">    size-capped tmpfs (``--mount type=tmpfs`` is unsupported), so the</span>
+<span class="sd">    contract is &quot;at least this much room&quot;, backed by host disk. Set to</span>
+<span class="sd">    ``&quot;&quot;`` to opt out entirely (legacy 64 MB tmpfs). See</span>
+<span class="sd">    ``runtimes/_apptainer_tmpfs.py``.&quot;&quot;&quot;</span>
 
     <span class="n">relaxed</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Opt out of sac&#39;s hardened defaults (auto-prepended</span>
