@@ -640,13 +640,12 @@ def test_validate_raw_rejects_unknown_spec_field():
     }
     # Act
     errors = validate_raw(raw, path="<test>")
-    # Assert — the rejection names the offending key and points at the
+    # Assert — the rejection names the offending key AND points at the
     # canonical escape hatch (spec.extensions for custom data).
-    bad = [e for e in errors if "totally_made_up_field" in e]
-    assert bad, f"unknown spec field must be rejected; got errors={errors!r}"
-    assert "spec.extensions" in bad[0], (
-        "unknown-spec-field error must point users at spec.extensions; "
-        f"got {bad[0]!r}"
+    assert any(
+        "totally_made_up_field" in e and "spec.extensions" in e for e in errors
+    ), (
+        f"unknown spec field must be rejected pointing at spec.extensions; got {errors!r}"
     )
 
 
@@ -663,16 +662,11 @@ def test_validate_raw_unknown_spec_field_does_not_collide_with_relocated_message
     }
     # Act
     errors = validate_raw(raw, path="<test>")
-    # Assert — the message mentions the new home, not "Unknown spec field".
-    relocations = [e for e in errors if "spec.claude.model" in e]
-    assert relocations, (
-        f"spec.model must produce a relocation hint; got {errors!r}"
-    )
-    generic = [e for e in errors if "Unknown spec field 'model'" in e]
-    assert not generic, (
-        "spec.model must NOT also trigger the generic unknown-field "
-        f"message; got {generic!r}"
-    )
+    # Assert — the relocation hint is present AND the generic
+    # "Unknown spec field" message is NOT also emitted for the same key.
+    assert any("spec.claude.model" in e for e in errors) and not any(
+        "Unknown spec field 'model'" in e for e in errors
+    ), f"spec.model must produce only a relocation hint; got {errors!r}"
 
 
 def test_validate_raw_rejects_metadata_name():
@@ -687,12 +681,9 @@ def test_validate_raw_rejects_metadata_name():
     }
     # Act
     errors = validate_raw(raw, path="<test>")
-    # Assert — the message mentions the SSoT replacement.
-    bad = [e for e in errors if "metadata.name" in e]
-    assert bad, f"metadata.name must be rejected; got {errors!r}"
-    assert "parent directory" in bad[0], (
-        "metadata.name rejection must point at dir-as-SSoT; "
-        f"got {bad[0]!r}"
+    # Assert — rejected AND the message points at the dir-as-SSoT layout.
+    assert any("metadata.name" in e and "parent directory" in e for e in errors), (
+        f"metadata.name must be rejected pointing at dir-as-SSoT; got {errors!r}"
     )
 
 
@@ -708,11 +699,8 @@ def test_validate_raw_rejects_dot_claude():
     # Act
     errors = validate_raw(raw, path="<test>")
     # Assert
-    bad = [e for e in errors if "dot_claude" in e]
-    assert bad, f"spec.dot_claude must be rejected; got {errors!r}"
-    assert "to_home" in bad[0], (
-        "dot_claude rejection must point at the to_home pipeline; "
-        f"got {bad[0]!r}"
+    assert any("dot_claude" in e and "to_home" in e for e in errors), (
+        f"spec.dot_claude must be rejected pointing at the to_home pipeline; got {errors!r}"
     )
 
 
@@ -728,9 +716,6 @@ def test_validate_raw_rejects_spec_skills():
     # Act
     errors = validate_raw(raw, path="<test>")
     # Assert
-    bad = [e for e in errors if "spec.skills" in e]
-    assert bad, f"spec.skills must be rejected; got {errors!r}"
-    assert "to_home" in bad[0], (
-        "spec.skills rejection must point at the to_home/.claude/skills/ "
-        f"layout; got {bad[0]!r}"
+    assert any("spec.skills" in e and "to_home" in e for e in errors), (
+        f"spec.skills must be rejected pointing at to_home/.claude/skills/; got {errors!r}"
     )
