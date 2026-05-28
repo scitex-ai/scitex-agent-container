@@ -57,7 +57,7 @@ From: ./sac-base.sif
             pytest pytest-cov \
             claude-agent-sdk \
             "scitex[all]" \
-            "git+https://github.com/ywatanabe1989/scitex-agent-container.git@develop"
+            "git+https://github.com/ywatanabe1989/scitex-agent-container.git@main"
     else
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
             pip setuptools wheel
@@ -67,9 +67,9 @@ From: ./sac-base.sif
             pytest pytest-cov \
             claude-agent-sdk \
             "scitex[all]" \
-            "git+https://github.com/ywatanabe1989/scitex-agent-container.git@develop"
+            "git+https://github.com/ywatanabe1989/scitex-agent-container.git@main"
     fi
-    # Pin a specific sac release by editing the @develop above to @v0.14.0
+    # Pin a specific sac release by editing the @main above to @v0.14.0
     # (or whatever tag), then ``sac image build scitex -y`` again.
 
 %environment
