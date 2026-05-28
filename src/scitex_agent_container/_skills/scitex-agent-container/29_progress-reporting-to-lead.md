@@ -83,26 +83,7 @@ If you already pushed a milestone earlier in this turn, you can skip the next St
 
 ## ACL note
 
-The first time a new sac agent sends to `lead`, you may hit:
-
-```
-HTTP 403 (ACL deny): cross-group send: sender '<name>' (group=['<name>']) may not address 'lead' without an explicit ACL grant
-```
-
-Fix (lead-side, one-time per agent):
-
-```python
-from scitex_agent_container.comms.acl import grant_send
-grant_send(sender='<agent-name>', target='lead')
-```
-
-Or via CLI on the host:
-
-```bash
-sac a2a grant --sender <name> --target lead
-```
-
-After grant, send works without further config. Idempotent — re-granting is safe.
+ACL-based send restrictions are not currently enforced in sac (verified 2026-05-28: no `scitex_agent_container.comms.acl` module, no `sac a2a grant` subcommand). If a future sac release adds an enforced ACL and you hit 403, file an issue against scitex-agent-container for the grant-CLI + Python API to be implemented — don't try to work around it manually.
 
 ## Companion Stop-hook reminder
 
