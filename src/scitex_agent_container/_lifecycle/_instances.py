@@ -100,6 +100,25 @@ def record_local_instance(config: AgentConfig, runtime: Any) -> str | None:
         workdir=str(workdir) if workdir else None,
     )
 
+    # ADR-0014 Stage 1 — paired comms_nodes write so cross-host peers
+    # can resolve this agent after a `sac registry sync`. The instances
+    # table is local; comms_nodes is the federated layer. Best-effort:
+    # any error here is logged but does not abort the agent start (a
+    # missing comms_nodes row degrades to "peers can't see this agent
+    # via the federated graph until next sync" — not a startup blocker).
+    if a2a_port is not None:
+        try:
+            from .._state.state_db_nodes import register_comms_node
+
+            register_comms_node(
+                name=config.name,
+                host=host,
+                a2a_port=int(a2a_port),
+                source_host=None,
+            )
+        except Exception:  # stx-allow: fallback (reason: never block agent start on registry write)
+            pass
+
     state_dir = _state_dir_for(config, runtime)
     if state_dir is not None:
         write_instance_id(state_dir, instance_id)
@@ -134,6 +153,15 @@ def end_local_instance(config: AgentConfig, runtime: Any) -> bool:
             if row.get("name") == config.name:
                 updated = record_instance_stop(str(row["id"]), exit_reason="stopped")
                 break
+
+    # ADR-0014 Stage 1 — paired tombstone in comms_nodes. Best-effort.
+    if updated:
+        try:
+            from .._state.state_db_nodes import unregister_comms_node
+
+            unregister_comms_node(name=config.name)
+        except Exception:  # stx-allow: fallback (reason: never block agent stop on registry write)
+            pass
 
     if state_dir is not None:
         clear_instance_id(state_dir)

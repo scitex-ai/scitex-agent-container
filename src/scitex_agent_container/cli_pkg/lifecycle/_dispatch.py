@@ -266,6 +266,21 @@ def _dispatch_remote_start(
         remote=True,
         spawned_by=_spawned_by(),
     )
+    # ADR-0014 Stage 1 — paired comms_nodes row for the cross-host
+    # agent so peers resolving via the federated graph (not just the
+    # local instances table) see the new placement after the next sync.
+    if bound is not None:
+        try:
+            from ..._state.state_db_nodes import register_comms_node
+
+            register_comms_node(
+                name=name,
+                host=peer,
+                a2a_port=int(bound),
+                source_host=None,
+            )
+        except Exception:  # stx-allow: fallback (reason: never block dispatch on registry write)
+            pass
     click.echo(
         f"[dispatch] {name!r} started on {peer!r} "
         f"(a2a_port={peer_state.get('a2a_port')!s}, "

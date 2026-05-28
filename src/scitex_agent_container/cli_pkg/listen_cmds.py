@@ -40,6 +40,114 @@ def _is_loopback(host: str) -> bool:
         return False
 
 
+def _register_self_comms_node(*, port: int) -> None:
+    """ADR-0014 — register this listen's operator identity in comms_nodes.
+
+    Best-effort: any failure (no config, no LeadConfig, DB error, name
+    collision) is logged to stderr but does NOT prevent ``sac listen``
+    from binding. A listen that won't start because of a registry-write
+    error is worse than a missing federated row — peers can still
+    cross-host-forward to the listen via the existing ``instances``
+    table for sac-managed agents; only the operator-identity row needs
+    the federated graph.
+
+    Identity source: ``LeadConfig.name`` (e.g. ``lead`` on the lead
+    host). Hosts without a ``lead:`` block skip this hook quietly —
+    those listens serve only sac-managed agents, which already register
+    themselves through ``record_instance_start``.
+    """
+    try:
+        from .._state.host_config import load
+        from .._state.state_db_nodes import (
+            CommsNodeConflictError,
+            register_comms_node,
+        )
+
+        cfg = load()
+        lead = cfg.lead
+        if lead is None:
+            return  # no operator identity configured; nothing to register
+        local_host = cfg.canonical_host()
+        try:
+            register_comms_node(
+                name=lead.name,
+                host=local_host,
+                a2a_port=port,
+                source_host=None,  # locally-registered
+            )
+        except CommsNodeConflictError as exc:
+            click.echo(
+                f"# WARN: comms_nodes self-register conflict: {exc}",
+                err=True,
+            )
+    except Exception as exc:  # stx-allow: fallback (reason: never block listen on registry write)
+        click.echo(
+            f"# WARN: comms_nodes self-register failed: {exc!r}",
+            err=True,
+        )
+
+
+def _maybe_sync_on_start() -> None:
+    """ADR-0014 — optionally trigger ``sac registry sync --all`` once at start.
+
+    Opt-out via the ``comms_nodes.sync_on_start: false`` config flag
+    (default True). Best-effort: per-peer failures are logged by the
+    sync command itself; we never raise.
+
+    The sync is synchronous so the listen has the latest peer view
+    before it starts answering inbound A2A POSTs — that's the closure
+    on the bidirectionality bug: a Spartan listen that just came up
+    will already know where ``lead`` lives before the first agent on
+    Spartan tries to send to it.
+    """
+    try:
+        from .._state.host_config import load
+
+        cfg = load()
+        # The config flag is read by hand because LeadConfig is the
+        # only structured block sac currently parses. Look in the raw
+        # config dict if present; default True.
+        raw_path = cfg.source_path
+        sync_on_start = True
+        if raw_path is not None and raw_path.is_file():
+            import yaml
+
+            raw = yaml.safe_load(raw_path.read_text()) or {}
+            comms_nodes_cfg = raw.get("comms_nodes")
+            if isinstance(comms_nodes_cfg, dict):
+                flag = comms_nodes_cfg.get("sync_on_start", True)
+                if isinstance(flag, bool):
+                    sync_on_start = flag
+        if not sync_on_start:
+            return
+        # Only run when there is at least one static peer; skip silently
+        # otherwise so single-host installs don't spam warnings.
+        static_peers = [
+            n for n in cfg.peers.keys() if not any(c in n for c in "*?[")
+        ]
+        if not static_peers:
+            return
+        from ._registry_sync import registry_sync_impl
+
+        rc = registry_sync_impl(
+            from_peer=None,
+            to_peer=None,
+            all_peers=True,
+            dry_run=False,
+            as_json=False,
+        )
+        if rc != 0:
+            click.echo(
+                f"# WARN: comms_nodes startup sync had peer failures (rc={rc})",
+                err=True,
+            )
+    except Exception as exc:  # stx-allow: fallback (reason: never block listen on sync)
+        click.echo(
+            f"# WARN: comms_nodes startup sync failed: {exc!r}",
+            err=True,
+        )
+
+
 @click.command(name="listen")
 @click.option(
     "--bind",
@@ -119,6 +227,14 @@ def listen(
     click.echo(f"# sac listen v1 → {host}:{port}", err=True)
     click.echo(f"# token file: {tok_path}", err=True)
     click.echo(f"# health: curl http://{host}:{port}/v1/sac/health", err=True)
+
+    # ADR-0014 Stage 1 — register the host's operator identity into
+    # comms_nodes so cross-host peers can resolve it after a sync.
+    # Best-effort: log a warning on failure but never abort startup
+    # (a listen that won't bind because of a registry write is worse
+    # than a missing federated row).
+    _register_self_comms_node(port=port)
+    _maybe_sync_on_start()
 
     app = create_app(token=token)
     import uvicorn
