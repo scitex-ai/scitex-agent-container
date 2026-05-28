@@ -93,6 +93,30 @@ From: ubuntu:24.04
     apt-get update
     apt-get install -y --no-install-recommends gh
 
+    # ---- 2a. Apptainer (for inside-SIF nested launch) -------------------
+    # Bundled so sac-from-sac flows (clew -> cohort capsule spawn) work
+    # without needing a host bind. Per operator decision 2026-05-28 (msg
+    # 6704: SIF-bundle preferred over host-bind / upstream conditional
+    # bypass). Spartan's host `which apptainer` is a 1KB bash shim that
+    # requires `module` (Lmod) -- not available in the container -- so
+    # the bind approach was infeasible.
+    #
+    # Unprivileged user-namespace mode only (no setuid in nested SIF);
+    # `--fakeroot` requires `uidmap` for newuidmap/newgidmap.
+    # squashfs-tools for SIF read.
+    #
+    # Apptainer is NOT in Ubuntu 24.04 noble main/universe (verified
+    # 2026-05-28 against packages.ubuntu.com); the only canonical
+    # distribution channel is the official PPA `ppa:apptainer/ppa`
+    # (see apptainer.org/docs/admin/main/installation.html). We use
+    # `add-apt-repository` from software-properties-common, which is
+    # the path the upstream install doc prescribes verbatim.
+    apt-get install -y --no-install-recommends software-properties-common
+    add-apt-repository -y ppa:apptainer/ppa
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        apptainer uidmap squashfs-tools
+
     # ---- 3. Node.js + npm globals --------------------------------------
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
     apt-get install -y --no-install-recommends nodejs
@@ -226,7 +250,7 @@ From: ubuntu:24.04
 %labels
     org.scitex.layer base
     org.scitex.runtime apptainer
-    org.scitex.contains "git gh node npm rustc cargo fd bat eza rg tree jq yq delta gdu sd dust uv pipx mermaid prettier eslint jsonlint"
+    org.scitex.contains "git gh node npm rustc cargo fd bat eza rg tree jq yq delta gdu sd dust uv pipx mermaid prettier eslint jsonlint apptainer"
 
 %help
     scitex-agent-container :base layer.
