@@ -6,7 +6,33 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.21.2] — 2026-05-28
+
+### Added
+- **feat(apptainer): `spec.apptainer.tmpfs_size`** (default `2G`) — relocate
+  the container `/tmp` + `/var/tmp` onto the host filesystem via `--workdir`,
+  so a `--containall` agent isn't capped at the 64 MB session tmpfs mid-run.
+  Fails loud (`TmpfsSpaceError`) below the requested size; no-op when `""`
+  or when the operator already passes `--workdir`. (#187)
+- **feat(fleet): `sac fleet sync`** — cross-host `spec.yaml` + `to_home/**`
+  audit across every peer in `config.yaml`, fail-loud on any divergence
+  (no auto-merge). Worker `--collect`, `--peer`, `--only`,
+  `--allow-unresolvable`, JSON output. (#207)
+- **feat(acl): Phase-3 server-managed ACL enforcement** (ADR-0010) —
+  per-spec `spec.comms` (outbound/inbound siblings/parent allow|deny,
+  `a2a.listen`) and `spec.lineage` (`group`, `may_spawn`), persisted to
+  `state.db` and enforced at the listen send path and the spawn gate. (#206)
+- **docs(readme): Models section** + spec-reference "Available models"
+  (opus/sonnet/haiku aliases → current 4.x families, `[1m]` context, full
+  versioned IDs, provider override); skills `spec.claude` field table
+  (account + provider); ADR-0012; refreshed CLI surface (fleet/host/accounts).
+- **feat(base-image): apt-based fd/rg/bat/eza** with Debian symlinks. (#205)
+
 ### Fixed
+- **fix(mcp): account tools call renamed `accounts` subcommands** — the MCP
+  `account_show` / `quota_watch` tools invoked the removed `account` /
+  `quota watch` CLI verbs; repointed at `accounts status` /
+  `accounts watch-quota`. (#231)
 - **docs(skills): purge v2-era field references from `_skills/scitex-agent-container/`** —
   brought seven skills in lockstep with the v3 validator (`config/_validation.py`),
   which strictly rejects `spec.remote`, `metadata.name`, top-level
