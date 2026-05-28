@@ -131,3 +131,119 @@ def test_post_via_ssh_curl_rejects_single_quote_in_bearer(
             bearer="quoted'token",
             timeout_s=5,
         )
+
+
+def test_post_via_ssh_curl_rejects_empty_host_argument(
+    tmp_path, env_save_restore, subprocess_shim
+):
+    # Arrange
+    env_save_restore.set("SAC_SSH_CONTROL_DIR", str(tmp_path / "cm"))
+    env_save_restore.delete("SAC_SSH_CONTROL_MASTER")
+    subprocess_shim.install("ssh", exit=0, stdout="{}")
+    import pytest
+
+    from scitex_agent_container._network._ssh_curl import _post_via_ssh_curl
+
+    # Act
+    # Assert
+    with pytest.raises(ValueError):
+        _post_via_ssh_curl(
+            host="",
+            port=9999,
+            path="/v1/turn",
+            body=b"{}",
+            bearer=None,
+            timeout_s=5,
+        )
+
+
+def test_post_via_ssh_curl_rejects_non_positive_port_value(
+    tmp_path, env_save_restore, subprocess_shim
+):
+    # Arrange
+    env_save_restore.set("SAC_SSH_CONTROL_DIR", str(tmp_path / "cm"))
+    env_save_restore.delete("SAC_SSH_CONTROL_MASTER")
+    subprocess_shim.install("ssh", exit=0, stdout="{}")
+    import pytest
+
+    from scitex_agent_container._network._ssh_curl import _post_via_ssh_curl
+
+    # Act
+    # Assert
+    with pytest.raises(ValueError):
+        _post_via_ssh_curl(
+            host="example.invalid",
+            port=0,
+            path="/v1/turn",
+            body=b"{}",
+            bearer=None,
+            timeout_s=5,
+        )
+
+
+def test_post_via_ssh_curl_rejects_path_without_leading_slash(
+    tmp_path, env_save_restore, subprocess_shim
+):
+    # Arrange
+    env_save_restore.set("SAC_SSH_CONTROL_DIR", str(tmp_path / "cm"))
+    env_save_restore.delete("SAC_SSH_CONTROL_MASTER")
+    subprocess_shim.install("ssh", exit=0, stdout="{}")
+    import pytest
+
+    from scitex_agent_container._network._ssh_curl import _post_via_ssh_curl
+
+    # Act
+    # Assert
+    with pytest.raises(ValueError):
+        _post_via_ssh_curl(
+            host="example.invalid",
+            port=9999,
+            path="agents/no-slash",
+            body=b"{}",
+            bearer=None,
+            timeout_s=5,
+        )
+
+
+def test_post_via_ssh_curl_returns_nonzero_rc_when_shim_exits_one(
+    tmp_path, env_save_restore, subprocess_shim
+):
+    # Arrange
+    env_save_restore.set("SAC_SSH_CONTROL_DIR", str(tmp_path / "cm"))
+    env_save_restore.delete("SAC_SSH_CONTROL_MASTER")
+    subprocess_shim.install("ssh", exit=1, stdout="", stderr="ssh: connect refused")
+    from scitex_agent_container._network._ssh_curl import _post_via_ssh_curl
+
+    # Act
+    rc, _stdout, _stderr = _post_via_ssh_curl(
+        host="example.invalid",
+        port=9999,
+        path="/agents/a/message:send",
+        body=b"{}",
+        bearer="abc",
+        timeout_s=5,
+    )
+    # Assert
+    assert rc == 1
+
+
+def test_post_via_ssh_curl_returns_stderr_bytes_from_shim(
+    tmp_path, env_save_restore, subprocess_shim
+):
+    # Arrange
+    env_save_restore.set("SAC_SSH_CONTROL_DIR", str(tmp_path / "cm"))
+    env_save_restore.delete("SAC_SSH_CONTROL_MASTER")
+    subprocess_shim.install("ssh", exit=255, stdout="", stderr="ssh: handshake failed")
+    from scitex_agent_container._network._ssh_curl import _post_via_ssh_curl
+
+    # Act
+    _rc, _stdout, stderr = _post_via_ssh_curl(
+        host="example.invalid",
+        port=9999,
+        path="/agents/a/message:send",
+        body=b"{}",
+        bearer="abc",
+        timeout_s=5,
+    )
+    # Assert
+    assert b"handshake failed" in stderr
