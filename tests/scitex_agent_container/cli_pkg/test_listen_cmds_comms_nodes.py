@@ -12,7 +12,6 @@ Real on-disk state.db + config.yaml; no mocks.
 from __future__ import annotations
 
 import importlib
-import os
 from pathlib import Path
 
 import pytest
