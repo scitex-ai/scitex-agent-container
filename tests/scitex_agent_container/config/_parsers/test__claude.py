@@ -248,9 +248,52 @@ def test_provider_block_parses_auth_token_env_field():
 
 
 def test_provider_non_dict_value_yields_none_provider():
-    # Arrange — a malformed (non-mapping) provider collapses to None so
-    # the validator surfaces the shape error, not the parser.
+    # Arrange — an unregistered (non-mapping, non-registered-name)
+    # provider collapses to None so the validator surfaces the shape
+    # error, not the parser.
     spec = {"claude": {"provider": "garbage"}}
+    # Act
+    result = parse_claude(spec)
+    # Assert
+    assert result.provider is None
+
+
+# ---------------------------------------------------------------------------
+# String-form provider (ADR-0011 extension, operator directive 2026-05-28)
+# ---------------------------------------------------------------------------
+
+
+def test_provider_string_form_mimo_resolves_to_xiaomi_base_url():
+    # Arrange
+    spec = {"claude": {"provider": "mimo"}}
+    # Act
+    result = parse_claude(spec)
+    # Assert
+    assert result.provider.base_url == "https://token-plan-sgp.xiaomimimo.com/anthropic"
+
+
+def test_provider_string_form_mimo_resolves_to_xiaomi_auth_env():
+    # Arrange
+    spec = {"claude": {"provider": "mimo"}}
+    # Act
+    result = parse_claude(spec)
+    # Assert
+    assert result.provider.auth_token_env == "XIAOMI_API_KEY"
+
+
+def test_provider_string_form_deepseek_resolves_to_deepseek_base_url():
+    # Arrange
+    spec = {"claude": {"provider": "deepseek"}}
+    # Act
+    result = parse_claude(spec)
+    # Assert
+    assert result.provider.base_url == "https://api.deepseek.com/anthropic"
+
+
+def test_provider_string_form_anthropic_sentinel_yields_no_override():
+    # Arrange — registered name with base_url=None means
+    # "use the default Anthropic OAuth backend, no override".
+    spec = {"claude": {"provider": "anthropic"}}
     # Act
     result = parse_claude(spec)
     # Assert

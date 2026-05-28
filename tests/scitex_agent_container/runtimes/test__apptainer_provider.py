@@ -15,6 +15,8 @@ and a descriptive name (TQ003).
 
 from __future__ import annotations
 
+from pathlib import Path  # noqa: F401  # used in string annotation on line ~179
+
 import pytest
 
 from scitex_agent_container.config import AgentConfig, ClaudeSpec, ProviderSpec
@@ -245,3 +247,32 @@ def test_home_dotenv_supports_quoted_and_export_prefixed_lines(
     env = _env_dict(provider_env_flags(cfg))
     # Assert — quotes stripped, ``export`` prefix tolerated.
     assert env["SAC_ANTHROPIC_API_KEY"] == "sk-quoted-export"
+
+
+# ---------------------------------------------------------------------------
+# ANTHROPIC_MODEL auto-injection (ADR-0011 extension, lead-learnings/05 fix)
+# ---------------------------------------------------------------------------
+
+
+def test_flags_inject_anthropic_model_from_spec_when_set(env_save_restore):
+    # Arrange — provider active and spec.claude.model = "deepseek-chat";
+    # auto-injected so the SDK's built-in default doesn't silently win.
+    env_save_restore.set("DEEPSEEK_API_KEY", "sk-injected")
+    cfg = _provider_config()
+    # Act
+    env = _env_dict(provider_env_flags(cfg))
+    # Assert
+    assert env["ANTHROPIC_MODEL"] == "deepseek-chat"
+
+
+def test_flags_omit_anthropic_model_when_spec_model_empty(env_save_restore):
+    # Arrange — provider active but no model set; SDK's default model
+    # is then intentional and should not be overridden by a stray
+    # ANTHROPIC_MODEL flag.
+    env_save_restore.set("DEEPSEEK_API_KEY", "sk-injected")
+    cfg = _provider_config()
+    cfg.claude.model = ""
+    # Act
+    env = _env_dict(provider_env_flags(cfg))
+    # Assert
+    assert "ANTHROPIC_MODEL" not in env

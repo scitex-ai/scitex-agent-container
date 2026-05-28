@@ -155,7 +155,7 @@ def provider_env_flags(config: AgentConfig) -> list[str]:
     # Per-agent clean config dir — the conflict-breaker. Distinct from the
     # OAuth path's /tmp/sac-claude so a stale OAuth bind can never win.
     config_dir = f"/tmp/sac-{config.name}-provider-cfg"
-    return [
+    flags = [
         "--env",
         f"ANTHROPIC_BASE_URL={base_url}",
         "--env",
@@ -163,6 +163,17 @@ def provider_env_flags(config: AgentConfig) -> list[str]:
         "--env",
         f"CLAUDE_CONFIG_DIR={config_dir}",
     ]
+    # ADR-0011 extension (lead-learnings/05 pitfall fix): auto-inject
+    # ``ANTHROPIC_MODEL`` from ``spec.claude.model`` whenever a provider
+    # is active. Without this, the SDK's built-in default model id wins
+    # over the spec — every turn talks to the provider's gateway but
+    # against the wrong model alias, and operators have to duplicate
+    # the model id into ``raw_args.env`` to work around it. Skipped
+    # when ``model`` is empty (the SDK's default is then intentional).
+    model = (getattr(claude, "model", "") or "") if claude is not None else ""
+    if model:
+        flags.extend(["--env", f"ANTHROPIC_MODEL={model}"])
+    return flags
 
 
 __all__ = ["ProviderEnvError", "provider_active", "provider_env_flags"]
