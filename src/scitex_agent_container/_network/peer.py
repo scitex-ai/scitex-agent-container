@@ -291,16 +291,19 @@ def _post_turn_via_ssh(
         "-X POST -H 'Content-Type: application/json' -d @- "
         f"http://127.0.0.1:{port}/v1/turn"
     )
-    from .._ssh import ensure_control_path_dir, ssh_control_opts
+    # Connection multiplexing — concurrent v1/turn deliveries to the
+    # same peer share one ssh master, avoiding sshd MaxSessions caps and
+    # the per-call TCP handshake. See
+    # :func:`scitex_agent_container._state.host_config.ssh_control_options`.
+    from .._state.host_config import ssh_control_options
 
-    ensure_control_path_dir()
     ssh_cmd = [
         "ssh",
         "-o",
         "BatchMode=yes",
         "-o",
         "ConnectTimeout=15",
-        *ssh_control_opts(),
+        *ssh_control_options(),
         host,
         remote_curl,
     ]

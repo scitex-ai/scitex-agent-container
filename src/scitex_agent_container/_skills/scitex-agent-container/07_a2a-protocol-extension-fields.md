@@ -15,7 +15,7 @@ A2A v1.0 reserves the AgentCard top level for spec-defined fields and funnels ve
 
 | Field | Mapped to AgentCard |
 | --- | --- |
-| `metadata.name` (or filename stem) | `name` |
+| parent-directory stem (dir-as-SSoT) | `name` — v3 derives the agent name from the YAML's parent dir; the legacy `metadata.name` field is rejected by `_validation.py` |
 | `metadata.labels.capabilities` (CSV) | first item → `description`; all items → `skills[0].tags` |
 | `metadata.labels.team` | `provider.organization` |
 | `metadata.labels.role` | `skills[0].name`, `x-scitex-agent-container.role_class` |
@@ -38,7 +38,7 @@ Emitted by `a2a/_card.py::project_card`. Every per-agent card served at `GET /ag
 | `x-scitex-agent-container.runtime` | `spec.runtime` | Runtime kind (`claude-code`, `agent-proxy`, etc.). |
 | `x-scitex-agent-container.model` | `spec.claude.model` ∨ `spec.model` (legacy) | LLM model identifier. |
 | `x-scitex-agent-container.multiplexer` | `spec.multiplexer` | tmux / zellij / none. |
-| `x-scitex-agent-container.required_skills` | `metadata.labels.skills` ∪ `spec.skills.required` | Skill IDs the agent loads at boot. |
+| `x-scitex-agent-container.required_skills` | `metadata.labels.skills` (CSV) — `spec.skills` is rejected in v3; skills now live as files under `to_home/.claude/skills/` | Skill IDs the agent loads at boot. |
 | `x-scitex-agent-container.isolation` | derived from `spec.apptainer.*` | D3 attestation block — `{level, containall, cleanenv, writable_tmpfs, preflight_passed, preflight_allowed, binds_count, binds_writable_count}`. External attestation surfaces (Clew, orochi) read these booleans. |
 
 ## Per-agent `capabilities.extensions[]` entries

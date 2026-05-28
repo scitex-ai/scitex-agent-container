@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "scitex-agent-container"
-version = "0.21.0"
+version = "0.21.2"
 description = "Declarative YAML-based framework for defining, managing, and orchestrating AI coding agent instances"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -86,7 +86,7 @@ slurm = [
     "scitex-hpc>=0.6.2",
 ]
 dev = [
-    "scitex-dev>=0.11.7",
+    "scitex-dev>=0.14.0",  # tests/results/ accepted as a known tests subdir (PS-302)
     # PS210: tests import scitex_hpc unguarded, so [dev] must include it
     # (otherwise `pip install -e .[dev]` can't run the full suite).
     "scitex-hpc>=0.6.2",

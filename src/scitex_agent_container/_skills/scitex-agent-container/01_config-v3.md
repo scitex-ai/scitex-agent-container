@@ -45,26 +45,41 @@ metadata:
     machine: local
 spec:
   runtime: apptainer      # apptainer (only accepted value)
-  model: opus[1m]
-  multiplexer: tmux       # tmux (default) or screen
 
   claude:
+    model: opus[1m]            # v3-realign: moved from top-level spec.model
     flags:
       - --dangerously-skip-permissions
     session: continue-or-new   # continue-or-new (default) | continue | new | resume
 
-  skills:
-    required: [scitex]
+  # Skills are file-based in v3: drop SKILL.md trees under
+  # to_home/.claude/skills/<id>/ and list ids in metadata.labels.skills.
+  # The validator rejects spec.skills.
 
   health:
     enabled: true
     interval: 60
-    method: multiplexer-alive
+    method: sdk-alive          # sole supported probe (heartbeat-file/healthz)
 
   restart:
     policy: on-failure
     max_retries: 3
 ```
+
+### `spec.claude` fields
+
+| Field | Type | Purpose |
+|---|---|---|
+| `model` | alias or full ID | `opus` / `sonnet` (default) / `haiku` (+ `[1m]` for 1M context), or a full ID like `claude-opus-4-7`. May also sit at `spec.model` (top level). Abbreviated IDs missing version digits (`claude-opus[1m]`) are rejected at validate-time. |
+| `session` | enum | `continue-or-new` (default) \| `continue` \| `new` \| `resume` |
+| `resume_id` | string | Explicit session UUID for `session: resume` |
+| `continue_max_age_minutes` | int | Only resume if `session.jsonl` is newer than N minutes |
+| `flags[]` | list | Extra flags appended to the `claude` invocation |
+| `channels[]` | list | MCP push channels (`server:<name>` / `plugin:<id>@<v>`) |
+| `auto_accept` | bool (default `true`) | Auto-confirm TUI permission prompts |
+| `account` | string | Pin this agent to a stored OAuth account (`sac accounts` store-name). Credentials are **boot-copied** into the agent state dir, not live-bound. Mutually exclusive with `provider`. See [26_credentials-rotation.md](26_credentials-rotation.md). |
+| `provider` | `{ base_url, auth_token_env }` | Point the SDK at any Anthropic-compatible backend (e.g. DeepSeek). `base_url` is the endpoint; `auth_token_env` is the **name** of the host env var holding the key (never the key value). Mutually exclusive with `account`; relaxes the `claude-*` model-alias check. See ADR-0011. |
+| `raw_options` | dict | Escape hatch — splatted into `ClaudeAgentOptions(**raw_options)` |
 
 ## Auto-derived fields
 

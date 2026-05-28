@@ -42,7 +42,9 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from .._state.state_db_nodes import (
     derive_group,
     has_grant,
+    read_comms_policy,
     resolve_node_token,
+    sender_target_relationship,
     spawn_allowed,
 )
 
@@ -185,6 +187,18 @@ def check_send_acl(
     if sender == target:
         return ("allow", None)
 
+    # Phase-3 (ADR-0010 Step 2) — per-spec outbound/inbound deny layered
+    # on top of the group default. Restrictive only: a per-spec deny
+    # blocks even when the group ACL would otherwise allow. Evaluated
+    # BEFORE the group check so a sibling-deny on either side fires even
+    # when sender and target share a group. Default policies (everything
+    # ``allow``) leave the legacy group ACL semantics untouched.
+    phase3_decision = _phase3_relationship_deny(
+        sender=sender, target=target, db_path=db_path
+    )
+    if phase3_decision is not None:
+        return phase3_decision
+
     sender_group = derive_group(name=sender, db_path=db_path)
     if target in sender_group:
         return ("allow", None)
@@ -202,6 +216,85 @@ def check_send_acl(
             "in state.db."
         ),
     )
+
+
+def _phase3_relationship_deny(
+    *,
+    sender: str,
+    target: str,
+    db_path: Path | None,
+) -> AclDecision | None:
+    """Per-spec ACL deny based on the sender↔target lineage relationship.
+
+    Returns a ``("deny", reason)`` tuple when either:
+
+    * the SENDER's ``spec.comms.outbound`` denies the relationship from
+      its side (``outbound.parent`` when target is sender's parent;
+      ``outbound.siblings`` when target is sender's sibling), or
+    * the TARGET's ``spec.comms.inbound`` denies the relationship from
+      its side (``inbound.parent`` when sender is target's parent —
+      i.e. target is sender's child; ``inbound.siblings`` when sender
+      is target's sibling).
+
+    Returns ``None`` when no per-spec rule applies — the caller falls
+    through to the existing group/grant ACL.
+
+    The relationship space (Phase-3 scope):
+
+    * ``outbound.parent``  / ``inbound.parent``  — adjacent parent edge
+    * ``outbound.siblings`` / ``inbound.siblings`` — shared-parent edge
+    * (children are NOT modelled on either side — clew's gap list only
+      asked for parent + sibling. A child→parent send is gated via the
+      sender's ``outbound.parent`` on one side and the parent's
+      ``inbound.parent`` on the other.)
+
+    Defaults preserve current behaviour: every comb in the matrix
+    starts ``"allow"`` so absence of ``spec.comms`` is a no-op here.
+    """
+    rel = sender_target_relationship(
+        sender=sender, target=target, db_path=db_path
+    )
+    if rel in ("parent", "sibling"):
+        sender_policy = read_comms_policy(name=sender, db_path=db_path)
+        if rel == "parent" and sender_policy["outbound_parent"] == "deny":
+            return (
+                "deny",
+                (
+                    f"per-spec outbound deny: sender {sender!r} has "
+                    "spec.comms.outbound.parent=deny; target "
+                    f"{target!r} is its parent."
+                ),
+            )
+        if rel == "sibling" and sender_policy["outbound_siblings"] == "deny":
+            return (
+                "deny",
+                (
+                    f"per-spec outbound deny: sender {sender!r} has "
+                    "spec.comms.outbound.siblings=deny; target "
+                    f"{target!r} is its sibling."
+                ),
+            )
+    if rel in ("child", "sibling"):
+        target_policy = read_comms_policy(name=target, db_path=db_path)
+        if rel == "child" and target_policy["inbound_parent"] == "deny":
+            return (
+                "deny",
+                (
+                    f"per-spec inbound deny: target {target!r} has "
+                    "spec.comms.inbound.parent=deny; sender "
+                    f"{sender!r} is its parent."
+                ),
+            )
+        if rel == "sibling" and target_policy["inbound_siblings"] == "deny":
+            return (
+                "deny",
+                (
+                    f"per-spec inbound deny: target {target!r} has "
+                    "spec.comms.inbound.siblings=deny; sender "
+                    f"{sender!r} is its sibling."
+                ),
+            )
+    return None
 
 
 def check_spawn(

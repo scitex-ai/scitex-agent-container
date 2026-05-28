@@ -44,7 +44,7 @@ For agent-to-agent communication (orochi master → workers, peer collaboration)
 ```python
 from scitex_agent_container.peer import post_turn, post_turn_to_url, resolve_peer_url
 
-# By agent name — auto-resolves URL from spec.remote.host + spec.a2a.port
+# By agent name — auto-resolves URL from spec.host (or spec.hosts) + spec.a2a.port
 reply = post_turn("worker", "summarize today's commits")
 
 # By URL — useful for ad-hoc peers

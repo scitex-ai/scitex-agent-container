@@ -117,5 +117,12 @@ def parse_apptainer(spec: dict):
         overlay=str(raw.get("overlay", "") or ""),
         overlay_size=str(raw.get("overlay_size", "") or ""),
         overlay_create_if_missing=bool(raw.get("overlay_create_if_missing", True)),
+        # /tmp scratch sizing. Absent key → dataclass default "2G".
+        # Explicit "" (or null) → opt-out (legacy 64 MB session tmpfs).
+        # `raw.get(k, default) or default` would collapse "" to the
+        # default, so distinguish "absent" from "present-but-empty".
+        tmpfs_size=(str(raw["tmpfs_size"]) if raw.get("tmpfs_size") is not None else "")
+        if "tmpfs_size" in raw
+        else "2G",
         relaxed=bool(raw.get("relaxed", False)),
     )

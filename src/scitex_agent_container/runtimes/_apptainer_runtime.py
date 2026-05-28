@@ -212,6 +212,20 @@ class ApptainerContainerRuntime(RuntimeBase):
                         )
                 argv += ["--overlay", str(overlay_p)]
 
+        # Sized /tmp scratch (spec.apptainer.tmpfs_size, default "2G").
+        # A --containall container otherwise gets a 64 MB session tmpfs
+        # at /tmp, which fills mid-run during the full test suite. The
+        # helper emits `--workdir <state_dir>/tmp-scratch` to relocate
+        # /tmp + /var/tmp onto the host filesystem (capacity >> 64 MB)
+        # and fails loud (TmpfsSpaceError) if that filesystem has less
+        # than tmpfs_size free. No-op when tmpfs_size is "" (opt-out) or
+        # when the operator already declared --workdir in raw_args. The
+        # flag is curated (emitted before raw_args) so an operator's own
+        # --workdir still wins via the helper's raw_args skip.
+        from ._apptainer_tmpfs import tmpfs_workdir_flags
+
+        argv += tmpfs_workdir_flags(config, state_dir)
+
         # Anthropic-auth argv — emits the backend wiring (env + creds
         # bind). Branches internally on whether spec.claude.provider is
         # active: provider → API-key backend (ANTHROPIC_BASE_URL +

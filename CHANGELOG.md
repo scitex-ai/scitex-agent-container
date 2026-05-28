@@ -6,6 +6,76 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.21.2] — 2026-05-28
+
+### Added
+- **feat(apptainer): `spec.apptainer.tmpfs_size`** (default `2G`) — relocate
+  the container `/tmp` + `/var/tmp` onto the host filesystem via `--workdir`,
+  so a `--containall` agent isn't capped at the 64 MB session tmpfs mid-run.
+  Fails loud (`TmpfsSpaceError`) below the requested size; no-op when `""`
+  or when the operator already passes `--workdir`. (#187)
+- **feat(fleet): `sac fleet sync`** — cross-host `spec.yaml` + `to_home/**`
+  audit across every peer in `config.yaml`, fail-loud on any divergence
+  (no auto-merge). Worker `--collect`, `--peer`, `--only`,
+  `--allow-unresolvable`, JSON output. (#207)
+- **feat(acl): Phase-3 server-managed ACL enforcement** (ADR-0010) —
+  per-spec `spec.comms` (outbound/inbound siblings/parent allow|deny,
+  `a2a.listen`) and `spec.lineage` (`group`, `may_spawn`), persisted to
+  `state.db` and enforced at the listen send path and the spawn gate. (#206)
+- **docs(readme): Models section** + spec-reference "Available models"
+  (opus/sonnet/haiku aliases → current 4.x families, `[1m]` context, full
+  versioned IDs, provider override); skills `spec.claude` field table
+  (account + provider); ADR-0012; refreshed CLI surface (fleet/host/accounts).
+- **feat(base-image): apt-based fd/rg/bat/eza** with Debian symlinks. (#205)
+
+### Fixed
+- **fix(mcp): account tools call renamed `accounts` subcommands** — the MCP
+  `account_show` / `quota_watch` tools invoked the removed `account` /
+  `quota watch` CLI verbs; repointed at `accounts status` /
+  `accounts watch-quota`. (#231)
+- **docs(skills): purge v2-era field references from `_skills/scitex-agent-container/`** —
+  brought seven skills in lockstep with the v3 validator (`config/_validation.py`),
+  which strictly rejects `spec.remote`, `metadata.name`, top-level
+  `spec.model`, `spec.skills`, and `dot_claude`. Highlights: full rewrite
+  of `11_remote-deploy.md` to `spec.host` / `spec.hosts` + `sac --on <peer>`
+  dispatch; YAML example in `01_config-v3.md` no longer ships
+  `spec.skills` / top-level `spec.model` / `multiplexer-alive`; A2A
+  AgentCard mapping in `07_a2a-protocol-extension-fields.md` points at
+  the dir-as-SSoT name source and the file-based skill layout;
+  `19_full-agent-troubleshooting.md` replaces the `spec.skills.required` /
+  `spec.skills.available` table with the `to_home/.claude/skills/<id>/`
+  delivery mechanism. Added validator tests covering the unknown-spec-field
+  catch-all and the `metadata.name` / `dot_claude` / `spec.skills`
+  rejection messages; relocation-vs-unknown messages stay distinct.
+
+## [0.21.1] — 2026-05-26
+
+### Added
+- **feat(ssh): connection multiplexing across all sac→peer ssh calls**
+  — every sac call that shells out to ssh now prepends
+  `-o ControlMaster=auto -o ControlPersist=60s -o ControlPath=<dir>/%C`
+  so concurrent calls against the same peer share one TCP+SSH master.
+  Fixes (a) "control socket dir is read-only" inside apptainer SIFs
+  where the default `~/.ssh/sockets` ControlPath lands on the overlay,
+  and (b) silent drops when fanning out across hosts that cap
+  per-user concurrent sessions (Spartan `MaxSessions`,
+  sshd `MaxStartups`). The ControlPath dir defaults to
+  `${TMPDIR:-/tmp}/.sac-ssh-cm` (writable inside apptainer); override
+  with `$SAC_SSH_CONTROL_DIR`; opt out entirely with
+  `SAC_SSH_CONTROL_MASTER=0`. New helpers
+  `scitex_agent_container._state.host_config.ssh_control_options()`
+  and `ssh_control_options_str()`, applied centrally in `build_ssh_argv`
+  and at three direct-ssh call sites (`_network.peer._post_turn_via_ssh`,
+  `cli_pkg.priority_cmds._ssh_start_agent`,
+  `cli_pkg._send_preflight.default_ssh_runner`). New CLI
+  `sac host ssh-opts` prints the flags shell-quoted for use in agent
+  prompts as `ssh $(sac host ssh-opts) host cmd`. See
+  `_skills/scitex-agent-container/11_remote-deploy.md` §
+  "SSH connection multiplexing". Failure mode is fall-through: if the
+  control dir can't be created (read-only mount, ENOSPC) the helper
+  returns `[]` and ssh argv stays byte-identical to pre-patch.
+>>>>>>> origin/develop
+
 ## [0.21.0] — 2026-05-25
 
 ### Added

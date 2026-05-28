@@ -26,6 +26,24 @@ From: ubuntu:24.04
     export DEBIAN_FRONTEND=noninteractive
 
     # ---- 1. apt: system packages ---------------------------------------
+    # Dev-CLIs ship from apt where Ubuntu 24.04 carries them — faster
+    # builds, no rust toolchain dependency for the default set. The
+    # Debian binary-name quirk (fd→fdfind, bat→batcat) is resolved by
+    # symlinks in section 1b. ``tree`` is still source-built in section
+    # 5 (apt ships an older 2.0.x; we want 2.1.3 features).
+    #
+    # Agent-useful, non-interactive CLI tool set:
+    #   fd-find ripgrep bat eza tree jq git-delta gdu (apt)
+    #   yq sd dust (sections 4a / 4b — not in apt)
+    # Interactive-only tools (htop, top, ncdu, fzf TUI mode) are
+    # intentionally excluded — sac agents are headless; an agent has
+    # no TTY to drive a curses UI and `htop` is dead weight in the SIF.
+    # `procps`/`lsof`/`strace`/`less` stay because their NON-interactive
+    # modes (pgrep, ps, lsof piped, strace -c, less -F) are agent-useful.
+    #
+    # git/curl/ca-certificates/openssh-client are listed here so any
+    # future base-image trim cannot silently drop them — sac runtime
+    # hard-depends on each one (HTTPS verify chain, SSH dispatch, git).
     apt-get update
     apt-get install -y --no-install-recommends \
         ca-certificates curl wget gnupg \
@@ -34,9 +52,11 @@ From: ubuntu:24.04
         libffi-dev libssl-dev libgl1-mesa-dev libc6-dev \
         python3 python3-pip python3-venv python3-dev \
         locales tzdata \
-        htop procps lsof strace less \
+        procps lsof strace less \
         iputils-ping dnsutils netcat-openbsd \
         nano jq \
+        fd-find ripgrep bat eza \
+        git-delta gdu \
         tini
     locale-gen en_US.UTF-8
 
@@ -51,6 +71,18 @@ From: ubuntu:24.04
     userdel -r ubuntu 2>/dev/null || true
     rm -rf /home/ubuntu
     useradd -m -d /home/agent -s /bin/bash -u 1000 agent
+
+    # ---- 1b. Debian binary-name quirk symlinks -------------------------
+    # apt-installed ``fd-find`` ships its binary as ``fdfind`` (avoids a
+    # name clash with the long-retired ``fd`` chess engine package), and
+    # ``bat`` ships as ``batcat`` (clash with bacula-console-tray). Every
+    # piece of muscle memory + tooling we care about (rg/fd shorthand,
+    # ``bat`` pager) expects the short names; symlink both into
+    # ``/usr/local/bin`` so the apt build behaves like an upstream
+    # cargo-installed name. ``ripgrep`` and ``eza`` already install as
+    # ``rg`` / ``eza`` — no symlink needed.
+    ln -sf "$(command -v fdfind)" /usr/local/bin/fd
+    ln -sf "$(command -v batcat)" /usr/local/bin/bat
 
     # ---- 2. GitHub CLI -------------------------------------------------
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
@@ -84,7 +116,24 @@ From: ubuntu:24.04
 
     rm -rf /var/lib/apt/lists/*
 
-    # ---- 4. Rust toolchain + Rust CLIs ---------------------------------
+    # ---- 4. Rust toolchain + cargo-binstall ----------------------------
+    # Toolchain + cargo-binstall stay so additional Rust CLIs can be
+    # layered in (apptainer-scitex.def or downstream image-rebuild flows)
+    # without re-installing rustup. The default dev-CLI set baked here:
+    #
+    #   * ``sd``   — sed-like find/replace, non-interactive (Rust)
+    #   * ``dust`` — du-like disk-usage summary (one-shot, non-interactive)
+    #
+    # Both are useful to a headless agent (scripted refactors, "what is
+    # eating my overlay") and ship from cargo because Ubuntu 24.04 has
+    # neither in apt. The interactive disk-explorer cousins
+    # (``ncdu``, ``gdu`` TUI mode) are deliberately NOT installed —
+    # ``gdu --non-interactive`` from apt covers the headless case in
+    # section 1.
+    #
+    # For the operator's hand-curated extra Rust-CLI set (per-host,
+    # post-launch in an overlay) see ``~/.bin/installers/install_rust_clis.sh``
+    # in the operator dotfiles.
     export RUSTUP_HOME=/opt/rust
     export CARGO_HOME=/opt/cargo
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
@@ -94,8 +143,20 @@ From: ubuntu:24.04
         https://github.com/cargo-bins/cargo-binstall/releases/latest/download/cargo-binstall-x86_64-unknown-linux-musl.tgz \
         | tar xz -C /opt/cargo/bin/
     chmod +x /opt/cargo/bin/cargo-binstall
-    cargo binstall --no-confirm --force fd-find bat eza ripgrep
+    cargo binstall --no-confirm --force sd dust
     rm -rf /opt/cargo/registry /opt/cargo/git
+
+    # ---- 4a. yq — pulled as a static binary from mikefarah/yq --------
+    # ``yq`` is the YAML cousin of ``jq``; Ubuntu's ``yq`` apt package
+    # ships kislyuk/yq (a thin jq wrapper, different CLI surface), not
+    # the mikefarah Go binary that the rest of the SciTeX ecosystem
+    # uses. Pull the Go binary directly to /usr/local/bin so callers
+    # get the expected `.path | select(...)` syntax — non-interactive,
+    # single static binary, no runtime deps.
+    curl -fsSL \
+        https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 \
+        -o /usr/local/bin/yq
+    chmod +x /usr/local/bin/yq
 
     # ---- 5. tree v2.1.3 from source ------------------------------------
     curl -fsSL https://gitlab.com/OldManProgrammer/unix-tree/-/archive/2.1.3/unix-tree-2.1.3.tar.gz \
@@ -165,7 +226,7 @@ From: ubuntu:24.04
 %labels
     org.scitex.layer base
     org.scitex.runtime apptainer
-    org.scitex.contains "git gh node npm rustc cargo fd bat eza rg tree uv pipx mermaid prettier eslint jsonlint"
+    org.scitex.contains "git gh node npm rustc cargo fd bat eza rg tree jq yq delta gdu sd dust uv pipx mermaid prettier eslint jsonlint"
 
 %help
     scitex-agent-container :base layer.

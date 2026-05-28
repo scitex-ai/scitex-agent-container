@@ -148,6 +148,7 @@ when `spec.a2a.port` is set) and `GET /agents/<name>/card`
 | `overlay`     | path                          | Writable rw layer above the SIF                            |
 | `overlay_size` | size string (e.g. `"5G"`, `"500M"`) | When set together with `overlay`, sac auto-creates the overlay image at that path with the given size if it doesn't exist (declarative — no manual `apptainer overlay create` step). Units: M/MB/G/GB only (K/KB rejected). Empty = no auto-create (missing overlay raises a clear FileNotFoundError at launch). |
 | `overlay_create_if_missing` | bool (default `true`) | Gate for the auto-create behaviour above. When `false` AND the overlay is missing, sac raises FileNotFoundError without attempting creation (operator must pre-create with `apptainer overlay create`). |
+| `tmpfs_size`  | size string (default `"2G"`)  | Minimum free-space guarantee for the container's `/tmp` (and `/var/tmp`). A `--containall` container otherwise gets a 64 MB session tmpfs at `/tmp` that fills mid-run during the full test suite. sac emits `--workdir <state_dir>/tmp-scratch` to relocate `/tmp` onto the host filesystem (capacity >> 64 MB) and fails loud (`TmpfsSpaceError`) if that filesystem has less than `tmpfs_size` free. Units: M/MB/G/GB only (K/KB rejected). NOT a hard cap (unprivileged apptainer can't size-cap a tmpfs). Set to `""` to opt out (legacy 64 MB tmpfs). Skipped when the operator declares their own `--workdir`/`-W` in `raw_args`. |
 | `binds[]`     | `host:container[:ro\|rw]` (or legacy `{src,dst,mode}` dict) | Bind mounts. Source side supports `~` / `$VAR` (sac expands before calling apptainer). Destination MUST be absolute (apptainer rejects relative / `~` / `$VAR`); conventional roots are `/home/agent/...` (D5 canonical HOME), `/srv/`, `/work/`, `/opt/`, `/data/`. The legacy `{src, dst, mode}` dict form is still accepted by the parser and normalized to the string form. |
 | `env`         | key-value dict                | Env vars exported into the container                       |
 | `container_workdir` | path (default `/work`)  | Working directory inside the container.                    |
@@ -161,7 +162,9 @@ when `spec.a2a.port` is set) and `GET /agents/<name>/card`
 
 | Field                       | Type                                  | Description                                                       |
 |-----------------------------|---------------------------------------|-------------------------------------------------------------------|
-| `model`                     | `haiku` \| `sonnet` \| `opus` \| ...  | Claude model                                                      |
+| `model`                     | alias or full ID (default `sonnet`)   | Claude model — see **Available models** below |
+| `account`                   | string                                | Pin this agent to a stored OAuth account (`sac accounts` store-name). Mutually exclusive with `provider`. |
+| `provider`                  | `{ base_url, auth_token_env }`        | Point the SDK session at any Anthropic-compatible endpoint (e.g. DeepSeek). `base_url` is the endpoint; `auth_token_env` is the NAME of the host env var holding the key (never the key). Mutually exclusive with `account`; relaxes the `claude-*` model-alias check. See ADR-0011. |
 | `session`                   | `continue` \| `new-session` \| `resume`| Session strategy (default `continue` — safe fallback). Legacy aliases `continue-or-new`, `new` accepted |
 | `resume_id`                 | string                                | Explicit session UUID for `session: resume`                       |
 | `continue_max_age_minutes`  | int                                   | Only resume if session.jsonl is newer than N minutes              |
@@ -169,6 +172,36 @@ when `spec.a2a.port` is set) and `GET /agents/<name>/card`
 | `channels[]`                | `server:<name>` / `plugin:<id>@<v>`   | MCP push channels (passed as `claude --channels`)                 |
 | `auto_accept`               | bool (default `True`)                 | Auto-confirm permission prompts in the TUI                        |
 | `raw_options`               | dict                                  | **Escape hatch** — splatted into `ClaudeAgentOptions(**raw_options)` |
+
+#### Available models (`spec.claude.model`)
+
+sac validates `model` at YAML-load time, then hands it to the Claude Code
+SDK (`claude --model`), which resolves the value to a concrete model. Two
+shapes are accepted:
+
+**1. Bare alias** — recommended; auto-tracks the latest version of that family:
+
+| Alias               | Resolves to (current, 2026-05)        | When to use                         |
+|---------------------|---------------------------------------|-------------------------------------|
+| `opus`              | Claude Opus 4.7                        | Most capable; heaviest / slowest    |
+| `sonnet`            | Claude Sonnet 4.6 — **default**        | Balanced capability and speed       |
+| `haiku`             | Claude Haiku 4.5                       | Fastest, cheapest; light tasks      |
+| `inherit` / `default` | SDK / host default                  | Don't pin a family explicitly       |
+
+Append `[1m]` for the 1M-token context window where the model offers it —
+e.g. `opus[1m]`, `sonnet[1m]`.
+
+**2. Full versioned ID** — pins one exact model, no auto-tracking:
+`claude-<family>-N-M[-<date>][[ctx]]`, e.g. `claude-opus-4-7`,
+`claude-opus-4-7[1m]`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`.
+
+Abbreviated forms missing the version digits (e.g. `claude-opus[1m]`) are
+**rejected at validate-time** — they pass the YAML loader but the SDK
+silently returns zero tokens (no API call), so the agent looks hung. The
+pinned regex catches this early.
+
+> Under a `provider` override (e.g. DeepSeek) the `claude-*` alias check
+> is relaxed — use the provider's own model names instead.
 
 ### `spec.health` / `spec.restart` / `spec.watchdog` / `spec.autonomous`
 
