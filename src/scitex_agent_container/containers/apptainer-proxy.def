@@ -62,7 +62,7 @@ From: ubuntu:24.04
     # fails with ModuleNotFoundError. Pin to develop until proxy lands
     # in a release.
     python3 -m pip install --no-cache-dir --break-system-packages \
-        "git+https://github.com/ywatanabe1989/scitex-agent-container.git@develop"
+        "git+https://github.com/ywatanabe1989/scitex-agent-container.git@main"
 
     # Convenience symlink — same rationale as apptainer-base.def: many
     # tools hard-code `python` rather than `python3`.

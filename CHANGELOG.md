@@ -6,6 +6,47 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.21.3] — 2026-05-28
+
+### Added
+- **feat(comms): stage 1 — symmetric federated `comms_nodes`** (ADR-0014,
+  #234). New `comms_nodes` table (globally-unique `name` → `(host, a2a_port)`
+  routing tuple) added to `KNOWN_TABLES` so `sac db export/import` carries
+  it. `resolve_node_host` falls through to `comms_nodes` after the
+  `instances` lookup, so a node living on another host's listen (e.g.
+  `lead` on `ywata-note-win`) resolves correctly from a peer host.
+  Symmetric ssh-pull anti-entropy via new `sac registry sync
+  [--from PEER | --to PEER | --all] [--dry-run]` reusing the existing
+  `sac db export/import` primitive over the operator's `peers:` ssh
+  trust. Listen-startup hook registers the host's operator identity
+  (from `LeadConfig`) into local `comms_nodes`; agent-lifecycle hook
+  writes/tombstones the agent's row alongside the `instances` row.
+  Conflict policy: name globally unique, fail-loud (`CommsNodeConflictError`)
+  on `(host, a2a_port)` mismatch between sources. Adds `sac db export
+  --tables TABLE[,TABLE...]` filter.
+- **feat(comms): stage 2 — cross-host push via ssh-transport selector +
+  ACL e2e** (ADR-0015, #236). `_node_channel._forward_to_remote` now
+  selects per-host: ssh-curl when `target_host` is a member of
+  `host_config.peers` (including `spartan-*` glob), HTTP otherwise.
+  Generalized `_network._ssh_curl._post_via_ssh_curl(host, port, path,
+  body, bearer, timeout_s)` helper shared by `/v1/turn` and
+  `/agents/<name>/message:send` — same argv shape, ControlMaster reuse,
+  body via ssh-stdin into `curl -d @-`. Receiver-side ACL already
+  correct (admin-bearer path → `metadata.from_agent` honoured →
+  `has_grant` checked against the **receiver's** local `comms_grants`).
+  Closes the structural WAN gap that blocked Spartan-agent → lead push.
+  No-mocks ssh-shim fixture (`tests/.../_helpers/ssh_http_shim.py`)
+  installs a real `ssh` binary on `$PATH` that performs an in-process
+  `httpx.post` against the destination loopback listen — substitutes
+  the ssh tunnel without mocking subprocess. Stage 2 added 17 NM+TQ-
+  compliant tests (5 happy-path e2e + 12 error-path); codecov on the
+  diff landed at 87.50%.
+
+### Fixed
+- **docs(changelog): drop orphan `>>>>>>> origin/develop` merge marker**
+  that survived a prior develop→main resolution and rendered as raw
+  conflict text inside the v0.21.1 entry.
+
 ## [0.21.2] — 2026-05-28
 
 ### Added
@@ -74,7 +115,6 @@ versioning follows [SemVer](https://semver.org/).
   "SSH connection multiplexing". Failure mode is fall-through: if the
   control dir can't be created (read-only mount, ENOSPC) the helper
   returns `[]` and ssh argv stays byte-identical to pre-patch.
->>>>>>> origin/develop
 
 ## [0.21.0] — 2026-05-25
 

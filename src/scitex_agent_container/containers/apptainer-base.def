@@ -143,7 +143,7 @@ From: ubuntu:24.04
         https://github.com/cargo-bins/cargo-binstall/releases/latest/download/cargo-binstall-x86_64-unknown-linux-musl.tgz \
         | tar xz -C /opt/cargo/bin/
     chmod +x /opt/cargo/bin/cargo-binstall
-    cargo binstall --no-confirm --force sd dust
+    cargo binstall --no-confirm --force sd du-dust
     rm -rf /opt/cargo/registry /opt/cargo/git
 
     # ---- 4a. yq — pulled as a static binary from mikefarah/yq --------
@@ -199,7 +199,7 @@ From: ubuntu:24.04
     export PATH=/root/.local/bin:/usr/local/bin:$PATH
     uv pip install --python /opt/venv-sac/bin/python \
         "claude-agent-sdk==0.1.72" \
-        "git+https://github.com/ywatanabe1989/scitex-agent-container.git@develop"
+        "git+https://github.com/ywatanabe1989/scitex-agent-container.git@main"
 
     # Surface the SDK's bundled claude CLI on PATH so humans can
     # `apptainer shell` and run `claude` interactively, and so that
