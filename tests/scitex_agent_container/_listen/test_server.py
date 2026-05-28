@@ -38,6 +38,7 @@ from scitex_agent_container._listen.server import create_app
 from scitex_agent_container._runners import _session_state as _ss
 from scitex_agent_container._state import registry as _reg
 from scitex_agent_container._state import state_db
+from scitex_agent_container._state import state_db_nodes as state_db_nodes_grant
 from scitex_agent_container._state.state_db_nodes import record_lineage
 
 TOKEN = "test-token-abc123"
@@ -945,6 +946,278 @@ def test_cross_host_forward_502_body_carries_add_peer_fix(
     err = r.json().get("error", "")
     # Assert
     assert "sac host add-peer" in err
+
+
+# ---------------------------------------------------------------------------
+# ADR-0015 Stage 2 — ssh-transport selector + e2e ACL.
+#
+# When ``target_host`` is a member of ``host_config.peers`` (typical for
+# real WAN hostnames the operator already has ssh trust to, e.g.
+# ``ywata-note-win``), the forwarder swaps the HTTP leg for ssh + remote
+# curl. The destination's ACL is unchanged — the receiver still gates
+# on ``metadata.from_agent`` against its own ``comms_grants`` table.
+#
+# These tests exercise the full ssh leg without mocking subprocess: an
+# ``ssh`` shim binary on ``$PATH`` performs the *real* httpx POST to the
+# loopback uvicorn instance that stands in for the destination host.
+# ---------------------------------------------------------------------------
+
+
+def _write_peers_config(*, tmp_path: Path, target_host: str, ssh_target: str) -> Path:
+    """Write a minimal ``config.yaml`` with one peer mapping.
+
+    The forwarder calls ``host_config.load()`` which honours
+    ``SCITEX_AGENT_CONTAINER_CONFIG`` — the caller is expected to set
+    that env var to the returned path before the request fires.
+    """
+    cfg_path = tmp_path / "config.yaml"
+    cfg = {
+        "host": {"canonical": "host-b"},
+        "peers": {target_host: {"ssh": ssh_target}},
+    }
+    cfg_path.write_text(yaml.safe_dump(cfg))
+    return cfg_path
+
+
+@pytest.fixture
+def cross_host_ssh_env(cross_host_env, ssh_http_shim, env_save_restore):
+    """Extend ``cross_host_env`` with the ssh shim + a ``peers:`` config.
+
+    Produces the topology the ssh-transport tests share:
+
+    * A real uvicorn listen acts as host A (the destination, owns
+      ``alice``). ``$peer-tokens/host-a.token`` is already seeded by
+      the parent fixture.
+    * A peers config that names ``host-a`` (the canonical host name on
+      ``alice``'s ``instances`` row) with ``ssh: host-a-via-shim`` —
+      that's the literal token the shim will see as its ssh host
+      argument. Membership flips the forwarder onto the ssh leg.
+    * The ssh shim is installed at the front of ``$PATH`` so the
+      production code's ``subprocess.run(["ssh", ...])`` call lands
+      on our shim instead of a real ``ssh``. The shim performs a
+      real loopback ``httpx`` POST into host A's uvicorn — no mocks.
+
+    Returned dict carries: ``db``, ``tmp``, ``host_a_port`` (free
+    port reserved for host A's uvicorn), ``host_b_port`` (free port
+    for the forwarder's TestClient session), ``shim`` (the
+    :class:`_SshHttpShim` controller), ``token`` (SHARED_TOKEN).
+    """
+    # Arrange
+    tmp = cross_host_env["tmp"]
+    cfg_path = _write_peers_config(
+        tmp_path=tmp, target_host="host-a", ssh_target="host-a-via-shim"
+    )
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg_path))
+    ssh_http_shim.install()
+    host_a_port = _free_port()
+    host_b_port = _free_port()
+    yield {
+        "db": cross_host_env["db"],
+        "tmp": tmp,
+        "host_a_port": host_a_port,
+        "host_b_port": host_b_port,
+        "shim": ssh_http_shim,
+        "token": SHARED_TOKEN,
+    }
+
+
+def _drive_ssh_cross_host_send(
+    cross_host_ssh_env: dict,
+    *,
+    sender: str,
+    text: str,
+) -> dict:
+    """Subscribe on host A as ``alice``, POST to host B for ``alice``
+    with ``from_agent=sender``, return the SSE event host A receives.
+
+    Both hosts run as real ``uvicorn`` instances; host B's forwarder
+    uses the ssh shim (which performs a real httpx POST into host A's
+    uvicorn). Mirrors :func:`test_cross_host_send_forwards_to_target_host`
+    one section above — the only difference is the transport.
+    """
+    db = cross_host_ssh_env["db"]
+    host_a_port = cross_host_ssh_env["host_a_port"]
+    host_b_port = cross_host_ssh_env["host_b_port"]
+
+    state_db.record_instance_start(name="alice", host="host-a", a2a_port=0, db_path=db)
+    with state_db.open_db(db) as conn:
+        conn.execute(
+            "UPDATE instances SET a2a_port = ? WHERE name = 'alice'",
+            (host_a_port,),
+        )
+
+    app_a = create_app(token=SHARED_TOKEN, local_host="host-a")
+    app_b = create_app(token=SHARED_TOKEN, local_host="host-b")
+
+    async def driver() -> dict:
+        with _run_loopback(app_a, host_a_port):
+            ready = asyncio.Event()
+            captured: dict = {}
+
+            async def consume():
+                async with httpx.AsyncClient(timeout=5.0) as ac:
+                    async with ac.stream(
+                        "GET",
+                        f"http://127.0.0.1:{host_a_port}/agents/alice/inbox/stream",
+                        headers={"authorization": f"Bearer {SHARED_TOKEN}"},
+                    ) as sse:
+                        async for line in sse.aiter_lines():
+                            if line.startswith(":"):
+                                ready.set()
+                                continue
+                            if line.startswith("data:"):
+                                captured["event"] = json.loads(
+                                    line[len("data:") :].lstrip()
+                                )
+                                return
+
+            sub = asyncio.create_task(consume())
+            try:
+                await asyncio.wait_for(ready.wait(), timeout=5.0)
+                with _run_loopback(app_b, host_b_port):
+                    async with httpx.AsyncClient(timeout=10.0) as ac:
+                        resp = await ac.post(
+                            f"http://127.0.0.1:{host_b_port}/agents/alice/message:send",
+                            json=_send_payload(text, from_agent=sender),
+                            headers={"authorization": f"Bearer {SHARED_TOKEN}"},
+                        )
+                if resp.status_code >= 400:
+                    raise RuntimeError(
+                        f"ssh forward returned {resp.status_code}: {resp.text!r}"
+                    )
+                await asyncio.wait_for(sub, timeout=5.0)
+            finally:
+                if not sub.done():
+                    sub.cancel()
+                    with contextlib.suppress(BaseException):
+                        await sub
+            return captured.get("event", {})
+
+    return asyncio.run(driver())
+
+
+def test_cross_host_send_via_ssh_shim_delivers_to_remote_inbox(
+    cross_host_ssh_env,
+) -> None:
+    """End-to-end ssh-transport: a POST to host B's ``message:send`` for
+    a target pinned to host A arrives on host A's broker through the
+    ssh-shim leg.
+    """
+    # Arrange
+    db = cross_host_ssh_env["db"]
+    record_lineage(child="permitted-peer", parent="root", db_path=db)
+    record_lineage(child="alice", parent="root", db_path=db)
+    # Act
+    event = _drive_ssh_cross_host_send(
+        cross_host_ssh_env, sender="permitted-peer", text="hi via ssh"
+    )
+    # Assert
+    assert event.get("content") == "hi via ssh"
+
+
+def test_cross_host_send_via_ssh_shim_preserves_from_agent_metadata(
+    cross_host_ssh_env,
+) -> None:
+    """The forwarded event keeps the original ``from_agent`` across the
+    ssh transport so host A's ACL gates on the real sender, not the
+    forwarding host's identity.
+    """
+    # Arrange
+    db = cross_host_ssh_env["db"]
+    record_lineage(child="permitted-peer", parent="root", db_path=db)
+    record_lineage(child="alice", parent="root", db_path=db)
+    # Act
+    event = _drive_ssh_cross_host_send(
+        cross_host_ssh_env, sender="permitted-peer", text="probe"
+    )
+    # Assert
+    assert event.get("from_agent") == "permitted-peer"
+
+
+def test_cross_host_send_with_explicit_grant_unblocks_cross_group_push(
+    cross_host_ssh_env,
+) -> None:
+    """Cross-group sends are denied by default; an explicit grant on
+    the *destination's* ``comms_grants`` flips deny→allow. The grant
+    must live on the receiver's db — the forwarder is just a router.
+    """
+    # Arrange — sender lives under a SEPARATE root from alice, so the
+    # default intra-group ACL would deny. The grant on the receiver's
+    # db (same db here; the fixture's tmp HOME pins both apps to it)
+    # is the only thing that should let the message through.
+    db = cross_host_ssh_env["db"]
+    record_lineage(child="alice", parent="root-a", db_path=db)
+    record_lineage(child="outsider", parent="root-b", db_path=db)
+    state_db_nodes_grant.grant_send(
+        sender="outsider",
+        target="alice",
+        db_path=db,
+        note="ADR-0015 stage2 e2e test grant",
+    )
+    # Act
+    event = _drive_ssh_cross_host_send(
+        cross_host_ssh_env, sender="outsider", text="cross-group"
+    )
+    # Assert
+    assert event.get("content") == "cross-group"
+
+
+def test_cross_host_send_without_grant_returns_403_from_target_listen(
+    cross_host_ssh_env,
+) -> None:
+    """Without a ``comms_grants`` row the receiver denies cross-group
+    sends — the ssh transport must surface that as a non-2xx response
+    to the originating sender (loud failure, no silent drop).
+    """
+    # Arrange
+    db = cross_host_ssh_env["db"]
+    host_a_port = cross_host_ssh_env["host_a_port"]
+    host_b_port = cross_host_ssh_env["host_b_port"]
+    record_lineage(child="alice", parent="root-a", db_path=db)
+    record_lineage(child="outsider", parent="root-b", db_path=db)
+    state_db.record_instance_start(name="alice", host="host-a", a2a_port=0, db_path=db)
+    with state_db.open_db(db) as conn:
+        conn.execute(
+            "UPDATE instances SET a2a_port = ? WHERE name = 'alice'",
+            (host_a_port,),
+        )
+    app_a = create_app(token=SHARED_TOKEN, local_host="host-a")
+    app_b = create_app(token=SHARED_TOKEN, local_host="host-b")
+
+    async def driver() -> int:
+        with _run_loopback(app_a, host_a_port), _run_loopback(app_b, host_b_port):
+            async with httpx.AsyncClient(timeout=10.0) as ac:
+                resp = await ac.post(
+                    f"http://127.0.0.1:{host_b_port}/agents/alice/message:send",
+                    json=_send_payload("denied", from_agent="outsider"),
+                    headers={"authorization": f"Bearer {SHARED_TOKEN}"},
+                )
+            return resp.status_code
+
+    # Act
+    status = asyncio.run(driver())
+    # Assert
+    assert status == 403
+
+
+def test_cross_host_send_via_ssh_shim_uses_peer_token_bearer_header(
+    cross_host_ssh_env,
+) -> None:
+    """The shim's captured Authorization header matches the destination
+    host's bearer (``peer-tokens/host-a.token``) — proves the forwarder
+    rotated to the *destination's* token, not its own listen token.
+    """
+    # Arrange
+    db = cross_host_ssh_env["db"]
+    record_lineage(child="permitted-peer", parent="root", db_path=db)
+    record_lineage(child="alice", parent="root", db_path=db)
+    _drive_ssh_cross_host_send(
+        cross_host_ssh_env, sender="permitted-peer", text="bearer probe"
+    )
+    # Act
+    record = cross_host_ssh_env["shim"].last()
+    # Assert
+    assert record is not None and record.get("bearer") == SHARED_TOKEN
 
 
 # ---------------------------------------------------------------------------

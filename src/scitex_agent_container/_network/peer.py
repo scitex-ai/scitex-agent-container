@@ -276,9 +276,18 @@ def _post_turn_via_ssh(
     ``127.0.0.1:port`` *on the remote*, and pipes the JSON envelope
     through ssh stdin to remote curl stdin. Lets agents stay on
     loopback while peers reach them through the ssh control plane.
+
+    ADR-0015 Stage 2: the ssh argv + remote-curl construction now lives
+    in :func:`_ssh_curl._post_via_ssh_curl` and is shared with the
+    cross-host ``message:send`` forwarder. The argv shape and the
+    ``rc != 0 → PeerError`` semantics here are preserved verbatim; the
+    only behavior change is that a ``subprocess.TimeoutExpired`` is now
+    surfaced as ``rc=124`` by the helper, which this wrapper still
+    maps to the same ``ssh+curl timeout`` ``PeerError``.
     """
-    import subprocess
     import urllib.parse
+
+    from ._ssh_curl import _post_via_ssh_curl
 
     parsed = urllib.parse.urlparse(url)
     host = parsed.hostname
@@ -286,60 +295,36 @@ def _post_turn_via_ssh(
     if not host or not port:
         raise PeerError(f"malformed ssh URL: {url!r}")
 
-    remote_curl = (
-        f"curl -sS --max-time {int(timeout_s)} "
-        "-X POST -H 'Content-Type: application/json' -d @- "
-        f"http://127.0.0.1:{port}/v1/turn"
-    )
-    # Connection multiplexing — concurrent v1/turn deliveries to the
-    # same peer share one ssh master, avoiding sshd MaxSessions caps and
-    # the per-call TCP handshake. See
-    # :func:`scitex_agent_container._state.host_config.ssh_control_options`.
-    from .._state.host_config import ssh_control_options
-
-    ssh_cmd = [
-        "ssh",
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        "ConnectTimeout=15",
-        *ssh_control_options(),
-        host,
-        remote_curl,
-    ]
     turn_body: dict[str, Any] = {"text": text, "exit_after": bool(exit_after)}
     if dispatch_id is not None:
         turn_body["dispatch_id"] = dispatch_id
     if from_agent is not None:
         turn_body["from_agent"] = from_agent
-    body = json.dumps(turn_body)
-    try:
-        proc = subprocess.run(
-            ssh_cmd,
-            input=body,
-            capture_output=True,
-            text=True,
-            timeout=timeout_s + 15,
-        )
-    except subprocess.TimeoutExpired as exc:
+    body = json.dumps(turn_body).encode("utf-8")
+    rc, stdout, stderr = _post_via_ssh_curl(
+        host=host,
+        port=port,
+        path="/v1/turn",
+        body=body,
+        bearer=None,
+        timeout_s=timeout_s,
+    )
+    if rc == 124:
+        raise PeerError(f"ssh+curl timeout to {host}:{port} after {timeout_s:.0f}s")
+    if rc != 0:
         raise PeerError(
-            f"ssh+curl timeout to {host}:{port} after {timeout_s:.0f}s"
-        ) from exc
-    if proc.returncode != 0:
-        raise PeerError(
-            f"ssh+curl to {host}:{port} failed (rc={proc.returncode}): "
-            f"{(proc.stderr or '').strip()[:300]}"
+            f"ssh+curl to {host}:{port} failed (rc={rc}): "
+            f"{stderr.decode('utf-8', errors='replace').strip()[:300]}"
         )
+    stdout_text = stdout.decode("utf-8", errors="replace")
     try:
         # Take the last non-empty line in case .bashrc on the remote
         # printed banners before curl's body.
-        lines = [
-            line for line in (proc.stdout or "").strip().splitlines() if line.strip()
-        ]
+        lines = [line for line in stdout_text.strip().splitlines() if line.strip()]
         payload = json.loads(lines[-1])
     except (json.JSONDecodeError, IndexError) as exc:
         raise PeerError(
-            f"ssh+curl to {host}:{port} returned non-JSON: {(proc.stdout or '')[:300]}"
+            f"ssh+curl to {host}:{port} returned non-JSON: {stdout_text[:300]}"
         ) from exc
     # Over ssh the remote curl (no --fail) returns rc=0 even on a 504, so
     # the HTTP status is invisible — the honest body's status field is the
