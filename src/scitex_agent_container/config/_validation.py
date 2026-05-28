@@ -14,6 +14,7 @@ from pathlib import Path
 import yaml
 
 from ._acl_validation import validate_phase3_acl
+from ._provider_validation import provider_is_active, validate_provider
 
 # Accepted shapes for ``spec.model`` (F-CS7).
 #
@@ -132,30 +133,9 @@ _V3_REMOVED_FIELDS: dict[str, str] = {
 }
 
 
-def _validate_provider(provider_block: object) -> list[str]:
-    """Validate ``spec.claude.provider`` (vendor backend override).
-
-    Absent / non-dict → no errors (provider feature unused). When the
-    block is a dict, both ``base_url`` and ``auth_token_env`` must be
-    non-empty strings — an incomplete override would silently fall back
-    to Anthropic at runtime, which we refuse to allow.
-    """
-    if not isinstance(provider_block, dict):
-        return []
-    errors: list[str] = []
-    for field_name in ("base_url", "auth_token_env"):
-        val = provider_block.get(field_name)
-        if val is None or val == "":
-            errors.append(
-                f"spec.claude.provider.{field_name} is required and must be "
-                "non-empty when spec.claude.provider is declared."
-            )
-        elif not isinstance(val, str):
-            errors.append(
-                f"spec.claude.provider.{field_name} must be a string, got "
-                f"{type(val).__name__}"
-            )
-    return errors
+# ``_validate_provider`` moved to ``_provider_validation.validate_provider``
+# (ADR-0011 extension — provider as registered string identifier; see
+# the sibling module for the dict + string forms).
 
 
 def validate_raw(raw: dict, path: str) -> list[str]:
@@ -276,8 +256,8 @@ def validate_raw(raw: dict, path: str) -> list[str]:
         # is the provider's own (e.g. 'deepseek-chat') and the claude-*
         # regex below is skipped. Absent → behaviour unchanged.
         provider_block = claude_block.get("provider")
-        has_provider = isinstance(provider_block, dict)
-        errors.extend(_validate_provider(provider_block))
+        has_provider = provider_is_active(provider_block)
+        errors.extend(validate_provider(provider_block))
         model = claude_block.get("model")
         if model is not None:
             if not isinstance(model, str):

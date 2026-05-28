@@ -78,7 +78,7 @@ spec:
 | `channels[]` | list | MCP push channels (`server:<name>` / `plugin:<id>@<v>`) |
 | `auto_accept` | bool (default `true`) | Auto-confirm TUI permission prompts |
 | `account` | string | Pin this agent to a stored OAuth account (`sac accounts` store-name). Credentials are **boot-copied** into the agent state dir, not live-bound. Mutually exclusive with `provider`. See [26_credentials-rotation.md](26_credentials-rotation.md). |
-| `provider` | `{ base_url, auth_token_env }` | Point the SDK at any Anthropic-compatible backend (e.g. DeepSeek). `base_url` is the endpoint; `auth_token_env` is the **name** of the host env var holding the key (never the key value). Mutually exclusive with `account`; relaxes the `claude-*` model-alias check. See ADR-0011. |
+| `provider` | string OR `{ base_url, auth_token_env }` | Point the SDK at any Anthropic-compatible backend. **Canonical (ADR-0011 extension, 2026-05-28):** registered name string, e.g. `provider: mimo` / `provider: deepseek`. sac resolves the base URL + auth env var name from the registry at `config/_provider_registry.py`. **Legacy dict shape** still accepted for back-compat: `base_url` endpoint + `auth_token_env` NAME of the host env var holding the key (never the key value). Mutually exclusive with `account`; relaxes the `claude-*` model-alias check. Auto-injects `ANTHROPIC_MODEL` from `spec.claude.model` (fixes the pitfall where the SDK's default model id silently won). Adding a new provider = add one entry `{base_url, auth_token_env}` to `PROVIDERS` in `_provider_registry.py`. See ADR-0011. |
 | `raw_options` | dict | Escape hatch — splatted into `ClaudeAgentOptions(**raw_options)` |
 
 ## Auto-derived fields

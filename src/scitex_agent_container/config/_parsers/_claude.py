@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .._provider_registry import resolve_provider
 from .._provider_types import ProviderSpec
 from .._types import ClaudeSpec
 
@@ -9,11 +10,35 @@ from .._types import ClaudeSpec
 def _parse_provider(raw: dict) -> ProviderSpec | None:
     """Parse ``spec.claude.provider`` into a ``ProviderSpec`` or ``None``.
 
-    Absent / explicit-null block → ``None`` (default Anthropic backend).
-    Non-empty fields are surfaced verbatim; the validator enforces that
-    ``base_url`` + ``auth_token_env`` are non-empty when the block exists.
+    Accepts two shapes (back-compat — see ADR-0011 extension):
+
+    * **string** (new shape, operator directive 2026-05-28 msg 6783):
+      a registered provider name, e.g. ``provider: mimo``. Resolved
+      against :mod:`config._provider_registry` to recover the backend
+      metadata. An ``"anthropic"`` string-form (or any registered name
+      whose registry entry has ``base_url=None``) parses to ``None`` —
+      it means "default Anthropic backend, no override".
+    * **dict** (existing shape): ``{base_url, auth_token_env}``.
+      Forwarded verbatim to :class:`ProviderSpec`; the validator
+      enforces both fields are non-empty.
+    * anything else (absent, explicit-null, list, ...) → ``None``.
+
+    Unknown string names are silently surfaced as ``None`` here so
+    the validator (which runs against the raw block) is the single
+    source of the "unknown provider" diagnostic — keeps the error
+    message + the known-providers list in one place.
     """
     block = raw.get("provider")
+    if isinstance(block, str):
+        entry = resolve_provider(block)
+        if entry is None:
+            return None
+        base_url = entry.get("base_url") or ""
+        auth_token_env = entry.get("auth_token_env") or ""
+        if not base_url and not auth_token_env:
+            # Registered "no override" sentinel (e.g. "anthropic").
+            return None
+        return ProviderSpec(base_url=base_url, auth_token_env=auth_token_env)
     if not isinstance(block, dict):
         return None
     return ProviderSpec(

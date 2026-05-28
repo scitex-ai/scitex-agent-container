@@ -4,6 +4,12 @@
 
 Accepted (lands with PR #208 — `feat/deepseek-provider-override`).
 
+**Extended 2026-05-28** (operator directive Telegram msg 6783, this PR):
+`spec.claude.provider` accepts a registered **string identifier**
+(`provider: mimo`, `provider: deepseek`) in addition to the existing
+`{base_url, auth_token_env}` dict shape — see "Extension: registry
+form" below. The dict shape is preserved unchanged for back-compat.
+
 ## Context
 
 sac agents need to run on Anthropic-SDK-compatible alternate providers
@@ -170,3 +176,75 @@ ecosystem primitive.
   decisions described here ARE PR #208's decisions; they should land
   together so that a future reader hitting `git log` finds the rationale
   next to the implementation.
+
+## Extension: registry form (2026-05-28)
+
+Operator directive (Telegram msg 6783): the dict shape leaks the
+abstraction. The canonical operator action is "I want this agent on
+mimo / deepseek / anthropic"; sac should know the rest. Spelling out
+`base_url` and `auth_token_env` for every spec also creates a duplication
+trap — when `spec.claude.model` doesn't auto-inject as `ANTHROPIC_MODEL`,
+operators silently end up with the SDK's default model id winning over
+their spec (the lead-learnings/05 pitfall).
+
+### Decision
+
+1. **New `config/_provider_registry.py`** holds a flat `PROVIDERS` dict:
+   `{name → {base_url, auth_token_env}}`. Initial entries: `anthropic`
+   (sentinel: `base_url=None` means "no override"), `deepseek`, `mimo`,
+   `xiaomi` (alias of `mimo`). Adding a new backend is one line: append
+   an entry to `PROVIDERS`. The registry is the single source of
+   backend metadata.
+
+2. **Parser** (`config/_parsers/_claude.py::_parse_provider`) accepts
+   either a string (registry lookup; unknown → `None`, surfaced by the
+   validator) or a dict (existing shape, unchanged). The
+   `anthropic`-style "no override" entry parses to `None` — equivalent
+   to omitting the provider field.
+
+3. **Validator** (`config/_provider_validation.py::validate_provider`)
+   handles both shapes. Unknown string names produce a loud error
+   listing the registered providers via `list_providers()`, so the
+   operator sees the exact set they can pick from without reading
+   source. Extracted into its own module (sibling of
+   `_provider_registry.py` and `_provider_types.py`) to keep
+   `_validation.py` under the project's 512-line cap.
+
+4. **Runtime** (`runtimes/_apptainer_provider.py::provider_env_flags`)
+   gains `ANTHROPIC_MODEL` auto-injection from `spec.claude.model`
+   whenever a provider is active (string or dict shape — applies
+   uniformly). Closes the lead-learnings/05 duplication pitfall.
+
+### Back-compat
+
+The dict shape continues to load and validate as before. Existing
+specs need no changes. The string shape is purely additive.
+
+### Mutual exclusion with `account`
+
+Unchanged: a registered string name with `base_url != None` is "active"
+and trips the same mutual-exclusion-with-account check as the dict
+shape. The `anthropic` sentinel (or any future entry with `base_url=None`)
+is NOT active — it parses to no override, leaving the OAuth flow intact.
+
+### Adding a new provider
+
+```python
+# config/_provider_registry.py
+PROVIDERS = {
+    ...,
+    "my-gateway": {
+        "base_url": "https://my-gateway.example.com/anthropic",
+        "auth_token_env": "MY_GATEWAY_API_KEY",
+    },
+}
+```
+
+Then `provider: my-gateway` in any spec resolves to the same env-injection
+shape the dict form would have produced. No further code changes needed.
+
+### Related ADRs
+
+- ADR-0016 — Provider × Account axes for sac agent dispatch (just
+  merged; this ADR-0011 extension is the "provider" axis collapsed
+  from `{dict}` to `name`).
