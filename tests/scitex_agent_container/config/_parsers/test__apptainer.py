@@ -299,3 +299,39 @@ def test_overlay_create_if_missing_round_trips_false():
     result = parse_apptainer(spec)
     # Assert
     assert result.overlay_create_if_missing is False
+
+
+def test_tmpfs_size_defaults_to_2g_when_absent():
+    # Arrange — no apptainer block at all.
+    spec = {}
+    # Act
+    result = parse_apptainer(spec)
+    # Assert
+    assert result.tmpfs_size == "2G"
+
+
+def test_tmpfs_size_defaults_to_2g_when_apptainer_block_present_but_key_absent():
+    # Arrange
+    spec = {"apptainer": {"overlay": "/o.img"}}
+    # Act
+    result = parse_apptainer(spec)
+    # Assert
+    assert result.tmpfs_size == "2G"
+
+
+def test_tmpfs_size_round_trips_override():
+    # Arrange
+    spec = {"apptainer": {"tmpfs_size": "512M"}}
+    # Act
+    result = parse_apptainer(spec)
+    # Assert
+    assert result.tmpfs_size == "512M"
+
+
+def test_tmpfs_size_empty_string_opts_out():
+    # Arrange — explicit "" means use the legacy 64 MB session tmpfs.
+    spec = {"apptainer": {"tmpfs_size": ""}}
+    # Act
+    result = parse_apptainer(spec)
+    # Assert
+    assert result.tmpfs_size == ""

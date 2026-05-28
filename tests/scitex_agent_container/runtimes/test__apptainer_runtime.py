@@ -2486,3 +2486,102 @@ def test_fakeroot_not_doubled_when_operator_also_sets(tmp_path: Path) -> None:
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
     # Assert
     assert argv.count("--fakeroot") == 1
+
+
+# ---------------------------------------------------------------------------
+# /tmp scratch sizing — spec.apptainer.tmpfs_size (default "2G")
+# ---------------------------------------------------------------------------
+#
+# A --containall apptainer container otherwise gets a 64 MB session tmpfs
+# at /tmp, which fills mid-run during the full test suite. sac emits
+# --workdir <state_dir>/tmp-scratch to relocate /tmp onto the host
+# filesystem. See runtimes/_apptainer_tmpfs.py.
+
+
+def test_tmpfs_default_emits_workdir_flag(tmp_path: Path) -> None:
+    # Arrange — bare apptainer spec → dataclass default tmpfs_size "2G".
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd", apptainer=ApptainerSpec())
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    # Assert
+    assert "--workdir" in argv
+
+
+def test_tmpfs_default_workdir_points_at_state_scratch(tmp_path: Path) -> None:
+    # Arrange
+    rt = ApptainerContainerRuntime()
+    state_dir = tmp_path / "state"
+    cfg = _config(tmp_path / "wd", apptainer=ApptainerSpec())
+    # Act
+    argv = rt.build_run_argv(cfg, state_dir=state_dir, sif_path=tmp_path / "x.sif")
+    # Assert
+    assert _flag_value(argv, "--workdir") == str(state_dir / "tmp-scratch")
+
+
+def test_tmpfs_default_applies_without_apptainer_block(tmp_path: Path) -> None:
+    # Arrange — no apptainer block at all still gets the larger /tmp.
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd")
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    # Assert
+    assert "--workdir" in argv
+
+
+def test_tmpfs_override_size_still_emits_workdir(tmp_path: Path) -> None:
+    # Arrange — a roomy override that the tmp_path filesystem satisfies.
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd", apptainer=ApptainerSpec(tmpfs_size="512M"))
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    # Assert
+    assert _flag_value(argv, "--workdir") == str(tmp_path / "state" / "tmp-scratch")
+
+
+def test_tmpfs_empty_opts_out_of_workdir(tmp_path: Path) -> None:
+    # Arrange — explicit "" means "use the legacy 64 MB session tmpfs".
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd", apptainer=ApptainerSpec(tmpfs_size=""))
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    # Assert
+    assert "--workdir" not in argv
+
+
+def test_tmpfs_not_doubled_when_operator_sets_workdir(tmp_path: Path) -> None:
+    # Arrange — operator's own --workdir in raw_args wins; sac skips its.
+    rt = ApptainerContainerRuntime()
+    cfg = _config(
+        tmp_path / "wd",
+        apptainer=ApptainerSpec(raw_args=["--workdir", "/scratch/mine"]),
+    )
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    # Assert
+    assert argv.count("--workdir") == 1
+
+
+def test_tmpfs_operator_workdir_value_preserved(tmp_path: Path) -> None:
+    # Arrange
+    rt = ApptainerContainerRuntime()
+    cfg = _config(
+        tmp_path / "wd",
+        apptainer=ApptainerSpec(raw_args=["--workdir", "/scratch/mine"]),
+    )
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    # Assert
+    assert _flag_value(argv, "--workdir") == "/scratch/mine"

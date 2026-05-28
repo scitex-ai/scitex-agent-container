@@ -102,6 +102,7 @@ mode.
 
 | Pitfall | Fix |
 |---|---|
+| `/tmp` fills mid-run — "No space left on device" during `pytest`, coverage XML, or tmp-heavy fixtures | a `--containall` container's `/tmp` is a 64 MB session tmpfs. sac now relocates it onto host disk by default via `spec.apptainer.tmpfs_size` (default `"2G"`) → `--workdir <state_dir>/tmp-scratch`. If you see this on an old spec, bump `tmpfs_size` or confirm it isn't set to `""` (opt-out). |
 | Heavy data under `~` on Spartan → quota | put workdirs under `/tmp` or project FS (`/data/gpfs/projects/<punim>/...`) |
 | Re-launching an already-passed agent | parent's done-detection must accept all score-schema variants |
 | Subagent-style narrow prompt | include "you are a *full* agent — use Bash, run tests, commit" explicitly |
