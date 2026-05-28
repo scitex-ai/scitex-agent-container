@@ -617,3 +617,105 @@ def test_spec_remote_rejection_drops_stale_section_reference():
     assert "§2" not in message, (
         f"spec.remote rejection must not cite stale §2; got {message!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Unknown spec field — generic catch-all for typos / undeclared keys.
+#
+# The validator must reject any spec key outside ``_KNOWN_SPEC_KEYS`` plus
+# the v3-relocated/removed sets. This guards against typos silently
+# disappearing into ``spec.extensions`` semantics, and keeps the docs and
+# validator in lockstep — every example in the skills must use only known
+# field names.
+# ---------------------------------------------------------------------------
+
+
+def test_validate_raw_rejects_unknown_spec_field():
+    """An undeclared top-level spec key is rejected with a helpful error."""
+    # Arrange
+    raw = {
+        "apiVersion": "scitex-agent-container/v3",
+        "kind": "Agent",
+        "spec": {"runtime": "apptainer", "totally_made_up_field": 42},
+    }
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert — the rejection names the offending key AND points at the
+    # canonical escape hatch (spec.extensions for custom data).
+    assert any(
+        "totally_made_up_field" in e and "spec.extensions" in e for e in errors
+    ), (
+        f"unknown spec field must be rejected pointing at spec.extensions; got {errors!r}"
+    )
+
+
+def test_validate_raw_unknown_spec_field_does_not_collide_with_relocated_message():
+    """Relocated fields get a specific redirect message, not the generic
+    'unknown field' one. Keep the two messages distinct so operators
+    fixing a v2 spec see the relocation hint instead of a vague typo
+    complaint."""
+    # Arrange — spec.model is a v3-RELOCATED field (→ spec.claude.model).
+    raw = {
+        "apiVersion": "scitex-agent-container/v3",
+        "kind": "Agent",
+        "spec": {"runtime": "apptainer", "model": "opus"},
+    }
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert — the relocation hint is present AND the generic
+    # "Unknown spec field" message is NOT also emitted for the same key.
+    assert any("spec.claude.model" in e for e in errors) and not any(
+        "Unknown spec field 'model'" in e for e in errors
+    ), f"spec.model must produce only a relocation hint; got {errors!r}"
+
+
+def test_validate_raw_rejects_metadata_name():
+    """The v2-era ``metadata.name`` field is rejected with a redirect to
+    the dir-as-SSoT layout."""
+    # Arrange
+    raw = {
+        "apiVersion": "scitex-agent-container/v3",
+        "kind": "Agent",
+        "metadata": {"name": "legacy-agent"},
+        "spec": {"runtime": "apptainer"},
+    }
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert — rejected AND the message points at the dir-as-SSoT layout.
+    assert any("metadata.name" in e and "parent directory" in e for e in errors), (
+        f"metadata.name must be rejected pointing at dir-as-SSoT; got {errors!r}"
+    )
+
+
+def test_validate_raw_rejects_dot_claude():
+    """The legacy ``spec.dot_claude`` layout key is rejected with a
+    redirect to the ``to_home/`` deploy pipeline (ADR-0006)."""
+    # Arrange
+    raw = {
+        "apiVersion": "scitex-agent-container/v3",
+        "kind": "Agent",
+        "spec": {"runtime": "apptainer", "dot_claude": {"skills": []}},
+    }
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert any("dot_claude" in e and "to_home" in e for e in errors), (
+        f"spec.dot_claude must be rejected pointing at the to_home pipeline; got {errors!r}"
+    )
+
+
+def test_validate_raw_rejects_spec_skills():
+    """The v2-era ``spec.skills`` block is rejected; skills now live as
+    files under ``to_home/.claude/skills/``."""
+    # Arrange
+    raw = {
+        "apiVersion": "scitex-agent-container/v3",
+        "kind": "Agent",
+        "spec": {"runtime": "apptainer", "skills": {"required": ["foo"]}},
+    }
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert any("spec.skills" in e and "to_home" in e for e in errors), (
+        f"spec.skills must be rejected pointing at to_home/.claude/skills/; got {errors!r}"
+    )
