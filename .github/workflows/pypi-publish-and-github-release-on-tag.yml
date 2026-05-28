@@ -12,12 +12,34 @@ name: release
 #   2. build         — wheel + sdist, uploaded as workflow artifact.
 #   3. publish       — PyPI via OIDC trusted publisher.
 #   4. release       — GitHub Release with CHANGELOG notes + artifacts.
+#                      IDEMPOTENT: re-runs (via workflow_dispatch) update
+#                      an existing release in place rather than failing.
 #   5. sync-main     — open a develop→main PR (admin-merge) so main
 #                      always equals the latest released commit. Skipped
 #                      if main already matches.
 #
 # Manual re-run: the workflow also accepts a `version` input via
 # workflow_dispatch so you can re-publish without re-tagging.
+#
+# Trap — ``[skip ci]`` ON THE TAGGED COMMIT SUPPRESSES THIS WORKFLOW.
+# GitHub Actions honours ``[skip ci]`` / ``[ci skip]`` / ``[no ci]`` /
+# ``[skip actions]`` / ``[actions skip]`` in the commit message for ALL
+# trigger types including ``push: tags:``. If the tag is placed on a
+# commit whose message carries one of those markers (commonly: the
+# sphinx-bot's ``docs: refresh _sphinx_html/ ... [skip ci]`` follow-up
+# commit), the entire workflow no-ops silently and the operator has to
+# fall back to ``workflow_dispatch`` manual re-run.
+#
+# Release-flow doctrine to avoid this trap: tag the MERGE commit of the
+# release PR specifically, not ``origin/main`` HEAD. The merge commit's
+# message ("Merge pull request #NNN from <branch>") never carries the
+# skip marker; ``origin/main`` HEAD can race-advance via a sphinx-bot
+# ``[skip ci]`` docs refresh between merge and tag. Concretely:
+#
+#     # After merging the release PR, get the merge SHA:
+#     MERGE_SHA=$(gh pr view <N> --json mergeCommit --jq '.mergeCommit.oid')
+#     git tag -fa vX.Y.Z "$MERGE_SHA" -m "release: vX.Y.Z — ..."
+#     git push origin vX.Y.Z
 
 on:
   push:
@@ -136,14 +158,31 @@ jobs:
           if [ ! -s release-notes.md ]; then
             echo "Release v${VERSION}. See CHANGELOG.md for details." > release-notes.md
           fi
-      - name: Create GitHub Release
+      - name: Create or update GitHub Release (idempotent)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${{ needs.build.outputs.version }}" \
-            --title "${{ needs.build.outputs.version }}" \
-            --notes-file release-notes.md \
-            dist/*
+          # Idempotent release publish: re-runs (workflow_dispatch
+          # re-publish path, common when the on-tag trigger was
+          # suppressed by ``[skip ci]`` on the tagged commit — see
+          # header comment) must UPDATE the existing GH Release in
+          # place instead of failing on "release already exists".
+          VERSION="${{ needs.build.outputs.version }}"
+          if gh release view "$VERSION" > /dev/null 2>&1; then
+            echo "Release $VERSION exists — updating title, notes, and assets."
+            gh release edit "$VERSION" \
+              --title "$VERSION" \
+              --notes-file release-notes.md
+            # --clobber overwrites assets of the same name without
+            # tripping the duplicate-asset error.
+            gh release upload "$VERSION" dist/* --clobber
+          else
+            echo "Release $VERSION does not exist — creating."
+            gh release create "$VERSION" \
+              --title "$VERSION" \
+              --notes-file release-notes.md \
+              dist/*
+          fi
 
   sync-main:
     # Open develop→main PR so main always equals the latest released
