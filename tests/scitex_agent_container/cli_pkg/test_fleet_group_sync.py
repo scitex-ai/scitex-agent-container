@@ -29,7 +29,6 @@ from click.testing import CliRunner
 from scitex_agent_container._state.spec_manifest import build_manifest
 from scitex_agent_container.cli_pkg.fleet_group import fleet_group
 
-
 # ---------------------------------------------------------------------------
 # Fixtures + helpers
 # ---------------------------------------------------------------------------
@@ -165,9 +164,7 @@ def test_sync_collect_emits_manifest_with_local_host_name(
     assert payload["host"] == "local"
 
 
-def test_sync_collect_emits_spec_yaml_sha256(
-    tmp_path: Path, env_save_restore
-) -> None:
+def test_sync_collect_emits_spec_yaml_sha256(tmp_path: Path, env_save_restore) -> None:
     # Arrange
     _write_config(tmp_path, env_save_restore, canonical="local", peers={})
     home = _redirect_home(tmp_path, env_save_restore)
@@ -186,9 +183,7 @@ def test_sync_collect_emits_spec_yaml_sha256(
 # ---------------------------------------------------------------------------
 
 
-def test_sync_exits_zero_when_all_hosts_agree(
-    tmp_path: Path, env_save_restore
-) -> None:
+def test_sync_exits_zero_when_all_hosts_agree(tmp_path: Path, env_save_restore) -> None:
     # Arrange — local has alpha, peer "spartan" has identical alpha.
     _write_config(
         tmp_path,
@@ -198,11 +193,11 @@ def test_sync_exits_zero_when_all_hosts_agree(
     )
     home = _redirect_home(tmp_path, env_save_restore)
     local_agents = home / ".scitex/agent-container/agents"
-    _make_agent(local_agents, "alpha", spec="same\n",
-                to_home_files={"CLAUDE.md": "x\n"})
+    _make_agent(
+        local_agents, "alpha", spec="same\n", to_home_files={"CLAUDE.md": "x\n"}
+    )
     peer_agents = tmp_path / "spartan_agents"
-    _make_agent(peer_agents, "alpha", spec="same\n",
-                to_home_files={"CLAUDE.md": "x\n"})
+    _make_agent(peer_agents, "alpha", spec="same\n", to_home_files={"CLAUDE.md": "x\n"})
     _install_ssh_shim(
         tmp_path,
         mapping={
@@ -367,8 +362,7 @@ def test_sync_json_output_lists_diverged_hosts_for_conflict(
     result = runner.invoke(fleet_group, ["sync", "--json"])
     payload = json.loads(result.output)
     spec_conflict = next(
-        c for c in payload["agents"]["alpha"]["conflicts"]
-        if c["file"] == "spec.yaml"
+        c for c in payload["agents"]["alpha"]["conflicts"] if c["file"] == "spec.yaml"
     )
     # Assert
     assert spec_conflict["diverged_hosts"] == ["bm198"]
@@ -433,9 +427,7 @@ def test_sync_unreachable_peer_message_names_the_peer(
     assert "spartan" in result.output
 
 
-def test_sync_does_not_modify_any_peer_tree(
-    tmp_path: Path, env_save_restore
-) -> None:
+def test_sync_does_not_modify_any_peer_tree(tmp_path: Path, env_save_restore) -> None:
     # Arrange
     _write_config(
         tmp_path,
@@ -533,6 +525,108 @@ def test_sync_only_flag_narrows_audit_to_named_agents(
     payload = json.loads(result.output)
     # Assert
     assert payload["ok"] is True
+
+
+# ---------------------------------------------------------------------------
+# Fail-loud edge branches — single-host, unknown peer, malformed JSON,
+# unresolvable peer (with and without --allow-unresolvable).
+# ---------------------------------------------------------------------------
+
+
+def test_sync_exits_two_when_no_peers_to_compare(
+    tmp_path: Path, env_save_restore
+) -> None:
+    # Arrange — a "fleet" of one host has nothing to diff.
+    _write_config(tmp_path, env_save_restore, canonical="local", peers={})
+    home = _redirect_home(tmp_path, env_save_restore)
+    _make_agent(home / ".scitex/agent-container/agents", "alpha", spec="x\n")
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(fleet_group, ["sync"])
+    # Assert
+    assert result.exit_code == 2
+
+
+def test_sync_exits_two_on_unknown_peer_filter(
+    tmp_path: Path, env_save_restore
+) -> None:
+    # Arrange — --peer names a host absent from config.yaml.
+    _write_config(
+        tmp_path,
+        env_save_restore,
+        canonical="local",
+        peers={"spartan": {"ssh": "spartan-host"}},
+    )
+    home = _redirect_home(tmp_path, env_save_restore)
+    _make_agent(home / ".scitex/agent-container/agents", "alpha", spec="x\n")
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(fleet_group, ["sync", "--peer", "ghost"])
+    # Assert
+    assert result.exit_code == 2
+
+
+def test_sync_exits_two_on_malformed_peer_json(
+    tmp_path: Path, env_save_restore
+) -> None:
+    # Arrange — peer returns non-JSON on stdout; never accept it.
+    _write_config(
+        tmp_path,
+        env_save_restore,
+        canonical="local",
+        peers={"spartan": {"ssh": "spartan-host"}},
+    )
+    home = _redirect_home(tmp_path, env_save_restore)
+    _make_agent(home / ".scitex/agent-container/agents", "alpha", spec="x\n")
+    _install_ssh_shim(
+        tmp_path,
+        mapping={"spartan-host": {"stdout": "not json at all {{{"}},
+        env_save_restore=env_save_restore,
+    )
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(fleet_group, ["sync"])
+    # Assert
+    assert result.exit_code == 2
+
+
+def test_sync_exits_two_on_unresolvable_peer_without_allow(
+    tmp_path: Path, env_save_restore
+) -> None:
+    # Arrange — peer has resolve: but no static ssh: target (Phase-1 dead end).
+    _write_config(
+        tmp_path,
+        env_save_restore,
+        canonical="local",
+        peers={"hpc": {"resolve": {"source": "scitex-hpc"}}},
+    )
+    home = _redirect_home(tmp_path, env_save_restore)
+    _make_agent(home / ".scitex/agent-container/agents", "alpha", spec="x\n")
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(fleet_group, ["sync"])
+    # Assert
+    assert result.exit_code == 2
+
+
+def test_sync_allow_unresolvable_downgrades_unresolvable_peer_to_warning(
+    tmp_path: Path, env_save_restore
+) -> None:
+    # Arrange — same unresolvable peer, but --allow-unresolvable in play.
+    _write_config(
+        tmp_path,
+        env_save_restore,
+        canonical="local",
+        peers={"hpc": {"resolve": {"source": "scitex-hpc"}}},
+    )
+    home = _redirect_home(tmp_path, env_save_restore)
+    _make_agent(home / ".scitex/agent-container/agents", "alpha", spec="x\n")
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(fleet_group, ["sync", "--json", "--allow-unresolvable"])
+    payload = json.loads(result.output)
+    # Assert
+    assert payload["unreachable"][0]["peer"] == "hpc"
 
 
 # EOF
