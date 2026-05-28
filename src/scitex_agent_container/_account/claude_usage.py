@@ -21,12 +21,15 @@ from __future__ import annotations
 
 import fcntl
 import json
+import logging
 import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+_logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Public return-shape sentinel keys
@@ -48,6 +51,17 @@ _EMPTY_RESULT: dict[str, Any] = {
 _CACHE_TTL_SECONDS = 300  # 5 minutes
 _USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 _TOKEN_URL = "https://claude.ai/api/auth/oauth/token"
+
+# Shape-dispatch + per-window extraction lives in a sibling module so this
+# file stays focused on orchestration (token read / refresh / cache / HTTP).
+# Re-exported here so existing imports such as
+# ``from .claude_usage import _parse_windows`` keep resolving.
+from .claude_usage_parsers import (  # noqa: E402,F401 — public re-exports
+    _NEW_SHAPE_KEYS as _NEW_SHAPE_KEYS,
+    _extract_quota_from_payload as _extract_quota_from_payload,
+    _parse_new_shape as _parse_new_shape,
+    _parse_windows as _parse_windows,
+)
 
 # Substrings that must never appear in KEYS of the returned dict.
 # These are chosen to catch accidental token field leaks (e.g. "accessToken")
@@ -261,11 +275,17 @@ def _write_cache(home: Path, result: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _fetch_from_api(access_token: str, *, opener=None) -> list[dict[str, Any]] | None:
-    """Call the usage API and return the parsed JSON.
+def _fetch_from_api(access_token: str, *, opener=None) -> Any:
+    """Call the usage API and return the raw parsed JSON payload.
 
-    Returns None on failure.  The response may be a list of window objects
-    or a single dict.
+    Returns whatever shape the API sent (dict for the 2026-05-28+ schema,
+    list for legacy deployments), or ``None`` on network / HTTP / JSON
+    decode failure. Shape-dispatch is the caller's job — see
+    ``_extract_quota_from_payload``.
+
+    HTTP 401 is re-raised so the public ``fetch_usage`` flow can retry
+    after a token refresh; every other failure mode is logged at WARNING
+    and returns ``None``.
     """
     req = urllib.request.Request(
         _USAGE_URL,
@@ -282,50 +302,30 @@ def _fetch_from_api(access_token: str, *, opener=None) -> list[dict[str, Any]] |
     ) as exc:  # stx-allow: fallback (reason: expected failure — see inline comment)
         if exc.code == 401:
             raise  # caller handles 401 as token-expired
+        _logger.warning("claude_usage: usage API returned HTTP %s", exc.code)
         return None
-    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+        _logger.warning("claude_usage: usage API request failed: %s", exc)
         return None
 
     # stx-allow: fallback (reason: API may return non-JSON body (maintenance page, Cloudflare HTML); None causes caller to return an error result)
     try:
         payload = json.loads(raw)
-    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+        _logger.warning(
+            "claude_usage: usage API response was not JSON: %s; first 200 bytes=%r",
+            exc,
+            raw[:200],
+        )
         return None
 
-    if isinstance(payload, list):
+    if isinstance(payload, (dict, list)):
         return payload
-    if isinstance(payload, dict):
-        # Single-window or wrapped response
-        windows = payload.get("windows") or payload.get("data")
-        if isinstance(windows, list):
-            return windows
-        # Treat the dict itself as a single window if it has "window" key
-        if "window" in payload:
-            return [payload]
+    _logger.warning(
+        "claude_usage: usage API JSON was unexpected top-level type %s",
+        type(payload).__name__,
+    )
     return None
-
-
-def _parse_windows(windows: list[dict[str, Any]]) -> dict[str, Any]:
-    """Extract 5h and 7d quota values from the API window list."""
-    result: dict[str, Any] = {}
-    for w in windows:
-        if not isinstance(w, dict):
-            continue
-        win = w.get("window")
-        used = w.get("used")
-        limit = w.get("limit")
-        reset_at = w.get("resetAt")
-        if win not in ("5h", "7d"):
-            continue
-        suffix = win.replace("h", "h").replace("d", "d")  # already correct
-        result[f"used_tokens_{suffix}"] = used if isinstance(used, int) else None
-        result[f"limit_tokens_{suffix}"] = limit if isinstance(limit, int) else None
-        if isinstance(used, int) and isinstance(limit, int) and limit > 0:
-            result[f"used_pct_{suffix}"] = round(used / limit * 100, 2)
-        else:
-            result[f"used_pct_{suffix}"] = None
-        result[f"reset_at_{suffix}"] = reset_at if isinstance(reset_at, str) else None
-    return result
 
 
 # ---------------------------------------------------------------------------
@@ -403,10 +403,10 @@ def fetch_usage(home: Path | None = None, *, opener=None) -> dict[str, Any]:
             # If refresh failed, try with the old token anyway
 
     # --- API call -----------------------------------------------------------
-    windows = None
+    payload: Any = None
     # stx-allow: fallback (reason: network errors or unexpected exceptions from the usage API are caught and surfaced as an error dict rather than an unhandled exception)
     try:
-        windows = _fetch_from_api(access_token, opener=opener)
+        payload = _fetch_from_api(access_token, opener=opener)
     except (
         urllib.error.HTTPError
     ) as exc:  # stx-allow: fallback (reason: expected failure — see inline comment)
@@ -419,20 +419,24 @@ def fetch_usage(home: Path | None = None, *, opener=None) -> dict[str, Any]:
                 access_token = new_token
                 # stx-allow: fallback (reason: second API attempt after token refresh may still fail due to network issues; pass lets the 401 handler return an error dict)
                 try:
-                    windows = _fetch_from_api(access_token, opener=opener)
+                    payload = _fetch_from_api(access_token, opener=opener)
                 except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                     pass
-        if windows is None:
+        if payload is None:
             return _err(f"HTTP {exc.code} from usage API; refresh attempted")
     except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         return _err(f"Network error: {exc}")
 
-    if windows is None:
+    if payload is None:
+        return _err("Failed to fetch or parse usage API response")
+
+    quota = _extract_quota_from_payload(payload)
+    if quota is None:
         return _err("Failed to fetch or parse usage API response")
 
     # --- build result -------------------------------------------------------
     result: dict[str, Any] = dict(_EMPTY_RESULT)
-    result.update(_parse_windows(windows))
+    result.update(quota)
     result["fetched_at"] = _iso_now()
     result["from_cache"] = False
     result["error"] = None

@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 from scitex_agent_container._account import claude_usage as cu
+from scitex_agent_container._account import claude_usage_parsers as cup
 from scitex_agent_container._account.claude_usage import (
     _EMPTY_RESULT,
     fetch_usage,
@@ -548,40 +549,15 @@ def test_fetch_from_api_returns_list_payload_unchanged() -> None:
     assert out == [{"window": "5h"}]
 
 
-def test_fetch_from_api_unwraps_windows_key() -> None:
-    # Arrange
-    opener = _opener_returning({"windows": [{"window": "5h"}]})
+def test_fetch_from_api_returns_dict_payload_unchanged() -> None:
+    # Arrange — 2026-05-28+ shape; ``_fetch_from_api`` now returns the
+    # raw payload and lets ``_extract_quota_from_payload`` dispatch.
+    payload = {"five_hour": {"utilization": 5.0, "resets_at": "2026-01-01T00:00Z"}}
+    opener = _opener_returning(payload)
     # Act
     out = cu._fetch_from_api("tok", opener=opener)
     # Assert
-    assert out == [{"window": "5h"}]
-
-
-def test_fetch_from_api_unwraps_data_key() -> None:
-    # Arrange
-    opener = _opener_returning({"data": [{"window": "7d"}]})
-    # Act
-    out = cu._fetch_from_api("tok", opener=opener)
-    # Assert
-    assert out == [{"window": "7d"}]
-
-
-def test_fetch_from_api_wraps_single_window_dict_in_list() -> None:
-    # Arrange
-    opener = _opener_returning({"window": "5h", "used": 1})
-    # Act
-    out = cu._fetch_from_api("tok", opener=opener)
-    # Assert
-    assert out == [{"window": "5h", "used": 1}]
-
-
-def test_fetch_from_api_returns_none_for_unknown_dict_shape() -> None:
-    # Arrange
-    opener = _opener_returning({"foo": "bar"})
-    # Act
-    out = cu._fetch_from_api("tok", opener=opener)
-    # Assert
-    assert out is None
+    assert out == payload
 
 
 def test_fetch_from_api_returns_none_on_malformed_json() -> None:
@@ -612,6 +588,216 @@ def test_fetch_from_api_returns_none_on_http_500() -> None:
     out = cu._fetch_from_api("tok", opener=opener)
     # Assert
     assert out is None
+
+
+def test_fetch_from_api_returns_none_for_non_dict_non_list_payload() -> None:
+    # Arrange — scalar payload (e.g. bare JSON string from a maintenance page).
+    opener = _opener_returning(b'"a bare string"')
+    # Act
+    out = cu._fetch_from_api("tok", opener=opener)
+    # Assert
+    assert out is None
+
+
+# ---------------------------------------------------------------------------
+# _extract_quota_from_payload — shape dispatcher (moved out of _fetch_from_api).
+# ---------------------------------------------------------------------------
+
+
+def test_extract_quota_dispatches_new_dict_shape() -> None:
+    # Arrange
+    payload = {
+        "five_hour": {"utilization": 12.0, "resets_at": "2026-01-01T00:00Z"},
+        "seven_day": {"utilization": 34.0, "resets_at": "2026-01-08T00:00Z"},
+    }
+    # Act
+    out = cup._extract_quota_from_payload(payload)
+    # Assert
+    assert out is not None and out["used_pct_5h"] == 12.0
+
+
+def test_extract_quota_dispatches_legacy_list_shape() -> None:
+    # Arrange
+    payload = [{"window": "5h", "used": 10, "limit": 100, "resetAt": "x"}]
+    # Act
+    out = cup._extract_quota_from_payload(payload)
+    # Assert
+    assert out is not None and out["used_pct_5h"] == 10.0
+
+
+def test_extract_quota_unwraps_legacy_windows_key() -> None:
+    # Arrange
+    payload = {"windows": [{"window": "5h", "used": 2, "limit": 10, "resetAt": "x"}]}
+    # Act
+    out = cup._extract_quota_from_payload(payload)
+    # Assert
+    assert out is not None and out["used_pct_5h"] == 20.0
+
+
+def test_extract_quota_unwraps_legacy_data_key() -> None:
+    # Arrange
+    payload = {"data": [{"window": "7d", "used": 3, "limit": 30, "resetAt": "x"}]}
+    # Act
+    out = cup._extract_quota_from_payload(payload)
+    # Assert
+    assert out is not None and out["used_pct_7d"] == 10.0
+
+
+def test_extract_quota_wraps_legacy_single_window_dict() -> None:
+    # Arrange
+    payload = {"window": "5h", "used": 1, "limit": 10, "resetAt": "x"}
+    # Act
+    out = cup._extract_quota_from_payload(payload)
+    # Assert
+    assert out is not None and out["used_pct_5h"] == 10.0
+
+
+def test_extract_quota_returns_none_for_unknown_dict_shape() -> None:
+    # Arrange
+    payload = {"foo": "bar"}
+    # Act
+    out = cup._extract_quota_from_payload(payload)
+    # Assert
+    assert out is None
+
+
+def test_extract_quota_returns_none_for_non_dict_non_list_input() -> None:
+    # Arrange
+    payload = "scalar"
+    # Act
+    out = cup._extract_quota_from_payload(payload)
+    # Assert
+    assert out is None
+
+
+# ---------------------------------------------------------------------------
+# _parse_new_shape — 2026-05-28+ Anthropic schema.
+# ---------------------------------------------------------------------------
+
+
+def test_parse_new_shape_extracts_five_hour_utilization() -> None:
+    # Arrange
+    payload = {"five_hour": {"utilization": 5.0, "resets_at": "2026-01-01T00:00Z"}}
+    # Act
+    out = cup._parse_new_shape(payload)
+    # Assert
+    assert out["used_pct_5h"] == 5.0
+
+
+def test_parse_new_shape_extracts_seven_day_utilization() -> None:
+    # Arrange
+    payload = {"seven_day": {"utilization": 39.0, "resets_at": "2026-06-01T23Z"}}
+    # Act
+    out = cup._parse_new_shape(payload)
+    # Assert
+    assert out["used_pct_7d"] == 39.0
+
+
+def test_parse_new_shape_extracts_five_hour_reset_at() -> None:
+    # Arrange
+    payload = {"five_hour": {"utilization": 5.0, "resets_at": "2026-01-01T00:00Z"}}
+    # Act
+    out = cup._parse_new_shape(payload)
+    # Assert
+    assert out["reset_at_5h"] == "2026-01-01T00:00Z"
+
+
+def test_parse_new_shape_handles_missing_five_hour_window() -> None:
+    # Arrange — only seven_day present.
+    payload = {"seven_day": {"utilization": 5.0, "resets_at": "x"}}
+    # Act
+    out = cup._parse_new_shape(payload)
+    # Assert
+    assert out["used_pct_5h"] is None
+
+
+def test_parse_new_shape_handles_null_window_value() -> None:
+    # Arrange
+    payload = {"five_hour": None, "seven_day": {"utilization": 1.0, "resets_at": "x"}}
+    # Act
+    out = cup._parse_new_shape(payload)
+    # Assert
+    assert out["used_pct_5h"] is None
+
+
+def test_parse_new_shape_handles_non_numeric_utilization() -> None:
+    # Arrange
+    payload = {"five_hour": {"utilization": "not-a-number", "resets_at": "x"}}
+    # Act
+    out = cup._parse_new_shape(payload)
+    # Assert
+    assert out["used_pct_5h"] is None
+
+
+def test_parse_new_shape_leaves_token_counts_as_none() -> None:
+    # Arrange — new schema does not surface raw token counts.
+    payload = {"five_hour": {"utilization": 50.0, "resets_at": "x"}}
+    # Act
+    out = cup._parse_new_shape(payload)
+    # Assert
+    assert out["used_tokens_5h"] is None
+
+
+# ---------------------------------------------------------------------------
+# fetch_usage — end-to-end with the live 2026-05-28+ shape.
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_usage_parses_live_anthropic_dict_shape(tmp_path: Path) -> None:
+    # Arrange — the exact shape returned by api.anthropic.com on 2026-05-28.
+    home = _make_home_full_creds(tmp_path)
+    payload = {
+        "five_hour": {"utilization": 5.0, "resets_at": "2026-05-28T15:50:00Z"},
+        "seven_day": {"utilization": 39.0, "resets_at": "2026-06-01T23:00:00Z"},
+        "seven_day_oauth_apps": None,
+        "seven_day_opus": None,
+        "seven_day_sonnet": {
+            "utilization": 0.0,
+            "resets_at": "2026-06-01T23:00:00Z",
+        },
+        "extra_usage": {
+            "is_enabled": True,
+            "monthly_limit": 4000,
+            "used_credits": 0.0,
+            "utilization": None,
+            "currency": "USD",
+            "disabled_reason": None,
+        },
+    }
+    opener = _opener_returning(payload)
+    # Act
+    result = fetch_usage(home=home, opener=opener)
+    # Assert
+    assert result["used_pct_5h"] == 5.0
+
+
+def test_fetch_usage_extracts_seven_day_from_live_anthropic_shape(
+    tmp_path: Path,
+) -> None:
+    # Arrange
+    home = _make_home_full_creds(tmp_path)
+    payload = {
+        "five_hour": {"utilization": 5.0, "resets_at": "x"},
+        "seven_day": {"utilization": 39.0, "resets_at": "y"},
+    }
+    opener = _opener_returning(payload)
+    # Act
+    result = fetch_usage(home=home, opener=opener)
+    # Assert
+    assert result["used_pct_7d"] == 39.0
+
+
+def test_fetch_usage_clears_error_field_on_new_shape_success(
+    tmp_path: Path,
+) -> None:
+    # Arrange
+    home = _make_home_full_creds(tmp_path)
+    payload = {"five_hour": {"utilization": 5.0, "resets_at": "x"}}
+    opener = _opener_returning(payload)
+    # Act
+    result = fetch_usage(home=home, opener=opener)
+    # Assert
+    assert result["error"] is None
 
 
 # ---------------------------------------------------------------------------
