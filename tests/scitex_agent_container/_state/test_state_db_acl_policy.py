@@ -93,7 +93,8 @@ def test_record_comms_policy_rejects_unknown_outbound_value(db_path: Path) -> No
     """Out-of-domain values are rejected (defence-in-depth — parser also
     rejects them at YAML-load time)."""
     # Arrange — about to call with a bad value.
-    # Act / Assert
+    # Act
+    # Assert
     with pytest.raises(ValueError):
         record_comms_policy(
             name="cap-a", outbound_siblings="maybe", db_path=db_path

@@ -73,7 +73,8 @@ def test_parse_comms_rejects_unknown_key() -> None:
     """Typos at the YAML surface fail loud rather than silently degrading."""
     # Arrange
     spec = {"comms": {"unknown": {}}}
-    # Act / Assert
+    # Act
+    # Assert
     with pytest.raises(ValueError):
         parse_comms(spec)
 
@@ -102,7 +103,8 @@ def test_parse_lineage_rejects_unknown_group_value() -> None:
     """Out-of-domain group value fails at parse time."""
     # Arrange
     spec = {"lineage": {"group": "cluster"}}
-    # Act / Assert
+    # Act
+    # Assert
     with pytest.raises(ValueError):
         parse_lineage(spec)
 
