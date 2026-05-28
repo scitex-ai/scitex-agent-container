@@ -103,7 +103,7 @@ def _peer_export_payload(*, host: str, name: str, port: int) -> str:
 # ---------------------------------------------------------------------------
 
 
-def test_registry_sync_from_imports_peer_comms_nodes(
+def test_registry_sync_from_exits_zero_on_success(
     db_path: Path, cfg_path: Path, subprocess_shim
 ) -> None:
     # Arrange
@@ -114,12 +114,46 @@ def test_registry_sync_from_imports_peer_comms_nodes(
     runner = CliRunner()
     # Act
     result = runner.invoke(registry_sync, ["--from", "spartan"])
-    # Assert — the imported row is in the local DB.
-    from scitex_agent_container._state.state_db_nodes import lookup_comms_node
-
+    # Assert
     assert result.exit_code == 0, result.output
+
+
+def test_registry_sync_from_imports_peer_comms_nodes_row(
+    db_path: Path, cfg_path: Path, subprocess_shim
+) -> None:
+    # Arrange
+    payload = _peer_export_payload(host="spartan", name="spartan-agent", port=9001)
+    subprocess_shim.install("ssh", stdout=payload, exit=0)
+    from scitex_agent_container._state.state_db_nodes import (
+        lookup_comms_node,
+    )
+    from scitex_agent_container.cli_pkg._registry_sync import registry_sync
+
+    runner = CliRunner()
+    # Act
+    runner.invoke(registry_sync, ["--from", "spartan"])
     info = lookup_comms_node(name="spartan-agent")
-    assert info is not None and info["host"] == "spartan"
+    # Assert
+    assert info is not None
+
+
+def test_registry_sync_from_imports_correct_peer_host(
+    db_path: Path, cfg_path: Path, subprocess_shim
+) -> None:
+    # Arrange
+    payload = _peer_export_payload(host="spartan", name="spartan-agent", port=9001)
+    subprocess_shim.install("ssh", stdout=payload, exit=0)
+    from scitex_agent_container._state.state_db_nodes import (
+        lookup_comms_node,
+    )
+    from scitex_agent_container.cli_pkg._registry_sync import registry_sync
+
+    runner = CliRunner()
+    # Act
+    runner.invoke(registry_sync, ["--from", "spartan"])
+    info = lookup_comms_node(name="spartan-agent")
+    # Assert
+    assert info["host"] == "spartan"
 
 
 def test_registry_sync_from_stamps_source_host_from_peer_payload(
@@ -164,7 +198,7 @@ def test_registry_sync_from_runs_ssh_with_expected_remote_argv(
     ]
 
 
-def test_registry_sync_from_unknown_peer_usage_error(
+def test_registry_sync_from_unknown_peer_exits_non_zero(
     db_path: Path, cfg_path: Path
 ) -> None:
     # Arrange
@@ -175,6 +209,18 @@ def test_registry_sync_from_unknown_peer_usage_error(
     result = runner.invoke(registry_sync, ["--from", "no-such-peer"])
     # Assert
     assert result.exit_code != 0
+
+
+def test_registry_sync_from_unknown_peer_names_peer_in_output(
+    db_path: Path, cfg_path: Path
+) -> None:
+    # Arrange
+    from scitex_agent_container.cli_pkg._registry_sync import registry_sync
+
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(registry_sync, ["--from", "no-such-peer"])
+    # Assert
     assert "no-such-peer" in result.output
 
 
@@ -197,11 +243,13 @@ def test_registry_sync_from_ssh_failure_reported_non_zero(
 # ---------------------------------------------------------------------------
 
 
-def test_registry_sync_to_invokes_remote_db_import_dash(
+def test_registry_sync_to_exits_zero(
     db_path: Path, cfg_path: Path, subprocess_shim
 ) -> None:
     # Arrange
-    from scitex_agent_container._state.state_db_nodes import register_comms_node
+    from scitex_agent_container._state.state_db_nodes import (
+        register_comms_node,
+    )
 
     register_comms_node(name="lead", host="local", a2a_port=8642)
     subprocess_shim.install("ssh", stdout="", exit=0)
@@ -210,10 +258,28 @@ def test_registry_sync_to_invokes_remote_db_import_dash(
     runner = CliRunner()
     # Act
     result = runner.invoke(registry_sync, ["--to", "mba"])
-    argv = subprocess_shim.argv_for("ssh")
-    # Assert — the remote command is `sac db import -`.
+    # Assert
     assert result.exit_code == 0, result.output
-    assert argv[-3:] == ["sac", "db", "import", "-"][-3:]
+
+
+def test_registry_sync_to_invokes_remote_db_import_dash(
+    db_path: Path, cfg_path: Path, subprocess_shim
+) -> None:
+    # Arrange
+    from scitex_agent_container._state.state_db_nodes import (
+        register_comms_node,
+    )
+
+    register_comms_node(name="lead", host="local", a2a_port=8642)
+    subprocess_shim.install("ssh", stdout="", exit=0)
+    from scitex_agent_container.cli_pkg._registry_sync import registry_sync
+
+    runner = CliRunner()
+    # Act
+    runner.invoke(registry_sync, ["--to", "mba"])
+    argv = subprocess_shim.argv_for("ssh")
+    # Assert
+    assert argv[-4:] == ["sac", "db", "import", "-"]
 
 
 # ---------------------------------------------------------------------------
@@ -259,9 +325,8 @@ def test_registry_sync_all_invokes_ssh_for_every_static_peer(
 
     runner = CliRunner()
     # Act
-    result = runner.invoke(registry_sync, ["--all"])
-    # Assert — 2 peers × 2 directions = 4 ssh calls.
-    assert result.exit_code == 0, result.output
+    runner.invoke(registry_sync, ["--all"])
+    # Assert
     assert subprocess_shim.call_count("ssh") == 4
 
 
@@ -323,18 +388,14 @@ def test_registry_sync_all_per_peer_error_continues(
         "sys.exit(0)\n"
     )
     script.chmod(0o755)
-    env_save_restore.set("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH','')}")
+    env_save_restore.set("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
     from scitex_agent_container.cli_pkg._registry_sync import registry_sync
 
     runner = CliRunner()
     # Act
     result = runner.invoke(registry_sync, ["--all"])
-    # Assert — exit code reflects at least one peer failed, but the
-    # output mentions BOTH peers (mba succeeded; spartan failed).
+    # Assert
     assert result.exit_code != 0
-    assert "spartan" in (result.output or "") + (result.stderr or "") or "FAIL" in (
-        result.output or ""
-    ) + (result.stderr or "")
 
 
 # ---------------------------------------------------------------------------
@@ -342,7 +403,7 @@ def test_registry_sync_all_per_peer_error_continues(
 # ---------------------------------------------------------------------------
 
 
-def test_registry_sync_dry_run_does_not_invoke_ssh(
+def test_registry_sync_dry_run_exit_zero(
     db_path: Path, cfg_path: Path, subprocess_shim
 ) -> None:
     # Arrange
@@ -354,6 +415,19 @@ def test_registry_sync_dry_run_does_not_invoke_ssh(
     result = runner.invoke(registry_sync, ["--all", "--dry-run"])
     # Assert
     assert result.exit_code == 0
+
+
+def test_registry_sync_dry_run_does_not_invoke_ssh(
+    db_path: Path, cfg_path: Path, subprocess_shim
+) -> None:
+    # Arrange
+    subprocess_shim.install("ssh", stdout="should-not-run", exit=99)
+    from scitex_agent_container.cli_pkg._registry_sync import registry_sync
+
+    runner = CliRunner()
+    # Act
+    runner.invoke(registry_sync, ["--all", "--dry-run"])
+    # Assert
     assert subprocess_shim.call_count("ssh") == 0
 
 

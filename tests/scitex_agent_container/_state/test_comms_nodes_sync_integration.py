@@ -63,17 +63,11 @@ def _stamp_source(payload: dict, source_host: str) -> dict:
     return new_payload
 
 
-def test_register_on_a_sync_to_b_resolves_correctly(
-    db_a: Path, db_b: Path
-) -> None:
+def test_register_on_a_sync_to_b_resolves_correctly(db_a: Path, db_b: Path) -> None:
     # Arrange — A registers lead locally.
-    register_comms_node(
-        name="lead", host="hostA", a2a_port=8642, db_path=db_a
-    )
+    register_comms_node(name="lead", host="hostA", a2a_port=8642, db_path=db_a)
     # Act — export from A, restamp source, import to B.
-    payload = export_state(
-        db_path=db_a, host="hostA", tables=["comms_nodes"]
-    )
+    payload = export_state(db_path=db_a, host="hostA", tables=["comms_nodes"])
     stamped = _stamp_source(payload, source_host="hostA")
     import_state(stamped, db_path=db_b)
     # Assert — B's resolver now finds lead on hostA.
@@ -81,28 +75,21 @@ def test_register_on_a_sync_to_b_resolves_correctly(
     assert info == {"host": "hostA", "a2a_port": 8642}
 
 
-def test_register_on_a_sync_to_b_is_not_local_on_b(
-    db_a: Path, db_b: Path
-) -> None:
-    # Arrange + Act — same flow as above.
-    register_comms_node(
-        name="lead", host="hostA", a2a_port=8642, db_path=db_a
-    )
+def test_register_on_a_sync_to_b_is_not_local_on_b(db_a: Path, db_b: Path) -> None:
+    # Arrange
+    register_comms_node(name="lead", host="hostA", a2a_port=8642, db_path=db_a)
     payload = export_state(db_path=db_a, host="hostA", tables=["comms_nodes"])
+    # Act
     import_state(_stamp_source(payload, "hostA"), db_path=db_b)
-    # Assert — B treats lead as NON-local (the bug-fix assertion).
-    assert not is_local_node(
-        name="lead", local_host="hostB", db_path=db_b
-    )
+    # Assert
+    assert not is_local_node(name="lead", local_host="hostB", db_path=db_b)
 
 
 def test_idempotent_re_import_does_not_create_duplicates(
     db_a: Path, db_b: Path
 ) -> None:
     # Arrange
-    register_comms_node(
-        name="lead", host="hostA", a2a_port=8642, db_path=db_a
-    )
+    register_comms_node(name="lead", host="hostA", a2a_port=8642, db_path=db_a)
     payload = export_state(db_path=db_a, host="hostA", tables=["comms_nodes"])
     # Act — import twice.
     import_state(_stamp_source(payload, "hostA"), db_path=db_b)
@@ -133,13 +120,10 @@ def test_conflict_when_both_hosts_claim_same_name_with_different_target(
         source_host=None,
         db_path=db_b,
     )
-    # Act + Assert — direct register call mirroring the post-sync
-    # path (the sync would have imported A's row via INSERT OR IGNORE
-    # — which silently skips because the PK exists — so the conflict
-    # surfaces when B-side code tries to register A's row as a peer-
-    # sourced row through the primitive). Pulling the row through the
-    # primitive with a different source_host is exactly what
-    # ``register_comms_node`` rejects.
+    # Act
+    # Assert — sync would import via INSERT OR IGNORE (silent skip on
+    # existing PK); the conflict surfaces when B-side code tries to
+    # re-register A's row as a peer-sourced row through the primitive.
     with pytest.raises(CommsNodeConflictError):
         register_comms_node(
             name="lead",

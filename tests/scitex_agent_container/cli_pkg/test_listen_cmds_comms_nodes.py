@@ -69,9 +69,7 @@ def test_register_self_writes_comms_nodes_row_for_lead_identity(
     assert info is not None and info["host"] == "lead-host"
 
 
-def test_register_self_records_correct_port(
-    db_path: Path, cfg_with_lead: Path
-) -> None:
+def test_register_self_records_correct_port(db_path: Path, cfg_with_lead: Path) -> None:
     # Arrange
     from scitex_agent_container.cli_pkg.listen_cmds import _register_self_comms_node
 
@@ -88,8 +86,8 @@ def test_register_self_no_lead_block_is_silent_noop(
     db_path: Path, cfg_no_lead: Path
 ) -> None:
     # Arrange
-    from scitex_agent_container.cli_pkg.listen_cmds import _register_self_comms_node
     from scitex_agent_container._state.state_db_nodes import list_comms_nodes
+    from scitex_agent_container.cli_pkg.listen_cmds import _register_self_comms_node
 
     # Act
     _register_self_comms_node(port=8642)
@@ -97,9 +95,7 @@ def test_register_self_no_lead_block_is_silent_noop(
     assert list_comms_nodes() == []
 
 
-def test_register_self_source_host_is_none(
-    db_path: Path, cfg_with_lead: Path
-) -> None:
+def test_register_self_source_host_is_none(db_path: Path, cfg_with_lead: Path) -> None:
     # Arrange
     from scitex_agent_container.cli_pkg.listen_cmds import _register_self_comms_node
 
@@ -112,29 +108,37 @@ def test_register_self_source_host_is_none(
     assert info["source_host"] is None
 
 
-def test_register_self_does_not_raise_when_config_missing(
+def test_register_self_with_missing_config_writes_no_row(
     db_path: Path, tmp_path: Path, env_save_restore
 ) -> None:
     # Arrange — point config to a non-existent file. ``host_config.load``
     # is missing-tolerant so the hook should land in the "no lead"
-    # silent-noop branch, never raise.
-    env_save_restore.set(
-        "SCITEX_AGENT_CONTAINER_CONFIG", str(tmp_path / "absent.yaml")
+    # silent-noop branch and write no row.
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(tmp_path / "absent.yaml"))
+    from scitex_agent_container._state.state_db_nodes import list_comms_nodes
+    from scitex_agent_container.cli_pkg.listen_cmds import (
+        _register_self_comms_node,
     )
-    from scitex_agent_container.cli_pkg.listen_cmds import _register_self_comms_node
 
-    # Act + Assert — must not raise.
+    # Act
     _register_self_comms_node(port=8642)
+    rows = list_comms_nodes()
+    # Assert
+    assert rows == []
 
 
-def test_maybe_sync_on_start_no_peers_is_quiet(
+def test_maybe_sync_on_start_no_peers_writes_no_row(
     db_path: Path, cfg_with_lead: Path
 ) -> None:
     # Arrange
+    from scitex_agent_container._state.state_db_nodes import list_comms_nodes
     from scitex_agent_container.cli_pkg.listen_cmds import _maybe_sync_on_start
 
-    # Act + Assert — must not raise even though there are no peers.
+    # Act
     _maybe_sync_on_start()
+    rows = list_comms_nodes()
+    # Assert
+    assert rows == []
 
 
 def test_maybe_sync_on_start_respects_disable_flag(
@@ -152,7 +156,11 @@ def test_maybe_sync_on_start_respects_disable_flag(
         )
     )
     env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(p))
+    from scitex_agent_container._state.state_db_nodes import list_comms_nodes
     from scitex_agent_container.cli_pkg.listen_cmds import _maybe_sync_on_start
 
-    # Act + Assert — must not raise (would otherwise attempt ssh).
+    # Act
     _maybe_sync_on_start()
+    rows = list_comms_nodes()
+    # Assert
+    assert rows == []

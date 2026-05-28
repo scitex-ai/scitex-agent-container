@@ -41,42 +41,84 @@ def db_path(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_export_state_no_tables_filter_includes_everything(db_path: Path) -> None:
+@pytest.mark.parametrize(
+    "table",
+    [
+        "definitions",
+        "instances",
+        "instance_heartbeats",
+        "events",
+        "attempts",
+        "turns",
+        "errors",
+        "heartbeats",
+        "channel_events",
+        "node_tokens",
+        "lineage",
+        "comms_grants",
+        "comms_nodes",
+    ],
+)
+def test_export_state_no_tables_filter_includes_table(
+    db_path: Path, table: str
+) -> None:
     # Arrange
-    from scitex_agent_container._state.state_db import (
-        KNOWN_TABLES,
-        export_state,
-    )
+    from scitex_agent_container._state.state_db import export_state
 
     # Act
     payload = export_state()
-    # Assert — every known table appears as a key (rows may be empty).
-    for table in KNOWN_TABLES:
-        assert table in payload["tables"]
+    # Assert
+    assert table in payload["tables"]
 
 
-def test_export_state_tables_filter_restricts_to_named_only(db_path: Path) -> None:
+def test_export_state_tables_filter_emits_comms_nodes_row(
+    db_path: Path,
+) -> None:
     # Arrange
-    from scitex_agent_container._state.state_db import export_state
-    from scitex_agent_container._state.state_db_nodes import register_comms_node
+    from scitex_agent_container._state.state_db import (
+        export_state,
+        record_instance_start,
+    )
+    from scitex_agent_container._state.state_db_nodes import (
+        register_comms_node,
+    )
 
     register_comms_node(name="alpha", host="h1", a2a_port=7000, db_path=db_path)
-    # also seed something into a non-selected table
-    from scitex_agent_container._state.state_db import record_instance_start
-
     record_instance_start("agent-a", host="h1")
     # Act
     payload = export_state(tables=["comms_nodes"])
-    # Assert — comms_nodes carries its row; instances is empty in the dump.
+    # Assert
     assert len(payload["tables"]["comms_nodes"]) == 1
+
+
+def test_export_state_tables_filter_excludes_unlisted_tables(
+    db_path: Path,
+) -> None:
+    # Arrange
+    from scitex_agent_container._state.state_db import (
+        export_state,
+        record_instance_start,
+    )
+    from scitex_agent_container._state.state_db_nodes import (
+        register_comms_node,
+    )
+
+    register_comms_node(name="alpha", host="h1", a2a_port=7000, db_path=db_path)
+    record_instance_start("agent-a", host="h1")
+    # Act
+    payload = export_state(tables=["comms_nodes"])
+    # Assert
     assert payload["tables"]["instances"] == []
 
 
-def test_export_state_tables_filter_unknown_table_raises(db_path: Path) -> None:
+def test_export_state_tables_filter_unknown_table_raises(
+    db_path: Path,
+) -> None:
     # Arrange
     from scitex_agent_container._state.state_db import export_state
 
-    # Act + Assert
+    # Act
+    # Assert
     with pytest.raises(ValueError, match="unknown table"):
         export_state(tables=["not_a_real_table"])
 
@@ -86,9 +128,11 @@ def test_export_state_tables_filter_unknown_table_raises(db_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_db_export_tables_flag_emits_only_named_table(db_path: Path) -> None:
+def test_db_export_tables_flag_exits_zero(db_path: Path) -> None:
     # Arrange
-    from scitex_agent_container._state.state_db_nodes import register_comms_node
+    from scitex_agent_container._state.state_db_nodes import (
+        register_comms_node,
+    )
     from scitex_agent_container.cli_pkg.db_group import db_export
 
     register_comms_node(name="alpha", host="h1", a2a_port=7000, db_path=db_path)
@@ -97,33 +141,73 @@ def test_db_export_tables_flag_emits_only_named_table(db_path: Path) -> None:
     result = runner.invoke(db_export, ["--tables", "comms_nodes"])
     # Assert
     assert result.exit_code == 0, result.output
+
+
+def test_db_export_tables_flag_emits_only_named_table(db_path: Path) -> None:
+    # Arrange
+    from scitex_agent_container._state.state_db_nodes import (
+        register_comms_node,
+    )
+    from scitex_agent_container.cli_pkg.db_group import db_export
+
+    register_comms_node(name="alpha", host="h1", a2a_port=7000, db_path=db_path)
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(db_export, ["--tables", "comms_nodes"])
     payload = json.loads(result.output)
+    # Assert
     assert len(payload["tables"]["comms_nodes"]) == 1
 
 
-def test_db_export_tables_flag_unknown_name_bad_parameter(db_path: Path) -> None:
+def test_db_export_tables_flag_unknown_name_exits_two(
+    db_path: Path,
+) -> None:
     # Arrange
     from scitex_agent_container.cli_pkg.db_group import db_export
 
     runner = CliRunner()
     # Act
     result = runner.invoke(db_export, ["--tables", "not_a_real_table"])
-    # Assert — click.BadParameter raises a usage error, exit code 2.
+    # Assert
     assert result.exit_code == 2
-    assert "not_a_real_table" in result.output
 
 
-def test_db_export_tables_flag_accepts_csv_multiple(db_path: Path) -> None:
+def test_db_export_tables_flag_unknown_name_names_offender_in_output(
+    db_path: Path,
+) -> None:
     # Arrange
     from scitex_agent_container.cli_pkg.db_group import db_export
 
     runner = CliRunner()
     # Act
-    result = runner.invoke(
-        db_export, ["--tables", "comms_nodes,instances"]
-    )
+    result = runner.invoke(db_export, ["--tables", "not_a_real_table"])
     # Assert
-    assert result.exit_code == 0, result.output
+    assert "not_a_real_table" in result.output
+
+
+def test_db_export_tables_flag_csv_includes_comms_nodes(
+    db_path: Path,
+) -> None:
+    # Arrange
+    from scitex_agent_container.cli_pkg.db_group import db_export
+
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(db_export, ["--tables", "comms_nodes,instances"])
     payload = json.loads(result.output)
+    # Assert
     assert "comms_nodes" in payload["tables"]
+
+
+def test_db_export_tables_flag_csv_includes_instances(
+    db_path: Path,
+) -> None:
+    # Arrange
+    from scitex_agent_container.cli_pkg.db_group import db_export
+
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(db_export, ["--tables", "comms_nodes,instances"])
+    payload = json.loads(result.output)
+    # Assert
     assert "instances" in payload["tables"]
