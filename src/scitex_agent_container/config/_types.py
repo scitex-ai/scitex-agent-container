@@ -6,6 +6,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict
 
+# Phase-3 ACL dataclasses (kept in a sibling module under the per-file
+# line cap; re-exported here for the :class:`AgentConfig` field defaults).
+from ._acl_types import CommsSpec, LineageSpec  # noqa: E402,F401
 from ._provider_types import ProviderSpec
 
 
@@ -193,6 +196,25 @@ class ApptainerSpec:
     <MB> <path>`` before launching. When False, sac never creates
     overlays even if size is given (operator must pre-create — sac
     raises FileNotFoundError instead). See ``docs/isolation.md`` §7."""
+
+    tmpfs_size: str = "2G"
+    """Minimum free-space guarantee for the container's ``/tmp`` (and
+    ``/var/tmp``). A ``--containall`` apptainer container otherwise gets
+    a 64 MB session tmpfs at ``/tmp`` — too small for the full test
+    suite, coverage XML generation, or pytest fixtures with file IO,
+    which fill it mid-run with "No space left on device".
+
+    sac emits ``--workdir <state_dir>/tmp-scratch`` to relocate ``/tmp``
+    onto the host filesystem (capacity >> 64 MB) and verifies that
+    filesystem has at least this many bytes free before launch, failing
+    loud otherwise. Accepts apptainer-style sizes with units M/MB/G/GB
+    only (e.g. ``"2G"``, ``"512M"``, ``"2048MB"``); K/KB rejected.
+
+    NOT a hard cap — an unprivileged apptainer user cannot mount a
+    size-capped tmpfs (``--mount type=tmpfs`` is unsupported), so the
+    contract is "at least this much room", backed by host disk. Set to
+    ``""`` to opt out entirely (legacy 64 MB tmpfs). See
+    ``runtimes/_apptainer_tmpfs.py``."""
 
     relaxed: bool = False
     """Opt out of sac's hardened defaults (auto-prepended
@@ -451,6 +473,10 @@ class AgentConfig:
     user: str = ""
     # Inbound A2A endpoint (HTTP /v1/turn + AgentCard).
     a2a: A2ASpec = field(default_factory=A2ASpec)
+    # Phase-3 capsule-isolation: per-spec ACL policy + spawn gating.
+    # Defaults preserve pre-Phase-3 behaviour (everything allow / true).
+    comms: CommsSpec = field(default_factory=CommsSpec)
+    lineage: LineageSpec = field(default_factory=LineageSpec)
     # v3 ``kind`` discriminator: "Agent" (SDK runner) or "AgentProxy"
     # (HTTP forwarder — see :class:`ProxySpec`). Validator rejects any
     # other value. Loader populates from raw["kind"].

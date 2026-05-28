@@ -105,7 +105,8 @@ by rule B make cross-host `status`/`post-turn` resolvable.
 |---|---|---|
 | 1 | auto-record in core start + schema (`bound_port`/`remote`/`spawned_by`); remote resolve | **MERGED (PR #189)** |
 | 2 | mechanism #3 (server-mediated spawn via `sac listen POST /agents`, routed through core start; `spawned_by` = requester) | pending (a prior attempt died on a transient 529 throttle) |
-| 3 | server-managed ACL: a `sac acl grant/revoke/list` CLI (no such CLI exists today — only an internal `grant_send` writing `state.db`), lead-privileged rule, child⊆parent enforcement, ssh-localhost self-spawn block, YAML exceptions | pending |
+| 3a | per-spec ACL schema + server-side enforcement: `spec.comms.outbound.{siblings,parent}`, `spec.comms.inbound.{siblings,parent}`, `spec.comms.a2a.listen`, `spec.lineage.group=solitary`, `spec.lineage.may_spawn` (clew 5-gap doc); persisted in `node_comms_policy` and consulted by `check_send_acl` / `check_spawn` / `derive_group` | **DONE** (Phase-3, this PR) |
+| 3b | `sac acl grant/revoke/list` CLI, lead-privileged rule, child⊆parent enforcement, ssh-localhost self-spawn block | pending |
 | — | family-tree DAG visualization | pending (schema fields ready) |
 | #2 prereq | SLURM client in SIF + munge/host-binds | **DONE + verified on Spartan** |
 

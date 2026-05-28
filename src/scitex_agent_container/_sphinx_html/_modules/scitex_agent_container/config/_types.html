@@ -5,7 +5,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>scitex_agent_container.config._types &mdash; scitex-agent-container v0.21.1</title>
+  <title>scitex_agent_container.config._types &mdash; scitex-agent-container v0.21.2</title>
       <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
       <link rel="stylesheet" type="text/css" href="../../../_static/copybutton.css?v=76b2166b" />
@@ -13,7 +13,7 @@
   
       <script src="../../../_static/jquery.js?v=5d32c60e"></script>
       <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
-      <script src="../../../_static/documentation_options.js?v=6081af2d"></script>
+      <script src="../../../_static/documentation_options.js?v=57792547"></script>
       <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
       <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
       <script src="../../../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -222,8 +222,8 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.extensions"><code class="docutils literal notranslate"><span class="pre">AgentConfig.extensions</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.skills</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.context_management"><code class="docutils literal notranslate"><span class="pre">AgentConfig.context_management</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_commands"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_commands</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_prompts"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_prompts</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.mcp_servers"><code class="docutils literal notranslate"><span class="pre">AgentConfig.mcp_servers</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.multiplexer"><code class="docutils literal notranslate"><span class="pre">AgentConfig.multiplexer</span></code></a></li>
@@ -233,6 +233,8 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.mounts"><code class="docutils literal notranslate"><span class="pre">AgentConfig.mounts</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.user"><code class="docutils literal notranslate"><span class="pre">AgentConfig.user</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.a2a"><code class="docutils literal notranslate"><span class="pre">AgentConfig.a2a</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.comms"><code class="docutils literal notranslate"><span class="pre">AgentConfig.comms</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.lineage"><code class="docutils literal notranslate"><span class="pre">AgentConfig.lineage</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.kind"><code class="docutils literal notranslate"><span class="pre">AgentConfig.kind</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.proxy"><code class="docutils literal notranslate"><span class="pre">AgentConfig.proxy</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.to_home"><code class="docutils literal notranslate"><span class="pre">AgentConfig.to_home</span></code></a></li>
@@ -434,6 +436,9 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Dict</span>
 
+<span class="c1"># Phase-3 ACL dataclasses (kept in a sibling module under the per-file</span>
+<span class="c1"># line cap; re-exported here for the :class:`AgentConfig` field defaults).</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._acl_types</span><span class="w"> </span><span class="kn">import</span> <span class="n">CommsSpec</span><span class="p">,</span> <span class="n">LineageSpec</span>  <span class="c1"># noqa: E402,F401</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">._provider_types</span><span class="w"> </span><span class="kn">import</span> <span class="n">ProviderSpec</span>
 
 
@@ -633,6 +638,25 @@
 <span class="sd">    &lt;MB&gt; &lt;path&gt;`` before launching. When False, sac never creates</span>
 <span class="sd">    overlays even if size is given (operator must pre-create — sac</span>
 <span class="sd">    raises FileNotFoundError instead). See ``docs/isolation.md`` §7.&quot;&quot;&quot;</span>
+
+    <span class="n">tmpfs_size</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;2G&quot;</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Minimum free-space guarantee for the container&#39;s ``/tmp`` (and</span>
+<span class="sd">    ``/var/tmp``). A ``--containall`` apptainer container otherwise gets</span>
+<span class="sd">    a 64 MB session tmpfs at ``/tmp`` — too small for the full test</span>
+<span class="sd">    suite, coverage XML generation, or pytest fixtures with file IO,</span>
+<span class="sd">    which fill it mid-run with &quot;No space left on device&quot;.</span>
+
+<span class="sd">    sac emits ``--workdir &lt;state_dir&gt;/tmp-scratch`` to relocate ``/tmp``</span>
+<span class="sd">    onto the host filesystem (capacity &gt;&gt; 64 MB) and verifies that</span>
+<span class="sd">    filesystem has at least this many bytes free before launch, failing</span>
+<span class="sd">    loud otherwise. Accepts apptainer-style sizes with units M/MB/G/GB</span>
+<span class="sd">    only (e.g. ``&quot;2G&quot;``, ``&quot;512M&quot;``, ``&quot;2048MB&quot;``); K/KB rejected.</span>
+
+<span class="sd">    NOT a hard cap — an unprivileged apptainer user cannot mount a</span>
+<span class="sd">    size-capped tmpfs (``--mount type=tmpfs`` is unsupported), so the</span>
+<span class="sd">    contract is &quot;at least this much room&quot;, backed by host disk. Set to</span>
+<span class="sd">    ``&quot;&quot;`` to opt out entirely (legacy 64 MB tmpfs). See</span>
+<span class="sd">    ``runtimes/_apptainer_tmpfs.py``.&quot;&quot;&quot;</span>
 
     <span class="n">relaxed</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Opt out of sac&#39;s hardened defaults (auto-prepended</span>
@@ -920,6 +944,10 @@
     <span class="n">user</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
     <span class="c1"># Inbound A2A endpoint (HTTP /v1/turn + AgentCard).</span>
     <span class="n">a2a</span><span class="p">:</span> <span class="n">A2ASpec</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="n">A2ASpec</span><span class="p">)</span>
+    <span class="c1"># Phase-3 capsule-isolation: per-spec ACL policy + spawn gating.</span>
+    <span class="c1"># Defaults preserve pre-Phase-3 behaviour (everything allow / true).</span>
+    <span class="n">comms</span><span class="p">:</span> <span class="n">CommsSpec</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="n">CommsSpec</span><span class="p">)</span>
+    <span class="n">lineage</span><span class="p">:</span> <span class="n">LineageSpec</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="n">LineageSpec</span><span class="p">)</span>
     <span class="c1"># v3 ``kind`` discriminator: &quot;Agent&quot; (SDK runner) or &quot;AgentProxy&quot;</span>
     <span class="c1"># (HTTP forwarder — see :class:`ProxySpec`). Validator rejects any</span>
     <span class="c1"># other value. Loader populates from raw[&quot;kind&quot;].</span>

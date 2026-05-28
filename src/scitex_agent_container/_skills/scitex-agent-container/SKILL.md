@@ -44,7 +44,7 @@ session inside Apptainer (local or remote via SSH), observe via
 - [06_http-api.md](06_http-api.md) — `POST /v1/turn` wire format (`spec.a2a.port` enables)
 
 ### Core
-- [01_config-v3.md](01_config-v3.md) — v3 config format (current); v2+`metadata.name` rejected
+- [01_config-v3.md](01_config-v3.md) — v3 config format (current); dir-as-SSoT (no `metadata.name`); v2-era `spec.remote`/`spec.skills`/`dot_claude`/top-level `spec.model` rejected
 - [02_multiplexer.md](02_multiplexer.md) — vestigial for agents (SDK runtime); lead-only tmux wrap
 - [03_auto-accept.md](03_auto-accept.md) — modular prompt handlers
 - [04_resource-management.md](04_resource-management.md) — resource management

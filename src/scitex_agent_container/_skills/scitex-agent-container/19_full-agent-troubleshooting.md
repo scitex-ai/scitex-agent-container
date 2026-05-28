@@ -50,20 +50,23 @@ cannot push state back to it (no `/v1/turn` endpoint on the CLI side —
 see "A2A asymmetry" in 18). Filesystem `tail -F` is the supported
 push channel.
 
-## Hard / soft skill modes
+## Skill delivery (files under `to_home/.claude/skills/`)
 
-`spec.skills` has two modes — pick `required` (hard) or `available`
-(soft) per skill:
+`spec.skills` was **removed in v3** — the validator rejects it with a
+redirect to the file-based layout. Skills are now plain directories
+under the agent's `to_home/.claude/skills/<skill-id>/` and are
+auto-discovered by the SDK at session start.
 
-| Mode | Spec field | What materialises into CLAUDE.md | When to use |
+| Mode | How to declare it | What materialises into the container | When to use |
 |---|---|---|---|
-| **hard** | `spec.skills.required: [foo]` | `@<absolute-path>` line so the SDK inlines content at session start | invariants the agent must apply (procedure, validity gate, security rule) |
-| **soft** | `spec.skills.available: [foo]` | name + path under `## Available Skills` (no `@-import`) | references / examples / optional patterns |
+| **hard** (required) | drop `to_home/.claude/skills/<id>/SKILL.md` + add the id to `metadata.labels.skills` (CSV) | `@$HOME/.claude/skills/<id>/SKILL.md` `@-import` in the generated CLAUDE.md so the SDK inlines content at session start | invariants the agent must apply (procedure, validity gate, security rule) |
+| **soft** (available) | drop the same files but omit the id from `metadata.labels.skills` | the SDK still auto-discovers `$HOME/.claude/skills/<id>/` and loads it on demand; no `@-import` in CLAUDE.md | references / examples / optional patterns |
 
-Both modes are honoured by the SDK runner uniformly (F-CS1, via
-`setup_claude_md` / `build_skills_lines`). The skills are materialised
-into the agent's in-container `$HOME/.claude/` so the SDK auto-discovers
-them at session start (see [25_claude-setup-delivery.md](25_claude-setup-delivery.md)).
+Delivery is handled by `runtimes/_to_home.py::deploy_to_home`
+(materialises the directory) and `setup_claude_md` (writes the
+`@-import` lines for ids listed in `metadata.labels.skills`). See
+[25_claude-setup-delivery.md](25_claude-setup-delivery.md) for the
+end-to-end pipeline.
 
 ## Reaper pattern (when delegating multiple agents)
 
@@ -99,6 +102,7 @@ mode.
 
 | Pitfall | Fix |
 |---|---|
+| `/tmp` fills mid-run — "No space left on device" during `pytest`, coverage XML, or tmp-heavy fixtures | a `--containall` container's `/tmp` is a 64 MB session tmpfs. sac now relocates it onto host disk by default via `spec.apptainer.tmpfs_size` (default `"2G"`) → `--workdir <state_dir>/tmp-scratch`. If you see this on an old spec, bump `tmpfs_size` or confirm it isn't set to `""` (opt-out). |
 | Heavy data under `~` on Spartan → quota | put workdirs under `/tmp` or project FS (`/data/gpfs/projects/<punim>/...`) |
 | Re-launching an already-passed agent | parent's done-detection must accept all score-schema variants |
 | Subagent-style narrow prompt | include "you are a *full* agent — use Bash, run tests, commit" explicitly |

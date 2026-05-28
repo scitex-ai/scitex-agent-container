@@ -75,6 +75,10 @@ def _table_filter_clauses(
         # a tombstoned row (``ended_at`` set) still ships on the next
         # pull until both sides converge.
         "comms_nodes": ("WHERE updated_at >= ?", (since,)),
+        # Phase-3 ACL table (ADR-0010 Step 2). Uses ``updated_at`` since
+        # the row is upserted on every agent_start with no historical
+        # tail (latest write wins).
+        "node_comms_policy": ("WHERE updated_at >= ?", (since,)),
     }
     return {t: explicit.get(t, ("WHERE ts >= ?", (since,))) for t in known_tables}
 

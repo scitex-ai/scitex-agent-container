@@ -42,8 +42,18 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .state_db_acl_policy import (
+    DEFAULT_COMMS_POLICY,
+    apply_may_spawn_gate,
+    read_comms_policy,
+    record_comms_policy,
+    sender_target_relationship,
+)
+
 __all__ = [
     "CommsNodeConflictError",
+    "DEFAULT_COMMS_POLICY",
+    "apply_may_spawn_gate",
     "derive_group",
     "grant_send",
     "has_grant",
@@ -53,11 +63,14 @@ __all__ = [
     "list_node_tokens",
     "lookup_comms_node",
     "mint_node_token",
+    "read_comms_policy",
+    "record_comms_policy",
     "record_lineage",
     "register_comms_node",
     "resolve_node_host",
     "resolve_node_token",
     "revoke_send",
+    "sender_target_relationship",
     "spawn_allowed",
     "unregister_comms_node",
 ]
@@ -95,8 +108,7 @@ def mint_node_token(*, name: str, db_path: Path | None = None) -> str:
         token = secrets.token_urlsafe(_TOKEN_BYTES)
         now = time.time()
         conn.execute(
-            "INSERT INTO node_tokens (name, token, created_at) "
-            "VALUES (?, ?, ?)",
+            "INSERT INTO node_tokens (name, token, created_at) VALUES (?, ?, ?)",
             (name, token, now),
         )
     return token
@@ -136,9 +148,7 @@ def list_node_tokens(db_path: Path | None = None) -> list[dict[str, Any]]:
     from .state_db import open_db
 
     with open_db(db_path) as conn:
-        cur = conn.execute(
-            "SELECT name, created_at FROM node_tokens ORDER BY name ASC"
-        )
+        cur = conn.execute("SELECT name, created_at FROM node_tokens ORDER BY name ASC")
         return [
             {"name": str(r["name"]), "created_at": float(r["created_at"])}
             for r in cur.fetchall()
@@ -209,9 +219,22 @@ def derive_group(
     lineage tree. That keeps the default-ACL semantics simple and
     matches handoff §2: "the group is the unit of default ACL" (one
     parent + its direct children, not the entire ancestry).
+
+    Phase-3 (ADR-0010 Step 2): if ``name``'s ``node_comms_policy`` row
+    sets ``lineage_group = 'solitary'``, the group is forced to
+    ``{name}`` and the lineage-table walk is skipped. That isolates a
+    capsule from its siblings AND its parent without depending on the
+    lineage table being empty — clew capsule children adopt this so a
+    sibling capsule can never address them through the group-default
+    ACL even though they share a parent edge.
     """
     if not name:
         raise ValueError("derive_group: name must be non-empty")
+    # Phase-3 solitary override — short-circuits to the singleton group
+    # without touching the lineage table.
+    policy = read_comms_policy(name=name, db_path=db_path)
+    if policy["lineage_group"] == "solitary":
+        return {name}
     from .state_db import open_db
 
     with open_db(db_path) as conn:
@@ -264,8 +287,9 @@ def spawn_allowed(
     — zero schema change, zero data migration.
     """
     if caller is None or caller == "":
-        # Admin / human operator. Allowed.
-        return (True, None)
+        # Admin / human operator. Skips the global root-only check;
+        # per-spec may_spawn (Phase-3 Gap-5) layers on top.
+        return apply_may_spawn_gate(caller=caller, base=(True, None), db_path=db_path)
     from .state_db import open_db
 
     with open_db(db_path) as conn:
@@ -273,7 +297,7 @@ def spawn_allowed(
             "SELECT parent_name FROM lineage WHERE child_name = ?", (caller,)
         ).fetchone()
     if parent_row is None:
-        return (True, None)  # caller has no parent → root → allow
+        return apply_may_spawn_gate(caller=caller, base=(True, None), db_path=db_path)
     return (
         False,
         (
@@ -311,8 +335,7 @@ def grant_send(
 
     with open_db(db_path) as conn:
         existing = conn.execute(
-            "SELECT 1 FROM comms_grants "
-            "WHERE sender_name = ? AND target_name = ?",
+            "SELECT 1 FROM comms_grants WHERE sender_name = ? AND target_name = ?",
             (sender, target),
         ).fetchone()
         if existing is not None:
@@ -339,8 +362,7 @@ def revoke_send(
 
     with open_db(db_path) as conn:
         cur = conn.execute(
-            "DELETE FROM comms_grants "
-            "WHERE sender_name = ? AND target_name = ?",
+            "DELETE FROM comms_grants WHERE sender_name = ? AND target_name = ?",
             (sender, target),
         )
     return cur.rowcount > 0
@@ -360,8 +382,7 @@ def has_grant(
 
     with open_db(db_path) as conn:
         row = conn.execute(
-            "SELECT 1 FROM comms_grants "
-            "WHERE sender_name = ? AND target_name = ?",
+            "SELECT 1 FROM comms_grants WHERE sender_name = ? AND target_name = ?",
             (sender, target),
         ).fetchone()
     return row is not None
