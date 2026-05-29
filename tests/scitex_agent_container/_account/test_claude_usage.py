@@ -181,15 +181,10 @@ def test_cache_hit_preserves_used_tokens_5h(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-_API_PAYLOAD_OK = [
-    {"window": "5h", "used": 2_000, "limit": 20_000, "resetAt": "2026-01-01T05:00:00Z"},
-    {
-        "window": "7d",
-        "used": 8_000,
-        "limit": 200_000,
-        "resetAt": "2026-01-08T00:00:00Z",
-    },
-]
+_API_PAYLOAD_OK = {
+    "five_hour": {"utilization": 10, "resets_at": "2026-01-01T05:00:00Z"},
+    "seven_day": {"utilization": 4, "resets_at": "2026-01-08T00:00:00Z"},
+}
 
 
 def test_returned_dict_does_not_leak_token_in_keys(tmp_path: Path) -> None:
@@ -539,49 +534,41 @@ def test_write_cache_returns_silently_when_parent_path_is_a_file(
 # ---------------------------------------------------------------------------
 
 
-def test_fetch_from_api_returns_list_payload_unchanged() -> None:
+def test_fetch_from_api_returns_payload_dict_unchanged() -> None:
     # Arrange
-    opener = _opener_returning([{"window": "5h"}])
+    payload = {
+        "five_hour": {"utilization": 12, "resets_at": "2026-01-01T05:00:00Z"},
+        "seven_day": {"utilization": 3, "resets_at": "2026-01-08T00:00:00Z"},
+    }
+    opener = _opener_returning(payload)
     # Act
     out = cu._fetch_from_api("tok", opener=opener)
     # Assert
-    assert out == [{"window": "5h"}]
+    assert out == payload
 
 
-def test_fetch_from_api_unwraps_windows_key() -> None:
-    # Arrange
-    opener = _opener_returning({"windows": [{"window": "5h"}]})
-    # Act
-    out = cu._fetch_from_api("tok", opener=opener)
-    # Assert
-    assert out == [{"window": "5h"}]
-
-
-def test_fetch_from_api_unwraps_data_key() -> None:
-    # Arrange
-    opener = _opener_returning({"data": [{"window": "7d"}]})
-    # Act
-    out = cu._fetch_from_api("tok", opener=opener)
-    # Assert
-    assert out == [{"window": "7d"}]
-
-
-def test_fetch_from_api_wraps_single_window_dict_in_list() -> None:
-    # Arrange
-    opener = _opener_returning({"window": "5h", "used": 1})
-    # Act
-    out = cu._fetch_from_api("tok", opener=opener)
-    # Assert
-    assert out == [{"window": "5h", "used": 1}]
-
-
-def test_fetch_from_api_returns_none_for_unknown_dict_shape() -> None:
-    # Arrange
-    opener = _opener_returning({"foo": "bar"})
+def test_fetch_from_api_returns_none_for_non_dict_payload() -> None:
+    # Arrange — list payloads no longer match the documented shape.
+    opener = _opener_returning(["not", "a", "dict"])
     # Act
     out = cu._fetch_from_api("tok", opener=opener)
     # Assert
     assert out is None
+
+
+def test_fetch_from_api_sends_anthropic_beta_header() -> None:
+    # Arrange
+    captured: dict[str, str] = {}
+
+    def capture_opener(req, timeout=None):
+        for header_name, header_value in req.header_items():
+            captured[header_name.lower()] = header_value
+        return _FakeResp(b"{}")
+
+    # Act
+    cu._fetch_from_api("tok", opener=capture_opener)
+    # Assert — the OAuth usage endpoint requires this preview-gating header.
+    assert captured.get("anthropic-beta") == "oauth-2025-04-20"
 
 
 def test_fetch_from_api_returns_none_on_malformed_json() -> None:
@@ -619,44 +606,75 @@ def test_fetch_from_api_returns_none_on_http_500() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_parse_windows_treats_non_int_used_as_none() -> None:
-    # Arrange
-    payload = [{"window": "5h", "used": "not-int", "limit": "x", "resetAt": 1}]
+def test_parse_windows_extracts_five_hour_pct_from_new_shape() -> None:
+    # Arrange — real OAuth usage response shape (2026-Q2 percentage model).
+    payload = {
+        "five_hour": {"utilization": 23, "resets_at": "2026-05-29T05:00:00Z"},
+        "seven_day": {"utilization": 7, "resets_at": "2026-06-01T00:00:00Z"},
+    }
     # Act
     out = cu._parse_windows(payload)
     # Assert
-    assert out["used_tokens_5h"] is None
+    assert out["used_pct_5h"] == 23.0
 
 
-def test_parse_windows_treats_non_int_limit_as_none() -> None:
+def test_parse_windows_extracts_seven_day_pct_from_new_shape() -> None:
     # Arrange
-    payload = [{"window": "5h", "used": 10, "limit": "x"}]
+    payload = {
+        "five_hour": {"utilization": 23, "resets_at": "2026-05-29T05:00:00Z"},
+        "seven_day": {"utilization": 7, "resets_at": "2026-06-01T00:00:00Z"},
+    }
     # Act
     out = cu._parse_windows(payload)
     # Assert
-    assert out["limit_tokens_5h"] is None
+    assert out["used_pct_7d"] == 7.0
 
 
-def test_parse_windows_returns_none_pct_when_limit_is_zero() -> None:
+def test_parse_windows_extracts_five_hour_reset_timestamp() -> None:
     # Arrange
-    payload = [{"window": "5h", "used": 10, "limit": 0}]
+    payload = {
+        "five_hour": {"utilization": 23, "resets_at": "2026-05-29T05:00:00Z"},
+    }
+    # Act
+    out = cu._parse_windows(payload)
+    # Assert
+    assert out["reset_at_5h"] == "2026-05-29T05:00:00Z"
+
+
+def test_parse_windows_clamps_utilization_above_one_hundred() -> None:
+    # Arrange — server should never overshoot, but defend against it anyway.
+    payload = {"five_hour": {"utilization": 150}}
+    # Act
+    out = cu._parse_windows(payload)
+    # Assert
+    assert out["used_pct_5h"] == 100.0
+
+
+def test_parse_windows_treats_non_numeric_utilization_as_none() -> None:
+    # Arrange
+    payload = {"five_hour": {"utilization": "not-a-number"}}
     # Act
     out = cu._parse_windows(payload)
     # Assert
     assert out["used_pct_5h"] is None
 
 
-def test_parse_windows_skips_non_dict_and_unknown_windows() -> None:
+def test_parse_windows_ignores_non_dict_window_value() -> None:
     # Arrange
-    payload = [
-        "not-a-dict",
-        {"window": "1d"},  # unknown window key
-        {"window": "5h", "used": 1, "limit": 10},
-    ]
+    payload = {"five_hour": "not-a-dict", "seven_day": {"utilization": 5}}
     # Act
     out = cu._parse_windows(payload)
     # Assert
-    assert out["used_pct_5h"] == 10.0
+    assert out.get("used_pct_5h") is None and out["used_pct_7d"] == 5.0
+
+
+def test_parse_windows_returns_empty_dict_for_non_dict_payload() -> None:
+    # Arrange
+    payload = ["not", "a", "dict"]
+    # Act
+    out = cu._parse_windows(payload)  # type: ignore[arg-type]
+    # Assert
+    assert out == {}
 
 
 # ---------------------------------------------------------------------------
@@ -703,12 +721,12 @@ def test_fetch_usage_refreshes_expired_token_then_returns_data(tmp_path: Path) -
     home = _make_home_with_creds(tmp_path, expires_at_ms=0)
     opener = _opener_sequence(
         {"access_token": "NEW", "expires_in": 3600},  # refresh
-        [{"window": "5h", "used": 100, "limit": 1000, "resetAt": "x"}],  # API
+        {"five_hour": {"utilization": 17}, "seven_day": {"utilization": 2}},
     )
     # Act
     result = fetch_usage(home=home, opener=opener)
     # Assert
-    assert result["used_tokens_5h"] == 100
+    assert result["used_pct_5h"] == 17.0
 
 
 def test_fetch_usage_handles_401_then_refresh_then_retry(tmp_path: Path) -> None:
@@ -720,12 +738,12 @@ def test_fetch_usage_handles_401_then_refresh_then_retry(tmp_path: Path) -> None
     opener = _opener_sequence(
         http_401,  # API attempt 1
         {"access_token": "REFRESHED", "expires_in": 3600},  # refresh
-        [{"window": "7d", "used": 50, "limit": 500, "resetAt": "x"}],  # retry
+        {"five_hour": {"utilization": 4}, "seven_day": {"utilization": 9}},
     )
     # Act
     result = fetch_usage(home=home, opener=opener)
     # Assert
-    assert result["used_tokens_7d"] == 50
+    assert result["used_pct_7d"] == 9.0
 
 
 def test_fetch_usage_returns_error_when_refresh_after_401_fails(
@@ -751,7 +769,7 @@ def test_fetch_usage_returns_error_for_unparsable_response(tmp_path: Path) -> No
     home = _make_home_with_creds(
         tmp_path, expires_at_ms=int(time.time() * 1000) + 60_000
     )
-    opener = _opener_returning({"unexpected": "shape"})
+    opener = _opener_returning(b"not-json{")
     # Act
     result = fetch_usage(home=home, opener=opener)
     # Assert
@@ -764,7 +782,7 @@ def test_fetch_usage_writes_cache_file_on_success(tmp_path: Path) -> None:
         tmp_path, expires_at_ms=int(time.time() * 1000) + 60_000
     )
     opener = _opener_returning(
-        [{"window": "5h", "used": 1, "limit": 10, "resetAt": "now"}]
+        {"five_hour": {"utilization": 12, "resets_at": "now"}}
     )
     # Act
     fetch_usage(home=home, opener=opener)
