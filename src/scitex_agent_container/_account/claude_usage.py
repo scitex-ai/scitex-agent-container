@@ -1,7 +1,15 @@
 """Live Claude API quota fetcher.
 
-Fetches token-usage quota from ``GET https://api.anthropic.com/api/oauth/usage``
+Fetches usage quota from ``GET https://api.anthropic.com/api/oauth/usage``
 using the OAuth access token stored in ``~/.claude/.credentials.json``.
+
+The endpoint requires the ``anthropic-beta: oauth-2025-04-20`` header and
+returns a percentage-utilization model rather than raw token counts::
+
+    {
+      "five_hour":  {"utilization": <pct 0-100>, "resets_at": "<iso>"},
+      "seven_day":  {"utilization": <pct 0-100>, "resets_at": "<iso>"}
+    }
 
 Design rules
 ------------
@@ -15,6 +23,10 @@ Design rules
 4. The public function ``fetch_usage()`` **never raises**.  On any failure it
    returns a dict with ``error`` set and other quota fields ``None``.
 5. Pure stdlib + ``urllib.request`` only.  No requests/httpx.
+
+The legacy ``used_tokens_*`` / ``limit_tokens_*`` keys are preserved in the
+returned dict for back-compat with downstream consumers, but are always
+``None`` under the new percentage-utilization API shape.
 """
 
 from __future__ import annotations
@@ -31,6 +43,9 @@ from typing import Any
 # ---------------------------------------------------------------------------
 # Public return-shape sentinel keys
 # ---------------------------------------------------------------------------
+# ``used_tokens_*`` and ``limit_tokens_*`` are preserved (always ``None`` now)
+# so downstream consumers reading these keys do not KeyError. The active
+# percentage signal lives in ``used_pct_5h`` / ``used_pct_7d``.
 _EMPTY_RESULT: dict[str, Any] = {
     "used_tokens_5h": None,
     "limit_tokens_5h": None,
@@ -48,6 +63,13 @@ _EMPTY_RESULT: dict[str, Any] = {
 _CACHE_TTL_SECONDS = 300  # 5 minutes
 _USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 _TOKEN_URL = "https://claude.ai/api/auth/oauth/token"
+# Required by the OAuth usage endpoint; without it the API returns 4xx and
+# the response shape cannot be parsed. Tracked by Anthropic via the
+# anthropic-beta preview gating header.
+_USAGE_BETA_HEADER = "oauth-2025-04-20"
+# Match the user-agent claude-hud sends so the OAuth gateway treats sac
+# requests as a first-party CLI client.
+_USAGE_USER_AGENT = "claude-code/2.1"
 
 # Substrings that must never appear in KEYS of the returned dict.
 # These are chosen to catch accidental token field leaks (e.g. "accessToken")
@@ -261,15 +283,21 @@ def _write_cache(home: Path, result: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _fetch_from_api(access_token: str, *, opener=None) -> list[dict[str, Any]] | None:
-    """Call the usage API and return the parsed JSON.
+def _fetch_from_api(access_token: str, *, opener=None) -> dict[str, Any] | None:
+    """Call the usage API and return the parsed JSON payload dict.
 
-    Returns None on failure.  The response may be a list of window objects
-    or a single dict.
+    The endpoint is gated by the ``anthropic-beta`` preview header and
+    returns a single object containing ``five_hour`` / ``seven_day``
+    sub-objects with ``utilization`` (0-100 percentage) and ``resets_at``.
+    Returns the parsed dict, or ``None`` on any non-fatal failure.
     """
     req = urllib.request.Request(
         _USAGE_URL,
-        headers={"Authorization": f"Bearer {access_token}"},
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "anthropic-beta": _USAGE_BETA_HEADER,
+            "User-Agent": _USAGE_USER_AGENT,
+        },
         method="GET",
     )
     _opener = opener if opener is not None else urllib.request.urlopen
@@ -292,40 +320,53 @@ def _fetch_from_api(access_token: str, *, opener=None) -> list[dict[str, Any]] |
     except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         return None
 
-    if isinstance(payload, list):
-        return payload
-    if isinstance(payload, dict):
-        # Single-window or wrapped response
-        windows = payload.get("windows") or payload.get("data")
-        if isinstance(windows, list):
-            return windows
-        # Treat the dict itself as a single window if it has "window" key
-        if "window" in payload:
-            return [payload]
-    return None
+    if not isinstance(payload, dict):
+        return None
+    return payload
 
 
-def _parse_windows(windows: list[dict[str, Any]]) -> dict[str, Any]:
-    """Extract 5h and 7d quota values from the API window list."""
-    result: dict[str, Any] = {}
-    for w in windows:
-        if not isinstance(w, dict):
+def _coerce_utilization_pct(value: Any) -> float | None:
+    """Clamp a utilization value to [0, 100]; return None for non-numeric input."""
+    if isinstance(value, bool):
+        # bools are ints in Python — explicitly reject so True doesn't become 1.0%.
+        return None
+    if not isinstance(value, (int, float)):
+        return None
+    pct = float(value)
+    if pct < 0:
+        pct = 0.0
+    elif pct > 100:
+        pct = 100.0
+    return round(pct, 2)
+
+
+def _parse_windows(payload: dict[str, Any]) -> dict[str, Any]:
+    """Extract 5h and 7d utilization + reset timestamps from the API payload.
+
+    Expected payload shape (new in 2026-Q2)::
+
+        {"five_hour": {"utilization": 23, "resets_at": "<iso>"},
+         "seven_day": {"utilization": 7,  "resets_at": "<iso>"}}
+
+    The endpoint reports a 0-100 percentage directly, so the legacy
+    token-count math (``used / limit * 100``) is gone — we surface the
+    server-provided percentage as ``used_pct_5h`` / ``used_pct_7d`` and
+    leave the legacy ``used_tokens_*`` / ``limit_tokens_*`` keys as
+    ``None`` for back-compat with consumers that destructure them.
+    """
+    out: dict[str, Any] = {}
+    if not isinstance(payload, dict):
+        return out
+
+    mapping = (("five_hour", "5h"), ("seven_day", "7d"))
+    for src_key, suffix in mapping:
+        window = payload.get(src_key)
+        if not isinstance(window, dict):
             continue
-        win = w.get("window")
-        used = w.get("used")
-        limit = w.get("limit")
-        reset_at = w.get("resetAt")
-        if win not in ("5h", "7d"):
-            continue
-        suffix = win.replace("h", "h").replace("d", "d")  # already correct
-        result[f"used_tokens_{suffix}"] = used if isinstance(used, int) else None
-        result[f"limit_tokens_{suffix}"] = limit if isinstance(limit, int) else None
-        if isinstance(used, int) and isinstance(limit, int) and limit > 0:
-            result[f"used_pct_{suffix}"] = round(used / limit * 100, 2)
-        else:
-            result[f"used_pct_{suffix}"] = None
-        result[f"reset_at_{suffix}"] = reset_at if isinstance(reset_at, str) else None
-    return result
+        out[f"used_pct_{suffix}"] = _coerce_utilization_pct(window.get("utilization"))
+        resets_at = window.get("resets_at")
+        out[f"reset_at_{suffix}"] = resets_at if isinstance(resets_at, str) else None
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -357,7 +398,8 @@ def fetch_usage(home: Path | None = None, *, opener=None) -> dict[str, Any]:
     """Return live Claude API quota metrics.
 
     Reads the OAuth access token from ``~/.claude/.credentials.json``,
-    queries ``GET https://api.anthropic.com/api/oauth/usage``, and returns
+    queries ``GET https://api.anthropic.com/api/oauth/usage`` with the
+    required ``anthropic-beta: oauth-2025-04-20`` header, and returns
     quota metrics.  Tokens are **never** included in the returned dict.
 
     Results are cached in ``~/.scitex/cache/claude_usage.json`` for 5 min.
@@ -371,6 +413,10 @@ def fetch_usage(home: Path | None = None, *, opener=None) -> dict[str, Any]:
             used_tokens_5h, limit_tokens_5h, used_pct_5h, reset_at_5h,
             used_tokens_7d, limit_tokens_7d, used_pct_7d, reset_at_7d,
             fetched_at, from_cache, error
+
+        The ``used_tokens_*`` / ``limit_tokens_*`` keys are always
+        ``None`` under the new percentage-utilization API shape and
+        remain in the schema for downstream back-compat.
 
         Never raises.
     """
@@ -403,10 +449,10 @@ def fetch_usage(home: Path | None = None, *, opener=None) -> dict[str, Any]:
             # If refresh failed, try with the old token anyway
 
     # --- API call -----------------------------------------------------------
-    windows = None
+    payload: dict[str, Any] | None = None
     # stx-allow: fallback (reason: network errors or unexpected exceptions from the usage API are caught and surfaced as an error dict rather than an unhandled exception)
     try:
-        windows = _fetch_from_api(access_token, opener=opener)
+        payload = _fetch_from_api(access_token, opener=opener)
     except (
         urllib.error.HTTPError
     ) as exc:  # stx-allow: fallback (reason: expected failure — see inline comment)
@@ -419,20 +465,20 @@ def fetch_usage(home: Path | None = None, *, opener=None) -> dict[str, Any]:
                 access_token = new_token
                 # stx-allow: fallback (reason: second API attempt after token refresh may still fail due to network issues; pass lets the 401 handler return an error dict)
                 try:
-                    windows = _fetch_from_api(access_token, opener=opener)
+                    payload = _fetch_from_api(access_token, opener=opener)
                 except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                     pass
-        if windows is None:
+        if payload is None:
             return _err(f"HTTP {exc.code} from usage API; refresh attempted")
     except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         return _err(f"Network error: {exc}")
 
-    if windows is None:
+    if payload is None:
         return _err("Failed to fetch or parse usage API response")
 
     # --- build result -------------------------------------------------------
     result: dict[str, Any] = dict(_EMPTY_RESULT)
-    result.update(_parse_windows(windows))
+    result.update(_parse_windows(payload))
     result["fetched_at"] = _iso_now()
     result["from_cache"] = False
     result["error"] = None
