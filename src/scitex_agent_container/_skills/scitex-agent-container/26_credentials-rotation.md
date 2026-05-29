@@ -164,6 +164,79 @@ Stages of death:
   session 401s. **Re-login required** — see
   [27_credentials-relogin.md](27_credentials-relogin.md).
 
+## 5. Multi-account CI rotation
+
+Operator splits CI auth across N Anthropic Max accounts to load-balance the
+per-account 429 rate. Lead 2026-05-29 example: 66 `scitex-*` packages divided
+22-22-22 across `wyusuuke-gmail-com`, `ywata1989-gmail-com`,
+`ywatanabe-scitex-ai`.
+
+Recipe:
+
+```bash
+for acct in wyusuuke-gmail-com ywata1989-gmail-com ywatanabe-scitex-ai; do
+    SRC=/home/ywatanabe/.scitex/agent-container/accounts/$acct/.credentials.json
+    scitex-dev creds rotate-all --source "$SRC" --only pkg1 --only pkg2 ... --yes
+done
+```
+
+`--only` is repeatable; pass each package once per account.
+
+Non-negotiables:
+
+- **Silent-no-op trap.** If `--source` points to a file whose
+  `claudeAiOauth.expiresAt` is in the past, `rotate-all` exits 0 with **zero
+  stdout** (not error, not warning). Looks like success, does nothing. Always
+  verify expiry before invoking.
+- **Two locations, only one valid for `--source`:**
+  - **Sac-store path — USE THIS:** `~/.scitex/agent-container/accounts/<acct>/.credentials.json`,
+    kept fresh by the watch-live daemon (§6); what `sac accounts list` reads.
+  - **Stale standalone copies — DO NOT USE:** `~/.claude/.credentials-<acct>.json`,
+    written once at account-add time, never refreshed, expire in ~8 h. These
+    are the canonicals §1 describes — they receive write-back via the `:rw`
+    bind of a running agent, not via direct rotation.
+
+Diagnosis:
+
+```bash
+jq '.claudeAiOauth.expiresAt' <path>   # epoch ms
+echo $(($(date +%s) * 1000))           # now in ms
+```
+
+Or `sac accounts list` reports freshness for every account in the sac store.
+
+## 6. The watch-live daemon — what keeps the sac store fresh
+
+`sac accounts watch-live` runs `inotifywait -m` on `~/.claude/` for
+`close_write|moved_to|create` events on `.credentials.json`. On every event it
+atomically copies the live credential to the matching sac-store path; the slug
+map turns the account email into a store name (e.g. `wyusuuke@gmail.com` →
+`wyusuuke-gmail-com`).
+
+```bash
+sac accounts watch-live    # long-running; foreground or explicit & / supervisor
+```
+
+Non-negotiables:
+
+- **NOT auto-started.** No systemd / launchd unit ships by default. If the
+  daemon isn't running when `claude /login` updates the live cred, the sac
+  store stays stale until the operator manually runs `sac accounts sync-live`
+  or starts the daemon.
+- **Manual one-shot fallback:** `sac accounts sync-live` runs the same atomic
+  copy once without the daemon — use after a `claude /login` performed with
+  the daemon stopped, or to catch up before a rotation.
+
+Implementation:
+
+- `src/scitex_agent_container/_account/creds_watch.py` L140-152
+  (`watch_inotify()`), L99-133 (`watch_poll()` polling fallback for hosts
+  without `inotifywait`), L35 (imports + calls into `sync_live()`).
+- `src/scitex_agent_container/_account/creds_sync.py` L141-244 (`sync_live()`:
+  atomic copy + freshness check), L69-77 (`slugify_email()`).
+- `src/scitex_agent_container/cli_pkg/_account_sync_live.py` L82-100+
+  (`account_watch_live` click command — daemon entry point).
+
 ## See also
 
 - [27_credentials-relogin.md](27_credentials-relogin.md) — verified
