@@ -692,3 +692,84 @@ def fetch_usage_for_credentials(
     _write_per_account_cache(cache_path, result)
     return result
 
+
+# ---------------------------------------------------------------------------
+# Headless OAuth token refresh — used by `sac accounts refresh`
+# ---------------------------------------------------------------------------
+
+
+def refresh_account_credentials(
+    credentials_path: Path,
+    *,
+    opener=None,
+) -> dict[str, Any]:
+    """Refresh the OAuth access token for the credentials at ``credentials_path``.
+
+    Calls ``_refresh_access_token_at`` (which does the POST to the token
+    endpoint + atomic write-back to the SAME file) and returns a structured
+    result the CLI can render without ever surfacing token values.
+
+    Args:
+        credentials_path: Path to the per-account ``.credentials.json``
+            (typically ``~/.scitex/agent-container/accounts/<name>/.credentials.json``).
+        opener: Optional injection seam for tests.
+
+    Returns:
+        Dict with keys::
+
+            success      : bool — True iff a new access_token was minted.
+            expires_at   : ISO-8601 string of the new token's expiry, or None.
+            error        : str  — reason for failure, or None on success.
+            credentials_path : str — echo of the input path (for `--all` rendering).
+
+        Never raises. Token values are NEVER included.
+    """
+    creds = Path(credentials_path)
+    out: dict[str, Any] = {
+        "success": False,
+        "expires_at": None,
+        "error": None,
+        "credentials_path": str(creds),
+    }
+
+    if not creds.is_file():
+        out["error"] = f"credentials file not found: {creds}"
+        return out
+
+    _, refresh_token, client_id, _ = _read_tokens_at(creds)
+    if not refresh_token:
+        out["error"] = "no refresh_token in credentials — needs `claude /login`"
+        return out
+    if not client_id:
+        out["error"] = "no clientId in credentials — needs `claude /login`"
+        return out
+
+    new_access = _refresh_access_token_at(
+        creds, refresh_token, client_id, opener=opener
+    )
+    if not new_access:
+        out["error"] = (
+            "refresh endpoint rejected the refresh_token — needs `claude /login`"
+        )
+        return out
+
+    # Read back the freshly-written expiry; the token value itself is
+    # intentionally NOT touched (tokens never leave this module).
+    # stx-allow: fallback (reason: post-write read is best-effort; if the just-written file is unreadable the refresh still succeeded in memory)
+    try:
+        data = _load_json(creds) or {}
+        oauth = data.get("claudeAiOauth") if isinstance(data, dict) else None
+        expires_at_ms = (
+            oauth.get("expiresAt") if isinstance(oauth, dict) else None
+        )
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+        expires_at_ms = None
+
+    if isinstance(expires_at_ms, int):
+        out["expires_at"] = datetime.fromtimestamp(
+            expires_at_ms / 1000, tz=timezone.utc
+        ).isoformat()
+
+    out["success"] = True
+    return out
+
