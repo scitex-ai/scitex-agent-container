@@ -788,3 +788,193 @@ def test_fetch_usage_writes_cache_file_on_success(tmp_path: Path) -> None:
     fetch_usage(home=home, opener=opener)
     # Assert
     assert (home / ".scitex" / "cache" / "claude_usage.json").is_file()
+
+
+# ---------------------------------------------------------------------------
+# fetch_usage_for_credentials — per-account variant.
+# ---------------------------------------------------------------------------
+
+
+def _make_creds_at(path: Path, *, expires_at_ms: int | None = None) -> None:
+    """Write a full Claude Code credentials.json at ``path``."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    creds: dict[str, Any] = {
+        "claudeAiOauth": {
+            "accessToken": "acc",
+            "refreshToken": "ref",
+            "clientId": "cid",
+            "subscriptionType": "pro",
+        }
+    }
+    if expires_at_ms is not None:
+        creds["claudeAiOauth"]["expiresAt"] = expires_at_ms
+    path.write_text(json.dumps(creds))
+
+
+def test_fetch_usage_for_credentials_extracts_pct_from_new_shape(tmp_path: Path) -> None:
+    # Arrange — per-account snapshot with valid token + real new-shape payload.
+    creds = tmp_path / "acct" / ".credentials.json"
+    _make_creds_at(creds, expires_at_ms=int(time.time() * 1000) + 60_000)
+    opener = _opener_returning(
+        {"five_hour": {"utilization": 33}, "seven_day": {"utilization": 11}}
+    )
+    # Act
+    result = cu.fetch_usage_for_credentials(creds, opener=opener)
+    # Assert
+    assert result["used_pct_5h"] == 33.0
+
+
+def test_fetch_usage_for_credentials_writes_usage_json_next_to_creds(
+    tmp_path: Path,
+) -> None:
+    # Arrange
+    creds = tmp_path / "acct" / ".credentials.json"
+    _make_creds_at(creds, expires_at_ms=int(time.time() * 1000) + 60_000)
+    opener = _opener_returning(
+        {"five_hour": {"utilization": 5}, "seven_day": {"utilization": 1}}
+    )
+    # Act
+    cu.fetch_usage_for_credentials(creds, opener=opener)
+    # Assert — cache lands at <acct>/usage.json (same path read by
+    # `_state.account_store.read_account_usage_cache`).
+    assert (tmp_path / "acct" / "usage.json").is_file()
+
+
+def test_fetch_usage_for_credentials_cache_hit_skips_network(tmp_path: Path) -> None:
+    # Arrange — seed a fresh per-account cache.
+    creds = tmp_path / "acct" / ".credentials.json"
+    _make_creds_at(creds, expires_at_ms=int(time.time() * 1000) + 60_000)
+    cache_path = tmp_path / "acct" / "usage.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "used_pct_5h": 42,
+                "used_pct_7d": 7,
+                "fetched_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+    )
+
+    def must_not_call(req, timeout=None):
+        raise AssertionError("opener called despite fresh per-account cache")
+
+    # Act
+    result = cu.fetch_usage_for_credentials(creds, opener=must_not_call)
+    # Assert
+    assert result["used_pct_5h"] == 42
+
+
+def test_fetch_usage_for_credentials_returns_error_when_no_access_token(
+    tmp_path: Path,
+) -> None:
+    # Arrange — credentials file with no accessToken.
+    creds = tmp_path / "acct" / ".credentials.json"
+    creds.parent.mkdir(parents=True)
+    creds.write_text(json.dumps({"claudeAiOauth": {"subscriptionType": "pro"}}))
+    # Act
+    result = cu.fetch_usage_for_credentials(creds)
+    # Assert
+    assert "No access token" in (result["error"] or "")
+
+
+def test_fetch_usage_for_credentials_returns_error_for_missing_creds_file(
+    tmp_path: Path,
+) -> None:
+    # Arrange
+    creds = tmp_path / "nonexistent" / ".credentials.json"
+    # Act
+    result = cu.fetch_usage_for_credentials(creds)
+    # Assert
+    assert isinstance(result["error"], str) and result["error"]
+
+
+def test_fetch_usage_for_credentials_does_not_leak_tokens_in_result(
+    tmp_path: Path,
+) -> None:
+    # Arrange
+    creds = tmp_path / "acct" / ".credentials.json"
+    _make_creds_at(creds, expires_at_ms=int(time.time() * 1000) + 60_000)
+    opener = _opener_returning(
+        {"five_hour": {"utilization": 10}, "seven_day": {"utilization": 2}}
+    )
+    forbidden = ("accesstoken", "refreshtoken", "sk-ant-", "bearer")
+    # Act
+    result = cu.fetch_usage_for_credentials(creds, opener=opener)
+    # Assert
+    for key in result:
+        kl = key.lower()
+        for needle in forbidden:
+            assert needle not in kl
+
+
+def test_fetch_usage_for_credentials_sets_as_of_iso_timestamp(tmp_path: Path) -> None:
+    # Arrange
+    creds = tmp_path / "acct" / ".credentials.json"
+    _make_creds_at(creds, expires_at_ms=int(time.time() * 1000) + 60_000)
+    opener = _opener_returning(
+        {"five_hour": {"utilization": 8}, "seven_day": {"utilization": 1}}
+    )
+    # Act
+    result = cu.fetch_usage_for_credentials(creds, opener=opener)
+    # Assert — `as_of` is what account_group.py's display path reads.
+    assert isinstance(result["as_of"], str) and result["as_of"]
+
+
+def test_fetch_usage_for_credentials_refreshes_expired_token(tmp_path: Path) -> None:
+    # Arrange — expired token; opener returns refresh then API response.
+    creds = tmp_path / "acct" / ".credentials.json"
+    _make_creds_at(creds, expires_at_ms=0)
+    opener = _opener_sequence(
+        {"access_token": "NEW", "expires_in": 3600},  # refresh
+        {"five_hour": {"utilization": 19}, "seven_day": {"utilization": 3}},
+    )
+    # Act
+    result = cu.fetch_usage_for_credentials(creds, opener=opener)
+    # Assert
+    assert result["used_pct_5h"] == 19.0
+
+
+def test_fetch_usage_for_credentials_writes_refreshed_token_to_same_file(
+    tmp_path: Path,
+) -> None:
+    # Arrange — expired token, refresh succeeds.
+    creds = tmp_path / "acct" / ".credentials.json"
+    _make_creds_at(creds, expires_at_ms=0)
+    opener = _opener_sequence(
+        {"access_token": "ROTATED", "expires_in": 3600},  # refresh
+        {"five_hour": {"utilization": 1}},  # API
+    )
+    # Act
+    cu.fetch_usage_for_credentials(creds, opener=opener)
+    # Assert — rotated token written back to the per-account credentials file.
+    written = json.loads(creds.read_text())
+    assert written["claudeAiOauth"]["accessToken"] == "ROTATED"
+
+
+def test_fetch_usage_for_credentials_per_account_cache_isolation(
+    tmp_path: Path,
+) -> None:
+    # Arrange — two separate accounts with their own creds files.
+    acct_a = tmp_path / "acct-a" / ".credentials.json"
+    acct_b = tmp_path / "acct-b" / ".credentials.json"
+    _make_creds_at(acct_a, expires_at_ms=int(time.time() * 1000) + 60_000)
+    _make_creds_at(acct_b, expires_at_ms=int(time.time() * 1000) + 60_000)
+    # Seed only acct-a's per-account cache.
+    (tmp_path / "acct-a" / "usage.json").write_text(
+        json.dumps(
+            {
+                "used_pct_5h": 99,
+                "fetched_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+    )
+    # acct-b opener returns a different value, proving its cache lookup
+    # is NOT hit by acct-a's cache file.
+    opener = _opener_returning(
+        {"five_hour": {"utilization": 4}, "seven_day": {"utilization": 1}}
+    )
+    # Act
+    result_b = cu.fetch_usage_for_credentials(acct_b, opener=opener)
+    # Assert
+    assert result_b["used_pct_5h"] == 4.0
+
