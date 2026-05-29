@@ -132,12 +132,17 @@ def _cache_path(home: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def _read_tokens(home: Path) -> tuple[str | None, str | None, str | None, int | None]:
-    """Return (access_token, refresh_token, client_id, expires_at_ms).
+def _read_tokens_at(
+    credentials_path: Path,
+) -> tuple[str | None, str | None, str | None, int | None]:
+    """Read OAuth tokens from a specific credentials.json file.
 
-    All values are consumed inside this module only.
+    Returns ``(access_token, refresh_token, client_id, expires_at_ms)``.
+    All four are ``None`` if the file is missing/corrupt or lacks the
+    ``claudeAiOauth`` object. Values are consumed inside this module only;
+    tokens never leave the module.
     """
-    data = _load_json(_credentials_path(home))
+    data = _load_json(credentials_path)
     if data is None:
         return None, None, None, None
     oauth = data.get("claudeAiOauth")
@@ -155,6 +160,16 @@ def _read_tokens(home: Path) -> tuple[str | None, str | None, str | None, int | 
     )
 
 
+def _read_tokens(home: Path) -> tuple[str | None, str | None, str | None, int | None]:
+    """Return (access_token, refresh_token, client_id, expires_at_ms).
+
+    Thin wrapper over ``_read_tokens_at`` resolved to
+    ``~/.claude/.credentials.json``. All values are consumed inside this
+    module only.
+    """
+    return _read_tokens_at(_credentials_path(home))
+
+
 def _is_token_expired(expires_at_ms: int | None) -> bool:
     if expires_at_ms is None:
         return False  # unknown — try anyway
@@ -167,18 +182,22 @@ def _is_token_expired(expires_at_ms: int | None) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _refresh_access_token(
-    home: Path,
+def _refresh_access_token_at(
+    credentials_path: Path,
     refresh_token: str,
     client_id: str,
     *,
     opener=None,
 ) -> str | None:
-    """POST to token endpoint and atomically update credentials file.
+    """POST to token endpoint and atomically update the given credentials file.
 
-    Returns the new access token string, or None on failure.
-    Tokens are never returned to the caller of ``fetch_usage`` — this is
-    an internal helper only.
+    Used by both the legacy ``_refresh_access_token`` wrapper (which
+    targets ``~/.claude/.credentials.json``) and ``fetch_usage_for_credentials``
+    (which targets a per-account snapshot at
+    ``~/.scitex/agent-container/accounts/<name>/.credentials.json``).
+    Returns the new access token string, or ``None`` on failure. Tokens
+    are never returned to the caller of ``fetch_usage`` — this is an
+    internal helper only.
     """
     body = json.dumps(
         {
@@ -208,10 +227,9 @@ def _refresh_access_token(
         return None
 
     # Atomically update the credentials file.
-    creds_path = _credentials_path(home)
     # stx-allow: fallback (reason: credentials file may be read-only or locked by another process; new access token is still usable in memory even if disk write fails)
     try:
-        with open(creds_path, "r+", encoding="utf-8") as fh:
+        with open(credentials_path, "r+", encoding="utf-8") as fh:
             fcntl.flock(fh, fcntl.LOCK_EX)
             try:
                 data = json.load(fh)
@@ -224,16 +242,35 @@ def _refresh_access_token(
                         expires_in * 1000
                     )
                 # Write to .tmp then rename for atomicity.
-                tmp_path = Path(str(creds_path) + ".tmp")
+                tmp_path = Path(str(credentials_path) + ".tmp")
                 with open(tmp_path, "w", encoding="utf-8") as tmp_fh:
                     json.dump(data, tmp_fh, indent=2)
-                tmp_path.rename(creds_path)
+                tmp_path.rename(credentials_path)
             finally:
                 fcntl.flock(fh, fcntl.LOCK_UN)
     except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         pass  # best-effort write; we still have the new token in memory
 
     return new_access
+
+
+def _refresh_access_token(
+    home: Path,
+    refresh_token: str,
+    client_id: str,
+    *,
+    opener=None,
+) -> str | None:
+    """POST to token endpoint and atomically update credentials file.
+
+    Thin wrapper over ``_refresh_access_token_at`` resolved to
+    ``~/.claude/.credentials.json``. Returns the new access token string,
+    or ``None`` on failure. Tokens are never returned to the caller of
+    ``fetch_usage`` — this is an internal helper only.
+    """
+    return _refresh_access_token_at(
+        _credentials_path(home), refresh_token, client_id, opener=opener
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -493,3 +530,165 @@ def fetch_usage(home: Path | None = None, *, opener=None) -> dict[str, Any]:
 
     _write_cache(_home, result)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Per-account fetch — uses an explicit credentials file, NOT the active one
+# ---------------------------------------------------------------------------
+
+
+def _per_account_cache_path(credentials_path: Path) -> Path:
+    """Cache the per-account usage snapshot next to its credentials file.
+
+    ``<account_dir>/usage.json`` is also the file
+    ``_state.account_store.read_account_usage_cache`` reads, so populating
+    it makes writers and readers symmetric — the ``account list`` JSON
+    path can transparently pick up the cached value across sac
+    invocations without changing the reader.
+    """
+    return credentials_path.parent / "usage.json"
+
+
+def _read_per_account_cache(path: Path) -> dict[str, Any] | None:
+    """Per-account cache reader; same 5-min TTL as the shared cache."""
+    data = _load_json(path)
+    if data is None:
+        return None
+    fetched_at_str = data.get("fetched_at") or data.get("as_of")
+    if not isinstance(fetched_at_str, str):
+        return None
+    # stx-allow: fallback (reason: cache file may contain a malformed timestamp; returning None forces a fresh API fetch)
+    try:
+        fetched_at = datetime.fromisoformat(fetched_at_str)
+        if fetched_at.tzinfo is None:
+            fetched_at = fetched_at.replace(tzinfo=timezone.utc)
+    except ValueError:  # stx-allow: fallback (reason: type coercion or format mismatch)
+        return None
+    age = (_now_utc() - fetched_at).total_seconds()
+    if age < _CACHE_TTL_SECONDS:
+        data["from_cache"] = True
+        return data
+    return None
+
+
+def _write_per_account_cache(path: Path, result: dict[str, Any]) -> None:
+    """Write per-account usage cache atomically; never raises."""
+    # stx-allow: fallback (reason: per-account cache file may be on a read-only filesystem or disk-full; cache is a performance optimisation and callers are unaffected)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = Path(str(path) + ".tmp")
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(result, fh, indent=2)
+        tmp.rename(path)
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+        pass
+
+
+def fetch_usage_for_credentials(
+    credentials_path: Path,
+    *,
+    opener=None,
+) -> dict[str, Any]:
+    """Fetch usage data using the OAuth credentials at ``credentials_path``.
+
+    Per-account variant of :func:`fetch_usage`: reads access/refresh tokens
+    from ``credentials_path`` (NOT ``~/.claude/.credentials.json``),
+    refreshes on expiry by atomically writing back to that same file,
+    fetches the OAuth usage API, and caches the result at
+    ``credentials_path.parent / "usage.json"`` (the same file
+    ``_state.account_store.read_account_usage_cache`` reads, so writers
+    + readers are symmetric).
+
+    The cache is intentionally keyed per-account by the file location:
+    one stored account's cache never masks another's. The TTL matches
+    :func:`fetch_usage` (5 min) so repeated ``sac account list`` calls
+    don't hammer the API.
+
+    Args:
+        credentials_path: Path to the per-account ``.credentials.json``.
+        opener: Optional injection seam for tests.
+
+    Returns:
+        A dict with the same keys as :func:`fetch_usage` plus an extra
+        ``as_of`` (ISO timestamp). Never raises; ``error`` is populated
+        on any failure path.
+    """
+    creds = Path(credentials_path)
+
+    def _err(msg: str) -> dict[str, Any]:
+        r = dict(_EMPTY_RESULT)
+        now = _iso_now()
+        r["fetched_at"] = now
+        r["as_of"] = now
+        r["error"] = msg
+        return r
+
+    # --- cache check (per-account) -----------------------------------------
+    cache_path = _per_account_cache_path(creds)
+    cached = _read_per_account_cache(cache_path)
+    if cached is not None:
+        return cached
+
+    # --- read tokens (never returned) --------------------------------------
+    access_token, refresh_token, client_id, expires_at_ms = _read_tokens_at(creds)
+    if not access_token:
+        return _err(f"No access token in {creds}")
+
+    # --- refresh if expired -------------------------------------------------
+    if _is_token_expired(expires_at_ms):
+        if refresh_token and client_id:
+            new_token = _refresh_access_token_at(
+                creds, refresh_token, client_id, opener=opener
+            )
+            if new_token:
+                access_token = new_token
+            # If refresh failed, try with the old token anyway.
+
+    # --- API call -----------------------------------------------------------
+    payload: dict[str, Any] | None = None
+    # stx-allow: fallback (reason: network errors or unexpected exceptions from the usage API are caught and surfaced as an error dict rather than an unhandled exception)
+    try:
+        payload = _fetch_from_api(access_token, opener=opener)
+    except (
+        urllib.error.HTTPError
+    ) as exc:  # stx-allow: fallback (reason: expected failure — see inline comment)
+        if exc.code == 401 and refresh_token and client_id:
+            # Try refresh once on 401.
+            new_token = _refresh_access_token_at(
+                creds, refresh_token, client_id, opener=opener
+            )
+            if new_token:
+                access_token = new_token
+                # stx-allow: fallback (reason: second API attempt after token refresh may still fail due to network issues; pass lets the 401 handler return an error dict)
+                try:
+                    payload = _fetch_from_api(access_token, opener=opener)
+                except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+                    pass
+        if payload is None:
+            return _err(f"HTTP {exc.code} from usage API; refresh attempted")
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+        return _err(f"Network error: {exc}")
+
+    if payload is None:
+        return _err("Failed to fetch or parse usage API response")
+
+    # --- build result -------------------------------------------------------
+    result: dict[str, Any] = dict(_EMPTY_RESULT)
+    result.update(_parse_windows(payload))
+    now = _iso_now()
+    result["fetched_at"] = now
+    result["as_of"] = now
+    result["from_cache"] = False
+    result["error"] = None
+
+    # Security guard — must run before cache write.
+    try:
+        _check_no_token_leak(result)
+    except (
+        RuntimeError
+    ) as exc:  # stx-allow: fallback (reason: runtime state error — handled gracefully)
+        return _err(str(exc))
+
+    _write_per_account_cache(cache_path, result)
+    return result
+

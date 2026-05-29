@@ -120,11 +120,13 @@ def account_list(as_json: bool) -> None:
       $ sac account list --json
     """
     import json as _json
+    from pathlib import Path as _Path
 
-    from .._account.claude_usage import fetch_usage
+    from .._account.claude_usage import fetch_usage_for_credentials
     from .._account.credentials import read_credentials_metadata
     from .._account.creds_sync import account_freshness
     from .._state.account_store import (
+        _store_path,
         list_accounts,
         read_account_plan,
         read_account_usage_cache,
@@ -132,29 +134,34 @@ def account_list(as_json: bool) -> None:
     from ._helpers import console
     from .status_cmds import _format_claude_account_block
 
-    def _usage_for_account(
-        acct_meta: dict, active_meta: dict | None, live_usage: dict | None
-    ) -> dict | None:
-        # Prefer the live fetch when the row matches the currently active
-        # credentials (matched by email); otherwise fall back to the
-        # per-account usage.json cache (cache-only reader; returns None
-        # → `usage: —` when nothing has populated it).
-        active_email = (active_meta or {}).get("email_address")
-        acct_email = acct_meta.get("email_address")
-        if (
-            live_usage
-            and not live_usage.get("error")
-            and live_usage.get("used_pct_5h") is not None
-            and active_email
-            and acct_email
-            and active_email == acct_email
-        ):
-            return {
-                "used_pct_5h": live_usage.get("used_pct_5h"),
-                "used_pct_7d": live_usage.get("used_pct_7d"),
-                "as_of": live_usage.get("fetched_at"),
-            }
-        return read_account_usage_cache(acct_meta.get("name"))
+    def _usage_for_account(acct_meta: dict) -> dict | None:
+        # Live PER-ACCOUNT fetch using the stored snapshot's tokens. The
+        # snapshot lives at
+        # ``~/.scitex/agent-container/accounts/<name>/.credentials.json``
+        # (cascade-resolved via ``_store_path``); the fetch result is
+        # cached next to that file as ``usage.json`` so the same
+        # ``read_account_usage_cache`` reader sees the live value across
+        # invocations. Any failure (missing snapshot, expired token,
+        # network error) returns None → caller renders ``usage: —`` for
+        # that row only; never crashes the whole list.
+        name = acct_meta.get("name")
+        if not name:
+            return None
+        store = _store_path(None, _Path.home())
+        creds_path = store / name / ".credentials.json"
+        if not creds_path.is_file():
+            return read_account_usage_cache(name)
+        # stx-allow: fallback (reason: fetch_usage_for_credentials is documented never-raise, but defence-in-depth so one bad row never crashes `account list`)
+        try:
+            result = fetch_usage_for_credentials(creds_path)
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+            return read_account_usage_cache(name)
+        if result.get("error") or result.get("used_pct_5h") is None:
+            # No live data — try the cache reader as a final fallback so
+            # a stale-but-readable cache still shows something.
+            cached = read_account_usage_cache(name)
+            return cached if cached else None
+        return result
 
     accounts = list_accounts()
 
@@ -164,17 +171,9 @@ def account_list(as_json: bool) -> None:
             active = read_credentials_metadata()
         except (OSError, _json.JSONDecodeError):
             active = {}
-        # Live usage call — gives the active account's row a real value
-        # rather than the unpopulated cache "—". For non-active accounts
-        # we'd need credential-swap fetches (out of scope here).
-        # stx-allow: fallback (reason: fetch_usage already swallows network errors)
-        try:
-            live_usage = fetch_usage()
-        except Exception:  # stx-allow: fallback (reason: defence-in-depth; fetch_usage is documented never-raise)
-            live_usage = None
         # Enrich each stored account with OFFLINE plan/tier, credential
-        # FRESHNESS (VALID/EXPIRED/ABSENT + signed hours), and the live
-        # (or cached) usage snapshot for the matching account.
+        # FRESHNESS (VALID/EXPIRED/ABSENT + signed hours), and a LIVE
+        # per-account usage fetch (cached for 5 min next to the snapshot).
         stored = []
         for acct in accounts:
             entry = dict(acct)
@@ -182,7 +181,7 @@ def account_list(as_json: bool) -> None:
             fresh = account_freshness(acct["name"])
             entry["freshness"] = fresh.state
             entry["freshness_hours"] = fresh.hours
-            entry["usage"] = _usage_for_account(acct, active, live_usage)
+            entry["usage"] = _usage_for_account(acct)
             stored.append(entry)
         click.echo(
             _json.dumps(
@@ -208,16 +207,6 @@ def account_list(as_json: bool) -> None:
             "No accounts stored. Use: scitex-agent-container account save <name>"
         )
         return
-    # Live usage call (single network round-trip) — populates the active
-    # account's row with real values rather than the unpopulated per-account
-    # cache. Non-active rows fall through to read_account_usage_cache (still
-    # "—" until someone wires a credential-swap writer).
-    # stx-allow: fallback (reason: fetch_usage already swallows network errors)
-    try:
-        live_usage = fetch_usage()
-    except Exception:  # stx-allow: fallback (reason: defence-in-depth; fetch_usage is documented never-raise)
-        live_usage = None
-
     click.echo("Stored accounts:")
     for acct in accounts:
         name = acct["name"]
@@ -231,9 +220,10 @@ def account_list(as_json: bool) -> None:
         # operator at a glance which stores have rotted and need a
         # `sac accounts sync-live` (or a `claude /login`).
         fresh = account_freshness(name).label()
-        # Live usage for the active account, else cache-only fallback (— when
-        # the per-account usage.json is absent).
-        usage = _usage_for_account(acct, active_meta, live_usage)
+        # LIVE per-account usage (5-min cache next to the snapshot). On
+        # any failure the helper returns None → "—" for that row only;
+        # the rest of the list keeps rendering.
+        usage = _usage_for_account(acct)
         usage_str = "—"
         if usage:
             pct5 = usage.get("used_pct_5h")
