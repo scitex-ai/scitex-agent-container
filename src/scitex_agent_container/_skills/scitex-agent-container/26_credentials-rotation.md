@@ -164,6 +164,25 @@ Stages of death:
   session 401s. **Re-login required** — see
   [27_credentials-relogin.md](27_credentials-relogin.md).
 
+## 5. Multi-account CI rotation
+
+`for acct in ...; scitex-dev creds rotate-all --source $SAC_STORE --only pkgA --only pkgB ... --yes; done` splits CI auth across N Max accounts (lead 2026-05-29: 66 `scitex-*` divided 22-22-22 across 3). `--only` is repeatable.
+
+Non-negotiables:
+
+- **Silent-no-op trap.** Stale `--source` (`claudeAiOauth.expiresAt` in the past) exits **0 with zero stdout**. Verify first: `jq '.claudeAiOauth.expiresAt' <path>` vs `echo $(($(date +%s) * 1000))`.
+- **`--source` MUST be the sac store**, `~/.scitex/agent-container/accounts/<acct>/.credentials.json` (kept fresh by §6's daemon; what `sac accounts list` reads). The `~/.claude/.credentials-<acct>.json` canonicals from §1 are refreshed via `:rw` agent binds, NOT direct rotation — using them as `--source` silently fails when stale.
+
+## 6. The watch-live daemon — keeps the sac store fresh
+
+`sac accounts watch-live` runs `inotifywait -m ~/.claude/` for `close_write|moved_to|create` on `.credentials.json`; atomically copies each event into the matching sac-store path (slug-map e.g. `wyusuuke@gmail.com` → `wyusuuke-gmail-com`).
+
+Non-negotiables:
+
+- **NOT auto-started** — no systemd / launchd unit ships. If the daemon isn't running when `claude /login` refreshes, the sac store stays stale until `sac accounts sync-live` (one-shot fallback) or the daemon starts.
+
+Implementation: `_account/creds_watch.py` L140-152 (`watch_inotify()`), L99-133 (`watch_poll()` fallback); `_account/creds_sync.py` L141-244 (`sync_live()`), L69-77 (`slugify_email()`); `cli_pkg/_account_sync_live.py` L82-100+ (`account_watch_live` command).
+
 ## See also
 
 - [27_credentials-relogin.md](27_credentials-relogin.md) — verified
