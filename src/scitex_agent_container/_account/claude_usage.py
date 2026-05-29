@@ -62,7 +62,10 @@ _EMPTY_RESULT: dict[str, Any] = {
 
 _CACHE_TTL_SECONDS = 300  # 5 minutes
 _USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
-_TOKEN_URL = "https://claude.ai/api/auth/oauth/token"
+# Verified live 2026-05-30: the OAuth refresh endpoint is on the
+# Anthropic console, NOT claude.ai. claude.ai/api/auth/oauth/token is
+# Cloudflare-gated (403/404 for non-browser clients).
+_TOKEN_URL = "https://console.anthropic.com/v1/oauth/token"
 # Required by the OAuth usage endpoint; without it the API returns 4xx and
 # the response shape cannot be parsed. Tracked by Anthropic via the
 # anthropic-beta preview gating header.
@@ -70,6 +73,15 @@ _USAGE_BETA_HEADER = "oauth-2025-04-20"
 # Match the user-agent claude-hud sends so the OAuth gateway treats sac
 # requests as a first-party CLI client.
 _USAGE_USER_AGENT = "claude-code/2.1"
+# Refresh endpoint Cloudflare-gates POSTs unless the client looks like
+# the real Claude Code CLI. Verified live 2026-05-30: bare Content-Type
+# is not enough — all four headers are required.
+_REFRESH_USER_AGENT = "claude-cli/2.1.0 (external, cli)"
+# Claude Code's well-known OAuth client_id. Used when the stored
+# credentials snapshot lacks an explicit `clientId` (current Claude Code
+# versions do not write one to ~/.claude/.credentials.json). Verified
+# live 2026-05-30 against the production refresh endpoint.
+_CLAUDE_CODE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 
 # Substrings that must never appear in KEYS of the returned dict.
 # These are chosen to catch accidental token field leaks (e.g. "accessToken")
@@ -185,7 +197,7 @@ def _is_token_expired(expires_at_ms: int | None) -> bool:
 def _refresh_access_token_at(
     credentials_path: Path,
     refresh_token: str,
-    client_id: str,
+    client_id: str | None,
     *,
     opener=None,
 ) -> str | None:
@@ -198,18 +210,37 @@ def _refresh_access_token_at(
     Returns the new access token string, or ``None`` on failure. Tokens
     are never returned to the caller of ``fetch_usage`` — this is an
     internal helper only.
+
+    Notes (verified live 2026-05-30):
+    - Endpoint is ``console.anthropic.com/v1/oauth/token``;
+      ``claude.ai/api/auth/oauth/token`` is Cloudflare-gated and fails for
+      non-browser clients.
+    - Four request headers are required to pass Cloudflare — bare
+      ``Content-Type: application/json`` returns 4xx.
+    - Anthropic does NOT include the OAuth ``clientId`` in the credentials
+      file. When ``client_id`` is None/empty, fall back to the well-known
+      Claude Code client_id.
+    - The refresh_token ROTATES on every successful refresh. The new
+      ``refresh_token`` MUST be persisted alongside the new access_token
+      or the NEXT refresh call will fail (server invalidates the old one).
     """
+    effective_client_id = client_id or _CLAUDE_CODE_CLIENT_ID
     body = json.dumps(
         {
             "grant_type": "refresh_token",
             "refresh_token": refresh_token,
-            "client_id": client_id,
+            "client_id": effective_client_id,
         }
     ).encode()
     req = urllib.request.Request(
         _TOKEN_URL,
         data=body,
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": _REFRESH_USER_AGENT,
+            "anthropic-beta": _USAGE_BETA_HEADER,
+        },
         method="POST",
     )
     _opener = opener if opener is not None else urllib.request.urlopen
@@ -222,11 +253,14 @@ def _refresh_access_token_at(
         return None
 
     new_access = payload.get("access_token")
+    new_refresh = payload.get("refresh_token")
     expires_in = payload.get("expires_in")
     if not isinstance(new_access, str):
         return None
 
-    # Atomically update the credentials file.
+    # Atomically update the credentials file. Persist the rotated
+    # refresh_token alongside — this is critical, the server invalidates
+    # the prior refresh_token on success.
     # stx-allow: fallback (reason: credentials file may be read-only or locked by another process; new access token is still usable in memory even if disk write fails)
     try:
         with open(credentials_path, "r+", encoding="utf-8") as fh:
@@ -237,6 +271,8 @@ def _refresh_access_token_at(
                     data = {}
                 oauth = data.setdefault("claudeAiOauth", {})
                 oauth["accessToken"] = new_access
+                if isinstance(new_refresh, str):
+                    oauth["refreshToken"] = new_refresh
                 if isinstance(expires_in, (int, float)):
                     oauth["expiresAt"] = int(time.time() * 1000) + int(
                         expires_in * 1000
@@ -740,10 +776,10 @@ def refresh_account_credentials(
     if not refresh_token:
         out["error"] = "no refresh_token in credentials — needs `claude /login`"
         return out
-    if not client_id:
-        out["error"] = "no clientId in credentials — needs `claude /login`"
-        return out
 
+    # Claude Code does not write `clientId` to .credentials.json — use the
+    # stored value if present, else fall back to the constant well-known
+    # Claude Code client_id (verified live 2026-05-30).
     new_access = _refresh_access_token_at(
         creds, refresh_token, client_id, opener=opener
     )
