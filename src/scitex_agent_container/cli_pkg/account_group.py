@@ -497,104 +497,10 @@ def quota_watch(
 
 
 # ---------------------------------------------------------------------------
-# refresh — headless OAuth access-token rotation (no `claude /login` prompt)
+# refresh — headless OAuth access-token rotation (no `claude /login` prompt).
+# Lives in its own module to keep this file under the per-file line cap;
+# attached onto the group at import time (same pattern as sync-live).
 # ---------------------------------------------------------------------------
+from ._account_refresh import register_refresh_command
 
-
-@account.command("refresh")
-@click.argument("name", required=False)
-@click.option(
-    "--all",
-    "do_all",
-    is_flag=True,
-    default=False,
-    help="Refresh every stored account in turn (one network call each).",
-)
-@click.option(
-    "--json",
-    "as_json",
-    is_flag=True,
-    default=False,
-    help="Emit a JSON array on stdout instead of human prose.",
-)
-def account_refresh(name: str | None, do_all: bool, as_json: bool) -> None:
-    """Mint a fresh access_token from the stored refresh_token, headlessly.
-
-    Eliminates routine manual `claude /login`: as long as the (long-lived)
-    refresh_token is still valid, the access_token is rotated in place,
-    atomically written back to the same per-account credentials file.
-
-    A real `claude /login` is only required when the refresh_token itself
-    has lapsed — in which case this command reports it per-account and
-    moves on (with ``--all``) rather than aborting the whole run.
-
-    \b
-    Examples:
-      $ sac accounts refresh work
-      $ sac accounts refresh --all
-      $ sac accounts refresh --all --json
-    """
-    import json as _json
-    from pathlib import Path as _Path
-
-    from .._account.claude_usage import refresh_account_credentials
-    from .._state.account_store import _store_path, list_accounts
-
-    if not do_all and not name:
-        click.echo(
-            "error: provide an account name or --all "
-            "(see `sac accounts refresh --help`)",
-            err=True,
-        )
-        raise SystemExit(2)
-    if do_all and name:
-        click.echo(
-            "error: pass either a name or --all, not both", err=True
-        )
-        raise SystemExit(2)
-
-    home = _Path.home()
-    store = _store_path(None, home)
-
-    if do_all:
-        targets = [a["name"] for a in list_accounts(home=home)]
-    else:
-        targets = [name]  # type: ignore[list-item]
-
-    results: list[dict] = []
-    for acct_name in targets:
-        creds_path = store / acct_name / ".credentials.json"
-        # stx-allow: fallback (reason: refresh_account_credentials is documented never-raise, but defence-in-depth so one bad row never crashes --all)
-        try:
-            r = refresh_account_credentials(creds_path)
-        except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-            r = {
-                "success": False,
-                "expires_at": None,
-                "error": f"unexpected error: {exc}",
-                "credentials_path": str(creds_path),
-            }
-        r["name"] = acct_name
-        results.append(r)
-
-    if as_json:
-        click.echo(_json.dumps(results, ensure_ascii=False, indent=2))
-    else:
-        if not results:
-            click.echo("No accounts stored. Use: sac accounts save <name>")
-        for r in results:
-            if r["success"]:
-                click.echo(
-                    f"  {r['name']:20s}  refreshed; new expiry "
-                    f"{r['expires_at'] or '(unknown)'}"
-                )
-            else:
-                click.echo(
-                    f"  {r['name']:20s}  FAILED — {r['error']}", err=True
-                )
-
-    # Exit non-zero only if EVERY target failed; --all with mixed results
-    # is still a useful partial success.
-    if results and not any(r["success"] for r in results):
-        raise SystemExit(1)
-
+register_refresh_command(account)

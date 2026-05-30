@@ -166,7 +166,15 @@ def _resolve_local_token() -> tuple[str, str]:
 
 @click.group(name="dev", cls=HelpRecursiveGroup)
 def dev_group() -> None:
-    """Developer / maintainer plumbing (CI secrets, etc.)."""
+    """Developer / maintainer plumbing (CI secrets, scheduled jobs, etc.)."""
+
+
+# Federated scheduled-job subcommands (`sac dev {cron,daemon,systemd}`)
+# delegate to scitex-dev's ecosystem aggregator. Kept in their own module
+# to hold this file under the per-file line cap; attached at import time.
+from ._dev_jobs import register_dev_jobs_commands
+
+register_dev_jobs_commands(dev_group)
 
 
 @dev_group.command(name="extract-apikey-from-credentials")
