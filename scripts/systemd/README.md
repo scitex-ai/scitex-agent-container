@@ -12,8 +12,8 @@ systemd-user directory and enable the timer:
 
 ```bash
 mkdir -p ~/.config/systemd/user
-install -m 0644 packaging/systemd/sac-accounts-refresh.service \\
-                packaging/systemd/sac-accounts-refresh.timer   \\
+install -m 0644 scripts/systemd/sac-accounts-refresh.service \\
+                scripts/systemd/sac-accounts-refresh.timer   \\
                 ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now sac-accounts-refresh.timer
