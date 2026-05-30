@@ -1,0 +1,22 @@
+[Unit]
+Description=sac accounts refresh (headless OAuth access-token rotation)
+Documentation=https://github.com/ywatanabe1989/scitex-agent-container
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Refresh every stored account. `--all` continues past individual
+# failures; the unit exits non-zero only if EVERY account fails, at
+# which point the systemd journal entry is the operator's signal that
+# a real `claude /login` is finally required.
+ExecStart=/usr/bin/env sac accounts refresh --all
+# Fail-loud: stderr + non-zero exit land in the journal so
+# `journalctl --user -u sac-accounts-refresh.service` is the single
+# source of truth for refresh health.
+StandardOutput=journal
+StandardError=journal
+# No need to keep the unit "active" — it's a one-shot.
+RemainAfterExit=no
+# Bound the network call so a hung token endpoint can't wedge the timer.
+TimeoutStartSec=120s
