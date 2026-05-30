@@ -6,6 +6,38 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **feat(jobs): federate `sac.accounts-refresh` into `scitex_dev.jobs`.**
+  New provider `scitex_agent_container._jobs_plugin:provide_jobs`
+  registered under the `scitex_dev.jobs` entry-point group surfaces a
+  single systemd `JobSpec` (`sac.accounts-refresh`, every 2h,
+  `OnBootSec=15min`, `TimeoutStartSec=120s`) running `sac accounts
+  refresh --all --skip-active`. New `sac dev {cron,daemon,systemd}`
+  subcommands (`list`/`install`/`uninstall`) surface sac's own `sac.*`
+  jobs by delegating to scitex-dev's ecosystem aggregator; they degrade
+  gracefully (upgrade hint, exit 3) when the installed scitex-dev
+  predates `scitex_dev.jobs` (requires `scitex-dev>=0.16.0` in
+  production). The provider import is lazy so entry-point metadata is
+  install-time only.
+- **feat(accounts): `sac accounts refresh --skip-active`.** With
+  `--all`, excludes the stored account whose `email_address` matches the
+  currently-active `~/.claude` login (`~/.claude.json`
+  `oauthAccount.emailAddress`, case-insensitive) so the in-use
+  refresh_token is never rotated out from under the live session. No
+  active account resolvable → skips nothing and logs it. Behaviour is
+  unchanged without the flag.
+
+### Changed
+- **refactor(account): extract `sac accounts refresh` into
+  `cli_pkg/_account_refresh.py`** (registered onto the `account` group at
+  import time, mirroring `_account_sync_live`) to keep `account_group.py`
+  under the per-file line cap.
+- **chore(systemd): retire the static `sac-accounts-refresh.{service,timer}`
+  templates.** The unit files are now generated from the federated
+  `JobSpec` via `sac dev systemd install` / `scitex-dev ecosystem systemd
+  install`; `scripts/systemd/README.md` documents the new policy (the old
+  templates were pinned to the superseded `--all`, every-4h cadence).
+
 ## [0.21.3] — 2026-05-28
 
 ### Added
