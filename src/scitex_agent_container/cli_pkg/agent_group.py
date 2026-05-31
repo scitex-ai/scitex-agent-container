@@ -17,6 +17,7 @@ from .build_cmds import check as _check_impl
 from .info_cmds import find as _find_impl
 from .info_cmds import tail_session as _tail_impl
 from .lifecycle import delete as _delete_impl
+from .lifecycle import forget as _forget_impl
 from .lifecycle import restart as _restart_impl
 from .lifecycle import start as _start_impl
 from .lifecycle import stop as _stop_impl
@@ -42,7 +43,7 @@ class _AgentsGroup(HelpRecursiveGroup):
     flat alphabetical list."""
 
     COMMAND_CATEGORIES = [
-        ("Lifecycle", ["start", "stop", "restart", "delete"]),
+        ("Lifecycle", ["start", "stop", "restart", "delete", "forget"]),
         ("Interact", ["send"]),
         ("Inspect", ["list", "status", "health", "tail", "recall"]),
         ("Preflight", ["check"]),
@@ -61,6 +62,7 @@ agent_group.add_command(_rebind(_start_impl, "start"))
 agent_group.add_command(_rebind(_stop_impl, "stop"))
 agent_group.add_command(_rebind(_restart_impl, "restart"))
 agent_group.add_command(_rebind(_delete_impl, "delete"))
+agent_group.add_command(_rebind(_forget_impl, "forget"))
 
 # Polysemous noun-leaves (allowed under noun groups by §1 loosening)
 agent_group.add_command(_rebind(_status_impl, "list"))
