@@ -1762,6 +1762,44 @@ def test_build_sif_from_def_invokes_apptainer_build_subcommand(
 
 
 # ---------------------------------------------------------------------------
+# Fail-loud regression (backlog #4) — _build_sif_from_* MUST surface
+# the apptainer stderr on non-zero rc rather than swallowing it into a
+# bare ``False`` return. The pre-fix shape ate the diagnostic and the
+# operator saw only a generic "Failed to start agent" upstream.
+# ---------------------------------------------------------------------------
+
+
+def test_build_sif_from_uri_raises_runtime_error_on_apptainer_failure(
+    tmp_path: Path, subprocess_shim
+) -> None:
+    # Arrange — install a fake apptainer that fails with a distinctive
+    # stderr the test asserts on (proves the stderr is forwarded, not
+    # just that the call raises).
+    subprocess_shim.install(
+        "apptainer", exit=1, stderr="OCI pull failed: image not found"
+    )
+    # Act
+    # Assert — pytest.raises is the assertion (TQ007: one per test).
+    with pytest.raises(RuntimeError, match="OCI pull failed: image not found"):
+        mod._build_sif_from_uri(tmp_path / "out.sif", "docker://nope")
+
+
+def test_build_sif_from_def_raises_runtime_error_on_apptainer_failure(
+    tmp_path: Path, subprocess_shim
+) -> None:
+    # Arrange
+    def_file = tmp_path / "x.def"
+    def_file.write_text("Bootstrap: docker\n")
+    subprocess_shim.install(
+        "apptainer", exit=1, stderr="def parse error: missing Bootstrap"
+    )
+    # Act
+    # Assert — pytest.raises is the assertion (TQ007: one per test).
+    with pytest.raises(RuntimeError, match="def parse error: missing Bootstrap"):
+        mod._build_sif_from_def(tmp_path / "out.sif", def_file)
+
+
+# ---------------------------------------------------------------------------
 # A2A wiring guard — spec.a2a.port → --a2a-port, plus card-yaml path
 # ---------------------------------------------------------------------------
 
