@@ -22,19 +22,89 @@ from ..._lifecycle.lifecycle import agent_stop
 from ..._state.host_config import build_ssh_argv
 from ..._state.host_config import load as _load_host_config
 from ..._state.state_db import now_iso, record_instance_stop
+from ..._state.state_db_comms_nodes import unregister_comms_node
 from ...config import load_config
 from ...config._resolve import resolve_with_prefix
 from .._helpers import agent_name_complete, console
 from ._common import _iter_agent_yamls
 from ._dispatch import try_dispatch_remote
 
+# Stable exit_reason marker for the release-on-unreachable path so a
+# follow-up audit can grep state.db for stale-binding releases and
+# distinguish them from clean stops.
+_FORCE_RELEASED_EXIT_REASON = "peer-unreachable-force-released"
+
+
+class _PeerUnreachableError(RuntimeError):
+    """Raised when ``_dispatch_remote_stop`` cannot reach the bound peer
+    via ssh — distinct from generic ``RuntimeError`` so the caller can
+    decide to release the stale binding locally (with ``--force``) rather
+    than aborting the whole stop loop on a transport failure.
+
+    Carries the full message that would have been raised (so the caller
+    can still echo it to the operator when force-release fires), plus a
+    flag indicating whether the failure was at the ssh transport layer
+    (rc != 0 with no parseable JSON envelope, or no stdout at all) — i.e.
+    the peer is genuinely unreachable, not "the remote sac returned an
+    error envelope we should respect".
+    """
+
+    def __init__(self, message: str, *, peer: str) -> None:
+        super().__init__(message)
+        self.peer = peer
+
+
+def _force_release_binding(name: str, row: dict, peer: str) -> dict:
+    """Tombstone the lead-side instances row + remove the comms_nodes
+    pin so a subsequent start can re-bind the singleton to its current
+    spec.host.
+
+    Called from the stop loop when ``_dispatch_remote_stop`` raises
+    :class:`_PeerUnreachableError` AND the operator passed ``--force``.
+    The release MUST clear BOTH stores — the user's bm025 repro hung on
+    the unreachable peer precisely because the singleton's instance row
+    AND comms_nodes binding both still pointed there, so any subsequent
+    routing (``stop``, ``send``, ``--on``-propagated ``start``) re-tried
+    the dead host. Without comms_nodes also being cleared, future a2a
+    routing would still try bm025 even after the instance row was
+    closed.
+
+    Returns the envelope the caller would otherwise have parsed from the
+    peer, so the per-target JSON shape stays stable.
+    """
+    instance_id = row.get("id")
+    if instance_id:
+        record_instance_stop(instance_id, exit_reason=_FORCE_RELEASED_EXIT_REASON)
+    # stx-allow: fallback (reason: a missing comms_nodes row is a
+    # legitimate state — the singleton may never have been pinned via
+    # the federated graph — and must not block the release)
+    try:
+        unregister_comms_node(name=name)
+    except Exception:
+        pass
+    return {
+        "name": name,
+        "stopped": True,
+        "force_released": True,
+        "host": peer,
+        "exit_reason": _FORCE_RELEASED_EXIT_REASON,
+        "ended_at": now_iso(),
+        "dispatched": False,
+    }
+
 
 def _dispatch_remote_stop(peer: str, row: dict, peers: dict, name: str) -> dict:
     """SSH into ``peer`` and run ``sac agents stop <name> --json``.
 
     Updates the lead-side ``instances`` row via :func:`record_instance_stop`
-    on success.  Raises ``RuntimeError`` with the full ssh argv + stderr
-    on failure (per the project's no-silent-fallback rule).
+    on success. Raises :class:`_PeerUnreachableError` when the ssh
+    transport itself fails (rc != 0; covers
+    ``Connection refused`` / ``pam_slurm_adopt denied`` / hostname
+    resolution failure / etc.) so the caller can fall through to
+    :func:`_force_release_binding` under ``--force``. Raises plain
+    ``RuntimeError`` for ``--json`` parse failures (peer sac responded
+    but spoke a different shape — operator must reconcile, not
+    auto-release).
 
     Returns the parsed JSON envelope from the peer's stdout.
     """
@@ -50,12 +120,13 @@ def _dispatch_remote_stop(peer: str, row: dict, peers: dict, name: str) -> dict:
         check=False,
     )
     if result.returncode != 0:
-        raise RuntimeError(
+        raise _PeerUnreachableError(
             f"Remote `sac agents stop {name}` failed on {peer!r} "
             f"(rc={result.returncode}):\n"
             f"argv: {' '.join(shlex.quote(a) for a in ssh_argv)}\n"
             f"stdout:\n{result.stdout}\n"
-            f"stderr:\n{result.stderr}"
+            f"stderr:\n{result.stderr}",
+            peer=peer,
         )
     try:
         envelope = _json.loads(result.stdout)
@@ -197,13 +268,49 @@ def stop(
     for name, raw_target in pairs:
         try:
             envelope_holder: dict = {}
+            release_holder: dict = {}
 
-            def _handler(peer, row, ps, _name=name, _holder=envelope_holder):
-                _holder.update(_dispatch_remote_stop(peer, row, ps, _name))
-                _holder["_peer"] = peer
+            def _handler(
+                peer,
+                row,
+                ps,
+                _name=name,
+                _holder=envelope_holder,
+                _release=release_holder,
+                _force=force,
+            ):
+                try:
+                    _holder.update(_dispatch_remote_stop(peer, row, ps, _name))
+                    _holder["_peer"] = peer
+                except _PeerUnreachableError as exc:
+                    if not _force:
+                        # No force → surface the ssh failure unchanged.
+                        # The outer try/except records it as an error.
+                        raise
+                    # --force on an unreachable peer: release the stale
+                    # binding locally so the operator isn't blocked by
+                    # an unreachable prior host (the lead's bm025
+                    # repro). The release writes BOTH the instances
+                    # tombstone AND the comms_nodes pin removal so
+                    # subsequent routing re-binds to the current
+                    # spec.host.
+                    _release.update(_force_release_binding(_name, row, peer))
+                    _release["_underlying_error"] = str(exc)
 
             dispatched = try_dispatch_remote(name, "stop", peers, handler=_handler)
             if dispatched:
+                if release_holder:
+                    # Force-released path.
+                    if as_json:
+                        click.echo(_json.dumps(release_holder))
+                    else:
+                        console.print(
+                            f"[yellow]Agent '{name}' force-released on "
+                            f"'{release_holder.get('host')}' "
+                            f"(peer unreachable; "
+                            f"{_FORCE_RELEASED_EXIT_REASON})[/yellow]"
+                        )
+                    continue
                 if as_json:
                     click.echo(
                         _json.dumps(

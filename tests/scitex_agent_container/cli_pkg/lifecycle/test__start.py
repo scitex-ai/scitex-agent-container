@@ -252,12 +252,47 @@ def _write_singleton_yaml(parent: Path, name: str, host: str) -> Path:
     return y
 
 
+def _record_live_singleton(
+    state_db_path: Path, env_save_restore, name: str, host: str
+) -> None:
+    """Redirect state.db + record an active ``instances`` row for ``name``
+    on ``host`` so :func:`_resolve_singleton_skip`'s liveness gate sees
+    "live elsewhere" and preserves the legitimate skip path.
+
+    Required because the gate (added in the follow-up to PR #252's
+    real-liveness pattern) treats a singleton-on-wrong-host check as a
+    stale dead-end binding when the registry has NO live row on the
+    bound host — the lead's bm025 stale-binding repro. Tests that want
+    the skip to fire MUST first prove there's a live agent on the bound
+    host (otherwise the gate's release semantics rightly trigger).
+    """
+    import importlib
+
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_STATE_DB", str(state_db_path))
+    import scitex_agent_container._state.state_db as _state_db_mod
+
+    importlib.reload(_state_db_mod)
+    _state_db_mod.record_instance_start(
+        name=name,
+        host=host,
+        a2a_port=19200,
+        bound_port=19200,
+        remote=True,
+        spawned_by="cli",
+    )
+
+
 class TestSingletonHostSkip:
     def test_single_target_singleton_skip_exits_clean(self, tmp_path, env_save_restore):
-        # Arrange
+        # Arrange — live row on the bound host preserves the legitimate
+        # skip path (without it, the liveness gate would release the
+        # binding and fall through to a local start).
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
         env_save_restore.set("HOME", str(tmp_path))
         _install_fresh_creds(tmp_path)
+        _record_live_singleton(
+            tmp_path / "state.db", env_save_restore, "mini", "nowhere-host"
+        )
         yaml_path = _write_singleton_yaml(tmp_path, "mini", "nowhere-host")
         runner = CliRunner()
         # Act
@@ -272,6 +307,9 @@ class TestSingletonHostSkip:
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
         env_save_restore.set("HOME", str(tmp_path))
         _install_fresh_creds(tmp_path)
+        _record_live_singleton(
+            tmp_path / "state.db", env_save_restore, "mini", "nowhere-host"
+        )
         yaml_path = _write_singleton_yaml(tmp_path, "mini", "nowhere-host")
         runner = CliRunner()
         # Act
@@ -286,12 +324,44 @@ class TestSingletonHostSkip:
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
         env_save_restore.set("HOME", str(tmp_path))
         _install_fresh_creds(tmp_path)
+        _record_live_singleton(
+            tmp_path / "state.db", env_save_restore, "mini", "nowhere-host"
+        )
         yaml_path = _write_singleton_yaml(tmp_path, "mini", "nowhere-host")
         runner = CliRunner()
         # Act
         result = runner.invoke(start, [str(yaml_path), "--json"])
         # Assert
         assert '"status": "skipped"' in result.output
+
+    def test_single_target_singleton_dead_binding_releases_and_starts_local(
+        self, tmp_path, env_save_restore
+    ):
+        # Arrange — singleton pinned to nowhere-host, NO live row recorded.
+        # The new liveness gate must release the stale binding and fall
+        # through to a real start path. We can't run apptainer in tests,
+        # so we just verify the skip JSON was NOT emitted (i.e. the gate
+        # did NOT short-circuit). Real start fails downstream, that's fine
+        # — what we're pinning is that the skip path didn't fire.
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        env_save_restore.set("HOME", str(tmp_path))
+        _install_fresh_creds(tmp_path)
+        # Redirect state.db to ensure the registry is empty for this name.
+        import importlib
+
+        env_save_restore.set(
+            "SCITEX_AGENT_CONTAINER_STATE_DB", str(tmp_path / "state.db")
+        )
+        import scitex_agent_container._state.state_db as _state_db_mod
+
+        importlib.reload(_state_db_mod)
+        yaml_path = _write_singleton_yaml(tmp_path, "mini", "nowhere-host")
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, [str(yaml_path), "--json"])
+        # Assert — no "skipped" status; the start path proceeded past
+        # the skip gate (whether it then errored is independent).
+        assert '"status": "skipped"' not in result.output
 
     def test_bulk_directory_singleton_skip_renders_skip_line(
         self, tmp_path, env_save_restore
@@ -337,6 +407,9 @@ class TestResumeAndForeground:
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
         env_save_restore.set("HOME", str(tmp_path))
         _install_fresh_creds(tmp_path)
+        _record_live_singleton(
+            tmp_path / "state.db", env_save_restore, "mini", "nowhere-host"
+        )
         yaml_path = _write_singleton_yaml(tmp_path, "mini", "nowhere-host")
         runner = CliRunner()
         # Act
@@ -351,6 +424,9 @@ class TestResumeAndForeground:
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
         env_save_restore.set("HOME", str(tmp_path))
         _install_fresh_creds(tmp_path)
+        _record_live_singleton(
+            tmp_path / "state.db", env_save_restore, "mini", "nowhere-host"
+        )
         yaml_path = _write_singleton_yaml(tmp_path, "mini", "nowhere-host")
         runner = CliRunner()
         # Act
@@ -370,6 +446,22 @@ class TestResumeAndForeground:
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
         env_save_restore.set("HOME", str(tmp_path))
         _install_fresh_creds(tmp_path)
+        # Two live rows so both singleton skips preserve the original
+        # short-circuit (one helper call seeds state.db redirect, the
+        # second adds the second row via the now-redirected default).
+        _record_live_singleton(
+            tmp_path / "state.db", env_save_restore, "mini1", "nowhere-host"
+        )
+        from scitex_agent_container._state.state_db import record_instance_start
+
+        record_instance_start(
+            name="mini2",
+            host="nowhere-host",
+            a2a_port=19201,
+            bound_port=19201,
+            remote=True,
+            spawned_by="cli",
+        )
         y1 = _write_singleton_yaml(tmp_path, "mini1", "nowhere-host")
         y2 = _write_singleton_yaml(tmp_path, "mini2", "nowhere-host")
         runner = CliRunner()
@@ -519,12 +611,17 @@ class TestDispatchBranch:
         # Arrange — spec.host is NOT in the peer registry AND NOT the
         # current host. Resolver returns None ("caller decides"), the
         # routing branch falls through, and singleton-skip emits the
-        # ``Skipping 'mini'`` line.
+        # ``Skipping 'mini'`` line. A live row on the bound host
+        # preserves the original short-circuit (liveness gate sees the
+        # agent IS running over there, so deferring is meaningful).
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
         env_save_restore.set("HOME", str(tmp_path))
         _install_fresh_creds(tmp_path)
         cfg = _write_peer_config(tmp_path, "remote-host")
         env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg))
+        _record_live_singleton(
+            tmp_path / "state.db", env_save_restore, "mini", "unknown-host"
+        )
         yaml_path = _write_singleton_yaml(tmp_path, "mini", "unknown-host")
         runner = CliRunner()
         # Act

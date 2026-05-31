@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 import click
 
@@ -19,6 +19,11 @@ from ...config import AgentConfig
 
 if TYPE_CHECKING:
     from ..._state.host_config import PeerSpec
+
+# (name, host) -> True iff the registry holds an active instances row
+# for ``name`` on ``host``. Used by :func:`_resolve_singleton_skip` to
+# liveness-gate the spec-host preference.
+BoundHostLivenessOracle = Callable[[str, str], bool]
 
 _SKIP_DIR_NAMES = {"legacy-agents", "shared", "GITIGNORED"}
 
@@ -44,40 +49,116 @@ def _resolve_dispatch_peer(
     return target_host
 
 
+def _bound_host(config: AgentConfig) -> str | None:
+    """Return the spec-bound preferred host for a singleton config.
+
+    Mirrors :func:`_singleton_skip_reason`'s head-of-chain selection —
+    the v3 ``spec.host`` (str or first element of list) wins, then the
+    v2 ``scheduling.preferred_host`` fallback. Returns None when the
+    config is multi-instance or unpinned (no skip would fire and no
+    liveness check is meaningful).
+    """
+    spec = config.hosts_spec
+    if spec.hosts:
+        return None
+    host = spec.host
+    if host:
+        if isinstance(host, str):
+            return host or None
+        return host[0] if host else None
+    sched = config.scheduling
+    if sched.mode != "singleton":
+        return None
+    return sched.preferred_host or None
+
+
+def _registry_active_on(name: str, host: str) -> bool:
+    """Default bound-host liveness oracle: True iff the lead-side
+    ``instances`` table holds an active row for ``name`` on ``host``.
+
+    Reads :func:`state_db.list_active_instances` (host-unfiltered) and
+    matches name+host exactly. Any failure (state.db missing, schema
+    mismatch, OS error) yields False — "no evidence of liveness" —
+    which is the conservative answer for the caller
+    (:func:`_resolve_singleton_skip` will treat the spec-host pin as
+    stale and fall through to a local start, breaking the stale-binding
+    dead end the lead's bm025 repro identified).
+    """
+    # stx-allow: fallback (reason: state.db read failure is treated as
+    # "no liveness evidence" so the stale spec-host binding is released
+    # and the start path proceeds; this is the conservative answer that
+    # never blocks)
+    try:
+        from ..._state.state_db import list_active_instances
+
+        rows = list_active_instances(host=None)
+    except Exception:
+        return False
+    for row in rows or ():
+        if row.get("name") == name and row.get("host") == host:
+            return True
+    return False
+
+
 def _resolve_singleton_skip(
     config: AgentConfig,
     hostname: str,
     *,
     no_redispatch: bool,
+    liveness_oracle: BoundHostLivenessOracle | None = None,
 ) -> str | None:
-    """Gated wrapper around :func:`_singleton_skip_reason`.
+    """Liveness-gated wrapper around :func:`_singleton_skip_reason`.
 
-    Returns ``None`` (no skip — start locally) when ``no_redispatch`` is
-    True regardless of the underlying skip reason. Otherwise delegates
-    to :func:`_singleton_skip_reason` unchanged.
+    Returns ``None`` (no skip — start locally) in any of:
 
-    Rationale (Bug 1 root cause): the original call site consulted
-    ``_singleton_skip_reason`` even when the operator had explicitly
-    disabled redispatch (e.g. via ``sac --on <peer>`` which propagates
-    ``--no-redispatch`` to the remote ``sac agents start``). The skip
-    path's only purpose is to defer to a redispatch — with
-    ``no_redispatch=True`` the agent has nowhere else to land, so the
-    skip becomes a permanent silent no-op. The lead's repro
-    (``sac --on spartan-gpgpu011 agents start clew --force --no-preflight``
-    exits 0 with zero output) was exactly this dead end: the remote
-    saw ``spec.host=bm043`` ≠ ``gpgpu011``, skipped, and emitted
-    ``{"status": "skipped", ...}``, which the lead-side propagator
-    then dropped on the floor.
+      1. ``no_redispatch=True`` — operator explicitly disabled the
+         redispatch chain (e.g. via ``sac --on <peer>`` which propagates
+         ``--no-redispatch`` to the remote ``sac agents start``). With
+         redispatch off there is nowhere else for the skip to defer to,
+         so honouring it would produce a silent no-op the propagator
+         then drops on the floor. (PR #252 / Bug 1.)
+      2. The singleton check itself yields no skip (host matches, or
+         multi-instance config).
+      3. The singleton check WOULD fire, but the liveness oracle reports
+         no active instance row on the bound host — the spec-host pin
+         is stale. The lead's bm025 repro (clew pinned to a dead prior
+         host with no live row + ``pam_slurm_adopt`` rejecting any ssh
+         to it) hung clew because the skip kept deferring to a host
+         that had nothing live and was unreachable. Falling through
+         lets the operator's actual target take over.
 
-    Note: "real liveness" of an *already-running* agent on the LOCAL
-    host is a separate concern handled inside
-    :func:`scitex_agent_container._lifecycle._start.agent_start` (PID
-    liveness + registry-row cross-check). This helper is only about the
-    routing decision before any local launch decision is even reached.
+    Returns the human-readable skip reason ONLY when the singleton
+    check fires AND the agent has a verified-live row on the bound
+    host (the legitimate "it IS running over there, defer" case).
+
+    Args:
+        config: Agent spec.
+        hostname: Current host's resolved canonical name.
+        no_redispatch: Operator's ``--no-redispatch`` flag (when True,
+            never skip).
+        liveness_oracle: Optional ``(name, host) -> bool`` seam for
+            checking whether the agent is already active on its bound
+            host. Defaults to :func:`_registry_active_on` (real state.db
+            read).
     """
     if no_redispatch:
         return None
-    return _singleton_skip_reason(config, hostname)
+    reason = _singleton_skip_reason(config, hostname)
+    if reason is None:
+        return None
+    bound = _bound_host(config)
+    if bound is None:
+        # No explicit pin → no liveness check can apply; preserve
+        # behaviour.
+        return reason
+    oracle = liveness_oracle if liveness_oracle is not None else _registry_active_on
+    if not oracle(config.name, bound):
+        # Spec says "should be on X" but the registry has no live row
+        # on X. Skipping would leave the agent unlaunched anywhere —
+        # fall through and start locally instead. This is the lead's
+        # bm025 stale-binding repro.
+        return None
+    return reason
 
 
 def _singleton_skip_reason(config: AgentConfig, hostname: str) -> str | None:
@@ -275,6 +356,9 @@ def _multiplex_foreground_tails(names, sleeper=None):
 
 __all__ = [
     "_SKIP_DIR_NAMES",
+    "BoundHostLivenessOracle",
+    "_bound_host",
+    "_registry_active_on",
     "_resolve_dispatch_peer",
     "_resolve_singleton_skip",
     "_singleton_skip_reason",
