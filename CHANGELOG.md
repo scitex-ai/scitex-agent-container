@@ -6,6 +6,49 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.21.5] — 2026-06-01
+
+### Added
+- **feat(listen): single-instance flock guard for `sac listen`** (#266,
+  operator task #26 sub (1)). A second `sac listen` while one already
+  holds the port used to crash uvicorn with bare `EADDRINUSE` + a
+  Python traceback — loud but with no diagnostic about which process
+  held the port. New `_listen/_single_instance.py` (`acquire_listen_lock`,
+  `release_listen_lock`, `ListenAlreadyRunningError`, `default_lock_dir`)
+  takes a port-scoped flock at `<lock_dir>/listen-<port>.pid` BEFORE
+  uvicorn binds, stamps the current PID in the file body, and on
+  conflict fails loud with the holding PID and lock-file path so
+  `kill <pid>` is actionable without `lsof` / `netstat`. The flock is
+  kernel-released on process exit (even SIGKILL / OOM) so a crashed
+  listen never permanently jams the port. Acquired before
+  `_register_self_comms_node` / `_maybe_sync_on_start` so a duplicate
+  launch never touches the federated registry.
+- **feat(systemd): `sac-listen.service` hand-maintained user unit**
+  (#268, operator task #26 sub (3)). New `scripts/systemd/sac-listen.
+  service` (`Type=simple` + `Restart=on-failure` + `RestartSec=5s` +
+  `StandardOutput=journal`). The companion flock guard (sub (1))
+  ensures `Restart=on-failure` cannot double-bind. The README is
+  split into "federated scheduled jobs" (`sac.accounts-refresh`
+  pattern, materialised from `scitex_dev.jobs`) vs "hand-maintained
+  long-running services" (`sac-listen.service` lives here) so a
+  future operator does not move this into the federated path by
+  mistake. Install: copy to `~/.config/systemd/user/`,
+  `daemon-reload`, `enable --now`.
+
+### Tests
+- **test(channel): pin SSE auto-reconnect across listen restart**
+  (#267, operator task #26 sub (2)). Three no-mocks regression tests
+  in `tests/scitex_agent_container/_mcp/test_channel_reconnect.py`
+  using a real asyncio TCP server pin the invariant that the
+  in-container SSE consumer (`_mcp/channel.py::_consume_sse`)
+  reconnects after the listen drops the stream mid-flight (operator-
+  restart scenario), records ≥ 2 actual TCP connection attempts, and
+  recovers when the server starts AFTER the consumer is already
+  trying. The exponential-backoff loop (0.5s → 30s cap) was already
+  implemented; this PR pins it against regression. A flake-guard
+  using a held-socket port reservation replaces a brittle "start →
+  stop → restart on same port" approach.
+
 ## [0.21.4] — 2026-06-01
 
 ### Added
