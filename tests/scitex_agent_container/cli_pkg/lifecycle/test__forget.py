@@ -192,29 +192,24 @@ def test_forget_force_overrides_live_safety_gate(isolated_state: Path) -> None:
 
 
 def test_forget_does_not_spawn_ssh_subprocess(
-    isolated_state: Path, monkeypatch
+    isolated_state: Path, subprocess_shim
 ) -> None:
-    # Arrange — install a poison subprocess.run that raises if called
-    # with an ssh argv. Forget MUST be local-only and never reach for
-    # ssh (that is what `stop` does; `forget` is the recovery path
-    # for when ssh is hopeless).
-    import subprocess as _subprocess
-
-    real_run = _subprocess.run
-    saw_ssh = []
-
-    def _no_ssh_run(argv, *a, **kw):
-        if argv and isinstance(argv, (list, tuple)) and argv and "ssh" in str(argv[0]):
-            saw_ssh.append(argv)
-            raise AssertionError(f"forget must not ssh: {argv}")
-        return real_run(argv, *a, **kw)
-
-    monkeypatch.setattr(_subprocess, "run", _no_ssh_run)
+    # Arrange — install a real fake ``ssh`` binary on ``$PATH`` via the
+    # package's no-mocks ``subprocess_shim`` fixture (the same pattern
+    # the listen-side argv regression test uses). The shim records each
+    # invocation; ``forget`` MUST be local-only and never reach for ssh
+    # (that is what ``stop`` does; ``forget`` is the recovery path for
+    # when ssh is hopeless). PA-306 §3 forbids ``monkeypatch.setattr``
+    # — the production code's real ``subprocess.run`` does its real
+    # PATH lookup, finds the shim, and the shim's argv log is what we
+    # read back.
+    subprocess_shim.install("ssh", stdout="", exit=0)
     _seed_active_instance("ghost", db_path=isolated_state)
     # Act
     _run_forget("ghost", "--force")
-    # Assert
-    assert saw_ssh == []
+    # Assert — the shim records zero invocations because forget never
+    # shelled out to ssh in the first place.
+    assert subprocess_shim.call_count("ssh") == 0
 
 
 # ---------------------------------------------------------------------------
