@@ -389,9 +389,10 @@ def test_handlers_registry_contains_all_four_keys(key: str, expected: object) ->
     assert actual == expected_value or actual is expected_value
 
 
-# Keep ``sys`` referenced for tooling that doesn't follow ``# noqa`` on imports
-# in some checkers — we no longer monkeypatch sys.modules but the import is
-# harmless to retain.
+# Keep ``sys`` referenced so unused-import checkers do not flag the
+# module-level ``import sys`` even after the prior sys.modules monkey-
+# stubs were removed. The reference itself is the suppression — no
+# lint directive needed.
 _ = sys
 
 
