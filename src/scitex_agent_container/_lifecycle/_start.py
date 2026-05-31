@@ -116,10 +116,11 @@ def _rotate_to_healthy_account(
       account has a fresh snapshot → ``config.claude.account`` is
       mutated to that account and a one-line rotation notice is
       printed to ``log_stream`` (default ``sys.stderr``). The runtime
-      then re-copies that account's snapshot into the per-agent
-      writable boot-copy via the existing
-      :func:`runtimes._apptainer_creds.resolve_cred_file` path — the
-      in-container ~1h token refresh on that copy keeps working.
+      then binds that account's snapshot ``:rw`` directly via
+      :func:`runtimes._apptainer_creds.resolve_cred_file` (operator
+      #15 — the prior boot-copy path was the root cause of the
+      2026-06-01 fleet outage; refreshes now write back to the
+      snapshot itself, never expiring).
     * If NOTHING is healthy → :class:`_creds.NoHealthyAccountError`
       propagates (fail loud, no silent stale-token launch). Agent is
       NOT started.

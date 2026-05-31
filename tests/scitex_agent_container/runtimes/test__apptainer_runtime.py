@@ -1145,15 +1145,18 @@ def _save_snapshot(home: Path, name: str, body: str | None = None) -> Path:
     return snap
 
 
-def test_argv_pins_account_binds_state_dir_copy_not_host_file(
+def test_argv_pins_account_binds_snapshot_path_directly_not_host_file(
     tmp_path: Path, home_redirect: Path
 ) -> None:
     # Arrange — host live file AND a saved snapshot both exist; the pin
-    # must bind the state-dir copy, never the host file.
+    # must bind the SNAPSHOT FILE ITSELF (operator task #15 — the prior
+    # copy-into-state-dir path was the root cause of the 2026-06-01
+    # fleet outage: refreshes landed on the copy, the snapshot drifted
+    # stale, every SDK turn 401'd after ~8h).
     host_creds = home_redirect / ".claude" / ".credentials.json"
     host_creds.parent.mkdir(parents=True, exist_ok=True)
     host_creds.write_text('{"host": true}')
-    _save_snapshot(home_redirect, "alpha")
+    snap = _save_snapshot(home_redirect, "alpha")
     state_dir = tmp_path / "state"
     state_dir.mkdir()
     rt = ApptainerContainerRuntime()
@@ -1161,16 +1164,17 @@ def test_argv_pins_account_binds_state_dir_copy_not_host_file(
     # Act
     argv = rt.build_run_argv(cfg, state_dir=state_dir, sif_path=tmp_path / "x.sif")
     creds_arg = next(a for a in argv if "/tmp/sac-claude/.credentials.json" in a)
-    # Assert — the bound host-side path is the per-agent copy, not host.
-    assert creds_arg.startswith(str(state_dir / "claude" / ".credentials.json"))
+    # Assert — the bound host-side path IS the snapshot file, neither
+    # a per-agent copy nor the host live file.
+    assert creds_arg.startswith(str(snap))
 
 
-def test_argv_pins_account_copies_snapshot_bytes_into_state_dir(
+def test_argv_pins_account_does_not_create_state_dir_copy(
     tmp_path: Path, home_redirect: Path
 ) -> None:
     # Arrange — snapshot has distinctive bytes (plus a VALID future
-    # expiresAt so the fail-loud resolver accepts it) the copy must
-    # reproduce verbatim.
+    # expiresAt). The runtime MUST NOT write a state-dir copy — the
+    # bind target is the snapshot itself (operator task #15).
     far_future_ms = int((time.time() + 86_400) * 1_000)
     body = '{"pinned": "beta-bytes", "claudeAiOauth": {"expiresAt": %d}}' % (
         far_future_ms
@@ -1182,9 +1186,10 @@ def test_argv_pins_account_copies_snapshot_bytes_into_state_dir(
     cfg = _config(tmp_path, claude=ClaudeSpec(account="beta"))
     # Act
     rt.build_run_argv(cfg, state_dir=state_dir, sif_path=tmp_path / "x.sif")
-    copied = state_dir / "claude" / ".credentials.json"
-    # Assert — frozen boot-copy landed with the snapshot's contents.
-    assert copied.read_text() == body
+    legacy_copy = state_dir / "claude" / ".credentials.json"
+    # Assert — no per-agent copy materialised; the snapshot is the
+    # only place the in-container CLI's :rw refresh writeback lands.
+    assert not legacy_copy.exists()
 
 
 def test_argv_no_account_binds_host_live_file(
