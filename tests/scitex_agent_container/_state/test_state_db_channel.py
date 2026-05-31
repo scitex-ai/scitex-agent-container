@@ -277,8 +277,10 @@ def test_format_ts_iso_renders_unix_seconds_as_utc_z() -> None:
 
 def test_format_ts_iso_renders_int_unix_seconds() -> None:
     """Int ts (e.g. legacy callers) renders the same as float."""
-    # Arrange / Act
-    rendered = format_ts_iso(1_700_000_000)
+    # Arrange — same unix-seconds value as the float case, as int.
+    ts = 1_700_000_000
+    # Act
+    rendered = format_ts_iso(ts)
     # Assert
     assert rendered == "2023-11-14T22:13:20Z"
 
@@ -288,8 +290,10 @@ def test_format_ts_iso_matches_iso8601_shape() -> None:
     seconds, optional ``Z`` / ``+HH:MM`` offset)."""
     import re
 
-    # Arrange / Act
-    rendered = format_ts_iso(1_777_766_006.95)
+    # Arrange — a fractional-seconds float value.
+    ts = 1_777_766_006.95
+    # Act
+    rendered = format_ts_iso(ts)
     # Assert
     assert re.match(
         r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?$",
@@ -300,16 +304,20 @@ def test_format_ts_iso_matches_iso8601_shape() -> None:
 def test_format_ts_iso_empty_string_stays_empty() -> None:
     """A missing-ts default (the receive-side passes ``event.get('ts', '')``)
     must NOT render as the 1970 epoch."""
-    # Arrange / Act
-    rendered = format_ts_iso("")
+    # Arrange — the sentinel empty-string used by missing-ts callers.
+    ts = ""
+    # Act
+    rendered = format_ts_iso(ts)
     # Assert
     assert rendered == ""
 
 
 def test_format_ts_iso_none_renders_empty() -> None:
     """A ``None`` ts (missing from envelope) renders empty, same as ``""``."""
-    # Arrange / Act
-    rendered = format_ts_iso(None)
+    # Arrange — None is the other missing-ts shape envelopes carry.
+    ts = None
+    # Act
+    rendered = format_ts_iso(ts)
     # Assert
     assert rendered == ""
 
@@ -328,8 +336,10 @@ def test_format_ts_iso_already_iso_string_is_passed_through() -> None:
 def test_format_ts_iso_numeric_string_is_coerced_and_rendered() -> None:
     """The JSON-round-trip case: a float ts arrives as ``"1700000000.0"``
     after meta_json (de)serialization. Coerce and render."""
-    # Arrange / Act
-    rendered = format_ts_iso("1700000000.0")
+    # Arrange — JSON-serialised float ts shape.
+    ts = "1700000000.0"
+    # Act
+    rendered = format_ts_iso(ts)
     # Assert
     assert rendered == "2023-11-14T22:13:20Z"
 
@@ -337,7 +347,9 @@ def test_format_ts_iso_numeric_string_is_coerced_and_rendered() -> None:
 def test_format_ts_iso_does_not_render_bool_as_epoch() -> None:
     """``bool`` is an int subclass — guard so a stray ``True`` does not
     silently become the 1970-01-01T00:00:01Z epoch."""
-    # Arrange / Act
-    rendered = format_ts_iso(True)
+    # Arrange — bool is the isinstance(_, int) footgun we're guarding.
+    ts = True
+    # Act
+    rendered = format_ts_iso(ts)
     # Assert
     assert rendered == "True"
