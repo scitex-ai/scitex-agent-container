@@ -485,3 +485,168 @@ def test_cross_host_stop_json_envelope_marks_dispatched(remote_row_for_zeta, ssh
     envelope = _json.loads(result.output.strip().splitlines()[-1])
     # Assert
     assert envelope.get("dispatched") is True
+
+
+# ---------------------------------------------------------------------------
+# stop --force release-on-unreachable.
+#
+# Lead's bm025 stale-binding repro: a singleton's instances row pointed
+# at a dead prior host (no SLURM job → pam_slurm_adopt denied ssh), so
+# stop --force itself aborted on the transport failure and the stale
+# binding never cleared. With the new fall-through, --force on an
+# unreachable peer tombstones the instances row + removes the
+# comms_nodes pin so the singleton can re-bind to the current spec.host.
+# WITHOUT --force, the ssh failure still surfaces as an error (operator
+# must opt in to the destructive release).
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def ssh_shim_unreachable(tmp_path):
+    """PATH-prepended fake ssh that mimics an unreachable peer
+    (rc 255, stderr line that resembles ``pam_slurm_adopt`` denial)."""
+    import json as _json
+    import sys
+
+    bin_dir = tmp_path / "_shim_bin_unreachable"
+    bin_dir.mkdir(exist_ok=True)
+    log = bin_dir / "ssh.argv.jsonl"
+    script = bin_dir / "ssh"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import json, sys\n"
+        f"with open({_json.dumps(str(log))}, 'a') as fh:\n"
+        "    fh.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+        "sys.stderr.write('Access denied by pam_slurm_adopt: "
+        "you have no SLURM jobs on this node.\\n')\n"
+        "sys.exit(255)\n"
+    )
+    script.chmod(0o755)
+    saved_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = f"{bin_dir}{os.pathsep}{saved_path}"
+    try:
+        yield bin_dir
+    finally:
+        os.environ["PATH"] = saved_path
+
+
+@pytest.fixture
+def remote_row_for_clew(cross_host_state_db):
+    """Seed an active singleton row for ``clew`` on the unreachable
+    peer ``peer-x`` AND the matching comms_nodes pin so the test can
+    verify BOTH stores are cleared on force-release."""
+    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_db_comms_nodes import register_comms_node
+
+    iid = record_instance_start(
+        name="clew", host="peer-x", a2a_port=19500, bound_port=19500, remote=True
+    )
+    register_comms_node(name="clew", host="peer-x", a2a_port=19500, source_host=None)
+    return iid
+
+
+def test_force_release_on_unreachable_peer_exits_zero(
+    remote_row_for_clew, ssh_shim_unreachable
+):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(stop, ["clew", "--force"])
+    # Assert — operator unblocked (otherwise the bm025 repro returns rc=1).
+    assert result.exit_code == 0, result.output
+
+
+def test_force_release_tombstones_instance_row(
+    remote_row_for_clew, ssh_shim_unreachable
+):
+    # Arrange
+    from scitex_agent_container._state.state_db import list_active_instances
+
+    runner = CliRunner()
+    # Act
+    runner.invoke(stop, ["clew", "--force"])
+    # Assert — no active row for clew anywhere; the binding was released.
+    rows = [r for r in list_active_instances() if r["name"] == "clew"]
+    assert rows == []
+
+
+def test_force_release_clears_comms_nodes_binding(
+    remote_row_for_clew, ssh_shim_unreachable
+):
+    # Arrange — the federated comms_nodes pin must ALSO clear, otherwise
+    # subsequent a2a routing still tries the unreachable peer even after
+    # the instances row is closed.
+    from scitex_agent_container._state.state_db_comms_nodes import lookup_comms_node
+
+    runner = CliRunner()
+    # Act
+    runner.invoke(stop, ["clew", "--force"])
+    # Assert
+    assert lookup_comms_node(name="clew") is None
+
+
+def test_force_release_json_envelope_carries_force_released_flag(
+    remote_row_for_clew, ssh_shim_unreachable
+):
+    import json as _json
+
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(stop, ["clew", "--force", "--json"])
+    envelope = _json.loads(result.output.strip().splitlines()[-1])
+    # Assert
+    assert envelope.get("force_released") is True
+
+
+def test_force_release_json_envelope_carries_release_exit_reason(
+    remote_row_for_clew, ssh_shim_unreachable
+):
+    import json as _json
+
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(stop, ["clew", "--force", "--json"])
+    envelope = _json.loads(result.output.strip().splitlines()[-1])
+    # Assert
+    assert envelope.get("exit_reason") == "peer-unreachable-force-released"
+
+
+def test_no_force_on_unreachable_peer_exits_nonzero(
+    remote_row_for_clew, ssh_shim_unreachable
+):
+    # Arrange — without --force, the ssh transport failure MUST surface
+    # as an error (operator hasn't opted in to the destructive release).
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(stop, ["clew"])
+    # Assert
+    assert result.exit_code != 0
+
+
+def test_no_force_on_unreachable_peer_leaves_instance_row(
+    remote_row_for_clew, ssh_shim_unreachable
+):
+    # Arrange — without --force, the binding MUST remain so the
+    # operator can investigate before discarding it.
+    from scitex_agent_container._state.state_db import list_active_instances
+
+    runner = CliRunner()
+    # Act
+    runner.invoke(stop, ["clew"])
+    # Assert
+    rows = [r for r in list_active_instances() if r["name"] == "clew"]
+    assert len(rows) == 1
+
+
+def test_no_force_on_unreachable_peer_message_surfaces_peer_diagnostic(
+    remote_row_for_clew, ssh_shim_unreachable
+):
+    # Arrange — operator needs the underlying ssh stderr to diagnose
+    # (per the project's no-silent-fallback rule).
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(stop, ["clew"])
+    # Assert
+    assert "pam_slurm_adopt" in result.output or "peer-x" in result.output
