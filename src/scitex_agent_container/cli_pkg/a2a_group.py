@@ -1,4 +1,4 @@
-"""``sac a2a {serve,doctor}`` CLI subcommands — A2A protocol surface.
+"""``sac a2a {serve,doctor,grant,revoke,grants}`` CLI subcommands — A2A protocol surface.
 
 * :func:`a2a_serve` boots the stdlib HTTP A2A server for one or more
   agent YAMLs.
@@ -6,6 +6,14 @@
   declared by ``spec.a2a`` in its YAML) and reports liveness +
   round-trip latency. Useful for ops or as ``spec.health.method:
   a2a-card`` from outside the agent process.
+* :func:`a2a_grant` / :func:`a2a_revoke` / :func:`a2a_grants` are
+  thin click wrappers over the cross-group ACL primitives in
+  ``_state.state_db_nodes`` (``grant_send`` / ``revoke_send`` /
+  ``list_comms_grants``). Operators previously had to drop into a
+  Python REPL to amend the comms-grants table — a footgun
+  (silently granting too much on wrong argument order). The CLI
+  makes it auditable and validates the positional order at the
+  Click layer.
 
 Examples::
 
@@ -14,6 +22,9 @@ Examples::
     sac a2a serve agents/*/*.yaml --port 9000
     sac a2a doctor mock-echo.yaml
     sac a2a doctor mock-echo.yaml --json
+    sac a2a grant worker-a worker-b --note "ticket-123"
+    sac a2a revoke worker-a worker-b
+    sac a2a grants --json
 """
 
 from __future__ import annotations
@@ -235,3 +246,128 @@ def _emit(result: dict, as_json: bool) -> None:
             f"[{result['agent']}] unhealthy at {url}: {result['error']}",
             err=True,
         )
+
+
+# ---------------------------------------------------------------------------
+# Cross-group ACL verbs — thin wrappers over state_db_nodes primitives.
+#
+# Imports happen inside the callback (not at module import) to keep the
+# Click cold-start cheap: ``sac --help`` and tab-completion press should
+# never load SQLite. The same lazy pattern used by ``host_group`` /
+# ``peer_group`` for state_db consumers.
+# ---------------------------------------------------------------------------
+
+
+@a2a.command("grant")
+@click.argument("sender")
+@click.argument("target")
+@click.option(
+    "--note",
+    default=None,
+    help="Free-form audit annotation (e.g. ticket / handoff that authorised this).",
+)
+def a2a_grant(sender: str, target: str, note: str | None) -> None:
+    """Grant ``SENDER`` permission to send messages to ``TARGET``.
+
+    Thin wrapper over ``_state.state_db_nodes.grant_send`` — inserts a
+    row into ``comms_grants``. Idempotent: re-granting the same pair is
+    a no-op (the existing row's timestamp is preserved).
+
+    Argument order matters: ``SENDER → TARGET`` is directional. To allow
+    bidirectional cross-group traffic, run the command twice.
+
+    \b
+    Example:
+      $ sac a2a grant worker-a worker-b
+      $ sac a2a grant worker-a worker-b --note "ticket-PA-512"
+    """
+    from .._state.state_db_nodes import grant_send
+
+    try:
+        grant_send(sender=sender, target=target, note=note)
+    except ValueError as exc:
+        click.echo(f"error: {exc}", err=True)
+        raise SystemExit(2) from exc
+    from ._helpers import console
+
+    console.print(f"[green]ok[/green]  granted  {sender}  ->  {target}")
+
+
+@a2a.command("revoke")
+@click.argument("sender")
+@click.argument("target")
+def a2a_revoke(sender: str, target: str) -> None:
+    """Revoke ``SENDER``'s permission to send messages to ``TARGET``.
+
+    Thin wrapper over ``_state.state_db_nodes.revoke_send`` — removes
+    the single ``sender → target`` row in ``comms_grants``. No
+    confirmation prompt: the operation is narrow (one row, one
+    direction) and idempotent — revoking a non-existent grant prints
+    ``no-op`` and exits 0.
+
+    \b
+    Example:
+      $ sac a2a revoke worker-a worker-b
+    """
+    if not sender or not target:
+        click.echo(
+            "error: SENDER and TARGET must both be non-empty",
+            err=True,
+        )
+        raise SystemExit(2)
+    from .._state.state_db_nodes import revoke_send
+    from ._helpers import console
+
+    removed = revoke_send(sender=sender, target=target)
+    if removed:
+        console.print(f"[green]ok[/green]  revoked  {sender}  ->  {target}")
+    else:
+        console.print(f"[dim]no-op[/dim]  no grant  {sender}  ->  {target}")
+
+
+@a2a.command("grants")
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit a JSON array instead of a rich table (scripting-friendly).",
+)
+def a2a_grants(as_json: bool) -> None:
+    """List every row in the ``comms_grants`` table.
+
+    Thin wrapper over ``_state.state_db_nodes.list_comms_grants``.
+    Rows are emitted in insertion order with their audit ``note`` (if
+    any). Empty table renders as ``(no grants)`` in rich mode and
+    ``[]`` in JSON mode.
+
+    \b
+    Example:
+      $ sac a2a grants
+      $ sac a2a grants --json | jq '.[] | select(.sender == "worker-a")'
+    """
+    from .._state.state_db_nodes import list_comms_grants
+
+    rows = list_comms_grants()
+    if as_json:
+        click.echo(json.dumps(rows, ensure_ascii=False))
+        return
+    from ._helpers import console
+
+    if not rows:
+        console.print("[dim](no grants)[/dim]")
+        return
+    from rich.table import Table
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("sender")
+    table.add_column("target")
+    table.add_column("created_at", justify="right")
+    table.add_column("note", overflow="fold")
+    for r in rows:
+        table.add_row(
+            str(r["sender"]),
+            str(r["target"]),
+            f"{r['created_at']:.0f}",
+            r["note"] if r["note"] is not None else "",
+        )
+    console.print(table)
