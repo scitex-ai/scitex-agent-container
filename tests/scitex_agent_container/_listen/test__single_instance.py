@@ -23,9 +23,9 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Iterator
 
 import pytest
+
 from scitex_agent_container._listen._single_instance import (
     ListenAlreadyRunningError,
     acquire_listen_lock,
