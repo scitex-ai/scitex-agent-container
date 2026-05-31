@@ -26,19 +26,18 @@ markers (TQ002), one assertion (TQ007), 3+-word name.
 
 from __future__ import annotations
 
-import io
 import json
 import os
 from pathlib import Path
 from typing import Any, Iterator
 
 import pytest
+
 from scitex_agent_container._lifecycle._in_sif_broker import (
     InSifBrokerError,
     broker_start_to_host,
     is_in_sif,
 )
-
 from scitex_agent_container._lifecycle._start import agent_start
 from scitex_agent_container._state import state_db
 from scitex_agent_container._state.registry import Registry
