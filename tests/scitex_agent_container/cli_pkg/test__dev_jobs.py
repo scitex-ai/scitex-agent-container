@@ -153,3 +153,114 @@ def test_install_degrades_when_jobs_absent() -> None:
     # Assert
     text = (result.output or "") + (getattr(result, "stderr", "") or "")
     assert "requires scitex-dev>=" in text
+
+
+# ---------------------------------------------------------------------------
+# verb consistency with scitex-dev ecosystem aggregator
+#
+# Canonical verbs per job-kind (scitex-dev ecosystem):
+#   cron    → list / install / uninstall
+#   systemd → list / install / uninstall
+#   daemon  → list / exec   (a daemon is *run*, not "installed")
+# ---------------------------------------------------------------------------
+
+
+def _verbs_of(kind: str) -> set[str]:
+    """The leaf subcommand names exposed under ``sac dev <kind>``."""
+    grp = dev_group.commands[kind]
+    return set(grp.commands)  # type: ignore[attr-defined]
+
+
+def test_cron_verbs_are_list_install_uninstall() -> None:
+    # Arrange
+    kind = "cron"
+    # Act
+    verbs = _verbs_of(kind)
+    # Assert
+    assert verbs == {"list", "install", "uninstall"}
+
+
+def test_systemd_verbs_are_list_install_uninstall() -> None:
+    # Arrange
+    kind = "systemd"
+    # Act
+    verbs = _verbs_of(kind)
+    # Assert
+    assert verbs == {"list", "install", "uninstall"}
+
+
+def test_daemon_verbs_are_list_exec() -> None:
+    # Arrange — daemon is run, not installed: list + exec, no
+    # install/uninstall (matches scitex-dev ecosystem daemon).
+    kind = "daemon"
+    # Act
+    verbs = _verbs_of(kind)
+    # Assert
+    assert verbs == {"list", "exec"}
+
+
+def test_daemon_has_no_install_verb() -> None:
+    # Arrange
+    kind = "daemon"
+    # Act
+    verbs = _verbs_of(kind)
+    # Assert — explicit: the wrong install/uninstall verbs are gone.
+    assert "install" not in verbs and "uninstall" not in verbs
+
+
+def test_daemon_exec_takes_positional_name_argument() -> None:
+    # Arrange — exec mirrors `scitex-dev ecosystem daemon exec <name>`.
+    exec_cmd = dev_group.commands["daemon"].commands["exec"]  # type: ignore[attr-defined]
+    # Act
+    arg_names = [p.name for p in exec_cmd.params if p.param_type_name == "argument"]
+    # Assert
+    assert arg_names == ["name"]
+
+
+def _sac_daemon_job() -> _Job:
+    return _Job(
+        name="sac.watcher",
+        schedule="-",
+        command="sac listen --forever",
+        description="Long-running sac watcher.",
+        kind="daemon",
+    )
+
+
+def test_daemon_exec_delegates_to_scitex_dev_with_positional_name() -> None:
+    # Arrange — capture the (kind, verb, name) the exec verb delegates with.
+    import scitex_agent_container.cli_pkg._dev_jobs as dj
+
+    captured: list[tuple] = []
+    original = dj._ecosystem_delegate
+    dj._ecosystem_delegate = lambda *a, **k: (captured.append(a) or 0)  # type: ignore[assignment]
+    try:
+        with _jobs_present([_sac_daemon_job()]):
+            runner = CliRunner()
+            # Act
+            runner.invoke(dev_group, ["daemon", "exec", "sac.watcher"])
+    finally:
+        dj._ecosystem_delegate = original  # type: ignore[assignment]
+    # Assert — delegated as (kind="daemon", verb="exec", name="sac.watcher").
+    assert captured == [("daemon", "exec", "sac.watcher")]
+
+
+def test_daemon_exec_rejects_unknown_job() -> None:
+    # Arrange — only sac.watcher exists.
+    with _jobs_present([_sac_daemon_job()]):
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(dev_group, ["daemon", "exec", "does.not.exist"])
+    # Assert — clean ClickException, not a delegated run.
+    assert result.exit_code != 0 and "unknown sac daemon job" in result.output
+
+
+def test_daemon_exec_degrades_when_jobs_absent() -> None:
+    # Arrange
+    with _jobs_absent():
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(dev_group, ["daemon", "exec", "sac.watcher"])
+    # Assert
+    text = (result.output or "") + (getattr(result, "stderr", "") or "")
+    assert "requires scitex-dev>=" in text
