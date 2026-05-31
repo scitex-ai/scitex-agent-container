@@ -376,23 +376,15 @@ class ApptainerContainerRuntime(RuntimeBase):
     ) -> bool:
         del no_preflight
         self._one_shot = one_shot
-        if shutil.which("apptainer") is None:
-            # Fail loud (PA-blocker-P1 / clew handoff 2026-05-31): the
-            # silent ``return False`` here used to bubble up through
-            # ``_lifecycle/_start.py`` as a generic ``RuntimeError:
-            # Failed to start agent`` with no diagnostic — operators
-            # spent minutes guessing whether it was a config error, a
-            # crashed runner, or a missing binary. The two real causes
-            # are both about the host PATH:
-            #   1. apptainer not installed on this host at all, or
-            #   2. running INSIDE a SIF whose %environment doesn't put
-            #      ``/usr/local/bin/apptainer`` on PATH — i.e. a
-            #      nested-apptainer attempt without ``spec.apptainer.
-            #      nested_mode: "escape"`` set (the escape path
-            #      forwards the inner ``apptainer exec`` to the bare
-            #      host via ssh/srun-overlap; see clew handoff P2).
-            # Naming both up front saves an entire round-trip of
-            # operator diagnosis.
+        if shutil.which("apptainer") is None and not dry_run:
+            # Fail loud (clew handoff 2026-05-31 P1): the silent
+            # ``return False`` used to bubble up as a generic
+            # ``Failed to start agent`` with no diagnostic. Name both
+            # real causes — host install missing, or nested-SIF
+            # without ``spec.apptainer.nested_mode: "escape"`` (P2).
+            # ``dry_run`` bypasses the guard: dry-run only emits argv,
+            # so a dev box / CI runner without apptainer can still
+            # validate the argv path; the real run still raises.
             raise RuntimeError(
                 "apptainer binary not found on $PATH — cannot start "
                 f"agent '{config.name}'. Causes: (1) apptainer is not "
@@ -408,7 +400,15 @@ class ApptainerContainerRuntime(RuntimeBase):
         state_dir = self._state_dir(config)
         state_dir.mkdir(parents=True, exist_ok=True)
 
-        sif_path = self.resolve_sif(config)
+        # Dry-run on a host without apptainer must still resolve a
+        # local ``.sif`` path so the argv-emit completes — the class
+        # wrapper short-circuits on missing apptainer, so bypass it.
+        if dry_run and shutil.which("apptainer") is None:
+            cache_dir = self._image_cache_dir(config)
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            sif_path = _resolve_sif(config, cache_dir)
+        else:
+            sif_path = self.resolve_sif(config)
         if sif_path is None:
             return False
 

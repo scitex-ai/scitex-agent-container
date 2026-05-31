@@ -1311,6 +1311,28 @@ def test_start_error_message_names_the_agent_being_started(
     assert len(captured) == 1 and "zeta-bm175" in str(captured[0])
 
 
+def test_start_dry_run_does_not_raise_when_apptainer_binary_missing(
+    state_root: Path, tmp_path: Path, no_apptainer_on_path: Path
+) -> None:
+    # Arrange — dry-run only emits argv to a state-dir file and
+    # never calls ``apptainer exec``. A dev box / CI runner without
+    # apptainer installed must still be able to validate the
+    # ``sac agents start --dry-run`` argv path; the loud raise added
+    # for the no-apptainer case must skip when dry_run=True. The
+    # spec needs an image so the inner ``resolve_sif`` returns a
+    # value (dry-run hits the same code path otherwise).
+    sif = tmp_path / "ready.sif"
+    sif.write_bytes(b"\x00")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd", image=str(sif))
+
+    # Act
+    ok = rt.start(cfg, dry_run=True)
+
+    # Assert
+    assert ok is True
+
+
 def test_start_returns_false_when_sif_cannot_be_resolved(
     state_root: Path, tmp_path: Path, apptainer_on_path: Path
 ) -> None:
