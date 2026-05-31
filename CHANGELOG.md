@@ -6,7 +6,31 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.21.4] — 2026-06-01
+
 ### Added
+- **feat(broker): SAC-from-SAC — in-SIF `agent_start` brokers to host
+  `sac listen`** (#261, operator-mandated 2026-06-01). When an agent
+  runs INSIDE an apptainer SIF, `sac agents start <child>` (and the
+  `agent_start` API) auto-detects the in-SIF condition
+  (`APPTAINER_CONTAINER` / `SINGULARITY_CONTAINER`) and POSTs the
+  spawn RPC to the host-side `sac listen` instead of trying nested
+  apptainer (which is unsupported on the target HPC shape). The host
+  re-runs `check_spawn`, records the parent → child lineage edge, and
+  shells the real `sac agent start` against the bare host's
+  apptainer. New `_lifecycle/_in_sif_broker.py`
+  (`is_in_sif`, `broker_start_to_host`, `maybe_broker_in_sif_spawn`,
+  `InSifBrokerError`); injection seam `in_sif_opener` on
+  `agent_start`. Reuses the existing `SAC_LISTEN_BASE_URL` /
+  `SAC_LISTEN_BEARER` env injection from
+  `runtimes/_apptainer_listen_env.listen_env_flags`. Fail-loud
+  contract: missing base URL / transport / 4xx / 5xx / malformed
+  body → `InSifBrokerError` with status + body preserved verbatim.
+  Bare-host path unchanged. Also fixes a latent listen-side bug
+  exposed by the live test: `_listen/_agent_exec.py::agents_start`
+  used to shell `["sac", "agent", "start", name]` (singular, removed
+  in F-CS13); switched to `["sac", "agents", "start", name]` with a
+  regression test pinning the argv shape.
 - **feat(jobs): federate `sac.accounts-refresh` into `scitex_dev.jobs`.**
   New provider `scitex_agent_container._jobs_plugin:provide_jobs`
   registered under the `scitex_dev.jobs` entry-point group surfaces a
@@ -27,6 +51,38 @@ versioning follows [SemVer](https://semver.org/).
   active account resolvable → skips nothing and logs it. Behaviour is
   unchanged without the flag.
 
+### Fixed
+- **fix(creds): :rw bind the per-account snapshot directly — no
+  boot-time copy** (#262, operator task #15). Root cause of the
+  2026-06-01 fleet-wide silent 401 outage: agents pinned via
+  `spec.claude.account` got a FROZEN BOOT-COPY of the saved account's
+  snapshot under `<state_dir>/claude/.credentials.json`. The
+  in-container Claude CLI's ~1h OAuth refresh wrote back to that
+  per-agent copy — not the source snapshot. After ~8h drift, every
+  SDK turn 401'd silently (the telegram bridge still marked inbound
+  👀 but the agent could not complete a turn). Hit hub, orochi, and
+  proj-scitex-agent-container (revived only by restart). Fix:
+  `runtimes/_apptainer_creds.resolve_cred_file` pinned branch now
+  returns the snapshot path directly. The caller's existing `:rw`
+  bind in `_apptainer_auth.auth_argv` lands on the snapshot — the
+  in-container CLI's refresh writeback goes to the snapshot, which
+  is now self-healing and never expires while any pinned agent keeps
+  running. Same-account-pinned agents now share a single mount
+  target; the Claude CLI's atomic refresh writeback (tmp+rename) is
+  safe under concurrent refresh. Safety gates (`PinnedAccountError`
+  on absent / missing-`expiresAt` / already-expired snapshot)
+  preserved verbatim. Operators upgrading mid-deploy with a leftover
+  `<state_dir>/claude/.credentials.json` are unaffected (resolver
+  neither reads nor mutates the legacy dest; regression test in
+  place).
+- **fix(tests): satisfy STX-TQ002 AAA-marker rule on safety-gate
+  raises tests** (#263). Follow-up cleanup of an audit-gate violation
+  that slipped onto develop when #262 was auto-merged before
+  pytest-matrix completed. Three safety-gate tests used a combined
+  `# Act / Assert` comment; split into `# Act` + `# Assert —
+  pytest.raises is the assertion` (matches the sibling
+  `test__apptainer_creds.py` style). No production code change.
+
 ### Changed
 - **refactor(account): extract `sac accounts refresh` into
   `cli_pkg/_account_refresh.py`** (registered onto the `account` group at
@@ -37,6 +93,13 @@ versioning follows [SemVer](https://semver.org/).
   `JobSpec` via `sac dev systemd install` / `scitex-dev ecosystem systemd
   install`; `scripts/systemd/README.md` documents the new policy (the old
   templates were pinned to the superseded `--all`, every-4h cadence).
+- **chore(tests): package-level `conftest.py` clears in-SIF env
+  pollution.** Two autouse fixtures clear `APPTAINER_CONTAINER` /
+  `SINGULARITY_CONTAINER` (would route every test through the new
+  SAC-from-SAC broker) and `SCITEX_AGENT_CONTAINER_AGENT` / `SAC_AGENT`
+  (leaks the running agent's identity into statusline tests).
+  Side-effect: fixes 8 pre-existing in-SIF env failures that surfaced
+  only when pytest runs inside an agent SIF.
 
 ## [0.21.3] — 2026-05-28
 
