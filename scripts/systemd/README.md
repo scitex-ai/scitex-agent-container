@@ -1,3 +1,83 @@
+# sac systemd-user units
+
+This directory ships the systemd-user units sac installs into
+`~/.config/systemd/user/`. There are two kinds:
+
+* **Federated scheduled jobs** — registered into the
+  `scitex_dev.jobs` ecosystem entry-point group and materialised by
+  `sac dev systemd install` from a single `JobSpec` source of truth.
+  Today: `sac.accounts-refresh.{service,timer}`. The unit files are
+  NOT hand-maintained here.
+
+* **Hand-maintained long-running services** — `Type=simple` daemons
+  that do not fit the `JobSpec` (no cron schedule). Today:
+  `sac-listen.service` (the host-level HTTP/JSON control plane).
+  Operator-mandated 2026-06-01 (task #26): auto-start on boot,
+  auto-restart on crash, journal-tail-able.
+
+## sac-listen.service — hand-maintained
+
+Long-running daemon (the host's `sac listen` HTTP/JSON control
+plane, default loopback `127.0.0.1:7878`). Provides push hub, spawn
+broker, lead inbox. Before this unit landed, the listen was
+operator-started ad-hoc and could be found DOWN with nothing
+restarting it.
+
+```bash
+# Install the unit (operator copies, then enables)
+cp scripts/systemd/sac-listen.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now sac-listen.service
+
+# Verify
+systemctl --user status sac-listen.service
+journalctl --user -u sac-listen.service -n 50
+
+# Healthcheck (echos the same /v1/health the unit's diagnostic
+# stderr names at boot)
+curl -s http://127.0.0.1:7878/v1/health   # → {"ok":true,"service":"sac-listen","v":1}
+
+# Disable / remove
+systemctl --user disable --now sac-listen.service
+rm ~/.config/systemd/user/sac-listen.service
+systemctl --user daemon-reload
+```
+
+### Restart policy + companion guards
+
+* `Type=simple` + `Restart=on-failure` + `RestartSec=5s`. Brief
+  debounce so a launch that always fails (e.g. bad pip upgrade
+  surfaced as ImportError) doesn't hot-loop.
+* The companion `_listen/_single_instance.py` flock guard (task
+  #26 sub (1)) ensures `Restart=on-failure` can't double-bind the
+  port. The kernel releases the flock on every dirty exit, so the
+  next start cleanly takes it.
+* Agents already auto-reconnect their SSE inbox subscriptions on
+  listen restart via the exponential-backoff loop in
+  `_mcp/channel.py` (verified by
+  `tests/scitex_agent_container/_mcp/test_channel_reconnect.py`,
+  task #26 sub (2)). A `systemctl --user restart sac-listen` does
+  NOT require any agent restart.
+
+### Notes
+
+* `ExecStart=/usr/bin/env sac listen` resolves `sac` against the
+  user's `$PATH`. If the operator runs sac out of a venv, ensure
+  the venv's `bin/` is on the user's default PATH (systemd-user
+  inherits `~/.profile` style env via PAM, NOT interactive
+  `~/.bashrc`). Add `Environment=PATH=...` to a drop-in if needed.
+* `StandardOutput=journal` / `StandardError=journal` route both
+  the listen-boot diagnostic lines (token file / pidfile / health
+  URL) and uvicorn's request log to `journalctl --user -u
+  sac-listen`.
+* No `--bind` override: the default `127.0.0.1:7878` is correct
+  for the supported deployment shape (orochi owns the tunnel
+  mesh; SAC_OROCHI_SCOPES.md §4.4). Override via a `systemctl
+  --user edit sac-listen` drop-in if a non-loopback bind is ever
+  needed.
+
+---
+
 # sac accounts refresh — federated systemd-user timer
 
 Headless rotation of the Claude Code OAuth access-token using the
