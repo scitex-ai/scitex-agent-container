@@ -1,0 +1,48 @@
+[Unit]
+Description=sac listen — host-level HTTP/JSON control plane for sac agents (operator task #26)
+Documentation=https://github.com/ywatanabe1989/scitex-agent-container
+# Pull in the network stack before binding 127.0.0.1:7878. We do NOT
+# require a working internet route — sac listen is loopback-only by
+# default and serves the local agent fleet; ``network.target`` is
+# enough.
+After=network.target
+
+[Service]
+Type=simple
+# Resolve `sac` against PATH. Prefer the operator's venv via PATH
+# preamble in their shell profile; systemd-user inherits the user's
+# default PATH but not the interactive ``~/.bashrc`` shell config, so
+# a venv-rooted sac MUST be on $HOME/.local/bin or wrapped by an
+# absolute path in this unit. We use `--`-style argv (no shell) to
+# avoid PATH-by-shell surprises.
+ExecStart=/usr/bin/env sac listen
+# StandardOutput=journal, StandardError=journal — `journalctl --user
+# -u sac-listen` is the single tail point for both streams. The pre-
+# flight diagnostic stderr lines (token file / pidfile / health URL)
+# from listen_cmds.py land here, so the operator sees the boot trace
+# in journalctl with zero extra config.
+StandardOutput=journal
+StandardError=journal
+
+# Restart policy — the operator task brief: "auto-start on boot and
+# auto-restart on crash, with a healthcheck". The flock-backed
+# single-instance guard (operator task #26 sub (1)) ensures that
+# Restart=on-failure can't double-bind the port; the kernel releases
+# the flock on every dirty exit, so the next start cleanly takes it.
+Restart=on-failure
+# Brief debounce: avoid hot-looping a launch that always fails (e.g.
+# uvicorn import error after a bad pip upgrade). 5s is the same
+# value scitex-orochi's persistent-services use.
+RestartSec=5s
+# Honour SIGTERM-then-SIGKILL with a generous window so any in-flight
+# SSE responses have a chance to flush.
+TimeoutStopSec=20s
+
+# Resource ceilings — sac listen is small; if it ever balloons,
+# something is wrong and a restart is the right intervention. Leave
+# generous so legitimate large fan-out broadcasts don't trip the
+# limit.
+LimitNOFILE=8192
+
+[Install]
+WantedBy=default.target
