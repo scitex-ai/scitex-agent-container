@@ -72,6 +72,17 @@ def build_ssh_argv(
         "ConnectTimeout=10",
         "-o",
         "ServerAliveInterval=15",
+        # TOFU policy for first-touch peers: accept the host key on
+        # initial connect (record it in known_hosts), but reject on any
+        # subsequent mismatch. Without this, the very first dispatch to
+        # a freshly-registered peer hangs on the interactive
+        # ``Are you sure you want to continue connecting`` prompt, which
+        # under BatchMode=yes degrades to an immediate close — the
+        # operator sees a bare non-zero exit with no actionable error.
+        # ``accept-new`` is the safer ``no``: it does NOT silently
+        # accept changed keys, so a MITM still surfaces.
+        "-o",
+        "StrictHostKeyChecking=accept-new",
     ]
     # Connection multiplexing — must come before extra_opts so caller
     # overrides win. See :func:`ssh_control_options` for the rationale

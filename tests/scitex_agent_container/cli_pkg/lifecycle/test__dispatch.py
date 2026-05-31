@@ -592,6 +592,51 @@ class TestDispatchSshArgv:
 
 
 # ---------------------------------------------------------------------------
+# Bug 3 — TOFU policy: dispatch must add ``-o
+# StrictHostKeyChecking=accept-new`` to BOTH the ssh handoff AND rsync's
+# transport, so a first-touch peer (the most common dispatch failure
+# mode on a freshly-configured cluster) does not silently rc-1 with no
+# operator-actionable error.
+# ---------------------------------------------------------------------------
+
+
+class TestDispatchStrictHostKeyChecking:
+    def test_dispatch_ssh_argv_includes_accept_new_strict_host_key(
+        self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
+    ):
+        # Arrange
+        _write_peer_config(fake_home, env_save_restore)
+        # Act
+        _act_dispatch(shim_bin, capsys, rsync_kwargs=_RK_OK, ssh_kwargs=_SK_OK)
+        # Assert — the rendered ssh argv carries the TOFU policy.
+        assert "StrictHostKeyChecking=accept-new" in " ".join(
+            _ssh_invocations(shim_bin)[-1]
+        )
+
+    def test_dispatch_dry_rsync_argv_uses_accept_new_transport(
+        self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
+    ):
+        # Arrange — clean first-launch dry-run, ok ssh.
+        _write_peer_config(fake_home, env_save_restore)
+        # Act
+        _act_dispatch(shim_bin, capsys, rsync_kwargs=_RK_OK, ssh_kwargs=_SK_OK)
+        # Assert — rsync's -e transport carries the accept-new flag.
+        dry = next(a for a in _rsync_invocations(shim_bin) if _is_dry_run_argv(a))
+        assert any("StrictHostKeyChecking=accept-new" in tok for tok in dry)
+
+    def test_dispatch_real_rsync_argv_uses_accept_new_transport(
+        self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
+    ):
+        # Arrange
+        _write_peer_config(fake_home, env_save_restore)
+        # Act
+        _act_dispatch(shim_bin, capsys, rsync_kwargs=_RK_OK, ssh_kwargs=_SK_OK)
+        # Assert
+        real = next(a for a in _rsync_invocations(shim_bin) if not _is_dry_run_argv(a))
+        assert any("StrictHostKeyChecking=accept-new" in tok for tok in real)
+
+
+# ---------------------------------------------------------------------------
 # lookup_remote_peer + try_dispatch_remote: state.db-driven routing.
 # ---------------------------------------------------------------------------
 

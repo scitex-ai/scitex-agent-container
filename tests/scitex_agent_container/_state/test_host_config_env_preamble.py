@@ -369,3 +369,33 @@ def test_build_ssh_argv_empty_preamble_preserves_raw_command_tail(
     tail = argv[-3:]
     # Assert
     assert tail == ["--", "echo", "hi"]
+
+
+# ---------------------------------------------------------------------------
+# TOFU policy: build_ssh_argv pre-bakes ``StrictHostKeyChecking=accept-new``
+# so the first-touch dispatch to a freshly-registered peer adds the host
+# key on first connect (then refuses changes). Without this, BatchMode=yes
+# turns the missing host-key into a silent rc-1 with no actionable error
+# for the operator.
+# ---------------------------------------------------------------------------
+
+
+def test_build_ssh_argv_includes_accept_new_strict_host_key_option():
+    # Arrange
+    peers = {"mba": PeerSpec(name="mba", ssh="mba")}
+    # Act
+    argv = build_ssh_argv("mba", ["echo", "hi"], peers)
+    # Assert — TOFU flag is in the rendered argv.
+    joined = " ".join(argv)
+    assert "StrictHostKeyChecking=accept-new" in joined
+
+
+def test_build_ssh_argv_keeps_batchmode_with_accept_new_policy():
+    # Arrange — the accept-new + BatchMode combo is the explicit TOFU
+    # contract: accept a NEW key, but never prompt for one.
+    peers = {"mba": PeerSpec(name="mba", ssh="mba")}
+    # Act
+    argv = build_ssh_argv("mba", ["echo", "hi"], peers)
+    # Assert
+    joined = " ".join(argv)
+    assert "BatchMode=yes" in joined and "StrictHostKeyChecking=accept-new" in joined
