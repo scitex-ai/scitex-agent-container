@@ -1,14 +1,25 @@
 """Tests for ``cli_pkg/_image_source_build.py``.
 
-Covers:
-  - ``stage_build_context``: directory creation, .def copy, source-tree
-    copy, reset-on-rerun, ignore patterns (no ``__pycache__`` etc.),
-    failure modes (missing inputs).
-  - ``build_layer_from_source``: invokes the (swappable) apptainer
-    runner with the correct cwd / output / sandbox / force args, raises
-    on non-zero exit, returns the expected output path.
-  - ``_default_apptainer_build_runner``: shells out to ``apptainer`` —
-    only the argv-shape is asserted (no real apptainer binary required).
+Covers the staging helper itself plus two integration contracts the
+helper depends on (consolidated here, not in a separate test file, to
+satisfy PS-204 §2 orphan-test-file: every test file must mirror a
+single src file):
+
+  - ``stage_build_context`` / ``build_layer_from_source`` /
+    ``_default_apptainer_build_runner`` — unit coverage of the helper.
+  - Shipped .def contract — every apptainer-*.def in the package's
+    ``containers/`` dir must declare the bundled-source ``%files``
+    entry, install sac from ``/opt/scitex-agent-container-src``, and
+    NOT reference any ``git+...`` install. Locks the .def-side of the
+    helper's invariant; without this, a future .def edit could silently
+    drop back to ``git+https://...@main`` and the SIF version would
+    drift from the source tree that shipped it.
+  - Wheel-ships contract — the built wheel must contain pyproject.toml
+    + README.md under ``scitex_agent_container/_bundled/`` (via the
+    ``[tool.hatch.build.targets.wheel.force-include]`` directive). The
+    helper's ``locate_bundled_pyproject``/``locate_bundled_readme`` fall
+    through to the editable repo root only as a fallback; for
+    wheel-installed sac, ``_bundled/`` is the source of truth.
 
 No MagicMock anywhere: tests construct hand-rolled real callables and
 swap module-level references the same way ``test_image_group`` does.
@@ -16,13 +27,18 @@ swap module-level references the same way ``test_image_group`` does.
 
 from __future__ import annotations
 
+import subprocess
+import sys
+import zipfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
 import pytest
 
+import scitex_agent_container
 from scitex_agent_container.cli_pkg import _image_source_build as isb
+from scitex_agent_container.cli_pkg.image_group import _LAYERS, _RECIPES_DIR
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -508,4 +524,246 @@ def test_default_runner_sandbox_argv_uses_fakeroot_and_no_sudo(tmp_path):
         and "--fakeroot" in seen["argv"]
         and "sudo" not in seen["argv"]
         and "--force" not in seen["argv"]  # force=False
+    )
+
+
+# ---------------------------------------------------------------------------
+# Shipped .def contract — every apptainer-*.def installs sac from the
+# bundled source, never via ``git+...``. Co-located here (vs a separate
+# tests/scitex_agent_container/containers/ file) to satisfy PS-204 §2:
+# every test file must mirror exactly one src file. The helper module
+# under test (_image_source_build.py) owns the staging contract these
+# .def files participate in, so this is the natural home.
+# ---------------------------------------------------------------------------
+
+
+# All three shipped .defs — base/scitex/proxy. _LAYERS only covers
+# base+scitex (those are what ``sac image build`` accepts); proxy is
+# built by other paths but the same source-bundled invariant applies.
+_ALL_DEF_NAMES = sorted(set(_LAYERS.values()) | {"apptainer-proxy.def"})
+
+
+@pytest.fixture
+def def_text(request) -> str:
+    """Read one .def file's text by its bare filename."""
+    name: str = request.param
+    path = _RECIPES_DIR / name
+    assert path.is_file(), f"shipped recipe missing: {path}"
+    return path.read_text()
+
+
+@pytest.mark.parametrize("def_text", _ALL_DEF_NAMES, indirect=True)
+def test_def_has_files_section_copying_bundled_source(def_text: str):
+    # Arrange — the .def declares the %files entry the staging helper depends on
+    expected = f"{isb._STAGED_SRC_NAME} /opt/scitex-agent-container-src"
+    # Act
+    present = expected in def_text
+    # Assert
+    assert present, (
+        f".def is missing the bundled-source %files entry "
+        f"'{expected}'. The staging helper stages the source under that "
+        f"name; .def must reference it verbatim."
+    )
+
+
+@pytest.mark.parametrize("def_text", _ALL_DEF_NAMES, indirect=True)
+def test_def_installs_sac_from_bundled_source_absolute_path(def_text: str):
+    # Arrange — %post installs from the bundled source path — not from git
+    expected = "/opt/scitex-agent-container-src"
+    # Act
+    present = expected in def_text
+    # Assert
+    assert present, (
+        ".def must `pip install /opt/scitex-agent-container-src` in %post "
+        "so the in-SIF sac is structurally pinned to the source tree "
+        "that shipped this .def."
+    )
+
+
+@pytest.mark.parametrize("def_text", _ALL_DEF_NAMES, indirect=True)
+def test_def_does_not_install_sac_via_git_ref(def_text: str):
+    # Arrange — banned substrings; any of these drifts from the source tree
+    banned_substrings = (
+        "git+https://github.com/ywatanabe1989/scitex-agent-container",
+        "git+ssh://git@github.com/ywatanabe1989/scitex-agent-container",
+        "@develop",
+        "@v0.14.0",
+    )
+    # Act
+    offenders = [b for b in banned_substrings if b in def_text]
+    # Assert
+    assert offenders == [], (
+        f".def must not reference any of {offenders} for the sac install — "
+        f"use the bundled source at /opt/scitex-agent-container-src so the "
+        f"SIF's sac is always exactly the source that shipped the .def."
+    )
+
+
+def test_recipes_dir_holds_all_three_shipped_defs():
+    # Arrange — declared expected set
+    expected = set(_ALL_DEF_NAMES)
+    # Act
+    actual = sorted(p.name for p in _RECIPES_DIR.glob("apptainer-*.def"))
+    # Assert
+    assert expected.issubset(set(actual)), (
+        f"missing one or more shipped .def files. expected at least "
+        f"{_ALL_DEF_NAMES}, found {actual}"
+    )
+
+
+def test_def_files_use_consistent_staged_source_name():
+    # Arrange — all three .defs must agree on the path inside the image
+    names = _ALL_DEF_NAMES
+    # Act
+    missing = [
+        name
+        for name in names
+        if (_RECIPES_DIR / name).read_text().count("/opt/scitex-agent-container-src")
+        < 1
+    ]
+    # Assert
+    assert missing == [], (
+        f"{missing} do not reference /opt/scitex-agent-container-src; "
+        f"layered .defs must agree on the in-image source path."
+    )
+
+
+def test_staged_src_name_matches_def_files_files_entry():
+    # Arrange — the contract: every .def declares _STAGED_SRC_NAME in %files
+    names = _ALL_DEF_NAMES
+    # Act
+    missing = [
+        name
+        for name in names
+        if f"\n    {isb._STAGED_SRC_NAME} " not in (_RECIPES_DIR / name).read_text()
+    ]
+    # Assert
+    assert missing == [], (
+        f"{missing} must declare '{isb._STAGED_SRC_NAME}' as a %files source "
+        f"so the staging helper's copy is what gets bundled."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Wheel-ships contract — the built wheel must contain pyproject.toml +
+# README.md under ``scitex_agent_container/_bundled/`` so the helper's
+# wheel-install branch of locate_bundled_pyproject/_readme finds them.
+# Co-located here for the same PS-204 §2 reason as the .def contract.
+# Skipped when the wheel-build toolchain (pip) is not importable —
+# CI runners always have pip; minimal container test images may not.
+# ---------------------------------------------------------------------------
+
+
+_PKG_PATH = Path(scitex_agent_container.__file__).resolve()
+# parents[0] -> scitex_agent_container/   parents[1] -> src/   parents[2] -> <repo>/
+_REPO_ROOT = _PKG_PATH.parents[2]
+_PYPROJECT = _REPO_ROOT / "pyproject.toml"
+
+_HAVE_PIP = True
+try:
+    import pip  # noqa: F401
+except ImportError:
+    _HAVE_PIP = False
+
+# Per-test skips applied via decorator below — we deliberately avoid
+# module-level `pytestmark` so the staging-helper + .def-contract tests
+# above keep running on minimal images.
+_skip_no_repo = pytest.mark.skipif(
+    not _PYPROJECT.is_file(),
+    reason="wheel-build smoke requires editable install with repo root on disk",
+)
+_skip_no_pip = pytest.mark.skipif(
+    not _HAVE_PIP,
+    reason="wheel-build smoke requires pip; CI runners have it, minimal "
+    "container images may not",
+)
+
+
+def _build_wheel(out_dir: Path) -> Path:
+    """Build the wheel + return the .whl path. ``pip wheel --no-deps``.
+
+    ``pip wheel --no-deps`` drives the PEP 517 backend (hatchling) to
+    produce the wheel without resolving runtime deps — fast enough for
+    a CI smoke and doesn't require the optional ``build`` frontend.
+    """
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "wheel",
+            "--no-deps",
+            "--wheel-dir",
+            str(out_dir),
+            str(_REPO_ROOT),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        pytest.skip(
+            f"wheel build failed (rc={result.returncode}); skipping "
+            f"force-include smoke. stderr tail: {result.stderr[-400:]}"
+        )
+    wheels = list(out_dir.glob("scitex_agent_container-*.whl"))
+    assert wheels, f"no wheel produced in {out_dir}"
+    return wheels[0]
+
+
+@pytest.fixture(scope="module")
+def built_wheel(tmp_path_factory) -> Path:
+    out_dir = tmp_path_factory.mktemp("wheel-out")
+    return _build_wheel(out_dir)
+
+
+@_skip_no_repo
+@_skip_no_pip
+def test_wheel_ships_bundled_pyproject_toml(built_wheel: Path):
+    # Arrange
+    expected = "scitex_agent_container/_bundled/pyproject.toml"
+    # Act
+    with zipfile.ZipFile(built_wheel) as zf:
+        names = set(zf.namelist())
+    # Assert
+    assert expected in names, (
+        f"wheel must ship pyproject.toml under {expected} (force-include "
+        "in pyproject.toml). The source-bundled SIF build's "
+        "locate_bundled_pyproject() looks there on wheel installs; "
+        "missing it would break sac image build for wheel users."
+    )
+
+
+@_skip_no_repo
+@_skip_no_pip
+def test_wheel_ships_bundled_readme_md(built_wheel: Path):
+    # Arrange
+    expected = "scitex_agent_container/_bundled/README.md"
+    # Act
+    with zipfile.ZipFile(built_wheel) as zf:
+        names = set(zf.namelist())
+    # Assert
+    assert expected in names, (
+        f"wheel must ship README.md under {expected} (force-include in "
+        "pyproject.toml). hatchling needs it to build the staged source "
+        "tree because pyproject's ``readme = 'README.md'`` resolves "
+        "alongside pyproject.toml at install time."
+    )
+
+
+@_skip_no_repo
+@_skip_no_pip
+def test_bundled_pyproject_in_wheel_matches_repo_root(built_wheel: Path):
+    # Arrange
+    repo_text = _PYPROJECT.read_text()
+    # Act
+    with zipfile.ZipFile(built_wheel) as zf:
+        bundled_text = zf.read("scitex_agent_container/_bundled/pyproject.toml").decode(
+            "utf-8"
+        )
+    # Assert — force-include must copy bytes verbatim. If hatchling
+    # ever applies templating we'd want to know.
+    assert bundled_text == repo_text, (
+        "bundled pyproject.toml diverged from repo-root pyproject.toml; "
+        "the staged SIF source tree would then build a different package "
+        "than the one that shipped the .def."
     )
