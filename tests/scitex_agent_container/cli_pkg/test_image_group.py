@@ -124,6 +124,35 @@ def _use_env_snapshot(payload: dict) -> Iterator[list[tuple]]:
         ig._load_env_snapshot = saved  # type: ignore[assignment]
 
 
+@contextmanager
+def _use_source_builder(
+    *,
+    result: Path | None = None,
+    raises: BaseException | None = None,
+) -> Iterator[list[tuple]]:
+    """Swap ``image_group._build_layer_from_source`` for a real recording fake.
+
+    Same save/restore pattern as ``_use_backend``: a hand-rolled callable
+    (no MagicMock) records every invocation into the yielded list. If
+    ``raises`` is provided, the fake raises that exception instead of
+    returning ``result`` — covers the apptainer-failed code branch.
+    """
+    calls: list[tuple] = []
+
+    def _fake_builder(*a, **kw):
+        calls.append((a, kw))
+        if raises is not None:
+            raise raises
+        return result or Path("/tmp/sac-fake.sif")
+
+    saved = ig._build_layer_from_source
+    ig._build_layer_from_source = _fake_builder  # type: ignore[assignment]
+    try:
+        yield calls
+    finally:
+        ig._build_layer_from_source = saved  # type: ignore[assignment]
+
+
 # ---------------------------------------------------------------------------
 # tmp-rooted HOME so every command writes into ``tmp_path``.
 # Real env var, real bootstrap, real ``.gitignore``. No monkeypatch.
@@ -220,44 +249,48 @@ def test_build_errors_when_recipe_def_file_is_missing(home_tmp):
     assert result.exit_code == 1 and "recipe not found" in result.output
 
 
-def test_build_success_invokes_backend_and_prints_built_message(home_tmp):
+def test_build_success_invokes_source_builder_and_prints_built_message(home_tmp):
     # Arrange
-    backend = _FakeApptainerBackend(build_result=Path("/tmp/sac-base.sif"))
     runner = CliRunner()
     # Act
-    with _use_backend(backend):
+    with _use_source_builder(result=Path("/tmp/sac-base.sif")) as calls:
         result = runner.invoke(image_group, ["build", "base", "--yes"])
     # Assert
-    assert (
-        result.exit_code == 0
-        and "built" in result.output
-        and len(backend.calls.get("build", [])) == 1
-    )
+    assert result.exit_code == 0 and "built" in result.output and len(calls) == 1
 
 
-def test_build_success_passes_layer_def_path_and_force_to_backend(home_tmp):
+def test_build_success_passes_layer_def_path_pkg_root_and_force(home_tmp):
     # Arrange
-    backend = _FakeApptainerBackend(build_result=Path("/tmp/sac-base.sif"))
     runner = CliRunner()
     # Act
-    with _use_backend(backend):
+    with _use_source_builder(result=Path("/tmp/sac-base.sif")) as calls:
         runner.invoke(image_group, ["build", "base", "--yes"])
     # Assert
-    kwargs = backend.calls["build"][0][1]
+    kwargs = calls[0][1]
     assert (
-        kwargs["image_name"] == "sac-base"
+        kwargs["layer"] == "base"
         and kwargs["force"] is True
         and kwargs["sandbox"] is False
         and kwargs["def_path"].name == "apptainer-base.def"
+        and kwargs["pkg_root"].name == "scitex_agent_container"
     )
+
+
+def test_build_sandbox_flag_forwarded_to_source_builder(home_tmp):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _use_source_builder(result=Path("/tmp/sac-base.sandbox")) as calls:
+        runner.invoke(image_group, ["build", "base", "--sandbox", "--yes"])
+    # Assert
+    assert calls[0][1]["sandbox"] is True
 
 
 def test_build_reports_apptainer_failure_with_exit_code_1(home_tmp):
     # Arrange
-    backend = _FakeApptainerBackend(raises={"build": RuntimeError("apptainer broken")})
     runner = CliRunner()
     # Act
-    with _use_backend(backend):
+    with _use_source_builder(raises=RuntimeError("apptainer broken")):
         result = runner.invoke(image_group, ["build", "base", "--yes"])
     # Assert
     assert result.exit_code == 1 and "apptainer build failed" in result.output

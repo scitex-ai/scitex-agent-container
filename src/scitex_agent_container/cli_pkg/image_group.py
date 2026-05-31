@@ -24,7 +24,14 @@ from pathlib import Path
 
 import click
 
+from . import _image_source_build
 from ._helpers import HelpRecursiveGroup, console
+
+# Module-level overridable reference for the source-bundled build path.
+# Tests reassign this to a real recording callable (same swap-and-restore
+# pattern as ``_load_apptainer``); production code calls through it so
+# tests don't need to patch the cli_pkg._image_source_build module.
+_build_layer_from_source = _image_source_build.build_layer_from_source
 
 # Recipes ship inside the wheel (read-only, package-relative).
 _RECIPES_DIR = Path(__file__).resolve().parent.parent / "containers"
@@ -176,25 +183,31 @@ def image_build(layer: str, sandbox: bool, dry_run: bool, yes: bool) -> None:
         click.echo(f"error: recipe not found in wheel: {def_path}", err=True)
         sys.exit(1)
 
-    # Delegate to scitex-container's canonical builder so we don't
-    # carry a duplicate apptainer-invocation here. scitex-container
-    # owns the dir-per-image layout:
+    # Source-bundled build: the shipped .def files install sac from
+    # /opt/scitex-agent-container-src, which gets there via a %files
+    # copy of a sibling directory next to the .def at build time. The
+    # staging helper (cli_pkg/_image_source_build.py) creates that
+    # sibling copy under <out>/sac-<layer>/build-context/ and runs
+    # ``apptainer build`` with cwd set there so the .def's relative
+    # %files path resolves correctly.
     #
-    #   containers/
-    #   ├── sac-<layer>.sif -> sac-<layer>/sac-<layer>.sif
-    #   └── sac-<layer>/
-    #       ├── sac-<layer>.sif
-    #       ├── sac-<layer>.def                         (recipe snapshot)
-    #       └── sac-<layer>.build-YYYY-MMDD-HHMMSS.log  (full build log)
-    _sc_build = _load_apptainer().build
-
+    # We bypass scitex-container's build helper for this path because
+    # it doesn't expose a ``cwd`` parameter — without cwd control,
+    # apptainer would resolve the .def's relative %files against
+    # whatever directory the operator happened to ``sac image build``
+    # from, which is not predictable. The non-build verbs (sandbox,
+    # update, freeze, list, status, snapshot) still delegate to the
+    # scitex-container backend since they operate on already-built
+    # SIFs and don't need build-context staging.
+    pkg_root = _RECIPES_DIR.parent
     try:
-        output = _sc_build(
+        output = _build_layer_from_source(
+            layer=layer,
             def_path=def_path,
+            pkg_root=pkg_root,
             output_dir=out_dir,
-            image_name=f"sac-{layer}",
-            force=True,  # -y already gated above
             sandbox=sandbox,
+            force=True,  # -y already gated above
         )
     except (FileNotFoundError, RuntimeError) as exc:
         click.echo(f"error: apptainer build failed: {exc}", err=True)
