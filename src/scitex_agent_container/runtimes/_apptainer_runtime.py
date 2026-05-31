@@ -377,7 +377,33 @@ class ApptainerContainerRuntime(RuntimeBase):
         del no_preflight
         self._one_shot = one_shot
         if shutil.which("apptainer") is None:
-            return False
+            # Fail loud (PA-blocker-P1 / clew handoff 2026-05-31): the
+            # silent ``return False`` here used to bubble up through
+            # ``_lifecycle/_start.py`` as a generic ``RuntimeError:
+            # Failed to start agent`` with no diagnostic — operators
+            # spent minutes guessing whether it was a config error, a
+            # crashed runner, or a missing binary. The two real causes
+            # are both about the host PATH:
+            #   1. apptainer not installed on this host at all, or
+            #   2. running INSIDE a SIF whose %environment doesn't put
+            #      ``/usr/local/bin/apptainer`` on PATH — i.e. a
+            #      nested-apptainer attempt without ``spec.apptainer.
+            #      nested_mode: "escape"`` set (the escape path
+            #      forwards the inner ``apptainer exec`` to the bare
+            #      host via ssh/srun-overlap; see clew handoff P2).
+            # Naming both up front saves an entire round-trip of
+            # operator diagnosis.
+            raise RuntimeError(
+                "apptainer binary not found on $PATH — cannot start "
+                f"agent '{config.name}'. Causes: (1) apptainer is not "
+                "installed on this host (install via `apt-get install "
+                "apptainer` or the apptainer/ppa); (2) running INSIDE "
+                "a SIF that does not bundle apptainer on PATH, i.e. a "
+                "nested-apptainer self-spawn without "
+                '`spec.apptainer.nested_mode: "escape"` set in the '
+                "agent's spec.yaml (escape forwards the inner "
+                "`apptainer exec` to the bare host)."
+            )
 
         state_dir = self._state_dir(config)
         state_dir.mkdir(parents=True, exist_ok=True)
