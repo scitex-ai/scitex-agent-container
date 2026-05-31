@@ -167,7 +167,8 @@ def test_pinned_absent_snapshot_raises_pinned_account_error(
 ) -> None:
     # Arrange — pinned to an account whose store dir does not exist.
     state_dir = tmp_path / "state"
-    # Act / Assert
+    # Act
+    # Assert — pytest.raises is the assertion (TQ007: one per test).
     with pytest.raises(PinnedAccountError, match="has no credential snapshot"):
         resolve_cred_file(
             _config(tmp_path / "wd", account="missing-acct"),
@@ -185,7 +186,8 @@ def test_pinned_expired_snapshot_raises_pinned_account_error(
     now = time.time()
     _write_snapshot(home_redirect, "alpha", now - 60)
     state_dir = tmp_path / "state"
-    # Act / Assert
+    # Act
+    # Assert — pytest.raises is the assertion (TQ007: one per test).
     with pytest.raises(PinnedAccountError, match="expired"):
         resolve_cred_file(
             _config(tmp_path / "wd", account="alpha"),
@@ -204,7 +206,8 @@ def test_pinned_snapshot_missing_expiry_field_raises(
     acct_dir.mkdir(parents=True)
     (acct_dir / ".credentials.json").write_text(json.dumps({"claudeAiOauth": {}}))
     state_dir = tmp_path / "state"
-    # Act / Assert
+    # Act
+    # Assert — pytest.raises is the assertion (TQ007: one per test).
     with pytest.raises(PinnedAccountError, match="expiresAt"):
         resolve_cred_file(
             _config(tmp_path / "wd", account="alpha"),
