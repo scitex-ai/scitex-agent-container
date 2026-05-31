@@ -111,57 +111,39 @@ def account_save(name: str, email: str | None, dry_run: bool, yes: bool) -> None
     default=False,
     help="Emit a JSON array on stdout instead of human prose.",
 )
-def account_list(as_json: bool) -> None:
+@click.option(
+    "--refresh",
+    "--live",
+    "refresh",
+    is_flag=True,
+    default=False,
+    help=(
+        "Force a fresh upstream usage fetch by discarding the per-account "
+        "usage.json cache before rendering. Without this flag the 5-min "
+        "cache is consulted to avoid hammering the API; the As-of column "
+        "always shows the snapshot age so a stale number is obvious."
+    ),
+)
+def account_list(as_json: bool, refresh: bool) -> None:
     """List stored accounts and show the currently active one.
 
     \b
     Example:
       $ sac account list
       $ sac account list --json
+      $ sac account list --refresh    # force upstream usage% refetch
     """
     import json as _json
-    from pathlib import Path as _Path
 
-    from .._account.claude_usage import fetch_usage_for_credentials
     from .._account.credentials import read_credentials_metadata
-    from .._account.creds_sync import account_freshness
-    from .._state.account_store import (
-        _store_path,
-        list_accounts,
-        read_account_plan,
-        read_account_usage_cache,
+    from .._state.account_store import list_accounts
+    from ._account_list_render import (
+        build_stored_json,
+        build_stored_rows,
+        render_stored_table,
     )
     from ._helpers import console
     from .status_cmds import _format_claude_account_block
-
-    def _usage_for_account(acct_meta: dict) -> dict | None:
-        # Live PER-ACCOUNT fetch using the stored snapshot's tokens. The
-        # snapshot lives at
-        # ``~/.scitex/agent-container/accounts/<name>/.credentials.json``
-        # (cascade-resolved via ``_store_path``); the fetch result is
-        # cached next to that file as ``usage.json`` so the same
-        # ``read_account_usage_cache`` reader sees the live value across
-        # invocations. Any failure (missing snapshot, expired token,
-        # network error) returns None → caller renders ``usage: —`` for
-        # that row only; never crashes the whole list.
-        name = acct_meta.get("name")
-        if not name:
-            return None
-        store = _store_path(None, _Path.home())
-        creds_path = store / name / ".credentials.json"
-        if not creds_path.is_file():
-            return read_account_usage_cache(name)
-        # stx-allow: fallback (reason: fetch_usage_for_credentials is documented never-raise, but defence-in-depth so one bad row never crashes `account list`)
-        try:
-            result = fetch_usage_for_credentials(creds_path)
-        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-            return read_account_usage_cache(name)
-        if result.get("error") or result.get("used_pct_5h") is None:
-            # No live data — try the cache reader as a final fallback so
-            # a stale-but-readable cache still shows something.
-            cached = read_account_usage_cache(name)
-            return cached if cached else None
-        return result
 
     accounts = list_accounts()
 
@@ -171,21 +153,14 @@ def account_list(as_json: bool) -> None:
             active = read_credentials_metadata()
         except (OSError, _json.JSONDecodeError):
             active = {}
-        # Enrich each stored account with OFFLINE plan/tier, credential
-        # FRESHNESS (VALID/EXPIRED/ABSENT + signed hours), and a LIVE
-        # per-account usage fetch (cached for 5 min next to the snapshot).
-        stored = []
-        for acct in accounts:
-            entry = dict(acct)
-            entry.update(read_account_plan(acct["name"]))
-            fresh = account_freshness(acct["name"])
-            entry["freshness"] = fresh.state
-            entry["freshness_hours"] = fresh.hours
-            entry["usage"] = _usage_for_account(acct)
-            stored.append(entry)
         click.echo(
             _json.dumps(
-                {"active": active, "stored": stored}, ensure_ascii=False, indent=2
+                {
+                    "active": active,
+                    "stored": build_stored_json(accounts, refresh=refresh),
+                },
+                ensure_ascii=False,
+                indent=2,
             )
         )
         return
@@ -207,33 +182,7 @@ def account_list(as_json: bool) -> None:
             "No accounts stored. Use: scitex-agent-container account save <name>"
         )
         return
-    click.echo("Stored accounts:")
-    for acct in accounts:
-        name = acct["name"]
-        email = acct.get("email_address") or "(no email)"
-        # OFFLINE plan/tier from the snapshot — free, no network.
-        plan = read_account_plan(name)
-        plan_label = plan.get("plan_label") or "?"
-        tier = plan.get("rate_limit_tier") or "?"
-        # OFFLINE credential freshness from the snapshot's expiresAt —
-        # VALID (+Xh) / EXPIRED (-Xh) / ABSENT. The signal that tells the
-        # operator at a glance which stores have rotted and need a
-        # `sac accounts sync-live` (or a `claude /login`).
-        fresh = account_freshness(name).label()
-        # LIVE per-account usage (5-min cache next to the snapshot). On
-        # any failure the helper returns None → "—" for that row only;
-        # the rest of the list keeps rendering.
-        usage = _usage_for_account(acct)
-        usage_str = "—"
-        if usage:
-            pct5 = usage.get("used_pct_5h")
-            pct7 = usage.get("used_pct_7d")
-            as_of = usage.get("as_of") or usage.get("timestamp") or "?"
-            usage_str = f"5h={pct5}% 7d={pct7}% (as of {as_of})"
-        click.echo(
-            f"  {name:20s}  {email:28s}  {plan_label} [{tier}]  "
-            f"{fresh:18s}  usage: {usage_str}"
-        )
+    console.print(render_stored_table(build_stored_rows(accounts, refresh=refresh)))
 
 
 @account.command("delete")

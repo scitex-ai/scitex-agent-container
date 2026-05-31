@@ -754,8 +754,12 @@ def test_account_list_human_shows_usage_dash_when_no_cache(sandbox_home):
     runner = CliRunner()
     # Act
     result = runner.invoke(account, ["list"])
-    # Assert — cache-only usage renders the em-dash placeholder.
-    assert "usage: —" in result.output
+    # Assert — the rich table renders ``-`` cells for missing usage% and
+    # As-of (the prior ``usage: —`` was a flat-line format; the new
+    # renderer emits a `rich.table.Table` with one cell per metric).
+    assert "5h%" in result.output and "7d%" in result.output
+    # Confirm the empty-data cells are rendered as `-`.
+    assert " - " in result.output
 
 
 def test_account_list_json_includes_plan_label(sandbox_home):
