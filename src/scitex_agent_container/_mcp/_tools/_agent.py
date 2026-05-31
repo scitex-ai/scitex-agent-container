@@ -94,13 +94,18 @@ def agent_start(name: str, foreground: bool = False) -> dict[str, Any]:
     directly.
 
     .. note::
-       Runs the CLI **inside the current container**. Inside an
-       apptainer-isolated agent that means apptainer-in-apptainer
-       (blocked on most HPCs) or a bare-runner fallback. Use
-       :func:`agent_spawn` instead to ask the bare HOST to start the
-       child via the sac-listen control plane — that path goes through
-       the server-side ACL gate and records the parent→child lineage
-       edge automatically (ADR-0010 mechanism #3).
+       In-SIF dispatch: as of the SAC-from-SAC broker (operator-
+       mandated 2026-06-01), an ``agent_start`` call from inside an
+       apptainer SIF (``APPTAINER_CONTAINER`` / ``SINGULARITY_CONTAINER``
+       set) auto-redirects to the host-side ``sac listen`` control
+       plane via :mod:`_lifecycle._in_sif_broker`. The host re-runs
+       ``check_spawn``, records the parent→child lineage edge, and
+       shells the real ``sac agent start`` against the bare host's
+       apptainer. On the bare host the local lifecycle is unchanged.
+       Use :func:`agent_spawn` when you need to pass an *inline*
+       spec dict (the host materialises it) or to be explicit about
+       broker semantics in a hybrid script that might also run on
+       the bare host.
     """
     argv = ["agents", "start", name]
     if foreground:
@@ -157,9 +162,7 @@ def agent_spawn(
     from ..._lifecycle._spawn_client import SpawnRequestError, request_spawn
 
     try:
-        result = request_spawn(
-            name, caller=caller, spec=spec, overwrite=overwrite
-        )
+        result = request_spawn(name, caller=caller, spec=spec, overwrite=overwrite)
     except SpawnRequestError as exc:
         return {
             "status": "error",

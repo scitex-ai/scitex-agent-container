@@ -310,9 +310,17 @@ async def agents_start(request: Request) -> JSONResponse:
             return JSONResponse({"error": str(exc)}, status_code=409)
 
     sac_bin = shutil.which("sac") or "sac"
+    # ``agents`` (plural) is the canonical command group; the singular
+    # ``agent`` form was removed in the F-CS13 rename and the host CLI
+    # no longer exposes it (verified 2026-06-01 by the SAC-from-SAC
+    # live test: the singular form returned "Error: No such command
+    # 'agent'." with rc=2, breaking every brokered spawn from inside
+    # a SIF). Using the canonical plural is what every other CLI
+    # call site already does — see ``cli_pkg/fleet_group.py``
+    # ``[remote_sac, "agents", "start", name]``.
     proc = await asyncio.to_thread(
         subprocess.run,
-        [sac_bin, "agent", "start", name],
+        [sac_bin, "agents", "start", name],
         capture_output=True,
         text=True,
         check=False,
