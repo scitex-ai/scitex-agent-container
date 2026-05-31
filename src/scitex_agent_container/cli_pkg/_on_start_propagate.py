@@ -190,29 +190,69 @@ def propagate_remote_start(
     if runner is None:
         runner = _default_ssh_runner
     result = runner(peer, [ssh_argv0, *remote_argv])
+    captured_stdout = getattr(result, "stdout", None) or ""
+    captured_stderr = getattr(result, "stderr", None) or ""
     if result.returncode != 0:
-        # Remote start failed — no live instance to record. Surface the
-        # remote rc; the operator sees stdout/stderr from the inherited
-        # streams (real runner) or from the result object.
+        # Bug 2 root cause (fail-loud on remote failure): the real
+        # `_default_ssh_runner` calls subprocess.run with
+        # capture_output=True, so the remote's stdout AND stderr are
+        # buffered in the CompletedProcess. The pre-fix code returned
+        # only the rc and dropped both buffers on the floor, leaving
+        # the operator with a bare non-zero rc and zero diagnostics —
+        # the original `sac --on spartan-gpgpu011 agents start clew`
+        # silent-failure repro. Surface both buffers so the operator
+        # has the same information they'd see from a local start.
+        if captured_stdout:
+            click.echo(
+                captured_stdout, err=False, nl=not captured_stdout.endswith("\n")
+            )
+        if captured_stderr:
+            click.echo(captured_stderr, err=True, nl=not captured_stderr.endswith("\n"))
+        click.echo(
+            f"[--on {peer}] remote `sac {' '.join(remote_argv)}` failed "
+            f"(rc={result.returncode}); no lead-side instances row recorded.",
+            err=True,
+        )
         return result.returncode
 
-    stdout = getattr(result, "stdout", None) or ""
     try:
-        peer_state = json.loads(stdout)
+        peer_state = json.loads(captured_stdout)
     except (json.JSONDecodeError, TypeError) as exc:
         raise RuntimeError(
             f"`sac --on {peer} agents start {name}` succeeded but returned "
             f"non-JSON stdout; cannot record the lead-side instances row "
             f"(the started agent would be invisible to the lead — the "
             f"exact #192 failure). Re-run with --json to inspect.\n"
-            f"stdout (first 500 chars):\n{stdout[:500]}\n"
+            f"stdout (first 500 chars):\n{captured_stdout[:500]}\n"
             f"json error: {exc}"
         ) from exc
 
-    # A skipped / dry-run start has no live instance to record.
+    # Map the remote's status to a lead-side rc.
     status = peer_state.get("status")
-    if status not in ("started",):
+    if status == "dry_run_ok":
+        # Legitimate silent success: --dry-run propagated through and
+        # the remote did NOT mean to start anything. Mirror rc=0.
         return 0
+    if status != "started":
+        # Bug 2 root cause (fail-loud on remote skip/error): any non-
+        # "started" status means the remote produced no live instance.
+        # Without this branch, the pre-fix code returned 0 and dropped
+        # the structured reason on the floor — the operator sees
+        # `sac --on <peer> agents start ...` exit 0 with zero stdout,
+        # mistakenly believing the agent is up. Surface the reason and
+        # return a non-zero rc so the operator (and any wrapping
+        # automation) sees the failure.
+        reason = (
+            peer_state.get("reason")
+            or peer_state.get("error")
+            or f"remote returned status={status!r}"
+        )
+        click.echo(
+            f"[--on {peer}] agents start {name!r} did NOT start: {reason} "
+            f"(remote status={status!r}); no lead-side instances row recorded.",
+            err=True,
+        )
+        return 1
 
     agent_name = _name_from_target(name)
     bound = peer_state.get("a2a_port")
@@ -250,5 +290,3 @@ def _default_ssh_runner(peer: str, full_argv: list[str]):
     cfg = _load()
     ssh_argv = build_ssh_argv(peer, full_argv, cfg.peers)
     return subprocess.run(ssh_argv, capture_output=True, text=True, check=False)
-
-

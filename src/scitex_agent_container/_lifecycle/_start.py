@@ -25,6 +25,63 @@ from ._spawn_gate import enforce_spawn_gate, persist_acl_policy
 from .health import health_monitor
 
 
+def _verify_real_liveness(
+    config: AgentConfig,
+    runtime,
+    *,
+    instances_oracle: Callable[[], list[dict]] | None = None,
+) -> bool:
+    """Return True iff the agent is *demonstrably* running on this host.
+
+    The pre-fix call site treated ``registry.exists(name) and
+    runtime.is_running(config)`` as the already-running signal. Both
+    are necessary but not sufficient:
+
+      * ``registry.exists`` is a JSON file on disk — a forced ``rm``,
+        a stale entry from a prior boot, or a crash-during-write leaves
+        the file behind even though no agent is running.
+      * ``runtime.is_running`` checks the per-runtime PID file with
+        ``os.kill(pid, 0)`` — on a Linux PID-wraparound the same pid
+        can belong to a completely unrelated process and the probe
+        returns True.
+
+    Either of those false positives causes the no-op branch in
+    :func:`agent_start` to swallow a real start request silently and
+    return rc=0. The cross-host ``instances`` table is the third
+    independent signal — it is written by ``record_local_instance``
+    inside the *real* start path and removed by ``agent_stop`` /
+    ``cleanup_stale``. We require an active row before treating the
+    agent as already-running. If the row is absent, the registry/PID
+    pair is inconsistent → fall through to a real start instead of
+    the silent no-op.
+
+    The ``instances_oracle`` seam is the no-mocks knob for tests; it
+    defaults to a host-unfiltered :func:`state_db.list_active_instances`
+    call (we want ANY active row for the name, not just rows on the
+    current host — handover may have moved it).
+    """
+    if instances_oracle is None:
+        from .._state.state_db import list_active_instances as _default
+
+        def instances_oracle():  # type: ignore[no-redef]
+            # Explicit host=None so the call is unambiguous and the
+            # fixture-isolated test reads through the same module.
+            return _default(host=None)
+
+    try:
+        rows = instances_oracle()
+    except Exception:
+        # stx-allow: fallback (reason: a missing/locked state.db must
+        # not block the start path; degrade to "no liveness evidence"
+        # which causes the caller to launch fresh rather than silently
+        # no-op)
+        return False
+    for row in rows or ():
+        if row.get("name") == config.name:
+            return True
+    return False
+
+
 def _resolve_strict_drift(strict_drift: bool | None) -> bool:
     """Resolve effective strict-drift mode (arg wins, else env).
 
@@ -132,6 +189,7 @@ def agent_start(
     sleep_fn: Callable[[float], None] = time.sleep,
     thread_factory: Callable[..., Any] = threading.Thread,
     handover_mod: Any = None,
+    liveness_verifier: Callable[[AgentConfig, Any], bool] | None = None,
 ) -> bool:
     """Start an agent from its config YAML.
 
@@ -241,7 +299,19 @@ def agent_start(
 
     # Already running?
     forced_stop = False
-    if registry.exists(config.name) and runtime.is_running(config):
+    # Bug 1 (real-liveness): three independent signals must all agree
+    # before we trust the "already-running" no-op branch. registry +
+    # runtime.is_running is not enough — see :func:`_verify_real_liveness`
+    # for the false-positive cases the third signal closes.
+    _verify = (
+        liveness_verifier if liveness_verifier is not None else _verify_real_liveness
+    )
+    really_running = (
+        registry.exists(config.name)
+        and runtime.is_running(config)
+        and _verify(config, runtime)
+    )
+    if really_running:
         if force:
             agent_stop(
                 config.name,

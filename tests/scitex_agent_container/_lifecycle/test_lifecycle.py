@@ -423,7 +423,10 @@ def test_agent_start_happy_path_invokes_handover(
 def test_agent_start_idempotent_when_already_running(
     tmp_path: Path, registry: Registry
 ) -> None:
-    # Arrange: registry knows the agent and runtime reports it running.
+    # Arrange: registry knows the agent, runtime reports it running,
+    # AND the real-liveness verifier confirms an active instance row.
+    # Without the verifier signal a registry+is_running false positive
+    # would silently no-op a real start — see _verify_real_liveness.
     spec = _write_spec(tmp_path)
     registry.add("alpha", str(spec), "cld-alpha")
     runtime = FakeRuntime(running=True, start_result=True)
@@ -434,6 +437,7 @@ def test_agent_start_idempotent_when_already_running(
         runtime_factory=lambda _c: runtime,
         handover_mod=FakeHandover(),
         sleep_fn=_no_sleep,
+        liveness_verifier=lambda _cfg, _rt: True,
     )
     # Assert: returns success and never calls start.
     assert ok is True and runtime.start_calls == []
@@ -454,9 +458,105 @@ def test_agent_start_force_restarts_when_already_running(
         handover_mod=FakeHandover(),
         sleep_fn=_no_sleep,
         force=True,
+        liveness_verifier=lambda _cfg, _rt: True,
     )
     # Assert: force triggered stop AND start on the same runtime instance.
     assert len(runtime.stop_calls) == 1 and len(runtime.start_calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# Bug 1 (real-liveness): the already-running no-op MUST require three
+# independent signals (registry on-disk entry + runtime PID liveness +
+# active instances row). Pre-fix code trusted only the first two, so a
+# stale registry file + reused PID looked identical to a real running
+# agent and silently swallowed the start request as a no-op (exit 0).
+# ---------------------------------------------------------------------------
+
+
+def test_agent_start_launches_when_liveness_verifier_returns_false(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange — registry says exists, runtime PID-check says running,
+    # but the instances oracle reports NO active row (= stale state).
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    runtime = FakeRuntime(running=True, start_result=True)
+    # Act
+    lc.agent_start(
+        str(spec),
+        registry=registry,
+        runtime_factory=lambda _c: runtime,
+        handover_mod=FakeHandover(),
+        sleep_fn=_no_sleep,
+        liveness_verifier=lambda _cfg, _rt: False,
+    )
+    # Assert — fell through to a real launch instead of the silent no-op.
+    assert len(runtime.start_calls) == 1
+
+
+def test_verify_real_liveness_default_returns_true_for_recorded_instance(
+    tmp_path: Path, isolated_state_db: Path
+) -> None:
+    # Arrange — write a real instances row and call the default verifier
+    # against it.
+    from scitex_agent_container._lifecycle._start import _verify_real_liveness
+    from scitex_agent_container._state.state_db import record_instance_start
+
+    record_instance_start(name="alpha", host="h", a2a_port=19111)
+    cfg = AgentConfig(name="alpha")
+    # Act
+    live = _verify_real_liveness(cfg, runtime=None)
+    # Assert
+    assert live is True
+
+
+def test_verify_real_liveness_default_returns_false_when_no_row(
+    tmp_path: Path, isolated_state_db: Path
+) -> None:
+    # Arrange — fresh isolated state.db with no rows.
+    from scitex_agent_container._lifecycle._start import _verify_real_liveness
+
+    cfg = AgentConfig(name="alpha")
+    # Act
+    live = _verify_real_liveness(cfg, runtime=None)
+    # Assert
+    assert live is False
+
+
+def test_verify_real_liveness_swallows_oracle_errors_as_not_live(
+    tmp_path: Path,
+) -> None:
+    # Arrange — a broken oracle (raises) must degrade to "not live" so
+    # the caller falls through to a real start instead of crashing.
+    from scitex_agent_container._lifecycle._start import _verify_real_liveness
+
+    def _broken():
+        raise RuntimeError("state.db is wedged")
+
+    cfg = AgentConfig(name="alpha")
+    # Act
+    live = _verify_real_liveness(cfg, runtime=None, instances_oracle=_broken)
+    # Assert
+    assert live is False
+
+
+def test_verify_real_liveness_ignores_rows_for_other_agents(
+    tmp_path: Path,
+) -> None:
+    # Arrange — oracle returns active rows for OTHER agents only; the
+    # check is name-scoped so a busy cluster on other agents must not
+    # be mistaken for liveness of the agent in question.
+    from scitex_agent_container._lifecycle._start import _verify_real_liveness
+
+    cfg = AgentConfig(name="alpha")
+    # Act
+    live = _verify_real_liveness(
+        cfg,
+        runtime=None,
+        instances_oracle=lambda: [{"name": "beta"}, {"name": "gamma"}],
+    )
+    # Assert
+    assert live is False
 
 
 @pytest.fixture
@@ -490,7 +590,12 @@ def _force_restart_running_agent(
 ) -> None:
     """Drive a ``--force`` restart of a registered, running agent whose
     spec uses ``a2a.port: auto`` (the AgentConfig default), so resolution
-    claims a real allocator port. Shared Act for the regression tests."""
+    claims a real allocator port. Shared Act for the regression tests.
+
+    Passes ``liveness_verifier=True`` so the three-signal
+    already-running check fires even in the empty-state.db isolation
+    fixture (real production would have the instances row recorded).
+    """
     spec = _write_spec(tmp_path, name=name)
     registry.add(name, str(spec), f"cld-{name}")
     runtime = FakeRuntime(running=True, start_result=True)
@@ -501,6 +606,7 @@ def _force_restart_running_agent(
         handover_mod=FakeHandover(),
         sleep_fn=_no_sleep,
         force=True,
+        liveness_verifier=lambda _cfg, _rt: True,
     )
 
 

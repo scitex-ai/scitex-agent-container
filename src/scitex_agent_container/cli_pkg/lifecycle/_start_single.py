@@ -22,7 +22,7 @@ from ...config import load_config
 from ...config._host import resolve_hostname
 from ...config._resolve import resolve_with_prefix
 from .._helpers import console, system_msg
-from ._common import _multiplex_foreground_tails, _singleton_skip_reason
+from ._common import _multiplex_foreground_tails, _resolve_singleton_skip
 from ._dispatch import try_dispatch
 from ._resume_preflight import ResumePreflightError
 
@@ -86,7 +86,15 @@ def run_single_targets(
                     force=force,
                 ):
                     continue
-            skip = _singleton_skip_reason(config, current_host)
+            # Bug 1 root cause: a singleton-on-wrong-host skip is a
+            # dead-end when no_redispatch=True (the operator has
+            # explicitly disabled the redispatch chain — e.g. via
+            # ``sac --on <peer>``). _resolve_singleton_skip honours
+            # that and returns None instead of producing a silent no-op
+            # the propagator would then drop on the floor.
+            skip = _resolve_singleton_skip(
+                config, current_host, no_redispatch=no_redispatch
+            )
             if skip:
                 if as_json:
                     _emit_json(

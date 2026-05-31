@@ -115,9 +115,17 @@ def _dispatch_remote_start(
         "--exclude=.pytest_cache/",
         "--exclude=_sphinx_html/",
     ]
+    # Drive rsync's ssh transport with the same TOFU policy we use for
+    # bare ssh (build_ssh_argv): accept-new lets the first-touch peer
+    # be added to known_hosts, but rejects any later key change. Without
+    # ``-e``, rsync would invoke ssh with whatever the user's defaults
+    # are, which on a fresh peer surfaces as a silent rc-1 from rsync.
+    rsync_ssh_opt = "ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes"
     rsync_dry_argv = [
         "rsync",
         "-acvn",  # archive + checksum + verbose + dry-run
+        "-e",
+        rsync_ssh_opt,
         "--itemize-changes",
         "--delete",
         *exclude_args,
@@ -183,10 +191,14 @@ def _dispatch_remote_start(
         )
         return 0
 
-    # 6. Actual rsync (no --dry-run).
+    # 6. Actual rsync (no --dry-run). Same TOFU ssh transport as the
+    # dry-run above so the real handoff also accepts a first-touch
+    # peer key.
     rsync_real_argv = [
         "rsync",
         "-acv",
+        "-e",
+        rsync_ssh_opt,
         "--delete",
         *exclude_args,
         f"{src_dir!s}/",
@@ -279,7 +291,9 @@ def _dispatch_remote_start(
                 a2a_port=int(bound),
                 source_host=None,
             )
-        except Exception:  # stx-allow: fallback (reason: never block dispatch on registry write)
+        except (
+            Exception
+        ):  # stx-allow: fallback (reason: never block dispatch on registry write)
             pass
     click.echo(
         f"[dispatch] {name!r} started on {peer!r} "

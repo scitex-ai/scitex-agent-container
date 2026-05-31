@@ -44,6 +44,42 @@ def _resolve_dispatch_peer(
     return target_host
 
 
+def _resolve_singleton_skip(
+    config: AgentConfig,
+    hostname: str,
+    *,
+    no_redispatch: bool,
+) -> str | None:
+    """Gated wrapper around :func:`_singleton_skip_reason`.
+
+    Returns ``None`` (no skip — start locally) when ``no_redispatch`` is
+    True regardless of the underlying skip reason. Otherwise delegates
+    to :func:`_singleton_skip_reason` unchanged.
+
+    Rationale (Bug 1 root cause): the original call site consulted
+    ``_singleton_skip_reason`` even when the operator had explicitly
+    disabled redispatch (e.g. via ``sac --on <peer>`` which propagates
+    ``--no-redispatch`` to the remote ``sac agents start``). The skip
+    path's only purpose is to defer to a redispatch — with
+    ``no_redispatch=True`` the agent has nowhere else to land, so the
+    skip becomes a permanent silent no-op. The lead's repro
+    (``sac --on spartan-gpgpu011 agents start clew --force --no-preflight``
+    exits 0 with zero output) was exactly this dead end: the remote
+    saw ``spec.host=bm043`` ≠ ``gpgpu011``, skipped, and emitted
+    ``{"status": "skipped", ...}``, which the lead-side propagator
+    then dropped on the floor.
+
+    Note: "real liveness" of an *already-running* agent on the LOCAL
+    host is a separate concern handled inside
+    :func:`scitex_agent_container._lifecycle._start.agent_start` (PID
+    liveness + registry-row cross-check). This helper is only about the
+    routing decision before any local launch decision is even reached.
+    """
+    if no_redispatch:
+        return None
+    return _singleton_skip_reason(config, hostname)
+
+
 def _singleton_skip_reason(config: AgentConfig, hostname: str) -> str | None:
     """Return a human-readable skip reason if ``config`` is a singleton on
     the wrong host, else None.
@@ -240,6 +276,7 @@ def _multiplex_foreground_tails(names, sleeper=None):
 __all__ = [
     "_SKIP_DIR_NAMES",
     "_resolve_dispatch_peer",
+    "_resolve_singleton_skip",
     "_singleton_skip_reason",
     "_iter_agent_yamls",
     "_discover_all_agents",

@@ -22,6 +22,7 @@ from scitex_agent_container.cli_pkg.lifecycle._common import (
     _iter_agent_yamls,
     _multiplex_foreground_tails,
     _resolve_dispatch_peer,
+    _resolve_singleton_skip,
     _singleton_skip_reason,
 )
 from scitex_agent_container.config import AgentConfig
@@ -143,6 +144,63 @@ class TestSingletonSkipReason:
         cfg = _cfg(sched_mode="per-host", pref="alpha")
         # Act
         msg = _singleton_skip_reason(cfg, "beta")
+        # Assert
+        assert msg is None
+
+
+# ---------------------------------------------------------------------------
+# _resolve_singleton_skip — gated wrapper around _singleton_skip_reason.
+#
+# Bug 1 root cause: `_start_single` consulted `_singleton_skip_reason`
+# even with `no_redispatch=True`, so a singleton-on-wrong-host check
+# silently no-op'd starts that had NO other host to defer to (the
+# `--on <peer>` propagated remote call sets `--no-redispatch`, so the
+# skip path was a permanent dead-end). The gate skips the singleton
+# check whenever `no_redispatch=True` — the operator's explicit
+# "do it here" signal overrides the host-pinning preference.
+# ---------------------------------------------------------------------------
+
+
+class TestResolveSingletonSkip:
+    def test_skips_singleton_check_when_no_redispatch(self):
+        # Arrange — singleton pinned to alpha, current host beta.
+        # Without the gate, _singleton_skip_reason returns a skip reason.
+        cfg = _cfg(host="alpha")
+        # Act — no_redispatch=True means "run HERE, no further routing".
+        msg = _resolve_singleton_skip(cfg, "beta", no_redispatch=True)
+        # Assert — gate suppresses the dead-end skip.
+        assert msg is None
+
+    def test_returns_skip_reason_when_redispatch_still_possible(self):
+        # Arrange — same misalignment, but redispatch is still on the table.
+        cfg = _cfg(host="alpha")
+        # Act
+        msg = _resolve_singleton_skip(cfg, "beta", no_redispatch=False)
+        # Assert — preserve the original skip-and-defer behaviour.
+        assert msg and "alpha" in msg and "beta" in msg
+
+    def test_passes_through_none_when_host_matches(self):
+        # Arrange
+        cfg = _cfg(host="alpha")
+        # Act
+        msg = _resolve_singleton_skip(cfg, "alpha", no_redispatch=False)
+        # Assert
+        assert msg is None
+
+    def test_v2_singleton_mismatch_skip_still_propagates(self):
+        # Arrange — v2-style singleton with preferred_host=alpha; gate is
+        # a thin wrapper, so the v2 path's reason must survive.
+        cfg = _cfg(sched_mode="singleton", pref="alpha")
+        # Act
+        msg = _resolve_singleton_skip(cfg, "beta", no_redispatch=False)
+        # Assert
+        assert msg and "alpha" in msg
+
+    def test_no_redispatch_bypasses_v2_singleton_skip_too(self):
+        # Arrange — same as above but with the no_redispatch gate.
+        cfg = _cfg(sched_mode="singleton", pref="alpha")
+        # Act
+        msg = _resolve_singleton_skip(cfg, "beta", no_redispatch=True)
         # Assert
         assert msg is None
 

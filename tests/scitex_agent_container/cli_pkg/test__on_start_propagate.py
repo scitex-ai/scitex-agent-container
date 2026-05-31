@@ -234,3 +234,162 @@ class TestPropagateRecordsOverrideHost:
         rows = [r for r in list_active_instances() if r["name"] == "clew"]
         # Assert — nothing recorded for a failed remote start.
         assert rows == []
+
+
+# ---------------------------------------------------------------------------
+# Bug 1 fail-loud guards: silent-skip / silent-rc!=0 must surface to the operator.
+#
+# The lead's repro:
+#   sac --on spartan-gpgpu011 agents start proj-paper-scitex-clew --force --no-preflight
+# exited 0 with ZERO stdout/stderr because:
+#   (a) propagate_remote_start returned 0 when the remote emitted
+#       {"status": "skipped", ...}, dropping the skip reason on the floor;
+#   (b) when the remote exited non-zero, _default_ssh_runner captured
+#       stderr (capture_output=True) and propagate_remote_start returned
+#       the rc WITHOUT echoing the captured stderr/stdout to the operator.
+# Both paths produced operator-invisible no-ops. These tests pin the
+# fail-loud contract so the regression is caught immediately.
+# ---------------------------------------------------------------------------
+
+
+class TestFailLoudOnRemoteNonStart:
+    def test_skipped_status_returns_nonzero(self, isolated_state_db) -> None:
+        # Arrange — remote start succeeded (rc 0) but skipped (host mismatch).
+        def _run(peer, full_argv):
+            return subprocess.CompletedProcess(
+                args=full_argv,
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "name": "clew",
+                        "status": "skipped",
+                        "reason": "singleton prefers 'bm043', current host is 'gpgpu011'",
+                        "dry_run": False,
+                    }
+                ),
+                stderr="",
+            )
+
+        # Act
+        rc = propagate_remote_start(
+            "spartan-gpgpu011", ["agents", "start", "clew"], runner=_run
+        )
+        # Assert — a skipped remote start MUST NOT look like success to the operator.
+        assert rc != 0
+
+    def test_skipped_status_prints_reason_to_stderr(
+        self, isolated_state_db, capsys
+    ) -> None:
+        # Arrange
+        def _run(peer, full_argv):
+            return subprocess.CompletedProcess(
+                args=full_argv,
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "name": "clew",
+                        "status": "skipped",
+                        "reason": "singleton prefers 'bm043', current host is 'gpgpu011'",
+                        "dry_run": False,
+                    }
+                ),
+                stderr="",
+            )
+
+        # Act
+        propagate_remote_start(
+            "spartan-gpgpu011", ["agents", "start", "clew"], runner=_run
+        )
+        # Assert — the remote's skip reason MUST reach the operator.
+        captured = capsys.readouterr()
+        assert "singleton prefers 'bm043'" in (captured.err + captured.out)
+
+    def test_skipped_status_records_no_row(self, isolated_state_db) -> None:
+        # Arrange
+        def _run(peer, full_argv):
+            return subprocess.CompletedProcess(
+                args=full_argv,
+                returncode=0,
+                stdout=json.dumps({"name": "clew", "status": "skipped"}),
+                stderr="",
+            )
+
+        # Act
+        propagate_remote_start(
+            "spartan-gpgpu011", ["agents", "start", "clew"], runner=_run
+        )
+        # Assert — a skipped remote did NOT start anything, so no row.
+        from scitex_agent_container._state.state_db import list_active_instances
+
+        rows = [r for r in list_active_instances() if r["name"] == "clew"]
+        assert rows == []
+
+    def test_dry_run_ok_status_is_silent_success(
+        self, isolated_state_db, capsys
+    ) -> None:
+        # Arrange — `--dry-run` propagated to the remote returns
+        # status=dry_run_ok cleanly; this is the ONE non-"started" status
+        # that legitimately returns 0 (no agent was meant to start).
+        def _run(peer, full_argv):
+            return subprocess.CompletedProcess(
+                args=full_argv,
+                returncode=0,
+                stdout=json.dumps(
+                    {"name": "clew", "status": "dry_run_ok", "dry_run": True}
+                ),
+                stderr="",
+            )
+
+        # Act
+        rc = propagate_remote_start(
+            "spartan-gpgpu011",
+            ["agents", "start", "clew", "--dry-run"],
+            runner=_run,
+        )
+        # Assert
+        assert rc == 0
+
+    def test_remote_failure_echoes_remote_output_to_operator(
+        self, isolated_state_db, capsys
+    ) -> None:
+        # Arrange — remote rc != 0 (e.g. exception inside remote start);
+        # captured stdout/stderr MUST surface so the operator can debug.
+        def _run(peer, full_argv):
+            return subprocess.CompletedProcess(
+                args=full_argv,
+                returncode=1,
+                stdout=json.dumps(
+                    {
+                        "name": "clew",
+                        "status": "error",
+                        "error": "Permission denied loading spec.yaml",
+                    }
+                ),
+                stderr="ssh-side: connection reset",
+            )
+
+        # Act
+        propagate_remote_start(
+            "spartan-gpgpu011", ["agents", "start", "clew"], runner=_run
+        )
+        # Assert — at least the remote's structured error must reach the operator.
+        captured = capsys.readouterr()
+        merged = captured.err + captured.out
+        assert "Permission denied loading spec.yaml" in merged
+
+    def test_remote_failure_returns_remote_rc(self, isolated_state_db) -> None:
+        # Arrange
+        def _run(peer, full_argv):
+            return subprocess.CompletedProcess(
+                args=full_argv,
+                returncode=42,
+                stdout="",
+                stderr="boom",
+            )
+
+        # Act
+        rc = propagate_remote_start(
+            "spartan-gpgpu011", ["agents", "start", "clew"], runner=_run
+        )
+        # Assert
+        assert rc == 42
