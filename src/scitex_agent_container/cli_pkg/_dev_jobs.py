@@ -1,9 +1,20 @@
 """``sac dev {cron,daemon,systemd}`` — sac's federated scheduled jobs.
 
 Surfaces sac's OWN jobs (``sac.*``) by delegating to scitex-dev's
-ecosystem aggregator (``scitex_dev.jobs``). ``install`` / ``uninstall``
-delegate to ``scitex-dev ecosystem <kind> {install,uninstall}`` so the
-unit/cron generation stays single-sourced in scitex-dev.
+ecosystem aggregator (``scitex_dev.jobs``).
+
+The verbs per job-kind mirror scitex-dev's canonical ecosystem
+aggregator exactly (``scitex-dev ecosystem <kind> <verb>``):
+
+* ``cron``    → ``list`` / ``install`` / ``uninstall``
+* ``systemd`` → ``list`` / ``install`` / ``uninstall``
+* ``daemon``  → ``list`` / ``exec``   (a daemon is *run*, not "installed")
+
+``install`` / ``uninstall`` delegate to
+``scitex-dev ecosystem <kind> {install,uninstall} --name <name>`` so the
+unit/cron generation stays single-sourced in scitex-dev; ``exec``
+delegates to ``scitex-dev ecosystem daemon exec <name>`` (positional
+job-name argument, like scitex-dev's own ``daemon exec``).
 
 Graceful degradation: a scitex-dev that predates the ``scitex_dev.jobs``
 contract (PyPI lag — the contract is unreleased at the time of writing)
@@ -52,8 +63,15 @@ def _load_sac_jobs(kind: str) -> list:
     return [j for j in jobs_of_kind(kind) if j.name.startswith(_SAC_PREFIX)]
 
 
-def _ecosystem_delegate(kind: str, verb: str, name: str, yes: bool) -> int:
-    """Delegate to ``scitex-dev ecosystem <kind> <verb> --name <name>``.
+def _ecosystem_delegate(kind: str, verb: str, name: str, yes: bool = False) -> int:
+    """Delegate to ``scitex-dev ecosystem <kind> <verb> ... <name>``.
+
+    The job-name is passed the way each canonical verb expects it:
+
+    * ``daemon exec`` takes a *positional* ``NAME`` argument (and no
+      ``--yes``), matching ``scitex-dev ecosystem daemon exec <name>``.
+    * ``cron``/``systemd`` ``install``/``uninstall`` take ``--name
+      <name>`` (and optionally ``--yes``).
 
     Returns the subprocess exit code. ``scitex-dev`` is a hard dependency
     of this package, so the console script is expected on PATH; a missing
@@ -64,30 +82,19 @@ def _ecosystem_delegate(kind: str, verb: str, name: str, yes: bool) -> int:
         raise click.ClickException(
             "`scitex-dev` console script not found on PATH; " + _degrade_msg()
         )
+    if kind == "daemon" and verb == "exec":
+        # `daemon exec` runs in the foreground via a positional NAME.
+        return subprocess.call([exe, "ecosystem", kind, verb, name])
     cmd = [exe, "ecosystem", kind, verb, "--name", name]
     if yes:
         cmd.append("--yes")
     return subprocess.call(cmd)
 
 
-def _make_kind_group(kind: str):
-    """Build a ``sac dev <kind>`` group with list/install/uninstall."""
+def _add_list_command(grp, kind: str) -> None:
+    """Attach the shared ``list`` read-verb onto a kind group."""
 
-    @click.group(kind, invoke_without_command=True)
-    @click.pass_context
-    def _grp(ctx):
-        if ctx.invoked_subcommand is None:
-            click.echo(ctx.get_help())
-
-    _grp.help = (
-        f"sac's federated {kind} jobs (delegates to scitex-dev ecosystem).\n\n"
-        "\b\nVerbs:\n"
-        "  list       — show sac's own jobs of this kind\n"
-        "  install    — generate + install them via scitex-dev\n"
-        "  uninstall  — remove them via scitex-dev"
-    )
-
-    @_grp.command("list")
+    @grp.command("list")
     @click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
     def _list(as_json):
         """List sac's own jobs of this kind."""
@@ -95,7 +102,7 @@ def _make_kind_group(kind: str):
 
         try:
             jobs = _load_sac_jobs(kind)
-        except ImportError:
+        except ImportError:  # stx-allow: fallback (reason: old scitex-dev lacks scitex_dev.jobs — print upgrade hint, not a stack trace)
             click.echo(_degrade_msg(), err=True)
             raise SystemExit(3)
         if as_json:
@@ -123,6 +130,31 @@ def _make_kind_group(kind: str):
             click.echo(f"  {'':24s} {j.command}")
             click.echo(f"  {'':24s} {j.description}")
 
+
+def _make_installable_group(kind: str):
+    """Build a ``sac dev <kind>`` group with list/install/uninstall.
+
+    Used for the ``cron`` and ``systemd`` job-kinds — both of which are
+    *installed* (materialised into a crontab block / systemd unit files)
+    by scitex-dev. Mirrors ``scitex-dev ecosystem <kind>``.
+    """
+
+    @click.group(kind, invoke_without_command=True)
+    @click.pass_context
+    def _grp(ctx):
+        if ctx.invoked_subcommand is None:
+            click.echo(ctx.get_help())
+
+    _grp.help = (
+        f"sac's federated {kind} jobs (delegates to scitex-dev ecosystem).\n\n"
+        "\b\nVerbs:\n"
+        "  list       — show sac's own jobs of this kind\n"
+        "  install    — generate + install them via scitex-dev\n"
+        "  uninstall  — remove them via scitex-dev"
+    )
+
+    _add_list_command(_grp, kind)
+
     @_grp.command("install")
     @click.option(
         "-y",
@@ -135,7 +167,7 @@ def _make_kind_group(kind: str):
         """Install sac's jobs of this kind via scitex-dev."""
         try:
             jobs = _load_sac_jobs(kind)
-        except ImportError:
+        except ImportError:  # stx-allow: fallback (reason: old scitex-dev lacks scitex_dev.jobs — print upgrade hint, not a stack trace)
             click.echo(_degrade_msg(), err=True)
             raise SystemExit(3)
         if not jobs:
@@ -159,7 +191,7 @@ def _make_kind_group(kind: str):
         """Uninstall sac's jobs of this kind via scitex-dev."""
         try:
             jobs = _load_sac_jobs(kind)
-        except ImportError:
+        except ImportError:  # stx-allow: fallback (reason: old scitex-dev lacks scitex_dev.jobs — print upgrade hint, not a stack trace)
             click.echo(_degrade_msg(), err=True)
             raise SystemExit(3)
         if not jobs:
@@ -174,10 +206,59 @@ def _make_kind_group(kind: str):
     return _grp
 
 
+def _make_daemon_group():
+    """Build the ``sac dev daemon`` group with list/exec.
+
+    A daemon is a long-running process that is *run* (not "installed"),
+    so this group exposes ``exec`` (run one job in the foreground) rather
+    than install/uninstall — matching ``scitex-dev ecosystem daemon``.
+    """
+
+    @click.group("daemon", invoke_without_command=True)
+    @click.pass_context
+    def _grp(ctx):
+        if ctx.invoked_subcommand is None:
+            click.echo(ctx.get_help())
+
+    _grp.help = (
+        "sac's federated daemon jobs (delegates to scitex-dev ecosystem).\n\n"
+        "\b\nVerbs:\n"
+        "  list  — show sac's own daemon jobs\n"
+        "  exec  — run one sac daemon job in the foreground via scitex-dev"
+    )
+
+    _add_list_command(_grp, "daemon")
+
+    @_grp.command("exec")
+    @click.argument("name")
+    def _exec(name):
+        """Run the sac daemon job NAME in the foreground via scitex-dev.
+
+        \b
+        Blocks until the process exits; the caller is responsible for
+        backgrounding / supervision. Delegates to
+        `scitex-dev ecosystem daemon exec <name>`.
+        """
+        try:
+            jobs = {j.name: j for j in _load_sac_jobs("daemon")}
+        except ImportError:  # stx-allow: fallback (reason: old scitex-dev lacks scitex_dev.jobs — print upgrade hint, not a stack trace)
+            click.echo(_degrade_msg(), err=True)
+            raise SystemExit(3)
+        if name not in jobs:
+            known = ", ".join(sorted(jobs)) or "(none)"
+            raise click.ClickException(
+                f"unknown sac daemon job: {name!r}. Known jobs: {known}"
+            )
+        raise SystemExit(_ecosystem_delegate("daemon", "exec", name))
+
+    return _grp
+
+
 def register_dev_jobs_commands(dev_group: click.Group) -> None:
     """Attach the ``cron`` / ``daemon`` / ``systemd`` groups onto ``sac dev``."""
-    for kind in ("cron", "daemon", "systemd"):
-        dev_group.add_command(_make_kind_group(kind))
+    for kind in ("cron", "systemd"):
+        dev_group.add_command(_make_installable_group(kind))
+    dev_group.add_command(_make_daemon_group())
 
 
 __all__ = ["register_dev_jobs_commands"]
