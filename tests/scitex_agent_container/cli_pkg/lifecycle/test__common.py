@@ -365,16 +365,31 @@ class TestBoundHost:
 # ---------------------------------------------------------------------------
 
 
+def _reload_state_db_at(path: Path, env_save_restore):
+    """Redirect DEFAULT_DB_PATH at ``path`` and reload the state_db
+    module so the rebound path takes effect.
+
+    PA-306 §3 no-mocks: uses the project ``env_save_restore`` fixture
+    (NOT pytest's ``monkeypatch``) to manage the env var save/restore.
+    Returns the reloaded module so the caller can call its
+    ``record_instance_start`` etc. against the redirected DB.
+    """
+    import importlib
+
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_STATE_DB", str(path))
+    import scitex_agent_container._state.state_db as state_db_mod
+
+    importlib.reload(state_db_mod)
+    return state_db_mod
+
+
 class TestRegistryActiveOn:
-    def test_missing_state_db_treated_as_not_live(self, tmp_path, monkeypatch):
+    def test_missing_state_db_treated_as_not_live(self, tmp_path, env_save_restore):
         # Arrange — point state.db at a non-existent path; reload module
         # so DEFAULT_DB_PATH is recomputed.
         import importlib
 
-        monkeypatch.setenv("SCITEX_AGENT_CONTAINER_STATE_DB", str(tmp_path / "nope.db"))
-        import scitex_agent_container._state.state_db as state_db_mod
-
-        importlib.reload(state_db_mod)
+        state_db_mod = _reload_state_db_at(tmp_path / "nope.db", env_save_restore)
         try:
             # Act
             live = _registry_active_on("ghost", "alpha")
@@ -383,16 +398,11 @@ class TestRegistryActiveOn:
         finally:
             importlib.reload(state_db_mod)
 
-    def test_recorded_instance_seen_as_live(self, tmp_path, monkeypatch):
+    def test_recorded_instance_seen_as_live(self, tmp_path, env_save_restore):
         # Arrange
         import importlib
 
-        monkeypatch.setenv(
-            "SCITEX_AGENT_CONTAINER_STATE_DB", str(tmp_path / "state.db")
-        )
-        import scitex_agent_container._state.state_db as state_db_mod
-
-        importlib.reload(state_db_mod)
+        state_db_mod = _reload_state_db_at(tmp_path / "state.db", env_save_restore)
         try:
             state_db_mod.record_instance_start(
                 name="clew",
@@ -409,16 +419,13 @@ class TestRegistryActiveOn:
         finally:
             importlib.reload(state_db_mod)
 
-    def test_instance_on_other_host_not_live_on_target(self, tmp_path, monkeypatch):
+    def test_instance_on_other_host_not_live_on_target(
+        self, tmp_path, env_save_restore
+    ):
         # Arrange — row recorded on beta, asking about alpha.
         import importlib
 
-        monkeypatch.setenv(
-            "SCITEX_AGENT_CONTAINER_STATE_DB", str(tmp_path / "state.db")
-        )
-        import scitex_agent_container._state.state_db as state_db_mod
-
-        importlib.reload(state_db_mod)
+        state_db_mod = _reload_state_db_at(tmp_path / "state.db", env_save_restore)
         try:
             state_db_mod.record_instance_start(
                 name="clew",
@@ -435,18 +442,13 @@ class TestRegistryActiveOn:
         finally:
             importlib.reload(state_db_mod)
 
-    def test_ended_instance_not_live(self, tmp_path, monkeypatch):
+    def test_ended_instance_not_live(self, tmp_path, env_save_restore):
         # Arrange — record then end; the row's ended_at != NULL so it
         # must not be reported as live (mirrors what stop --force would
         # do via the new release path).
         import importlib
 
-        monkeypatch.setenv(
-            "SCITEX_AGENT_CONTAINER_STATE_DB", str(tmp_path / "state.db")
-        )
-        import scitex_agent_container._state.state_db as state_db_mod
-
-        importlib.reload(state_db_mod)
+        state_db_mod = _reload_state_db_at(tmp_path / "state.db", env_save_restore)
         try:
             row_id = state_db_mod.record_instance_start(
                 name="clew",
