@@ -1,18 +1,22 @@
 """Tests for ``runtimes._apptainer_creds`` — per-agent OAuth resolver.
 
-Regression guard for the "boot-snapshot clobbers fresh per-agent
-token" bug that recurred fleet-wide: the in-container Claude CLI
-refreshes its OAuth ``accessToken`` (~1h cadence) directly on the
-per-agent ``:rw`` copy at ``state_dir/claude/.credentials.json``.
-Before this guard, every ``sac agent restart`` re-ran
-:func:`resolve_cred_file` and unconditionally
-``shutil.copy2(snapshot, dest)`` — silently overwriting the freshly
-refreshed token with the stale boot-time snapshot. Auth then died at
-the next refresh cycle.
+After operator task #15 (2026-06-01 fleet-wide silent outage fix), the
+pinned-account resolver returns the SNAPSHOT FILE ITSELF — not a
+boot-copy into the per-agent state-dir. The companion module
+:mod:`test__apptainer_creds_rw_bind` covers the new positive contract
+(``resolved == snapshot``, no per-agent dest is written, mid-session
+refresh writeback through the ``:rw`` bind is visible without restart).
+
+This module keeps the **safety-gate** half of the contract (preserved
+from the legacy resolver): pinned agents NEVER silently launch with
+an absent / unverifiable / already-expired token. A pinned agent that
+cannot reach a healthy snapshot must hard-error so the operator's
+remedy path (``claude /login`` + ``sac accounts sync-live`` or
+``sac accounts save``) is forced.
 
 No-mocks (PA-306): the tests drive the REAL public function with REAL
-files on disk (tmp ``$HOME``, real ``.credentials.json`` JSON bodies,
-real ``shutil.copy2``). The OAuth-expiry helper is the production
+files on disk (tmp ``$HOME``, real ``.credentials.json`` JSON bodies).
+The OAuth-expiry helper is the production
 :func:`_account.creds_sync._read_oauth_expiry_seconds`, exercised
 through the resolver — no test-side reimplementation.
 """
@@ -32,7 +36,6 @@ from scitex_agent_container.runtimes._apptainer_creds import (
     resolve_cred_file,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures — real $HOME, real account-store layout, real credentials JSON
 # ---------------------------------------------------------------------------
@@ -51,7 +54,7 @@ def home_redirect(tmp_path: Path, env_save_restore) -> Path:
 
 def _write_snapshot(home: Path, name: str, expires_at_seconds: float) -> Path:
     """Materialise a real saved-account snapshot at the same on-disk
-    layout ``sac account save`` writes (``~/.scitex/agent-container/
+    layout ``sac accounts save`` writes (``~/.scitex/agent-container/
     accounts/<name>/.credentials.json``) with a numeric OAuth
     ``expiresAt`` in MILLISECONDS (matching the claude-code wire
     format). Returns the snapshot path."""
@@ -68,10 +71,11 @@ def _write_snapshot(home: Path, name: str, expires_at_seconds: float) -> Path:
     return snap
 
 
-def _write_dest(state_dir: Path, expires_at_seconds: float, token: str) -> Path:
-    """Materialise a per-agent dest at the exact path the resolver
-    writes (``<state_dir>/claude/.credentials.json``) with the given
-    OAuth ``expiresAt`` (seconds, stored as milliseconds on disk)."""
+def _write_legacy_dest(state_dir: Path, expires_at_seconds: float, token: str) -> Path:
+    """Materialise a per-agent legacy dest at the exact path the OLD
+    resolver used to write (``<state_dir>/claude/.credentials.json``).
+    Used to prove the new resolver leaves leftover legacy state alone
+    rather than touching it."""
     dest = state_dir / "claude" / ".credentials.json"
     dest.parent.mkdir(parents=True, exist_ok=True)
     body = {
@@ -94,84 +98,45 @@ def _config(workdir: Path, *, account: str) -> AgentConfig:
 
 
 # ---------------------------------------------------------------------------
-# REGRESSION — fresher dest must not be clobbered by a stale snapshot
+# Safety gate — pinned snapshot must be healthy or hard-error
 # ---------------------------------------------------------------------------
 
 
-def test_fresher_dest_token_is_preserved_when_snapshot_is_older(
-    tmp_path: Path, home_redirect: Path
-) -> None:
-    # Arrange — a saved snapshot with a valid (1h-ahead) expiry and a
-    # per-agent dest that was refreshed in-container to a much-newer
-    # token (24h-ahead). This is the EXACT shape of the recurring auth
-    # bug: agent restart re-runs the resolver and (pre-fix)
-    # unconditionally copies the older snapshot over the newer dest.
-    now = time.time()
-    snapshot_expiry = now + 3_600  # +1h — valid, not expired
-    dest_expiry = now + 86_400  # +24h — much fresher (post-refresh)
-    _write_snapshot(home_redirect, "alpha", snapshot_expiry)
-    state_dir = tmp_path / "state"
-    fresh_token = "in-container-refreshed-token"
-    dest = _write_dest(state_dir, dest_expiry, token=fresh_token)
-    # Act — resolver runs at agent restart.
-    resolve_cred_file(_config(tmp_path / "wd", account="alpha"), state_dir, now=now)
-    # Assert — the per-agent dest still carries the FRESH in-container
-    # token; the resolver did NOT clobber it with the stale snapshot.
-    body = json.loads(dest.read_text())
-    assert body["claudeAiOauth"]["accessToken"] == fresh_token
-
-
-def test_missing_dest_is_populated_from_snapshot(
-    tmp_path: Path, home_redirect: Path
-) -> None:
-    # Arrange — first-ever start: no dest exists yet, snapshot is valid.
-    # (The non-existence of dest is implicit in the empty state_dir;
-    # asserting it would be a second assertion and trip TQ007.)
-    now = time.time()
-    snapshot_expiry = now + 3_600
-    snap = _write_snapshot(home_redirect, "alpha", snapshot_expiry)
-    state_dir = tmp_path / "state"
-    # Act
-    resolve_cred_file(_config(tmp_path / "wd", account="alpha"), state_dir, now=now)
-    # Assert — dest now exists with the snapshot's bytes (cold-start path).
-    dest = state_dir / "claude" / ".credentials.json"
-    assert dest.read_text() == snap.read_text()
-
-
-def test_older_dest_is_overwritten_when_snapshot_is_newer(
-    tmp_path: Path, home_redirect: Path
-) -> None:
-    # Arrange — operator just ran `sac account save alpha` with a
-    # freshly-logged-in token; the per-agent dest still holds the
-    # older pre-rotation token. On restart, the snapshot SHOULD win
-    # because it is strictly newer.
-    now = time.time()
-    snapshot_expiry = now + 86_400  # +24h — the newer one
-    dest_expiry = now + 3_600  # +1h  — older
-    snap = _write_snapshot(home_redirect, "alpha", snapshot_expiry)
-    state_dir = tmp_path / "state"
-    _write_dest(state_dir, dest_expiry, token="stale-pre-rotation-token")
-    dest = state_dir / "claude" / ".credentials.json"
-    # Act
-    resolve_cred_file(_config(tmp_path / "wd", account="alpha"), state_dir, now=now)
-    # Assert — the resolver overwrote dest with the newer snapshot.
-    assert dest.read_text() == snap.read_text()
-
-
-def test_resolver_refuses_expired_snapshot_even_with_fresh_dest(
-    tmp_path: Path, home_redirect: Path
-) -> None:
-    # Arrange — pinned-account safety is upstream of the freshness
-    # guard: an EXPIRED snapshot must hard-error (PinnedAccountError)
-    # regardless of dest state, so the operator is forced to re-login
-    # instead of the agent silently running off the per-agent copy.
+def test_resolver_refuses_expired_snapshot(tmp_path: Path, home_redirect: Path) -> None:
+    # Arrange — pinned-account safety: an EXPIRED snapshot must
+    # hard-error (PinnedAccountError) so the operator is forced to
+    # re-login instead of the agent silently running off a dead token.
     now = time.time()
     _write_snapshot(home_redirect, "alpha", now - 60)  # already expired
     state_dir = tmp_path / "state"
-    _write_dest(state_dir, now + 86_400, token="fresh-but-irrelevant")
     # Act
     # Assert — pytest.raises is the assertion (TQ007: one per test).
     with pytest.raises(PinnedAccountError, match="expired"):
-        resolve_cred_file(
-            _config(tmp_path / "wd", account="alpha"), state_dir, now=now
-        )
+        resolve_cred_file(_config(tmp_path / "wd", account="alpha"), state_dir, now=now)
+
+
+# ---------------------------------------------------------------------------
+# Legacy tolerance — leftover per-agent dest from the OLD resolver
+# must not surprise an operator. The new resolver does not WRITE to
+# the legacy dest (covered in test__apptainer_creds_rw_bind), and a
+# pre-existing dest is NEITHER read nor mutated by the resolver. The
+# bind target is the snapshot regardless of dest state.
+# ---------------------------------------------------------------------------
+
+
+def test_legacy_dest_is_not_touched_by_resolver(
+    tmp_path: Path, home_redirect: Path
+) -> None:
+    # Arrange — operator upgrades to the :rw bind fix; the per-agent
+    # state dir still carries a stale dest from the pre-fix runtime.
+    # The new resolver must leave it ALONE — not read, not overwrite,
+    # not mutate. The bind target is the snapshot itself.
+    now = time.time()
+    _write_snapshot(home_redirect, "alpha", now + 3_600)
+    state_dir = tmp_path / "state"
+    dest = _write_legacy_dest(state_dir, now + 86_400, token="legacy-leftover")
+    dest_bytes_before = dest.read_bytes()
+    # Act
+    resolve_cred_file(_config(tmp_path / "wd", account="alpha"), state_dir, now=now)
+    # Assert — the legacy dest is byte-identical post-resolver.
+    assert dest.read_bytes() == dest_bytes_before

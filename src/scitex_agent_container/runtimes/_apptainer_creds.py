@@ -9,27 +9,49 @@ host-side ``.credentials.json`` gets bound into an agent container:
 
 * ``spec.claude.account`` empty → the host's live
   ``~/.claude/.credentials.json`` (shared OAuth — current default).
-* ``spec.claude.account`` set → a FROZEN BOOT-COPY of that saved
-  account's snapshot, copied into the agent's own state dir so two
-  agents pinned to two accounts never fight one mount, and a host
-  ``/login`` never moves a pinned agent.
+  Bound ``:rw`` by the caller so the in-container Claude CLI's ~1h
+  OAuth refresh writes back to the host live file.
 
-The copy is bound ``:rw`` by the caller so the in-container Claude CLI
-can refresh the OAuth ``accessToken`` (~1h cadence) on the agent's
-private copy. Changing ``spec.claude.account`` only takes effect on the
-next ``sac agent restart`` (the copy happens at start).
+* ``spec.claude.account`` set → the saved account's snapshot itself at
+  ``~/.scitex/agent-container/accounts/<acct>/.credentials.json``,
+  bound ``:rw`` by the caller. Refresh writes by the in-container
+  Claude CLI land on the snapshot **directly** so the snapshot is
+  self-healing and never expires while the agent keeps running.
+
+Fix for the 2026-06-01 fleet-wide silent outage (operator task #15):
+the prior implementation COPIED the snapshot into a per-agent state-dir
+``dest`` and bound that copy. Refreshes landed on the copy; the source
+snapshot drifted stale. After ~8h, every SDK turn 401'd silently (the
+telegram bridge still marked inbound 👀, but the agent could not
+complete a turn). The fix is structural — bind the snapshot itself.
+With the ``:rw`` bind the in-container CLI keeps the snapshot fresh
+for ALL agents pinned to that account, and an agent crash/restart
+cycle no longer loses the freshly-refreshed token (it was always
+written to the snapshot, not a per-agent copy).
 
 Fail-loud (no silent fallbacks): when ``spec.claude.account`` is set
-but the pinned store is ABSENT or EXPIRED, the start aborts with
-:class:`PinnedAccountError` carrying the exact remedy. A pinned agent
-must NEVER silently fall back to the host live file (a different
-account) or run with a stale token — that would defeat the whole point
-of account pinning and hand the agent the wrong identity.
+but the pinned snapshot is ABSENT, has no numeric ``expiresAt``, or is
+ALREADY EXPIRED, the start aborts with :class:`PinnedAccountError`
+carrying the exact remedy. A pinned agent must NEVER silently fall
+back to the host live file (a different account) or run with a stale
+token — that would defeat the whole point of account pinning and hand
+the agent the wrong identity.
+
+Sharing semantics with the :rw bind:
+
+* Different accounts → different snapshot files → no conflict.
+* Same account, multiple agents → all share the SAME snapshot mount.
+  The in-container Claude CLI uses an atomic write (tmp + rename) for
+  refresh writeback, so concurrent refreshes converge on whichever
+  finishes last — the token is fungible across agents pinned to the
+  same account by definition, so a refresh by agent A is also fresh
+  for agent B. The shared-mount footgun the prior copy avoided does
+  not apply here: same-account agents share an IDENTITY, sharing the
+  file matches the model.
 """
 
 from __future__ import annotations
 
-import shutil
 import time
 from pathlib import Path
 
@@ -58,10 +80,22 @@ def resolve_cred_file(
     With no ``spec.claude.account`` set, returns the host live file
     (``None`` only when it does not exist — caller skips the bind).
 
-    With ``spec.claude.account`` set, returns a frozen boot-copy of that
-    store's snapshot. Raises :class:`PinnedAccountError` when the store
-    is absent or its credential is already expired — NEVER falls back to
-    the host live file for a pinned agent. See module docstring.
+    With ``spec.claude.account`` set, returns the per-account SNAPSHOT
+    file directly (no per-agent copy). The caller binds it ``:rw`` so
+    the in-container Claude CLI's ~1h OAuth refresh writes back to the
+    snapshot itself — the snapshot is the single source of truth for
+    every agent pinned to this account.
+
+    Raises :class:`PinnedAccountError` when the snapshot is absent, has
+    no numeric ``expiresAt``, or is already expired — NEVER falls back
+    to the host live file for a pinned agent and NEVER hands out a
+    dead token. See module docstring.
+
+    The ``state_dir`` parameter is preserved in the signature for
+    backward compatibility with the caller's existing kwarg shape
+    (``_apptainer_auth.auth_argv``); it is no longer used because the
+    resolver no longer copies the snapshot into ``state_dir``. The
+    ``now`` parameter remains a real-time injection seam for tests.
     """
     host_cred = Path.home() / ".claude" / ".credentials.json"
     acct = getattr(getattr(config, "claude", None), "account", "") or ""
@@ -100,18 +134,11 @@ def resolve_cred_file(
             f"`sac accounts sync-live`, and restart this agent."
         )
 
-    dest = Path(state_dir).expanduser() / "claude" / ".credentials.json"
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    # Preserve the per-agent dest if it is already fresher than the
-    # snapshot. Without this guard, an agent restart would clobber a
-    # token the in-container Claude CLI just refreshed (on its private
-    # ``:rw`` copy) with the stale boot-time snapshot — and auth would
-    # die at the next refresh cycle. Only overwrite when dest is
-    # absent OR the snapshot's OAuth expiresAt is strictly newer.
-    dest_expiry = _read_oauth_expiry_seconds(dest) if dest.is_file() else None
-    if dest_expiry is None or expiry > dest_expiry:
-        shutil.copy2(snapshot, dest)
-    return dest
+    # Return the SNAPSHOT itself — the caller binds it ``:rw``, so the
+    # in-container Claude CLI's refresh writes land on this file
+    # directly. No per-agent copy, no stale-copy clobber risk, no
+    # auth-dies-after-8h failure mode (operator task #15).
+    return snapshot
 
 
 __all__ = ["PinnedAccountError", "resolve_cred_file"]
