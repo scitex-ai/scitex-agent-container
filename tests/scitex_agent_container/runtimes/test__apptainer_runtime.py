@@ -1246,16 +1246,91 @@ def test_argv_pinned_account_expired_snapshot_raises_pinned_account_error(
 # ---------------------------------------------------------------------------
 
 
-def test_start_returns_false_when_apptainer_binary_missing(
+def test_start_raises_explanatory_runtime_error_when_apptainer_binary_missing(
     state_root: Path, tmp_path: Path, no_apptainer_on_path: Path
 ) -> None:
-    # Arrange
+    # Arrange — clew handoff 2026-05-31 P1: the legacy silent
+    # ``return False`` here surfaced upstream as a generic ``Failed
+    # to start agent ...`` with no diagnostic; the runtime now names
+    # the missing binary AND the nested-SIF cause explicitly.
     rt = ApptainerContainerRuntime()
     cfg = _config(tmp_path / "wd")
+
     # Act
-    started = rt.start(cfg)
+    def _call():
+        return rt.start(cfg)
+
     # Assert
-    assert started is False
+    with pytest.raises(RuntimeError, match=r"apptainer binary not found"):
+        _call()
+
+
+def test_start_error_message_names_nested_apptainer_escape_hint(
+    state_root: Path, tmp_path: Path, no_apptainer_on_path: Path
+) -> None:
+    # Arrange — the nested-SIF cause is the common path on Spartan
+    # compute (agent running inside a SIF that doesn't bundle
+    # apptainer on PATH). The error message must surface the
+    # ``spec.apptainer.nested_mode: "escape"`` lever the operator
+    # needs, not just "apptainer missing".
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd")
+
+    # Act
+    captured: list[BaseException] = []
+    try:
+        rt.start(cfg)
+    except RuntimeError as exc:
+        captured.append(exc)
+
+    # Assert
+    assert (
+        len(captured) == 1
+        and "nested_mode" in str(captured[0])
+        and "escape" in str(captured[0])
+    )
+
+
+def test_start_error_message_names_the_agent_being_started(
+    state_root: Path, tmp_path: Path, no_apptainer_on_path: Path
+) -> None:
+    # Arrange — the operator's terminal may have many concurrent
+    # ``sac agents start`` runs in flight; naming the agent in the
+    # error tells them which spec.yaml to look at.
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd", name="zeta-bm175")
+
+    # Act
+    captured: list[BaseException] = []
+    try:
+        rt.start(cfg)
+    except RuntimeError as exc:
+        captured.append(exc)
+
+    # Assert
+    assert len(captured) == 1 and "zeta-bm175" in str(captured[0])
+
+
+def test_start_dry_run_does_not_raise_when_apptainer_binary_missing(
+    state_root: Path, tmp_path: Path, no_apptainer_on_path: Path
+) -> None:
+    # Arrange — dry-run only emits argv to a state-dir file and
+    # never calls ``apptainer exec``. A dev box / CI runner without
+    # apptainer installed must still be able to validate the
+    # ``sac agents start --dry-run`` argv path; the loud raise added
+    # for the no-apptainer case must skip when dry_run=True. The
+    # spec needs an image so the inner ``resolve_sif`` returns a
+    # value (dry-run hits the same code path otherwise).
+    sif = tmp_path / "ready.sif"
+    sif.write_bytes(b"\x00")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd", image=str(sif))
+
+    # Act
+    ok = rt.start(cfg, dry_run=True)
+
+    # Assert
+    assert ok is True
 
 
 def test_start_returns_false_when_sif_cannot_be_resolved(
