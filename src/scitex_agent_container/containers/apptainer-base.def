@@ -21,6 +21,17 @@
 Bootstrap: docker
 From: ubuntu:24.04
 
+%files
+    # Bundle the package's OWN source tree so the in-SIF sac is the
+    # source tree that shipped this .def — never a `git+...@main`
+    # snapshot of whatever happened to be on a branch at build time.
+    # The CLI (cli_pkg/image_group.py) stages a build-context dir that
+    # contains this .def alongside a `scitex-agent-container-src/` copy
+    # of the installed package; apptainer resolves the relative source
+    # path below against the build CWD, which the CLI sets to that
+    # staging dir. See sac image build for the staging implementation.
+    scitex-agent-container-src /opt/scitex-agent-container-src
+
 %post
     set -e
     export DEBIAN_FRONTEND=noninteractive
@@ -215,6 +226,12 @@ From: ubuntu:24.04
     # version also pins the binary — no separate `claude` install
     # needed (see Anthropic's claude-agent-sdk-python README). 2026-05-12.
     #
+    # sac itself is installed from /opt/scitex-agent-container-src/ —
+    # the package's OWN source tree, copied in by the %files section
+    # above. This pins the in-SIF sac to the source tree that shipped
+    # this .def (no `git+...@main` snapshot drift). The wheel build
+    # via hatchling happens inside the SIF, against the bundled tree.
+    #
     # uv landed at /root/.local/bin/uv (the uv installer ignores
     # UV_INSTALL_DIR for the curl|sh path and uses XDG_BIN_HOME ->
     # ~/.local/bin under root). PATH below is conservative — extend
@@ -223,7 +240,7 @@ From: ubuntu:24.04
     export PATH=/root/.local/bin:/usr/local/bin:$PATH
     uv pip install --python /opt/venv-sac/bin/python \
         "claude-agent-sdk==0.1.72" \
-        "git+https://github.com/ywatanabe1989/scitex-agent-container.git@main"
+        /opt/scitex-agent-container-src
 
     # Surface the SDK's bundled claude CLI on PATH so humans can
     # `apptainer shell` and run `claude` interactively, and so that

@@ -205,6 +205,18 @@ packages = ["src/scitex_agent_container"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/scitex_agent_container/cron/post-merge-pull.sh" = "scitex_agent_container/cron/post-merge-pull.sh"
+# Bundle pyproject.toml + README.md inside the wheel so the
+# source-bundled SIF build (cli_pkg/_image_source_build.py) can
+# reconstruct a pip-installable source tree from the INSTALLED
+# package — needed when sac was installed from a wheel and the
+# original repo root is no longer on disk. The .def's ``uv pip
+# install /opt/scitex-agent-container-src`` requires pyproject.toml
+# at the staging-root, AND README.md alongside it (pyproject's
+# ``readme = "README.md"`` makes hatchling read the file at build
+# time). stage_build_context resolves both from this bundled copy
+# (with a fallback to the editable-install repo root).
+"pyproject.toml" = "scitex_agent_container/_bundled/pyproject.toml"
+"README.md" = "scitex_agent_container/_bundled/README.md"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

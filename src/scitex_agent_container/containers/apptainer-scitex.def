@@ -23,6 +23,15 @@
 Bootstrap: localimage
 From: ./sac-base.sif
 
+%files
+    # Bundle the package's OWN source tree on top of the base layer so
+    # this layer's sac install is the source tree that shipped this
+    # .def — see apptainer-base.def for the staging contract. Both
+    # layers land the same tree at /opt/scitex-agent-container-src so a
+    # version mismatch between base and scitex is structurally
+    # impossible (both came from the same `sac image build` invocation).
+    scitex-agent-container-src /opt/scitex-agent-container-src
+
 %post
     set -e
     export DEBIAN_FRONTEND=noninteractive
@@ -50,6 +59,10 @@ From: ./sac-base.sif
     # curl|sh path and uses XDG_BIN_HOME → ~/.local/bin under root).
     # apptainer's %post starts with a minimal PATH so we extend it.
     export PATH="/root/.local/bin:/usr/local/bin:$PATH"
+    # sac is installed from /opt/scitex-agent-container-src/ — the
+    # package's OWN source tree, copied in by the %files section above.
+    # The SIF's sac version is structurally pinned to the source tree
+    # that shipped this .def; no `git+...@main` snapshot drift.
     if command -v uv >/dev/null; then
         uv pip install --python /opt/venv-sac/bin/python \
             black flake8 \
@@ -57,7 +70,7 @@ From: ./sac-base.sif
             pytest pytest-cov \
             claude-agent-sdk \
             "scitex[all]" \
-            "git+https://github.com/ywatanabe1989/scitex-agent-container.git@main"
+            /opt/scitex-agent-container-src
     else
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
             pip setuptools wheel
@@ -67,10 +80,8 @@ From: ./sac-base.sif
             pytest pytest-cov \
             claude-agent-sdk \
             "scitex[all]" \
-            "git+https://github.com/ywatanabe1989/scitex-agent-container.git@main"
+            /opt/scitex-agent-container-src
     fi
-    # Pin a specific sac release by editing the @main above to @v0.14.0
-    # (or whatever tag), then ``sac image build scitex -y`` again.
 
 %environment
     export PATH=/opt/venv-sac/bin:$PATH

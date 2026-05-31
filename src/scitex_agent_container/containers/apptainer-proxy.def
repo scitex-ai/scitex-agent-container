@@ -32,6 +32,13 @@
 Bootstrap: docker
 From: ubuntu:24.04
 
+%files
+    # Bundle the package's OWN source tree so the in-SIF sac is the
+    # source tree that shipped this .def — never a `git+...@main`
+    # snapshot. See apptainer-base.def %files note for the staging
+    # contract (cli_pkg/image_group.py sets up the build context).
+    scitex-agent-container-src /opt/scitex-agent-container-src
+
 %post
     set -e
     export DEBIAN_FRONTEND=noninteractive
@@ -59,10 +66,11 @@ From: ubuntu:24.04
     # Install the sac runner module itself. The proxy runner module
     # (scitex_agent_container._runners.a2a_proxy) lives in this package;
     # without it the apptainer dispatch's `python3 -m ...` invocation
-    # fails with ModuleNotFoundError. Pin to develop until proxy lands
-    # in a release.
+    # fails with ModuleNotFoundError. The source tree is bundled via
+    # the %files section above — installing from /opt/... structurally
+    # pins the SIF's sac to whatever shipped the .def.
     python3 -m pip install --no-cache-dir --break-system-packages \
-        "git+https://github.com/ywatanabe1989/scitex-agent-container.git@main"
+        /opt/scitex-agent-container-src
 
     # Convenience symlink — same rationale as apptainer-base.def: many
     # tools hard-code `python` rather than `python3`.
