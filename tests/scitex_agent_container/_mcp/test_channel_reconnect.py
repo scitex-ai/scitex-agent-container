@@ -218,19 +218,17 @@ async def test_consume_sse_records_at_least_two_connection_attempts(
 
 @pytest.mark.asyncio
 async def test_consume_sse_reconnects_after_server_starts_late():
-    # Arrange — pick an unused port, start the consumer FIRST against
-    # it, then start the server. The consumer must retry until the
-    # server is reachable, then deliver the event.
-    server = _ReconnectScenarioServer()
-    # Pre-allocate a port by starting and immediately stopping a
-    # throwaway server (kernel hands the same port back if we're
-    # quick — but we also tolerate a different port because the
-    # client only knows the URL once the real server is up). Easier:
-    # start the server first to grab the port, stop it, then drive
-    # the consumer at that URL while we re-start.
-    await server.start()
-    await server.stop()
-    held_port = server.port
+    # Arrange — reserve a port via a plain socket bind (so we own it
+    # for the consumer's first attempts), then release it and re-bind
+    # via the real SSE server. This is the operator's "listen-server-
+    # not-yet-up at agent startup" scenario. Using a held socket
+    # avoids the port-already-reused flake the naive "start+stop+
+    # restart" approach exhibited.
+    import socket as _socket
+
+    holder = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    holder.bind(("127.0.0.1", 0))
+    held_port = holder.getsockname()[1]
 
     received: list[dict[str, Any]] = []
 
@@ -240,27 +238,22 @@ async def test_consume_sse_reconnects_after_server_starts_late():
     url = f"http://127.0.0.1:{held_port}/agents/alice/inbox/stream"
     task = asyncio.create_task(_consume_sse(url, bearer=None, on_event=on_event))
 
-    # Brief delay so the consumer fires (and fails) at least once.
+    # Brief delay so the consumer fires (and is refused, since the
+    # holder socket is bound but not accepting) at least once.
     await asyncio.sleep(0.2)
 
-    # Re-arm the server on the (likely-same) port. If the port was
-    # reused by the kernel we get true late-start coverage; if not,
-    # the test gracefully aborts before assertion.
+    # Release the port and re-bind via the real SSE server. SO_REUSEADDR
+    # on the new server's listen socket avoids the TIME_WAIT collision
+    # that would otherwise make the immediate re-bind unreliable.
+    holder.close()
     new_server = _ReconnectScenarioServer()
-    try:
-        new_server._server = await asyncio.start_server(
-            new_server._handle, host=new_server.host, port=held_port
-        )
-        new_server.port = held_port
-    except OSError:
-        # Port reused by some other process — abort the test cleanly
-        # rather than flake on port-allocation luck.
-        task.cancel()
-        try:
-            await task
-        except (asyncio.CancelledError, Exception):
-            pass
-        pytest.skip("port reused by an unrelated process — flake guard")
+    new_server._server = await asyncio.start_server(
+        new_server._handle,
+        host=new_server.host,
+        port=held_port,
+        reuse_address=True,
+    )
+    new_server.port = held_port
     new_server.first_batch = [
         {"msg_id": "late-start", "from_agent": "lead", "content": "z"}
     ]
