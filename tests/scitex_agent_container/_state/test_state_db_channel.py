@@ -18,8 +18,9 @@ import pytest
 
 from scitex_agent_container._state import state_db
 from scitex_agent_container._state.state_db_channel import (
-    list_undelivered,
+    format_ts_iso,
     list_since_id,
+    list_undelivered,
     mark_delivered,
     persist_event,
 )
@@ -60,8 +61,7 @@ def test_channel_events_has_column(db_path: Path, column: str) -> None:
     # Act
     with conn_ctx as conn:
         cols = {
-            r[1]
-            for r in conn.execute("PRAGMA table_info(channel_events)").fetchall()
+            r[1] for r in conn.execute("PRAGMA table_info(channel_events)").fetchall()
         }
     # Assert
     assert column in cols
@@ -254,3 +254,102 @@ def test_list_since_id_returns_all_when_cursor_is_zero(db_path: Path) -> None:
     # Assert
     ids = [r["id"] for r in rows]
     assert ids == [r1, r2]
+
+
+# ---------------------------------------------------------------------------
+# format_ts_iso — display helper for channel-push timestamps
+#
+# Storage stays unix-seconds (channel_events.ts REAL); only the
+# rendered/emitted form is ISO-8601. The helper is the canonical
+# formatter every display caller routes through (see
+# scitex_agent_container._mcp.channel._build_notification).
+# ---------------------------------------------------------------------------
+
+
+def test_format_ts_iso_renders_unix_seconds_as_utc_z() -> None:
+    """Float ts (the bus envelope shape) renders as a trailing-Z ISO."""
+    # Arrange — 1_700_000_000 is 2023-11-14T22:13:20 UTC.
+    # Act
+    rendered = format_ts_iso(1_700_000_000.0)
+    # Assert — exact-round-trip the canonical formatter emits.
+    assert rendered == "2023-11-14T22:13:20Z"
+
+
+def test_format_ts_iso_renders_int_unix_seconds() -> None:
+    """Int ts (e.g. legacy callers) renders the same as float."""
+    # Arrange — same unix-seconds value as the float case, as int.
+    ts = 1_700_000_000
+    # Act
+    rendered = format_ts_iso(ts)
+    # Assert
+    assert rendered == "2023-11-14T22:13:20Z"
+
+
+def test_format_ts_iso_matches_iso8601_shape() -> None:
+    """Basic ISO-8601 shape regex (date 'T' time, optional fractional
+    seconds, optional ``Z`` / ``+HH:MM`` offset)."""
+    import re
+
+    # Arrange — a fractional-seconds float value.
+    ts = 1_777_766_006.95
+    # Act
+    rendered = format_ts_iso(ts)
+    # Assert
+    assert re.match(
+        r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?$",
+        rendered,
+    ), rendered
+
+
+def test_format_ts_iso_empty_string_stays_empty() -> None:
+    """A missing-ts default (the receive-side passes ``event.get('ts', '')``)
+    must NOT render as the 1970 epoch."""
+    # Arrange — the sentinel empty-string used by missing-ts callers.
+    ts = ""
+    # Act
+    rendered = format_ts_iso(ts)
+    # Assert
+    assert rendered == ""
+
+
+def test_format_ts_iso_none_renders_empty() -> None:
+    """A ``None`` ts (missing from envelope) renders empty, same as ``""``."""
+    # Arrange — None is the other missing-ts shape envelopes carry.
+    ts = None
+    # Act
+    rendered = format_ts_iso(ts)
+    # Assert
+    assert rendered == ""
+
+
+def test_format_ts_iso_already_iso_string_is_passed_through() -> None:
+    """An already-ISO string (a sender that pre-formatted ts) round-trips
+    verbatim — composition of render helpers must not corrupt tz."""
+    # Arrange
+    iso = "2026-04-21T09:30:00+00:00"
+    # Act
+    rendered = format_ts_iso(iso)
+    # Assert
+    assert rendered == iso
+
+
+def test_format_ts_iso_numeric_string_is_coerced_and_rendered() -> None:
+    """The JSON-round-trip case: a float ts arrives as ``"1700000000.0"``
+    after meta_json (de)serialization. Coerce and render."""
+    # Arrange — JSON-serialised float ts shape.
+    ts = "1700000000.0"
+    # Act
+    rendered = format_ts_iso(ts)
+    # Assert
+    assert rendered == "2023-11-14T22:13:20Z"
+
+
+def test_format_ts_iso_does_not_render_bool_as_epoch() -> None:
+    """``bool`` is an int subclass — guard so a stray ``True`` does not
+    silently become the 1970-01-01T00:00:01Z epoch."""
+    # Arrange — bool is the isinstance(_, int) footgun we're guarding.
+    ts = True
+    # Act
+    rendered = format_ts_iso(ts)
+    # Assert
+    assert rendered == "True"

@@ -259,10 +259,18 @@ def _build_notification(event: dict[str, Any]) -> dict[str, Any]:
 
     Every ``meta`` value is stringified via :func:`_meta_str` — the
     client schema rejects non-string values (see that helper).
+    ``meta.ts`` is rendered as ISO-8601 UTC via
+    :func:`_state.state_db_channel.format_ts_iso` so a receiving
+    session sees ``<channel ts="2026-04-21T09:30:00Z" ...>`` instead
+    of the raw unix-seconds float the bus stores. On-disk storage of
+    ``channel_events.ts`` is unchanged — only the rendered form
+    here is ISO-8601.
     """
+    from .._state.state_db_channel import format_ts_iso
+
     meta: dict[str, Any] = {
         "source": _meta_str(event.get("from_agent", "unknown")),
-        "ts": _meta_str(event.get("ts", "")),
+        "ts": format_ts_iso(event.get("ts", "")),
         "msg_id": _meta_str(event.get("msg_id", "")),
     }
     for k in ("conversation_id", "in_reply_to", "priority", "requires_reply"):

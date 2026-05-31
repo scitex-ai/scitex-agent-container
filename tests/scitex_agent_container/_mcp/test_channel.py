@@ -238,13 +238,45 @@ def test_build_notification_carries_msg_id():
     assert meta["msg_id"] == "abc123"
 
 
-def test_build_notification_ts_is_stringified():
+def test_build_notification_ts_renders_iso8601_utc_from_unix_seconds():
+    # Arrange — 1_700_000_000 is 2023-11-14T22:13:20Z (no surprise epoch).
+    event = {"ts": 1_700_000_000, "from_agent": "bob", "content": "x"}
+    # Act
+    meta = _build_notification(event)["meta"]
+    # Assert — exact-round-trip: the rendered form is the canonical
+    # ISO-8601 UTC string the formatter emits.
+    assert meta["ts"] == "2023-11-14T22:13:20Z"
+
+
+def test_build_notification_ts_matches_iso8601_shape():
+    """Regression: channel-push timestamps must render as ISO-8601 (the
+    operator-greenlit format fix). The old behaviour stringified the
+    bus's raw unix-seconds float (e.g. ``"1234"``) which receiving
+    sessions saw as an unreadable number in the ``<channel ts=...>``
+    tag. Pin the rendered shape so a future regression to ``str(ts)``
+    fails loudly here instead of silently degrading the display."""
+    import re
+
+    # Arrange — float ts (the actual bus type, see mint_event).
+    event = {"ts": 1_777_766_006.95, "from_agent": "bob", "content": "x"}
+    # Act
+    rendered = _build_notification(event)["meta"]["ts"]
+    # Assert — basic ISO-8601 shape (date 'T' time, optional fractional
+    # seconds, optional timezone suffix).
+    assert re.match(
+        r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?$",
+        rendered,
+    ), rendered
+
+
+def test_build_notification_ts_empty_when_absent():
+    """Missing ``ts`` stays empty — no surprise 1970 epoch."""
     # Arrange
-    event = {"ts": 1_234, "from_agent": "bob", "content": "x"}
+    event = {"from_agent": "bob", "content": "x"}
     # Act
     meta = _build_notification(event)["meta"]
     # Assert
-    assert meta["ts"] == "1234"
+    assert meta["ts"] == ""
 
 
 @pytest.mark.parametrize(
