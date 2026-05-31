@@ -190,6 +190,7 @@ def agent_start(
     thread_factory: Callable[..., Any] = threading.Thread,
     handover_mod: Any = None,
     liveness_verifier: Callable[[AgentConfig, Any], bool] | None = None,
+    in_sif_opener: Optional[Callable[..., Any]] = None,
 ) -> bool:
     """Start an agent from its config YAML.
 
@@ -223,6 +224,18 @@ def agent_start(
     config_path = resolve_config(config_path)
     registry = registry or Registry()
     config = load_config(config_path)
+
+    # SAC-from-SAC broker (operator-mandated 2026-06-01). When running
+    # INSIDE an apptainer SIF, apptainer-in-apptainer is unsupported on
+    # the deployment shape we target — POST the spawn to bare-host
+    # ``sac listen`` instead. The host re-runs ``check_spawn`` + records
+    # lineage + shells the real ``sac agent start``. Bypassed on
+    # dry-run (dry-run inspects the LOCAL planned workspace). Fail-loud
+    # contract lives in :func:`_in_sif_broker.maybe_broker_in_sif_spawn`.
+    from ._in_sif_broker import maybe_broker_in_sif_spawn
+
+    if maybe_broker_in_sif_spawn(config.name, dry_run=dry_run, opener=in_sif_opener):
+        return True
 
     # Launch-time LOCAL spec-source drift check. Verifies the git repo
     # backing this spec.yaml (on these hosts ``~/.scitex/agent-container/
