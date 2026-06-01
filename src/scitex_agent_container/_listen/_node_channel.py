@@ -31,6 +31,10 @@ from .._state.state_db_channel import (
 )
 from ..a2a._inbox_bus import mint_deny_notification, mint_event
 from ._acl import check_send_acl, deny_response
+from ._acl_approve_prompt import (
+    _looks_like_cross_group_deny,
+    _mint_approval_prompt,
+)
 from ._node_channel_forwarders import _forward_to_remote
 from ._nodes import Broker, NodeRegistry
 
@@ -154,6 +158,16 @@ async def node_message_send(request: Request) -> Response:
         claimed_from_agent=sac_meta.get("from_agent"),
         target=name,
     )
+    if decision == "block":
+        # Task #27 — block precedence path. The receiver previously
+        # ran ``sac a2a block <sender> <target>``; honour the veto
+        # without any receiver-side surface (no denied_attempt push,
+        # no approve-prompt re-fire). The sender still gets a 403 —
+        # they need to know their send did not land — but the
+        # reason is intentionally generic so the block flag itself
+        # does not leak. The receiver sees nothing.
+        return deny_response(reason or "ACL deny")
+
     if decision == "deny":
         # Comms item D — fail-loud on the RECEIVER side too. The sender
         # gets a 403 with the reason; without this notification the
@@ -170,14 +184,39 @@ async def node_message_send(request: Request) -> Response:
         # skip publishing in that case (still 403 to the sender).
         if name:
             broker: Broker = request.app.state.inbox
+            sender_id = authenticated_node or sac_meta.get("from_agent")
             notif = mint_deny_notification(
                 target=name,
-                from_agent=(authenticated_node or sac_meta.get("from_agent")),
+                from_agent=sender_id,
                 reason=reason or "ACL deny",
             )
             row_id = persist_event(target=name, event=notif)
             notif["_row_id"] = row_id
             await broker.publish(name, notif)
+
+            # Task #27 — ACL approve-prompt flow (post-amendment).
+            # On a CROSS-GROUP deny (the only deny reason the
+            # receiver can REMEDY via grant/block), emit a single
+            # receiver-facing prompt embedding BOTH the unblock
+            # and block CLI commands so the receiver picks one.
+            # Dedupe: ``record_pending_prompt`` returns True only
+            # on the FIRST entry per (sender, target); subsequent
+            # denied attempts return False and we suppress the
+            # push (no flooding). The original message content is
+            # NEVER stored — the receiver decides on identity,
+            # not on content. If the receiver unblocks, the
+            # sender resends.
+            if sender_id and _looks_like_cross_group_deny(reason):
+                from .._state.state_db_pending_approval import (
+                    record_pending_prompt,
+                )
+
+                first_pending = record_pending_prompt(sender=sender_id, target=name)
+                if first_pending:
+                    prompt = _mint_approval_prompt(target=name, sender=sender_id)
+                    prompt_row_id = persist_event(target=name, event=prompt)
+                    prompt["_row_id"] = prompt_row_id
+                    await broker.publish(name, prompt)
         return deny_response(reason or "ACL deny")
 
     # ADR-0013 Phase 1: typed event ``kind`` (``done`` / ``blocker`` /
