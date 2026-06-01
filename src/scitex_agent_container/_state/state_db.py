@@ -406,6 +406,17 @@ def init_schema(db_path: Path | None = None) -> Path:
         migrate_instances_add_family_tree_cols(conn)
         conn.executescript(_SCHEMA_ATTEMPTS)
         conn.executescript(_SCHEMA_DIARY)
+        # Task #27 — ACL block/unblock flow tables. Both CREATE TABLE
+        # scripts are idempotent; running them inline here means a
+        # fresh state.db carries the tables without a separate
+        # migration step. The owning modules expose the schema
+        # strings; we pull them through the same connection so
+        # ``init_schema`` stays atomic.
+        from . import state_db_blocks as _blocks
+        from . import state_db_pending_approval as _pp
+
+        conn.executescript(_pp._SCHEMA)
+        conn.executescript(_blocks._SCHEMA)
         conn.commit()
     return path
 

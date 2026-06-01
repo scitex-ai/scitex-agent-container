@@ -258,6 +258,34 @@ def _emit(result: dict, as_json: bool) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _do_unblock(sender: str, target: str, note: str | None) -> None:
+    """Shared implementation for both ``grant`` (legacy) and ``unblock``.
+
+    Both verbs UNBLOCK ``SENDER → TARGET``: write the
+    ``comms_grants`` row (sender's future messages pass), remove any
+    ``comms_blocks`` row (if previously blocked), and clear any
+    ``pending_prompts`` row so the receiver is not re-prompted on
+    the next denied attempt. Per lead's task #27 amendment, NO held
+    message is replayed — the sender resends if needed.
+    """
+    from .._state.grant_flush import unblock_and_clear_pending
+
+    try:
+        result = unblock_and_clear_pending(sender=sender, target=target, note=note)
+    except ValueError as exc:
+        click.echo(f"error: {exc}", err=True)
+        raise SystemExit(2) from exc
+    from ._helpers import console
+
+    extras = []
+    if result["unblocked"]:
+        extras.append("removed block")
+    if result["cleared_pending"]:
+        extras.append("cleared pending prompt")
+    tail = f" [dim]({'; '.join(extras)})[/dim]" if extras else ""
+    console.print(f"[green]ok[/green]  unblocked  {sender}  ->  {target}{tail}")
+
+
 @a2a.command("grant")
 @click.argument("sender")
 @click.argument("target")
@@ -269,28 +297,86 @@ def _emit(result: dict, as_json: bool) -> None:
 def a2a_grant(sender: str, target: str, note: str | None) -> None:
     """Grant ``SENDER`` permission to send messages to ``TARGET``.
 
-    Thin wrapper over ``_state.state_db_nodes.grant_send`` — inserts a
-    row into ``comms_grants``. Idempotent: re-granting the same pair is
-    a no-op (the existing row's timestamp is preserved).
+    Legacy alias of ``sac a2a unblock <SENDER> <TARGET>``. Writes the
+    ``comms_grants`` row, removes any ``comms_blocks`` row, and
+    clears the pending-prompt row for the pair. Re-granting an
+    already-granted pair is a no-op on the timestamp.
 
-    Argument order matters: ``SENDER → TARGET`` is directional. To allow
-    bidirectional cross-group traffic, run the command twice.
+    Argument order matters: ``SENDER → TARGET`` is directional. To
+    allow bidirectional cross-group traffic, run the command twice.
 
     \b
     Example:
       $ sac a2a grant worker-a worker-b
       $ sac a2a grant worker-a worker-b --note "ticket-PA-512"
     """
-    from .._state.state_db_nodes import grant_send
+    _do_unblock(sender, target, note)
+
+
+@a2a.command("unblock")
+@click.argument("sender")
+@click.argument("target")
+@click.option(
+    "--note",
+    default=None,
+    help="Free-form audit annotation (e.g. the approval-prompt msg_id this responds to).",
+)
+def a2a_unblock(sender: str, target: str, note: str | None) -> None:
+    """UNBLOCK ``SENDER`` — allow this sender's future messages to ``TARGET``.
+
+    Task #27 receiver-facing verb. Embedded in the approve-prompt
+    push the receiver sees on a denied cross-group send. Writes the
+    ``comms_grants`` row, removes any ``comms_blocks`` row, and
+    clears the pending-prompt row. The sender's original denied
+    message is NOT replayed — they resend if needed.
+
+    \b
+    Example:
+      $ sac a2a unblock worker-a lead
+      $ sac a2a unblock worker-a lead --note "prompt msg_id abc123"
+    """
+    _do_unblock(sender, target, note)
+
+
+@a2a.command("block")
+@click.argument("sender")
+@click.argument("target")
+@click.option(
+    "--note",
+    default=None,
+    help="Free-form audit annotation (e.g. the approval-prompt msg_id this responds to).",
+)
+def a2a_block(sender: str, target: str, note: str | None) -> None:
+    """BLOCK ``SENDER`` — silently drop this sender's future attempts to ``TARGET``.
+
+    Task #27 receiver-facing verb. Embedded in the approve-prompt
+    push as the silence-this-sender alternative to ``unblock``.
+    Writes the ``comms_blocks`` row, clears the pending-prompt row.
+    Future sends from ``SENDER`` to ``TARGET`` are silently dropped
+    by :func:`_listen._acl.check_send_acl` (no receiver push, no
+    approve-prompt re-fire). The sender still gets a 403 — they
+    learn their send did not land — but the receiver sees nothing.
+
+    Idempotent: re-blocking is a no-op on the existing row's
+    timestamp. Block precedence: if the pair also has a grant,
+    BLOCK wins.
+
+    \b
+    Example:
+      $ sac a2a block worker-a lead
+      $ sac a2a block worker-a lead --note "prompt msg_id abc123"
+    """
+    from .._state.grant_flush import block_and_clear_pending
 
     try:
-        grant_send(sender=sender, target=target, note=note)
+        result = block_and_clear_pending(sender=sender, target=target, note=note)
     except ValueError as exc:
         click.echo(f"error: {exc}", err=True)
         raise SystemExit(2) from exc
     from ._helpers import console
 
-    console.print(f"[green]ok[/green]  granted  {sender}  ->  {target}")
+    tail = " [dim](cleared pending prompt)[/dim]" if result["cleared_pending"] else ""
+    console.print(f"[yellow]ok[/yellow]  blocked  {sender}  ->  {target}{tail}")
 
 
 @a2a.command("revoke")
