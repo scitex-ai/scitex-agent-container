@@ -76,13 +76,19 @@ def auth_argv(config: AgentConfig, state_dir: Path) -> list[str]:
     # refresh code-path itself is responsible for any concurrency
     # locking — the bind is just a file passthrough.
     # Per-agent OAuth account pinning (spec.claude.account). When set,
-    # we COPY that saved account's .credentials.json into the agent's
-    # own state dir (frozen boot-copy) and bind THAT — so two agents
-    # pinned to two accounts never share one mount, and a host /login
-    # never moves a pinned agent. Changing the assigned account needs
-    # a `sac agent restart` to re-copy. ``account=""`` → host live
-    # file (unchanged behaviour). Bind stays RW so the in-container
-    # CLI can refresh the OAuth token on the agent's private copy.
+    # we bind the saved account's snapshot file at
+    # ~/.scitex/agent-container/accounts/<acct>/.credentials.json
+    # directly as ``:rw`` (operator task #15). The in-container Claude
+    # CLI's ~1h OAuth refresh writes back to the SAME file every
+    # same-account agent reads from, so the snapshot is self-healing
+    # and never expires while ANY pinned agent keeps running. Different
+    # accounts have different snapshots → no cross-account interference.
+    # The prior implementation COPIED the snapshot into a per-agent
+    # state-dir; refresh writes landed on that copy, the snapshot
+    # itself drifted stale, and after ~8h every SDK turn 401'd silently
+    # (the 2026-06-01 fleet-wide outage). ``account=""`` → host live
+    # ``~/.claude/.credentials.json`` (unchanged behaviour; also RW
+    # for the same refresh-in-place reason).
     from ._apptainer_creds import resolve_cred_file
 
     cred_file = resolve_cred_file(config, state_dir)

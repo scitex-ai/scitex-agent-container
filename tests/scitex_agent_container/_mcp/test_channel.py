@@ -238,13 +238,45 @@ def test_build_notification_carries_msg_id():
     assert meta["msg_id"] == "abc123"
 
 
-def test_build_notification_ts_is_stringified():
+def test_build_notification_ts_renders_iso8601_utc_from_unix_seconds():
+    # Arrange — 1_700_000_000 is 2023-11-14T22:13:20Z (no surprise epoch).
+    event = {"ts": 1_700_000_000, "from_agent": "bob", "content": "x"}
+    # Act
+    meta = _build_notification(event)["meta"]
+    # Assert — exact-round-trip: the rendered form is the canonical
+    # ISO-8601 UTC string the formatter emits.
+    assert meta["ts"] == "2023-11-14T22:13:20Z"
+
+
+def test_build_notification_ts_matches_iso8601_shape():
+    """Regression: channel-push timestamps must render as ISO-8601 (the
+    operator-greenlit format fix). The old behaviour stringified the
+    bus's raw unix-seconds float (e.g. ``"1234"``) which receiving
+    sessions saw as an unreadable number in the ``<channel ts=...>``
+    tag. Pin the rendered shape so a future regression to ``str(ts)``
+    fails loudly here instead of silently degrading the display."""
+    import re
+
+    # Arrange — float ts (the actual bus type, see mint_event).
+    event = {"ts": 1_777_766_006.95, "from_agent": "bob", "content": "x"}
+    # Act
+    rendered = _build_notification(event)["meta"]["ts"]
+    # Assert — basic ISO-8601 shape (date 'T' time, optional fractional
+    # seconds, optional timezone suffix).
+    assert re.match(
+        r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?$",
+        rendered,
+    ), rendered
+
+
+def test_build_notification_ts_empty_when_absent():
+    """Missing ``ts`` stays empty — no surprise 1970 epoch."""
     # Arrange
-    event = {"ts": 1_234, "from_agent": "bob", "content": "x"}
+    event = {"from_agent": "bob", "content": "x"}
     # Act
     meta = _build_notification(event)["meta"]
     # Assert
-    assert meta["ts"] == "1234"
+    assert meta["ts"] == ""
 
 
 @pytest.mark.parametrize(
@@ -949,7 +981,13 @@ async def test_push_channel_event_still_injects_notification(fake_listen):
 
 
 @pytest.mark.asyncio
-async def test_push_channel_event_auto_acks_to_sender_path(fake_listen):
+async def test_push_channel_event_auto_ack_is_suppressed_at_sender(fake_listen):
+    """Operator contract: the stage-2 read-receipt auto-ack is contentless
+    (empty body + ``metadata.ack=True``), so the sender-side noise filter
+    drops it BEFORE it leaves the outbound queue. The wire stays quiet —
+    the receive-side ``_should_auto_ack`` guard remains as belt-and-
+    suspenders. Pre-filter behaviour (a POST to ``/agents/bob/message:send``)
+    is replaced by zero POSTs."""
     # Arrange
     from scitex_agent_container._mcp.channel import _push_channel_event
 
@@ -963,15 +1001,14 @@ async def test_push_channel_event_auto_acks_to_sender_path(fake_listen):
         listen_url=fake_listen.base_url,
         bearer=None,
     )
-    paths = [p for p, _ in fake_listen.posts]
-    # Assert — the receipt went back to the original sender's send path.
-    assert "/agents/bob/message:send" in paths
+    # Assert — no auto-ack reached the listen.
+    assert fake_listen.posts == []
 
 
 @pytest.mark.asyncio
-async def test_push_channel_event_auto_ack_carries_ack_marker(fake_listen):
-    """The auto-ack must stamp ``ack=True`` — that flag IS the loop-guard
-    marker the receiving adapter checks before re-acking."""
+async def test_push_channel_event_still_injects_when_ack_suppressed(fake_listen):
+    """Suppressing the auto-ack must not block the primary injection: the
+    inbound event still reaches the session as a channel notification."""
     # Arrange
     from scitex_agent_container._mcp.channel import _push_channel_event
 
@@ -985,29 +1022,8 @@ async def test_push_channel_event_auto_ack_carries_ack_marker(fake_listen):
         listen_url=fake_listen.base_url,
         bearer=None,
     )
-    _, payload = fake_listen.posts[-1]
-    # Assert
-    assert payload["params"]["metadata"]["ack"] is True
-
-
-@pytest.mark.asyncio
-async def test_push_channel_event_auto_ack_references_original_msg_id(fake_listen):
-    # Arrange
-    from scitex_agent_container._mcp.channel import _push_channel_event
-
-    session = _CapturingSession()
-    event = {"from_agent": "bob", "content": "hi", "msg_id": "m1"}
-    # Act
-    await _push_channel_event(
-        session,
-        event,
-        agent_name="alice",
-        listen_url=fake_listen.base_url,
-        bearer=None,
-    )
-    _, payload = fake_listen.posts[-1]
-    # Assert
-    assert payload["params"]["metadata"]["in_reply_to"] == "m1"
+    # Assert — the notification was delivered through the session.
+    assert len(session.sent) == 1
 
 
 @pytest.mark.asyncio
@@ -1032,17 +1048,19 @@ async def test_push_channel_event_does_not_auto_ack_an_ack(fake_listen):
 
 
 @pytest.mark.asyncio
-async def test_two_adapters_do_not_ping_pong_to_a_fixed_point(fake_listen):
-    """Drive the full bounce: adapter A injects B's message → auto-acks B;
-    then feed A's ack into adapter B's inject path. B must NOT ack back, so
-    the exchange terminates after exactly one ack rather than diverging."""
+async def test_two_adapters_emit_zero_acks_under_sender_side_filter(fake_listen):
+    """End-to-end ping-pong cannot start under the sender-side filter: A's
+    would-be auto-ack to B is dropped at A before it reaches the wire, so
+    there is nothing for B's adapter to bounce back. Pre-filter behaviour
+    (exactly one ack on the wire) is replaced by zero acks on the wire.
+    Replaces ``test_two_adapters_do_not_ping_pong_to_a_fixed_point`` —
+    the loop terminates one hop earlier."""
     # Arrange
     from scitex_agent_container._mcp.channel import _push_channel_event
 
     session_a = _CapturingSession()
-    session_b = _CapturingSession()
     inbound_to_a = {"from_agent": "bob", "content": "hi", "msg_id": "m1"}
-    # Act — A receives B's message and auto-acks (1 POST expected).
+    # Act — A receives B's message; the auto-ack is suppressed at A.
     await _push_channel_event(
         session_a,
         inbound_to_a,
@@ -1050,25 +1068,8 @@ async def test_two_adapters_do_not_ping_pong_to_a_fixed_point(fake_listen):
         listen_url=fake_listen.base_url,
         bearer=None,
     )
-    _, ack_payload = fake_listen.posts[-1]
-    # Reconstruct the bus event B's adapter would see from A's ack POST.
-    ack_meta = ack_payload["params"]["metadata"]
-    inbound_to_b = {
-        "from_agent": ack_meta["from_agent"],
-        "content": "",
-        "msg_id": "m2",
-        "ack": ack_meta.get("ack"),
-    }
-    # B injects A's ack — the loop-guard must stop here.
-    await _push_channel_event(
-        session_b,
-        inbound_to_b,
-        agent_name="bob",
-        listen_url=fake_listen.base_url,
-        bearer=None,
-    )
-    # Assert — exactly one ack total; B did not bounce another back.
-    assert len(fake_listen.posts) == 1
+    # Assert — no ack reached the wire.
+    assert fake_listen.posts == []
 
 
 @pytest.mark.asyncio

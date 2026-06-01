@@ -126,6 +126,26 @@ fails on hub absence.
 Downstream fleet implementations (e.g. scitex-orochi) own their own env
 namespace; sac does not read fleet-specific vars directly.
 
+## Host listen — SAC-from-SAC broker
+
+When an agent runs INSIDE an apptainer SIF, ``sac agents start <child>``
+cannot ``apptainer exec`` locally (no nested apptainer on the supported
+HPC shape). The runtime injects the bare-host ``sac listen`` address +
+bearer into every container so the in-SIF CLI can POST the spawn RPC to
+the host instead; the host re-runs ``check_spawn``, records the
+``caller → child`` lineage edge, and shells the real ``sac agent
+start`` against the bare host's apptainer.
+
+| Variable | Purpose | Default | Type |
+|---|---|---|---|
+| `SAC_LISTEN_BASE_URL` | Host-stable ``sac listen`` base URL the in-SIF CLI POSTs spawn requests against (also used by the in-container channel adapter to subscribe to the bus). Auto-injected by the apptainer runtime from ``listen.host`` / ``listen.port`` in ``~/.scitex/agent-container/config.yaml``. | `http://127.0.0.1:7878` | URL |
+| `SAC_LISTEN_BEARER` | Bearer token presented as ``Authorization: Bearer ...`` to the host listen server. Auto-injected from the host's bearer-token file; required when ``server:sac`` is in ``spec.claude.channels`` (the runtime fails loud at launch otherwise). | `—` | string |
+
+Fail-loud: when the broker runs in a SIF and ``SAC_LISTEN_BASE_URL`` is
+unset, ``sac agents start`` raises ``InSifBrokerError`` (apptainer
+runtime forgot to inject it). Never silently downgrades to "skip the
+broker" / "try local apptainer anyway".
+
 ## Feature flags
 
 - **opt-out:** `SAC_COMPACT_ENABLED=false` disables context compaction.

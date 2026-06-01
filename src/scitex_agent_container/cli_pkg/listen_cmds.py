@@ -80,7 +80,9 @@ def _register_self_comms_node(*, port: int) -> None:
                 f"# WARN: comms_nodes self-register conflict: {exc}",
                 err=True,
             )
-    except Exception as exc:  # stx-allow: fallback (reason: never block listen on registry write)
+    except (
+        Exception
+    ) as exc:  # stx-allow: fallback (reason: never block listen on registry write)
         click.echo(
             f"# WARN: comms_nodes self-register failed: {exc!r}",
             err=True,
@@ -122,9 +124,7 @@ def _maybe_sync_on_start() -> None:
             return
         # Only run when there is at least one static peer; skip silently
         # otherwise so single-host installs don't spam warnings.
-        static_peers = [
-            n for n in cfg.peers.keys() if not any(c in n for c in "*?[")
-        ]
+        static_peers = [n for n in cfg.peers.keys() if not any(c in n for c in "*?[")]
         if not static_peers:
             return
         from ._registry_sync import registry_sync_impl
@@ -224,9 +224,36 @@ def listen(
             f"Install with: pip install 'scitex-agent-container[listen]'"
         ) from exc
 
+    # Operator task #26 sub (1) — single-instance guard. A second
+    # ``sac listen`` while one already holds the port used to crash
+    # uvicorn with bare EADDRINUSE + a Python traceback (loud, but the
+    # operator had no diagnostic about which process held the port).
+    # The flock-backed pidfile guard FAILS LOUD with a structured
+    # message naming the holding PID + lock file path so
+    # ``kill <pid>`` is actionable without ``lsof``. The flock is
+    # kernel-released on process exit (even SIGKILL) so a crashed
+    # listen never permanently jams the port. Acquired BEFORE the
+    # comms_nodes / startup-sync hooks so a duplicate launch never
+    # touches the federated registry — a conflicting second start
+    # exits cleanly with no side effects.
+    from .._listen._single_instance import (
+        ListenAlreadyRunningError,
+        acquire_listen_lock,
+        default_lock_dir,
+        release_listen_lock,
+    )
+
+    lock_dir = default_lock_dir()
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        lock_handle = acquire_listen_lock(port=port, lock_dir=lock_dir)
+    except ListenAlreadyRunningError as exc:
+        raise click.ClickException(str(exc)) from exc
+
     click.echo(f"# sac listen v1 → {host}:{port}", err=True)
     click.echo(f"# token file: {tok_path}", err=True)
     click.echo(f"# health: curl http://{host}:{port}/v1/sac/health", err=True)
+    click.echo(f"# pidfile: {lock_handle.pid_file}", err=True)
 
     # ADR-0014 Stage 1 — register the host's operator identity into
     # comms_nodes so cross-host peers can resolve it after a sync.
@@ -244,4 +271,11 @@ def listen(
     # websockets.legacy which has churned across the websockets package
     # major versions (broken in >=14). Disabling it avoids a startup
     # crash that silently kills a detached ``sac listen``.
-    uvicorn.run(app, host=host, port=port, log_level="info", ws="none")
+    try:
+        uvicorn.run(app, host=host, port=port, log_level="info", ws="none")
+    finally:
+        # Best-effort release on clean exit; kernel handles dirty
+        # exit (SIGKILL / crash / OOM) by closing fds and releasing
+        # the flock automatically — the next ``sac listen`` start
+        # observes an unlocked file and acquires cleanly.
+        release_listen_lock(lock_handle)

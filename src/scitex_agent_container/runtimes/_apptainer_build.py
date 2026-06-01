@@ -138,10 +138,28 @@ def _create_overlay_image(path: Path, size: str) -> None:
 
 
 def _build_sif_from_uri(sif_path: Path, uri: str) -> bool:
-    """``apptainer build <sif> <uri>`` — pulls + converts an OCI image."""
+    """``apptainer build <sif> <uri>`` — pulls + converts an OCI image.
+
+    Returns ``True`` on success. Raises :class:`RuntimeError` carrying
+    the apptainer stderr verbatim on non-zero rc — backlog #4 fail-loud
+    contract. The pre-fix shape was ``return result.returncode == 0``
+    which silently dropped the stderr; callers saw only ``False`` and
+    the operator had no diagnostic about why the build failed
+    (network, missing registry credentials, malformed reference, ...).
+    """
     sif_path.parent.mkdir(parents=True, exist_ok=True)
-    result = subprocess.run(["apptainer", "build", str(sif_path), uri])
-    return result.returncode == 0
+    result = subprocess.run(
+        ["apptainer", "build", str(sif_path), uri],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"apptainer build {uri!r} → {sif_path} failed "
+            f"(rc={result.returncode}). stderr:\n{result.stderr.strip()}\n"
+            f"stdout:\n{result.stdout.strip()}"
+        )
+    return True
 
 
 def _build_sif_from_def(sif_path: Path, def_file: Path) -> bool:
@@ -150,10 +168,24 @@ def _build_sif_from_def(sif_path: Path, def_file: Path) -> bool:
     No docker daemon required even if the .def starts with
     ``Bootstrap: docker`` — apptainer's docker compatibility runs
     entirely over OCI registry pulls.
+
+    Returns ``True`` on success. Raises :class:`RuntimeError` carrying
+    the apptainer stderr verbatim on non-zero rc — backlog #4 fail-loud
+    contract (see :func:`_build_sif_from_uri` for the same rationale).
     """
     sif_path.parent.mkdir(parents=True, exist_ok=True)
-    result = subprocess.run(["apptainer", "build", str(sif_path), str(def_file)])
-    return result.returncode == 0
+    result = subprocess.run(
+        ["apptainer", "build", str(sif_path), str(def_file)],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"apptainer build {def_file} → {sif_path} failed "
+            f"(rc={result.returncode}). stderr:\n{result.stderr.strip()}\n"
+            f"stdout:\n{result.stdout.strip()}"
+        )
+    return True
 
 
 # ---------------------------------------------------------------------------

@@ -376,13 +376,39 @@ class ApptainerContainerRuntime(RuntimeBase):
     ) -> bool:
         del no_preflight
         self._one_shot = one_shot
-        if shutil.which("apptainer") is None:
-            return False
+        if shutil.which("apptainer") is None and not dry_run:
+            # Fail loud (clew handoff 2026-05-31 P1): the silent
+            # ``return False`` used to bubble up as a generic
+            # ``Failed to start agent`` with no diagnostic. Name both
+            # real causes — host install missing, or nested-SIF
+            # without ``spec.apptainer.nested_mode: "escape"`` (P2).
+            # ``dry_run`` bypasses the guard: dry-run only emits argv,
+            # so a dev box / CI runner without apptainer can still
+            # validate the argv path; the real run still raises.
+            raise RuntimeError(
+                "apptainer binary not found on $PATH — cannot start "
+                f"agent '{config.name}'. Causes: (1) apptainer is not "
+                "installed on this host (install via `apt-get install "
+                "apptainer` or the apptainer/ppa); (2) running INSIDE "
+                "a SIF that does not bundle apptainer on PATH, i.e. a "
+                "nested-apptainer self-spawn without "
+                '`spec.apptainer.nested_mode: "escape"` set in the '
+                "agent's spec.yaml (escape forwards the inner "
+                "`apptainer exec` to the bare host)."
+            )
 
         state_dir = self._state_dir(config)
         state_dir.mkdir(parents=True, exist_ok=True)
 
-        sif_path = self.resolve_sif(config)
+        # Dry-run on a host without apptainer must still resolve a
+        # local ``.sif`` path so the argv-emit completes — the class
+        # wrapper short-circuits on missing apptainer, so bypass it.
+        if dry_run and shutil.which("apptainer") is None:
+            cache_dir = self._image_cache_dir(config)
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            sif_path = _resolve_sif(config, cache_dir)
+        else:
+            sif_path = self.resolve_sif(config)
         if sif_path is None:
             return False
 

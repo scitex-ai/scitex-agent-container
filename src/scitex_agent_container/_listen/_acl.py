@@ -59,7 +59,7 @@ __all__ = [
 ]
 
 
-AclDecision = tuple[Literal["allow", "deny"], str | None]
+AclDecision = tuple[Literal["allow", "deny", "block"], str | None]
 
 
 class NodeAuthMiddleware:
@@ -157,10 +157,7 @@ def check_send_acl(
     # Determine the *effective* sender identity for the ACL check.
     if authenticated_node is not None:
         # Per-node bearer was presented.
-        if (
-            claimed_from_agent is not None
-            and claimed_from_agent != authenticated_node
-        ):
+        if claimed_from_agent is not None and claimed_from_agent != authenticated_node:
             return (
                 "deny",
                 (
@@ -186,6 +183,19 @@ def check_send_acl(
 
     if sender == target:
         return ("allow", None)
+
+    # Task #27 — block check (block wins over grant). The receiver
+    # explicitly silenced this sender at some prior decision; the
+    # ACL gate honours it BEFORE the grant + cross-group checks so
+    # an explicit veto wins even when a stale ``comms_grants`` row
+    # would otherwise pass. The "block" decision value lets
+    # :func:`node_message_send` distinguish silent-drop (no
+    # receiver push, no approve-prompt re-fire) from the
+    # cross-group deny that does push.
+    from .._state.state_db_blocks import has_block as _has_block
+
+    if _has_block(sender=sender, target=target, db_path=db_path):
+        return ("block", f"blocked: {sender!r} → {target!r}")
 
     # Phase-3 (ADR-0010 Step 2) — per-spec outbound/inbound deny layered
     # on top of the group default. Restrictive only: a per-spec deny
@@ -251,9 +261,7 @@ def _phase3_relationship_deny(
     Defaults preserve current behaviour: every comb in the matrix
     starts ``"allow"`` so absence of ``spec.comms`` is a no-op here.
     """
-    rel = sender_target_relationship(
-        sender=sender, target=target, db_path=db_path
-    )
+    rel = sender_target_relationship(sender=sender, target=target, db_path=db_path)
     if rel in ("parent", "sibling"):
         sender_policy = read_comms_policy(name=sender, db_path=db_path)
         if rel == "parent" and sender_policy["outbound_parent"] == "deny":
@@ -323,6 +331,4 @@ def deny_response(reason: str) -> JSONResponse:
     but the sender must know exactly why (handoff §0 Hard rules).
     """
     log.warning("ACL deny: %s", reason)
-    return JSONResponse(
-        {"error": "ACL deny", "reason": reason}, status_code=403
-    )
+    return JSONResponse({"error": "ACL deny", "reason": reason}, status_code=403)

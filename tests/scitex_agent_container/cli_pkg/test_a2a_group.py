@@ -562,3 +562,271 @@ def test_doctor_against_live_serve_envelope_ok(
     ok = rt["envelope"]["ok"]
     # Assert
     assert ok is True, rt["envelope"]
+
+
+# ---------------------------------------------------------------------------
+# a2a {grant,revoke,grants} -- cross-group ACL verbs (no mocks).
+#
+# Each test uses ``isolated_state_db`` which pins
+# ``SCITEX_AGENT_CONTAINER_STATE_DB`` at a tmp_path SQLite and reloads
+# the state_db module so the import-time DEFAULT_DB_PATH constant
+# picks up the new value. Same seam ``test_db_group.py`` already uses.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def isolated_state_db(tmp_path: Path, env_save_restore) -> Iterator[Path]:
+    """Pin ``state.db`` under ``tmp_path`` for the duration of the test."""
+    import importlib
+
+    p = tmp_path / "state.db"
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_STATE_DB", str(p))
+    import scitex_agent_container._state.state_db as _sdb
+
+    importlib.reload(_sdb)
+    try:
+        yield p
+    finally:
+        importlib.reload(_sdb)
+
+
+def test_grant_exit_zero_on_happy_path(isolated_state_db: Path) -> None:
+    # Arrange
+    runner = CliRunner()
+    # Act
+    res = runner.invoke(a2a, ["grant", "worker-a", "worker-b"])
+    # Assert
+    assert res.exit_code == 0
+
+
+def test_grant_persists_row_into_comms_grants(isolated_state_db: Path) -> None:
+    # Arrange
+    runner = CliRunner()
+    runner.invoke(a2a, ["grant", "worker-a", "worker-b"])
+    # Act
+    from scitex_agent_container._state.state_db_nodes import list_comms_grants
+
+    rows = list_comms_grants()
+    # Assert
+    assert any(r["sender"] == "worker-a" and r["target"] == "worker-b" for r in rows)
+
+
+def test_grant_stores_optional_note(isolated_state_db: Path) -> None:
+    # Arrange
+    runner = CliRunner()
+    runner.invoke(a2a, ["grant", "worker-a", "worker-b", "--note", "ticket-PA-512"])
+    # Act
+    from scitex_agent_container._state.state_db_nodes import list_comms_grants
+
+    notes = [r["note"] for r in list_comms_grants()]
+    # Assert
+    assert "ticket-PA-512" in notes
+
+
+def test_grant_idempotent_no_duplicate_rows(isolated_state_db: Path) -> None:
+    # Arrange: grant twice with the same pair
+    runner = CliRunner()
+    runner.invoke(a2a, ["grant", "worker-a", "worker-b"])
+    runner.invoke(a2a, ["grant", "worker-a", "worker-b"])
+    # Act
+    from scitex_agent_container._state.state_db_nodes import list_comms_grants
+
+    rows = [
+        r
+        for r in list_comms_grants()
+        if r["sender"] == "worker-a" and r["target"] == "worker-b"
+    ]
+    # Assert
+    assert len(rows) == 1
+
+
+def test_grant_empty_sender_exits_two(isolated_state_db: Path) -> None:
+    # Arrange
+    runner = CliRunner()
+    # Act
+    res = runner.invoke(a2a, ["grant", "", "worker-b"])
+    # Assert
+    assert res.exit_code == 2
+
+
+def test_grant_empty_sender_writes_error_to_stderr(
+    isolated_state_db: Path,
+) -> None:
+    # Arrange
+    runner = CliRunner()
+    # Act
+    res = runner.invoke(a2a, ["grant", "", "worker-b"])
+    # Assert
+    assert "must be non-empty" in res.stderr
+
+
+def test_grant_human_output_announces_direction(
+    isolated_state_db: Path,
+) -> None:
+    # Arrange
+    runner = CliRunner()
+    # Act
+    res = runner.invoke(a2a, ["grant", "worker-a", "worker-b"])
+    # Assert
+    assert "worker-a" in res.output and "worker-b" in res.output
+
+
+# --- revoke -----------------------------------------------------------------
+
+
+def test_revoke_existing_grant_exits_zero(isolated_state_db: Path) -> None:
+    # Arrange
+    runner = CliRunner()
+    runner.invoke(a2a, ["grant", "worker-a", "worker-b"])
+    # Act
+    res = runner.invoke(a2a, ["revoke", "worker-a", "worker-b"])
+    # Assert
+    assert res.exit_code == 0
+
+
+def test_revoke_removes_row_from_comms_grants(isolated_state_db: Path) -> None:
+    # Arrange
+    runner = CliRunner()
+    runner.invoke(a2a, ["grant", "worker-a", "worker-b"])
+    runner.invoke(a2a, ["revoke", "worker-a", "worker-b"])
+    # Act
+    from scitex_agent_container._state.state_db_nodes import list_comms_grants
+
+    rows = [
+        r
+        for r in list_comms_grants()
+        if r["sender"] == "worker-a" and r["target"] == "worker-b"
+    ]
+    # Assert
+    assert rows == []
+
+
+def test_revoke_missing_grant_is_noop_zero_exit(isolated_state_db: Path) -> None:
+    # Arrange: no grant exists
+    runner = CliRunner()
+    # Act
+    res = runner.invoke(a2a, ["revoke", "worker-a", "worker-b"])
+    # Assert
+    assert res.exit_code == 0
+
+
+def test_revoke_missing_grant_emits_noop_marker(
+    isolated_state_db: Path,
+) -> None:
+    # Arrange
+    runner = CliRunner()
+    # Act
+    res = runner.invoke(a2a, ["revoke", "worker-a", "worker-b"])
+    # Assert
+    assert "no-op" in res.output
+
+
+def test_revoke_empty_sender_exits_two(isolated_state_db: Path) -> None:
+    # Arrange
+    runner = CliRunner()
+    # Act
+    res = runner.invoke(a2a, ["revoke", "", "worker-b"])
+    # Assert
+    assert res.exit_code == 2
+
+
+def test_revoke_empty_target_writes_error_to_stderr(
+    isolated_state_db: Path,
+) -> None:
+    # Arrange
+    runner = CliRunner()
+    # Act
+    res = runner.invoke(a2a, ["revoke", "worker-a", ""])
+    # Assert
+    assert "must both be non-empty" in res.stderr
+
+
+# --- grants -----------------------------------------------------------------
+
+
+def test_grants_empty_table_renders_no_grants_marker(
+    isolated_state_db: Path,
+) -> None:
+    # Arrange
+    runner = CliRunner()
+    # Act
+    res = runner.invoke(a2a, ["grants"])
+    # Assert
+    assert "no grants" in res.output
+
+
+def test_grants_json_empty_table_is_empty_array(
+    isolated_state_db: Path,
+) -> None:
+    # Arrange
+    runner = CliRunner()
+    # Act
+    res = runner.invoke(a2a, ["grants", "--json"])
+    # Assert
+    assert json.loads(res.output) == []
+
+
+def test_grants_json_lists_inserted_grant(isolated_state_db: Path) -> None:
+    # Arrange
+    runner = CliRunner()
+    runner.invoke(a2a, ["grant", "worker-a", "worker-b", "--note", "demo"])
+    # Act
+    res = runner.invoke(a2a, ["grants", "--json"])
+    rows = json.loads(res.output)
+    # Assert
+    assert any(
+        r["sender"] == "worker-a" and r["target"] == "worker-b" and r["note"] == "demo"
+        for r in rows
+    )
+
+
+def test_grants_rich_table_shows_sender_and_target(
+    isolated_state_db: Path,
+) -> None:
+    # Arrange
+    runner = CliRunner()
+    runner.invoke(a2a, ["grant", "alpha", "beta"])
+    # Act
+    res = runner.invoke(a2a, ["grants"])
+    # Assert
+    assert "alpha" in res.output and "beta" in res.output
+
+
+def test_grants_json_orders_by_insertion(isolated_state_db: Path) -> None:
+    # Arrange
+    runner = CliRunner()
+    runner.invoke(a2a, ["grant", "first-sender", "first-target"])
+    runner.invoke(a2a, ["grant", "second-sender", "second-target"])
+    # Act
+    res = runner.invoke(a2a, ["grants", "--json"])
+    rows = json.loads(res.output)
+    # Assert
+    assert rows[0]["sender"] == "first-sender" and rows[1]["sender"] == (
+        "second-sender"
+    )
+
+
+def test_grants_json_after_revoke_drops_the_row(
+    isolated_state_db: Path,
+) -> None:
+    # Arrange
+    runner = CliRunner()
+    runner.invoke(a2a, ["grant", "worker-a", "worker-b"])
+    runner.invoke(a2a, ["revoke", "worker-a", "worker-b"])
+    # Act
+    res = runner.invoke(a2a, ["grants", "--json"])
+    # Assert
+    assert json.loads(res.output) == []
+
+
+def test_grant_direction_is_one_way(isolated_state_db: Path) -> None:
+    """Granting A→B must NOT auto-grant B→A (the ACL is directional)."""
+    # Arrange
+    runner = CliRunner()
+    runner.invoke(a2a, ["grant", "worker-a", "worker-b"])
+    # Act
+    from scitex_agent_container._state.state_db_nodes import has_grant
+
+    reverse = has_grant(sender="worker-b", target="worker-a")
+    # Assert
+    assert reverse is False

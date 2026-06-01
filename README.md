@@ -1,5 +1,5 @@
 <!-- ---
-!-- Timestamp: 2026-05-13 14:23:46
+!-- Timestamp: 2026-06-01 05:30:00
 !-- Author: ywatanabe
 !-- File: /home/ywatanabe/proj/scitex-agent-container/README.md
 !-- --- -->
@@ -147,6 +147,8 @@ Aliases auto-track the latest version of each family; append `[1m]` for the 1M-t
                               └─→ POST /v1/turn  (per-agent A2A inbound)
 ```
 
+**SAC-from-SAC (in-SIF spawn).** An agent running INSIDE an apptainer SIF can spawn a child agent on the **bare host** by calling `sac agents start <child>` as normal — the CLI auto-detects the in-SIF condition (`APPTAINER_CONTAINER`) and POSTs the spawn RPC to the host's `sac listen` instead of trying nested apptainer (which the supported HPC shape forbids). The host re-runs ACL gating, records the parent → child lineage, and shells the real start against the bare host's apptainer. Wiring is automatic: `SAC_LISTEN_BASE_URL` + `SAC_LISTEN_BEARER` are injected at container launch.
+
 **[Full architecture →](docs/how-sac-works.md)** — launch flow, to_home merge rules, A2A inbound, control plane, restart/health.
 
 **[YAML Spec Reference (v3) →](docs/spec-reference.md)** — annotated full example + field table (apiVersion, spec.apptainer.*, spec.claude.*, a2a, health, restart).
@@ -168,6 +170,20 @@ Aliases auto-track the latest version of each family; append `[1m]` for the 1M-t
 
 **[Apptainer images →](docs/images.md)** — `base` vs `scitex` layers, sandbox/freeze workflow, version pinning.
 
+### Host listen as a persistent service
+
+`sac listen` is the host's HTTP/JSON control plane (push hub, spawn broker, lead inbox). For long-running deployments install the bundled systemd-user unit so it auto-starts on boot and auto-restarts on crash:
+
+```bash
+install -m 0644 scripts/systemd/sac-listen.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now sac-listen.service
+journalctl --user -u sac-listen.service -n 50          # logs
+curl -s http://127.0.0.1:7878/v1/health                # healthcheck
+```
+
+See [`scripts/systemd/README.md`](scripts/systemd/README.md) for the full recipe + the federated-jobs vs hand-maintained-services split.
+
 ## 1 Interfaces
 
 <details open>
@@ -178,8 +194,15 @@ Aliases auto-track the latest version of each family; append `[1m]` for the 1M-t
 ```bash
 # Agent lifecycle
 sac agents start  <name> [--foreground]   # daemon by default; --foreground streams stdio
+                                           # inside a SIF: auto-brokers to host listen
+                                           # (no apptainer-in-apptainer needed)
 sac agents stop   <name>                  # graceful SIGTERM, escalate to SIGKILL after 5 s
+                                           # --force tolerates an unreachable bound host
 sac agents restart <name>
+sac agents delete <name>                  # stop + remove spec dir + runtime dir + registry
+sac agents forget <name> [--force]        # local-only state.db cleanup for the
+                                           # "agent is gone, only stale rows persist" case
+                                           # (no ssh, no signal)
 sac agents send   <name> "<prompt>"       # send a follow-up turn to a running session
 sac agents send   <name> --key ESC        # interrupt current turn
 sac agents list [<name>] [--snapshot] [--priority]
@@ -191,6 +214,8 @@ sac agents find   <capability>
 
 # Control plane (HTTP/JSON, loopback-only)
 sac listen [--bind 127.0.0.1:7878]       # boot per-host REST API (bearer-auth)
+                                           # single-instance flock guard fails loud
+                                           # on a duplicate launch (PID + lockfile shown)
 sac peer post-turn <to> "<msg>"          # local agent-to-agent message via sac listen
 
 # Image lifecycle (delegates to scitex-container)
@@ -226,10 +251,16 @@ sac fleet notify  done|blocker|status --summary "..."   # agent→lead push (ADR
 sac doctor [--fleet]                      # diagnose agent-spec source drift
 sac subagent get-state                    # Claude Code Agent-tool subagent state
 
+# Federated scheduled jobs (delegates to scitex-dev ecosystem)
+sac dev systemd list / install / uninstall    # generate ~/.config/systemd/user/sac.*
+sac dev cron    list / install / uninstall    # crontab entries
+sac dev daemon  list / install / uninstall    # interactive daemons
+
 # Misc
 sac installation boot                     # first-time host bootstrap (venv, PATH, cron)
 sac event ingest                          # Claude Code hook event ingestor
 sac db   query / show / clean / export / import / migrate   # state.db inspection
+sac registry sync [--from PEER | --to PEER | --all]   # cross-host comms_nodes anti-entropy
 sac registry reconcile                    # singleton placement reconcile across fleet
 sac --help-recursive                      # full subcommand tree
 ```

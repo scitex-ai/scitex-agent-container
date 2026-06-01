@@ -276,9 +276,19 @@ def create_app(*, token: str, local_host: str | None = None) -> Starlette:
     Passing the value explicitly matters for in-process multi-host
     tests where the env is shared.
     """
+    # Task #27 PR B — ACL decision routes for the in-container
+    # broker. The bare-host lead writes the host's state.db directly
+    # via the CLI; an in-container ``sac a2a {unblock,block,grant}``
+    # posts here so the writes land on the HOST listen's state.db
+    # (rather than the silently-ineffective per-container copy).
+    from ._acl_routes import acl_block, acl_grant, acl_unblock
+
     routes: list[Route] = [
         Route("/v1/health", health, methods=["GET"]),
         Route("/.well-known/agent-card.json", fleet_card_handler, methods=["GET"]),
+        Route("/v1/acl/unblock", acl_unblock, methods=["POST"]),
+        Route("/v1/acl/block", acl_block, methods=["POST"]),
+        Route("/v1/acl/grant", acl_grant, methods=["POST"]),
     ]
     routes += _v1_agent_routes("/agents")
     app = Starlette(routes=routes)

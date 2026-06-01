@@ -6,7 +6,191 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.21.9] — 2026-06-01
+
+### Fixed
+- **fix(channel): suppress empty-content delivery acks at the sender**
+  (#260, lead handoff). Killed the empty-ack ping-pong spam hitting
+  every inbox (incl. lead's). New ``_channel_ack_filter`` +
+  ``_channel_auto_ack`` modules; sender-side filter drops empty-
+  content acks before the wire so the receiver never sees them.
+  Rate-limit env knobs (``SAC_AUTO_ACK_RATE_MAX`` /
+  ``SAC_AUTO_ACK_RATE_WINDOW_S``) gate spammy auto-ack loops.
+- **fix(smoke): update deny-row assertions for task #27 two-row
+  contract** (#281). v0.21.8's pypa-publish failed because the
+  smoke test ``test_listen_denied_send_persists_exactly_one_
+  channel_events_row`` pinned the pre-task-#27 single-row
+  contract; task #27 (block/unblock approve-flow, landed in
+  v0.21.8's contents) intentionally added a second row (the
+  ``approval_prompt`` push). Smoke test updated to the new two-
+  row contract + 5 new assertions on the prompt body (embeds
+  both ``sac a2a unblock`` and ``sac a2a block``, does NOT leak
+  the sender's body). No production code change; v0.21.8's
+  feature set still ships here.
+
+v0.21.9 = v0.21.8's full feature set (#278 + #279, task #27 ACL
+approve-prompt flow) re-cut after #260 + #281 unblocked the
+release pipeline. The v0.21.8 tag exists on GitHub but is a
+"ghost" — no PyPI artifact and no GitHub Release; operators
+install ``scitex-agent-container==0.21.9`` for the same feature
+set + the empty-ack fix + the smoke-test contract update.
+
+## [0.21.8] — 2026-06-01
+
 ### Added
+- **feat(acl): block/unblock approve-prompt flow** (#278 + #279,
+  operator-requested via lead — task #27). Cross-group denied
+  sends now emit ONE receiver-facing prompt embedding BOTH
+  ``sac a2a unblock <s> <t>`` and ``sac a2a block <s> <t>`` so
+  the receiver picks the verb. Dedupe: repeats from the same
+  (sender, target) pair while pending DO NOT re-prompt. UNBLOCK
+  writes ``comms_grants`` + removes any ``comms_blocks`` + clears
+  the pending row (sender's future messages pass; the original
+  denied message is NOT replayed — sender resends). BLOCK writes
+  ``comms_blocks`` (block precedence over grant) + clears the
+  pending row (sender's future attempts silently dropped — no
+  receiver push, no approve-prompt re-fire, sender still gets
+  403). New CLI verbs ``sac a2a unblock`` and ``sac a2a block``;
+  legacy ``sac a2a grant`` aliased to unblock. The push body
+  intentionally does NOT leak the denied message content —
+  receivers decide on identity, not on content. Intentionally
+  drops the earlier-design TTL knob + latest-wins / replay
+  machinery per the operator's "fragile spam-debounce" feedback.
+- **feat(acl): in-container broker for the ACL decision CLI verbs**
+  (#279, operator-greenlit Q5 / lead FUTURE item 4). Today an
+  in-container ``sac a2a {unblock,block,grant}`` used to write the
+  per-container state.db — silently ineffective against the host
+  listen's ACL checks (which consult the HOST'S state.db, a
+  different file). This PR adds three new host-listen routes
+  (``POST /v1/acl/{unblock,block,grant}``) + a stdlib-only HTTP
+  broker (``_state/_acl_broker_client.py``) that mirrors the
+  SAC-from-SAC ``_spawn_client`` pattern from #261. The CLI
+  detects in-SIF via ``_lifecycle._in_sif_broker.is_in_sif`` and
+  routes accordingly: in-SIF → host listen HTTP, bare-host →
+  local DB helpers directly. Receivers can run the verb from any
+  context and the write lands on the right db.
+
+## [0.21.7] — 2026-06-01
+
+### Fixed
+- **fix(build): pin `hatchling<1.28` to dodge twine
+  Metadata-Version 2.5 rejection.** hatchling ≥1.28 emits
+  ``Metadata-Version: 2.5`` which the pypa-publish action's bundled
+  twine rejects with ``InvalidDistribution: '2.5' is not a valid
+  metadata version`` (verified on the v0.21.6 release build,
+  workflow run 26728715926 — pypi-publish failed; no artifact landed
+  on PyPI and no GitHub Release was created). Hatchling 1.27 emits
+  ``Metadata-Version: 2.4`` which twine accepts. Same code contents
+  as the unpublished v0.21.6 (see ``[0.21.6]`` section below for the
+  feature/fix list); re-evaluate the pin when
+  ``pypa/gh-action-pypi-publish`` ships a newer twine.
+
+## [0.21.6] — 2026-06-01
+
+### Added
+- **feat(agents): `sac agents forget <name>`** (#270, operator
+  backlog #3). New local-only registry-reset recovery verb for the
+  "agent is gone, only stale rows persist" case (SLURM-reclaimed
+  node, crashed peer that came back fresh, etc.). Tombstones the
+  ``instances`` row with ``exit_reason='operator-forget'`` and
+  unregisters the ``comms_nodes`` pin. NO ssh, NO local process
+  signal. Refuses to act on a live instance unless ``--force`` is
+  passed. Idempotent: no rows = no-op exit 0.
+
+### Fixed
+- **fix(start): preserve apptainer stderr in SIF build failures**
+  (#271, operator backlog #4 partial). Pre-fix shape:
+  ``_build_sif_from_{uri,def}`` returned ``False`` on apptainer
+  build failure, silently dropping the stderr — callers saw only a
+  generic "Failed to start agent" upstream with no diagnostic.
+  Now ``capture_output=True`` + raises ``RuntimeError`` with the
+  apptainer stderr verbatim. Success path unchanged.
+- **fix(tests): drop unused `time` / `typing.Iterator` imports**
+  (#273, ruff F401 cleanup on develop).
+- **fix(tests): replace `monkeypatch` with `subprocess_shim` in
+  test__forget** (#274, PA-306 §3 no-mocks). The new ``forget``
+  test used ``monkeypatch.setattr`` which the audit gate
+  forbids; refactored to the project's standard no-mocks
+  ``subprocess_shim`` fixture (real fake ssh on $PATH).
+- **fix(tests): drop literal `# noqa` from comment in
+  test__handlers.py** (#275, ruff invalid-directive warning
+  cleanup).
+
+### Docs
+- **docs(readme): refresh to v0.21.5** (#272). Adds ``sac agents
+  forget``, the SAC-from-SAC broker subsection, the
+  ``sac-listen.service`` systemd unit install recipe, the
+  ``sac dev {systemd,cron,daemon}`` group, and ``sac registry
+  sync``. Timestamp bumped.
+
+## [0.21.5] — 2026-06-01
+
+### Added
+- **feat(listen): single-instance flock guard for `sac listen`** (#266,
+  operator task #26 sub (1)). A second `sac listen` while one already
+  holds the port used to crash uvicorn with bare `EADDRINUSE` + a
+  Python traceback — loud but with no diagnostic about which process
+  held the port. New `_listen/_single_instance.py` (`acquire_listen_lock`,
+  `release_listen_lock`, `ListenAlreadyRunningError`, `default_lock_dir`)
+  takes a port-scoped flock at `<lock_dir>/listen-<port>.pid` BEFORE
+  uvicorn binds, stamps the current PID in the file body, and on
+  conflict fails loud with the holding PID and lock-file path so
+  `kill <pid>` is actionable without `lsof` / `netstat`. The flock is
+  kernel-released on process exit (even SIGKILL / OOM) so a crashed
+  listen never permanently jams the port. Acquired before
+  `_register_self_comms_node` / `_maybe_sync_on_start` so a duplicate
+  launch never touches the federated registry.
+- **feat(systemd): `sac-listen.service` hand-maintained user unit**
+  (#268, operator task #26 sub (3)). New `scripts/systemd/sac-listen.
+  service` (`Type=simple` + `Restart=on-failure` + `RestartSec=5s` +
+  `StandardOutput=journal`). The companion flock guard (sub (1))
+  ensures `Restart=on-failure` cannot double-bind. The README is
+  split into "federated scheduled jobs" (`sac.accounts-refresh`
+  pattern, materialised from `scitex_dev.jobs`) vs "hand-maintained
+  long-running services" (`sac-listen.service` lives here) so a
+  future operator does not move this into the federated path by
+  mistake. Install: copy to `~/.config/systemd/user/`,
+  `daemon-reload`, `enable --now`.
+
+### Tests
+- **test(channel): pin SSE auto-reconnect across listen restart**
+  (#267, operator task #26 sub (2)). Three no-mocks regression tests
+  in `tests/scitex_agent_container/_mcp/test_channel_reconnect.py`
+  using a real asyncio TCP server pin the invariant that the
+  in-container SSE consumer (`_mcp/channel.py::_consume_sse`)
+  reconnects after the listen drops the stream mid-flight (operator-
+  restart scenario), records ≥ 2 actual TCP connection attempts, and
+  recovers when the server starts AFTER the consumer is already
+  trying. The exponential-backoff loop (0.5s → 30s cap) was already
+  implemented; this PR pins it against regression. A flake-guard
+  using a held-socket port reservation replaces a brittle "start →
+  stop → restart on same port" approach.
+
+## [0.21.4] — 2026-06-01
+
+### Added
+- **feat(broker): SAC-from-SAC — in-SIF `agent_start` brokers to host
+  `sac listen`** (#261, operator-mandated 2026-06-01). When an agent
+  runs INSIDE an apptainer SIF, `sac agents start <child>` (and the
+  `agent_start` API) auto-detects the in-SIF condition
+  (`APPTAINER_CONTAINER` / `SINGULARITY_CONTAINER`) and POSTs the
+  spawn RPC to the host-side `sac listen` instead of trying nested
+  apptainer (which is unsupported on the target HPC shape). The host
+  re-runs `check_spawn`, records the parent → child lineage edge, and
+  shells the real `sac agent start` against the bare host's
+  apptainer. New `_lifecycle/_in_sif_broker.py`
+  (`is_in_sif`, `broker_start_to_host`, `maybe_broker_in_sif_spawn`,
+  `InSifBrokerError`); injection seam `in_sif_opener` on
+  `agent_start`. Reuses the existing `SAC_LISTEN_BASE_URL` /
+  `SAC_LISTEN_BEARER` env injection from
+  `runtimes/_apptainer_listen_env.listen_env_flags`. Fail-loud
+  contract: missing base URL / transport / 4xx / 5xx / malformed
+  body → `InSifBrokerError` with status + body preserved verbatim.
+  Bare-host path unchanged. Also fixes a latent listen-side bug
+  exposed by the live test: `_listen/_agent_exec.py::agents_start`
+  used to shell `["sac", "agent", "start", name]` (singular, removed
+  in F-CS13); switched to `["sac", "agents", "start", name]` with a
+  regression test pinning the argv shape.
 - **feat(jobs): federate `sac.accounts-refresh` into `scitex_dev.jobs`.**
   New provider `scitex_agent_container._jobs_plugin:provide_jobs`
   registered under the `scitex_dev.jobs` entry-point group surfaces a
@@ -27,6 +211,38 @@ versioning follows [SemVer](https://semver.org/).
   active account resolvable → skips nothing and logs it. Behaviour is
   unchanged without the flag.
 
+### Fixed
+- **fix(creds): :rw bind the per-account snapshot directly — no
+  boot-time copy** (#262, operator task #15). Root cause of the
+  2026-06-01 fleet-wide silent 401 outage: agents pinned via
+  `spec.claude.account` got a FROZEN BOOT-COPY of the saved account's
+  snapshot under `<state_dir>/claude/.credentials.json`. The
+  in-container Claude CLI's ~1h OAuth refresh wrote back to that
+  per-agent copy — not the source snapshot. After ~8h drift, every
+  SDK turn 401'd silently (the telegram bridge still marked inbound
+  👀 but the agent could not complete a turn). Hit hub, orochi, and
+  proj-scitex-agent-container (revived only by restart). Fix:
+  `runtimes/_apptainer_creds.resolve_cred_file` pinned branch now
+  returns the snapshot path directly. The caller's existing `:rw`
+  bind in `_apptainer_auth.auth_argv` lands on the snapshot — the
+  in-container CLI's refresh writeback goes to the snapshot, which
+  is now self-healing and never expires while any pinned agent keeps
+  running. Same-account-pinned agents now share a single mount
+  target; the Claude CLI's atomic refresh writeback (tmp+rename) is
+  safe under concurrent refresh. Safety gates (`PinnedAccountError`
+  on absent / missing-`expiresAt` / already-expired snapshot)
+  preserved verbatim. Operators upgrading mid-deploy with a leftover
+  `<state_dir>/claude/.credentials.json` are unaffected (resolver
+  neither reads nor mutates the legacy dest; regression test in
+  place).
+- **fix(tests): satisfy STX-TQ002 AAA-marker rule on safety-gate
+  raises tests** (#263). Follow-up cleanup of an audit-gate violation
+  that slipped onto develop when #262 was auto-merged before
+  pytest-matrix completed. Three safety-gate tests used a combined
+  `# Act / Assert` comment; split into `# Act` + `# Assert —
+  pytest.raises is the assertion` (matches the sibling
+  `test__apptainer_creds.py` style). No production code change.
+
 ### Changed
 - **refactor(account): extract `sac accounts refresh` into
   `cli_pkg/_account_refresh.py`** (registered onto the `account` group at
@@ -37,6 +253,13 @@ versioning follows [SemVer](https://semver.org/).
   `JobSpec` via `sac dev systemd install` / `scitex-dev ecosystem systemd
   install`; `scripts/systemd/README.md` documents the new policy (the old
   templates were pinned to the superseded `--all`, every-4h cadence).
+- **chore(tests): package-level `conftest.py` clears in-SIF env
+  pollution.** Two autouse fixtures clear `APPTAINER_CONTAINER` /
+  `SINGULARITY_CONTAINER` (would route every test through the new
+  SAC-from-SAC broker) and `SCITEX_AGENT_CONTAINER_AGENT` / `SAC_AGENT`
+  (leaks the running agent's identity into statusline tests).
+  Side-effect: fixes 8 pre-existing in-SIF env failures that surfaced
+  only when pytest runs inside an agent SIF.
 
 ## [0.21.3] — 2026-05-28
 

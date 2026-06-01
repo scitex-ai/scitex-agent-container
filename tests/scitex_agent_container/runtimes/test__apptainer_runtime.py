@@ -1145,15 +1145,18 @@ def _save_snapshot(home: Path, name: str, body: str | None = None) -> Path:
     return snap
 
 
-def test_argv_pins_account_binds_state_dir_copy_not_host_file(
+def test_argv_pins_account_binds_snapshot_path_directly_not_host_file(
     tmp_path: Path, home_redirect: Path
 ) -> None:
     # Arrange — host live file AND a saved snapshot both exist; the pin
-    # must bind the state-dir copy, never the host file.
+    # must bind the SNAPSHOT FILE ITSELF (operator task #15 — the prior
+    # copy-into-state-dir path was the root cause of the 2026-06-01
+    # fleet outage: refreshes landed on the copy, the snapshot drifted
+    # stale, every SDK turn 401'd after ~8h).
     host_creds = home_redirect / ".claude" / ".credentials.json"
     host_creds.parent.mkdir(parents=True, exist_ok=True)
     host_creds.write_text('{"host": true}')
-    _save_snapshot(home_redirect, "alpha")
+    snap = _save_snapshot(home_redirect, "alpha")
     state_dir = tmp_path / "state"
     state_dir.mkdir()
     rt = ApptainerContainerRuntime()
@@ -1161,16 +1164,17 @@ def test_argv_pins_account_binds_state_dir_copy_not_host_file(
     # Act
     argv = rt.build_run_argv(cfg, state_dir=state_dir, sif_path=tmp_path / "x.sif")
     creds_arg = next(a for a in argv if "/tmp/sac-claude/.credentials.json" in a)
-    # Assert — the bound host-side path is the per-agent copy, not host.
-    assert creds_arg.startswith(str(state_dir / "claude" / ".credentials.json"))
+    # Assert — the bound host-side path IS the snapshot file, neither
+    # a per-agent copy nor the host live file.
+    assert creds_arg.startswith(str(snap))
 
 
-def test_argv_pins_account_copies_snapshot_bytes_into_state_dir(
+def test_argv_pins_account_does_not_create_state_dir_copy(
     tmp_path: Path, home_redirect: Path
 ) -> None:
     # Arrange — snapshot has distinctive bytes (plus a VALID future
-    # expiresAt so the fail-loud resolver accepts it) the copy must
-    # reproduce verbatim.
+    # expiresAt). The runtime MUST NOT write a state-dir copy — the
+    # bind target is the snapshot itself (operator task #15).
     far_future_ms = int((time.time() + 86_400) * 1_000)
     body = '{"pinned": "beta-bytes", "claudeAiOauth": {"expiresAt": %d}}' % (
         far_future_ms
@@ -1182,9 +1186,10 @@ def test_argv_pins_account_copies_snapshot_bytes_into_state_dir(
     cfg = _config(tmp_path, claude=ClaudeSpec(account="beta"))
     # Act
     rt.build_run_argv(cfg, state_dir=state_dir, sif_path=tmp_path / "x.sif")
-    copied = state_dir / "claude" / ".credentials.json"
-    # Assert — frozen boot-copy landed with the snapshot's contents.
-    assert copied.read_text() == body
+    legacy_copy = state_dir / "claude" / ".credentials.json"
+    # Assert — no per-agent copy materialised; the snapshot is the
+    # only place the in-container CLI's :rw refresh writeback lands.
+    assert not legacy_copy.exists()
 
 
 def test_argv_no_account_binds_host_live_file(
@@ -1246,16 +1251,91 @@ def test_argv_pinned_account_expired_snapshot_raises_pinned_account_error(
 # ---------------------------------------------------------------------------
 
 
-def test_start_returns_false_when_apptainer_binary_missing(
+def test_start_raises_explanatory_runtime_error_when_apptainer_binary_missing(
     state_root: Path, tmp_path: Path, no_apptainer_on_path: Path
 ) -> None:
-    # Arrange
+    # Arrange — clew handoff 2026-05-31 P1: the legacy silent
+    # ``return False`` here surfaced upstream as a generic ``Failed
+    # to start agent ...`` with no diagnostic; the runtime now names
+    # the missing binary AND the nested-SIF cause explicitly.
     rt = ApptainerContainerRuntime()
     cfg = _config(tmp_path / "wd")
+
     # Act
-    started = rt.start(cfg)
+    def _call():
+        return rt.start(cfg)
+
     # Assert
-    assert started is False
+    with pytest.raises(RuntimeError, match=r"apptainer binary not found"):
+        _call()
+
+
+def test_start_error_message_names_nested_apptainer_escape_hint(
+    state_root: Path, tmp_path: Path, no_apptainer_on_path: Path
+) -> None:
+    # Arrange — the nested-SIF cause is the common path on Spartan
+    # compute (agent running inside a SIF that doesn't bundle
+    # apptainer on PATH). The error message must surface the
+    # ``spec.apptainer.nested_mode: "escape"`` lever the operator
+    # needs, not just "apptainer missing".
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd")
+
+    # Act
+    captured: list[BaseException] = []
+    try:
+        rt.start(cfg)
+    except RuntimeError as exc:
+        captured.append(exc)
+
+    # Assert
+    assert (
+        len(captured) == 1
+        and "nested_mode" in str(captured[0])
+        and "escape" in str(captured[0])
+    )
+
+
+def test_start_error_message_names_the_agent_being_started(
+    state_root: Path, tmp_path: Path, no_apptainer_on_path: Path
+) -> None:
+    # Arrange — the operator's terminal may have many concurrent
+    # ``sac agents start`` runs in flight; naming the agent in the
+    # error tells them which spec.yaml to look at.
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd", name="zeta-bm175")
+
+    # Act
+    captured: list[BaseException] = []
+    try:
+        rt.start(cfg)
+    except RuntimeError as exc:
+        captured.append(exc)
+
+    # Assert
+    assert len(captured) == 1 and "zeta-bm175" in str(captured[0])
+
+
+def test_start_dry_run_does_not_raise_when_apptainer_binary_missing(
+    state_root: Path, tmp_path: Path, no_apptainer_on_path: Path
+) -> None:
+    # Arrange — dry-run only emits argv to a state-dir file and
+    # never calls ``apptainer exec``. A dev box / CI runner without
+    # apptainer installed must still be able to validate the
+    # ``sac agents start --dry-run`` argv path; the loud raise added
+    # for the no-apptainer case must skip when dry_run=True. The
+    # spec needs an image so the inner ``resolve_sif`` returns a
+    # value (dry-run hits the same code path otherwise).
+    sif = tmp_path / "ready.sif"
+    sif.write_bytes(b"\x00")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd", image=str(sif))
+
+    # Act
+    ok = rt.start(cfg, dry_run=True)
+
+    # Assert
+    assert ok is True
 
 
 def test_start_returns_false_when_sif_cannot_be_resolved(
@@ -1679,6 +1759,44 @@ def test_build_sif_from_def_invokes_apptainer_build_subcommand(
     mod._build_sif_from_def(tmp_path / "out.sif", def_file)
     # Assert
     assert subprocess_shim.argv_for("apptainer")[:1] == ["build"]
+
+
+# ---------------------------------------------------------------------------
+# Fail-loud regression (backlog #4) — _build_sif_from_* MUST surface
+# the apptainer stderr on non-zero rc rather than swallowing it into a
+# bare ``False`` return. The pre-fix shape ate the diagnostic and the
+# operator saw only a generic "Failed to start agent" upstream.
+# ---------------------------------------------------------------------------
+
+
+def test_build_sif_from_uri_raises_runtime_error_on_apptainer_failure(
+    tmp_path: Path, subprocess_shim
+) -> None:
+    # Arrange — install a fake apptainer that fails with a distinctive
+    # stderr the test asserts on (proves the stderr is forwarded, not
+    # just that the call raises).
+    subprocess_shim.install(
+        "apptainer", exit=1, stderr="OCI pull failed: image not found"
+    )
+    # Act
+    # Assert — pytest.raises is the assertion (TQ007: one per test).
+    with pytest.raises(RuntimeError, match="OCI pull failed: image not found"):
+        mod._build_sif_from_uri(tmp_path / "out.sif", "docker://nope")
+
+
+def test_build_sif_from_def_raises_runtime_error_on_apptainer_failure(
+    tmp_path: Path, subprocess_shim
+) -> None:
+    # Arrange
+    def_file = tmp_path / "x.def"
+    def_file.write_text("Bootstrap: docker\n")
+    subprocess_shim.install(
+        "apptainer", exit=1, stderr="def parse error: missing Bootstrap"
+    )
+    # Act
+    # Assert — pytest.raises is the assertion (TQ007: one per test).
+    with pytest.raises(RuntimeError, match="def parse error: missing Bootstrap"):
+        mod._build_sif_from_def(tmp_path / "out.sif", def_file)
 
 
 # ---------------------------------------------------------------------------

@@ -389,9 +389,10 @@ def test_handlers_registry_contains_all_four_keys(key: str, expected: object) ->
     assert actual == expected_value or actual is expected_value
 
 
-# Keep ``sys`` referenced for tooling that doesn't follow ``# noqa`` on imports
-# in some checkers — we no longer monkeypatch sys.modules but the import is
-# harmless to retain.
+# Keep ``sys`` referenced so unused-import checkers do not flag the
+# module-level ``import sys`` even after the prior sys.modules monkey-
+# stubs were removed. The reference itself is the suppression — no
+# lint directive needed.
 _ = sys
 
 
@@ -472,41 +473,32 @@ def test_claude_session_missing_sdk_raises_handler_error(
         invoke()
 
 
-@pytest.mark.skipif(
-    not _has_anthropic_creds(),
-    reason=(
-        "build_sdk_options fails earlier with auth-missing when no "
-        "Anthropic credentials available (CI runners). Set "
-        "SAC_ANTHROPIC_API_KEY or run `claude /login` to enable."
-    ),
-)
-def test_claude_session_channels_without_port_raises_handler_error(
-    isolated_env: Path,
-) -> None:
-    """``server:sac`` channel with no a2a_port drives a real SDK turn that fails.
-
-    With Anthropic creds present, ``build_sdk_options`` succeeds (it does
-    NOT validate a2a_port — see runtimes/_sdk_common.py:439-508, where a
-    missing port merely omits the sidecar ``--turn-url``). Control then
-    reaches the REAL ``claude-agent-sdk`` turn via ``query()``. That turn
-    cannot satisfy ``--dangerously-load-development-channels server:sac`` in
-    this minimal headless context, so the handler's broad ``except Exception``
-    re-raises as :class:`HandlerError`. The exact message is
-    non-deterministic across runs (live SDK error vs. per-call timeout), so
-    we assert only on the type — the stable contract is "this misconfiguration
-    is rejected, loudly". No mocks: a genuine ``build_sdk_options`` +
-    ``query()`` round-trip.
-    """
-    # Arrange
-    call = lambda: h.handle_claude_session(
-        "never-registered-agent", "hi", channels=["server:sac"], a2a_port=None
-    )
-    raises_ctx = pytest.raises(h.HandlerError)
-    # Act
-    invoke = lambda: call()
-    # Assert
-    with raises_ctx:
-        invoke()
+# Removed (2026-06-01): ``test_claude_session_channels_without_port_
+# raises_handler_error`` asserted that ``channels=["server:sac"]`` +
+# ``a2a_port=None`` would cause the live SDK turn to error out. The
+# premise has drifted out from under the test:
+#
+#   * The handler comment at lines 161-165 of
+#     ``src/scitex_agent_container/a2a/_handlers.py`` documents that
+#     ``server:sac`` subscribes to the BUS (``sac listen``, resolved
+#     from ``SAC_LISTEN_BASE_URL``) — NOT to the agent's own a2a_port.
+#     The two are unrelated: a2a_port is forwarded only so the SDK can
+#     register ``/v1/turn``. So the combination "server:sac + no
+#     a2a_port" is a *valid* configuration, not a misconfiguration.
+#   * Current ``claude-agent-sdk`` accepts the
+#     ``--dangerously-load-development-channels server:sac`` argument
+#     and completes the turn happily (verified by direct invocation:
+#     ``handle_claude_session("never-registered-agent", "hi",
+#     channels=["server:sac"], a2a_port=None)`` returns "Hi! How can
+#     I help you today?" rather than raising).
+#
+# Keeping the test would assert a contract that no longer holds. The
+# ``SDKCommonError → HandlerError`` translation path it was meant to
+# exercise is already covered by
+# ``test_claude_session_propagates_sdk_common_error_as_handler_error``
+# above; the ``except Exception → HandlerError`` re-raise is covered
+# by ``test_claude_session_missing_sdk_raises_handler_error``. No
+# observable behaviour goes untested by this removal.
 
 
 def test_claude_session_reads_model_env_for_options(isolated_env: Path) -> None:
