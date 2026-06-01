@@ -140,8 +140,41 @@ def register_tools(
         responses (cross-host forwards) don't carry it, and inventing a
         zero would be a false-positive failure. Only an explicit ``0``
         from the local publish path is the no-subscriber signal.
+
+        **Sender-side empty-ack noise filter:** before the outbound POST,
+        the assembled envelope is checked against
+        :func:`._channel_ack_filter.envelope_is_contentless_ack`. A
+        contentless ack (empty body + ``metadata.ack=True``) is dropped
+        silently with a debug log and a synthetic
+        ``{"status": 200, "body": {"suppressed": "empty_ack", ...}}``
+        result is returned — the operator's contract is to keep empty
+        delivery confirmations off the wire (sender-side, never receiver-
+        side, to avoid the symmetric "did we send? / did they receive?"
+        doubt). Non-empty acks and empty-content non-ack messages pass
+        through untouched (the join of empty body AND ``ack=True`` is
+        the only suppressed shape).
         """
         import httpx
+
+        from ._channel_ack_filter import envelope_is_contentless_ack
+
+        if envelope_is_contentless_ack(payload):
+            log.debug(
+                "sac a2a: suppressing empty-content ack to %r at %s "
+                "— sender-side noise filter (operator contract)",
+                target,
+                path,
+            )
+            return {
+                "status": 200,
+                "body": {
+                    "suppressed": "empty_ack",
+                    "reason": (
+                        "empty-content delivery ack dropped at sender "
+                        "(operator contract: no contentless acks on the wire)"
+                    ),
+                },
+            }
 
         try:
             res = await _post(path, payload)

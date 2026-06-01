@@ -413,17 +413,36 @@ async def test_call_tool_a2a_ack_unknown_sender_returns_error(
 
 
 @pytest.mark.asyncio
-async def test_call_tool_a2a_ack_posts_ack_metadata(
+async def test_call_tool_a2a_ack_is_suppressed_at_sender(
     registered_tools: _ToolRecorder, fake_listen
 ):
+    """The ``a2a_ack`` tool always builds an empty-content + ``ack=True``
+    payload — the exact shape the sender-side noise filter is designed to
+    drop. The HTTP POST must NOT reach the listen (the wire stays quiet).
+    """
     # Arrange
     _recent.append({"msg_id": "m1", "from_agent": "carol", "conversation_id": "c1"})
     call_fn = registered_tools.call_tool_fn
     # Act
     await call_fn("a2a_ack", {"msg_id": "m1"})
-    _, payload = fake_listen.posts[-1]
     # Assert
-    assert payload["params"]["metadata"]["ack"] is True
+    assert fake_listen.posts == []
+
+
+@pytest.mark.asyncio
+async def test_call_tool_a2a_ack_returns_suppression_marker(
+    registered_tools: _ToolRecorder, fake_listen
+):
+    """The dropped ack still returns a structured result to the caller so a
+    flow that ``await``ed it can distinguish "suppressed" from "delivered"."""
+    # Arrange
+    _recent.append({"msg_id": "m1", "from_agent": "carol", "conversation_id": "c1"})
+    call_fn = registered_tools.call_tool_fn
+    # Act
+    out = await call_fn("a2a_ack", {"msg_id": "m1"})
+    body = json.loads(out[0].text)
+    # Assert
+    assert body.get("body", {}).get("suppressed") == "empty_ack"
 
 
 @pytest.mark.asyncio
@@ -641,15 +660,20 @@ async def test_a2a_reply_no_subscriber_returns_loud_error(
 
 
 @pytest.mark.asyncio
-async def test_a2a_ack_no_subscriber_returns_loud_error(
+async def test_a2a_ack_is_suppressed_before_subscriber_check(
     registered_tools: _ToolRecorder, fake_listen
 ):
-    """The explicit ack tool also fails loud when it reaches no subscriber."""
-    # Arrange
+    """Sender-side noise filter runs *before* the HTTP POST, so the
+    no-subscriber check downstream never sees the contentless ack — even
+    when the listen would have reported zero subscribers, the ack is
+    dropped silently with no loud error (it is noise, not a delivery
+    failure)."""
+    # Arrange — would-be-zero subscriber response: irrelevant, we never POST.
     _recent.append({"msg_id": "orig2", "from_agent": "bob", "conversation_id": "c2"})
     fake_listen.send_response = {"delivered_subscriber_count": 0}
     call_fn = registered_tools.call_tool_fn
     # Act
     out = await call_fn("a2a_ack", {"msg_id": "orig2"})
+    body = json.loads(out[0].text)
     # Assert
-    assert "no live subscriber" in (_err(out) or "")
+    assert _err(out) is None and body.get("body", {}).get("suppressed") == "empty_ack"
