@@ -6,6 +6,44 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.21.6] — 2026-06-01
+
+### Added
+- **feat(agents): `sac agents forget <name>`** (#270, operator
+  backlog #3). New local-only registry-reset recovery verb for the
+  "agent is gone, only stale rows persist" case (SLURM-reclaimed
+  node, crashed peer that came back fresh, etc.). Tombstones the
+  ``instances`` row with ``exit_reason='operator-forget'`` and
+  unregisters the ``comms_nodes`` pin. NO ssh, NO local process
+  signal. Refuses to act on a live instance unless ``--force`` is
+  passed. Idempotent: no rows = no-op exit 0.
+
+### Fixed
+- **fix(start): preserve apptainer stderr in SIF build failures**
+  (#271, operator backlog #4 partial). Pre-fix shape:
+  ``_build_sif_from_{uri,def}`` returned ``False`` on apptainer
+  build failure, silently dropping the stderr — callers saw only a
+  generic "Failed to start agent" upstream with no diagnostic.
+  Now ``capture_output=True`` + raises ``RuntimeError`` with the
+  apptainer stderr verbatim. Success path unchanged.
+- **fix(tests): drop unused `time` / `typing.Iterator` imports**
+  (#273, ruff F401 cleanup on develop).
+- **fix(tests): replace `monkeypatch` with `subprocess_shim` in
+  test__forget** (#274, PA-306 §3 no-mocks). The new ``forget``
+  test used ``monkeypatch.setattr`` which the audit gate
+  forbids; refactored to the project's standard no-mocks
+  ``subprocess_shim`` fixture (real fake ssh on $PATH).
+- **fix(tests): drop literal `# noqa` from comment in
+  test__handlers.py** (#275, ruff invalid-directive warning
+  cleanup).
+
+### Docs
+- **docs(readme): refresh to v0.21.5** (#272). Adds ``sac agents
+  forget``, the SAC-from-SAC broker subsection, the
+  ``sac-listen.service`` systemd unit install recipe, the
+  ``sac dev {systemd,cron,daemon}`` group, and ``sac registry
+  sync``. Timestamp bumped.
+
 ## [0.21.5] — 2026-06-01
 
 ### Added
