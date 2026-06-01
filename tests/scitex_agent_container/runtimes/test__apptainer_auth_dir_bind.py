@@ -197,25 +197,43 @@ def test_pinned_claude_config_dir_env_unchanged(
 # ---------------------------------------------------------------------------
 
 
-def test_host_atomic_replace_inside_account_dir_is_visible_via_bind_source(
+def test_auth_argv_emits_bind_for_tmp_sac_claude_target(
     tmp_path: Path, home_redirect: Path
 ) -> None:
-    # Arrange — boot a pinned agent's auth flow, then simulate the
+    # Arrange — precondition for the atomic-replace regression below:
+    # auth_argv must emit a bind whose dest is /tmp/sac-claude. Without
+    # the bind, the in-container CLI has no shared snapshot at all.
+    # Split out of the host-replace test for TQ007 (one assert per test);
+    # the replace test relies on this precondition holding.
+    now = time.time()
+    _write_snapshot(home_redirect, "alpha", now + 3_600)
+    cfg = _pinned_config(tmp_path / "wd", account="alpha")
+    # Act
+    argv = auth_argv(cfg, state_dir=tmp_path / "state")
+    bind_src = _extract_bind_source_for_target(argv, "/tmp/sac-claude")
+    # Assert
+    assert bind_src is not None
+
+
+def test_dir_bind_reflects_host_atomic_replace_with_new_token(
+    tmp_path: Path, home_redirect: Path
+) -> None:
+    # Arrange — boot a pinned agent's auth flow, then prepare the
     # host-side atomic-replace path that creds_sync._atomic_copy +
     # account_store.switch_account + claude_usage._refresh_access_token_at
-    # all share: write .credentials.json.tmp, then os.replace onto the
-    # snapshot. With a directory bind, opening
-    # ``<bind_source>/.credentials.json`` after the replace MUST yield
-    # the NEW token (NEW inode resolved via dir lookup). The legacy
-    # single-file bind detached under exactly this sequence.
+    # all share: write .credentials.json.tmp alongside the snapshot.
+    # With a directory bind, opening ``<bind_source>/.credentials.json``
+    # after the replace MUST yield the NEW token (NEW inode resolved via
+    # dir lookup). The legacy single-file bind detached under exactly
+    # this sequence. The precondition that auth_argv emits the bind at
+    # all is covered by
+    # ``test_auth_argv_emits_bind_for_tmp_sac_claude_target``; here we
+    # let ``Path(None)`` raise TypeError loudly if that ever regresses.
     now = time.time()
     snap = _write_snapshot(home_redirect, "alpha", now + 3_600, token="boot-token")
     cfg = _pinned_config(tmp_path / "wd", account="alpha")
     argv = auth_argv(cfg, state_dir=tmp_path / "state")
-    bind_src = _extract_bind_source_for_target(argv, "/tmp/sac-claude")
-    assert bind_src is not None, "auth_argv did not emit /tmp/sac-claude bind"
-    bind_src_path = Path(bind_src)
-    # Act — host atomic-replace: write tmp sibling, then os.replace.
+    bind_src_path = Path(_extract_bind_source_for_target(argv, "/tmp/sac-claude"))
     new_body = {
         "claudeAiOauth": {
             "accessToken": "refreshed-token-after-host-replace",
@@ -224,6 +242,7 @@ def test_host_atomic_replace_inside_account_dir_is_visible_via_bind_source(
     }
     tmp_file = snap.with_suffix(snap.suffix + ".tmp")
     tmp_file.write_text(json.dumps(new_body))
+    # Act — host atomic-replace: rename tmp sibling onto the snapshot.
     os.replace(tmp_file, snap)
     # Assert — re-reading through the bind source's dir view picks up
     # the NEW content. Pre-fix file-bind would have read the orphan.
