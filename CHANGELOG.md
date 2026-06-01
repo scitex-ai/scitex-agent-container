@@ -6,6 +6,21 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.21.7] — 2026-06-01
+
+### Fixed
+- **fix(build): pin `hatchling<1.28` to dodge twine
+  Metadata-Version 2.5 rejection.** hatchling ≥1.28 emits
+  ``Metadata-Version: 2.5`` which the pypa-publish action's bundled
+  twine rejects with ``InvalidDistribution: '2.5' is not a valid
+  metadata version`` (verified on the v0.21.6 release build,
+  workflow run 26728715926 — pypi-publish failed; no artifact landed
+  on PyPI and no GitHub Release was created). Hatchling 1.27 emits
+  ``Metadata-Version: 2.4`` which twine accepts. Same code contents
+  as the unpublished v0.21.6 (see ``[0.21.6]`` section below for the
+  feature/fix list); re-evaluate the pin when
+  ``pypa/gh-action-pypi-publish`` ships a newer twine.
+
 ## [0.21.6] — 2026-06-01
 
 ### Added
