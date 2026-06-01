@@ -6,6 +6,35 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.21.9] — 2026-06-01
+
+### Fixed
+- **fix(channel): suppress empty-content delivery acks at the sender**
+  (#260, lead handoff). Killed the empty-ack ping-pong spam hitting
+  every inbox (incl. lead's). New ``_channel_ack_filter`` +
+  ``_channel_auto_ack`` modules; sender-side filter drops empty-
+  content acks before the wire so the receiver never sees them.
+  Rate-limit env knobs (``SAC_AUTO_ACK_RATE_MAX`` /
+  ``SAC_AUTO_ACK_RATE_WINDOW_S``) gate spammy auto-ack loops.
+- **fix(smoke): update deny-row assertions for task #27 two-row
+  contract** (#281). v0.21.8's pypa-publish failed because the
+  smoke test ``test_listen_denied_send_persists_exactly_one_
+  channel_events_row`` pinned the pre-task-#27 single-row
+  contract; task #27 (block/unblock approve-flow, landed in
+  v0.21.8's contents) intentionally added a second row (the
+  ``approval_prompt`` push). Smoke test updated to the new two-
+  row contract + 5 new assertions on the prompt body (embeds
+  both ``sac a2a unblock`` and ``sac a2a block``, does NOT leak
+  the sender's body). No production code change; v0.21.8's
+  feature set still ships here.
+
+v0.21.9 = v0.21.8's full feature set (#278 + #279, task #27 ACL
+approve-prompt flow) re-cut after #260 + #281 unblocked the
+release pipeline. The v0.21.8 tag exists on GitHub but is a
+"ghost" — no PyPI artifact and no GitHub Release; operators
+install ``scitex-agent-container==0.21.9`` for the same feature
+set + the empty-ack fix + the smoke-test contract update.
+
 ## [0.21.8] — 2026-06-01
 
 ### Added
