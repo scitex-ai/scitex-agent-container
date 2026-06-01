@@ -686,9 +686,7 @@ def _consume_sse_n(
                         )
                         if len(seen) == n:
                             return seen
-        raise AssertionError(
-            f"SSE {url!r} closed before {n} events (saw {len(seen)})"
-        )
+        raise AssertionError(f"SSE {url!r} closed before {n} events (saw {len(seen)})")
 
     return _run()
 
@@ -722,9 +720,7 @@ def test_listen_replay_on_reconnect_replays_pre_subscribe_events_in_id_order(com
                     )
         # First subscribe — replays e1 + e2; surface their contents in
         # arrival order so the assertion can compare on order alone.
-        frames = await _consume_sse_n(
-            url_stream, 2, bearer=_bearer(tokens["beta"])
-        )
+        frames = await _consume_sse_n(url_stream, 2, bearer=_bearer(tokens["beta"]))
         return [evt.get("content") for _id, evt in frames]
 
     # Act
@@ -765,14 +761,10 @@ def test_listen_replay_on_reconnect_resumes_only_post_cursor_event_with_last_eve
         # the resume cursor. The *order* of these frames is covered as
         # primary behaviour by the sister test above, so a wrong order
         # here is a precondition failure, not the assertion under test.
-        first_two = await _consume_sse_n(
-            url_stream, 2, bearer=_bearer(tokens["beta"])
-        )
+        first_two = await _consume_sse_n(url_stream, 2, bearer=_bearer(tokens["beta"]))
         first_contents = [evt.get("content") for _id, evt in first_two]
         if first_contents != ["e1", "e2"]:
-            raise RuntimeError(
-                f"precondition: replay order wrong: {first_contents!r}"
-            )
+            raise RuntimeError(f"precondition: replay order wrong: {first_contents!r}")
         # Third publish post-disconnect.
         async with httpx.AsyncClient(timeout=5.0) as ac:
             r3 = await ac.post(
@@ -870,20 +862,28 @@ def test_listen_denied_send_returns_403_to_sender(denied_send_channel_rows):
     assert status == 403, resp.text
 
 
-def test_listen_denied_send_persists_exactly_one_channel_events_row(
+def test_listen_denied_send_persists_exactly_two_channel_events_rows(
     denied_send_channel_rows,
 ):
+    """Task #27 (ACL block/unblock approve-flow) — a cross-group deny
+    now persists TWO rows on the receiver: (1) the existing metadata-
+    only ``denied_attempt`` (comms item D) AND (2) the new
+    ``approval_prompt`` push embedding the ``sac a2a unblock`` /
+    ``sac a2a block`` CLI commands. Pre-task-#27 this assertion was
+    ``n == 1``; the contract change is intentional and ships in
+    v0.21.8."""
     # Arrange
     rows = denied_send_channel_rows["rows"]
     # Act
     n = len(rows)
     # Assert
-    assert n == 1, rows
+    assert n == 2, rows
 
 
-def test_listen_denied_send_persisted_row_kind_is_denied_attempt(
+def test_listen_denied_send_persisted_first_row_kind_is_denied_attempt(
     denied_send_channel_rows,
 ):
+    """First row preserved verbatim from pre-task-#27 (comms item D)."""
     # Arrange
     row = denied_send_channel_rows["rows"][0]
     # Act
@@ -892,10 +892,28 @@ def test_listen_denied_send_persisted_row_kind_is_denied_attempt(
     assert kind == "denied_attempt"
 
 
+def test_listen_denied_send_persisted_second_row_is_approval_prompt(
+    denied_send_channel_rows,
+):
+    """Second row added by task #27 — the receiver-facing prompt
+    (``kind="message"`` so existing inbox renderers surface it via
+    the normal-message path; structured fields ride in
+    ``extra.approval_prompt``)."""
+    # Arrange
+    row = denied_send_channel_rows["rows"][1]
+    meta = json.loads(row["meta_json"])
+    # Act
+    is_prompt = (meta.get("extra") or {}).get("approval_prompt")
+    # Assert
+    assert is_prompt is True
+
+
 def test_listen_denied_send_persisted_row_source_names_the_sender(
     denied_send_channel_rows,
 ):
-    # Arrange
+    # Arrange — denied_attempt row only (the approval_prompt row's
+    # ``source`` is also alpha by design, so either would pass; pin
+    # on the historical row to keep the test specific).
     row = denied_send_channel_rows["rows"][0]
     # Act
     source = row["source"]
@@ -906,9 +924,11 @@ def test_listen_denied_send_persisted_row_source_names_the_sender(
 def test_listen_denied_send_persisted_row_content_column_is_empty(
     denied_send_channel_rows,
 ):
-    """Hard-pinned to ``""`` (or NULL) — the sender's body must never
-    land in the receiver's durable inbox.
-    """
+    """Hard-pinned to ``""`` (or NULL) on the ``denied_attempt`` row
+    — the sender's body must never land in the receiver's durable
+    inbox. The companion ``approval_prompt`` row's content is the
+    operator-facing prompt text (not the sender's body — those are
+    different things)."""
     # Arrange
     row = denied_send_channel_rows["rows"][0]
     # Act
@@ -927,6 +947,48 @@ def test_listen_denied_send_persisted_row_meta_json_carries_deny_reason(
     reason = meta.get("extra", {}).get("deny_reason", "")
     # Assert
     assert "cross-group" in reason
+
+
+def test_listen_denied_send_approval_prompt_embeds_unblock_command(
+    denied_send_channel_rows,
+):
+    """The approve-prompt push MUST embed the ``sac a2a unblock``
+    command so the receiver can act without leaving the inbox.
+    Task #27 contract: prompt body is self-contained."""
+    # Arrange
+    row = denied_send_channel_rows["rows"][1]
+    # Act
+    body = row["content"] or ""
+    # Assert
+    assert "sac a2a unblock alpha gamma" in body
+
+
+def test_listen_denied_send_approval_prompt_embeds_block_command(
+    denied_send_channel_rows,
+):
+    """Task #27 contract: the prompt embeds BOTH the unblock AND
+    block commands so the receiver picks one verb."""
+    # Arrange
+    row = denied_send_channel_rows["rows"][1]
+    # Act
+    body = row["content"] or ""
+    # Assert
+    assert "sac a2a block alpha gamma" in body
+
+
+def test_listen_denied_send_approval_prompt_does_not_leak_sender_body(
+    denied_send_channel_rows,
+):
+    """Task #27 contract: the approval prompt MUST NOT echo the
+    denied message body — receivers decide on IDENTITY, not on
+    content. The sender's original body (``_DENIED_BODY``) is
+    NEVER copied into the prompt push."""
+    # Arrange
+    row = denied_send_channel_rows["rows"][1]
+    # Act
+    body = row["content"] or ""
+    # Assert
+    assert _DENIED_BODY not in body
 
 
 def test_listen_denied_send_persisted_row_does_not_leak_message_body(
