@@ -746,16 +746,44 @@ def test_account_list_human_shows_offline_plan_label(sandbox_home):
     assert "Max 20x" in result.output
 
 
-def test_account_list_human_shows_usage_dash_when_no_cache(sandbox_home):
-    # Arrange — snapshot present, but no per-account usage.json cache.
+def _invoke_account_list_with_no_usage_cache(sandbox_home) -> str:
+    """Stage a stored account with NO usage.json cache and run ``sac account list``."""
     _write_plan_snapshot(
         sandbox_home, "work", subscription="pro", tier="default_claude_pro"
     )
     runner = CliRunner()
+    return runner.invoke(account, ["list"]).output
+
+
+def test_account_list_human_shows_5h_pct_column_when_no_cache(sandbox_home):
+    """Rich table emits the ``5h%`` column header even when usage is absent."""
+    # Arrange — fresh ``$HOME`` (sandbox_home autouse fixture).
+    home = sandbox_home
     # Act
-    result = runner.invoke(account, ["list"])
-    # Assert — cache-only usage renders the em-dash placeholder.
-    assert "usage: —" in result.output
+    output = _invoke_account_list_with_no_usage_cache(home)
+    # Assert
+    assert "5h%" in output
+
+
+def test_account_list_human_shows_7d_pct_column_when_no_cache(sandbox_home):
+    """Rich table emits the ``7d%`` column header even when usage is absent."""
+    # Arrange — fresh ``$HOME`` (sandbox_home autouse fixture).
+    home = sandbox_home
+    # Act
+    output = _invoke_account_list_with_no_usage_cache(home)
+    # Assert
+    assert "7d%" in output
+
+
+def test_account_list_human_shows_dash_cells_when_no_cache(sandbox_home):
+    """Empty-data cells render as ``-`` (rich table) when usage is absent."""
+    # Arrange — fresh ``$HOME`` (sandbox_home autouse fixture).
+    home = sandbox_home
+    # Act
+    output = _invoke_account_list_with_no_usage_cache(home)
+    # Assert — the prior ``usage: —`` was a flat-line format; the new
+    # renderer emits one cell per metric, with ``-`` for missing values.
+    assert " - " in output
 
 
 def test_account_list_json_includes_plan_label(sandbox_home):
