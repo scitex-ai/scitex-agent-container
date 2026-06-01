@@ -261,26 +261,34 @@ def _emit(result: dict, as_json: bool) -> None:
 def _do_unblock(sender: str, target: str, note: str | None) -> None:
     """Shared implementation for both ``grant`` (legacy) and ``unblock``.
 
-    Both verbs UNBLOCK ``SENDER → TARGET``: write the
-    ``comms_grants`` row (sender's future messages pass), remove any
-    ``comms_blocks`` row (if previously blocked), and clear any
-    ``pending_prompts`` row so the receiver is not re-prompted on
-    the next denied attempt. Per lead's task #27 amendment, NO held
-    message is replayed — the sender resends if needed.
+    Task #27 PR B: dispatches via
+    :func:`_a2a_acl_dispatch.dispatch_acl_decision` which routes
+    in-SIF → host listen HTTP (so the write lands on the host's
+    state.db) and bare-host → local DB helpers directly.
     """
-    from .._state.grant_flush import unblock_and_clear_pending
+    from ._a2a_acl_dispatch import dispatch_acl_decision
 
     try:
-        result = unblock_and_clear_pending(sender=sender, target=target, note=note)
+        result = dispatch_acl_decision(
+            "unblock", sender=sender, target=target, note=note
+        )
+    except click.ClickException:
+        raise
     except ValueError as exc:
         click.echo(f"error: {exc}", err=True)
         raise SystemExit(2) from exc
+    except Exception as exc:
+        # In-SIF broker raised an AclBrokerError (or transport
+        # error). Surface as a clean ClickException so the
+        # operator sees a single-line stderr instead of a
+        # traceback.
+        raise click.ClickException(str(exc)) from exc
     from ._helpers import console
 
     extras = []
-    if result["unblocked"]:
+    if result.get("unblocked"):
         extras.append("removed block")
-    if result["cleared_pending"]:
+    if result.get("cleared_pending"):
         extras.append("cleared pending prompt")
     tail = f" [dim]({'; '.join(extras)})[/dim]" if extras else ""
     console.print(f"[green]ok[/green]  unblocked  {sender}  ->  {target}{tail}")
@@ -366,16 +374,22 @@ def a2a_block(sender: str, target: str, note: str | None) -> None:
       $ sac a2a block worker-a lead
       $ sac a2a block worker-a lead --note "prompt msg_id abc123"
     """
-    from .._state.grant_flush import block_and_clear_pending
+    from ._a2a_acl_dispatch import dispatch_acl_decision
 
     try:
-        result = block_and_clear_pending(sender=sender, target=target, note=note)
+        result = dispatch_acl_decision("block", sender=sender, target=target, note=note)
+    except click.ClickException:
+        raise
     except ValueError as exc:
         click.echo(f"error: {exc}", err=True)
         raise SystemExit(2) from exc
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
     from ._helpers import console
 
-    tail = " [dim](cleared pending prompt)[/dim]" if result["cleared_pending"] else ""
+    tail = (
+        " [dim](cleared pending prompt)[/dim]" if result.get("cleared_pending") else ""
+    )
     console.print(f"[yellow]ok[/yellow]  blocked  {sender}  ->  {target}{tail}")
 
 
