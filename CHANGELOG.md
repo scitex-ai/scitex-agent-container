@@ -6,6 +6,41 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.21.8] — 2026-06-01
+
+### Added
+- **feat(acl): block/unblock approve-prompt flow** (#278 + #279,
+  operator-requested via lead — task #27). Cross-group denied
+  sends now emit ONE receiver-facing prompt embedding BOTH
+  ``sac a2a unblock <s> <t>`` and ``sac a2a block <s> <t>`` so
+  the receiver picks the verb. Dedupe: repeats from the same
+  (sender, target) pair while pending DO NOT re-prompt. UNBLOCK
+  writes ``comms_grants`` + removes any ``comms_blocks`` + clears
+  the pending row (sender's future messages pass; the original
+  denied message is NOT replayed — sender resends). BLOCK writes
+  ``comms_blocks`` (block precedence over grant) + clears the
+  pending row (sender's future attempts silently dropped — no
+  receiver push, no approve-prompt re-fire, sender still gets
+  403). New CLI verbs ``sac a2a unblock`` and ``sac a2a block``;
+  legacy ``sac a2a grant`` aliased to unblock. The push body
+  intentionally does NOT leak the denied message content —
+  receivers decide on identity, not on content. Intentionally
+  drops the earlier-design TTL knob + latest-wins / replay
+  machinery per the operator's "fragile spam-debounce" feedback.
+- **feat(acl): in-container broker for the ACL decision CLI verbs**
+  (#279, operator-greenlit Q5 / lead FUTURE item 4). Today an
+  in-container ``sac a2a {unblock,block,grant}`` used to write the
+  per-container state.db — silently ineffective against the host
+  listen's ACL checks (which consult the HOST'S state.db, a
+  different file). This PR adds three new host-listen routes
+  (``POST /v1/acl/{unblock,block,grant}``) + a stdlib-only HTTP
+  broker (``_state/_acl_broker_client.py``) that mirrors the
+  SAC-from-SAC ``_spawn_client`` pattern from #261. The CLI
+  detects in-SIF via ``_lifecycle._in_sif_broker.is_in_sif`` and
+  routes accordingly: in-SIF → host listen HTTP, bare-host →
+  local DB helpers directly. Receivers can run the verb from any
+  context and the write lands on the right db.
+
 ## [0.21.7] — 2026-06-01
 
 ### Fixed
