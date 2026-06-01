@@ -75,30 +75,66 @@ def auth_argv(config: AgentConfig, state_dir: Path) -> list[str]:
     # a manual scp-from-lead dance to re-seed peers. The CLI's
     # refresh code-path itself is responsible for any concurrency
     # locking — the bind is just a file passthrough.
+    #
     # Per-agent OAuth account pinning (spec.claude.account). When set,
-    # we bind the saved account's snapshot file at
-    # ~/.scitex/agent-container/accounts/<acct>/.credentials.json
-    # directly as ``:rw`` (operator task #15). The in-container Claude
-    # CLI's ~1h OAuth refresh writes back to the SAME file every
-    # same-account agent reads from, so the snapshot is self-healing
-    # and never expires while ANY pinned agent keeps running. Different
-    # accounts have different snapshots → no cross-account interference.
-    # The prior implementation COPIED the snapshot into a per-agent
-    # state-dir; refresh writes landed on that copy, the snapshot
-    # itself drifted stale, and after ~8h every SDK turn 401'd silently
-    # (the 2026-06-01 fleet-wide outage). ``account=""`` → host live
-    # ``~/.claude/.credentials.json`` (unchanged behaviour; also RW
-    # for the same refresh-in-place reason).
+    # we bind the per-account DIRECTORY
+    # (``~/.scitex/agent-container/accounts/<acct>/``) at
+    # ``/tmp/sac-claude`` ``:rw``. CLAUDE_CONFIG_DIR points the
+    # in-container Claude CLI at that dir so it reads
+    # ``.credentials.json`` from within the bound directory.
+    #
+    # Why a DIRECTORY bind, not a single-file bind (operator task #11):
+    # the per-account snapshot is rewritten by host-side atomic-replace
+    # paths — ``_account.creds_sync._atomic_copy`` (sync-live),
+    # ``_state.account_store.switch_account``, and
+    # ``_account.claude_usage._refresh_access_token_at`` — all using
+    # ``tmp + os.replace``. A single-file bind mount is on the file's
+    # dentry/inode; an atomic-replace orphans that inode (the bind
+    # surfaces as ``...credentials.json//deleted`` in
+    # ``/proc/<pid>/mountinfo``) and every already-running pinned agent
+    # silently loses the shared snapshot, regressing into the per-copy
+    # collision-401 disease that the snapshot model was meant to fix
+    # (PR #262 / task #15). A DIRECTORY bind resolves child files by
+    # name through the underlying filesystem on every open, so a
+    # tmp+rename inside the dir is visible to the container immediately
+    # — in BOTH directions (host writes seen by the container, and
+    # in-container CLI refresh writes seen by host writers).
+    #
+    # ``account=""`` → host live ``~/.claude/.credentials.json``
+    # (unchanged behaviour; single-file bind preserved because we MUST
+    # NOT expose the entire host ``~/.claude/`` directory — chat
+    # history, projects DB, MCP settings — into the container).
     from ._apptainer_creds import resolve_cred_file
 
     cred_file = resolve_cred_file(config, state_dir)
-    if cred_file is not None and cred_file.is_file():
-        argv += [
-            "--bind",
-            f"{cred_file}:/tmp/sac-claude/.credentials.json:rw",
-            "--env",
-            "CLAUDE_CONFIG_DIR=/tmp/sac-claude",
-        ]
+    if cred_file is None or not cred_file.is_file():
+        return argv
+
+    pinned_account = bool(getattr(getattr(config, "claude", None), "account", "") or "")
+    if pinned_account:
+        # Bind the per-account DIRECTORY; tmp+rename of the snapshot
+        # inside it stays visible to the container. Account-store
+        # metadata (``account.json``) is co-bound but harmless — the
+        # in-container CLI only opens ``.credentials.json``.
+        bind_src = cred_file.parent
+        bind_dest = "/tmp/sac-claude"
+    else:
+        # Unpinned: keep the legacy single-file bind. The host live
+        # ``~/.claude/.credentials.json`` is rewritten only by manual
+        # ``claude /login`` / ``sac accounts switch`` events; the
+        # routine in-container refresh writeback into a bound regular
+        # file at ``/tmp/sac-claude/.credentials.json`` is the
+        # documented contract. Binding ``~/.claude/`` itself would
+        # leak the host's full claude state into the container.
+        bind_src = cred_file
+        bind_dest = "/tmp/sac-claude/.credentials.json"
+
+    argv += [
+        "--bind",
+        f"{bind_src}:{bind_dest}:rw",
+        "--env",
+        "CLAUDE_CONFIG_DIR=/tmp/sac-claude",
+    ]
     return argv
 
 

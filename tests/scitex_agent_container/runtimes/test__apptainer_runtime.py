@@ -1145,14 +1145,18 @@ def _save_snapshot(home: Path, name: str, body: str | None = None) -> Path:
     return snap
 
 
-def test_argv_pins_account_binds_snapshot_path_directly_not_host_file(
+def test_argv_pins_account_binds_snapshot_directory_not_host_file(
     tmp_path: Path, home_redirect: Path
 ) -> None:
     # Arrange — host live file AND a saved snapshot both exist; the pin
-    # must bind the SNAPSHOT FILE ITSELF (operator task #15 — the prior
-    # copy-into-state-dir path was the root cause of the 2026-06-01
-    # fleet outage: refreshes landed on the copy, the snapshot drifted
-    # stale, every SDK turn 401'd after ~8h).
+    # must bind the snapshot's per-account DIRECTORY (task #11 — the
+    # prior single-file bind orphaned its inode under the host's
+    # atomic-replace writers in creds_sync / account_store /
+    # claude_usage, regressing into the per-copy collision-401 disease
+    # the snapshot model was meant to fix). The bound dir's child
+    # ``.credentials.json`` remains the snapshot itself; refresh
+    # writeback by the in-container CLI lands in the same on-disk file
+    # every same-account agent reads from.
     host_creds = home_redirect / ".claude" / ".credentials.json"
     host_creds.parent.mkdir(parents=True, exist_ok=True)
     host_creds.write_text('{"host": true}')
@@ -1163,10 +1167,15 @@ def test_argv_pins_account_binds_snapshot_path_directly_not_host_file(
     cfg = _config(tmp_path, claude=ClaudeSpec(account="alpha"))
     # Act
     argv = rt.build_run_argv(cfg, state_dir=state_dir, sif_path=tmp_path / "x.sif")
-    creds_arg = next(a for a in argv if "/tmp/sac-claude/.credentials.json" in a)
-    # Assert — the bound host-side path IS the snapshot file, neither
-    # a per-agent copy nor the host live file.
-    assert creds_arg.startswith(str(snap))
+    creds_arg = next(
+        a
+        for a in argv
+        if a.startswith(str(snap.parent) + ":") and a.endswith(":/tmp/sac-claude:rw")
+    )
+    # Assert — the bound host-side source IS the account directory
+    # (snapshot.parent), neither the snapshot file alone, a per-agent
+    # copy, nor the host live file.
+    assert creds_arg.split(":")[0] == str(snap.parent)
 
 
 def test_argv_pins_account_does_not_create_state_dir_copy(
