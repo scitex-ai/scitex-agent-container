@@ -278,3 +278,127 @@ async def test_a2a_ack_returns_structured_suppression_marker(
     body = json.loads(out[0].text)
     # Assert
     assert body.get("body", {}).get("suppressed") == "empty_ack"
+
+
+# ---------------------------------------------------------------------------
+# (3) Defensive branch coverage — predicate + rate-limit env parsing
+#
+# These tests target the structural "give-up" branches the predicate and
+# the rate-limit env helpers take on malformed input. Without explicit
+# coverage these branches sit untested at the codecov-patch threshold;
+# fail-loud invariants for the operator's "no silent acks" contract
+# deserve test pins so a future refactor cannot turn one into a silent
+# True/False flip.
+# ---------------------------------------------------------------------------
+
+
+def test_predicate_returns_false_when_message_is_not_a_dict():
+    # Arrange — params.message is a string (malformed envelope).
+    bad: dict[str, Any] = {
+        "jsonrpc": "2.0",
+        "id": "rid",
+        "method": "SendMessage",
+        "params": {
+            "message": "not-a-dict",
+            "metadata": {"ack": True, "from_agent": "alice"},
+        },
+    }
+    # Act
+    decision = envelope_is_contentless_ack(bad)
+    # Assert
+    assert decision is False
+
+
+def test_predicate_returns_false_when_text_is_not_a_string():
+    # Arrange — parts[0].text is an int (some buggy producer).
+    bad: dict[str, Any] = {
+        "jsonrpc": "2.0",
+        "id": "rid",
+        "method": "SendMessage",
+        "params": {
+            "message": {
+                "message_id": "mid",
+                "role": "ROLE_USER",
+                "parts": [{"text": 42}],
+            },
+            "metadata": {"ack": True, "from_agent": "alice"},
+        },
+    }
+    # Act
+    decision = envelope_is_contentless_ack(bad)
+    # Assert
+    assert decision is False
+
+
+def test_auto_ack_rate_limit_non_numeric_max_falls_back_to_default(
+    monkeypatch_safe_env,
+):
+    # Arrange — bad env value; the helper must fall back rather than
+    # raise. ``monkeypatch_safe_env`` (defined below as a yield-style
+    # save/restore fixture, no monkeypatch.setattr on production code)
+    # sets the env for the call window only.
+    monkeypatch_safe_env("SAC_AUTO_ACK_RATE_MAX", "not-a-number")
+    from scitex_agent_container._mcp._channel_auto_ack import (
+        _auto_ack_rate_limits,
+    )
+
+    # Act
+    max_n, _window = _auto_ack_rate_limits()
+    # Assert — fell back to the module default (positive int).
+    assert isinstance(max_n, int) and max_n > 0
+
+
+def test_auto_ack_rate_limit_non_numeric_window_falls_back_to_default(
+    monkeypatch_safe_env,
+):
+    # Arrange
+    monkeypatch_safe_env("SAC_AUTO_ACK_RATE_WINDOW_S", "abc")
+    from scitex_agent_container._mcp._channel_auto_ack import (
+        _auto_ack_rate_limits,
+    )
+
+    # Act
+    _max_n, window = _auto_ack_rate_limits()
+    # Assert
+    assert isinstance(window, float) and window > 0
+
+
+def test_auto_ack_rate_disabled_when_max_is_zero(monkeypatch_safe_env):
+    # Arrange — non-positive max is the explicit opt-out per the
+    # docstring contract ("A non-positive max disables the cap").
+    monkeypatch_safe_env("SAC_AUTO_ACK_RATE_MAX", "0")
+    from scitex_agent_container._mcp._channel_auto_ack import (
+        _auto_ack_rate_allow,
+    )
+
+    # Act
+    decision = _auto_ack_rate_allow("alice")
+    # Assert — disabled → always allow.
+    assert decision is True
+
+
+@pytest.fixture
+def monkeypatch_safe_env():
+    """Yield-style env setter that save/restores per key — no monkeypatch.
+
+    The audit gate forbids ``monkeypatch.setattr`` on production
+    internals; this fixture wraps a real ``os.environ`` mutation in
+    a try/finally so the test never leaks env into siblings.
+    """
+    import os as _os
+
+    saved: dict[str, str | None] = {}
+
+    def _set(key: str, value: str) -> None:
+        if key not in saved:
+            saved[key] = _os.environ.get(key)
+        _os.environ[key] = value
+
+    try:
+        yield _set
+    finally:
+        for k, prev in saved.items():
+            if prev is None:
+                _os.environ.pop(k, None)
+            else:
+                _os.environ[k] = prev
