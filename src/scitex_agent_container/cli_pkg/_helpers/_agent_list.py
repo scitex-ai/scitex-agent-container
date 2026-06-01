@@ -151,6 +151,11 @@ def get_agent_list_data(
             if capability not in caps:
                 continue
 
+        # ``pid`` carries the recorded container-root PID from the
+        # registry. Used downstream by the per-agent resource probe
+        # (``cpu_percent`` + ``mem_rss_mb``) to walk the process tree.
+        # Absent / ``0`` is the registry's "unknown PID" sentinel; the
+        # probe maps that to ``None`` so the row gets no resource keys.
         prep = {
             "idx": idx,
             "name": name,
@@ -159,6 +164,7 @@ def get_agent_list_data(
             "labels": labels,
             "cfg": cfg,
             "config_path": config_path,
+            "pid": entry.get("pid") or 0,
         }
         prepared.append(prep)
 
@@ -202,6 +208,32 @@ def get_agent_list_data(
                     probe_results[idx] = None
         finally:
             pool.shutdown(wait=False)
+
+    # 2.5th pass: per-agent CPU% + RSS via ONE psutil sweep. Walks each
+    # running agent's recorded PID + descendants (the apptainer
+    # container process tree). Lead task 2026-06-01: attribute host
+    # load to specific agents.
+    #
+    # Best-effort + cheap: a single ~100ms batched sleep covers every
+    # agent's cpu_percent delta — wall-clock cost is constant in agent
+    # count. Probe is called for the FULL prepared set; dead / unknown
+    # PIDs map to ``None`` inside ``collect_agent_resources`` and get
+    # no resource keys on the row (skill leaf 13_observability rule:
+    # ``absent ≠ 0``).
+    from ..._state._meta.resources import collect_agent_resources
+
+    _pids_to_probe = [prep["pid"] for prep in prepared if prep.get("pid")]
+    # stx-allow: fallback (reason: psutil may be absent or a per-process
+    # probe may fail mid-sweep; the list command must still render
+    # without resource columns. ``collect_agent_resources`` already
+    # absent-outs each PID on its own; this outer guard just catches
+    # the optional-dep ImportError case at module-import time.)
+    try:
+        _resources_by_pid: dict[int, dict[str, float] | None] = (
+            collect_agent_resources(_pids_to_probe) if _pids_to_probe else {}
+        )
+    except Exception:  # stx-allow: fallback (reason: see inline comment)
+        _resources_by_pid = {}
 
     # Third pass: build result rows. Per-row config_path is pulled
     # from each ``prep`` dict so validation runs against the agent's
@@ -279,6 +311,14 @@ def get_agent_list_data(
             row["liveness_unknown"] = True
         if labels:
             row["labels"] = labels
+        # Lead task 2026-06-01: attribute host load to specific agents.
+        # Two new fields, both ABSENT (not 0.0, not None) when the
+        # process-tree probe can't resolve the agent's PID — observability
+        # contract distinguishes "not probed" from "empty".
+        _res = _resources_by_pid.get(prep["pid"])
+        if _res is not None:
+            row["cpu_percent"] = _res["cpu_percent"]
+            row["mem_rss_mb"] = _res["mem_rss_mb"]
         results.append(row)
 
     # Merge in agents that are *defined* on disk but absent from the
@@ -411,6 +451,13 @@ def print_agent_list(
     # Account labels (e.g. ``<name> (<email>)``) can be long; fold within
     # the cell rather than stealing width from the name column.
     table.add_column("Account", overflow="fold")
+    # Lead task 2026-06-01: CPU% + MEM columns so the operator can
+    # attribute host load (~load 42 at the time of this change) to
+    # specific agents instead of staring at host-wide summaries. Right-
+    # aligned (numeric); cells render as ``-`` when the row's
+    # resource probe absent-outs (dead PID, psutil missing, etc.).
+    table.add_column("CPU%", justify="right", no_wrap=True)
+    table.add_column("MEM", justify="right", no_wrap=True)
     table.add_column("Path", overflow="fold")
     table.add_column("Started")
     cmap = {
@@ -432,12 +479,18 @@ def print_agent_list(
         )
         started = row["started_at"] if row["started_at"] not in ("-", "?") else "—"
         account_cell = row.get("account") or "—"
+        # Absent (not in row) ≠ 0 — render the placeholder cell so the
+        # operator distinguishes "not probed" from "literally idle".
+        cpu_cell = f"{row['cpu_percent']:.1f}" if "cpu_percent" in row else "-"
+        mem_cell = f"{row['mem_rss_mb']:.0f}M" if "mem_rss_mb" in row else "-"
         table.add_row(
             row["name"],
             f"[{col}]{row['status']}[/{col}]",
             yaml_cell,
             host_cell,
             account_cell,
+            cpu_cell,
+            mem_cell,
             row.get("path") or "—",
             started,
         )

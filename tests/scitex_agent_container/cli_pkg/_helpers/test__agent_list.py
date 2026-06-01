@@ -641,3 +641,236 @@ def test_safe_account_for_returns_string_on_none_config():
     result = _al._safe_account_for(cfg)
     # Assert
     assert isinstance(result, str) and result
+
+
+# ---------------------------------------------------------------------------
+# Lead task 2026-06-01: per-agent CPU% + RSS in the list row.
+# ---------------------------------------------------------------------------
+#
+# These tests use real OS processes for the PID side of the contract:
+# ``os.getpid()`` (the pytest process itself) for the "live PID" case
+# and an int that is guaranteed unused for the "dead PID" case. The
+# probe code in ``_state._meta.resources`` IS the unit under test; the
+# rest of the list pipeline is exercised end-to-end with the real
+# ``_FakeRegistry`` + ``_write_valid_spec`` helpers used elsewhere in
+# this file. PA-306 no-mocks: no monkeypatch of psutil, no MagicMock,
+# no patched ``collect_agent_resources``.
+
+
+def test_get_data_running_row_carries_cpu_and_mem_keys(tmp_path):
+    # Arrange — real PID of the pytest process itself (always alive
+    # for the duration of this test). The probe walks os.getpid()'s
+    # process tree and returns real cpu_percent + mem_rss_mb floats.
+    import os as _os
+
+    spec = _write_valid_spec(tmp_path / "live")
+    entries = [
+        {
+            "name": "live",
+            "config": str(spec),
+            "screen": "-",
+            "started_at": "-",
+            "pid": _os.getpid(),
+        }
+    ]
+    registry = _FakeRegistry(entries)
+    # Act
+    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+        out = get_agent_list_data(registry)
+    # Assert — both keys present on the live-PID row.
+    assert "cpu_percent" in out[0] and "mem_rss_mb" in out[0]
+
+
+def test_get_data_dead_pid_row_omits_resource_keys(tmp_path):
+    # Arrange — a PID well above any kernel's PID space. Observability
+    # contract: absent ≠ 0 — the row must NOT carry zero-filled keys,
+    # the row must OMIT them so a consumer can tell "not probed" from
+    # "literally idle".
+    spec = _write_valid_spec(tmp_path / "dead")
+    entries = [
+        {
+            "name": "dead",
+            "config": str(spec),
+            "screen": "-",
+            "started_at": "-",
+            "pid": 2**31 - 1,
+        }
+    ]
+    registry = _FakeRegistry(entries)
+    # Act
+    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+        out = get_agent_list_data(registry)
+    # Assert — neither key on the row.
+    assert "cpu_percent" not in out[0] and "mem_rss_mb" not in out[0]
+
+
+def test_get_data_unknown_pid_sentinel_omits_resource_keys(tmp_path):
+    # Arrange — registry entry with ``pid=0`` (the "PID unknown"
+    # sentinel ``_pids_from_session`` returns when tmux can't tell us
+    # the pane PID). The probe must NOT treat 0 as a real PID; the
+    # row must omit the resource keys.
+    spec = _write_valid_spec(tmp_path / "unknown")
+    entries = [
+        {
+            "name": "unknown",
+            "config": str(spec),
+            "screen": "-",
+            "started_at": "-",
+            "pid": 0,
+        }
+    ]
+    registry = _FakeRegistry(entries)
+    # Act
+    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+        out = get_agent_list_data(registry)
+    # Assert
+    assert "cpu_percent" not in out[0] and "mem_rss_mb" not in out[0]
+
+
+def test_get_data_cpu_percent_value_is_float_when_probed(tmp_path):
+    # Arrange — same live-PID setup; pin the field TYPE so a future
+    # refactor can't accidentally emit a string or int (consumers
+    # like the table renderer use the numeric format).
+    import os as _os
+
+    spec = _write_valid_spec(tmp_path / "type")
+    entries = [
+        {
+            "name": "type",
+            "config": str(spec),
+            "screen": "-",
+            "started_at": "-",
+            "pid": _os.getpid(),
+        }
+    ]
+    registry = _FakeRegistry(entries)
+    # Act
+    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+        out = get_agent_list_data(registry)
+    # Assert
+    assert isinstance(out[0]["cpu_percent"], float)
+
+
+def test_get_data_mem_rss_mb_is_positive_when_probed(tmp_path):
+    # Arrange — the pytest process always has >>1 MB RSS; we just pin
+    # the floor so a regression to ``0.0`` (which would look like
+    # "probed and idle" — the wrong UX) is caught.
+    import os as _os
+
+    spec = _write_valid_spec(tmp_path / "rss")
+    entries = [
+        {
+            "name": "rss",
+            "config": str(spec),
+            "screen": "-",
+            "started_at": "-",
+            "pid": _os.getpid(),
+        }
+    ]
+    registry = _FakeRegistry(entries)
+    # Act
+    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+        out = get_agent_list_data(registry)
+    # Assert
+    assert out[0]["mem_rss_mb"] > 1.0
+
+
+def test_print_agent_list_renders_cpu_and_mem_columns(capsys, tmp_path):
+    # Arrange — live PID so the row carries the fields and the table
+    # picks them up.
+    import os as _os
+
+    spec = _write_valid_spec(tmp_path / "tbl")
+    registry = _FakeRegistry(
+        [
+            {
+                "name": "tbl",
+                "config": str(spec),
+                "screen": "s",
+                "started_at": "ts",
+                "pid": _os.getpid(),
+            }
+        ]
+    )
+    # Act
+    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+        print_agent_list(registry)
+    # Assert — both column headers appear in the rendered output.
+    out = capsys.readouterr().out
+    assert "CPU%" in out and "MEM" in out
+
+
+def test_print_agent_list_renders_dash_for_dead_pid_resource_cells(capsys, tmp_path):
+    # Arrange — dead PID; row absent-outs cpu_percent / mem_rss_mb; the
+    # table must render placeholder cells ("-"), NOT empty strings (so
+    # the column alignment stays readable).
+    spec = _write_valid_spec(tmp_path / "dead")
+    registry = _FakeRegistry(
+        [
+            {
+                "name": "dead",
+                "config": str(spec),
+                "screen": "s",
+                "started_at": "ts",
+                "pid": 2**31 - 1,
+            }
+        ]
+    )
+    # Act
+    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+        print_agent_list(registry)
+    # Assert — the row appears with the placeholder cells. We pin
+    # the agent's name AND a ``-`` cell on the same line; rich's
+    # default table renderer puts each row's cells on one line.
+    out = capsys.readouterr().out
+    dead_row_line = next((line for line in out.splitlines() if "dead" in line), "")
+    assert " - " in dead_row_line
+
+
+def test_print_agent_list_json_emits_cpu_percent_for_live_pid(capsys, tmp_path):
+    # Arrange — live PID, JSON path; the field must surface in the
+    # JSON serialisation (downstream consumers — fleet hubs, dashboards
+    # — read JSON, not the rich table).
+    import os as _os
+
+    spec = _write_valid_spec(tmp_path / "json")
+    registry = _FakeRegistry(
+        [
+            {
+                "name": "json",
+                "config": str(spec),
+                "screen": "s",
+                "started_at": "ts",
+                "pid": _os.getpid(),
+            }
+        ]
+    )
+    # Act
+    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+        print_agent_list_json(registry)
+    # Assert
+    data = json.loads(capsys.readouterr().out)
+    assert "cpu_percent" in data[0]
+
+
+def test_print_agent_list_json_omits_cpu_percent_for_dead_pid(capsys, tmp_path):
+    # Arrange — dead PID; JSON path must OMIT the key (not emit ``null``
+    # / 0.0) so the observability contract holds end-to-end.
+    spec = _write_valid_spec(tmp_path / "dead-json")
+    registry = _FakeRegistry(
+        [
+            {
+                "name": "dead-json",
+                "config": str(spec),
+                "screen": "s",
+                "started_at": "ts",
+                "pid": 2**31 - 1,
+            }
+        ]
+    )
+    # Act
+    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+        print_agent_list_json(registry)
+    # Assert
+    data = json.loads(capsys.readouterr().out)
+    assert "cpu_percent" not in data[0]

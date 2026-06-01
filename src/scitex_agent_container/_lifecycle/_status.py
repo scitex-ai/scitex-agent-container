@@ -201,6 +201,26 @@ def agent_status(
     except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         result["snapshot"] = None
 
+    # Lead task 2026-06-01: per-agent CPU% + RSS in the status JSON. The
+    # list command does its own batched probe across all rows; for the
+    # single-agent status path we probe one PID directly. Same module
+    # (``_state._meta.resources.collect_agent_resources``), same
+    # observability contract (absent ≠ 0, dead PID → no fields).
+    # stx-allow: fallback (reason: psutil is an optional dependency;
+    # absence (or any per-process probe failure) absent-outs the row
+    # rather than crashing status — same shape as the host metrics block.)
+    try:
+        from .._state._meta.resources import collect_agent_resources
+
+        _pid_for_probe = entry.get("pid") or 0
+        if _pid_for_probe:
+            _agent_res = collect_agent_resources([_pid_for_probe]).get(_pid_for_probe)
+            if _agent_res is not None:
+                result["cpu_percent"] = _agent_res["cpu_percent"]
+                result["mem_rss_mb"] = _agent_res["mem_rss_mb"]
+    except Exception:  # stx-allow: fallback (reason: see inline comment)
+        pass
+
     # Enrich with claude-hud-style metadata. Canonical source for the
     # Agents-tab dashboard; the MCP sidecar heartbeat shells out to this
     # command rather than duplicating the logic in TypeScript.

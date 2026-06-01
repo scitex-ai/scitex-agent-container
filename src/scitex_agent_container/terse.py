@@ -90,6 +90,12 @@ TERSE_STATUS_FIELDS: tuple[str, ...] = (
     "skills_loaded",
     "hostname_canonical",
     "machine",
+    # Lead task 2026-06-01: per-agent CPU% + RSS so the terse status
+    # surface can attribute host load to individual agents. Absent when
+    # the recorded PID is unknown / dead — see
+    # ``_state._meta.resources.collect_agent_resources``.
+    "cpu_percent",
+    "mem_rss_mb",
 )
 
 # Whitelist used by ``scitex-agent-container take-snapshot --json --terse``.

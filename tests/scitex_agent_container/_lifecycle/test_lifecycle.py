@@ -1483,6 +1483,93 @@ def test_agent_status_config_load_failure_reports_unknown_model_and_runtime(
 
 
 # ---------------------------------------------------------------------------
+# agent_status — per-agent CPU% + RSS (lead task 2026-06-01).
+#
+# Real PIDs only. ``Registry.add`` defaults the recorded PID to
+# ``os.getpid()`` which is the live pytest process — a guaranteed-alive
+# PID for the duration of each test, so the probe walks a real
+# ``/proc/<pid>`` tree and surfaces real cpu_percent + mem_rss_mb floats.
+# Dead-PID handling is tested by writing a registry entry with an
+# explicitly unused PID. PA-306 no-mocks throughout.
+# ---------------------------------------------------------------------------
+
+
+def test_agent_status_includes_cpu_percent_for_live_pid(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange — Registry.add records ``os.getpid()`` (the pytest
+    # process itself), which the resource probe finds alive.
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    # Act
+    result = lc.agent_status(
+        "alpha", registry=registry, runtime_factory=lambda _c: FakeRuntime(running=True)
+    )
+    # Assert
+    assert "cpu_percent" in result
+
+
+def test_agent_status_cpu_percent_value_is_float(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    # Act
+    result = lc.agent_status(
+        "alpha", registry=registry, runtime_factory=lambda _c: FakeRuntime(running=True)
+    )
+    # Assert
+    assert isinstance(result["cpu_percent"], float)
+
+
+def test_agent_status_mem_rss_mb_is_positive_for_live_pid(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange — the pytest process always has >>1 MB RSS; pin the
+    # floor so a regression to 0.0 (which would read as "probed and
+    # empty" — the wrong UX) is caught.
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    # Act
+    result = lc.agent_status(
+        "alpha", registry=registry, runtime_factory=lambda _c: FakeRuntime(running=True)
+    )
+    # Assert
+    assert result["mem_rss_mb"] > 1.0
+
+
+def test_agent_status_omits_cpu_percent_for_dead_pid(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange — record a PID above any kernel's PID space so the
+    # probe can never resolve it. Observability contract: absent ≠ 0
+    # — the row must OMIT the keys, not emit zero-filled.
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha", pid=2**31 - 1)
+    # Act
+    result = lc.agent_status(
+        "alpha", registry=registry, runtime_factory=lambda _c: FakeRuntime(running=True)
+    )
+    # Assert
+    assert "cpu_percent" not in result
+
+
+def test_agent_status_omits_mem_rss_mb_for_dead_pid(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange — same dead-PID setup; second key must also be absent.
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha", pid=2**31 - 1)
+    # Act
+    result = lc.agent_status(
+        "alpha", registry=registry, runtime_factory=lambda _c: FakeRuntime(running=True)
+    )
+    # Assert
+    assert "mem_rss_mb" not in result
+
+
+# ---------------------------------------------------------------------------
 # agent_status — account field (operator request 4581).
 #
 # The autouse ``_isolate_home`` fixture points HOME at tmp_path, so an

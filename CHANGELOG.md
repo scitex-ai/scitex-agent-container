@@ -6,6 +6,35 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **feat(agents-list): per-agent CPU% + RSS in `sac agents list` and
+  `sac agents status --json`** (lead task 2026-06-01).
+  - New helper ``_state._meta.resources.collect_agent_resources``:
+    given an iterable of PIDs, walks each one's process tree (root +
+    descendants) and returns ``{"cpu_percent": float, "mem_rss_mb":
+    float}`` per PID via a SINGLE psutil sweep (one batched ~100ms
+    sleep covers every agent's cpu_percent delta — wall-clock cost is
+    constant in agent count). Dead PIDs / unknown sentinel ``0`` /
+    psutil-unavailable map to ``None`` rather than zero-filled — the
+    observability contract from skill leaf
+    ``13_observability.md`` (absent ≠ 0) holds end-to-end.
+  - ``sac agents list`` rows now carry ``cpu_percent`` and
+    ``mem_rss_mb`` for every running agent whose PID resolves;
+    rendered as right-aligned ``CPU%`` and ``MEM`` columns in the
+    human table (``-`` cell when absent). JSON path emits the keys
+    only when present — downstream fleet hubs / dashboards can
+    distinguish "not probed" from "literally idle".
+  - ``sac agents status --json`` carries the same two fields for the
+    single-agent path, sourced from the registry-recorded PID.
+  - ``TERSE_STATUS_FIELDS`` (``--terse`` projection) extended with
+    ``cpu_percent`` and ``mem_rss_mb`` so fleet hubs reading the
+    terse blob get attribution by default.
+  - TDD / no-mocks (PA-306): all new tests exercise real OS processes
+    — ``os.getpid()`` for the live-PID case, ``subprocess.Popen`` for
+    the descendants case, and a deliberately-unused PID
+    (``2**31 - 1``) for the dead-PID case. No psutil patching, no
+    ``MagicMock``, no ``monkeypatch`` of ``Process``.
+
 ## [0.21.9] — 2026-06-01
 
 ### Fixed
