@@ -241,6 +241,18 @@ def register_tools(
         # validator rejects unknown top-level params fields, so we
         # CANNOT splat them at the params root.
         metadata: dict[str, Any] = {"from_agent": agent_name}
+        # Operator #16: every outbound a2a message carries the sender's
+        # account + live quota (used_pct_5h, used_pct_7d, token_ttl_hours)
+        # as STRUCTURED metadata. Peers (especially the lead) consume the
+        # fields programmatically for back-pressure decisions — "this peer
+        # is about to hit the 5h cap, route around it" — without parsing
+        # free-form text. ``build_a2a_metadata()`` returns ``{}`` when no
+        # quota entry is resolvable (no env, no cache file, no matching
+        # account), so unpinned agents emit clean payloads with no fake
+        # metadata. Reads at SEND time → fresh quota every message.
+        from .._account.quota_cache import build_a2a_metadata
+
+        metadata.update(build_a2a_metadata())
         metadata.update({k: v for k, v in extra.items() if v is not None})
         params: dict[str, Any] = {
             "message": {

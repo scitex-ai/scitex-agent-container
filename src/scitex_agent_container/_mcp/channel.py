@@ -179,7 +179,22 @@ def _build_notification(event: dict[str, Any]) -> dict[str, Any]:
         "ts": format_ts_iso(event.get("ts", "")),
         "msg_id": _meta_str(event.get("msg_id", "")),
     }
-    for k in ("conversation_id", "in_reply_to", "priority", "requires_reply"):
+    # Operator #16: surface the sender's account + live quota fields to
+    # the receiving agent so peer-side back-pressure logic (and the
+    # human reader of <channel> tags) can see "this came from
+    # `ywatanabe` at 5h:19% / 7d:3% / TTL=7.7h" at a glance. Names
+    # match the wire keys emitted by
+    # ``_account.quota_cache.build_a2a_metadata``.
+    for k in (
+        "conversation_id",
+        "in_reply_to",
+        "priority",
+        "requires_reply",
+        "account",
+        "used_pct_5h",
+        "used_pct_7d",
+        "token_ttl_hours",
+    ):
         if k in event:
             meta[k] = _meta_str(event[k])
     return {

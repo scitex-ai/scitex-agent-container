@@ -481,6 +481,63 @@ def test_load_config_pinned_account_still_loads_despite_missing_snapshot(
 
 
 # ---------------------------------------------------------------------------
+# #16 — CLAUDE_AGENT_ACCOUNT auto-env from spec.claude.account
+#
+# The injected env is consumed by:
+#   * the in-container claude-code-telegrammer bridge (PR-A reads it to
+#     enrich the outbound signature with the account+quota);
+#   * `sac account quota` (agent self-awareness CLI);
+#   * the a2a metadata enricher (peer back-pressure).
+# All three converge on this single env, so the auto-injection is the
+# linchpin — if it regresses the whole #16 surface goes dark.
+# ---------------------------------------------------------------------------
+
+
+def test_load_config_injects_claude_agent_account_when_spec_pins_account(
+    tmp_path: Path,
+):
+    # Arrange
+    import warnings
+
+    p = _v3_yaml(tmp_path, "pinned", {"claude": {"account": "wyusuuke-gmail-com"}})
+    # Act
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        cfg = load_config(p)
+    # Assert
+    assert cfg.env["CLAUDE_AGENT_ACCOUNT"] == "wyusuuke-gmail-com"
+
+
+def test_load_config_omits_claude_agent_account_when_unpinned(tmp_path: Path):
+    # Arrange — no claude.account → no env (empty string would falsely
+    # advertise an account; an absent key signals "host-shared OAuth").
+    p = _v3_yaml(tmp_path, "unpinned", {})
+    # Act
+    cfg = load_config(p)
+    # Assert
+    assert "CLAUDE_AGENT_ACCOUNT" not in cfg.env
+
+
+def test_load_config_strips_whitespace_from_account_before_injection(
+    tmp_path: Path,
+):
+    # Arrange — defensive trim so a spec with a stray newline / space
+    # does not leak into the quota-cache lookup (which uses a strict
+    # ``split('-')[0] == short`` match — a leading space would break it).
+    import warnings
+
+    p = _v3_yaml(
+        tmp_path, "trimmed", {"claude": {"account": "  ywata1989-gmail-com  "}}
+    )
+    # Act
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        cfg = load_config(p)
+    # Assert
+    assert cfg.env["CLAUDE_AGENT_ACCOUNT"] == "ywata1989-gmail-com"
+
+
+# ---------------------------------------------------------------------------
 # Phase-3 ACL (ADR-0010) — spec.comms / spec.lineage reach AgentConfig
 # ---------------------------------------------------------------------------
 
