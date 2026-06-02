@@ -316,6 +316,165 @@ async def test_call_tool_a2a_send_returns_status_field(
     assert body["status"] == 200
 
 
+# ---------------------------------------------------------------------------
+# #16 PART 3 — every outbound a2a payload carries the sender's account +
+# live quota as STRUCTURED metadata. Read at SEND time from the bound
+# quota-cache.json (via _account.quota_cache.build_a2a_metadata).
+# ---------------------------------------------------------------------------
+
+
+def _write_quota_fixture(tmp_path, short: str = "alice", h5=42.0, d7=7.0, ttl_h=3.5):
+    """Drop a minimal quota-cache.json containing one matching entry."""
+    p = tmp_path / "quota-cache.json"
+    p.write_text(
+        json.dumps(
+            {
+                "written_at": 1.0,
+                "accounts": {
+                    f"{short}@gmail.com": {
+                        "short": short,
+                        "h5": h5,
+                        "d7": d7,
+                        "ttl_h": ttl_h,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    return p
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "key,expected",
+    [
+        ("account", "alice"),
+        ("used_pct_5h", 42.0),
+        ("used_pct_7d", 7.0),
+        ("token_ttl_hours", 3.5),
+    ],
+)
+async def test_call_tool_a2a_send_metadata_includes_account_quota_field(
+    registered_tools: _ToolRecorder,
+    fake_listen,
+    tmp_path,
+    env_save_restore,
+    key: str,
+    expected,
+):
+    # Arrange — point the shared reader at a fixture matching the test's
+    # agent_name ("alice", per the registered_tools fixture). One test
+    # per wire-field name pins each field to operator's #16 contract.
+    fixture = _write_quota_fixture(tmp_path, short="alice", h5=42.0, d7=7.0, ttl_h=3.5)
+    env_save_restore.set("SAC_QUOTA_CACHE_PATH", str(fixture))
+    env_save_restore.set("CLAUDE_AGENT_ACCOUNT", "alice-gmail-com")
+    call_fn = registered_tools.call_tool_fn
+    # Act
+    await call_fn("a2a_send", {"target": "bob", "content": "hi"})
+    _, payload = fake_listen.posts[-1]
+    metadata = payload["params"]["metadata"]
+    # Assert
+    assert (
+        metadata[key] == pytest.approx(expected)
+        if isinstance(expected, float)
+        else metadata[key] == expected
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "absent_key",
+    ["account", "used_pct_5h", "used_pct_7d", "token_ttl_hours"],
+)
+async def test_call_tool_a2a_send_metadata_omits_quota_key_when_unavailable(
+    registered_tools: _ToolRecorder,
+    fake_listen,
+    env_save_restore,
+    absent_key: str,
+):
+    # Arrange — no account env, no cache file → graceful empty merge.
+    env_save_restore.delete("CLAUDE_AGENT_ACCOUNT")
+    env_save_restore.set("SAC_QUOTA_CACHE_PATH", "/nonexistent/quota-cache.json")
+    call_fn = registered_tools.call_tool_fn
+    # Act
+    await call_fn("a2a_send", {"target": "bob", "content": "hi"})
+    _, payload = fake_listen.posts[-1]
+    metadata = payload["params"]["metadata"]
+    # Assert
+    assert absent_key not in metadata
+
+
+@pytest.mark.asyncio
+async def test_call_tool_a2a_send_keeps_from_agent_when_quota_unavailable(
+    registered_tools: _ToolRecorder,
+    fake_listen,
+    env_save_restore,
+):
+    # Arrange — quota fields drop out, but the from_agent invariant
+    # (pre-#16 contract) must survive every merge order.
+    env_save_restore.delete("CLAUDE_AGENT_ACCOUNT")
+    env_save_restore.set("SAC_QUOTA_CACHE_PATH", "/nonexistent/quota-cache.json")
+    call_fn = registered_tools.call_tool_fn
+    # Act
+    await call_fn("a2a_send", {"target": "bob", "content": "hi"})
+    _, payload = fake_listen.posts[-1]
+    metadata = payload["params"]["metadata"]
+    # Assert
+    assert metadata["from_agent"] == "alice"
+
+
+@pytest.mark.asyncio
+async def test_call_tool_a2a_reply_metadata_includes_account(
+    registered_tools: _ToolRecorder,
+    fake_listen,
+    tmp_path,
+    env_save_restore,
+):
+    # Arrange — replies go through the same wrapper, so they MUST carry
+    # the same metadata (peer-side back-pressure has to see ALL traffic).
+    fixture = _write_quota_fixture(tmp_path, short="alice", h5=11.0, d7=2.0)
+    env_save_restore.set("SAC_QUOTA_CACHE_PATH", str(fixture))
+    env_save_restore.set("CLAUDE_AGENT_ACCOUNT", "alice-gmail-com")
+    _recent.append({"msg_id": "m1", "from_agent": "carol", "conversation_id": "c-orig"})
+    call_fn = registered_tools.call_tool_fn
+    # Act
+    await call_fn("a2a_reply", {"in_reply_to": "m1", "content": "y"})
+    _, payload = fake_listen.posts[-1]
+    metadata = payload["params"]["metadata"]
+    # Assert
+    assert metadata["account"] == "alice"
+
+
+@pytest.mark.asyncio
+async def test_call_tool_a2a_reply_metadata_includes_used_pct_5h(
+    registered_tools: _ToolRecorder,
+    fake_listen,
+    tmp_path,
+    env_save_restore,
+):
+    # Arrange
+    fixture = _write_quota_fixture(tmp_path, short="alice", h5=11.0, d7=2.0)
+    env_save_restore.set("SAC_QUOTA_CACHE_PATH", str(fixture))
+    env_save_restore.set("CLAUDE_AGENT_ACCOUNT", "alice-gmail-com")
+    _recent.append({"msg_id": "m1", "from_agent": "carol", "conversation_id": "c-orig"})
+    call_fn = registered_tools.call_tool_fn
+    # Act
+    await call_fn("a2a_reply", {"in_reply_to": "m1", "content": "y"})
+    _, payload = fake_listen.posts[-1]
+    metadata = payload["params"]["metadata"]
+    # Assert
+    assert metadata["used_pct_5h"] == pytest.approx(11.0)
+
+
+# NB: a2a_ack is intentionally suppressed at the sender (the sender-side
+# noise filter drops empty-content + ack=True payloads — see
+# ``test_call_tool_a2a_ack_is_suppressed_at_sender`` below), so there is
+# no wire-level metadata to assert on the ack path. The send + reply
+# coverage above is sufficient for the operator's #16 contract: every
+# message that actually leaves the bridge carries the quota fields.
+
+
 @pytest.mark.asyncio
 async def test_call_tool_a2a_reply_unknown_msg_id_returns_error(
     registered_tools: _ToolRecorder,

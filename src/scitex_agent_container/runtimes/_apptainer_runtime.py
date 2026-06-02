@@ -61,6 +61,40 @@ RUNNER_MODULE = "scitex_agent_container._runners.claude_session"
 APPTAINER_PID_FILE = "apptainer_pid"
 APPTAINER_LOG_FILE = "stdout.log"
 
+# ----------------------------------------------------------------------
+# Quota-cache visibility (#16)
+# ----------------------------------------------------------------------
+# Every agent SIF needs to see its own account's live quota numbers
+# (5h utilization %, 7d utilization %, OAuth TTL hours) so:
+#   - the in-container claude-code-telegrammer bot enriches its outbound
+#     signature with the live quota (PR-A);
+#   - the `sac account quota` helper exposes the same data
+#     programmatically to the agent (self-awareness);
+#   - every A2A message carries the sender's quota as structured
+#     metadata for back-pressure / failover decisions by peers.
+#
+# The host cron refreshes ``QUOTA_CACHE_HOST_PATH`` every 10 minutes.
+# We bind it read-only at a stable container path so both Python
+# (`sac account quota`) and the TS bridge see the same file.
+#
+# Bind is conditional on the host file existing — apptainer errors
+# hard on a missing bind source, and a quota-cron-less host (CI,
+# fresh install) must still be able to launch agents. The downstream
+# consumers (telegrammer, `sac account quota`) all degrade gracefully
+# when the file is absent.
+QUOTA_CACHE_HOST_PATH_DEFAULT = "/home/ywatanabe/.scitex/quota-cache.json"
+QUOTA_CACHE_CONTAINER_PATH = "/var/sac/quota-cache.json"
+# Env override for the host-side cache path. Empty / unset → default.
+# Honest injection seam (no monkeypatch / mocks): tests redirect via a
+# real env mutation through ``env_save_restore``; non-test code on hosts
+# with the cron at the canonical path is unaffected.
+QUOTA_CACHE_HOST_PATH_ENV = "SAC_QUOTA_CACHE_HOST_PATH"
+
+
+def _resolve_quota_cache_host_path() -> Path:
+    override = os.environ.get(QUOTA_CACHE_HOST_PATH_ENV, "").strip()
+    return Path(override) if override else Path(QUOTA_CACHE_HOST_PATH_DEFAULT)
+
 
 class ApptainerContainerRuntime(RuntimeBase):
     """Apptainer (Singularity) runtime — backgrounded ``apptainer exec``.
@@ -106,6 +140,22 @@ class ApptainerContainerRuntime(RuntimeBase):
         home_host = state_dir.expanduser() / "home"
         home_host.mkdir(parents=True, exist_ok=True)
         argv += ["--bind", f"{home_host}:/home/agent"]
+
+        # Quota-cache bind (#16) — see module-level docstring.
+        # Bind read-only + advertise the in-container path to the
+        # telegrammer bridge so its default-path lookup hits the bind
+        # without any per-agent spec change. The env propagates through
+        # apptainer's --env into the inner bun process via the MCP
+        # server's stdio spawn (it inherits the agent process env).
+        quota_src = _resolve_quota_cache_host_path()
+        if quota_src.is_file():
+            argv += [
+                "--bind",
+                f"{quota_src}:{QUOTA_CACHE_CONTAINER_PATH}:ro",
+                "--env",
+                f"CLAUDE_CODE_TELEGRAMMER_TELEGRAM_QUOTA_CACHE_PATH={QUOTA_CACHE_CONTAINER_PATH}",
+            ]
+
         argv += [
             # Bind-mounts: workdir → <container_workdir>, state_dir → /state/<name>.
             # apptainer accepts the docker syntax for src:dst:[options].

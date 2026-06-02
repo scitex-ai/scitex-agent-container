@@ -290,6 +290,16 @@ def test_build_notification_ts_empty_when_absent():
         # the pushed turn is silently dropped.
         ("requires_reply", True, "true"),
         ("requires_reply", False, "false"),
+        # #16 — every outbound a2a message carries the sender's account
+        # + live quota as STRUCTURED metadata. The receive-side
+        # _build_notification must surface those fields onto the
+        # <channel meta.*> tag so the receiving agent (and the human
+        # reading the rendered tag) can see "this came from `ywatanabe`
+        # at 5h:19% / 7d:3% / TTL=7.7h" without parsing free-form text.
+        ("account", "ywatanabe", "ywatanabe"),
+        ("used_pct_5h", 19.0, "19.0"),
+        ("used_pct_7d", 3.0, "3.0"),
+        ("token_ttl_hours", 7.74, "7.74"),
     ],
 )
 def test_build_notification_propagates_optional_meta_key(

@@ -245,6 +245,21 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     display_model = MODEL_DISPLAY_NAMES.get(model, model)
     auto_env["SCITEX_AGENT_CONTAINER_MODEL"] = display_model
 
+    # CLAUDE_AGENT_ACCOUNT — operator #16 self-awareness requirement.
+    # Propagate the per-agent account dir-name (e.g. "ywata1989-gmail-com")
+    # into the container so:
+    #   - claude-code-telegrammer enriches its outbound signature with
+    #     the live quota for THIS account (PR-A reads this env);
+    #   - `sac account quota` keys its quota-cache.json lookup by the
+    #     `short` field == this env's first dash-segment;
+    #   - the a2a metadata enricher tags every outbound message with
+    #     the sender's account + quota for peer back-pressure decisions.
+    # Empty string is filtered out so an unpinned (host-shared-OAuth)
+    # agent doesn't advertise a misleading account label.
+    account_name = str(getattr(claude_spec, "account", "") or "").strip()
+    if account_name:
+        auto_env["CLAUDE_AGENT_ACCOUNT"] = account_name
+
     merged_env = {**auto_env, **(apptainer_spec.env or {})}
 
     # Auto-derive hooks: prepend mkdir for workdir

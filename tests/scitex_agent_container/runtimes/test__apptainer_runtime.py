@@ -2712,3 +2712,108 @@ def test_tmpfs_operator_workdir_value_preserved(tmp_path: Path) -> None:
     )
     # Assert
     assert _flag_value(argv, "--workdir") == "/scratch/mine"
+
+
+# ---------------------------------------------------------------------------
+# #16 — quota-cache.json bind-in + telegrammer env
+#
+# Every agent SIF gets read-only visibility on the host's quota-cache.json
+# (refreshed every 10 min by host cron). Bind is conditional on the host
+# file existing — quota-cron-less hosts (CI, fresh installs) must still
+# be able to launch agents.
+# ---------------------------------------------------------------------------
+
+
+def _binds(argv: list[str]) -> list[str]:
+    """Return every value following a ``--bind`` flag."""
+    return [argv[i + 1] for i, a in enumerate(argv) if a == "--bind"]
+
+
+def test_argv_binds_quota_cache_when_host_file_exists(
+    tmp_path: Path, env_save_restore
+) -> None:
+    # Arrange — point the runtime at a fixture file that DOES exist.
+    # Honest no-mocks redirect: SAC_QUOTA_CACHE_HOST_PATH is a real env
+    # override resolved at call time by ``_resolve_quota_cache_host_path``.
+    fake_host_cache = tmp_path / "quota-cache.json"
+    fake_host_cache.write_text("{}", encoding="utf-8")
+    env_save_restore.set("SAC_QUOTA_CACHE_HOST_PATH", str(fake_host_cache))
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd")
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    # Assert — bind shape: ``<host>:<container>:ro``, container path is
+    # the module constant (PR-A and `sac account quota` default to it).
+    expected = f"{fake_host_cache}:{mod.QUOTA_CACHE_CONTAINER_PATH}:ro"
+    assert expected in _binds(argv)
+
+
+def test_argv_omits_quota_cache_bind_when_host_file_absent(
+    tmp_path: Path, env_save_restore
+) -> None:
+    # Arrange — host path points nowhere (apptainer would otherwise
+    # fail-hard on the missing bind source — the runtime must skip it).
+    env_save_restore.set(
+        "SAC_QUOTA_CACHE_HOST_PATH", str(tmp_path / "definitely-not-there.json")
+    )
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd")
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    # Assert
+    assert not any(mod.QUOTA_CACHE_CONTAINER_PATH in b for b in _binds(argv))
+
+
+def test_argv_exposes_quota_cache_path_env_when_bound(
+    tmp_path: Path, env_save_restore
+) -> None:
+    # Arrange — when the bind is added, the runtime must also point the
+    # in-container telegrammer at the bound container path (its default
+    # is the host path, which is not visible inside the SIF).
+    fake_host_cache = tmp_path / "quota-cache.json"
+    fake_host_cache.write_text("{}", encoding="utf-8")
+    env_save_restore.set("SAC_QUOTA_CACHE_HOST_PATH", str(fake_host_cache))
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd")
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    env = _env_pairs(argv)
+    # Assert
+    assert (
+        env.get("CLAUDE_CODE_TELEGRAMMER_TELEGRAM_QUOTA_CACHE_PATH")
+        == mod.QUOTA_CACHE_CONTAINER_PATH
+    )
+
+
+def test_argv_omits_quota_cache_path_env_when_unbound(
+    tmp_path: Path, env_save_restore
+) -> None:
+    # Arrange
+    env_save_restore.set("SAC_QUOTA_CACHE_HOST_PATH", str(tmp_path / "missing.json"))
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd")
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    env = _env_pairs(argv)
+    # Assert
+    assert "CLAUDE_CODE_TELEGRAMMER_TELEGRAM_QUOTA_CACHE_PATH" not in env
+
+
+def test_quota_cache_container_path_default_is_var_sac(tmp_path: Path) -> None:
+    # Arrange — the constant is the single source of truth shared by the
+    # apptainer runtime (bind dst), the telegrammer (env-pointed reader
+    # default), and `sac account quota` (default cache path). A rename
+    # without coordinating the three sites silently breaks #16.
+    constant = mod.QUOTA_CACHE_CONTAINER_PATH
+    # Act
+    actual = str(constant)
+    # Assert
+    assert actual == "/var/sac/quota-cache.json"

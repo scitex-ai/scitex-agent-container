@@ -453,3 +453,90 @@ def quota_watch(
 from ._account_refresh import register_refresh_command
 
 register_refresh_command(account)
+
+
+# ---------------------------------------------------------------------------
+# quota — agent self-awareness: read THIS agent's own account quota from
+# the bound quota-cache.json (#16 PART 4). Reads $CLAUDE_AGENT_ACCOUNT
+# (injected by SAC at launch; see config/_loaders.py) and looks up the
+# matching entry in /var/sac/quota-cache.json (bound by the apptainer
+# runtime). Mirrors the host-cron schema — h5/d7 utilization %, ttl_h.
+#
+# Never errors on missing data: prints "unavailable" + non-zero exit
+# only when the operator passes --strict. Default exit code 0 + JSON
+# null/object so a Claude turn can run `sac account quota --json` in a
+# pipeline without aborting on a cold cache.
+# ---------------------------------------------------------------------------
+
+
+@account.command("quota")
+@click.option(
+    "--json",
+    "json_out",
+    is_flag=True,
+    default=False,
+    help="Emit JSON instead of human-readable text.",
+)
+@click.option(
+    "--strict",
+    is_flag=True,
+    default=False,
+    help=(
+        "Exit non-zero when no quota entry resolves (unset "
+        "$CLAUDE_AGENT_ACCOUNT, missing cache file, no matching entry). "
+        "Default behaviour: exit 0 with 'unavailable' / JSON null."
+    ),
+)
+def account_quota(json_out: bool, strict: bool) -> None:
+    """Print THIS agent's own account + live quota numbers.
+
+    Reads ``$CLAUDE_AGENT_ACCOUNT`` (injected by SAC at launch) and looks
+    up the matching entry in ``/var/sac/quota-cache.json`` (bound
+    read-only by the apptainer runtime; the host cron refreshes the
+    backing file every 10 minutes).
+
+    \b
+    Examples:
+      $ sac account quota
+      account=wyusuuke 5h=17 percent 7d=3 percent ttl=7.74h
+
+      $ sac account quota --json
+      {"account":"wyusuuke","used_pct_5h":17.0,"used_pct_7d":3.0,"token_ttl_hours":7.74}
+    """
+    import json as _json
+    import sys
+
+    from .._account.quota_cache import build_a2a_metadata
+
+    meta = build_a2a_metadata()
+    if not meta:
+        if json_out:
+            click.echo("null")
+        else:
+            click.echo("unavailable")
+        if strict:
+            sys.exit(1)
+        return
+
+    if json_out:
+        # Keep the JSON key order stable so downstream consumers (Claude
+        # turns piping through `jq`, smoke-tests grepping for fields)
+        # see a deterministic shape.
+        ordered = {
+            "account": meta["account"],
+            "used_pct_5h": meta["used_pct_5h"],
+            "used_pct_7d": meta["used_pct_7d"],
+            "token_ttl_hours": meta["token_ttl_hours"],
+        }
+        click.echo(_json.dumps(ordered))
+    else:
+        # Compact, parseable-by-eye TTY line. Percentages rounded to
+        # match the telegrammer signature shape (operator's wire example
+        # used integer percents); TTL is shown with 2 decimal places so
+        # a "0.5h left" warning is legible.
+        click.echo(
+            f"account={meta['account']} "
+            f"5h={round(meta['used_pct_5h'])} percent "
+            f"7d={round(meta['used_pct_7d'])} percent "
+            f"ttl={meta['token_ttl_hours']:.2f}h"
+        )
