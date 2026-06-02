@@ -678,6 +678,21 @@
     <span class="n">display_model</span> <span class="o">=</span> <span class="n">MODEL_DISPLAY_NAMES</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">model</span><span class="p">)</span>
     <span class="n">auto_env</span><span class="p">[</span><span class="s2">&quot;SCITEX_AGENT_CONTAINER_MODEL&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">display_model</span>
 
+    <span class="c1"># CLAUDE_AGENT_ACCOUNT — operator #16 self-awareness requirement.</span>
+    <span class="c1"># Propagate the per-agent account dir-name (e.g. &quot;ywata1989-gmail-com&quot;)</span>
+    <span class="c1"># into the container so:</span>
+    <span class="c1">#   - claude-code-telegrammer enriches its outbound signature with</span>
+    <span class="c1">#     the live quota for THIS account (PR-A reads this env);</span>
+    <span class="c1">#   - `sac account quota` keys its quota-cache.json lookup by the</span>
+    <span class="c1">#     `short` field == this env&#39;s first dash-segment;</span>
+    <span class="c1">#   - the a2a metadata enricher tags every outbound message with</span>
+    <span class="c1">#     the sender&#39;s account + quota for peer back-pressure decisions.</span>
+    <span class="c1"># Empty string is filtered out so an unpinned (host-shared-OAuth)</span>
+    <span class="c1"># agent doesn&#39;t advertise a misleading account label.</span>
+    <span class="n">account_name</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="nb">getattr</span><span class="p">(</span><span class="n">claude_spec</span><span class="p">,</span> <span class="s2">&quot;account&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">account_name</span><span class="p">:</span>
+        <span class="n">auto_env</span><span class="p">[</span><span class="s2">&quot;CLAUDE_AGENT_ACCOUNT&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">account_name</span>
+
     <span class="n">merged_env</span> <span class="o">=</span> <span class="p">{</span><span class="o">**</span><span class="n">auto_env</span><span class="p">,</span> <span class="o">**</span><span class="p">(</span><span class="n">apptainer_spec</span><span class="o">.</span><span class="n">env</span> <span class="ow">or</span> <span class="p">{})}</span>
 
     <span class="c1"># Auto-derive hooks: prepend mkdir for workdir</span>
