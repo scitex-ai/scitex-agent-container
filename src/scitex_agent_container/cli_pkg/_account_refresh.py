@@ -60,6 +60,91 @@ def _resolve_active_account_name(
     return None
 
 
+def _resolve_registry_dir(home: Path) -> Path:
+    """Resolve the file-based agent registry directory.
+
+    Mirrors the ``Registry`` class's path-resolution rule (honors
+    ``SCITEX_AGENT_CONTAINER_REGISTRY_DIR``, else
+    ``<home>/.scitex/agent-container/runtime/registry``), but READ per
+    call rather than frozen at module-import time. The freeze on
+    ``Registry`` is fine in production (HOME doesn't change) but is
+    brittle under pytest where the sandbox HOME is set after the test
+    process started.
+    """
+    import os
+
+    env_override = os.environ.get("SCITEX_AGENT_CONTAINER_REGISTRY_DIR")
+    if env_override:
+        return Path(env_override)
+    return home / ".scitex" / "agent-container" / "runtime" / "registry"
+
+
+def _collect_pinned_running_accounts(home: Path | None = None) -> set[str]:
+    """Return stored-account NAMES currently pinned by running local agents.
+
+    Closes the refresh-token rotation race: when an agent is spawned with
+    ``spec.claude.account: <name>``, its in-container Claude CLI refreshes
+    that account's token through the live :rw dir-bind on the snapshot.
+    If the host ``sac accounts refresh --all --skip-active`` cron ALSO
+    refreshes the same account every 2h, the two refreshers rotate each
+    other's refresh_token (OAuth refresh-tokens invalidate on use) and
+    whichever raced last leaves the other with a now-invalid token —
+    next API call hits 401.
+
+    This helper enumerates the local file-based agent registry (the same
+    JSON files ``sac status`` reads, written by ``_lifecycle/_start`` at
+    spawn time), loads each entry's ``config`` spec, and extracts
+    ``spec.claude.account`` when set. The caller unions the result with
+    the host-active account into a single skip-set so the cron never
+    refreshes a token currently in use by a running agent.
+
+    Cross-host scope: only LOCAL running agents matter — the cron runs
+    against the LOCAL snapshot store, and agents on other hosts have
+    their own local snapshot stores (and their own refresher cron).
+
+    Stale-registry tolerance: a registry entry left behind by a crashed
+    agent will over-skip its account (the cron won't refresh it until
+    the stale entry is cleaned via ``Registry.cleanup_stale``). The
+    failure mode is safe: under-refresh, eventually requiring manual
+    ``sac accounts refresh <name>``. The opposite (over-refresh racing
+    a live agent) is the bug we're fixing.
+
+    Tolerant: any registry / spec read failure is mapped to "this entry
+    contributes nothing" so refresh proceeds against the rest of the
+    set rather than crashing on one bad row.
+    """
+    import json as _json
+
+    home = home if home is not None else Path.home()
+    reg_dir = _resolve_registry_dir(home)
+    pinned: set[str] = set()
+    if not reg_dir.is_dir():
+        return pinned
+    # stx-allow: fallback (reason: skip-set construction is best-effort;
+    # any registry / spec read failure maps to "skip nothing extra" so
+    # refresh proceeds against the remaining accounts.)
+    try:
+        from ..config import load_config
+    except Exception:  # stx-allow: fallback (reason: see inline comment)
+        return pinned
+    for entry_path in sorted(reg_dir.glob("*.json")):
+        try:
+            entry = _json.loads(entry_path.read_text())
+        except Exception:  # stx-allow: fallback (reason: see inline comment)
+            continue
+        cfg_path = entry.get("config") if isinstance(entry, dict) else None
+        if not isinstance(cfg_path, str) or not cfg_path:
+            continue
+        try:
+            cfg = load_config(Path(cfg_path))
+        except Exception:  # stx-allow: fallback (reason: see inline comment)
+            continue
+        acct = getattr(getattr(cfg, "claude", None), "account", "") or ""
+        if isinstance(acct, str) and acct.strip():
+            pinned.add(acct.strip())
+    return pinned
+
+
 @click.command("refresh")
 @click.argument("name", required=False)
 @click.option(
@@ -135,18 +220,28 @@ def account_refresh(
         targets = [a["name"] for a in accounts]
         if skip_active:
             active_name = _resolve_active_account_name(home, accounts)
+            pinned_running = _collect_pinned_running_accounts(home)
             if active_name is None:
                 click.echo(
                     "[skip-active] no active account resolvable; "
-                    "refreshing all stored accounts.",
+                    "host-active skip is a no-op.",
                     err=True,
                 )
             elif active_name in targets:
-                targets = [t for t in targets if t != active_name]
                 click.echo(
                     f"[skip-active] excluding active account '{active_name}'.",
                     err=True,
                 )
+            for pinned_name in sorted(pinned_running & set(targets)):
+                click.echo(
+                    f"[skip-active] excluding pinned-running account "
+                    f"'{pinned_name}' (refresh-token rotation race guard).",
+                    err=True,
+                )
+            skip_set: set[str] = set(pinned_running)
+            if active_name:
+                skip_set.add(active_name)
+            targets = [t for t in targets if t not in skip_set]
     else:
         targets = [name]  # type: ignore[list-item]
 
