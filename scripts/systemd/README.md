@@ -59,6 +59,49 @@ systemctl --user daemon-reload
   task #26 sub (2)). A `systemctl --user restart sac-listen` does
   NOT require any agent restart.
 
+### Operational gotcha: SIGTERM hang holding the lockfile
+
+Observed during the 2026-06-03 host listen restart (lead): a SIGTERM
+that releases the port but **doesn't fully exit** (sub-second hang
+during in-flight SSE shutdown) leaves the flock-backed
+`listen-<port>.pid` file behind. The next start refuses with:
+
+```
+another sac listen already running (pid <N>)
+```
+
+even though `<N>` is dead. The kernel releases the flock on dirty
+exit, but the pidfile on disk is independent of the flock and only
+gets cleared by a CLEAN shutdown. Recovery sequence:
+
+```bash
+# 1. Identify the named pid in the stale lockfile (path varies by --bind)
+pid=$(cat ~/.scitex/sac/listen-7878.pid 2>/dev/null) && echo "named: $pid"
+
+# 2. Check if it's actually alive
+kill -0 "$pid" 2>/dev/null && echo ALIVE || echo DEAD-STALE-LOCK
+
+# 3. If DEAD: harmlessly re-send SIGKILL (no-op if already gone),
+#    clear the stale pidfile, then restart through the unit
+kill -9 "$pid" 2>/dev/null
+rm -f ~/.scitex/sac/listen-7878.pid
+systemctl --user restart sac-listen.service
+
+# 4. Verify
+systemctl --user status sac-listen.service
+curl -s http://127.0.0.1:7878/v1/health
+```
+
+The lockfile-clean-then-restart sequence is **non-destructive** —
+state.db is persistent on disk, agents auto-reconnect their SSE
+streams on the new listen via the existing backoff loop, and the
+flock guard means a second concurrent listen process cannot bind the
+port even if the recovery race ran twice.
+
+A future `sac listen --restart` verb will collapse this dance into a
+single atomic stop-clean-relaunch call; this manual recipe is the
+canonical recovery until that lands.
+
 ### Notes
 
 * `ExecStart=/usr/bin/env sac listen` resolves `sac` against the
