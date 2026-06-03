@@ -148,7 +148,7 @@ def _maybe_sync_on_start() -> None:
         )
 
 
-@click.command(name="listen")
+@click.group(name="listen", invoke_without_command=True)
 @click.option(
     "--bind",
     default="127.0.0.1:7878",
@@ -179,19 +179,52 @@ def _maybe_sync_on_start() -> None:
     default=False,
     help="Print the bearer token to stdout and exit.",
 )
+@click.pass_context
 def listen(
+    ctx: click.Context,
     bind: str,
     token_file: Path | None,
     allow_non_loopback: bool,
     print_token: bool,
 ) -> None:
-    """Boot the sac listen HTTP server.
+    """Boot the sac listen HTTP server (default) or invoke a subverb.
 
     \b
     Example:
-        sac listen                          # 127.0.0.1:7878
+        sac listen                          # 127.0.0.1:7878 (start)
         sac listen --bind 100.64.1.2:7878 --allow-non-loopback
         sac listen --print-token            # echo token then exit
+        sac listen restart                  # atomic stop-clean-relaunch
+    """
+    # Stash group-level options so subcommands (``restart``) can
+    # mirror ``sac listen``'s own bind resolution per design call (a).
+    ctx.ensure_object(dict)
+    ctx.obj["bind"] = bind
+    ctx.obj["token_file"] = token_file
+    ctx.obj["allow_non_loopback"] = allow_non_loopback
+    ctx.obj["print_token"] = print_token
+
+    if ctx.invoked_subcommand is not None:
+        # Subcommand will run next; group callback just stashed options.
+        return
+
+    _do_start_listen(
+        bind=bind,
+        token_file=token_file,
+        allow_non_loopback=allow_non_loopback,
+        print_token=print_token,
+    )
+
+
+def _do_start_listen(
+    *,
+    bind: str,
+    token_file: Path | None,
+    allow_non_loopback: bool,
+    print_token: bool,
+) -> None:
+    """Existing daemon-start logic, extracted so the group callback
+    can call it cleanly when no subcommand is given.
     """
     host, port = _split_bind(bind)
     if not _is_loopback(host) and not allow_non_loopback:
@@ -279,3 +312,72 @@ def listen(
         # the flock automatically — the next ``sac listen`` start
         # observes an unlocked file and acquires cleanly.
         release_listen_lock(lock_handle)
+
+
+# ---------------------------------------------------------------------------
+# ``sac listen restart`` — atomic stop-clean-relaunch
+# ---------------------------------------------------------------------------
+
+
+@listen.command(name="restart")
+@click.option(
+    "--grace-secs",
+    type=float,
+    default=10.0,
+    show_default=True,
+    help="SIGTERM-to-SIGKILL escalation deadline (seconds).",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Skip SIGTERM and go straight to SIGKILL.",
+)
+@click.pass_context
+def listen_restart(ctx: click.Context, grace_secs: float, force: bool) -> None:
+    """Atomically stop, clean, and relaunch the sac listen daemon.
+
+    Codifies the SIGTERM-hang lockfile recovery sequence documented at
+    ``scripts/systemd/README.md`` (PR #294). Mirrors ``sac listen``'s
+    own bind resolution: ``sac listen restart`` with no args restarts
+    the same daemon ``sac listen`` with no args would start.
+
+    \b
+    Example:
+        sac listen restart                  # 10s grace, then SIGKILL
+        sac listen restart --grace-secs 30  # longer TERM window
+        sac listen restart --force          # skip TERM, kill immediately
+    """
+    from .._listen._restart import (
+        format_escalation_warning,
+        restart_listen,
+    )
+    from .._listen._single_instance import default_lock_dir
+
+    bind = ctx.obj["bind"]
+    host, port = _split_bind(bind)
+
+    lock_dir = default_lock_dir()
+    lock_dir.mkdir(parents=True, exist_ok=True)
+
+    result = restart_listen(
+        host=host,
+        port=port,
+        lock_dir=lock_dir,
+        grace_secs=grace_secs,
+        force=force,
+    )
+
+    # Per design call (c): LOUD WARN on SIGKILL escalation, silent on
+    # a clean TERM exit. The format is fixed by
+    # ``_restart.format_escalation_warning`` (tested + stable).
+    if result.escalated_to_sigkill:
+        click.echo(format_escalation_warning(grace_secs), err=True)
+
+    if not result.ok:
+        raise click.ClickException(
+            result.error or "sac listen restart failed (unknown reason)"
+        )
+
+    msg = f"# sac listen restarted ({'systemd' if result.took_systemd_path else 'direct'}) → {host}:{port}"
+    click.echo(msg, err=True)
