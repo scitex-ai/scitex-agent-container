@@ -70,11 +70,8 @@ from ._channel_auto_ack import (  # noqa: E402,F401
     _post_auto_ack,
     _should_auto_ack,
 )
-from ._channel_self_register import (  # noqa: E402,F401
+from ._channel_self_register import (  # noqa: E402
     refresh_node as _refresh_comms_node,
-)
-from ._channel_self_register import (
-    register_self_node as _register_self_comms_node,
 )
 from ._channel_wake import _should_wake_turn, _wake_text, _wake_turn  # noqa: E402,F401
 
