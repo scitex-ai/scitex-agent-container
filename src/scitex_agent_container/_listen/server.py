@@ -209,21 +209,39 @@ from ._node_channel import (  # noqa: E402
 async def agent_delete(request: Request) -> JSONResponse:
     """DELETE /agents/<name> — stop the agent.
 
-    Three cases distinguished by the response code (PR-1 lifecycle):
+    Four cases distinguished by the response code:
 
       * **200 OK** — agent is live; ``pid`` file present; SIGTERM sent.
-      * **410 Gone** — agent is *stillborn*: a ``STARTUP_FAILED`` marker
-        is on disk (set by the POST /agents handler on a non-zero
-        ``sac agents start`` exit). The body carries the failure
-        details so the caller doesn't need to also ``GET .../status``.
+      * **410 Gone** (PR-1) — agent is *stillborn*: a ``STARTUP_FAILED``
+        marker is on disk (set by the POST /agents handler on a
+        non-zero ``sac agents start`` exit). The body carries the
+        failure details so the caller doesn't need to also
+        ``GET .../status``.
       * **404 Not Found** — agent never existed or was already deleted.
+      * **403 Forbidden** (PR-3) — caller is identified (via
+        ``request.state.authenticated_node``) but lacks lineage-scoped
+        permission to operate on this target. Body shape:
+        ``{"error": "ACL deny", "kind": "acl_deny", "reason": "..."}``
+        — the 5th kind in the wire taxonomy pinned with clew.
 
     Splitting 410 from 404 is the operator-actionable difference:
-    "never existed" vs. "existed, has been removed". The clew capsule
-    case landed in 404 before this change because the marker didn't
-    exist; with the marker, the 410 path now lights up.
+    "never existed" vs. "existed, has been removed". Splitting 403
+    from both is identity-actionable: the agent exists (or doesn't,
+    irrelevant) but the caller can't touch it.
     """
     name = request.path_params["name"]
+    # PR-3 — lineage-scoped ACL gate. ``authenticated_node`` is the
+    # resolved per-node identity from NodeAuthMiddleware; ``None``
+    # is the administrative / host-wide bearer (always allowed by
+    # check_lineage_acl). The ACL is enforced BEFORE we touch the
+    # state dir / pid file so a denied caller learns nothing about
+    # whether the target exists (status, marker, runtime files).
+    from ._acl import check_lineage_acl, deny_response
+
+    caller = getattr(request.state, "authenticated_node", None)
+    decision, reason = check_lineage_acl(caller=caller, target=name)
+    if decision == "deny":
+        return deny_response(reason or "lineage ACL deny")
     sd = state_dir_for(name)
     pid_file = sd / "pid"
     if not pid_file.is_file():

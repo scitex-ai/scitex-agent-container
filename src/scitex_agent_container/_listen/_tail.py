@@ -113,6 +113,19 @@ async def _stream_tail(
 
 async def agent_tail(request: Request) -> Response:
     name = request.path_params["name"]
+    # PR-3 — lineage-scoped ACL gate. ``authenticated_node`` is the
+    # resolved per-node identity from NodeAuthMiddleware; ``None``
+    # is the administrative / host-wide bearer (always allowed by
+    # check_lineage_acl). Gate runs BEFORE the path/file probe so a
+    # denied caller learns nothing about whether the target has a
+    # session.jsonl on disk.
+    from ._acl import check_lineage_acl, deny_response
+
+    caller = getattr(request.state, "authenticated_node", None)
+    decision, reason = check_lineage_acl(caller=caller, target=name)
+    if decision == "deny":
+        return deny_response(reason or "lineage ACL deny")
+
     since_raw = request.query_params.get("since")
     follow_raw = request.query_params.get("follow", "false")
     follow = str(follow_raw).lower() in ("1", "true", "yes")
