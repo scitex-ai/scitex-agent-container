@@ -79,8 +79,17 @@ def materialize_inline_spec(
          HTTP 400 + ``kind="bind_unresolvable"`` (PR-1 fail-loud).
          This is the SoT for "is this bind safe?" — PR-2 just
          pre-cleans the common SAC-from-SAC case.
-      5. ``kind="already_exists"`` for the overwrite-guard collision.
-      6. ``kind="spec_invalid"`` for write failure (disk full, RO fs).
+      5. **startup_commands lint**: every
+         ``spec.startup_commands[*].command`` first token is checked
+         via :func:`shlex.split` + :func:`shutil.which` against the
+         SAC host PATH. Misses, colon-suffixed prompt-text barewords
+         (the ``"You:"`` smoking gun from the clew launcher #70
+         incident on 2026-06-03), and shell-syntax errors abort
+         with HTTP 400 + ``kind="spec_invalid"`` carrying a per-entry
+         ``reason`` sub-shade enum. Mirrors PR-1's wire shape so the
+         caller can branch on ``kind`` + per-entry ``reason``.
+      6. ``kind="already_exists"`` for the overwrite-guard collision.
+      7. ``kind="spec_invalid"`` for write failure (disk full, RO fs).
 
     Args:
         name: target agent name.
@@ -150,6 +159,28 @@ def materialize_inline_spec(
     preflight = preflight_bind_sources(spec)
     if not preflight.ok:
         return JSONResponse(preflight_failure_response_body(preflight), status_code=400)
+
+    # Follow-up to PR-1/2/3 — startup_commands first-token lint. The
+    # clew launcher #70 incident on 2026-06-03 put the agent's CLAUDE
+    # mission prompt into spec.startup_commands by mistake; the first
+    # line ``"You: ..."`` ran as a shell command and bash logged
+    # ``You: command not found``. The bind preflight above does not
+    # cover startup_commands, so this sibling preflight catches the
+    # class. Done AFTER bind preflight so the cheap-to-expensive order
+    # holds (shlex+which is cheap but the bind stat() chain is even
+    # cheaper). Wire shape: ``kind="spec_invalid"`` (re-using the
+    # existing enum already used by apiVersion/kind validation above)
+    # with per-entry ``reason`` sub-shade enum.
+    from ._inline_spec_startup_lint import (
+        preflight_failure_response_body as startup_lint_failure_body,
+    )
+    from ._inline_spec_startup_lint import (
+        preflight_startup_commands,
+    )
+
+    startup_lint = preflight_startup_commands(spec)
+    if not startup_lint.ok:
+        return JSONResponse(startup_lint_failure_body(startup_lint), status_code=400)
 
     primary = (
         Path(os.path.expanduser("~")) / ".scitex" / "agent-container" / "agents" / name

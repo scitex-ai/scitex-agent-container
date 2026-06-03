@@ -195,3 +195,59 @@ class TestMaterializeOverwriteSemantics:
         loaded = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
         # Assert
         assert loaded["spec"]["role"] == "worker"
+
+
+class TestMaterializeStartupCommandsLintWireIn:
+    """Integration of the startup_commands first-token lint into the
+    inline-spec materialise pipeline. Unit-level branch coverage of the
+    lint itself lives in :mod:`test__inline_spec_startup_lint`; this
+    class only confirms the wire-in at the materialise entrypoint.
+    """
+
+    def test_prompt_text_command_returns_400(self, home_root: Path):
+        # Arrange — the clew launcher #70 canonical bug: agent's CLAUDE
+        # mission prompt was placed in startup_commands by mistake.
+        spec = _valid_spec()
+        spec["spec"]["startup_commands"] = [
+            {"command": "You: run the experiment with seed=42"}
+        ]
+        # Act
+        result = materialize_inline_spec("alpha", spec, overwrite=False)
+        # Assert
+        assert result.status_code == 400
+
+    def test_prompt_text_command_kind_is_spec_invalid(self, home_root: Path):
+        # Arrange
+        spec = _valid_spec()
+        spec["spec"]["startup_commands"] = [{"command": "You: do thing"}]
+        # Act
+        result = materialize_inline_spec("alpha", spec, overwrite=False)
+        # Assert
+        assert _body(result)["kind"] == "spec_invalid"
+
+    def test_prompt_text_command_does_not_write_spec_file(self, home_root: Path):
+        # Arrange — fail-loud rejection must leave zero artifacts (no
+        # spec dir, no spec.yaml). Same fail-loud contract PR-1 holds
+        # for bind_unresolvable.
+        spec = _valid_spec()
+        spec["spec"]["startup_commands"] = [{"command": "You: leaked"}]
+        spec_path = (
+            home_root / ".scitex" / "agent-container" / "agents" / "alpha" / "spec.yaml"
+        )
+        # Act
+        materialize_inline_spec("alpha", spec, overwrite=False)
+        # Assert
+        assert not spec_path.exists()
+
+    def test_well_formed_startup_commands_pass_through(self, home_root: Path):
+        # Arrange — ``echo`` + ``ls`` (both available as builtin /
+        # PATH executable) should not block the materialise.
+        spec = _valid_spec()
+        spec["spec"]["startup_commands"] = [
+            {"command": "echo starting"},
+            {"command": "ls /tmp"},
+        ]
+        # Act
+        result = materialize_inline_spec("alpha", spec, overwrite=False)
+        # Assert
+        assert result is None
