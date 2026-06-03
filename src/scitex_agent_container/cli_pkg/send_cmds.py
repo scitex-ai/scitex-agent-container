@@ -45,6 +45,52 @@ class _RemoteA2APortMissingError(click.ClickException):
     """
 
 
+def _send_via_host_listen(
+    *,
+    name: str,
+    prompt: str,
+    model: str | None,
+    max_turns: int | None,
+) -> None:
+    """In-SIF send proxy — POST /agents/<name>/send → outcome JSON.
+
+    PR-3 Checkpoint 3 — the path the ``sac agents send <name>
+    <prompt>`` CLI takes when running inside an apptainer SIF. The
+    ``--key`` (SIGINT) path is excluded by the call site because
+    it needs local pid access; prompts route through the host
+    listen so the running agent's in-process SDK session handles
+    the turn end-to-end.
+
+    The host's lineage-scoped ACL gate denies cross-lineage sends
+    with ``kind=acl_deny`` + exit 5; other failures map per the
+    standard outcome table.
+    """
+    import sys as _sys
+
+    from .._lifecycle._in_sif_http_client import (
+        HostListenTransportError,
+        host_listen_call,
+    )
+    from .._lifecycle._in_sif_outcome import (
+        build_outcome,
+        outcome_to_stdout_json,
+        transport_outcome,
+    )
+
+    body: dict = {"prompt": prompt}
+    if model is not None:
+        body["model"] = model
+    if max_turns is not None:
+        body["max_turns"] = max_turns
+    try:
+        status, resp = host_listen_call("POST", f"/agents/{name}/send", body=body)
+        outcome = build_outcome(http_status=status, body=resp)
+    except HostListenTransportError as exc:
+        outcome = transport_outcome(str(exc), url=exc.url)
+    _sys.stdout.write(outcome_to_stdout_json(outcome))
+    _sys.exit(outcome.exit_code)
+
+
 def _try_dispatch_remote_send(name: str, prompt: str) -> bool:
     """POST a turn to ``name`` on a remote peer via /v1/turn.
 
@@ -221,6 +267,24 @@ def send(
         raise click.UsageError("--key is mutually exclusive with PROMPT.")
     if not key and not prompt:
         raise click.UsageError("Either PROMPT or --key is required.")
+
+    # PR-3 — in-SIF auto-fallback. When inside an apptainer SIF and
+    # sending a PROMPT (the ``--key`` SIGINT path needs local pid
+    # access and is excluded), auto-proxy to ``POST /agents/<name>/send``
+    # on the host listen. The host's existing lineage-scoped ACL gate
+    # (already wired into node_message_send + the per-agent send
+    # surface) enforces caller permission. Outcome JSON + exit code
+    # follow the same Checkpoint 2 contract as the other in-SIF verbs.
+    from .._lifecycle._in_sif_broker import is_in_sif
+
+    if is_in_sif() and prompt and not key:
+        _send_via_host_listen(
+            name=name,
+            prompt=prompt,
+            model=model,
+            max_turns=max_turns,
+        )
+        return  # noreturn — _send_via_host_listen sys.exits
     if key:
         # ESC / C-c → SIGINT to the runner pid. Other keys are reserved
         # for a future tty-bridge implementation.
