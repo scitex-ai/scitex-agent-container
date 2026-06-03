@@ -115,6 +115,18 @@ def _format_claude_account_block(meta: dict) -> list[str]:
     default=False,
     help="Per-agent: also include a priority report (should this host yield to a higher-priority host?).",
 )
+@click.option(
+    "--workdir-audit",
+    "with_workdir_audit",
+    is_flag=True,
+    default=False,
+    help=(
+        "Per-agent: include the F-CS8 workdir audit (file count, total "
+        "bytes, bloat-source subdirs) under the `workdir_audit` key. "
+        "Surfaces silent SDK-discovery footprint without needing "
+        "`find <workdir>/.claude/ -type f | wc -l`. See F-CS8."
+    ),
+)
 @click.pass_context
 def status(
     ctx: click.Context,
@@ -125,6 +137,7 @@ def status(
     machine: str | None,
     with_snapshot: bool,
     with_priority: bool,
+    with_workdir_audit: bool,
 ) -> None:
     """Show agent status.
 
@@ -171,6 +184,24 @@ def status(
                 info["snapshot"] = take_snapshot(name, with_diff=True)
             except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                 info["snapshot_error"] = str(exc)
+
+        if with_workdir_audit:
+            # F-CS8 surface — fleet sweep 2026-06-03 showed two distinct
+            # bloat types (worktrees + hooks/pre-tool-use/.pending) that
+            # silently trip SDK auto-discovery. Expose the per-agent
+            # audit so operators can spot bloat without spelunking via
+            # `find <workdir>/.claude/ -type f | wc -l`.
+            from .._workdir_audit import audit_workdir_claude
+            from .._workdir_audit import to_dict as _audit_to_dict
+
+            workdir = info.get("expanded_workdir") or info.get("workdir") or ""
+            # stx-allow: fallback (reason: workdir audit walks a real fs
+            # tree; permission-denied or network-stale entries should not
+            # break the status command — surface as audit_error)
+            try:
+                info["workdir_audit"] = _audit_to_dict(audit_workdir_claude(workdir))
+            except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+                info["workdir_audit_error"] = str(exc)
 
         if with_priority:
             from ..config._host import resolve_hostname

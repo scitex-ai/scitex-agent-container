@@ -301,6 +301,84 @@ def test_workdir_claude_size_does_not_follow_symlinks(workdir, tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# F-CS8 LOUD-warn upgrades (2026-06-03 hardening) — file-count threshold
+# crossing trips the warn even with sub-threshold bytes, and the warn
+# banner names the bloat-source subdirs by relative path so the operator
+# can `mv` them without spelunking.
+# ---------------------------------------------------------------------------
+
+
+def test_warns_on_file_count_alone(workdir, capsys, env_save_restore):
+    # Arrange — tiny bytes (10 × 1 B) but force file-count threshold low
+    # enough that the count alone trips the F-CS8 warn. Confirms the warn
+    # now uses BOTH thresholds (the orochi failure was count-driven).
+    from scitex_agent_container.runtimes import claude_session as cs
+
+    env_save_restore.set("SAC_WORKDIR_CLAUDE_WARN_FILES", "5")
+    (workdir / ".claude" / "junk").mkdir(parents=True)
+    for i in range(10):
+        (workdir / ".claude" / "junk" / f"f{i}").write_bytes(b"x")
+    cfg = AgentConfig(name="x", runtime="docker", workdir=str(workdir))
+    # Act
+    cs._warn_if_heavy_workdir_claude(cfg)
+    # Assert
+    err = capsys.readouterr().err
+    assert "F-CS8" in err
+
+
+def test_warn_banner_lists_bloat_source_subdir(workdir, capsys, env_save_restore):
+    # Arrange — drop the per-subdir bloat threshold so a small fixture
+    # trips the worktrees bucket. The LOUD warn should name the subdir
+    # in the banner so operators don't have to grep the whole tree.
+    from scitex_agent_container.runtimes import claude_session as cs
+
+    env_save_restore.set("SAC_WORKDIR_CLAUDE_WARN_FILES", "3")
+    env_save_restore.set("SAC_WORKDIR_CLAUDE_BLOAT_SUBDIR_FILES", "3")
+    (workdir / ".claude" / "worktrees").mkdir(parents=True)
+    for i in range(5):
+        (workdir / ".claude" / "worktrees" / f"f{i}").write_bytes(b"x")
+    cfg = AgentConfig(name="x", runtime="docker", workdir=str(workdir))
+    # Act
+    cs._warn_if_heavy_workdir_claude(cfg)
+    # Assert
+    err = capsys.readouterr().err
+    assert ".claude/worktrees/" in err
+
+
+def test_warn_banner_emits_concrete_mv_command(workdir, capsys, env_save_restore):
+    # Arrange — operator-friendly: the banner should hand the operator a
+    # ready-to-paste `mv` line for each bloat source.
+    from scitex_agent_container.runtimes import claude_session as cs
+
+    env_save_restore.set("SAC_WORKDIR_CLAUDE_WARN_FILES", "3")
+    env_save_restore.set("SAC_WORKDIR_CLAUDE_BLOAT_SUBDIR_FILES", "3")
+    (workdir / ".claude" / "worktrees").mkdir(parents=True)
+    for i in range(5):
+        (workdir / ".claude" / "worktrees" / f"f{i}").write_bytes(b"x")
+    cfg = AgentConfig(name="x", runtime="docker", workdir=str(workdir))
+    # Act
+    cs._warn_if_heavy_workdir_claude(cfg)
+    # Assert
+    err = capsys.readouterr().err
+    assert "mv " in err
+
+
+def test_warn_silent_when_neither_threshold_crossed(workdir, capsys, env_save_restore):
+    # Arrange — generous thresholds, small tree. No warn expected.
+    from scitex_agent_container.runtimes import claude_session as cs
+
+    env_save_restore.set("SAC_WORKDIR_CLAUDE_WARN_FILES", "100000")
+    env_save_restore.set("SAC_WORKDIR_CLAUDE_WARN_BYTES", str(1024 * 1024 * 1024))
+    (workdir / ".claude" / "skills").mkdir(parents=True)
+    (workdir / ".claude" / "skills" / "tiny.md").write_text("x")
+    cfg = AgentConfig(name="x", runtime="docker", workdir=str(workdir))
+    # Act
+    cs._warn_if_heavy_workdir_claude(cfg)
+    # Assert
+    assert capsys.readouterr().err == ""
+
+
+# ---------------------------------------------------------------------------
 # F-CS1 — CLAUDE.md materialisation through _setup_workspace.
 # ---------------------------------------------------------------------------
 

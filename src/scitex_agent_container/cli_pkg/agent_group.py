@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import click
 
+from ._agent_prune_claude import prune_claude as _prune_claude_impl
 from ._helpers import HelpRecursiveGroup
 from .build_cmds import check as _check_impl
 from .info_cmds import find as _find_impl
@@ -49,6 +50,7 @@ class _AgentsGroup(HelpRecursiveGroup):
         ("Preflight", ["check"]),
         ("Discovery", ["find"]),
         ("Account", ["accounts"]),
+        ("Maintenance", ["prune-claude"]),
     ]
 
 
@@ -78,5 +80,8 @@ agent_group.add_command(_rebind(_find_impl, "find"))
 agent_group.add_command(_rebind(_recall_impl, "recall"))
 agent_group.add_command(_rebind(_check_impl, "check"))
 agent_group.add_command(_rebind(_send_impl, "send"))
+# F-CS8 prune — dry-run-by-default purge of the two known workdir
+# bloat sources (.pending/ records + merged-only worktrees/agent-*).
+agent_group.add_command(_rebind(_prune_claude_impl, "prune-claude"))
 
 __all__ = ["agent_group"]
