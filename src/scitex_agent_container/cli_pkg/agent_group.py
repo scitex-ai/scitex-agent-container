@@ -44,7 +44,10 @@ class _AgentsGroup(HelpRecursiveGroup):
     flat alphabetical list."""
 
     COMMAND_CATEGORIES = [
-        ("Lifecycle", ["start", "stop", "restart", "delete", "forget"]),
+        (
+            "Lifecycle",
+            ["start", "stop", "restart", "delete", "forget", "spawn-from-here"],
+        ),
         ("Interact", ["send"]),
         ("Inspect", ["list", "status", "health", "tail", "recall"]),
         ("Preflight", ["check"]),
@@ -65,6 +68,13 @@ agent_group.add_command(_rebind(_stop_impl, "stop"))
 agent_group.add_command(_rebind(_restart_impl, "restart"))
 agent_group.add_command(_rebind(_delete_impl, "delete"))
 agent_group.add_command(_rebind(_forget_impl, "forget"))
+# PR-3 — in-SIF-native spawn verb with wire-stable outcome JSON +
+# table-mapped exit code. Distinct from `start` (the legacy local-
+# materialise-then-maybe-broker verb): `spawn-from-here` ALWAYS
+# POSTs to the host listen.
+from ._spawn_from_here import spawn_from_here as _spawn_from_here_impl  # noqa: E402
+
+agent_group.add_command(_rebind(_spawn_from_here_impl, "spawn-from-here"))
 
 # Polysemous noun-leaves (allowed under noun groups by §1 loosening)
 agent_group.add_command(_rebind(_status_impl, "list"))

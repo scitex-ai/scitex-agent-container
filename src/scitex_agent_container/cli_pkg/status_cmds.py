@@ -20,6 +20,40 @@ from ._helpers import (
 )
 
 
+def _status_via_host_listen(name: str) -> None:
+    """In-SIF per-agent status proxy — GET /agents/<name>/status.
+
+    PR-3 Checkpoint 3 — the path the ``sac agents status <name>``
+    CLI takes when running inside an apptainer SIF. Emits one
+    :func:`_in_sif_outcome.outcome_to_stdout_json` line to stdout
+    (the wire-stable shape pinned in Checkpoint 2) and exits with
+    the table-mapped code.
+
+    Never raises — every failure mode (transport, ACL deny, etc.)
+    is mapped into an outcome with the structured ``kind`` tag the
+    consumer branches on. The host's lineage-scoped ACL gate is
+    the authority; an unauthorised caller gets ``kind=acl_deny``
+    + exit 5.
+    """
+    from .._lifecycle._in_sif_http_client import (
+        HostListenTransportError,
+        host_listen_call,
+    )
+    from .._lifecycle._in_sif_outcome import (
+        build_outcome,
+        outcome_to_stdout_json,
+        transport_outcome,
+    )
+
+    try:
+        status, body = host_listen_call("GET", f"/agents/{name}/status")
+        outcome = build_outcome(http_status=status, body=body)
+    except HostListenTransportError as exc:
+        outcome = transport_outcome(str(exc), url=exc.url)
+    sys.stdout.write(outcome_to_stdout_json(outcome))
+    sys.exit(outcome.exit_code)
+
+
 def _format_claude_account_block(meta: dict) -> list[str]:
     """Render the ``Claude Code account`` section as a list of text lines.
 
@@ -166,6 +200,21 @@ def status(
         sys.exit(2)
 
     if name:
+        # PR-3 — in-SIF auto-fallback for per-agent status. When the
+        # CLI is invoked inside an apptainer SIF, the local registry
+        # is the SIF's own (not the host's), so a `sac agents status
+        # <name>` for any host-side agent would error out. Auto-proxy
+        # to `GET /agents/<name>/status` on the host listen, mapped
+        # through the PR-3 outcome layer for stable stdout JSON +
+        # exit code. The lineage-scoped ACL on the host side enforces
+        # that the caller can only inspect itself or its lineage
+        # descendants.
+        from .._lifecycle._in_sif_broker import is_in_sif
+
+        if is_in_sif():
+            _status_via_host_listen(name)
+            return  # noreturn — _status_via_host_listen sys.exits
+
         # stx-allow: fallback (reason: agent_status queries registry and multiplexer state that may be unavailable; CLI exits with code 1 and reports the error in the requested format)
         try:
             info = agent_status(name)

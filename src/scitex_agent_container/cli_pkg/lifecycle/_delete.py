@@ -25,6 +25,44 @@ from .._helpers import agent_name_complete, console
 from ._dispatch import lookup_remote_peer
 
 
+def _delete_via_host_listen(names: tuple[str, ...]) -> None:
+    """In-SIF DELETE proxy — one HTTP DELETE per name → outcome JSON.
+
+    PR-3 Checkpoint 3 — the path the CLI takes when running inside
+    an apptainer SIF (= a SAC-from-SAC child agent's workspace).
+    Each name's outcome is emitted as one JSON line to stdout in
+    the wire-stable :func:`_in_sif_outcome.outcome_to_stdout_json`
+    shape. Process exit code is the maximum of the per-name
+    outcome exit codes (highest = worst case per the table), so
+    the calling script sees the most actionable failure code for
+    the batch.
+
+    Never raises — every failure mode (transport, ACL deny, marker
+    stillborn, unknown kind) is mapped into an outcome with the
+    structured ``kind`` tag the consumer branches on.
+    """
+    from ..._lifecycle._in_sif_http_client import (
+        HostListenTransportError,
+        host_listen_call,
+    )
+    from ..._lifecycle._in_sif_outcome import (
+        build_outcome,
+        outcome_to_stdout_json,
+        transport_outcome,
+    )
+
+    worst_exit = 0
+    for name in names:
+        try:
+            status, body = host_listen_call("DELETE", f"/agents/{name}")
+            outcome = build_outcome(http_status=status, body=body)
+        except HostListenTransportError as exc:
+            outcome = transport_outcome(str(exc), url=exc.url)
+        sys.stdout.write(outcome_to_stdout_json(outcome))
+        worst_exit = max(worst_exit, outcome.exit_code)
+    sys.exit(worst_exit)
+
+
 def _dispatch_remote_delete(name: str) -> bool:
     """SSH into the peer that owns ``name`` to stop + rm + close row.
 
@@ -140,6 +178,25 @@ def delete(
       $ sac agent delete hello-agent --keep-runtime
     """
     import shutil as _shutil
+
+    # PR-3 — in-SIF auto-fallback. When the CLI is running inside an
+    # apptainer SIF (= the SAC-from-SAC architecture: a child agent's
+    # workspace), the local filesystem doesn't carry the host registry
+    # (each SIF has its own ~/.scitex/agent-container/), and there is
+    # no useful local pid file to SIGTERM. Auto-proxy the operation to
+    # the host's ``sac listen`` server via the env-injected
+    # SAC_LISTEN_BASE_URL + SAC_LISTEN_BEARER. The lineage-scoped ACL
+    # gate on the host side enforces that the caller can only DELETE
+    # itself or its lineage descendants — same wire shape (5-kind +
+    # transport) as the in-process gate. Result is one
+    # InSifOutcome JSON line per name to stdout; exit code is the
+    # highest seen (worst-case mapping per the table) so a batch DELETE
+    # surfaces the most actionable failure code to the calling script.
+    from ..._lifecycle._in_sif_broker import is_in_sif
+
+    if is_in_sif() and not dry_run:
+        _delete_via_host_listen(names)
+        return  # noreturn — _delete_via_host_listen sys.exits
 
     if len(names) > 1 and not yes and not dry_run:
         click.echo(

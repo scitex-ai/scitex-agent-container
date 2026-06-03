@@ -53,10 +53,67 @@ log = logging.getLogger(__name__)
 __all__ = [
     "AclDecision",
     "NodeAuthMiddleware",
+    "check_lineage_acl",
     "check_send_acl",
     "check_spawn",
     "deny_response",
 ]
+
+
+def check_lineage_acl(
+    *,
+    caller: str | None,
+    target: str,
+    db_path: Path | None = None,
+) -> AclDecision:
+    """Decide whether ``caller`` may operate on ``target`` via lineage.
+
+    PR-3 Checkpoint 3 — the generalized ACL gate the DELETE,
+    STATUS, send, and tail surfaces consume so an agent can only
+    manage agents that are itself OR its lineage descendants
+    (transitively, walked via the ``lineage`` table).
+
+    Policy:
+
+      * ``caller is None`` (or empty string) — administrative /
+        operator path (host-wide bearer, not a per-node token).
+        Always allowed. Mirrors the spawn-gate's admin treatment.
+      * ``caller == target`` — self-management. A SAC agent
+        managing its OWN runtime (e.g. ``sac agents status`` on
+        itself) is always allowed regardless of lineage.
+      * ``target ∈ descendants_of(caller)`` — caller is a
+        transitive ancestor; lineage-scoped operation permitted.
+      * Otherwise — deny with a structured reason naming the
+        caller, the target, and the fact that no lineage edge
+        connects them.
+
+    Returns the same ``("allow", None)`` / ``("deny", reason)``
+    tuple shape as :func:`check_send_acl` / :func:`check_spawn`
+    so callers can compose uniformly. The deny ``reason`` is
+    suitable for inclusion in :func:`deny_response` (which now
+    wraps it with ``kind="acl_deny"`` per the 5-kind contract).
+
+    ``db_path`` is exposed so tests can isolate from the global
+    state.db.
+    """
+    if caller is None or caller == "":
+        return ("allow", None)
+    if caller == target:
+        return ("allow", None)
+    from .._state._lineage import descendants_of
+
+    descendants = descendants_of(name=caller, db_path=db_path)
+    if target in descendants:
+        return ("allow", None)
+    return (
+        "deny",
+        (
+            f"lineage ACL deny: caller {caller!r} has no lineage edge "
+            f"to target {target!r}. Permitted operations are self "
+            "(caller == target) or any transitive descendant via the "
+            "lineage table."
+        ),
+    )
 
 
 AclDecision = tuple[Literal["allow", "deny", "block"], str | None]
@@ -323,12 +380,31 @@ def check_spawn(
     return ("deny", reason)
 
 
-def deny_response(reason: str) -> JSONResponse:
+def deny_response(reason: str, *, kind: str = "acl_deny") -> JSONResponse:
     """Standard 403 body for an ACL denial. Loud + structured.
 
     Logged at WARNING so the host operator sees the rejection in the
     listen-server log. Denial is the policy working — not a crash —
     but the sender must know exactly why (handoff §0 Hard rules).
+
+    Wire shape (PR-3 — pinned with clew, the 5th kind in the
+    POST/DELETE/send/tail surface taxonomy):
+
+    .. code-block:: json
+
+       {
+         "error":  "ACL deny",
+         "kind":   "acl_deny",
+         "reason": "<human-readable cause>"
+       }
+
+    Callers branch on ``kind`` (not prose); ``reason`` is for humans
+    only. The kind defaults to ``"acl_deny"`` but is overridable so a
+    future ACL phase (per-spec deny, lineage-out-of-scope) can shade
+    the taxonomy without breaking the 5-kind contract.
     """
     log.warning("ACL deny: %s", reason)
-    return JSONResponse({"error": "ACL deny", "reason": reason}, status_code=403)
+    return JSONResponse(
+        {"error": "ACL deny", "kind": kind, "reason": reason},
+        status_code=403,
+    )
