@@ -18,7 +18,6 @@ import pytest
 from click.testing import CliRunner
 
 from scitex_agent_container.cli_pkg._agent_prune_claude import (
-    PrunePlan,
     apply_plan,
     plan_prune,
     prune_claude,
