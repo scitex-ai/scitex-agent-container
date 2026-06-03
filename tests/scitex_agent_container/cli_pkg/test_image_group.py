@@ -166,7 +166,9 @@ def home_tmp(tmp_path: Path) -> Iterator[Path]:
     saved_home = os.environ.get("HOME")
     os.environ["HOME"] = str(home)
     saved_containers_dir = ig._CONTAINERS_DIR
+    saved_state_root = ig._SCITEX_USER_STATE_ROOT
     ig._CONTAINERS_DIR = home / ".scitex" / "agent-container" / "containers"  # type: ignore[assignment]
+    ig._SCITEX_USER_STATE_ROOT = home / ".scitex"  # type: ignore[assignment]
     try:
         yield tmp_path
     finally:
@@ -175,6 +177,7 @@ def home_tmp(tmp_path: Path) -> Iterator[Path]:
         else:
             os.environ["HOME"] = saved_home
         ig._CONTAINERS_DIR = saved_containers_dir  # type: ignore[assignment]
+        ig._SCITEX_USER_STATE_ROOT = saved_state_root  # type: ignore[assignment]
 
 
 # ---------------------------------------------------------------------------
@@ -591,3 +594,118 @@ def test_resolve_source_to_sif_raises_when_layer_not_built(home_tmp):
     # Assert
     with pytest.raises(Exception):
         _call()
+
+
+# ---------------------------------------------------------------------------
+# Cross-package discovery — ``~/.scitex/<pkg>/containers/*.sif`` convention
+# (operator design 8566). sac does NOT know any package by name; the glob
+# spans every package that follows the convention, with no _LAYERS edit
+# required for new packages to appear.
+# ---------------------------------------------------------------------------
+
+
+def test_list_discovers_sif_in_downstream_package_dir(home_tmp):
+    # Arrange — scitex-writer drops a SIF at the canonical convention
+    # path. sac should surface it via the generic glob without any
+    # package-name awareness.
+    writer_dir = ig._SCITEX_USER_STATE_ROOT / "writer" / "containers"
+    writer_dir.mkdir(parents=True)
+    (writer_dir / "texlive.sif").write_bytes(b"x" * 100)
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(image_group, ["list"])
+    # Assert
+    assert result.exit_code == 0 and "texlive.sif" in result.output
+
+
+def test_list_labels_downstream_sif_with_package_name(home_tmp):
+    # Arrange — the rendered row carries ``<package>/<sif>`` so the
+    # operator sees the owning package at a glance.
+    writer_dir = ig._SCITEX_USER_STATE_ROOT / "writer" / "containers"
+    writer_dir.mkdir(parents=True)
+    (writer_dir / "texlive.sif").write_bytes(b"x" * 100)
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(image_group, ["list"])
+    # Assert
+    assert "writer/texlive.sif" in result.output
+
+
+def test_list_json_carries_package_field_for_each_entry(home_tmp):
+    # Arrange — JSON consumers need the package as a structured field,
+    # not parsed out of the rendered label.
+    writer_dir = ig._SCITEX_USER_STATE_ROOT / "writer" / "containers"
+    writer_dir.mkdir(parents=True)
+    (writer_dir / "texlive.sif").write_bytes(b"x" * 100)
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(image_group, ["list", "--json"])
+    start = result.output.index("[")
+    end = result.output.rindex("]") + 1
+    data = json.loads(result.output[start:end])
+    # Assert
+    assert data[0]["package"] == "writer"
+
+
+def test_list_finds_sifs_across_multiple_packages_simultaneously(home_tmp):
+    # Arrange — agent-container/sac-base.sif AND writer/texlive.sif
+    # AND neurovista/whatever.sif should all surface from a single
+    # scan. The convention is generic; new packages slot in without
+    # sac code changes.
+    ac_dir = ig._SCITEX_USER_STATE_ROOT / "agent-container" / "containers"
+    ac_dir.mkdir(parents=True)
+    (ac_dir / "sac-base.sif").write_bytes(b"x")
+    writer_dir = ig._SCITEX_USER_STATE_ROOT / "writer" / "containers"
+    writer_dir.mkdir(parents=True)
+    (writer_dir / "texlive.sif").write_bytes(b"x")
+    nv_dir = ig._SCITEX_USER_STATE_ROOT / "neurovista" / "containers"
+    nv_dir.mkdir(parents=True)
+    (nv_dir / "experiment.sif").write_bytes(b"x")
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(image_group, ["list"])
+    # Assert
+    assert all(
+        marker in result.output
+        for marker in ("sac-base.sif", "texlive.sif", "experiment.sif")
+    )
+
+
+def test_list_does_not_descend_below_containers_subdir(home_tmp):
+    # Arrange — the glob is ``*/containers/*.sif`` (exactly 2 levels).
+    # A SIF buried deeper (e.g. ``writer/containers/legacy/old.sif``)
+    # is deliberately NOT surfaced — keeps the scan bounded and
+    # forces packages onto the flat convention.
+    nested = ig._SCITEX_USER_STATE_ROOT / "writer" / "containers" / "legacy"
+    nested.mkdir(parents=True)
+    (nested / "deep.sif").write_bytes(b"x")
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(image_group, ["list"])
+    # Assert — deep.sif must NOT appear in output.
+    assert "deep.sif" not in result.output
+
+
+def test_list_ignores_sifs_outside_containers_subdir(home_tmp):
+    # Arrange — a stray SIF directly under ``~/.scitex/writer/`` (not
+    # under the ``containers/`` subdir) is OUTSIDE the convention and
+    # must not surface. The scan is conventional, not free-form.
+    stray = ig._SCITEX_USER_STATE_ROOT / "writer"
+    stray.mkdir(parents=True)
+    (stray / "stray.sif").write_bytes(b"x")
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(image_group, ["list"])
+    # Assert
+    assert "stray.sif" not in result.output
+
+
+def test_scitex_user_state_root_is_dotscitex_under_home():
+    # Arrange — pin the root constant so a refactor that moves it
+    # silently (e.g. into a config var) trips a red test. The
+    # convention's location is operator contract.
+    expected = Path.home() / ".scitex"
+    # Act
+    actual = ig._SCITEX_USER_STATE_ROOT
+    # Assert
+    assert actual == expected

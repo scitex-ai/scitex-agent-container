@@ -37,7 +37,22 @@ _build_layer_from_source = _image_source_build.build_layer_from_source
 _RECIPES_DIR = Path(__file__).resolve().parent.parent / "containers"
 
 # Built artifacts live in user state (persistent, never in the repo).
+#
+# sac OWNS this directory for its own (base / scitex) artifacts. Other
+# scitex-* packages own their own siblings under ``~/.scitex/<pkg>/``
+# per the ``~/.scitex/<pkg>/{containers,bin}`` convention (operator
+# design 8566): scitex-writer → ``~/.scitex/writer/containers/``,
+# scitex-neurovista → ``~/.scitex/neurovista/containers/``, etc. sac
+# does NOT host other packages' SIFs in its own namespace — minimal
+# scope per the ecosystem doctrine.
 _CONTAINERS_DIR = Path.home() / ".scitex" / "agent-container" / "containers"
+
+# Generic cross-package discovery root. ``sac image list`` globs
+# ``<root>/*/containers/*.sif`` so any package following the convention
+# becomes visible without sac knowing the package by name. Mirrors the
+# ``scitex_dev.*`` entry_points discovery pattern (each package owns its
+# own surface; the aggregator never hard-codes package names).
+_SCITEX_USER_STATE_ROOT = Path.home() / ".scitex"
 
 # Layer → .def filename mapping.
 _LAYERS = {
@@ -300,7 +315,11 @@ def image_freeze(sandbox_dir: Path, output_sif: Path) -> None:
 @image_group.command("list")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
 def image_list(as_json: bool) -> None:
-    """List installed SIF versions.
+    """List installed SIFs across every scitex-* package.
+
+    Discovers via the ``~/.scitex/<pkg>/containers/*.sif`` convention
+    (operator design 8566) — sac does NOT know any other package by
+    name; new packages light up automatically.
 
     \b
     Example:
@@ -308,17 +327,12 @@ def image_list(as_json: bool) -> None:
       $ sac image list --json
     """
     _ensure_containers_dir()
-    # Match our own naming pattern. SIFs are single files
-    # (scitex-agent-container-*.sif); sandboxes are writable directories
-    # (scitex-agent-container-*.sandbox/). Both count as installed images.
-    # We don't delegate to scitex-container's list_versions because that
-    # regex is hard-coded to the legacy ``scitex-v*.sif`` form.
     entries: list[Path] = []
-    entries.extend(sorted(_CONTAINERS_DIR.glob("scitex-agent-container-*.sif")))
+    entries.extend(sorted(_SCITEX_USER_STATE_ROOT.glob("*/containers/*.sif")))
     entries.extend(
         sorted(
             p
-            for p in _CONTAINERS_DIR.glob("scitex-agent-container-*.sandbox")
+            for p in _SCITEX_USER_STATE_ROOT.glob("*/containers/*.sandbox")
             if p.is_dir()
         )
     )
@@ -339,6 +353,7 @@ def image_list(as_json: bool) -> None:
         size_bytes = _dir_size_bytes(p) if is_sandbox else p.stat().st_size
         versions.append(
             {
+                "package": p.parent.parent.name,
                 "name": p.name,
                 "path": str(p),
                 "kind": "sandbox" if is_sandbox else "sif",
@@ -346,20 +361,22 @@ def image_list(as_json: bool) -> None:
                 "mtime": p.stat().st_mtime,
             }
         )
-    console.print(f"[dim]containers dir: {_CONTAINERS_DIR}[/dim]")
+    console.print(f"[dim]scan root: {_SCITEX_USER_STATE_ROOT}/*/containers/[/dim]")
     if as_json:
         click.echo(json.dumps(versions, indent=2, default=str))
         return
     if not versions:
         console.print(
-            f"[dim](no SIFs in {_CONTAINERS_DIR} — run "
-            f"`sac image build base -y && sac image build scitex -y` to populate)[/dim]"
+            f"[dim](no SIFs under {_SCITEX_USER_STATE_ROOT}/*/containers/ — "
+            f"run `sac image build base -y && sac image build scitex -y` to "
+            f"populate; downstream packages populate their own siblings)[/dim]"
         )
         return
     for v in versions:
         size_mb = v["size_bytes"] / (1024 * 1024)
         tag = "sandbox" if v["kind"] == "sandbox" else "sif"
-        console.print(f"  {tag:<7s}  {v['name']:50s} {size_mb:>8.1f} MB")
+        label = f"{v['package']}/{v['name']}"
+        console.print(f"  {tag:<7s}  {label:50s} {size_mb:>8.1f} MB")
 
 
 # ---------------------------------------------------------------------------
