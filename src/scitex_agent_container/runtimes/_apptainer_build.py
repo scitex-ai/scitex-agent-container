@@ -13,11 +13,101 @@ dependency on :class:`ApptainerContainerRuntime`:
 from __future__ import annotations
 
 import hashlib
+import os
+import pwd
 import re
 import subprocess
 from pathlib import Path
 
 from ..config import AgentConfig
+
+# ---------------------------------------------------------------------------
+# Fakeroot auto-detection for SIF builds (operator gotcha 2026-06-03)
+#
+# ``apptainer build`` on a non-setuid install falls back to ``sudo
+# apptainer build`` when the caller isn't root + ``--fakeroot`` isn't
+# requested. ``sudo`` then prompts for a password, which fails in any
+# headless / cron / agent / detached context. The result is a silent
+# "build failed" with a non-actionable error in the build log.
+#
+# When the host already has fakeroot mappings configured for the
+# current user (``/etc/subuid`` + ``/etc/subgid`` carry an entry), the
+# user-namespace path works without sudo — we just have to ask for it
+# via ``--fakeroot``. This helper detects that situation so the build
+# argv carries the flag automatically.
+#
+# Test seams (``euid``, ``subuid_path``, ``subgid_path``) keep the
+# probe injectable from tests without monkeypatching ``os.geteuid`` or
+# ``/etc/subuid``.
+# ---------------------------------------------------------------------------
+
+
+def _has_subid_entry(path: Path, username: str) -> bool:
+    """Return ``True`` iff ``path`` (a ``/etc/sub{u,g}id``-shaped file)
+    has a mapping entry for ``username``.
+
+    Format per ``shadow-utils``: ``<username>:<start_id>:<count>`` per
+    line; the only check sac needs is "does this user have ANY
+    mapping" — the kernel handles the rest.
+    """
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.startswith(username + ":"):
+                return True
+    except (FileNotFoundError, OSError):
+        pass
+    return False
+
+
+def _should_use_fakeroot_for_build(
+    *,
+    euid: int | None = None,
+    subuid_path: Path | None = None,
+    subgid_path: Path | None = None,
+) -> bool:
+    """Auto-detect whether ``apptainer build`` needs ``--fakeroot``.
+
+    Returns ``True`` iff:
+
+    * The current effective UID is NOT root (real root doesn't need
+      fakeroot — the OS already lets it create namespaces directly),
+    * AND the user's ``/etc/subuid`` entry exists,
+    * AND the user's ``/etc/subgid`` entry exists.
+
+    A returning ``True`` means the build argv should add ``--fakeroot``
+    so apptainer uses the user-namespace path instead of falling back
+    to ``sudo`` (which prompts for a password in any non-interactive
+    context — agents, cron, detached lead, etc.).
+
+    Test seams (``euid``, ``subuid_path``, ``subgid_path``) let the
+    probe run against fake values without monkeypatching the real
+    syscalls / files.
+    """
+    real_euid = euid if euid is not None else os.geteuid()
+    if real_euid == 0:
+        return False
+
+    try:
+        username = pwd.getpwuid(real_euid).pw_name
+    except KeyError:
+        return False
+
+    sub_uid = subuid_path if subuid_path is not None else Path("/etc/subuid")
+    sub_gid = subgid_path if subgid_path is not None else Path("/etc/subgid")
+    return _has_subid_entry(sub_uid, username) and _has_subid_entry(sub_gid, username)
+
+
+def _build_argv_prefix() -> list[str]:
+    """Return ``["apptainer", "build"]`` plus ``--fakeroot`` when needed.
+
+    Used by both :func:`_build_sif_from_def` and
+    :func:`_build_sif_from_uri` so the fakeroot logic stays in one
+    place.
+    """
+    argv = ["apptainer", "build"]
+    if _should_use_fakeroot_for_build():
+        argv.append("--fakeroot")
+    return argv
 
 
 def resolve_sif(config: AgentConfig, cache_dir: Path) -> Path | None:
@@ -148,11 +238,8 @@ def _build_sif_from_uri(sif_path: Path, uri: str) -> bool:
     (network, missing registry credentials, malformed reference, ...).
     """
     sif_path.parent.mkdir(parents=True, exist_ok=True)
-    result = subprocess.run(
-        ["apptainer", "build", str(sif_path), uri],
-        capture_output=True,
-        text=True,
-    )
+    argv = _build_argv_prefix() + [str(sif_path), uri]
+    result = subprocess.run(argv, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(
             f"apptainer build {uri!r} → {sif_path} failed "
@@ -169,16 +256,19 @@ def _build_sif_from_def(sif_path: Path, def_file: Path) -> bool:
     ``Bootstrap: docker`` — apptainer's docker compatibility runs
     entirely over OCI registry pulls.
 
+    Auto-adds ``--fakeroot`` via :func:`_build_argv_prefix` when the
+    current user has ``/etc/subuid`` + ``/etc/subgid`` mappings — see
+    that function's docstring. Avoids the silent "sudo: a password is
+    required" failure in headless / agent / cron contexts when the
+    host's apptainer install isn't setuid.
+
     Returns ``True`` on success. Raises :class:`RuntimeError` carrying
     the apptainer stderr verbatim on non-zero rc — backlog #4 fail-loud
     contract (see :func:`_build_sif_from_uri` for the same rationale).
     """
     sif_path.parent.mkdir(parents=True, exist_ok=True)
-    result = subprocess.run(
-        ["apptainer", "build", str(sif_path), str(def_file)],
-        capture_output=True,
-        text=True,
-    )
+    argv = _build_argv_prefix() + [str(sif_path), str(def_file)]
+    result = subprocess.run(argv, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(
             f"apptainer build {def_file} → {sif_path} failed "
@@ -220,10 +310,13 @@ def _read_listen_bearer() -> str | None:
 
 __all__ = [
     "resolve_sif",
+    "_build_argv_prefix",
+    "_build_sif_from_def",
+    "_build_sif_from_uri",
+    "_create_overlay_image",
+    "_has_subid_entry",
     "_listen_token_path",
     "_read_listen_bearer",
     "_safe_image_tag",
-    "_create_overlay_image",
-    "_build_sif_from_uri",
-    "_build_sif_from_def",
+    "_should_use_fakeroot_for_build",
 ]
