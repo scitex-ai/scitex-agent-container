@@ -70,6 +70,9 @@ from ._channel_auto_ack import (  # noqa: E402,F401
     _post_auto_ack,
     _should_auto_ack,
 )
+from ._channel_self_register import (  # noqa: E402
+    refresh_node as _refresh_comms_node,
+)
 from ._channel_wake import _should_wake_turn, _wake_text, _wake_turn  # noqa: E402,F401
 
 
@@ -362,6 +365,19 @@ async def _serve(
         sse_task: asyncio.Task[None] = asyncio.create_task(
             _consume_sse(sse_url, bearer, on_event)
         )
+
+        # ADR-0014 + lead-row-port-zero bug fix (2026-06-03):
+        # Self-register THIS channel into ``comms_nodes`` so the federated
+        # graph contains the lead (or any sac mcp channel node) durably.
+        # The initial UPSERT happens INSIDE refresh_node's first iteration
+        # (no leading sleep), so a single task covers both startup register
+        # and periodic ``updated_at`` refresh. Best-effort: a failed write
+        # logs a warning but never kills the SSE consumer or the MCP
+        # handshake. Cancelled in ``finally`` alongside the SSE task.
+        reg_task: asyncio.Task[None] = asyncio.create_task(
+            _refresh_comms_node(name=name, listen_url=listen_url)
+        )
+
         try:
             async with anyio.create_task_group() as tg:
                 async for message in session.incoming_messages:
@@ -374,6 +390,7 @@ async def _serve(
                     )
         finally:
             sse_task.cancel()
+            reg_task.cancel()
 
 
 async def _run(
