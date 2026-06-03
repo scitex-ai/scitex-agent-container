@@ -603,3 +603,299 @@ def test_warning_points_to_systemd_readme_for_manual_recovery() -> None:
     msg = format_escalation_warning(10.0)
     # Assert
     assert "scripts/systemd/README.md" in msg
+
+
+# ---------------------------------------------------------------------------
+# Uncovered error-branch coverage
+# ---------------------------------------------------------------------------
+
+
+def test_systemd_unit_is_active_returns_false_when_systemctl_missing(
+    tmp_path: Path,
+) -> None:
+    # Arrange — unit file present but systemctl binary missing (or
+    # subprocess raises FileNotFoundError on a non-systemd host).
+    unit = tmp_path / "sac-listen.service"
+    unit.write_text("[Unit]\n")
+
+    def _missing_systemctl(*args, **kwargs):
+        raise FileNotFoundError("systemctl: command not found")
+
+    # Act
+    with _swap("_run_subprocess", _missing_systemctl):
+        result = systemd_unit_is_active(unit)
+    # Assert
+    assert result is False
+
+
+def test_default_http_get_returns_minus_one_for_unreachable_url() -> None:
+    # Arrange — the real default callable (no swap) against a port
+    # nothing is bound on. Returns -1 per the URLError → -1 contract.
+    from scitex_agent_container._listen._restart import _default_http_get
+
+    # Act
+    status = _default_http_get("http://127.0.0.1:1/never-bound", timeout=0.1)
+    # Assert
+    assert status == -1
+
+
+def test_term_skipped_when_pid_dies_between_check_and_kill(tmp_path: Path) -> None:
+    # Arrange — pid is alive at the initial check, but ProcessLookupError
+    # is raised when SIGTERM is sent (race: process died between the
+    # liveness probe and the signal). Result must NOT escalate, since
+    # the process is already gone.
+    pid_file = tmp_path / "listen-7878.pid"
+    pid_file.write_text("12345\n")
+
+    class _DyingKill:
+        """Pid is alive on the very first `kill(0)`, but ProcessLookupError
+        on the SIGTERM (race) → no escalation."""
+
+        def __init__(self):
+            self.calls: list[tuple[int, int]] = []
+            self._first_probe = True
+
+        def __call__(self, pid: int, sig: int) -> None:
+            self.calls.append((pid, sig))
+            if sig == 0 and self._first_probe:
+                self._first_probe = False
+                return  # alive
+            raise ProcessLookupError(pid)
+
+    kill = _DyingKill()
+    subproc = _SubprocessRecorder(returncodes=[0])
+    http = _HttpRecorder(statuses=[200])
+    # Act
+    with (
+        _swap("_kill", kill),
+        _swap("_sleep", _no_sleep),
+        _swap("_run_subprocess", subproc),
+        _swap("_http_get", http),
+    ):
+        result = restart_listen(
+            host="127.0.0.1",
+            port=7878,
+            lock_dir=tmp_path,
+            systemd_unit_path=tmp_path / "absent.service",
+            sac_listen_argv=["echo", "stub"],
+        )
+    # Assert
+    assert result.escalated_to_sigkill is False
+
+
+def test_direct_spawn_filenotfound_reports_loud_error(tmp_path: Path) -> None:
+    # Arrange — sac binary missing on $PATH; spawn must fail loudly
+    # with the actionable error in ``result.error``.
+    pid_file = tmp_path / "listen-7878.pid"
+    kill = _KillRecorder(alive_script=[False])
+
+    def _missing_sac(*args, **kwargs):
+        raise FileNotFoundError("sac: command not found")
+
+    # Act
+    with (
+        _swap("_kill", kill),
+        _swap("_sleep", _no_sleep),
+        _swap("_run_subprocess", _missing_sac),
+    ):
+        result = restart_listen(
+            host="127.0.0.1",
+            port=7878,
+            lock_dir=tmp_path,
+            systemd_unit_path=tmp_path / "absent.service",
+            sac_listen_argv=["sac", "listen"],
+        )
+    # Assert
+    assert "direct spawn failed" in result.error
+
+
+def test_systemctl_restart_nonzero_rc_reports_loud_error(tmp_path: Path) -> None:
+    # Arrange — unit installed + enabled, but ``systemctl restart``
+    # exits non-zero. Must surface in ``result.error`` rather than
+    # silently claiming success.
+    unit = tmp_path / "sac-listen.service"
+    unit.write_text("[Unit]\n")
+    # is-enabled rc=0, daemon-reload rc=0, restart rc=1
+    subproc = _SubprocessRecorder(returncodes=[0, 0, 1])
+    kill = _KillRecorder(alive_script=[False])
+    # Act
+    with (
+        _swap("_kill", kill),
+        _swap("_sleep", _no_sleep),
+        _swap("_run_subprocess", subproc),
+    ):
+        result = restart_listen(
+            host="127.0.0.1",
+            port=7878,
+            lock_dir=tmp_path,
+            systemd_unit_path=unit,
+        )
+    # Assert
+    assert "systemctl restart exited rc=1" in result.error
+
+
+def test_systemctl_timeoutexpired_reports_loud_error(tmp_path: Path) -> None:
+    # Arrange — systemctl hangs past the call's timeout.
+    unit = tmp_path / "sac-listen.service"
+    unit.write_text("[Unit]\n")
+
+    # is-enabled returns 0 (alive). Then daemon-reload raises
+    # TimeoutExpired. _SubprocessRecorder doesn't directly support
+    # raising; build a stateful callable.
+    state = {"n": 0}
+
+    def _stateful_subproc(*args, **kwargs):
+        state["n"] += 1
+        if state["n"] == 1:
+            # is-enabled
+            return subprocess.CompletedProcess(args=list(args[0]), returncode=0)
+        # daemon-reload (or restart) — hang
+        raise subprocess.TimeoutExpired(cmd=list(args[0]), timeout=10.0)
+
+    kill = _KillRecorder(alive_script=[False])
+    # Act
+    with (
+        _swap("_kill", kill),
+        _swap("_sleep", _no_sleep),
+        _swap("_run_subprocess", _stateful_subproc),
+    ):
+        result = restart_listen(
+            host="127.0.0.1",
+            port=7878,
+            lock_dir=tmp_path,
+            systemd_unit_path=unit,
+        )
+    # Assert
+    assert "systemctl restart failed" in result.error
+
+
+def test_post_sigkill_survival_refuses_to_clear_pidfile(tmp_path: Path) -> None:
+    # Arrange — pid stays alive even after SIGKILL (zombie /
+    # uninterruptible state). Must NOT clear the pidfile, must
+    # surface the actionable error.
+    pid_file = tmp_path / "listen-7878.pid"
+    pid_file.write_text("12345\n")
+    # alive_script: always True — survives SIGTERM, SIGKILL, and the
+    # defence-in-depth post-kill check.
+    kill = _KillRecorder(alive_script=[True])
+    # Act
+    with _swap("_kill", kill), _swap("_sleep", _no_sleep):
+        result = restart_listen(
+            host="127.0.0.1",
+            port=7878,
+            lock_dir=tmp_path,
+            grace_secs=0.4,
+            systemd_unit_path=tmp_path / "absent.service",
+            sac_listen_argv=["echo", "stub"],
+        )
+    # Assert
+    assert "survived SIGKILL" in result.error
+
+
+# ---------------------------------------------------------------------------
+# CLI verb (sac listen restart) — exercises the click integration
+# ---------------------------------------------------------------------------
+
+
+def test_cli_listen_restart_surface_invokes_restart_listen(tmp_path: Path) -> None:
+    # Arrange — CliRunner against the listen group + restart subcommand.
+    # The verb wires `host:port` from --bind into the restart_listen
+    # call. We swap the restart_listen function on the module the CLI
+    # imports it from to record + control the result.
+    from click.testing import CliRunner
+
+    from scitex_agent_container._listen import _restart as restart_mod_alias
+    from scitex_agent_container.cli_pkg.listen_cmds import listen as listen_grp
+
+    captured: dict[str, tuple] = {}
+
+    def _fake_restart(**kwargs):
+        captured["kwargs"] = kwargs
+        from scitex_agent_container._listen._restart import RestartResult
+
+        return RestartResult(
+            ok=True,
+            escalated_to_sigkill=False,
+            had_prior_pidfile=False,
+            prior_pid_alive=False,
+            health_ok=True,
+            took_systemd_path=False,
+            error="",
+        )
+
+    runner = CliRunner()
+    saved = restart_mod_alias.restart_listen
+    restart_mod_alias.restart_listen = _fake_restart  # type: ignore[assignment]
+    try:
+        # Act
+        result = runner.invoke(listen_grp, ["restart"])
+    finally:
+        restart_mod_alias.restart_listen = saved  # type: ignore[assignment]
+    # Assert
+    assert result.exit_code == 0 and "kwargs" in captured
+
+
+def test_cli_listen_restart_surfaces_loud_warn_on_escalation(tmp_path: Path) -> None:
+    # Arrange — restart_listen returns escalated=True; CLI must emit
+    # the canonical WARN line to stderr per design call (c).
+    from click.testing import CliRunner
+
+    from scitex_agent_container._listen import _restart as restart_mod_alias
+    from scitex_agent_container.cli_pkg.listen_cmds import listen as listen_grp
+
+    def _fake_restart(**kwargs):
+        from scitex_agent_container._listen._restart import RestartResult
+
+        return RestartResult(
+            ok=True,
+            escalated_to_sigkill=True,
+            had_prior_pidfile=True,
+            prior_pid_alive=True,
+            health_ok=True,
+            took_systemd_path=False,
+            error="",
+        )
+
+    runner = CliRunner()
+    saved = restart_mod_alias.restart_listen
+    restart_mod_alias.restart_listen = _fake_restart  # type: ignore[assignment]
+    try:
+        # Act
+        result = runner.invoke(listen_grp, ["restart"])
+    finally:
+        restart_mod_alias.restart_listen = saved  # type: ignore[assignment]
+    # Assert
+    assert "WARN: escalated to SIGKILL" in result.output
+
+
+def test_cli_listen_restart_failure_exits_nonzero_with_error(tmp_path: Path) -> None:
+    # Arrange — restart_listen returns ok=False + populated error;
+    # CLI must exit non-zero and surface the error.
+    from click.testing import CliRunner
+
+    from scitex_agent_container._listen import _restart as restart_mod_alias
+    from scitex_agent_container.cli_pkg.listen_cmds import listen as listen_grp
+
+    def _fake_restart(**kwargs):
+        from scitex_agent_container._listen._restart import RestartResult
+
+        return RestartResult(
+            ok=False,
+            escalated_to_sigkill=False,
+            had_prior_pidfile=False,
+            prior_pid_alive=False,
+            health_ok=False,
+            took_systemd_path=False,
+            error="daemon did not respond 200 on /v1/sac/health within 30s",
+        )
+
+    runner = CliRunner()
+    saved = restart_mod_alias.restart_listen
+    restart_mod_alias.restart_listen = _fake_restart  # type: ignore[assignment]
+    try:
+        # Act
+        result = runner.invoke(listen_grp, ["restart"])
+    finally:
+        restart_mod_alias.restart_listen = saved  # type: ignore[assignment]
+    # Assert
+    assert result.exit_code != 0 and "/v1/sac/health" in result.output
