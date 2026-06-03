@@ -37,7 +37,17 @@ TOKEN = "test-token-startup-failed"
 def isolated_env(tmp_path: Path, env_save_restore):
     """Redirect $HOME + the SAC dir envs so registry / runtime writes
     land in tmp_path. Mirror of test_server.py's fixture so the tests
-    stay isolated from operator's real .scitex tree."""
+    stay isolated from operator's real .scitex tree.
+
+    Reloads ``_session_state`` BOTH on entry (so the module's
+    module-level ``DEFAULT_STATE_ROOT`` re-reads our redirected
+    ``SCITEX_AGENT_CONTAINER_RUNTIME_DIR``) AND on teardown (so the
+    NEXT test in the same worker doesn't inherit our tmp_path as the
+    default state root). The module reads the env at import time, so
+    a one-shot reload before-the-test leaves the post-env-restore path
+    cached and breaks ``_runners/test_claude_session.py``'s assertions
+    on the default home-rooted path.
+    """
     home = tmp_path / "home"
     home.mkdir()
     runtime = tmp_path / "runtime"
@@ -52,7 +62,18 @@ def isolated_env(tmp_path: Path, env_save_restore):
     import scitex_agent_container._runners._session_state as ss
 
     importlib.reload(ss)
-    return tmp_path
+    yield tmp_path
+    # Pytest finalizes inner-first (LIFO): this fixture's teardown runs
+    # BEFORE ``env_save_restore`` restores the env. So we have to pop
+    # the env keys ourselves before reloading — otherwise the reload
+    # re-binds ``DEFAULT_STATE_ROOT`` to our tmp_path again. After we
+    # reload, ``env_save_restore`` will set the env back to its
+    # original (pre-test) values, but the module is already cached
+    # with the right defaults.
+    os.environ.pop("SCITEX_AGENT_CONTAINER_RUNTIME_DIR", None)
+    os.environ.pop("SCITEX_AGENT_CONTAINER_YAML_DIRS", None)
+    os.environ.pop("HOME", None)
+    importlib.reload(ss)
 
 
 @pytest.fixture
@@ -120,27 +141,84 @@ def test_delete_returns_410_when_stillborn_marker_present(
     assert response.status_code == 410
 
 
-def test_delete_410_body_carries_kind_startup_failed(
+def test_delete_410_body_top_level_status_is_startup_failed(
     client, auth_headers, isolated_env
 ):
-    # Arrange
+    # Arrange — per clew review (#287), the lifecycle tag is at the
+    # top level under ``status`` (mirrors the STATUS body's ``status``
+    # field) so a renderer can branch without walking into ``details``.
+    _write_marker_for("delete-status-tag")
+    # Act
+    response = client.delete("/agents/delete-status-tag", headers=auth_headers)
+    # Assert
+    assert response.json()["status"] == "startup_failed"
+
+
+def test_delete_410_top_level_kind_is_failure_classification(
+    client, auth_headers, isolated_env
+):
+    # Arrange — top-level ``kind`` carries the FAILURE CLASSIFICATION
+    # lifted from the marker (e.g. ``apptainer_mount_failed``) so a
+    # clew-launcher error renderer can switch on it without walking
+    # into ``details``. The lifecycle tag (``startup_failed``) lives
+    # under ``status``.
     _write_marker_for("delete-kind-tag")
     # Act
     response = client.delete("/agents/delete-kind-tag", headers=auth_headers)
     # Assert
-    assert response.json()["kind"] == "startup_failed"
+    assert response.json()["kind"] == "apptainer_mount_failed"
 
 
 def test_delete_410_body_includes_details_with_failure_kind(
     client, auth_headers, isolated_env
 ):
-    # Arrange
+    # Arrange — full marker remains echoed under ``details`` so a
+    # caller can hash for dedupe or surface the stderr_tail.
     _write_marker_for("delete-details")
     # Act
     response = client.delete("/agents/delete-details", headers=auth_headers)
     details = response.json()["details"]
     # Assert
     assert details["kind"] == "apptainer_mount_failed"
+
+
+def test_delete_410_body_lifts_phase_to_top_level(client, auth_headers, isolated_env):
+    # Arrange — ``phase`` (e.g. ``container_creation``) is one of the
+    # summary fields clew lifts from the marker so a one-line error
+    # render has the lifecycle phase without a second key-walk.
+    _write_marker_for("delete-phase-lift")
+    # Act
+    response = client.delete("/agents/delete-phase-lift", headers=auth_headers)
+    # Assert
+    assert response.json()["phase"] == "container_creation"
+
+
+def test_delete_410_body_lifts_runtime_dir_to_top_level(
+    client, auth_headers, isolated_env
+):
+    # Arrange — ``runtime_dir`` is the host-absolute path to the
+    # per-instance state dir. Lifting it to the top level means a
+    # human ``cat`` of the marker / peer ``stderr.log`` requires no
+    # path reconstruction.
+    _write_marker_for("delete-runtime-dir")
+    # Act
+    response = client.delete("/agents/delete-runtime-dir", headers=auth_headers)
+    # Assert
+    assert response.json()["runtime_dir"] != ""
+
+
+def test_delete_410_body_carries_see_also_pointing_at_marker_file(
+    client, auth_headers, isolated_env
+):
+    # Arrange — ``see_also`` is the convenience suffix-join of
+    # ``runtime_dir`` + ``STARTUP_FAILED`` so a human / sysadmin gets
+    # a copy-paste-able ``cat`` target without computing it.
+    _write_marker_for("delete-see-also")
+    # Act
+    response = client.delete("/agents/delete-see-also", headers=auth_headers)
+    body = response.json()
+    # Assert
+    assert body["see_also"].endswith("/STARTUP_FAILED")
 
 
 def test_delete_returns_404_when_no_marker_and_no_pid(

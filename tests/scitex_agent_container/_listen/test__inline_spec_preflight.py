@@ -4,9 +4,19 @@ Real I/O against tmp_path; bind sources are real files/dirs on disk
 or deliberately-missing paths. AAA + one assert per test (PA-307).
 The preflight is a pure function over the filesystem — no mocks.
 
-Pinning the wire-shape contract here (``kind``, ``details.unresolvable``
-field names) so clew + future SAC-from-SAC clients can branch on it
-without grepping prose.
+Pinning the wire-shape contract here so clew + future SAC-from-SAC
+clients can branch on it without grepping prose. Per the clew review
+on #287, the failure-body keys are:
+
+  * ``kind`` (top-level branch tag) = ``"bind_unresolvable"``
+  * ``details.binds[]`` (was ``unresolvable``) — array form so multi-
+    capsule callers see EVERY miss in one round-trip
+  * ``details.binds[].source`` (was ``bind``) — raw spec entry
+  * ``details.binds[].container_path`` (was ``container_dest``)
+  * ``details.binds[].host_normalized`` (was always-emitted
+    ``host_resolved``) — present ONLY when ``~``/``$VAR`` expansion
+    changed the source
+  * ``details.translation_hint`` (was ``remediation_hint``)
 """
 
 from __future__ import annotations
@@ -247,25 +257,39 @@ def test_failure_body_has_error_field(tmp_path: Path) -> None:
 
 
 def test_failure_body_lists_unresolvable_binds_only(tmp_path: Path) -> None:
-    # Arrange — one OK, one missing; only the missing one should appear.
+    # Arrange — one OK, one missing; only the missing one should appear
+    # under the renamed ``details.binds`` array (was ``unresolvable``).
     (tmp_path / "ok").mkdir()
     spec = _spec_with_binds([f"{tmp_path}/ok:/o", f"{tmp_path}/missing:/m"])
     result = preflight_bind_sources(spec)
     # Act
     body = preflight_failure_response_body(result)
-    listed_binds = [e["bind"] for e in body["details"]["unresolvable"]]
+    listed_sources = [e["source"] for e in body["details"]["binds"]]
     # Assert
-    assert listed_binds == [f"{tmp_path}/missing:/m"]
+    assert listed_sources == [f"{tmp_path}/missing:/m"]
 
 
-def test_failure_body_carries_remediation_hint(tmp_path: Path) -> None:
-    # Arrange
+def test_failure_body_carries_translation_hint(tmp_path: Path) -> None:
+    # Arrange — hint renamed from ``remediation_hint`` to
+    # ``translation_hint`` per clew review (names what the caller
+    # actually needs to DO — translate the path).
     spec = _spec_with_binds([f"{tmp_path}/missing:/x"])
     result = preflight_bind_sources(spec)
     # Act
     body = preflight_failure_response_body(result)
     # Assert
-    assert body["details"]["remediation_hint"] != ""
+    assert body["details"]["translation_hint"] != ""
+
+
+def test_failure_body_entry_has_container_path(tmp_path: Path) -> None:
+    # Arrange — container destination is echoed under the renamed
+    # ``container_path`` key (was ``container_dest``).
+    spec = _spec_with_binds([f"{tmp_path}/missing:/capsule"])
+    result = preflight_bind_sources(spec)
+    # Act
+    body = preflight_failure_response_body(result)
+    # Assert
+    assert body["details"]["binds"][0]["container_path"] == "/capsule"
 
 
 def test_failure_body_each_entry_has_exists_on_host_false(
@@ -276,6 +300,37 @@ def test_failure_body_each_entry_has_exists_on_host_false(
     result = preflight_bind_sources(spec)
     # Act
     body = preflight_failure_response_body(result)
-    flags = [e["exists_on_host"] for e in body["details"]["unresolvable"]]
+    flags = [e["exists_on_host"] for e in body["details"]["binds"]]
     # Assert
     assert flags == [False, False]
+
+
+def test_failure_body_omits_host_normalized_when_no_expansion_happened(
+    tmp_path: Path,
+) -> None:
+    # Arrange — bind source is a plain absolute path, no ~ / $VAR to
+    # expand. ``host_normalized`` should be OMITTED (saves wire bytes
+    # + makes "no normalisation" cleanly distinguishable from
+    # "normalisation produced the same path").
+    spec = _spec_with_binds([f"{tmp_path}/missing:/x"])
+    result = preflight_bind_sources(spec)
+    # Act
+    body = preflight_failure_response_body(result)
+    # Assert
+    assert "host_normalized" not in body["details"]["binds"][0]
+
+
+def test_failure_body_includes_host_normalized_when_expansion_changed_path(
+    tmp_path: Path,
+    env_save_restore,
+) -> None:
+    # Arrange — ``~/missing-dir`` expands to a different path on the
+    # host; the entry MUST include ``host_normalized`` so the operator
+    # sees what was actually stat()ed.
+    env_save_restore.set("HOME", str(tmp_path))
+    spec = _spec_with_binds(["~/missing-dir:/x"])
+    result = preflight_bind_sources(spec)
+    # Act
+    body = preflight_failure_response_body(result)
+    # Assert
+    assert body["details"]["binds"][0]["host_normalized"] == f"{tmp_path}/missing-dir"

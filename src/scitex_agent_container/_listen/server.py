@@ -231,18 +231,35 @@ async def agent_delete(request: Request) -> JSONResponse:
         # genuinely not-found. Stillborn → 410 Gone + the structured
         # failure body the operator/orchestrator can branch on without
         # also hitting GET /agents/<name>/status.
-        from .._lifecycle._startup_failed import read_marker
+        #
+        # Wire shape per clew review (#287):
+        #
+        # The "headline" failure fields (status, phase, kind, failed_at,
+        # runtime_dir, remediation_hint) are LIFTED to the top level so a
+        # clew-launcher error renderer can branch / display without
+        # walking into ``details``. ``see_also`` is the host-absolute
+        # path to the on-disk marker so a human / sysadmin can ``cat``
+        # the marker (and the peer ``stdout.log`` / ``stderr.log`` in
+        # the same directory) without recomputing it. The full marker
+        # remains under ``details`` for parity with the marker file
+        # contents (and so an orchestrator can hash it for dedupe).
+        from .._lifecycle._startup_failed import MARKER_FILENAME, read_marker
 
         marker = read_marker(sd)
         if marker is not None:
-            return JSONResponse(
-                {
-                    "name": name,
-                    "kind": "startup_failed",
-                    "details": marker,
-                },
-                status_code=410,
-            )
+            runtime_dir = marker.get("runtime_dir", str(sd.resolve()))
+            body: dict[str, Any] = {
+                "name": name,
+                "status": "startup_failed",
+                "kind": marker.get("kind"),
+                "phase": marker.get("phase"),
+                "failed_at": marker.get("failed_at"),
+                "runtime_dir": runtime_dir,
+                "remediation_hint": marker.get("remediation_hint", ""),
+                "see_also": f"{runtime_dir}/{MARKER_FILENAME}",
+                "details": marker,
+            }
+            return JSONResponse(body, status_code=410)
         return JSONResponse({"error": "no pid file"}, status_code=404)
     try:
         pid = int(pid_file.read_text().strip())

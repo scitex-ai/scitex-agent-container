@@ -43,10 +43,18 @@ so we can extend without breaking the existing readers:
      "phase":        "container_creation",
      "kind":         "apptainer_mount_failed",
      "exit_code":    255,
+     "runtime_dir":  "<host abs path to per-instance state dir>",
      "stdout_tail":  "<last N lines>",
      "stderr_tail":  "<last N lines>",
      "remediation_hint": "..."
    }
+
+The ``runtime_dir`` field is the host-absolute path to the per-instance
+state directory carrying this marker (and any peer ``stdout.log`` /
+``stderr.log`` if the spawn captured them). Echoing it in the JSON
+spares wire-shape consumers (clew launcher, ``sac agents delete``
+410 body) having to recompute or guess the path — the marker is
+self-describing.
 
 Tail capture is bounded so a runaway log doesn't bloat the marker.
 """
@@ -196,6 +204,12 @@ def write_marker(
         "phase": phase,
         "kind": kind,
         "exit_code": int(exit_code),
+        # Host-absolute path to the per-instance state directory so the
+        # marker is self-describing. The DELETE 410 / STATUS bodies
+        # echo this verbatim so a clew launcher (or human operator)
+        # can `cat <runtime_dir>/stderr.log` without recomputing the
+        # path from <name>.
+        "runtime_dir": str(runtime_dir.resolve()),
         "stdout_tail": _tail_text(stdout),
         "stderr_tail": _tail_text(stderr),
         "remediation_hint": hint,

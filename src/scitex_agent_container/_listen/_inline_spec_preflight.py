@@ -224,35 +224,62 @@ def preflight_failure_response_body(result: PreflightResult) -> dict:
          "error": "bind source(s) not visible from host",
          "kind": "bind_unresolvable",
          "details": {
-           "unresolvable": [
+           "binds": [
              {
-               "bind": "/work/x:/x:ro",
-               "host_resolved": "/work/x",
-               "container_dest": "/x",
-               "exists_on_host": false
+               "source":          "/work/x",
+               "host_normalized": "/work/x",        // omitted when == source
+               "container_path":  "/x",
+               "exists_on_host":  false
              }
            ],
-           "remediation_hint": "rewrite the source to a host-visible path ..."
+           "translation_hint": "rewrite source(s) to host-visible paths ..."
          }
        }
+
+    Field naming per clew review (#287 WIP):
+      * ``binds`` (was ``unresolvable``) — always a LIST so 49-capsule
+        callers see EVERY miss in one round-trip, not just the first.
+      * ``source`` (was ``bind``) — the raw spec entry the operator
+        wrote.
+      * ``host_normalized`` (was always-emitted ``host_resolved``) —
+        ONLY emitted when ``~``/``$VAR`` expansion changed the source.
+        Saves wire bytes + makes "no normalisation happened" cleanly
+        distinguishable from "normalisation produced the same path".
+      * ``container_path`` (was ``container_dest``) — name aligned with
+        the rest of the apptainer-bind nomenclature (config parsers
+        already call it ``container_path``).
+      * ``translation_hint`` (was ``remediation_hint``) — names what
+        the operator actually needs to DO (translate the path), not a
+        generic "remediation".
 
     Callers MUST treat ``kind`` as the branch key; the prose ``error``
     is for humans only.
     """
+    entries: list[dict] = []
+    for c in result.unresolvable:
+        entry: dict = {
+            "source": c.bind,
+            "container_path": c.container_dest,
+            "exists_on_host": c.exists_on_host,
+        }
+        # Emit ``host_normalized`` ONLY when the host-side path was
+        # actually rewritten by ``~``/``$VAR`` expansion. Compare
+        # against the RAW HOST PORTION of the bind (not the whole
+        # ``host:container[:mode]`` string, which would always differ
+        # from the bare host_resolved path). Parsing here keeps
+        # BindCheck minimal — no extra field for callers to know
+        # about.
+        parsed = _parse_bind(c.bind)
+        raw_host = parsed[0] if parsed is not None else ""
+        if c.host_resolved and c.host_resolved != raw_host:
+            entry["host_normalized"] = c.host_resolved
+        entries.append(entry)
     return {
         "error": "bind source(s) not visible from host",
         "kind": "bind_unresolvable",
         "details": {
-            "unresolvable": [
-                {
-                    "bind": c.bind,
-                    "host_resolved": c.host_resolved,
-                    "container_dest": c.container_dest,
-                    "exists_on_host": c.exists_on_host,
-                }
-                for c in result.unresolvable
-            ],
-            "remediation_hint": (
+            "binds": entries,
+            "translation_hint": (
                 "rewrite each bind source to a path that exists on the "
                 "host (not the caller's in-SIF /work view), or wait for "
                 "PR-2 (SAC-side bind translate) to ship and re-spawn."

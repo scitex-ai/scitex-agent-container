@@ -183,6 +183,24 @@ def test_marker_payload_carries_exit_code(tmp_path: Path) -> None:
     assert payload["exit_code"] == 137
 
 
+def test_marker_payload_carries_runtime_dir(tmp_path: Path) -> None:
+    # Arrange — per clew review, the marker must echo its own host-
+    # absolute runtime_dir so the DELETE 410 / STATUS bodies can
+    # surface a ``see_also`` pointer without recomputing the path.
+    # Act
+    target = write_marker(
+        tmp_path,
+        started_at="2026-06-03T01:00:00Z",
+        phase="container_creation",
+        exit_code=255,
+        stdout="",
+        stderr="",
+    )
+    payload = json.loads(target.read_text())
+    # Assert
+    assert payload["runtime_dir"] == str(tmp_path.resolve())
+
+
 def test_marker_payload_classifies_apptainer_fatal(tmp_path: Path) -> None:
     # Arrange
     runtime_dir = tmp_path

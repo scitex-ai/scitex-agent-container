@@ -30,7 +30,15 @@ TOKEN = "test-token-failloud"
 
 @pytest.fixture
 def isolated_env(tmp_path: Path, env_save_restore):
-    """Real env redirect; same shape as the sibling startup_failed tests."""
+    """Real env redirect; same shape as the sibling startup_failed tests.
+
+    Reload-on-teardown is critical (see same-named fixture in
+    ``test_server_startup_failed.py``): ``_runners._session_state``
+    reads the runtime-dir env at import time, so we must reload BOTH
+    before AND after each test or the next test in the worker inherits
+    our tmp_path as the default state root and unrelated assertions
+    like ``test_state_dir_for_default_root_is_under_user_home`` break.
+    """
     home = tmp_path / "home"
     home.mkdir()
     runtime = tmp_path / "runtime"
@@ -41,11 +49,19 @@ def isolated_env(tmp_path: Path, env_save_restore):
     env_save_restore.set("SCITEX_AGENT_CONTAINER_RUNTIME_DIR", str(runtime))
     env_save_restore.set("SCITEX_AGENT_CONTAINER_YAML_DIRS", str(yaml_dir))
     import importlib
+    import os as _os
 
     import scitex_agent_container._runners._session_state as ss
 
     importlib.reload(ss)
-    return tmp_path
+    yield tmp_path
+    # See test_server_startup_failed.py's same-named fixture for the
+    # LIFO-finalizer rationale: pop the env keys ourselves so the
+    # reload picks up the OPERATOR's HOME, not our tmp_path.
+    _os.environ.pop("SCITEX_AGENT_CONTAINER_RUNTIME_DIR", None)
+    _os.environ.pop("SCITEX_AGENT_CONTAINER_YAML_DIRS", None)
+    _os.environ.pop("HOME", None)
+    importlib.reload(ss)
 
 
 @pytest.fixture
@@ -113,20 +129,25 @@ def test_post_400_body_has_kind_bind_unresolvable(
 def test_post_400_body_lists_offending_bind(
     client, auth_headers, isolated_env, tmp_path
 ):
-    # Arrange
+    # Arrange — failure body now uses ``details.binds[]`` (was
+    # ``details.unresolvable[]``) per clew review for the array-form
+    # contract. Entries key the raw spec line under ``source``
+    # (was ``bind``).
     offending = f"{tmp_path}/missing:/x"
     body = _post_body_with_binds("missing-bind-list", [offending])
     # Act
     response = client.post("/agents", json=body, headers=auth_headers)
-    listed = [e["bind"] for e in response.json()["details"]["unresolvable"]]
+    listed = [e["source"] for e in response.json()["details"]["binds"]]
     # Assert
     assert offending in listed
 
 
-def test_post_400_body_includes_remediation_hint(
+def test_post_400_body_includes_translation_hint(
     client, auth_headers, isolated_env, tmp_path
 ):
-    # Arrange
+    # Arrange — hint renamed from ``remediation_hint`` to
+    # ``translation_hint`` per clew review (names what the caller
+    # actually needs to DO — translate the path).
     body = _post_body_with_binds(
         "missing-bind-hint",
         [f"{tmp_path}/missing:/x"],
@@ -134,7 +155,7 @@ def test_post_400_body_includes_remediation_hint(
     # Act
     response = client.post("/agents", json=body, headers=auth_headers)
     # Assert
-    assert "remediation_hint" in response.json()["details"]
+    assert "translation_hint" in response.json()["details"]
 
 
 def test_post_rejection_does_not_materialise_spec(
@@ -201,7 +222,9 @@ def test_post_400_when_one_of_many_binds_missing(
 def test_post_400_only_lists_missing_bind_not_existing_one(
     client, auth_headers, isolated_env, tmp_path
 ):
-    # Arrange
+    # Arrange — array form (``details.binds``) must contain ONLY the
+    # missing entries; resolved binds get filtered out so 49-capsule
+    # callers can act on the failure list directly.
     ok = tmp_path / "ok"
     ok.mkdir()
     body = _post_body_with_binds(
@@ -210,7 +233,7 @@ def test_post_400_only_lists_missing_bind_not_existing_one(
     )
     # Act
     response = client.post("/agents", json=body, headers=auth_headers)
-    listed = [e["bind"] for e in response.json()["details"]["unresolvable"]]
+    listed = [e["source"] for e in response.json()["details"]["binds"]]
     # Assert
     assert f"{ok}:/o" not in listed
 
