@@ -318,6 +318,9 @@ async def agents_start(request: Request) -> JSONResponse:
     # a SIF). Using the canonical plural is what every other CLI
     # call site already does — see ``cli_pkg/fleet_group.py``
     # ``[remote_sac, "agents", "start", name]``.
+    from datetime import datetime, timezone
+
+    started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     proc = await asyncio.to_thread(
         subprocess.run,
         [sac_bin, "agents", "start", name],
@@ -325,6 +328,36 @@ async def agents_start(request: Request) -> JSONResponse:
         text=True,
         check=False,
     )
+    if proc.returncode != 0:
+        # PR-1 — stillborn agent observability. The subprocess can exit
+        # non-zero for many reasons, including apptainer FATAL on a bind
+        # source the host can't see (the clew capsule case). Write a
+        # ``runtime_dir/STARTUP_FAILED`` marker so:
+        #   * a subsequent ``DELETE`` returns 410 Gone with the failure
+        #     payload instead of 404 "no pid file",
+        #   * ``GET .../status`` can surface ``status="startup_failed"``
+        #     instead of vacuous registry-only fields,
+        #   * future fleet-GC automation can drop the stillborn cleanly.
+        # The marker write is best-effort: a write failure (e.g. /state
+        # filesystem RO) MUST NOT shadow the underlying spawn failure.
+        # stx-allow: fallback (reason: marker is observability metadata
+        # only; failing here would only obscure the real start failure)
+        try:
+            from .._lifecycle._startup_failed import write_marker
+            from .._runners._session_state import state_dir_for
+
+            runtime_dir = state_dir_for(name)
+            write_marker(
+                runtime_dir,
+                started_at=started_at,
+                phase="container_creation",
+                exit_code=proc.returncode,
+                stdout=proc.stdout,
+                stderr=proc.stderr,
+            )
+        except Exception:  # stx-allow: fallback (reason: see inline comment)
+            pass
+
     return JSONResponse(
         {
             "name": name,

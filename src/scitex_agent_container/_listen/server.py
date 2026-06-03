@@ -26,6 +26,7 @@ from __future__ import annotations
 import os
 import urllib.error as _urlerror
 import urllib.request as _urlrequest
+from typing import Any
 
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -74,15 +75,25 @@ async def agent_status(request: Request) -> JSONResponse:
         return JSONResponse({"error": str(exc)}, status_code=404)
     sd = state_dir_for(name)
     sid = read_session_id(sd)
-    return JSONResponse(
-        {
-            "name": name,
-            "spec_path": str(spec_path),
-            "workdir": cfg.expanded_workdir,
-            "session_id": sid,
-            "state_dir": str(sd),
-        }
-    )
+    body: dict[str, Any] = {
+        "name": name,
+        "spec_path": str(spec_path),
+        "workdir": cfg.expanded_workdir,
+        "session_id": sid,
+        "state_dir": str(sd),
+    }
+    # PR-1 — stillborn surface. If the runtime dir has a
+    # ``STARTUP_FAILED`` marker (= the spawn never produced an SDK
+    # session), echo it so callers don't have to also poll a separate
+    # endpoint to know why ``session_id`` is null. Matches the 410
+    # body shape returned by DELETE on the same condition.
+    from .._lifecycle._startup_failed import read_marker
+
+    marker = read_marker(sd)
+    if marker is not None:
+        body["status"] = "startup_failed"
+        body["startup_failed"] = marker
+    return JSONResponse(body)
 
 
 # --- extracted handlers re-imported for routes + back-compat ---------------
@@ -196,11 +207,59 @@ from ._node_channel import (  # noqa: E402
 
 
 async def agent_delete(request: Request) -> JSONResponse:
-    """DELETE /agents/<name> — stop the agent."""
+    """DELETE /agents/<name> — stop the agent.
+
+    Three cases distinguished by the response code (PR-1 lifecycle):
+
+      * **200 OK** — agent is live; ``pid`` file present; SIGTERM sent.
+      * **410 Gone** — agent is *stillborn*: a ``STARTUP_FAILED`` marker
+        is on disk (set by the POST /agents handler on a non-zero
+        ``sac agents start`` exit). The body carries the failure
+        details so the caller doesn't need to also ``GET .../status``.
+      * **404 Not Found** — agent never existed or was already deleted.
+
+    Splitting 410 from 404 is the operator-actionable difference:
+    "never existed" vs. "existed, has been removed". The clew capsule
+    case landed in 404 before this change because the marker didn't
+    exist; with the marker, the 410 path now lights up.
+    """
     name = request.path_params["name"]
     sd = state_dir_for(name)
     pid_file = sd / "pid"
     if not pid_file.is_file():
+        # PR-1 — distinguish stillborn (have STARTUP_FAILED marker) from
+        # genuinely not-found. Stillborn → 410 Gone + the structured
+        # failure body the operator/orchestrator can branch on without
+        # also hitting GET /agents/<name>/status.
+        #
+        # Wire shape per clew review (#287):
+        #
+        # The "headline" failure fields (status, phase, kind, failed_at,
+        # runtime_dir, remediation_hint) are LIFTED to the top level so a
+        # clew-launcher error renderer can branch / display without
+        # walking into ``details``. ``see_also`` is the host-absolute
+        # path to the on-disk marker so a human / sysadmin can ``cat``
+        # the marker (and the peer ``stdout.log`` / ``stderr.log`` in
+        # the same directory) without recomputing it. The full marker
+        # remains under ``details`` for parity with the marker file
+        # contents (and so an orchestrator can hash it for dedupe).
+        from .._lifecycle._startup_failed import MARKER_FILENAME, read_marker
+
+        marker = read_marker(sd)
+        if marker is not None:
+            runtime_dir = marker.get("runtime_dir", str(sd.resolve()))
+            body: dict[str, Any] = {
+                "name": name,
+                "status": "startup_failed",
+                "kind": marker.get("kind"),
+                "phase": marker.get("phase"),
+                "failed_at": marker.get("failed_at"),
+                "runtime_dir": runtime_dir,
+                "remediation_hint": marker.get("remediation_hint", ""),
+                "see_also": f"{runtime_dir}/{MARKER_FILENAME}",
+                "details": marker,
+            }
+            return JSONResponse(body, status_code=410)
         return JSONResponse({"error": "no pid file"}, status_code=404)
     try:
         pid = int(pid_file.read_text().strip())
