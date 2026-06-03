@@ -290,8 +290,16 @@ async def agents_start(request: Request) -> JSONResponse:
 
     inline_spec = body.get("spec")
     if inline_spec is not None:
+        # PR-2 — pass ``caller`` through so the bind translate can
+        # look up the parent agent's host-side bind map and rewrite
+        # in-SIF ``/work/...`` sources before the PR-1 preflight
+        # runs. Caller absent → translate disabled, preflight
+        # enforces directly (the operator/admin path).
         err = materialize_inline_spec(
-            name, inline_spec, overwrite=bool(body.get("overwrite"))
+            name,
+            inline_spec,
+            overwrite=bool(body.get("overwrite")),
+            caller=caller,
         )
         if err is not None:
             return err

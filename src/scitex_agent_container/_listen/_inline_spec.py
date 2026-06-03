@@ -14,8 +14,50 @@ from pathlib import Path
 from starlette.responses import JSONResponse
 
 
+def _resolve_parent_binds(caller: str) -> list[str] | None:
+    """Return the parent agent's persisted ``apptainer.binds`` or ``None``.
+
+    Injected into :func:`translate_binds_in_spec` so the translate
+    module stays decoupled from the on-host config-resolution chain.
+    A return of ``None`` (caller unknown, spec unreadable, config
+    invalid) lands as ``skipped_reason="caller_unknown"`` and the
+    spec is forwarded to PR-1 unchanged.
+
+    The resolution goes through ``resolve_config`` → ``load_config``
+    (the same path :func:`agent_status` uses), so any spec the host
+    can introspect via ``GET /agents/<name>/status`` is the same
+    spec PR-2 reads here. Imports are local so a unit test that
+    patches ``resolve_config`` only needs to wire the lookup, not
+    the heavy parser chain.
+    """
+    # stx-allow: fallback (reason: any failure in the resolve / load /
+    # parse chain must collapse to no-op so PR-1 stays the SoT; the
+    # translate module itself also catches but we centralize the
+    # "lookup is allowed to fail silently" rule HERE so the callable
+    # passed to the translate module is contract-clean)
+    try:
+        from ..config import load_config
+        from ..config._resolve import resolve_config
+
+        spec_path = resolve_config(caller)
+        cfg = load_config(spec_path)
+    except Exception:  # stx-allow: fallback (reason: see inline comment)
+        return None
+    apt = getattr(cfg, "apptainer", None)
+    if apt is None:
+        return None
+    binds = getattr(apt, "binds", None)
+    if not isinstance(binds, list):
+        return None
+    return [b for b in binds if isinstance(b, str)]
+
+
 def materialize_inline_spec(
-    name: str, spec: object, *, overwrite: bool
+    name: str,
+    spec: object,
+    *,
+    overwrite: bool,
+    caller: str | None = None,
 ) -> JSONResponse | None:
     """Write ``spec`` to ``~/.scitex/agent-container/agents/<name>/spec.yaml``.
 
@@ -25,13 +67,31 @@ def materialize_inline_spec(
 
       1. ``spec`` is a dict + v3 apiVersion + Agent kind (basic shape).
       2. ``kind="spec_invalid"`` for any of (1) — wire-stable.
-      3. **bind preflight**: every ``spec.apptainer.binds[*]`` host
+      3. **PR-2 bind translate (opt-in convenience)**. When ``caller``
+         is a known SAC-managed agent, the parent's host-side bind
+         map is used to rewrite any of the child spec's bind sources
+         that name an in-SIF prefix (``/work/...``) the parent's
+         container view exposes. Read-only, best-effort: any failure
+         to resolve the parent collapses to no-op and PR-1 catches
+         whatever leaked through.
+      4. **bind preflight**: every ``spec.apptainer.binds[*]`` host
          source is ``stat()``-checked. Any missing source aborts with
-         HTTP 400 + ``kind="bind_unresolvable"`` (PR-1 fail-loud). This
-         catches the SAC-from-SAC silent FATAL where the spec carries
-         in-SIF ``/work/...`` paths that the host can't see.
-      4. ``kind="already_exists"`` for the overwrite-guard collision.
-      5. ``kind="spec_invalid"`` for write failure (disk full, RO fs).
+         HTTP 400 + ``kind="bind_unresolvable"`` (PR-1 fail-loud).
+         This is the SoT for "is this bind safe?" — PR-2 just
+         pre-cleans the common SAC-from-SAC case.
+      5. ``kind="already_exists"`` for the overwrite-guard collision.
+      6. ``kind="spec_invalid"`` for write failure (disk full, RO fs).
+
+    Args:
+        name: target agent name.
+        spec: the inline v3 Agent spec dict from the POST body.
+        overwrite: 409 if a spec already exists at the target path
+            unless this is ``True``.
+        caller: PR-2 — the spawning node's name. ``None`` (or an
+            unknown caller) disables bind-translate and the spec is
+            forwarded to the preflight unchanged. The same caller
+            field drives the WI-2 spawn gate one level up in the
+            request handler.
     """
     import yaml
 
@@ -61,6 +121,20 @@ def materialize_inline_spec(
             },
             status_code=400,
         )
+
+    # PR-2 — bind translate. Run BEFORE the PR-1 preflight so the
+    # common SAC-from-SAC case (parent launcher posts a child spec
+    # whose bind sources are the parent's in-SIF view, e.g.
+    # ``/work/data/X``) no longer requires the launcher to
+    # pre-translate paths. Read-only, best-effort: any failure to
+    # resolve the caller's parent record collapses to a no-op and
+    # PR-1 catches the leak. The translated spec is the one PR-1
+    # validates and (on success) the handler persists to disk.
+    from ._inline_spec_bind_translate import translate_binds_in_spec
+
+    spec = translate_binds_in_spec(
+        spec, caller, parent_binds_lookup=_resolve_parent_binds
+    )[0]
 
     # PR-1 — fail-loud bind-source preflight. Done BEFORE writing the
     # spec to disk so a rejected spawn leaves zero artifacts (no spec
