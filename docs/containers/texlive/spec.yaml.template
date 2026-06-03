@@ -1,0 +1,58 @@
+# sac-texlive sub-tool integration — wrapper agent spec.yaml fragment.
+#
+# The texlive SIF is mounted INTO a wrapper agent's primary runtime
+# SIF (scitex-writer, proj-neurovista, ...) as a READ-ONLY sub-tool at
+# /opt/texlive.sif. The wrapper exports
+# STXW_TEXLIVE_APPTAINER_SIF=/opt/texlive.sif so the wrapper's compile
+# script invokes apptainer-exec into the sub-tool for the actual
+# pdflatex / bibtex / latexmk calls.
+#
+# This template shows the fragments to splice into a wrapper agent's
+# existing spec.yaml. The wrapper provides the primary runtime;
+# texlive provides the lean LaTeX environment.
+#
+# Build the sub-tool SIF first:
+#
+#   sac image build texlive -y
+#   # -> ~/.scitex/agent-container/containers/sac-texlive/sac-texlive.sif
+#
+# Then drop the fragments below under the wrapper's apptainer.binds +
+# apptainer.raw_args. The wrapper's compile script (in the wrapper's
+# workspace, NOT this SIF) honours STXW_TEXLIVE_APPTAINER_SIF and
+# shells out via apptainer-exec.
+#
+# Bind preflight (SAC PR-1, #287) catches a missing sub-tool SIF at
+# POST /agents time with HTTP 400 kind=bind_unresolvable. The
+# canonical bind source below uses $HOME so the resolver picks up the
+# operator's actual home — host-independent across operator hosts.
+
+apiVersion: scitex-agent-container/v3
+kind: Agent
+
+spec:
+  # vvv THESE FRAGMENTS GO INTO THE WRAPPER AGENT'S spec.yaml vvv
+
+  apptainer:
+    # ... (wrapper's own image, workdir, etc., unchanged) ...
+
+    binds:
+      # Existing wrapper binds stay here.
+
+      # NEW: texlive sub-tool, mounted read-only at /opt/texlive.sif.
+      # The canonical sac-managed build path lives under
+      # ~/.scitex/agent-container/containers/sac-texlive/ — built by
+      # `sac image build texlive -y`. $HOME expands at preflight time
+      # so this is portable across operator hosts.
+      - $HOME/.scitex/agent-container/containers/sac-texlive/sac-texlive.sif:/opt/texlive.sif:ro
+
+    raw_args:
+      # NEW: tell the wrapper's compile script where the texlive sub-tool is.
+      - --env
+      - STXW_TEXLIVE_APPTAINER_SIF=/opt/texlive.sif
+
+  # ^^^ END WRAPPER SPEC.YAML FRAGMENT ^^^
+  #
+  # No auto-compile — downstream wrappers compile manually via their
+  # own scripts (e.g. neurovista's `./paper/compile manuscript`).
+  # No claude block needed here — this is just the sub-tool wiring;
+  # the wrapper agent owns its own conversation surface.

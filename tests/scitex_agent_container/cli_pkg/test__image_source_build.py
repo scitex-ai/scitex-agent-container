@@ -38,7 +38,11 @@ import pytest
 
 import scitex_agent_container
 from scitex_agent_container.cli_pkg import _image_source_build as isb
-from scitex_agent_container.cli_pkg.image_group import _LAYERS, _RECIPES_DIR
+from scitex_agent_container.cli_pkg.image_group import (
+    _LAYERS,
+    _RECIPES_DIR,
+    _SUB_TOOL_LAYERS,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -537,10 +541,18 @@ def test_default_runner_sandbox_argv_uses_fakeroot_and_no_sudo(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-# All three shipped .defs — base/scitex/proxy. _LAYERS only covers
-# base+scitex (those are what ``sac image build`` accepts); proxy is
-# built by other paths but the same source-bundled invariant applies.
-_ALL_DEF_NAMES = sorted(set(_LAYERS.values()) | {"apptainer-proxy.def"})
+# Stacked .defs whose SIF carries sac itself — base/scitex/proxy. These
+# install sac from the bundled /opt/scitex-agent-container-src that the
+# staging helper places. Sub-tool layers (_SUB_TOOL_LAYERS, e.g.
+# :texlive) are DELIBERATELY excluded — they're independent toolchain
+# SIFs that wrapper agents mount at /opt/<tool>.sif and have no business
+# carrying the sac source. The independence is asserted positively
+# below in test_sub_tool_def_does_not_bundle_sac_source.
+_STACKED_DEF_NAMES = sorted(
+    {fn for layer, fn in _LAYERS.items() if layer not in _SUB_TOOL_LAYERS}
+    | {"apptainer-proxy.def"}
+)
+_SUB_TOOL_DEF_NAMES = sorted(_LAYERS[layer] for layer in _SUB_TOOL_LAYERS)
 
 
 @pytest.fixture
@@ -552,7 +564,7 @@ def def_text(request) -> str:
     return path.read_text()
 
 
-@pytest.mark.parametrize("def_text", _ALL_DEF_NAMES, indirect=True)
+@pytest.mark.parametrize("def_text", _STACKED_DEF_NAMES, indirect=True)
 def test_def_has_files_section_copying_bundled_source(def_text: str):
     # Arrange — the .def declares the %files entry the staging helper depends on
     expected = f"{isb._STAGED_SRC_NAME} /opt/scitex-agent-container-src"
@@ -566,7 +578,7 @@ def test_def_has_files_section_copying_bundled_source(def_text: str):
     )
 
 
-@pytest.mark.parametrize("def_text", _ALL_DEF_NAMES, indirect=True)
+@pytest.mark.parametrize("def_text", _STACKED_DEF_NAMES, indirect=True)
 def test_def_installs_sac_from_bundled_source_absolute_path(def_text: str):
     # Arrange — %post installs from the bundled source path — not from git
     expected = "/opt/scitex-agent-container-src"
@@ -580,7 +592,7 @@ def test_def_installs_sac_from_bundled_source_absolute_path(def_text: str):
     )
 
 
-@pytest.mark.parametrize("def_text", _ALL_DEF_NAMES, indirect=True)
+@pytest.mark.parametrize("def_text", _STACKED_DEF_NAMES, indirect=True)
 def test_def_does_not_install_sac_via_git_ref(def_text: str):
     # Arrange — banned substrings; any of these drifts from the source tree
     banned_substrings = (
@@ -599,21 +611,21 @@ def test_def_does_not_install_sac_via_git_ref(def_text: str):
     )
 
 
-def test_recipes_dir_holds_all_three_shipped_defs():
+def test_recipes_dir_holds_all_stacked_shipped_defs():
     # Arrange — declared expected set
-    expected = set(_ALL_DEF_NAMES)
+    expected = set(_STACKED_DEF_NAMES)
     # Act
     actual = sorted(p.name for p in _RECIPES_DIR.glob("apptainer-*.def"))
     # Assert
     assert expected.issubset(set(actual)), (
-        f"missing one or more shipped .def files. expected at least "
-        f"{_ALL_DEF_NAMES}, found {actual}"
+        f"missing one or more shipped stacked .def files. expected at "
+        f"least {_STACKED_DEF_NAMES}, found {actual}"
     )
 
 
 def test_def_files_use_consistent_staged_source_name():
-    # Arrange — all three .defs must agree on the path inside the image
-    names = _ALL_DEF_NAMES
+    # Arrange — all stacked .defs must agree on the path inside the image
+    names = _STACKED_DEF_NAMES
     # Act
     missing = [
         name
@@ -629,8 +641,8 @@ def test_def_files_use_consistent_staged_source_name():
 
 
 def test_staged_src_name_matches_def_files_files_entry():
-    # Arrange — the contract: every .def declares _STAGED_SRC_NAME in %files
-    names = _ALL_DEF_NAMES
+    # Arrange — the contract: every stacked .def declares _STAGED_SRC_NAME in %files
+    names = _STACKED_DEF_NAMES
     # Act
     missing = [
         name
@@ -641,6 +653,50 @@ def test_staged_src_name_matches_def_files_files_entry():
     assert missing == [], (
         f"{missing} must declare '{isb._STAGED_SRC_NAME}' as a %files source "
         f"so the staging helper's copy is what gets bundled."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Sub-tool layer independence — the inverse contract.
+#
+# Sub-tool SIFs (`:texlive`, ...) deliberately do NOT carry the sac
+# source: they're mounted into a wrapper agent's primary runtime SIF at
+# `/opt/<tool>.sif:ro` and the wrapper owns the sac install. Baking
+# scitex-agent-container-src into a sub-tool would silently grow the
+# SIF by 10+ MB and create two competing sac source trees per agent.
+# These tests pin that independence so a careless future edit that
+# inserts `%files scitex-agent-container-src ...` into a sub-tool .def
+# trips a red test.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("def_text", _SUB_TOOL_DEF_NAMES, indirect=True)
+def test_sub_tool_def_does_not_bundle_sac_source(def_text: str):
+    # Arrange — sub-tool .defs are stand-alone toolchain SIFs; the sac
+    # source has no business being in there. If a future edit adds it,
+    # the wrapper agent would carry two competing sac install trees.
+    forbidden = f"{isb._STAGED_SRC_NAME} /opt/scitex-agent-container-src"
+    # Act
+    present = forbidden in def_text
+    # Assert
+    assert present is False, (
+        f"sub-tool .def carries the bundled-source %files entry "
+        f"'{forbidden}'. Sub-tool SIFs must stay independent of sac so "
+        f"wrapper agents can mount them without conflict."
+    )
+
+
+@pytest.mark.parametrize("def_text", _SUB_TOOL_DEF_NAMES, indirect=True)
+def test_sub_tool_def_does_not_pip_install_sac(def_text: str):
+    # Arrange — even an out-of-band pip install of sac (e.g. from PyPI)
+    # would violate the sub-tool independence invariant.
+    forbidden = "/opt/scitex-agent-container-src"
+    # Act
+    present = forbidden in def_text
+    # Assert
+    assert present is False, (
+        f"sub-tool .def references '{forbidden}'. Sub-tool SIFs must "
+        f"not install sac — they're standalone toolchain images."
     )
 
 

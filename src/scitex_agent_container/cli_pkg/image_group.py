@@ -40,10 +40,30 @@ _RECIPES_DIR = Path(__file__).resolve().parent.parent / "containers"
 _CONTAINERS_DIR = Path.home() / ".scitex" / "agent-container" / "containers"
 
 # Layer → .def filename mapping.
+#
+# Stacked layers (FROM ./sac-<parent>.sif):
+#   base   -> :scitex      ubuntu + dev tools + scitex[all] + claude-sdk + sac
+#
+# Sub-tool layers (independent SIFs; FROM upstream docker images):
+#   texlive  Apptainer LaTeX environment for wrapper agents to mount at
+#            /opt/texlive.sif. Wrapper integrates via apptainer.binds —
+#            see docs/containers/texlive/spec.yaml.template.
 _LAYERS = {
     "base": "apptainer-base.def",
     "scitex": "apptainer-scitex.def",
+    "texlive": "apptainer-texlive.def",
 }
+
+# Sub-tool layers — independent SIFs that wrapper agents mount at
+# /opt/<tool>.sif. Distinct from stacked layers (base→scitex) because
+# sub-tools deliberately do NOT bundle the sac source (no %files for
+# scitex-agent-container-src, no pip install of sac in %post). They
+# carry only their own toolchain (e.g. TeX Live for :texlive). Tests
+# that assert the stacked-layer source-bundle invariant must exclude
+# sub-tool layers; tests that assert sub-tool independence read the
+# inverse here.
+_SUB_TOOL_LAYERS: frozenset[str] = frozenset({"texlive"})
+
 _DEFAULT_LAYER = "base"
 
 
@@ -142,6 +162,7 @@ def image_build(layer: str, sandbox: bool, dry_run: bool, yes: bool) -> None:
     Examples:
       $ sac image build                # apptainer :base SIF (default; OS + dev tools, ~15-25 min)
       $ sac image build scitex         # apptainer :scitex SIF (FROM :base + scitex[all], ~10-20 min)
+      $ sac image build texlive        # apptainer :texlive sub-tool SIF (LaTeX, ~10-15 min)
       $ sac image build --sandbox      # writable sandbox dir
     """
     out_dir = _ensure_containers_dir()

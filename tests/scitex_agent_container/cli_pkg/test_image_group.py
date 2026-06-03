@@ -591,3 +591,87 @@ def test_resolve_source_to_sif_raises_when_layer_not_built(home_tmp):
     # Assert
     with pytest.raises(Exception):
         _call()
+
+
+# ---------------------------------------------------------------------------
+# _LAYERS registry — every registered layer must point at an in-repo .def
+# that actually ships in the wheel (no ghost entries, no typo'd filenames).
+# ---------------------------------------------------------------------------
+
+
+def test_every_registered_layer_has_a_recipe_file_in_recipes_dir():
+    # Arrange — _RECIPES_DIR is the package-relative containers/ dir
+    # (wheel-shipped). Every value in _LAYERS must resolve to a real
+    # file there, or `sac image build <layer> -y` will exit 1 at the
+    # recipe-not-found gate.
+    missing = [
+        name for name, fn in ig._LAYERS.items() if not (ig._RECIPES_DIR / fn).is_file()
+    ]
+    # Act
+    # (the comprehension above is the work; assertion below is the check)
+    # Assert
+    assert missing == []
+
+
+def test_texlive_layer_is_registered_in_layers_dict():
+    # Arrange — operator/lead agreed 2026-06-03 that the texlive SIF
+    # ships as a sub-tool layer alongside base/scitex, built via
+    # `sac image build texlive -y` (NOT a separate dotfiles-deploy
+    # path). Pinning the registration here so a future refactor that
+    # accidentally drops the entry trips a red test.
+    # Act
+    registered = "texlive" in ig._LAYERS
+    # Assert
+    assert registered is True
+
+
+def test_texlive_layer_points_at_apptainer_texlive_def():
+    # Arrange — naming convention is apptainer-<layer>.def for SSoT
+    # consistency with base/scitex. This pins the filename so the
+    # in-repo recipe move is observable in tests.
+    # Act
+    fn = ig._LAYERS.get("texlive")
+    # Assert
+    assert fn == "apptainer-texlive.def"
+
+
+def test_build_texlive_dry_run_prints_layer_name(home_tmp):
+    # Arrange — texlive must be accepted by the click.Choice validator
+    # (regression guard for the _LAYERS extension).
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(image_group, ["build", "texlive", "--dry-run"])
+    # Assert
+    assert result.exit_code == 0 and "texlive" in result.output
+
+
+def test_build_texlive_passes_apptainer_texlive_def_to_source_builder(home_tmp):
+    # Arrange — verify the build path resolves the def-name correctly
+    # end-to-end, not just the registry lookup. Catches a future bug
+    # where _LAYERS is updated but the build verb is hard-coded to
+    # base/scitex.
+    runner = CliRunner()
+    # Act
+    with _use_source_builder(result=Path("/tmp/sac-texlive.sif")) as calls:
+        runner.invoke(image_group, ["build", "texlive", "--yes"])
+    # Assert
+    assert calls[0][1]["def_path"].name == "apptainer-texlive.def"
+
+
+def test_build_texlive_warns_when_existing_sac_texlive_sif_would_be_overwritten(
+    home_tmp,
+):
+    # Arrange — pre-place a fake existing artifact at the expected
+    # path. The build verb computes the path as
+    # _CONTAINERS_DIR / sac-<layer> / sac-<layer>.sif and warns BEFORE
+    # the --yes gate; this pins the artifact-path naming so a refactor
+    # of the convention can't silently break the operator's expected
+    # ~/.scitex/agent-container/containers/sac-texlive/sac-texlive.sif.
+    out_dir = ig._CONTAINERS_DIR / "sac-texlive"
+    out_dir.mkdir(parents=True)
+    (out_dir / "sac-texlive.sif").write_bytes(b"x" * 100)
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(image_group, ["build", "texlive", "--dry-run"])
+    # Assert
+    assert result.exit_code == 0 and "Existing" in result.output
