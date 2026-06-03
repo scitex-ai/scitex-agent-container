@@ -164,7 +164,8 @@ def test_non_2xx_body_is_returned_parsed() -> None:
 def test_url_error_raises_transport_error() -> None:
     # Arrange — host listen refused / DNS / etc.
     opener = _opener_raising(urlerror.URLError("Connection refused"))
-    # Act / Assert
+    # Act
+    # Assert
     with pytest.raises(HostListenTransportError):
         host_listen_call(
             "GET", "/v1/health", base_url="http://x", bearer="", opener=opener
@@ -190,7 +191,8 @@ def test_url_error_transport_error_carries_url() -> None:
 def test_timeout_raises_transport_error() -> None:
     # Arrange
     opener = _opener_raising(TimeoutError("timed out"))
-    # Act / Assert
+    # Act
+    # Assert
     with pytest.raises(HostListenTransportError):
         host_listen_call(
             "GET", "/v1/health", base_url="http://x", bearer="", opener=opener
@@ -200,7 +202,8 @@ def test_timeout_raises_transport_error() -> None:
 def test_oserror_raises_transport_error() -> None:
     # Arrange — broader socket-level failure (network unreachable).
     opener = _opener_raising(OSError("network is unreachable"))
-    # Act / Assert
+    # Act
+    # Assert
     with pytest.raises(HostListenTransportError):
         host_listen_call(
             "GET", "/v1/health", base_url="http://x", bearer="", opener=opener
@@ -216,7 +219,8 @@ def test_missing_base_url_raises_transport_error(env_save_restore) -> None:
     # Arrange — no explicit base_url + env unset.
     env_save_restore.delete("SAC_LISTEN_BASE_URL")
     env_save_restore.delete("SCITEX_AGENT_CONTAINER_LISTEN_BASE_URL")
-    # Act / Assert
+    # Act
+    # Assert
     with pytest.raises(HostListenTransportError):
         host_listen_call("GET", "/v1/health", base_url=None, bearer="")
 

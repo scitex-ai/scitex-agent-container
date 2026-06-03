@@ -327,12 +327,13 @@ def test_stdout_json_has_exactly_five_top_level_fields() -> None:
 def test_outcome_is_frozen_dataclass() -> None:
     # Arrange
     outcome = build_outcome(http_status=200, body={"x": 1})
-    # Act / Assert — frozen dataclass raises on attribute set.
+    # Act — frozen dataclass raises on attribute set.
     raised = False
     try:
         outcome.exit_code = 99  # type: ignore[misc]
     except Exception:
         raised = True
+    # Assert
     assert raised is True
 
 
