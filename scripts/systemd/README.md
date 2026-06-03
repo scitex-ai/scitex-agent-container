@@ -72,11 +72,52 @@ another sac listen already running (pid <N>)
 
 even though `<N>` is dead. The kernel releases the flock on dirty
 exit, but the pidfile on disk is independent of the flock and only
-gets cleared by a CLEAN shutdown. Recovery sequence:
+gets cleared by a CLEAN shutdown.
+
+#### Canonical recovery — `sac listen restart`
+
+```bash
+sac listen restart                    # default 10s TERM grace, then SIGKILL
+sac listen restart --grace-secs 30    # longer TERM window
+sac listen restart --force            # skip TERM, go straight to SIGKILL
+```
+
+The verb codifies the entire SIGTERM → wait → SIGKILL fallback →
+`rm -f` pidfile → relaunch → health-check sequence atomically:
+
+1. Reads the PID from `~/.scitex/agent-container/runtime/listen-<port>.pid`.
+2. Sends SIGTERM, polls every 200ms up to `--grace-secs` (default 10s).
+3. Escalates to SIGKILL if the daemon survives the deadline. Prints a
+   LOUD WARN to stderr on escalation so the diagnostic is visible:
+   ```
+   WARN: escalated to SIGKILL after 10.0s; daemon hung on SIGTERM
+   (likely in-flight SSE shutdown). See scripts/systemd/README.md for
+   the manual recovery.
+   ```
+   (Silent on a clean TERM exit.)
+4. Verifies the PID is actually dead before clearing the pidfile
+   (defence-in-depth against killing a recycled PID).
+5. Relaunches via `systemctl --user daemon-reload && systemctl --user
+   restart sac-listen.service` if the unit is installed and enabled;
+   otherwise direct `sac listen` spawn.
+6. Polls `/v1/sac/health` until 200 or 30s deadline. Exits non-zero
+   with the actionable error if the new daemon doesn't come up.
+
+The sequence is **non-destructive** — state.db is persistent on disk,
+agents auto-reconnect their SSE streams on the new listen via the
+existing backoff loop, and the flock guard means a second concurrent
+listen process cannot bind the port even if the recovery race ran
+twice.
+
+#### Manual fallback — when `sac` itself is broken
+
+If sac is uninstalled / the venv is broken / `sac --version` doesn't
+resolve, the verb above can't run. The manual sequence still works
+verbatim and is what the verb does internally:
 
 ```bash
 # 1. Identify the named pid in the stale lockfile (path varies by --bind)
-pid=$(cat ~/.scitex/sac/listen-7878.pid 2>/dev/null) && echo "named: $pid"
+pid=$(cat ~/.scitex/agent-container/runtime/listen-7878.pid 2>/dev/null) && echo "named: $pid"
 
 # 2. Check if it's actually alive
 kill -0 "$pid" 2>/dev/null && echo ALIVE || echo DEAD-STALE-LOCK
@@ -84,23 +125,14 @@ kill -0 "$pid" 2>/dev/null && echo ALIVE || echo DEAD-STALE-LOCK
 # 3. If DEAD: harmlessly re-send SIGKILL (no-op if already gone),
 #    clear the stale pidfile, then restart through the unit
 kill -9 "$pid" 2>/dev/null
-rm -f ~/.scitex/sac/listen-7878.pid
+rm -f ~/.scitex/agent-container/runtime/listen-7878.pid
+systemctl --user daemon-reload
 systemctl --user restart sac-listen.service
 
 # 4. Verify
 systemctl --user status sac-listen.service
-curl -s http://127.0.0.1:7878/v1/health
+curl -s http://127.0.0.1:7878/v1/sac/health
 ```
-
-The lockfile-clean-then-restart sequence is **non-destructive** —
-state.db is persistent on disk, agents auto-reconnect their SSE
-streams on the new listen via the existing backoff loop, and the
-flock guard means a second concurrent listen process cannot bind the
-port even if the recovery race ran twice.
-
-A future `sac listen --restart` verb will collapse this dance into a
-single atomic stop-clean-relaunch call; this manual recipe is the
-canonical recovery until that lands.
 
 ### Notes
 
