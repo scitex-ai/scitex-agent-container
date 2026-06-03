@@ -58,6 +58,13 @@ systemctl --user daemon-reload
   `tests/scitex_agent_container/_mcp/test_channel_reconnect.py`,
   task #26 sub (2)). A `systemctl --user restart sac-listen` does
   NOT require any agent restart.
+* **Restarting sac-listen does NOT redeploy in-SIF code changes.**
+  Agents keep running their baked-in `:scitex` SIF copy of sac. After
+  merging anything under `_runners/`, `_lifecycle/_in_sif_*`,
+  `_mcp/*`, or anywhere else the in-SIF runner imports, you must
+  rebuild the SIF and restart the agents. See
+  [`docs/deploy-runbook.md`](../../docs/deploy-runbook.md) for the
+  full "merged ≠ deployed" checklist.
 
 ### Operational gotcha: SIGTERM hang holding the lockfile
 
