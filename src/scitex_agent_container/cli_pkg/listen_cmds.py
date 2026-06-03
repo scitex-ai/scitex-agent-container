@@ -348,8 +348,6 @@ def listen_restart(ctx: click.Context, grace_secs: float, force: bool) -> None:
         sac listen restart --grace-secs 30  # longer TERM window
         sac listen restart --force          # skip TERM, kill immediately
     """
-    import sys
-
     from .._listen._restart import (
         format_escalation_warning,
         restart_listen,

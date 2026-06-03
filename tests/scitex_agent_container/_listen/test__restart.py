@@ -17,12 +17,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-import pytest
-
 from scitex_agent_container._listen import _restart as restart_mod
 from scitex_agent_container._listen._restart import (
-    DEFAULT_GRACE_SECS,
-    RestartResult,
     format_escalation_warning,
     pid_alive,
     pidfile_path,
