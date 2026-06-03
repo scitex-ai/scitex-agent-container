@@ -120,20 +120,71 @@ def _warn_if_heavy_workdir_claude(config: AgentConfig) -> None:
     workdir = getattr(config, "expanded_workdir", None) or getattr(
         config, "workdir", None
     )
-    size = _workdir_claude_size_bytes(workdir)
-    if size <= _workdir_claude_warn_threshold():
+    # The richer LOUD audit lives in ``_workdir_audit`` so the same code
+    # surface is reused by ``sac agents status --workdir-audit`` and the
+    # ``sac agents prune-claude`` CLI. ``audit_workdir_claude`` walks once,
+    # collects both byte size + file count, and reports per-subdir bloat
+    # sources so the operator sees exactly which directory to prune.
+    from .._workdir_audit import audit_workdir_claude
+
+    audit = audit_workdir_claude(workdir)
+    if not (audit.exceeded_files or audit.exceeded_bytes):
         return
-    mb = size / (1024 * 1024)
-    print(
-        f"warning: '{workdir}/.claude/' is {mb:.1f} MB — "
-        "claude-agent-sdk auto-discovery may swallow errors and the "
-        "agent will return 0 tokens per turn with no log line. "
-        "Recommend a project-specific workdir (e.g. "
-        "/home/<you>/proj/<this-project>/) or /tmp/<scratch>/, then "
-        "reference other repos via absolute paths. (F-CS8)",
-        file=sys.stderr,
-        flush=True,
-    )
+
+    # Multi-line LOUD warn — single-line stderr is too easy to lose in
+    # apptainer's `WARNING: While bind mounting ...` flood. Banner +
+    # bullet block + bloat-source listing + concrete next-step commands
+    # so even a half-distracted reviewer of the start log spots it.
+    mb = audit.bytes / (1024 * 1024)
+    lines = [
+        "",
+        "=" * 72,
+        "F-CS8 WARNING — heavy workdir/.claude/ detected",
+        "=" * 72,
+        f"  workdir       : {audit.workdir}/.claude/",
+        f"  file count    : {audit.files:,}"
+        f" (threshold {audit.threshold_files:,})"
+        f"{'  <-- OVER' if audit.exceeded_files else ''}",
+        f"  total bytes   : {mb:.1f} MB"
+        f" (threshold {audit.threshold_bytes / (1024 * 1024):.1f} MB)"
+        f"{'  <-- OVER' if audit.exceeded_bytes else ''}",
+        "",
+        "claude-agent-sdk walks <workdir>/.claude/ at session start to",
+        "discover hooks/skills/settings. A heavy walk either silently times",
+        "out spawning MCP servers (the bun telegrammer server is the canary",
+        "— it just won't show up in the SDK's tool surface) or makes the",
+        "agent return 0 tokens per turn with no log line. Verified field",
+        "failure: proj-scitex-orochi at 41,873 files / 884 MB (2026-06-03).",
+        "",
+    ]
+    if audit.bloat_sources:
+        lines.append("  bloat sources (sub-dirs above the per-bucket threshold):")
+        for s in audit.bloat_sources:
+            sub_mb = s.bytes / (1024 * 1024)
+            lines.append(
+                f"    - .claude/{s.rel_path}/  {s.files:,} files / {sub_mb:.1f} MB"
+            )
+        lines.append("")
+        lines.append("  Immediate remediation (parks data, does NOT delete):")
+        for s in audit.bloat_sources:
+            safe = s.rel_path.replace("/", "_")
+            lines.append(
+                f"    mv {audit.workdir}/.claude/{s.rel_path}"
+                f" {audit.workdir}/.claude-{safe}-parked-$(date +%Y-%m-%d)"
+            )
+        lines.append("")
+        lines.append("  Then `sac agents stop <NAME> && sac agents start <NAME>` to")
+        lines.append("  verify the SDK picks up the lean tree on next boot.")
+    else:
+        lines.append("  no single sub-dir is over the per-bucket threshold —")
+        lines.append("  the bloat is distributed across the whole tree.")
+        lines.append("")
+        lines.append("  Recommend a project-specific workdir (e.g.")
+        lines.append("  /home/<you>/proj/<this-project>/) or /tmp/<scratch>/,")
+        lines.append("  then reference other repos via absolute paths.")
+    lines.append("=" * 72)
+    lines.append("")
+    print("\n".join(lines), file=sys.stderr, flush=True)
 
 
 # 2026-05-13 docker/podman ripout: apptainer is the only accepted
