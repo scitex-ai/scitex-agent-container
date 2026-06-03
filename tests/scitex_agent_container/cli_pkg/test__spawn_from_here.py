@@ -11,7 +11,6 @@ AAA + one-assert per test.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 import yaml
