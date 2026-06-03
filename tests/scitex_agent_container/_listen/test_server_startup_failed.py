@@ -221,7 +221,6 @@ def test_delete_returns_200_when_pid_present(client, auth_headers, isolated_env)
     # Arrange — a real subprocess to SIGTERM.
     import subprocess
     import sys
-    import time
 
     proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
     try:

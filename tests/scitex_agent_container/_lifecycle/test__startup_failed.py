@@ -13,8 +13,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from scitex_agent_container._lifecycle._startup_failed import (
     MARKER_FILENAME,
     SCHEMA_VERSION,

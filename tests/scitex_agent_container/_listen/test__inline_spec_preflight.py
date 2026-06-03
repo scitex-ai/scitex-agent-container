@@ -13,8 +13,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from scitex_agent_container._listen._inline_spec_preflight import (
     BindCheck,
     PreflightResult,
