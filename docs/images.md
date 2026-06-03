@@ -17,6 +17,31 @@ Built artifacts live under `~/.scitex/agent-container/containers/`, never in git
   apptainer-{base,scitex}.def    ← canonical SSoT
 ```
 
+## Cross-package convention: `~/.scitex/<pkg>/{containers,bin}`
+
+Sac owns `~/.scitex/agent-container/` for its own (base / scitex) artifacts.
+Other scitex-* packages own their own siblings under `~/.scitex/<pkg>/`:
+
+```
+~/.scitex/
+├── agent-container/containers/    ← sac's own SIFs (base, scitex, ...)
+├── writer/containers/             ← scitex-writer's SIFs (texlive, mermaid, ...)
+└── <pkg>/containers/              ← any future package follows the same shape
+```
+
+`sac image list` scans `~/.scitex/*/containers/*.sif` generically — sac
+does **not** know any other package by name, and new packages light up
+automatically with no sac code change. Each owning package ships its
+own installer CLI (e.g. `scitex-writer install texlive-sif`) that drops
+its SIF at the conventional path. Wrapper agents bind from there
+(`~/.scitex/writer/containers/texlive.sif:/opt/texlive.sif:ro`).
+
+This mirrors the `scitex_dev.*` entry_points pattern already in use
+across the ecosystem (`scitex_dev.docs`, `scitex_dev.skills`,
+`scitex_dev.linter.plugins`, `scitex_dev.jobs`): each package owns its
+own surface, the aggregator never hard-codes downstream names. Per
+operator design 8566; ecosystem doctrine of minimal scope.
+
 ## Build
 
 ```bash
