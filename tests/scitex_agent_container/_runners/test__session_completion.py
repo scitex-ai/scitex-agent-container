@@ -565,6 +565,161 @@ class TestEmitOnceGuard:
 
 
 # ---------------------------------------------------------------------------
+# emit_completion_push — sender-side empty-beacon noise suppression
+# ---------------------------------------------------------------------------
+
+
+class TestEmptyBeaconSuppression:
+    """Sender-side guard: status==unknown AND empty summary → SKIP dispatch.
+
+    The conversation never populated an outcome (no ResultMessage, no
+    exception caught) so the beacon would carry no actionable information
+    for the requester. Across the fleet these structurally-identical empty
+    beacons were noise; suppressing at the SENDER (loud-skip beats silent
+    noise) keeps the a2a channel signal-only.
+    """
+
+    def test_unknown_status_with_empty_summary_is_suppressed(self) -> None:
+        # Arrange — begin opens turn (status=None, summary=""); never finished.
+        ctx = TurnContext()
+        ctx.begin(requester="lead", dispatch_id="d-empty")
+        calls: list = []
+
+        async def _push_fn(report, requester, dispatch_id):
+            calls.append(report)
+
+        async def _scenario():
+            await emit_completion_push(ctx, _push_fn, agent_name="worker")
+            return calls
+
+        # Act
+        observed = asyncio.run(_scenario())
+        # Assert
+        assert observed == []
+
+    def test_unknown_status_with_whitespace_only_summary_is_suppressed(self) -> None:
+        # Arrange — whitespace summary is treated as empty (no real signal).
+        ctx = TurnContext()
+        ctx.begin(requester="lead", dispatch_id="d-ws")
+        ctx.finish(status=STATUS_UNKNOWN, summary="   \n\t  ")
+        calls: list = []
+
+        async def _push_fn(report, requester, dispatch_id):
+            calls.append(report)
+
+        async def _scenario():
+            await emit_completion_push(ctx, _push_fn, agent_name="worker")
+            return calls
+
+        # Act
+        observed = asyncio.run(_scenario())
+        # Assert
+        assert observed == []
+
+    def test_unknown_status_with_real_summary_still_dispatches(self) -> None:
+        # Arrange — summary carries signal; honest "unknown" must still go.
+        ctx = TurnContext()
+        ctx.begin(requester="lead", dispatch_id="d-known-unk")
+        ctx.finish(status=STATUS_UNKNOWN, summary="partial output then SDK stalled")
+        calls: list = []
+
+        async def _push_fn(report, requester, dispatch_id):
+            calls.append(report)
+
+        async def _scenario():
+            await emit_completion_push(ctx, _push_fn, agent_name="worker")
+            return calls
+
+        # Act
+        observed = asyncio.run(_scenario())
+        # Assert
+        assert len(observed) == 1
+
+    def test_success_status_with_empty_summary_still_dispatches(self) -> None:
+        # Arrange — a clean turn that happened to produce no text is still
+        # a real outcome the requester needs to hear about.
+        ctx = TurnContext()
+        ctx.begin(requester="lead", dispatch_id="d-empty-success")
+        ctx.finish(status=STATUS_SUCCESS, summary="")
+        calls: list = []
+
+        async def _push_fn(report, requester, dispatch_id):
+            calls.append(report)
+
+        async def _scenario():
+            await emit_completion_push(ctx, _push_fn, agent_name="worker")
+            return calls
+
+        # Act
+        observed = asyncio.run(_scenario())
+        # Assert
+        assert len(observed) == 1
+
+    def test_failure_status_with_empty_summary_still_dispatches(self) -> None:
+        # Arrange — honest failure with no captured detail is still signal.
+        ctx = TurnContext()
+        ctx.begin(requester="lead", dispatch_id="d-empty-fail")
+        ctx.finish(status=STATUS_FAILURE, summary="")
+        calls: list = []
+
+        async def _push_fn(report, requester, dispatch_id):
+            calls.append(report)
+
+        async def _scenario():
+            await emit_completion_push(ctx, _push_fn, agent_name="worker")
+            return calls
+
+        # Act
+        observed = asyncio.run(_scenario())
+        # Assert
+        assert len(observed) == 1
+
+    def test_suppressed_empty_beacon_marks_turn_pushed(self) -> None:
+        # Arrange — pushed=True after suppression so the failure-path's
+        # redundant emit_completion_push() in _drive_turn.finally cannot
+        # retry the same empty beacon.
+        ctx = TurnContext()
+        ctx.begin(requester="lead", dispatch_id="d-once-empty")
+        calls: list = []
+
+        async def _push_fn(report, requester, dispatch_id):
+            calls.append(report)
+
+        async def _scenario():
+            await emit_completion_push(ctx, _push_fn, agent_name="worker")
+            return ctx.pushed
+
+        # Act
+        pushed = asyncio.run(_scenario())
+        # Assert
+        assert pushed is True
+
+    def test_suppressed_empty_beacon_logs_loud_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # Arrange — suppress must be LOUD (WARNING) so a stuck emitter is
+        # observable in the agent log; silent drops are the anti-pattern.
+        ctx = TurnContext()
+        ctx.begin(requester="lead", dispatch_id="d-loud")
+        calls: list = []
+
+        async def _push_fn(report, requester, dispatch_id):
+            calls.append(report)
+
+        async def _scenario():
+            with caplog.at_level(
+                "WARNING", logger="scitex_agent_container._runners._session_hooks"
+            ):
+                await emit_completion_push(ctx, _push_fn, agent_name="worker")
+            return caplog.records
+
+        # Act
+        records = asyncio.run(_scenario())
+        # Assert
+        assert any("SUPPRESSED" in r.getMessage() for r in records)
+
+
+# ---------------------------------------------------------------------------
 # Full conversation → requester push (real run_conversation, fake SDK module)
 # ---------------------------------------------------------------------------
 

@@ -117,6 +117,18 @@ async def emit_completion_push(
     outcome — should not happen, since Stop comes after the ResultMessage)
     is reported as ``unknown``, NEVER fabricated as success.
 
+    Empty-beacon guard (fleet-wide noise suppression)
+    -------------------------------------------------
+    A beacon whose ``status`` is :data:`STATUS_UNKNOWN` AND whose summary is
+    empty / whitespace carries no information for the requester — the
+    conversation never recorded an outcome and there is no reply text to
+    relay. Peers across the fleet were seeing dozens of these structurally-
+    identical empty beacons per agent, degrading the a2a channel. We
+    SUPPRESS the dispatch at the sender (loud-skip beats silent noise): the
+    skip is logged at WARNING with the agent / requester / dispatch_id so a
+    stuck emitter is observable in the agent log, and ``pushed`` is set so
+    the failure-path's redundant emit cannot retry the same empty beacon.
+
     A delivery failure is LOUD (logged at WARNING, requester named) but
     never re-raised: the turn already completed, and a flaky receipt must
     not crash the agent or abort the SDK control flow.
@@ -126,16 +138,38 @@ async def emit_completion_push(
     requester = turn_context.requester
     if not requester or turn_context.pushed:
         return
-    turn_context.pushed = True
 
     from ._session_completion import STATUS_UNKNOWN, build_completion_report
 
     status = turn_context.status or STATUS_UNKNOWN
+    summary = turn_context.summary or ""
+    # Sender-side empty-beacon guard. The join (status==unknown AND empty
+    # summary) is the structural signature of a noise beacon: the
+    # conversation never populated an outcome, so there is nothing for the
+    # requester to act on. Suppress LOUDLY (skip the wire dispatch, log a
+    # WARNING that names the emitter) rather than relay information-free
+    # noise. ``pushed`` is set BEFORE returning so the failure-path's
+    # redundant emit cannot retry the same empty beacon.
+    if status == STATUS_UNKNOWN and not summary.strip():
+        turn_context.pushed = True
+        log.warning(
+            "completion push SUPPRESSED (empty beacon) for requester %r "
+            "(agent=%s dispatch_id=%s): status=%r and summary is empty — "
+            "the conversation never recorded an outcome; skipping the "
+            "wire dispatch rather than relaying information-free noise",
+            requester,
+            agent_name,
+            turn_context.dispatch_id,
+            status,
+        )
+        return
+
+    turn_context.pushed = True
     report = build_completion_report(
         agent=agent_name,
         dispatch_id=turn_context.dispatch_id,
         status=status,
-        summary_text=turn_context.summary,
+        summary_text=summary,
     )
     try:
         await push_fn(report, requester, turn_context.dispatch_id)
