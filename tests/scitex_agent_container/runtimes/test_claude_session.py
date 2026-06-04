@@ -267,8 +267,11 @@ def test_no_warning_for_small_claude_dir(workdir, capsys):
     cfg = AgentConfig(name="x", runtime="docker", workdir=str(workdir))
     # Act
     _warn_if_heavy_workdir_claude(cfg)
-    # Assert
-    assert capsys.readouterr().err == ""
+    # Assert — the F-CS8 heavy-workdir banner must NOT fire for a tiny
+    # tree. The audit chain's gdu/du missing-binary fallback warnings are
+    # environment noise (CI runners without dundee gdu installed) and are
+    # NOT what this test is asserting against.
+    assert "F-CS8" not in capsys.readouterr().err
 
 
 def test_warns_when_claude_dir_exceeds_threshold(workdir, capsys, env_save_restore):
@@ -364,7 +367,7 @@ def test_warn_banner_emits_concrete_mv_command(workdir, capsys, env_save_restore
 
 
 def test_warn_silent_when_neither_threshold_crossed(workdir, capsys, env_save_restore):
-    # Arrange — generous thresholds, small tree. No warn expected.
+    # Arrange — generous thresholds, small tree. No F-CS8 banner expected.
     from scitex_agent_container.runtimes import claude_session as cs
 
     env_save_restore.set("SAC_WORKDIR_CLAUDE_WARN_FILES", "100000")
@@ -374,8 +377,11 @@ def test_warn_silent_when_neither_threshold_crossed(workdir, capsys, env_save_re
     cfg = AgentConfig(name="x", runtime="docker", workdir=str(workdir))
     # Act
     cs._warn_if_heavy_workdir_claude(cfg)
-    # Assert
-    assert capsys.readouterr().err == ""
+    # Assert — the gdu/du missing-binary chain may emit environment
+    # warnings on CI; this test asserts only that the F-CS8 heavy-workdir
+    # banner does NOT fire when both thresholds are generously above
+    # actual usage.
+    assert "F-CS8" not in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------
