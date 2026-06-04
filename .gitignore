@@ -23,6 +23,11 @@ GITIGNORED/
 .claude/
 docs/to_claude/
 
+# But: example agent to_home/.claude/ trees ARE part of the package — they
+# ship as the documented reference template fleet operators copy from.
+!examples/agents/*/to_home/.claude/
+!examples/agents/*/to_home/.claude/**
+
 # dev artifacts
 .coverage
 .coverage.*
