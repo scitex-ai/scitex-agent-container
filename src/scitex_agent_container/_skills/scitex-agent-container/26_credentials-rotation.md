@@ -70,17 +70,47 @@ to the same file.
 
 ### Apptainer bind (`runtimes/_apptainer_auth.py::auth_argv`)
 
-Default (host-live) path:
+Both paths (host-live AND pinned-account) dir-bind unconditionally
+(post task #13):
 
 ```
---bind <cred_file>:/tmp/sac-claude/.credentials.json:rw
+--bind <cred_file_parent>:/tmp/sac-claude:rw
 --env  CLAUDE_CONFIG_DIR=/tmp/sac-claude
 ```
+
+* `cred_file_parent` = `~/.claude/` for unpinned / host-live (the
+  agent picks up whatever account the operator is currently logged
+  in as).
+* `cred_file_parent` = `~/.scitex/agent-container/accounts/<acct>/`
+  for pinned (the snapshot dir for the named account).
 
 The **`:rw`** is why live refresh works: when the bundled `claude`
 inside the container detects a near-expiry access token (~5 min skew),
 it writes the new token back through the bind to the host canonical.
 Without `:rw` the container 401s the moment the token expires.
+
+The **directory bind** (not a single-file bind) is what keeps the
+container's view in sync with host-side atomic-rename refreshes
+(`_account/creds_watch.py` watch-live mirror, `_account/creds_sync.py
+_atomic_copy`, `_account/claude_usage._refresh_access_token_at`).
+A single-file bind would survive the rename pointing at the old inode
+— visible as `...credentials.json//deleted` in
+`/proc/<pid>/mountinfo` — and the container reads the stale
+pre-rename token forever → 401 at natural expiry. See
+[ADR-0017](../../../../docs/adr/0017-credential-rotation-and-refresh-race.md)
+§ "Failure mode 1" for the empirical anchor (2026-06-04 03:00
+fleet-wide storm).
+
+Scope acknowledgement for the unpinned dir-bind: `~/.claude/` contains
+more than just `.credentials.json` (settings.json, projects DB, chat
+history, MCP config). The dir-bind exposes these to the container,
+where the previous file-bind exposed only the creds file. The
+bundled in-container CLI already READS these via `CLAUDE_CONFIG_DIR`;
+the change is that it can now also WRITE to them. The recommended
+deployment is `spec.claude.account` pinning + the watch-live daemon
+(§ 6) mirroring the host-active account into the snapshot store, so
+the unpinned dir-bind is a degraded fallback for the host-active-login
+case only.
 
 Target lives under `/tmp/` (not `$HOME`) because D2 hardened preflight
 requires `$HOME` empty; `CLAUDE_CONFIG_DIR=/tmp/sac-claude` keeps SDK and

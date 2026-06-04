@@ -76,58 +76,80 @@ def auth_argv(config: AgentConfig, state_dir: Path) -> list[str]:
     # refresh code-path itself is responsible for any concurrency
     # locking — the bind is just a file passthrough.
     #
-    # Per-agent OAuth account pinning (spec.claude.account). When set,
-    # we bind the per-account DIRECTORY
-    # (``~/.scitex/agent-container/accounts/<acct>/``) at
-    # ``/tmp/sac-claude`` ``:rw``. CLAUDE_CONFIG_DIR points the
-    # in-container Claude CLI at that dir so it reads
-    # ``.credentials.json`` from within the bound directory.
+    # OAuth credentials bind shape: DIRECTORY bind, unconditionally
+    # (operator task #11 + task #13).
     #
-    # Why a DIRECTORY bind, not a single-file bind (operator task #11):
-    # the per-account snapshot is rewritten by host-side atomic-replace
-    # paths — ``_account.creds_sync._atomic_copy`` (sync-live),
-    # ``_state.account_store.switch_account``, and
+    # The per-account snapshot AND the host-live ``~/.claude/`` file are
+    # both rewritten by host-side atomic-replace paths —
+    # ``_account.creds_sync._atomic_copy`` (sync-live + watch-live),
+    # ``_state.account_store.switch_account``,
     # ``_account.claude_usage._refresh_access_token_at`` — all using
     # ``tmp + os.replace``. A single-file bind mount is on the file's
     # dentry/inode; an atomic-replace orphans that inode (the bind
     # surfaces as ``...credentials.json//deleted`` in
-    # ``/proc/<pid>/mountinfo``) and every already-running pinned agent
-    # silently loses the shared snapshot, regressing into the per-copy
-    # collision-401 disease that the snapshot model was meant to fix
-    # (PR #262 / task #15). A DIRECTORY bind resolves child files by
-    # name through the underlying filesystem on every open, so a
-    # tmp+rename inside the dir is visible to the container immediately
-    # — in BOTH directions (host writes seen by the container, and
-    # in-container CLI refresh writes seen by host writers).
+    # ``/proc/<pid>/mountinfo``) and every already-running agent
+    # silently loses the shared file, regressing into the per-copy
+    # collision-401 disease the snapshot model was meant to fix.
+    # A DIRECTORY bind resolves child files by name through the
+    # underlying filesystem on every open, so a tmp+rename inside the
+    # dir is visible to the container immediately — in BOTH directions
+    # (host writes seen by the container, and in-container CLI refresh
+    # writes seen by host writers).
     #
-    # ``account=""`` → host live ``~/.claude/.credentials.json``
-    # (unchanged behaviour; single-file bind preserved because we MUST
-    # NOT expose the entire host ``~/.claude/`` directory — chat
-    # history, projects DB, MCP settings — into the container).
+    # PR #262 (task #11) made the PINNED branch dir-bind; this module
+    # (task #13) makes the UNPINNED/host-live branch dir-bind too. The
+    # legacy single-file-bind code path is fully retired.
+    #
+    # BOTH branches dir-bind (operator task #13, 2026-06-04 cred-refresher
+    # storm root cause).
+    #
+    # Previously the unpinned/host-live branch single-file-bound
+    # ``~/.claude/.credentials.json`` at ``/tmp/sac-claude/.credentials.json``.
+    # The comment justifying that choice said the host live file is
+    # "rewritten only by manual claude /login / sac accounts switch" —
+    # this was wrong on the live system: ``_account/creds_watch.py``
+    # (the watch-live daemon mirroring ``~/.claude/`` into the snapshot
+    # store) AND ``_account/creds_sync._atomic_copy`` both atomic-replace
+    # the file. Any such rename orphans the bind's inode → bind goes
+    # ``//deleted`` in ``/proc/<pid>/mountinfo`` → container reads the
+    # stale pre-rename token forever → 401 at natural expiry. The
+    # cred-refresher agents (unpinned by design, since they refresh
+    # whatever ``~/.claude`` resolves to) hit this fleet-wide on
+    # 2026-06-04 03:00.
+    #
+    # Fix: the unpinned branch now dir-binds ``~/.claude/`` at
+    # ``/tmp/sac-claude``. Same shape as the pinned branch; ONLY the
+    # source dir differs. Atomic rename inside the bound dir is
+    # immediately visible to the container.
+    #
+    # Scope acknowledgement: this exposes the operator's host
+    # ``~/.claude/`` (settings.json, chat history, projects DB) to the
+    # container, where before only ``.credentials.json`` was visible.
+    # The bundled in-container ``claude`` CLI already READS these via
+    # ``CLAUDE_CONFIG_DIR=/tmp/sac-claude``; the change is that it can
+    # now also WRITE to them. The cleaner long-term fix is to resolve
+    # the active host login to its snapshot dir (per ADR-0017's
+    # one-account-one-refresher invariant), which only exposes
+    # ``.credentials.json``. The recommended deployment is to pin via
+    # ``spec.claude.account`` and let the unpinned dir-bind be the
+    # degraded fallback for the host-active-login case. The watch-live
+    # daemon (skill 26 § 6) mirrors operator relogins into the snapshot
+    # store so a pinned agent tracks the active login automatically.
     from ._apptainer_creds import resolve_cred_file
 
     cred_file = resolve_cred_file(config, state_dir)
     if cred_file is None or not cred_file.is_file():
         return argv
 
-    pinned_account = bool(getattr(getattr(config, "claude", None), "account", "") or "")
-    if pinned_account:
-        # Bind the per-account DIRECTORY; tmp+rename of the snapshot
-        # inside it stays visible to the container. Account-store
-        # metadata (``account.json``) is co-bound but harmless — the
-        # in-container CLI only opens ``.credentials.json``.
-        bind_src = cred_file.parent
-        bind_dest = "/tmp/sac-claude"
-    else:
-        # Unpinned: keep the legacy single-file bind. The host live
-        # ``~/.claude/.credentials.json`` is rewritten only by manual
-        # ``claude /login`` / ``sac accounts switch`` events; the
-        # routine in-container refresh writeback into a bound regular
-        # file at ``/tmp/sac-claude/.credentials.json`` is the
-        # documented contract. Binding ``~/.claude/`` itself would
-        # leak the host's full claude state into the container.
-        bind_src = cred_file
-        bind_dest = "/tmp/sac-claude/.credentials.json"
+    # Dir-bind unconditionally. ``cred_file.parent`` is:
+    #   - Pinned:   ~/.scitex/agent-container/accounts/<acct>/  (snapshot dir,
+    #               narrowly scoped to .credentials.json + account.json).
+    #   - Unpinned: ~/.claude/  (legacy host live, over-binds; see
+    #               scope-acknowledgement comment above).
+    # CLAUDE_CONFIG_DIR points the in-container CLI at the bound dir
+    # so it finds .credentials.json inside it.
+    bind_src = cred_file.parent
+    bind_dest = "/tmp/sac-claude"
 
     argv += [
         "--bind",

@@ -121,16 +121,30 @@ def test_provider_argv_omits_oauth_config_dir(
 
 
 def test_oauth_argv_binds_credentials_when_present(tmp_path: Path, home_redirect: Path):
-    # Arrange — no provider, real host creds file → OAuth bind emitted.
+    # Arrange — no provider, real host creds file → OAuth dir-bind emitted.
+    # Post task #13 the unpinned branch dir-binds ``~/.claude/`` at
+    # ``/tmp/sac-claude`` (same shape as the pinned branch). The bind
+    # source is the credentials file's PARENT (``~/.claude/``), not
+    # the file itself.
     creds = _write_host_creds(home_redirect)
     cfg = _oauth_config(tmp_path / "wd")
     # Act
     argv = auth_argv(cfg, state_dir=tmp_path / "state")
-    # Assert
-    assert any(
-        a.startswith(str(creds)) and "/tmp/sac-claude/.credentials.json:rw" in a
-        for a in argv
-    )
+    # Assert — dir-bind at /tmp/sac-claude (NOT /tmp/sac-claude/.credentials.json).
+    assert any(a == f"{creds.parent}:/tmp/sac-claude:rw" for a in argv)
+
+
+def test_oauth_argv_does_not_emit_legacy_file_bind(tmp_path: Path, home_redirect: Path):
+    # Arrange — task #13 retired the single-file bind to
+    # ``/tmp/sac-claude/.credentials.json``. Make sure it does not slip
+    # back in (atomic-rename refreshes orphan the bind → //deleted →
+    # 401 at expiry).
+    _write_host_creds(home_redirect)
+    cfg = _oauth_config(tmp_path / "wd")
+    # Act
+    argv = auth_argv(cfg, state_dir=tmp_path / "state")
+    # Assert — no bind whose dest is the credentials file path.
+    assert not any(":/tmp/sac-claude/.credentials.json:" in a for a in argv)
 
 
 def test_oauth_argv_sets_oauth_config_dir(tmp_path: Path, home_redirect: Path):

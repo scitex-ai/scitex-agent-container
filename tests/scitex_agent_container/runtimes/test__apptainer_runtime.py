@@ -1042,10 +1042,14 @@ def test_argv_emits_rocm_flag_when_requested(tmp_path: Path) -> None:
     assert "--rocm" in argv
 
 
-def test_argv_mounts_credentials_file_when_present(
+def test_argv_mounts_credentials_dir_when_present(
     tmp_path: Path, home_redirect: Path
 ) -> None:
     # Arrange — Path.home() reads $HOME, redirected by the fixture.
+    # Post task #13 the unpinned branch dir-binds ``~/.claude/`` at
+    # ``/tmp/sac-claude`` (same shape as the pinned branch). The legacy
+    # single-file bind to ``/tmp/sac-claude/.credentials.json`` is
+    # retired — atomic-replace refresh would unlink the bound inode.
     creds = home_redirect / ".claude" / ".credentials.json"
     creds.parent.mkdir(parents=True, exist_ok=True)
     creds.write_text("{}")
@@ -1053,11 +1057,8 @@ def test_argv_mounts_credentials_file_when_present(
     cfg = _config(tmp_path)
     # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
-    # Assert
-    assert any(
-        a.startswith(str(creds)) and "/tmp/sac-claude/.credentials.json:rw" in a
-        for a in argv
-    )
+    # Assert — bind source is the credentials file's PARENT (~/.claude/).
+    assert any(a == f"{creds.parent}:/tmp/sac-claude:rw" for a in argv)
 
 
 def test_argv_credentials_bind_is_read_write(
@@ -1073,7 +1074,7 @@ def test_argv_credentials_bind_is_read_write(
     cfg = _config(tmp_path)
     # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
-    creds_arg = next(a for a in argv if "/tmp/sac-claude/.credentials.json" in a)
+    creds_arg = next(a for a in argv if ":/tmp/sac-claude:" in a)
     # Assert
     assert ":ro" not in creds_arg
 
@@ -1201,10 +1202,13 @@ def test_argv_pins_account_does_not_create_state_dir_copy(
     assert not legacy_copy.exists()
 
 
-def test_argv_no_account_binds_host_live_file(
+def test_argv_no_account_dir_binds_host_claude(
     tmp_path: Path, home_redirect: Path
 ) -> None:
-    # Arrange — account="" (default) keeps the legacy host-file bind.
+    # Arrange — account="" (unpinned default) now dir-binds ``~/.claude/``
+    # at ``/tmp/sac-claude`` (post task #13, same shape as the pinned
+    # branch). The legacy single-file bind is retired — atomic-replace
+    # refreshes orphaned the bound inode → //deleted → 401 at expiry.
     host_creds = home_redirect / ".claude" / ".credentials.json"
     host_creds.parent.mkdir(parents=True, exist_ok=True)
     host_creds.write_text("{}")
@@ -1212,9 +1216,9 @@ def test_argv_no_account_binds_host_live_file(
     cfg = _config(tmp_path, claude=ClaudeSpec(account=""))
     # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
-    creds_arg = next(a for a in argv if "/tmp/sac-claude/.credentials.json" in a)
-    # Assert
-    assert creds_arg.startswith(str(host_creds))
+    # Assert — bind source is the credentials file's PARENT (~/.claude/);
+    # bind dest is the DIRECTORY /tmp/sac-claude, not the file inside it.
+    assert any(a == f"{host_creds.parent}:/tmp/sac-claude:rw" for a in argv)
 
 
 def test_argv_pinned_account_missing_snapshot_raises_pinned_account_error(
