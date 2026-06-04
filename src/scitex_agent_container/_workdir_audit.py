@@ -47,10 +47,16 @@ their own cache on top.
 
 from __future__ import annotations
 
+import json
+import logging
 import os
+import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Default thresholds (env-overridable)
@@ -168,30 +174,334 @@ _PROBED_SUBDIRS: tuple[str, ...] = (
 
 
 def _walk_size_and_count(root: Path) -> tuple[int, int]:
-    """Return ``(files, bytes)`` for ``root`` (recursive, no symlinks).
+    """Return EXACT ``(files, bytes)`` for ``root`` (recursive, no symlinks).
+
+    Used by :func:`_probe_subdir` for per-bucket bloat reporting where
+    the operator wants the precise count of a specific known-bloat
+    subdir (``worktrees``, ``.pending``, ...). No early-exit because
+    the probe is already targeted at a bounded, small-N location.
 
     Symlinks are deliberately NOT followed — they can create cycles and
     they don't mirror how claude-agent-sdk walks its discovery tree.
-    Failed stat()s contribute zero, matching the F-CS8 pre-flight
-    behaviour the warn path already uses. Never raises.
+    Failed stat()s contribute zero. Never raises.
+
+    Excluded subtrees (see :mod:`_walk_exclusions`) are PRUNED — most
+    importantly ``worktrees/`` directories anywhere in the walk. The
+    probe in :func:`_probe_subdir` is unaffected because the prune is
+    BASENAME-keyed: a walk rooted INSIDE a ``worktrees/`` directory
+    sees ``agent-*`` entries (none matching the exclusion), so per-
+    bucket telemetry still descends.
     """
+    from ._walk_exclusions import prune_walk_dirnames
+
     total_bytes = 0
     total_files = 0
     if not root.is_dir():
         return 0, 0
-    for path in root.rglob("*"):
-        # stx-allow: fallback (reason: stat may fail on broken symlinks or
-        # permission-denied entries; treat as 0 bytes / not-counted rather
-        # than abort the whole audit — matches existing F-CS8 pre-flight)
-        try:
-            if path.is_symlink():
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        # Prune in place so os.walk does not descend the excluded subtrees.
+        prune_walk_dirnames(dirnames)
+        for fname in filenames:
+            fpath = Path(dirpath) / fname
+            # stx-allow: fallback (reason: stat may fail on broken symlinks
+            # or permission-denied entries; treat as 0 bytes / not-counted
+            # rather than abort the whole audit — matches existing F-CS8
+            # pre-flight)
+            try:
+                if fpath.is_symlink():
+                    continue
+                if fpath.is_file():
+                    total_files += 1
+                    total_bytes += fpath.stat().st_size
+            except OSError:  # stx-allow: fallback (reason: see inline comment)
                 continue
-            if path.is_file():
-                total_files += 1
-                total_bytes += path.stat().st_size
-        except OSError:  # stx-allow: fallback (reason: see inline comment)
-            continue
     return total_files, total_bytes
+
+
+def _try_gdu_bytes(root: Path) -> int | None:
+    """Try ``gdu`` for the byte total (excluding ``worktrees/``) via its
+    machine-readable JSON export.
+
+    Returns the integer apparent-size byte total on success, ``None``
+    on any failure (binary missing, non-zero exit, unparseable JSON,
+    unexpected schema). Caller logs the fallback transition; this
+    function stays quiet so the caller controls the chain narrative.
+
+    Why gdu (parallel disk-usage scanner): 3-10x faster than ``du`` on
+    large trees. We use ``-o -`` (JSON to stdout) instead of the
+    human-readable ``--summarize`` output — JSON's schema is stable
+    across gdu releases on the same major version, eliminating the
+    per-release human-format parse drift that's caused gdu adoption
+    to stall elsewhere.
+
+    PARSER VERSION CONTRACT:
+      Tied to ``gdu`` 5.x (as pinned in the SIF's apptainer-base.def).
+      The JSON shape is::
+
+        [ <format-version>, <schema-version>, {header}, <root-node> ]
+
+      where each <node> is either:
+        * A directory: ``[ {folder-meta-dict}, <child1>, <child2>, ... ]``
+        * A file:      ``{ "name": ..., "asize": <bytes>, "dsize": <disk>, ... }``
+
+      We recurse and sum the ``asize`` (apparent size — file st_size
+      sum, matching the Python walk's semantics for the existing
+      per-bucket probe contract).
+
+      If ``.def`` bumps gdu to a future major version (6.x+), re-verify
+      this parser by spot-checking ``gdu -o-`` output structure
+      against a known fixture; bump the version comment here.
+
+    ``-I ".*/worktrees"`` excludes any directory whose absolute path
+    ends with ``/worktrees`` at any depth. Verified on this host.
+    """
+    if shutil.which("gdu") is None:
+        return None
+    # stx-allow: fallback (reason: gdu may exit non-zero on permission
+    # issues or timeout; caller logs the visible fallback)
+    try:
+        result = subprocess.run(
+            [
+                "gdu",
+                "-o",
+                "-",
+                "--no-progress",
+                "-I",
+                ".*/worktrees",
+                str(root),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):  # stx-allow: fallback
+        return None
+    if result.returncode != 0 or not result.stdout:
+        return None
+    return _sum_asize_from_gdu_json(result.stdout)
+
+
+def _sum_asize_from_gdu_json(blob: str) -> int | None:
+    """Parse gdu's JSON export and sum ``asize`` recursively.
+
+    Returns the integer total, or ``None`` if parsing fails. See
+    :func:`_try_gdu_bytes` for the schema contract.
+    """
+    # stx-allow: fallback (reason: malformed JSON or unexpected schema
+    # version is treated as "tool unusable" so the caller can degrade)
+    try:
+        doc = json.loads(blob)
+    except (json.JSONDecodeError, ValueError):  # stx-allow: fallback
+        return None
+    if not isinstance(doc, list) or len(doc) < 4:
+        return None
+    return _walk_gdu_node_for_asize(doc[3])
+
+
+def _walk_gdu_node_for_asize(node: Any) -> int:
+    """Recursively sum ``asize`` across a gdu JSON node.
+
+    File nodes are dicts with ``asize``; directory nodes are lists
+    where index 0 is the directory's metadata dict (no asize) and
+    indices 1.. are the children. Unknown shapes contribute 0
+    (defense in depth).
+    """
+    if isinstance(node, dict):
+        size = node.get("asize")
+        return size if isinstance(size, int) else 0
+    if isinstance(node, list):
+        if not node:
+            return 0
+        # The first entry is the folder's own metadata (dir, no size);
+        # subsequent entries are the children to recurse into.
+        return sum(_walk_gdu_node_for_asize(child) for child in node[1:])
+    return 0
+
+
+def _try_du_bytes(root: Path) -> int | None:
+    """Try ``du -sb --exclude=worktrees`` for the byte total.
+
+    Returns the byte count on success, ``None`` on any failure (binary
+    missing, non-zero exit, unparseable output). Caller logs the
+    fallback transition; this function stays quiet so the caller
+    controls the chain narrative.
+
+    Why ``du`` and not ``gdu``: gdu (dundee/gdu) is faster but its
+    CLI output format varies per release (human units in the
+    ``--summarize`` line: "1.2 MiB", "512 B"), and the
+    ``--ignore-dirs-pattern`` is an ABSOLUTE-PATH regex (the bare
+    basename ``worktrees`` doesn't match — you need ``.*/worktrees``,
+    which is itself version-fragile). ``du -sb --exclude=worktrees``
+    is universally present and emits a stable ``<bytes>\\t<path>``
+    line that needs no parsing logic that can drift. Lead-confirmed
+    2026-06-04: du is the right call for the programmatic audit.
+
+    Note that ``du -sb`` is APPARENT size INCLUDING directory entries
+    (each typically 4 KiB on ext4) and INCLUDING disk-block padding
+    for small files (1-byte files allocate full 4 KiB blocks). That
+    inflates the byte count relative to the file-st_size sum the
+    Python walk produces. Acceptable per the lead's directive
+    ("don't compute the exact total — the audit only needs 'is it
+    heavy? yes/no'") AND because the bumped byte threshold is a
+    HEURISTIC for "tree is heavy enough to slow boot", which the
+    du semantics actually capture better (disk usage IS the cost
+    surface).
+    """
+    if shutil.which("du") is None:
+        return None
+    # stx-allow: fallback (reason: du may exit non-zero on
+    # permission-denied entries or timeout on NFS; caller logs the
+    # visible fallback)
+    try:
+        result = subprocess.run(
+            ["du", "-sb", "--exclude=worktrees", str(root)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):  # stx-allow: fallback
+        return None
+    if result.returncode != 0 or not result.stdout:
+        return None
+    first_line = result.stdout.split("\n", 1)[0]
+    bytes_str = (
+        first_line.split("\t", 1)[0]
+        if "\t" in first_line
+        else first_line.split(None, 1)[0]
+    )
+    try:
+        return int(bytes_str)
+    except ValueError:
+        return None
+
+
+def _measure_top_level(
+    root: Path, *, file_threshold: int, byte_threshold: int
+) -> tuple[int, int, bool]:
+    """Threshold-aware measurement of ``root`` (excluding ``worktrees/``).
+
+    The F-CS8 audit only needs "is it heavy? yes/no" — not the exact
+    total. We measure via a three-tier chain, with each fallback
+    transition LOGGED at WARNING level so the operator sees the
+    degraded path (the no-silent-fallback discipline; ywatanabe core
+    rule). Tiers, fastest first:
+
+      1. ``gdu -o -`` (machine-readable JSON, exclude regex). Fastest
+         on large trees and parses cleanly because gdu's JSON schema
+         is stable per major version (the SIF pins gdu's version in
+         the .def so we own the schema). See :func:`_try_gdu_bytes`
+         for the parser's version contract.
+      2. ``du -sb --exclude=worktrees`` — universal Linux tool, stable
+         ``<bytes>\\t<path>`` output. Fallback when gdu is absent or
+         fails.
+      3. Bounded Python ``os.walk`` with shared prune + EARLY-EXIT
+         once EITHER threshold is crossed. O(threshold), not
+         O(tree). The last-resort fallback that always works.
+
+    Files count always comes from the Python walk (gdu/du don't
+    cheaply report file counts), but the walk stays bounded by the
+    same early-exit gate.
+
+    Returns ``(files, bytes, early_exit)``:
+
+    * If ``early_exit`` is ``True``: at least one threshold was
+      crossed; ``files`` / ``bytes`` are LOWER BOUNDS at exit. The
+      threshold that triggered exit is definitively crossed; the
+      other's exceeded-ness is unknown and treated as
+      not-exceeded (the actionable alarm has already fired).
+    * If ``early_exit`` is ``False``: the walk completed; the
+      Python ``total_files`` is exact, and ``bytes`` is whichever
+      tier produced an answer (gdu > du > Python walk).
+
+    Visible-fallback warnings:
+
+    * ``gdu`` not found → ``logger.warning(...)`` + try ``du``.
+    * ``gdu`` found but failed → ``logger.warning(...)`` + try ``du``.
+    * ``du`` not found → ``logger.warning(...)`` + use Python walk.
+    * ``du`` found but failed → ``logger.warning(...)`` + use Python walk.
+    """
+    from ._walk_exclusions import prune_walk_dirnames
+
+    if not root.is_dir():
+        return 0, 0, False
+
+    # ---- Tier 1: gdu (JSON) -------------------------------------------------
+    fast_bytes: int | None = None
+    if shutil.which("gdu") is None:
+        logger.warning(
+            "gdu not found; falling back to du for .claude size "
+            "audit (slower on large trees). No-silent-fallback "
+            "discipline: this warning fires on every audit until "
+            "gdu is on PATH. The SIF's apptainer-base.def is "
+            "expected to bake gdu in."
+        )
+    else:
+        fast_bytes = _try_gdu_bytes(root)
+        if fast_bytes is None:
+            logger.warning(
+                "gdu invocation failed for .claude size audit; "
+                "falling back to du. Verify the gdu version pinned "
+                "in the SIF still matches the JSON-schema contract "
+                "in _try_gdu_bytes() (gdu major version bump = "
+                "re-verify parser)."
+            )
+
+    # ---- Tier 2: du ---------------------------------------------------------
+    if fast_bytes is None:
+        if shutil.which("du") is None:
+            logger.warning(
+                "du not found; using bounded os.walk for .claude size "
+                "audit (slowest tier). No-silent-fallback discipline: "
+                "this warning fires on every audit until du is on "
+                "PATH. Install coreutils to restore the fast path."
+            )
+        else:
+            fast_bytes = _try_du_bytes(root)
+            if fast_bytes is None:
+                logger.warning(
+                    "du invocation failed for .claude size audit; "
+                    "falling back to bounded os.walk. Check that du "
+                    "supports `-sb --exclude=<pat>` on this host."
+                )
+
+    # ---- Tier 2 (and file count): bounded Python walk with early-exit -----
+    total_bytes = 0
+    total_files = 0
+    early_exit = False
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        prune_walk_dirnames(dirnames)
+        for fname in filenames:
+            fpath = Path(dirpath) / fname
+            # stx-allow: fallback (reason: stat may fail on broken symlinks
+            # or permission-denied entries; treat as 0 bytes / not-counted)
+            try:
+                if fpath.is_symlink():
+                    continue
+                if fpath.is_file():
+                    total_files += 1
+                    # When an external tier produced fast_bytes we still
+                    # track Python's own running byte total so the walk
+                    # remains threshold-aware even when fast_bytes is
+                    # < byte_threshold (the threshold check uses
+                    # fast_bytes when available, else total_bytes).
+                    total_bytes += fpath.stat().st_size
+                    effective_bytes = (
+                        fast_bytes if fast_bytes is not None else total_bytes
+                    )
+                    if total_files > file_threshold or effective_bytes > byte_threshold:
+                        early_exit = True
+                        return (
+                            total_files,
+                            effective_bytes,
+                            True,
+                        )
+            except OSError:  # stx-allow: fallback (reason: see inline comment)
+                continue
+
+    final_bytes = fast_bytes if fast_bytes is not None else total_bytes
+    return total_files, final_bytes, early_exit
 
 
 def _probe_subdir(root: Path, rel: str) -> SubdirAudit | None:
@@ -251,7 +561,11 @@ def audit_workdir_claude(
             missing=True,
         )
 
-    total_files, total_bytes = _walk_size_and_count(root)
+    file_threshold = warn_threshold_files()
+    byte_threshold = warn_threshold_bytes()
+    total_files, total_bytes, _early_exit = _measure_top_level(
+        root, file_threshold=file_threshold, byte_threshold=byte_threshold
+    )
 
     subdirs = tuple(probed_subdirs) if probed_subdirs is not None else _PROBED_SUBDIRS
     bloat_threshold = bloat_subdir_threshold_files()
@@ -267,10 +581,10 @@ def audit_workdir_claude(
         files=total_files,
         bytes=total_bytes,
         bloat_sources=tuple(bloat),
-        exceeded_files=total_files > warn_threshold_files(),
-        exceeded_bytes=total_bytes > warn_threshold_bytes(),
-        threshold_files=warn_threshold_files(),
-        threshold_bytes=warn_threshold_bytes(),
+        exceeded_files=total_files > file_threshold,
+        exceeded_bytes=total_bytes > byte_threshold,
+        threshold_files=file_threshold,
+        threshold_bytes=byte_threshold,
         missing=False,
     )
 

@@ -219,6 +219,44 @@ def test_plan_worktrees_records_skip_reason_for_locked(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
+# plan_prune — `removeprefix` regression guard (2026-06-04)
+# ---------------------------------------------------------------------------
+
+
+def test_plan_picks_merged_worktree_whose_branch_starts_with_strip_char(
+    tmp_path: Path,
+):
+    """Regression guard for the ``str.lstrip("refs/heads/")`` bug. The
+    old code stripped any LEADING character that appeared in the set
+    {r,e,f,s,/,h,a,d} — so a branch like ``sibling-feature`` lost its
+    leading ``s``, became ``ibling-feature``, ``git merge-base
+    --is-ancestor`` rejected the unknown ref, and the reaper silently
+    skipped an already-merged worktree. We now use ``removeprefix``;
+    this test pins that fix by creating a worktree on a branch named
+    ``sibling-`` and asserting the planner picks it as merged."""
+    # Arrange
+    workdir = tmp_path / "wd"
+    workdir.mkdir()
+    _init_git_repo(workdir)
+    # Branch name deliberately starts with 's' so the old lstrip bug
+    # would have mangled it. The wrapper creates the worktree with
+    # branch ``merged-agent-strip-victim`` — also leading-'m', also
+    # OK; force the branch to start with 's' by renaming after.
+    target = workdir / ".claude" / "worktrees" / "agent-strip-victim"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["git", "worktree", "add", "-b", "strip-target", str(target)],
+        cwd=workdir,
+        check=True,
+    )
+    # Act
+    plan = plan_prune(workdir, pending_age_days=7)
+    paths = {Path(e.path).name for e in plan.worktrees}
+    # Assert
+    assert "agent-strip-victim" in paths
+
+
+# ---------------------------------------------------------------------------
 # apply_plan — moves to parked dir, no delete
 # ---------------------------------------------------------------------------
 

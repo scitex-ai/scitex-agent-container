@@ -290,14 +290,14 @@ def _plan_worktrees(
                 )
             )
             continue
-        # NOTE: "str.lstrip(chars)" strips a CHARACTER SET (not a
-        # prefix string). The previous "lstrip(\"refs/heads/\")" here
+        # NOTE: ``str.lstrip(chars)`` strips a CHARACTER SET (not a
+        # prefix string). The previous ``lstrip("refs/heads/")`` here
         # mangled any branch whose first character appeared in those
-        # 11 characters (e.g. "sibling-..." lost its leading "s"
-        # and then "git merge-base --is-ancestor" saw an unknown
+        # 11 characters (e.g. ``sibling-...`` lost its leading ``s``
+        # and then ``git merge-base --is-ancestor`` saw an unknown
         # ref + returned 1, so a fully-merged worktree was reported
         # as "not merged" and the reaper silently skipped it. Use
-        # "removeprefix" to actually strip the prefix string.
+        # ``removeprefix`` to actually strip the prefix string.
         branch = entry.get("branch", "").removeprefix("refs/heads/")
         if not branch:
             skipped.append(
