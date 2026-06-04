@@ -89,26 +89,24 @@ The skip-set is the **union** of the host-active account and the set of accounts
 
 ### Implementation
 
-#### Live `:rw` dir-bind (PR #262)
+#### Live `:rw` dir-bind (PR #262 + the unpinned-branch follow-up)
 
 `runtimes/_apptainer_creds.resolve_cred_file` returns:
 
-* For an **unpinned** agent: `~/.claude/.credentials.json` (the host's active login, single-file bind at `/tmp/sac-claude/.credentials.json:rw`).
+* For an **unpinned** agent: `~/.claude/.credentials.json` (the host's active login).
 * For a **pinned** agent (`spec.claude.account: <acct>`): the **snapshot Path** `~/.scitex/agent-container/accounts/<acct>/.credentials.json` — no copy.
 
-`runtimes/_apptainer_auth.auth_argv` then chooses bind shape:
+`runtimes/_apptainer_auth.auth_argv` then dir-binds **unconditionally**:
 
 ```python
-if pinned_account:
-    bind_src = cred_file.parent         # the account's snapshot DIRECTORY
-    bind_dest = "/tmp/sac-claude"
-else:
-    bind_src = cred_file                # single file
-    bind_dest = "/tmp/sac-claude/.credentials.json"
+bind_src = cred_file.parent     # ~/.claude/ or accounts/<acct>/
+bind_dest = "/tmp/sac-claude"
 argv += ["--bind", f"{bind_src}:{bind_dest}:rw", ...]
 ```
 
-The directory bind matters because the bundled CLI writes the new credentials file atomically (write-to-tmp + rename). A single-file bind would survive that rename for the OLD inode and miss the new file. A directory bind lets the in-container CLI see the new file under the same `/tmp/sac-claude/.credentials.json` path no matter how it was written.
+The directory bind matters because both refresh paths — the bundled in-container CLI rotating the access-token in place, AND the host-side watch-live / sync-live daemons mirroring `~/.claude/.credentials.json` into the snapshot store — write atomically (write-to-tmp + rename). A single-file bind would survive that rename pointing at the OLD inode (visible as `...credentials.json//deleted` in `/proc/<pid>/mountinfo`), so the container reads the stale pre-rename token forever and 401s at natural expiry. A directory bind resolves child files by name through the underlying filesystem on every open, so a tmp+rename inside the dir is visible to the container immediately in both directions.
+
+**Initial PR #262 made only the pinned branch dir-bind**, leaving the unpinned/host-live branch as the legacy single-file bind (justified at the time by "don't expose ~/.claude/" — but the cred-refresher agents are unpinned by design, and they hit the //deleted regression on 2026-06-04 03:00 fleet-wide). The follow-up retiring the single-file branch (Task #13) makes both branches dir-bind. The unpinned bound dir is `~/.claude/` (over-binds settings.json + chat history + projects DB compared to the per-account snapshot dir, but the recommended deployment is `spec.claude.account` pinning + watch-live daemon mirroring the host-active account into the snapshot store, so the unpinned dir-bind is a degraded fallback for the host-active-login case only).
 
 #### Skip-set extension (PR #299)
 
