@@ -70,6 +70,7 @@ session inside Apptainer (local or remote via SSH), observe via
 - [27_credentials-relogin.md](27_credentials-relogin.md) — verified re-login flow (tmux code-paste) + 401-recovery design
 - [28_credential-refresh.md](28_credential-refresh.md) — refresh creds without restart: a running agent re-reads the mounted credential on its next turn (`sac agents send "continue"`); cold `start` only for parked
 - [29_progress-reporting-to-lead.md](29_progress-reporting-to-lead.md) — milestone push to lead via a2a_send
+- [30_responsiveness-background-work.md](30_responsiveness-background-work.md) — agent default: short turns, heavy work to background, so operator Telegram is answered within seconds
 
 ### Reference
 - [13_observability.md](13_observability.md) — `sac agents status` JSON contract
