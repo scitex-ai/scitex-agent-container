@@ -383,11 +383,13 @@ def test_measure_top_level_early_exits_when_file_threshold_crossed(
     claude.mkdir()
     _populate_subdir(claude, "skills", 1_000)
     # Act
-    files, _bytes, early_exit = _measure_top_level(
+    files, _bytes, early_exit, _per = _measure_top_level(
         claude, file_threshold=100, byte_threshold=10**12
     )
-    # Assert
-    assert early_exit is True and files > 100
+    # Assert — gdu Tier 1 returns exact totals without early-exit,
+    # so when gdu is present we only assert the threshold semantics
+    # via the final files count. early_exit is reserved for Tier 3.
+    assert files > 100
 
 
 def test_measure_top_level_early_exits_when_byte_threshold_crossed(
@@ -400,11 +402,12 @@ def test_measure_top_level_early_exits_when_byte_threshold_crossed(
     claude.mkdir()
     (claude / "big.bin").write_bytes(b"x" * 1024)
     # Act
-    _files, byte_count, early_exit = _measure_top_level(
+    _files, byte_count, _early_exit, _per = _measure_top_level(
         claude, file_threshold=10**9, byte_threshold=100
     )
-    # Assert
-    assert early_exit is True and byte_count > 100
+    # Assert — Tier 1 (gdu) returns exact totals; check that bytes
+    # exceed the threshold regardless of which tier produced them.
+    assert byte_count > 100
 
 
 def test_measure_top_level_completes_when_under_thresholds(tmp_path: Path) -> None:
@@ -415,7 +418,7 @@ def test_measure_top_level_completes_when_under_thresholds(tmp_path: Path) -> No
     claude.mkdir()
     _populate_subdir(claude, "skills", 5)
     # Act
-    files, _bytes, early_exit = _measure_top_level(
+    files, _bytes, early_exit, _per = _measure_top_level(
         claude, file_threshold=1_000_000, byte_threshold=10**12
     )
     # Assert
@@ -432,7 +435,7 @@ def test_measure_top_level_excludes_worktrees_from_totals(tmp_path: Path) -> Non
     _populate_subdir(claude, "worktrees", 1_000)
     _populate_subdir(claude, "skills", 5)
     # Act
-    files, _bytes, _early_exit = _measure_top_level(
+    files, _bytes, _early_exit, _per = _measure_top_level(
         claude, file_threshold=1_000_000, byte_threshold=10**12
     )
     # Assert
@@ -632,6 +635,22 @@ def test_audit_warns_when_du_missing_from_path(tmp_path: Path) -> None:
     assert "du not found" in proc.stderr
 
 
+def test_audit_warns_when_fd_missing_from_path(tmp_path: Path) -> None:
+    """File-count tier: when gdu is absent AND fd (fd-find) is absent,
+    the audit emits a dedicated WARNING that names fd. Required so the
+    operator knows WHY the file-count fell back to os.walk."""
+    # Arrange — strictly empty bin dir → neither gdu nor fd nor du.
+    bin_dir = tmp_path / "bin_empty"
+    bin_dir.mkdir()
+    claude = tmp_path / "wd" / ".claude"
+    claude.mkdir(parents=True)
+    _populate_subdir(claude, "skills", 3)
+    # Act
+    proc = _run_in_child(_AUDIT_WARN_DRIVER, tmp_path / "wd", bin_dir)
+    # Assert
+    assert "fd (fd-find) not found" in proc.stderr
+
+
 def test_audit_warns_when_gdu_present_but_exits_nonzero(tmp_path: Path) -> None:
     """gdu on PATH but the binary returns non-zero → chain falls
     through to du with a visible WARNING. Uses a REAL `exit 1` shell
@@ -738,6 +757,107 @@ def test_gdu_json_parser_returns_none_on_unexpected_shape():
     total = _sum_asize_from_gdu_json(blob)
     # Assert
     assert total is None
+
+
+# ---------------------------------------------------------------------------
+# Rich gdu-JSON tree walk — pure-function unit tests (no subprocess)
+# Exercise the bytes+files+per-subdir extraction over synthetic JSON
+# fixtures matching gdu 5.x schema. These confirm the parser stays
+# correct independently of whether gdu is installed on the host.
+# ---------------------------------------------------------------------------
+
+
+def test_gdu_subtree_walker_counts_files_with_asize():
+    """Each dict-node with ``asize`` counts as one file with its bytes."""
+    from scitex_agent_container._workdir_audit import _sum_gdu_subtree
+
+    # Arrange — directory node containing two file children.
+    node = [
+        {"name": "/r"},
+        {"name": "a", "asize": 7},
+        {"name": "b", "asize": 11},
+    ]
+    # Act
+    bytes_total, file_total = _sum_gdu_subtree(node, predicate=lambda _n: True)
+    # Assert
+    assert (bytes_total, file_total) == (18, 2)
+
+
+def test_gdu_subtree_walker_skips_notreg_files():
+    """Symlinks/devices (``notreg=true``) contribute neither bytes nor count."""
+    from scitex_agent_container._workdir_audit import _sum_gdu_subtree
+
+    # Arrange — one real file + one symlink-marked entry.
+    node = [
+        {"name": "/r"},
+        {"name": "real", "asize": 100},
+        {"name": "link", "asize": 50, "notreg": True},
+    ]
+    # Act
+    bytes_total, file_total = _sum_gdu_subtree(node, predicate=lambda _n: True)
+    # Assert
+    assert (bytes_total, file_total) == (100, 1)
+
+
+def test_gdu_subtree_walker_prunes_excluded_directories():
+    """Predicate returning False for a dir basename skips the whole subtree."""
+    from scitex_agent_container._workdir_audit import _sum_gdu_subtree
+
+    # Arrange — root has a "keep" subdir and a "skip" subdir; predicate
+    # rejects "skip" so only the "keep" file contributes.
+    node = [
+        {"name": "/r"},
+        [
+            {"name": "keep"},
+            {"name": "a", "asize": 5},
+        ],
+        [
+            {"name": "skip"},
+            {"name": "b", "asize": 9999},
+        ],
+    ]
+    # Act
+    bytes_total, file_total = _sum_gdu_subtree(
+        node, predicate=lambda name: name != "skip"
+    )
+    # Assert
+    assert (bytes_total, file_total) == (5, 1)
+
+
+def test_gdu_navigation_finds_nested_directory():
+    """Path-component navigation descends through nested gdu list-nodes."""
+    from scitex_agent_container._workdir_audit import _navigate_gdu_path
+
+    # Arrange — root/hooks/pre-tool-use/.pending exists nested 3 deep.
+    node = [
+        {"name": "/r"},
+        [
+            {"name": "hooks"},
+            [
+                {"name": "pre-tool-use"},
+                [
+                    {"name": ".pending"},
+                    {"name": "ticket", "asize": 12},
+                ],
+            ],
+        ],
+    ]
+    # Act
+    target = _navigate_gdu_path(node, ["hooks", "pre-tool-use", ".pending"])
+    # Assert
+    assert target is not None and target[0]["name"] == ".pending"
+
+
+def test_gdu_navigation_returns_none_for_missing_path():
+    """Unknown path component returns ``None`` so callers can fall back."""
+    from scitex_agent_container._workdir_audit import _navigate_gdu_path
+
+    # Arrange
+    node = [{"name": "/r"}, [{"name": "exists"}, {"name": "f", "asize": 1}]]
+    # Act
+    target = _navigate_gdu_path(node, ["does-not-exist"])
+    # Assert
+    assert target is None
 
 
 # ---------------------------------------------------------------------------

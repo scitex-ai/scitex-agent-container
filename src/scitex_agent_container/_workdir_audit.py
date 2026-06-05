@@ -287,6 +287,12 @@ def _sum_asize_from_gdu_json(blob: str) -> int | None:
 
     Returns the integer total, or ``None`` if parsing fails. See
     :func:`_try_gdu_bytes` for the schema contract.
+
+    This narrow byte-only helper is preserved as the existing-test
+    contract. The richer :func:`_summarize_gdu_json` extracts bytes,
+    file count, AND per-subdir breakdown in one pass — that's what
+    :func:`_measure_top_level` calls so gdu remains a single
+    subprocess for the whole audit.
     """
     # stx-allow: fallback (reason: malformed JSON or unexpected schema
     # version is treated as "tool unusable" so the caller can degrade)
@@ -317,6 +323,190 @@ def _walk_gdu_node_for_asize(node: Any) -> int:
         # subsequent entries are the children to recurse into.
         return sum(_walk_gdu_node_for_asize(child) for child in node[1:])
     return 0
+
+
+# ---------------------------------------------------------------------------
+# Rich gdu-JSON extractor: bytes + files + per-subdir in ONE subprocess.
+# This is what eliminates the trailing os.walk on hot paths — gdu has
+# already walked every inode to compute its asize sum, so re-walking in
+# Python just to count files is pure overhead. The orochi 42 k-file
+# pathology is the exact case this helps most.
+# ---------------------------------------------------------------------------
+
+
+def _try_gdu_summary(root: Path, *, curated_subdirs: tuple[str, ...]) -> dict | None:
+    """Run ``gdu`` once, extract totals + per-curated-subdir breakdown.
+
+    Returns ``{"bytes": int, "files": int, "per_subdir": dict}`` on
+    success, ``None`` on any failure. ``per_subdir`` maps each curated
+    ``rel_path`` (e.g. ``"worktrees"``) to a ``(bytes, files)`` tuple
+    when that subdir exists under ``root``; missing subdirs are simply
+    absent from the dict.
+
+    Totals exclude any subtree whose dir basename matches
+    :func:`scitex_agent_container._walk_exclusions.is_excluded_walk_dir`
+    (currently ``worktrees``) so the worktrees bucket does not inflate
+    the headline numbers. Per-subdir entries are NOT exclusion-aware —
+    the bloat-source report intentionally surfaces worktrees so the
+    operator can decide whether to prune it.
+
+    Why one big gdu call without ``-I``: ``gdu -I '<regex>'`` excludes
+    the directory from gdu's OWN scan, which means we lose the
+    per-subdir bloat data. Doing the exclusion in the Python tree
+    walk on gdu's JSON is O(N) over the JSON dict count — negligible
+    next to gdu's syscall-bound walk — and lets the SAME gdu call
+    fuel BOTH the totals (excluding worktrees) AND the bloat probe
+    (which needs the worktrees bytes/files).
+    """
+    if shutil.which("gdu") is None:
+        return None
+    # stx-allow: fallback (reason: gdu may exit non-zero on permission
+    # issues or timeout; caller logs the visible fallback)
+    try:
+        result = subprocess.run(
+            ["gdu", "-o", "-", "--no-progress", str(root)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):  # stx-allow: fallback
+        return None
+    if result.returncode != 0 or not result.stdout:
+        return None
+    # stx-allow: fallback (reason: malformed JSON / unexpected schema
+    # treated as tool-unusable; caller degrades to du+fd/walk)
+    try:
+        doc = json.loads(result.stdout)
+    except (json.JSONDecodeError, ValueError):  # stx-allow: fallback
+        return None
+    if not isinstance(doc, list) or len(doc) < 4:
+        return None
+    root_node = doc[3]
+    if not isinstance(root_node, list):
+        return None
+
+    from ._walk_exclusions import is_excluded_walk_dir
+
+    total_bytes, total_files = _sum_gdu_subtree(
+        root_node, predicate=lambda name: not is_excluded_walk_dir(name)
+    )
+    per_subdir: dict[str, tuple[int, int]] = {}
+    for rel in curated_subdirs:
+        node = _navigate_gdu_path(root_node, rel.split("/"))
+        if node is None:
+            continue
+        sb, sf = _sum_gdu_subtree(node, predicate=lambda _name: True)
+        per_subdir[rel] = (sb, sf)
+    return {"bytes": total_bytes, "files": total_files, "per_subdir": per_subdir}
+
+
+def _sum_gdu_subtree(node: Any, *, predicate) -> tuple[int, int]:
+    """Recursive ``(bytes, files)`` over a gdu node, skipping pruned dirs.
+
+    ``predicate(basename) -> bool``: when ``False`` for a directory's
+    basename, the entire subtree is skipped. Files (dicts) are always
+    counted regardless of predicate (files don't have a "name to prune
+    by directory rule" — predicate is dir-scoped).
+
+    Non-regular files (gdu sets ``"notreg": true`` for symlinks /
+    devices / sockets / FIFOs) are SKIPPED so the count matches the
+    old ``os.walk`` semantics which explicitly filtered
+    ``Path.is_symlink()`` to avoid following links into bound mounts
+    or cyclic targets.
+    """
+    # File node (dict with asize). Skip non-regular files (gdu's
+    # ``notreg`` covers symlinks + devices + sockets + FIFOs).
+    if isinstance(node, dict):
+        if node.get("notreg") is True:
+            return 0, 0
+        asize = node.get("asize")
+        bytes_here = asize if isinstance(asize, int) else 0
+        files_here = 1 if isinstance(asize, int) else 0
+        return bytes_here, files_here
+    # Directory node (list starting with a meta dict).
+    if not isinstance(node, list) or not node:
+        return 0, 0
+    meta = node[0]
+    if isinstance(meta, dict):
+        name = meta.get("name")
+        if isinstance(name, str) and not predicate(name):
+            return 0, 0
+    total_bytes = 0
+    total_files = 0
+    for child in node[1:]:
+        cb, cf = _sum_gdu_subtree(child, predicate=predicate)
+        total_bytes += cb
+        total_files += cf
+    return total_bytes, total_files
+
+
+def _navigate_gdu_path(root_node: Any, components: list[str]) -> Any | None:
+    """Descend gdu directory-list nodes by ``components`` (path segments).
+
+    Returns the matching child node (list for dir, dict for file) or
+    ``None`` if any path segment is missing. ``components`` of length
+    zero returns ``root_node`` itself.
+    """
+    if not components:
+        return root_node
+    if not isinstance(root_node, list) or len(root_node) < 2:
+        return None
+    head = components[0]
+    rest = components[1:]
+    for child in root_node[1:]:
+        if isinstance(child, list) and child and isinstance(child[0], dict):
+            if child[0].get("name") == head:
+                return _navigate_gdu_path(child, rest)
+        # File-leaf: only matches if it's the final component.
+        elif isinstance(child, dict) and not rest:
+            if child.get("name") == head:
+                return child
+    return None
+
+
+def _try_fd_file_count(root: Path) -> int | None:
+    """Try ``fd`` for a fast file count under ``root``, excluding worktrees.
+
+    Returns the count on success, ``None`` on any failure (binary
+    missing, non-zero exit). Used in Tier 2 when gdu is absent but
+    fd-find IS present (common Ubuntu CI runner state).
+
+    ``fd`` is preferred over a Python walk for counting because it is
+    parallel, gitignore-aware-off (`--no-ignore`), and emits one path
+    per line — `sum(1 for _ in lines)` is the entire parser. Note the
+    Ubuntu package name is ``fd-find`` and the binary is named ``fd``
+    on most distros but ``fdfind`` on Debian; this code looks for
+    ``fd`` first, then ``fdfind``, for portability.
+    """
+    binary = shutil.which("fd") or shutil.which("fdfind")
+    if binary is None:
+        return None
+    # stx-allow: fallback (reason: fd may exit non-zero on permission
+    # denied entries; caller logs visible fallback)
+    try:
+        result = subprocess.run(
+            [
+                binary,
+                "--type",
+                "f",
+                "--hidden",
+                "--no-ignore",
+                "--exclude",
+                "worktrees",
+                ".",
+                str(root),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):  # stx-allow: fallback
+        return None
+    if result.returncode != 0:
+        return None
+    return sum(1 for line in result.stdout.splitlines() if line.strip())
 
 
 def _try_du_bytes(root: Path) -> int | None:
@@ -378,9 +568,13 @@ def _try_du_bytes(root: Path) -> int | None:
 
 
 def _measure_top_level(
-    root: Path, *, file_threshold: int, byte_threshold: int
-) -> tuple[int, int, bool]:
-    """Threshold-aware measurement of ``root`` (excluding ``worktrees/``).
+    root: Path,
+    *,
+    file_threshold: int,
+    byte_threshold: int,
+    curated_subdirs: tuple[str, ...] = (),
+) -> tuple[int, int, bool, dict[str, tuple[int, int]] | None]:
+    """Measure ``root`` (excluding ``worktrees/``) via the fastest tool present.
 
     The F-CS8 audit only needs "is it heavy? yes/no" — not the exact
     total. We measure via a three-tier chain, with each fallback
@@ -388,85 +582,119 @@ def _measure_top_level(
     degraded path (the no-silent-fallback discipline; ywatanabe core
     rule). Tiers, fastest first:
 
-      1. ``gdu -o -`` (machine-readable JSON, exclude regex). Fastest
-         on large trees and parses cleanly because gdu's JSON schema
-         is stable per major version (the SIF pins gdu's version in
-         the .def so we own the schema). See :func:`_try_gdu_bytes`
-         for the parser's version contract.
-      2. ``du -sb --exclude=worktrees`` — universal Linux tool, stable
-         ``<bytes>\\t<path>`` output. Fallback when gdu is absent or
-         fails.
+      1. ``gdu -o -`` (machine-readable JSON). One subprocess yields
+         bytes + file count + per-curated-subdir breakdown via a
+         single Python-side tree walk over gdu's JSON (no second
+         os.walk on disk). This is the only tier the SIF will see in
+         production. See :func:`_try_gdu_summary` for the parser's
+         version contract.
+      2. ``du -sb --exclude=worktrees`` for bytes + ``fd`` (fd-find,
+         ``--exclude worktrees -t f -H --no-ignore``) for file count.
+         Two subprocesses but both are fast and stable. Used on CI
+         runners and dev hosts that have du+fd but not the SIF-pinned
+         gdu. Per-subdir breakdown returns ``None`` and the caller
+         falls back to a small targeted ``os.walk`` PER CURATED
+         SUBDIR (worktrees/, .pending/) — bounded, not over the full
+         tree.
       3. Bounded Python ``os.walk`` with shared prune + EARLY-EXIT
          once EITHER threshold is crossed. O(threshold), not
-         O(tree). The last-resort fallback that always works.
+         O(tree). The last-resort fallback when both gdu AND fd
+         are missing.
 
-    Files count always comes from the Python walk (gdu/du don't
-    cheaply report file counts), but the walk stays bounded by the
-    same early-exit gate.
+    Returns ``(files, bytes, early_exit, per_subdir_or_None)``:
 
-    Returns ``(files, bytes, early_exit)``:
-
-    * If ``early_exit`` is ``True``: at least one threshold was
-      crossed; ``files`` / ``bytes`` are LOWER BOUNDS at exit. The
-      threshold that triggered exit is definitively crossed; the
-      other's exceeded-ness is unknown and treated as
-      not-exceeded (the actionable alarm has already fired).
-    * If ``early_exit`` is ``False``: the walk completed; the
-      Python ``total_files`` is exact, and ``bytes`` is whichever
-      tier produced an answer (gdu > du > Python walk).
+    * If gdu Tier 1 succeeds: ``per_subdir`` is a dict mapping each
+      ``curated_subdirs`` entry that exists under ``root`` to a
+      ``(bytes, files)`` tuple. ``early_exit`` is always ``False``
+      because gdu produces exact totals in one fast call.
+    * Otherwise: ``per_subdir`` is ``None`` and the caller must
+      probe curated subdirs separately.
+    * In Tier 3, ``early_exit=True`` means at least one threshold
+      was crossed; ``files`` / ``bytes`` are lower bounds at exit.
 
     Visible-fallback warnings:
 
-    * ``gdu`` not found → ``logger.warning(...)`` + try ``du``.
-    * ``gdu`` found but failed → ``logger.warning(...)`` + try ``du``.
-    * ``du`` not found → ``logger.warning(...)`` + use Python walk.
-    * ``du`` found but failed → ``logger.warning(...)`` + use Python walk.
+    * ``gdu`` not found / failed → ``logger.warning(...)``.
+    * ``fd`` (or ``fdfind``) not found / failed when du-byte tier
+      ran → ``logger.warning(...)`` and fall through to os.walk.
+    * ``du`` not found / failed → ``logger.warning(...)`` and fall
+      through to os.walk.
     """
     from ._walk_exclusions import prune_walk_dirnames
 
     if not root.is_dir():
-        return 0, 0, False
+        return 0, 0, False, None
 
-    # ---- Tier 1: gdu (JSON) -------------------------------------------------
-    fast_bytes: int | None = None
+    # ---- Tier 1: gdu (JSON; bytes + files + per-subdir in one call) --------
     if shutil.which("gdu") is None:
         logger.warning(
-            "gdu not found; falling back to du for .claude size "
-            "audit (slower on large trees). No-silent-fallback "
-            "discipline: this warning fires on every audit until "
-            "gdu is on PATH. The SIF's apptainer-base.def is "
-            "expected to bake gdu in."
+            "gdu not found; falling back to du+fd for .claude audit "
+            "(slower on large trees). No-silent-fallback discipline: "
+            "this warning fires on every audit until gdu is on PATH. "
+            "The SIF's apptainer-base.def is expected to bake gdu in."
         )
     else:
-        fast_bytes = _try_gdu_bytes(root)
-        if fast_bytes is None:
+        summary = _try_gdu_summary(root, curated_subdirs=curated_subdirs)
+        if summary is None:
             logger.warning(
-                "gdu invocation failed for .claude size audit; "
-                "falling back to du. Verify the gdu version pinned "
-                "in the SIF still matches the JSON-schema contract "
-                "in _try_gdu_bytes() (gdu major version bump = "
+                "gdu invocation failed for .claude audit; falling "
+                "back to du+fd. Verify the gdu version pinned in the "
+                "SIF still matches the JSON-schema contract in "
+                "_try_gdu_summary() (gdu major version bump = "
                 "re-verify parser)."
             )
-
-    # ---- Tier 2: du ---------------------------------------------------------
-    if fast_bytes is None:
-        if shutil.which("du") is None:
-            logger.warning(
-                "du not found; using bounded os.walk for .claude size "
-                "audit (slowest tier). No-silent-fallback discipline: "
-                "this warning fires on every audit until du is on "
-                "PATH. Install coreutils to restore the fast path."
-            )
         else:
-            fast_bytes = _try_du_bytes(root)
-            if fast_bytes is None:
-                logger.warning(
-                    "du invocation failed for .claude size audit; "
-                    "falling back to bounded os.walk. Check that du "
-                    "supports `-sb --exclude=<pat>` on this host."
-                )
+            return (
+                summary["files"],
+                summary["bytes"],
+                False,
+                summary["per_subdir"],
+            )
 
-    # ---- Tier 2 (and file count): bounded Python walk with early-exit -----
+    # ---- Tier 2a: du for bytes ---------------------------------------------
+    fast_bytes: int | None = None
+    if shutil.which("du") is None:
+        logger.warning(
+            "du not found; using bounded os.walk for .claude byte "
+            "audit (slowest tier). No-silent-fallback discipline: "
+            "this warning fires on every audit until du is on "
+            "PATH. Install coreutils to restore the fast path."
+        )
+    else:
+        fast_bytes = _try_du_bytes(root)
+        if fast_bytes is None:
+            logger.warning(
+                "du invocation failed for .claude byte audit; "
+                "falling back to bounded os.walk. Check that du "
+                "supports `-sb --exclude=<pat>` on this host."
+            )
+
+    # ---- Tier 2b: fd for file count ----------------------------------------
+    fast_files: int | None = None
+    if shutil.which("fd") is None and shutil.which("fdfind") is None:
+        logger.warning(
+            "fd (fd-find) not found; using bounded os.walk for "
+            ".claude file-count audit. Install fd-find for a fast "
+            "parallel count; this warning fires until either fd or "
+            "gdu is on PATH."
+        )
+    else:
+        fast_files = _try_fd_file_count(root)
+        if fast_files is None:
+            logger.warning(
+                "fd invocation failed for .claude file-count audit; "
+                "falling back to bounded os.walk. Check fd flag "
+                "support on this host."
+            )
+
+    # ---- Short-circuit: both Tier 2 tools returned ------------------------
+    # If du AND fd both produced numbers, we are DONE — no need for the
+    # bounded os.walk just to re-confirm. The caller will compute
+    # per-subdir bloat via small targeted walks.
+    if fast_bytes is not None and fast_files is not None:
+        return fast_files, fast_bytes, False, None
+
+    # ---- Tier 3: bounded Python walk with early-exit -----------------------
     total_bytes = 0
     total_files = 0
     early_exit = False
@@ -481,27 +709,30 @@ def _measure_top_level(
                     continue
                 if fpath.is_file():
                     total_files += 1
-                    # When an external tier produced fast_bytes we still
-                    # track Python's own running byte total so the walk
-                    # remains threshold-aware even when fast_bytes is
-                    # < byte_threshold (the threshold check uses
-                    # fast_bytes when available, else total_bytes).
                     total_bytes += fpath.stat().st_size
                     effective_bytes = (
                         fast_bytes if fast_bytes is not None else total_bytes
                     )
-                    if total_files > file_threshold or effective_bytes > byte_threshold:
+                    effective_files = (
+                        fast_files if fast_files is not None else total_files
+                    )
+                    if (
+                        effective_files > file_threshold
+                        or effective_bytes > byte_threshold
+                    ):
                         early_exit = True
                         return (
-                            total_files,
+                            effective_files,
                             effective_bytes,
                             True,
+                            None,
                         )
             except OSError:  # stx-allow: fallback (reason: see inline comment)
                 continue
 
     final_bytes = fast_bytes if fast_bytes is not None else total_bytes
-    return total_files, final_bytes, early_exit
+    final_files = fast_files if fast_files is not None else total_files
+    return final_files, final_bytes, early_exit, None
 
 
 def _probe_subdir(root: Path, rel: str) -> SubdirAudit | None:
@@ -563,17 +794,27 @@ def audit_workdir_claude(
 
     file_threshold = warn_threshold_files()
     byte_threshold = warn_threshold_bytes()
-    total_files, total_bytes, _early_exit = _measure_top_level(
-        root, file_threshold=file_threshold, byte_threshold=byte_threshold
+    subdirs = tuple(probed_subdirs) if probed_subdirs is not None else _PROBED_SUBDIRS
+    total_files, total_bytes, _early_exit, per_subdir_map = _measure_top_level(
+        root,
+        file_threshold=file_threshold,
+        byte_threshold=byte_threshold,
+        curated_subdirs=subdirs,
     )
 
-    subdirs = tuple(probed_subdirs) if probed_subdirs is not None else _PROBED_SUBDIRS
     bloat_threshold = bloat_subdir_threshold_files()
     bloat: list[SubdirAudit] = []
-    for rel in subdirs:
-        sub = _probe_subdir(root, rel)
-        if sub is not None and sub.files >= bloat_threshold:
-            bloat.append(sub)
+    if per_subdir_map is not None:
+        # Tier 1 (gdu) gave us everything in one call — no extra walks.
+        for rel, (b_bytes, b_files) in per_subdir_map.items():
+            if b_files >= bloat_threshold:
+                bloat.append(SubdirAudit(rel_path=rel, files=b_files, bytes=b_bytes))
+    else:
+        # Tier 2/3 fallback — small targeted walks per curated subdir.
+        for rel in subdirs:
+            sub = _probe_subdir(root, rel)
+            if sub is not None and sub.files >= bloat_threshold:
+                bloat.append(sub)
     bloat.sort(key=lambda s: s.files, reverse=True)
 
     return WorkdirClaudeAudit(
