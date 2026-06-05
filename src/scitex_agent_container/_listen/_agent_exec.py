@@ -329,12 +329,32 @@ async def agents_start(request: Request) -> JSONResponse:
     from datetime import datetime, timezone
 
     started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # --broker-self recursive re-entry fix (clew dogfood repro
+    # 2026-06-06, lead msg d8f61055): when the listen runs inside a
+    # parent SAC's SIF on a SLURM allocation, this handler's child
+    # `sac agents start` inherits APPTAINER_CONTAINER /
+    # SINGULARITY_CONTAINER from the listen's env. That makes
+    # is_in_sif() return True in the child, which re-enters
+    # maybe_broker_in_sif_spawn → tries to broker the spawn to
+    # *this same listen* → recursive InSifBrokerError loop.
+    #
+    # The listen IS the host-side spawn boundary: the child should
+    # take the bare-host path (direct apptainer-exec the sibling
+    # SIF), not pretend it is still inside a parent SIF. Strip the
+    # in-SIF env markers so is_in_sif() returns False on the child.
+    # No other downstream sac code reads these env vars except the
+    # broker probe, so the strip is safe; apptainer ITSELF re-sets
+    # APPTAINER_CONTAINER inside the child SIF it execs.
+    child_env = dict(os.environ)
+    child_env.pop("APPTAINER_CONTAINER", None)
+    child_env.pop("SINGULARITY_CONTAINER", None)
     proc = await asyncio.to_thread(
         subprocess.run,
         [sac_bin, "agents", "start", name],
         capture_output=True,
         text=True,
         check=False,
+        env=child_env,
     )
     if proc.returncode != 0:
         # PR-1 — stillborn agent observability. The subprocess can exit
