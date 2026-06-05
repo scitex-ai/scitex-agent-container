@@ -232,3 +232,64 @@ def test_fleet_view_does_not_proxy(fake_host_listen):
     runner.invoke(status, [])
     # Assert — the fake server saw NO requests.
     assert fake_host_listen.captured == []
+
+
+# ---------------------------------------------------------------------------
+# PR#316: graceful degrade when SAC_LISTEN_BASE_URL is missing in-SIF
+#
+# Lead msg 4cb474fc / clew L3 diag 2026-06-06: sac-from-sac L2 contexts
+# (broker-self orchestrator, bare-host with stale SINGULARITY_CONTAINER
+# env from a launcher hint) hit is_in_sif() == True but have no
+# host-listen to proxy to — SAC_LISTEN_BASE_URL is empty. Pre-PR#316
+# this surfaced as a stillborn-read masquerading as a transport error
+# (HostListenTransportError "in-SIF host-listen call requires
+# SAC_LISTEN_BASE_URL ... Got empty/unset."). Fix: fall through to the
+# local Registry read instead — the broker-self happy path has the
+# agent's state.db row reachable locally anyway. Tests pin the
+# "no-listen-url → local read, not transport error" contract.
+# ---------------------------------------------------------------------------
+
+
+def test_status_in_sif_without_listen_url_does_not_proxy_to_http(
+    env_save_restore, fake_host_listen
+):
+    # Arrange — in-SIF (APPTAINER_CONTAINER set by the fixture) but
+    # SAC_LISTEN_BASE_URL is empty (operator-shell case, broker-self).
+    # The fake_host_listen fixture installed a URL; explicitly unset
+    # to simulate the broken-listen case.
+    env_save_restore.set("SAC_LISTEN_BASE_URL", "")
+    runner = CliRunner()
+    # Act
+    runner.invoke(status, ["any-target-name"])
+    # Assert — the fake host listen received NO request: the in-SIF
+    # path degraded gracefully to the local Registry read.
+    assert fake_host_listen.captured == []
+
+
+def test_status_in_sif_with_unset_listen_url_does_not_proxy_to_http(
+    env_save_restore, fake_host_listen
+):
+    # Arrange — same scenario but env var is fully unset rather than
+    # empty-string. Both shapes must degrade identically.
+    env_save_restore.delete("SAC_LISTEN_BASE_URL")
+    runner = CliRunner()
+    # Act
+    runner.invoke(status, ["any-target-name"])
+    # Assert
+    assert fake_host_listen.captured == []
+
+
+def test_status_in_sif_without_listen_url_exit_is_not_transport_error(
+    env_save_restore, fake_host_listen
+):
+    # Arrange — pin that the degraded path does NOT emit the
+    # PR-3 outcome JSON with kind=transport (which the pre-PR#316
+    # behaviour did). Whatever the local read returns is fine; the
+    # contract is "not a stillborn transport error from the
+    # host-listen call".
+    env_save_restore.set("SAC_LISTEN_BASE_URL", "")
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(status, ["any-target-name"])
+    # Assert — output (if any) is NOT the in-SIF transport outcome.
+    assert '"in-SIF host-listen call requires SAC_LISTEN_BASE_URL"' not in result.output
