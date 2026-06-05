@@ -69,7 +69,7 @@ def isolated_listen_env(tmp_path: Path):
 
 
 def test_agents_start_shells_plural_agents_form(
-    isolated_listen_env, subprocess_shim
+    isolated_listen_env, env_save_restore, subprocess_shim
 ) -> None:
     """The handler MUST shell ``["sac", "agents", "start", <name>]``.
 
@@ -78,6 +78,10 @@ def test_agents_start_shells_plural_agents_form(
     which manifests as a 502 from every brokered SAC-from-SAC spawn.
     """
     # Arrange — drop a fake ``sac`` on PATH that records its argv.
+    # Disable the post-ack liveness probe (PR7) for this test — the
+    # shim doesn't simulate the apptainer-pid write; the probe's
+    # contract is asserted by the dedicated probe tests below.
+    env_save_restore.set("SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", "0")
     subprocess_shim.install("sac", stdout="ok", exit=0)
     app = create_app(token=_TOKEN)
     # Act — admin spawn (no caller) so the gate trivially allows and we
@@ -96,10 +100,11 @@ def test_agents_start_shells_plural_agents_form(
 
 
 def test_agents_start_does_not_use_singular_agent_form(
-    isolated_listen_env, subprocess_shim
+    isolated_listen_env, env_save_restore, subprocess_shim
 ) -> None:
     """Explicit negative — the buggy singular form must NOT recur."""
     # Arrange
+    env_save_restore.set("SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", "0")
     subprocess_shim.install("sac", stdout="ok", exit=0)
     app = create_app(token=_TOKEN)
     # Act
@@ -171,6 +176,9 @@ def test_agents_start_strips_apptainer_container_env_from_child(
     bin_dir.mkdir()
     env_log = _install_env_recording_sac_shim(bin_dir)
     env_save_restore.set("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    # Disable the PR7 post-ack liveness probe — these tests assert
+    # env-strip semantics, not apptainer-instance health.
+    env_save_restore.set("SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", "0")
     env_save_restore.set("APPTAINER_CONTAINER", "/path/to/parent-sac.sif")
     app = create_app(token=_TOKEN)
     # Act
@@ -205,6 +213,9 @@ def test_agents_start_strips_singularity_container_env_from_child(
     bin_dir.mkdir()
     env_log = _install_env_recording_sac_shim(bin_dir)
     env_save_restore.set("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    # Disable the PR7 post-ack liveness probe — these tests assert
+    # env-strip semantics, not apptainer-instance health.
+    env_save_restore.set("SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", "0")
     env_save_restore.set("SINGULARITY_CONTAINER", "/path/to/parent-sac.sif")
     app = create_app(token=_TOKEN)
     # Act
@@ -248,6 +259,9 @@ def test_agents_start_preserves_unrelated_env_vars_to_child(
     script.write_text(body)
     script.chmod(0o755)
     env_save_restore.set("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    # Disable the PR7 post-ack liveness probe — these tests assert
+    # env-strip semantics, not apptainer-instance health.
+    env_save_restore.set("SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", "0")
     env_save_restore.set("SAC_BROKER_SELF_TEST_CANARY", "must-survive-strip")
     env_save_restore.set("APPTAINER_CONTAINER", "/parent.sif")
     app = create_app(token=_TOKEN)
@@ -261,3 +275,170 @@ def test_agents_start_preserves_unrelated_env_vars_to_child(
     recorded = json.loads(env_log.read_text().splitlines()[-1])
     # Assert
     assert recorded["CANARY"] == "must-survive-strip"
+
+
+# ---------------------------------------------------------------------------
+# Layer-3 fail-loud post-spawn-ack liveness probe (PR7, clew dogfood
+# repro 2026-06-06, lead msg 57f1632a). The listen's /agents handler
+# was returning 200 "SUCC: started" on `sac agents start` rc=0 without
+# verifying the apptainer instance actually came up; clew's repro on
+# Spartan jobid 25666081 saw the listen ack the spawn, then the
+# instance died silently (empty stdout.log, dead apptainer_pid, no
+# fresh STARTUP_FAILED). The probe (waits up to N seconds for an
+# alive apptainer_pid) makes the silent death LOUD: STARTUP_FAILED
+# marker + 502 response.
+#
+# Each test installs a custom sac shim that simulates one of the three
+# branches (no pid file written / pid file written but pid dead / pid
+# file written and pid alive) so the probe's contract is exercised
+# end-to-end against a real subprocess + real handler + real marker
+# write. No MagicMock.
+# ---------------------------------------------------------------------------
+
+
+def _install_sac_shim_writing_pid_file(
+    bin_dir: Path, *, runtime_dir: Path, pid_value: int | None
+) -> None:
+    """Install a sac shim that writes ``<runtime_dir>/apptainer_pid``.
+
+    ``pid_value=None`` → don't write the file (simulates the "child
+    never reached apptainer runtime" branch). Otherwise write the int.
+    ``runtime_dir`` is created before the file is written so the shim
+    can run on a fresh isolated_listen_env.
+    """
+    import json as _json
+    import sys as _sys
+
+    script = bin_dir / "sac"
+    if pid_value is None:
+        body = f"#!{_sys.executable}\nimport sys\nsys.exit(0)\n"
+    else:
+        runtime_dir_s = _json.dumps(str(runtime_dir))
+        body = (
+            f"#!{_sys.executable}\n"
+            "import pathlib, sys\n"
+            f"rd = pathlib.Path({runtime_dir_s})\n"
+            "rd.mkdir(parents=True, exist_ok=True)\n"
+            f"(rd / 'apptainer_pid').write_text('{int(pid_value)}\\n')\n"
+            "sys.exit(0)\n"
+        )
+    script.write_text(body)
+    script.chmod(0o755)
+
+
+def test_agents_start_writes_startup_failed_when_no_apptainer_pid(
+    isolated_listen_env, env_save_restore, tmp_path: Path
+) -> None:
+    """Probe must fail loud when the child returned rc=0 without writing pid."""
+    # Arrange — shim returns 0 but never touches the runtime_dir.
+    bin_dir = tmp_path / "sac_bin_no_pid"
+    bin_dir.mkdir()
+    _install_sac_shim_writing_pid_file(
+        bin_dir, runtime_dir=tmp_path / "unused", pid_value=None
+    )
+    env_save_restore.set("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    env_save_restore.set("SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", "0.5")
+    app = create_app(token=_TOKEN)
+    # Act
+    with TestClient(app) as client:
+        client.post(
+            "/agents",
+            json={"name": "broker-child"},
+            headers={"authorization": f"Bearer {_TOKEN}"},
+        )
+    from scitex_agent_container._lifecycle._startup_failed import read_marker
+    from scitex_agent_container._runners._session_state import state_dir_for
+
+    marker = read_marker(state_dir_for("broker-child"))
+    # Assert
+    assert marker is not None and marker["kind"] == "post_ack_no_apptainer_pid"
+
+
+def test_agents_start_writes_startup_failed_when_apptainer_pid_dead(
+    isolated_listen_env, env_save_restore, tmp_path: Path
+) -> None:
+    """Probe must fail loud when the pid file points at a reaped pid."""
+    # Arrange — shim writes apptainer_pid with a pid that is definitely
+    # not alive (a very high value the kernel won't have allocated to
+    # any running process in this test session).
+    from scitex_agent_container._runners._session_state import state_dir_for
+
+    runtime_dir = state_dir_for("broker-child")
+    bin_dir = tmp_path / "sac_bin_dead_pid"
+    bin_dir.mkdir()
+    _install_sac_shim_writing_pid_file(
+        bin_dir, runtime_dir=runtime_dir, pid_value=2147483646
+    )
+    env_save_restore.set("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    env_save_restore.set("SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", "0.5")
+    app = create_app(token=_TOKEN)
+    # Act
+    with TestClient(app) as client:
+        client.post(
+            "/agents",
+            json={"name": "broker-child"},
+            headers={"authorization": f"Bearer {_TOKEN}"},
+        )
+    from scitex_agent_container._lifecycle._startup_failed import read_marker
+
+    marker = read_marker(runtime_dir)
+    # Assert
+    assert marker is not None and marker["kind"] == "post_ack_apptainer_pid_dead"
+
+
+def test_agents_start_returns_200_when_apptainer_pid_is_alive(
+    isolated_listen_env, env_save_restore, tmp_path: Path
+) -> None:
+    """Probe happy path — alive apptainer_pid → 200, no STARTUP_FAILED."""
+    # Arrange — shim writes apptainer_pid pointing at the pytest
+    # process pid (alive for the entire test session).
+    from scitex_agent_container._runners._session_state import state_dir_for
+
+    runtime_dir = state_dir_for("broker-child")
+    bin_dir = tmp_path / "sac_bin_live_pid"
+    bin_dir.mkdir()
+    _install_sac_shim_writing_pid_file(
+        bin_dir, runtime_dir=runtime_dir, pid_value=os.getpid()
+    )
+    env_save_restore.set("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    env_save_restore.set("SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", "2.0")
+    app = create_app(token=_TOKEN)
+    # Act
+    with TestClient(app) as client:
+        resp = client.post(
+            "/agents",
+            json={"name": "broker-child"},
+            headers={"authorization": f"Bearer {_TOKEN}"},
+        )
+    # Assert
+    assert resp.status_code == 200
+
+
+def test_agents_start_post_ack_failure_returns_502(
+    isolated_listen_env, env_save_restore, tmp_path: Path
+) -> None:
+    """The loud signal: a post-ack failure must downgrade the response.
+
+    The pre-PR7 behaviour returned 200 with "SUCC: started" even when
+    the apptainer instance was stillborn — clew's Spartan repro hit
+    this. Pin the new contract: failure → 502 so the operator-side
+    recv path sees a real diagnostic.
+    """
+    # Arrange
+    bin_dir = tmp_path / "sac_bin_502"
+    bin_dir.mkdir()
+    _install_sac_shim_writing_pid_file(
+        bin_dir, runtime_dir=tmp_path / "unused", pid_value=None
+    )
+    env_save_restore.set("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    env_save_restore.set("SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", "0.5")
+    app = create_app(token=_TOKEN)
+    # Act
+    with TestClient(app) as client:
+        resp = client.post(
+            "/agents",
+            json={"name": "broker-child"},
+            headers={"authorization": f"Bearer {_TOKEN}"},
+        )
+    # Assert
+    assert resp.status_code == 502
