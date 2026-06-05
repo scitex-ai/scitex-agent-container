@@ -82,17 +82,38 @@ def test_register_self_records_correct_port(db_path: Path, cfg_with_lead: Path) 
     assert info["a2a_port"] == 9000
 
 
-def test_register_self_no_lead_block_is_silent_noop(
+def test_register_self_no_lead_block_writes_no_row(
     db_path: Path, cfg_no_lead: Path
 ) -> None:
-    # Arrange
+    # Arrange — pin the "no row written" half of the contract; the
+    # warning-emission half is its own test below so each assertion
+    # stays single-fact.
     from scitex_agent_container._state.state_db_nodes import list_comms_nodes
     from scitex_agent_container.cli_pkg.listen_cmds import _register_self_comms_node
 
     # Act
     _register_self_comms_node(port=8642)
-    # Assert — no row was written.
+    # Assert
     assert list_comms_nodes() == []
+
+
+def test_register_self_no_lead_block_warns_loudly_on_stderr(
+    db_path: Path, cfg_no_lead: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Arrange — the pre-PR4 behaviour was a silent return: an operator
+    # whose listen failed to advertise `lead` had no diagnostic. The
+    # repair-verb PR#308 closed half the gap; this PR fills the rest
+    # by emitting a loud `# WARN:` line + the repair recipe so an
+    # operator grepping listen stderr finds an actionable pointer.
+    from scitex_agent_container.cli_pkg.listen_cmds import _register_self_comms_node
+
+    # Act
+    _register_self_comms_node(port=8642)
+    captured = capsys.readouterr()
+    # Assert — both the diagnostic + the repair-verb hint are surfaced.
+    assert (
+        "no `lead:` block" in captured.err and "sac registry register" in captured.err
+    )
 
 
 def test_register_self_source_host_is_none(db_path: Path, cfg_with_lead: Path) -> None:
