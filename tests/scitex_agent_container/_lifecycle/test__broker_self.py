@@ -206,6 +206,7 @@ def test_self_broker_listen_context_tears_down_subprocess_on_exit(
     # the parent SAC exits, breaking the next task's bootstrap).
     env_save_restore.delete("SAC_LISTEN_BASE_URL")
     env_save_restore.delete("SAC_LISTEN_BEARER")
+    # Act
     with self_broker_listen_context() as info:
         port = info["port"]
     # Give the kernel a brief window to release the port after SIGTERM
@@ -228,6 +229,7 @@ def test_self_broker_listen_context_deletes_token_file_on_exit(
     # past context exit, even on a clean shutdown.
     env_save_restore.delete("SAC_LISTEN_BASE_URL")
     env_save_restore.delete("SAC_LISTEN_BEARER")
+    # Act
     with self_broker_listen_context() as info:
         token_file = info["token_file"]
         existed = token_file.is_file()
@@ -256,10 +258,14 @@ def test_self_broker_listen_context_raises_broker_self_error_on_bogus_executable
         ):
             pass
 
-    # Act / Assert — either the Popen OSError surfaces as BrokerSelfError
-    # immediately, or the health-poll times out into BrokerSelfError.
-    with pytest.raises(BrokerSelfError):
+    # Act
+    raised: BaseException | None = None
+    try:
         _call()
+    except BrokerSelfError as exc:
+        raised = exc
+    # Assert
+    assert isinstance(raised, BrokerSelfError)
 
 
 def test_self_broker_listen_context_does_not_leak_env_on_bootstrap_failure(
@@ -271,6 +277,7 @@ def test_self_broker_listen_context_does_not_leak_env_on_bootstrap_failure(
     # subsequent broker POST).
     env_save_restore.delete("SAC_LISTEN_BASE_URL")
     env_save_restore.delete("SAC_LISTEN_BEARER")
+    # Act
 
     with suppress(BrokerSelfError):
         with self_broker_listen_context(

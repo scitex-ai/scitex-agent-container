@@ -74,10 +74,15 @@ __all__ = [
 # string; identical convention to :func:`_state.state_db_nodes.mint_node_token`.
 _TOKEN_BYTES = 32
 
-# Default health-poll cap. 5 seconds is long enough for a cold uvicorn
-# bind on a SLURM node under load; shorter would risk a CI flake, longer
-# would mask a real bind failure with a stalled CLI.
-_DEFAULT_HEALTH_TIMEOUT_S = 5.0
+# Default health-poll cap PER ATTEMPT. 15s is generous enough for a
+# cold-import + uvicorn bind on a SLURM node under sibling-task CPU
+# contention OR a CI box running pytest-xdist with N workers each
+# spawning subprocesses simultaneously. Shorter (5s) flaked CI under
+# 16-way parallel load (``-n auto`` on a 16-core runner). Longer would
+# mask a real bind failure with a stalled CLI. Combined with the
+# 3-attempt retry in :func:`self_broker_listen_context`, total
+# worst-case wait is 45s.
+_DEFAULT_HEALTH_TIMEOUT_S = 15.0
 
 
 class BrokerSelfError(RuntimeError):
