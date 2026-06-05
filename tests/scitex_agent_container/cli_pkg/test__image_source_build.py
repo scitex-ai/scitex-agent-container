@@ -39,6 +39,7 @@ import pytest
 import scitex_agent_container
 from scitex_agent_container.cli_pkg import _image_source_build as isb
 from scitex_agent_container.cli_pkg.image_group import _LAYERS, _RECIPES_DIR
+from scitex_agent_container.runtimes import _apptainer_build as build_mod
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -98,6 +99,23 @@ def _use_apptainer_runner(runner_fn) -> Iterator[list[tuple]]:
         yield calls
     finally:
         isb._apptainer_build_runner = saved  # type: ignore[assignment]
+
+
+@contextmanager
+def _force_fakeroot_probe(value: bool) -> Iterator[None]:
+    """Swap ``runtimes._apptainer_build._should_use_fakeroot_for_build``.
+
+    The runner imports the probe lazily on each call, so swapping the
+    module attribute deterministically controls which SIF-build branch
+    the runner takes regardless of the host's actual ``/etc/subuid``
+    state. No MagicMock — a plain ``lambda`` returning the desired value.
+    """
+    saved = build_mod._should_use_fakeroot_for_build
+    build_mod._should_use_fakeroot_for_build = lambda: value  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        build_mod._should_use_fakeroot_for_build = saved  # type: ignore[assignment]
 
 
 # ---------------------------------------------------------------------------
@@ -457,8 +475,10 @@ def test_build_layer_from_source_stages_source_at_known_relative_name(
 # ---------------------------------------------------------------------------
 
 
-def test_default_runner_sif_argv_uses_sudo_apptainer_build(tmp_path):
-    # Arrange — swap subprocess.run for a real recording callable.
+def test_default_runner_sif_argv_uses_sudo_when_subuid_absent(tmp_path):
+    # Arrange — fakeroot probe forced False (no /etc/subuid mapping for
+    # this user) so the runner takes the sudo fallback branch. Swap
+    # subprocess.run for a real recording callable.
     seen: dict = {}
 
     class _FakeResult:
@@ -473,13 +493,14 @@ def test_default_runner_sif_argv_uses_sudo_apptainer_build(tmp_path):
     isb.subprocess.run = _fake_run  # type: ignore[assignment]
     try:
         # Act
-        rc = isb._default_apptainer_build_runner(
-            output_path=tmp_path / "x.sif",
-            staged_def=tmp_path / "x.def",
-            cwd=tmp_path,
-            sandbox=False,
-            force=True,
-        )
+        with _force_fakeroot_probe(False):
+            rc = isb._default_apptainer_build_runner(
+                output_path=tmp_path / "x.sif",
+                staged_def=tmp_path / "x.def",
+                cwd=tmp_path,
+                sandbox=False,
+                force=True,
+            )
     finally:
         isb.subprocess.run = saved  # type: ignore[assignment]
     # Assert
@@ -487,9 +508,45 @@ def test_default_runner_sif_argv_uses_sudo_apptainer_build(tmp_path):
         rc == 0
         and seen["argv"][:3] == ["sudo", "apptainer", "build"]
         and "--force" in seen["argv"]
+        and "--fakeroot" not in seen["argv"]
         and str(tmp_path / "x.sif") in seen["argv"]
         and str(tmp_path / "x.def") in seen["argv"]
         and seen["cwd"] == str(tmp_path)
+    )
+
+
+def test_default_runner_sif_argv_uses_fakeroot_when_subuid_present(
+    tmp_path: Path, subprocess_shim
+):
+    """Lead's hand-built SIF on 2026-06-05 used the rootless fakeroot
+    path because /etc/subuid had a mapping; ``sac image build`` had
+    been falling back to sudo (silent password prompt in headless
+    contexts). Real PATH-installed ``apptainer`` shim records argv;
+    the production runner shells out via the real ``subprocess.run``
+    and the shim writes the argv to a log we read back. No MagicMock.
+    """
+    # Arrange — install a recording apptainer shim, force the probe True.
+    subprocess_shim.install("apptainer", exit=0)
+    # Act
+    with _force_fakeroot_probe(True):
+        rc = isb._default_apptainer_build_runner(
+            output_path=tmp_path / "x.sif",
+            staged_def=tmp_path / "x.def",
+            cwd=tmp_path,
+            sandbox=False,
+            force=True,
+        )
+    argv = subprocess_shim.argv_for("apptainer")
+    # Assert — argv carries --fakeroot, no sudo, and the build target.
+    assert (
+        rc == 0
+        and argv is not None
+        and argv[0] == "build"
+        and "--fakeroot" in argv
+        and "sudo" not in argv
+        and "--force" in argv
+        and str(tmp_path / "x.sif") in argv
+        and str(tmp_path / "x.def") in argv
     )
 
 

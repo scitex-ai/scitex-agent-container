@@ -235,10 +235,24 @@ def _default_apptainer_build_runner(
 
     Returns the apptainer exit code (0 on success). Sandbox builds use
     ``--fakeroot`` (apptainer's sandbox-from-def path requires it on
-    rootless installs); SIF builds use ``sudo`` because the default sac
-    install doesn't grant the build user setuid privileges, mirroring
-    how ``scitex_container.apptainer.build`` invokes apptainer.
+    rootless installs).
+
+    SIF builds prefer ``--fakeroot`` when the user already has
+    ``/etc/subuid`` + ``/etc/subgid`` mappings (the lead's hand-built
+    SIF on 2026-06-05 used this path), and fall back to ``sudo
+    apptainer build`` only when no mappings exist. The sudo fallback
+    works on an interactive shell but fails silently in headless /
+    detached / no-tty contexts (sudo prompts for a password) — which
+    is exactly what bit the lead's ``sac image build`` invocation
+    earlier today. The fakeroot probe lives in
+    :mod:`runtimes._apptainer_build` so both the lifecycle build and
+    this CLI build agree on the heuristic.
     """
+    # Local import — runtimes/_apptainer_build pulls config etc. and
+    # we don't want to pay that cost on the cold ``sac image`` startup
+    # path until the actual build runs.
+    from ..runtimes._apptainer_build import _should_use_fakeroot_for_build
+
     if sandbox:
         argv = [
             "apptainer",
@@ -249,7 +263,16 @@ def _default_apptainer_build_runner(
         if force:
             argv.append("--force")
         argv += [str(output_path), str(staged_def)]
+    elif _should_use_fakeroot_for_build():
+        # Rootless user-namespace build — no sudo prompt. This is the
+        # path the lead's hand-built SIF used today.
+        argv = ["apptainer", "build", "--fakeroot"]
+        if force:
+            argv.append("--force")
+        argv += [str(output_path), str(staged_def)]
     else:
+        # No subuid mappings: fall back to sudo. Works interactively;
+        # FAILS in headless contexts (silent password prompt).
         argv = ["sudo", "apptainer", "build"]
         if force:
             argv.append("--force")

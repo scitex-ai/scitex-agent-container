@@ -44,8 +44,13 @@ From: ubuntu:24.04
     # 5 (apt ships an older 2.0.x; we want 2.1.3 features).
     #
     # Agent-useful, non-interactive CLI tool set:
-    #   fd-find ripgrep bat eza tree jq git-delta gdu (apt)
+    #   fd-find ripgrep bat eza tree jq git-delta (apt)
     #   yq sd dust (sections 4a / 4b — not in apt)
+    #   gdu — NOT from apt: Ubuntu's `gdu` package is the ambiguous
+    #         "gnu-disk-usage" build with no machine-readable output;
+    #         sac's .claude size-audit needs the dundee/gdu
+    #         `gdu -o-` JSON path, so we pull a pinned dundee binary
+    #         in section 4c.
     # Interactive-only tools (htop, top, ncdu, fzf TUI mode) are
     # intentionally excluded — sac agents are headless; an agent has
     # no TTY to drive a curses UI and `htop` is dead weight in the SIF.
@@ -67,7 +72,7 @@ From: ubuntu:24.04
         iputils-ping dnsutils netcat-openbsd \
         nano jq \
         fd-find ripgrep bat eza \
-        git-delta gdu \
+        git-delta \
         tini
     locale-gen en_US.UTF-8
 
@@ -161,10 +166,10 @@ From: ubuntu:24.04
     #
     # Both are useful to a headless agent (scripted refactors, "what is
     # eating my overlay") and ship from cargo because Ubuntu 24.04 has
-    # neither in apt. The interactive disk-explorer cousins
-    # (``ncdu``, ``gdu`` TUI mode) are deliberately NOT installed —
-    # ``gdu --non-interactive`` from apt covers the headless case in
-    # section 1.
+    # neither in apt. The interactive disk-explorer cousin ``ncdu`` is
+    # deliberately NOT installed — the dundee/``gdu`` binary fetched
+    # in section 4c covers the headless ``gdu -o-`` JSON case sac
+    # itself needs (apt's ambiguous ``gdu`` package was dropped).
     #
     # For the operator's hand-curated extra Rust-CLI set (per-host,
     # post-launch in an overlay) see ``~/.bin/installers/install_rust_clis.sh``
@@ -193,6 +198,24 @@ From: ubuntu:24.04
         -o /usr/local/bin/yq
     chmod +x /usr/local/bin/yq
 
+    # ---- 4c. gdu — dundee/gdu (pinned), NOT Ubuntu's gnu-disk-usage --
+    # Ubuntu 24.04's apt `gdu` is the ambiguous "gnu-disk-usage" build
+    # (no `-o-` machine-readable JSON). sac's .claude size-audit
+    # (F-CS8, _workdir_audit.py) hard-depends on dundee/gdu's
+    # `gdu -o- <path>` JSON contract — different binary, same name.
+    # Pull a PINNED static release tarball from the dundee/gdu GitHub
+    # releases page so the .claude audit's JSON parser stays stable
+    # across SIF rebuilds.
+    GDU_VERSION=5.31.0
+    curl -fsSL \
+        "https://github.com/dundee/gdu/releases/download/v${GDU_VERSION}/gdu_linux_amd64.tgz" \
+        -o /tmp/gdu.tgz
+    tar -xzf /tmp/gdu.tgz -C /tmp
+    install -m 0755 /tmp/gdu_linux_amd64 /usr/local/bin/gdu
+    rm -f /tmp/gdu.tgz /tmp/gdu_linux_amd64
+    # Verify: dundee/gdu's --version line starts with "Version:	v5.31.0".
+    /usr/local/bin/gdu --version
+
     # ---- 5. tree v2.1.3 from source ------------------------------------
     curl -fsSL https://gitlab.com/OldManProgrammer/unix-tree/-/archive/2.1.3/unix-tree-2.1.3.tar.gz \
         | tar xz -C /tmp
@@ -217,14 +240,16 @@ From: ubuntu:24.04
     # just these two into a dedicated venv so /usr/bin/python3 stays
     # untouched and per-agent overlays own their own scientific stack.
     #
-    # claude-agent-sdk PINNED to 0.1.72 — newer 0.1.81 bundles claude
-    # CLI 2.1.139, which has a regression that hangs on the startup
-    # `GET /v1/mcp_servers` call inside apptainer (proven against the
-    # host's working 0.1.72/2.1.112 pair, same SIF, same creds,
-    # same network — only the bundled binary differs). The SDK
-    # bundles its CLI under `_bundled/claude`, so pinning the Python
-    # version also pins the binary — no separate `claude` install
-    # needed (see Anthropic's claude-agent-sdk-python README). 2026-05-12.
+    # claude-agent-sdk PINNED to 0.2.87 — bundles claude CLI 2.1.150
+    # (verified in-apptainer 2026-06-05, including Bash
+    # run_in_background). The old 0.1.72 pin was a workaround for a
+    # since-fixed 2.1.139 startup hang on `GET /v1/mcp_servers`; the
+    # SDK has rolled forward across the affected window and the
+    # currently shipping pair is the one the lead's hand-built SIF
+    # uses today. The SDK bundles its CLI under `_bundled/claude`, so
+    # pinning the Python version also pins the binary — no separate
+    # `claude` install needed (see Anthropic's claude-agent-sdk-python
+    # README).
     #
     # sac itself is installed from /opt/scitex-agent-container-src/ —
     # the package's OWN source tree, copied in by the %files section
@@ -239,7 +264,7 @@ From: ubuntu:24.04
     python3 -m venv /opt/venv-sac
     export PATH=/root/.local/bin:/usr/local/bin:$PATH
     uv pip install --python /opt/venv-sac/bin/python \
-        "claude-agent-sdk==0.1.72" \
+        "claude-agent-sdk==0.2.87" \
         /opt/scitex-agent-container-src
 
     # Surface the SDK's bundled claude CLI on PATH so humans can
