@@ -216,7 +216,6 @@ def test_register_self_node_refresh_advances_updated_at(
     import time
 
     from scitex_agent_container._mcp._channel_self_register import register_self_node
-
     from scitex_agent_container._state.state_db_nodes import lookup_comms_node
 
     register_self_node(name="lead", listen_url="http://127.0.0.1:7878")
@@ -241,7 +240,6 @@ def test_register_self_node_writes_no_row_when_listen_url_has_port_zero(
     # function MUST refuse rather than persist a 0 port (which is what
     # broke `sac a2a peers` resolution in the first place).
     from scitex_agent_container._mcp._channel_self_register import register_self_node
-
     from scitex_agent_container._state.state_db_nodes import list_comms_nodes
 
     # Act
@@ -299,7 +297,6 @@ def test_refresh_node_writes_initial_row_on_first_tick(
     # so a caller doesn't have to call register_self_node separately
     # before kicking off the loop.
     from scitex_agent_container._mcp._channel_self_register import refresh_node
-
     from scitex_agent_container._state.state_db_nodes import lookup_comms_node
 
     async def _drive_one_tick() -> None:
@@ -325,7 +322,6 @@ def test_refresh_node_advances_updated_at_across_ticks(
 ) -> None:
     # Arrange — let the loop tick twice; updated_at must advance.
     from scitex_agent_container._mcp._channel_self_register import refresh_node
-
     from scitex_agent_container._state.state_db_nodes import lookup_comms_node
 
     captured: dict[str, float] = {}
@@ -377,3 +373,46 @@ def test_refresh_node_respects_cancellation_promptly(
     cancelled = asyncio.run(_start_then_cancel())
     # Assert
     assert cancelled is True
+
+
+# ---------------------------------------------------------------------------
+# End-to-end — channel-start → resolve_node_host('lead') succeeds
+#
+# The lead's request (msg a26da20, 2026-06-05): pin the contract that
+# after the channel's refresh task fires its first iteration, the
+# resolver every cross-host A2A POST uses (resolve_node_host, not just
+# lookup_comms_node) returns the right row. Without this, a future
+# regression that breaks the channel→resolver seam (e.g. someone
+# decoupling the registration target from the resolver) would land
+# silently — the lower-level lookup_comms_node tests above would still
+# pass while production cross-host routing broke.
+# ---------------------------------------------------------------------------
+
+
+def test_refresh_node_makes_lead_resolvable_via_resolve_node_host(
+    db_path: Path, cfg_with_lead: Path
+) -> None:
+    # Arrange — drive one refresh tick (the same path channel.py
+    # _serve() schedules at startup) then ask the production resolver.
+    from scitex_agent_container._mcp._channel_self_register import refresh_node
+    from scitex_agent_container._state.state_db_nodes import resolve_node_host
+
+    async def _drive_one_tick() -> None:
+        task = asyncio.create_task(
+            refresh_node(name="lead", listen_url="http://127.0.0.1:7878", interval_s=10)
+        )
+        await asyncio.sleep(
+            0.05
+        )  # one tick is enough; first iteration runs immediately
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    # Act
+    asyncio.run(_drive_one_tick())
+    info = resolve_node_host(name="lead")
+    # Assert — the full {host, a2a_port} dict, from canonical_host + the
+    # parsed listen_url port. host comes from cfg_with_lead's "lead-host".
+    assert info == {"host": "lead-host", "a2a_port": 7878}
