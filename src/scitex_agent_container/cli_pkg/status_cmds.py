@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json as json_mod
+import os
 import sys
 
 import click
@@ -209,9 +210,23 @@ def status(
         # exit code. The lineage-scoped ACL on the host side enforces
         # that the caller can only inspect itself or its lineage
         # descendants.
+        #
+        # PR#316 (lead msg 4cb474fc, clew L3 diag 2026-06-06): the
+        # host-listen-call path needs SAC_LISTEN_BASE_URL. In sac-from-sac
+        # L2 broker-self / bare-host-with-stale-SINGULARITY_CONTAINER
+        # contexts that env var IS absent — the operator's shell isn't
+        # a real apptainer container, and there's no host listen to
+        # broker the read to. Pre-PR#316 this surfaced as
+        # ``HostListenTransportError: in-SIF host-listen call requires
+        # SAC_LISTEN_BASE_URL`` (a stillborn-read masquerading as a
+        # transport error). Fix: degrade gracefully — fall through to
+        # the local registry read when the env var is missing. The
+        # local read picks up the agent's instances/state.db row
+        # directly; on the broker-self happy path the agent's runtime
+        # dir is bind-visible to the same state.db the local read uses.
         from .._lifecycle._in_sif_broker import is_in_sif
 
-        if is_in_sif():
+        if is_in_sif() and (os.environ.get("SAC_LISTEN_BASE_URL") or "").strip():
             _status_via_host_listen(name)
             return  # noreturn — _status_via_host_listen sys.exits
 
