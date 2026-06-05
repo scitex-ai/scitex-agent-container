@@ -565,6 +565,128 @@ class TestEmitOnceGuard:
 
 
 # ---------------------------------------------------------------------------
+# emit_completion_push — fleet-noise guard (PR3, 2026-06-05)
+#
+# Wire signature the fleet was spamming:
+#   {"agent": <name>, "dispatch_id": null, "status": "unknown", "summary": ""}
+#
+# That payload is what an idle/wake turn emits when it had no incoming
+# dispatch_id AND produced no assistant text. The guard suppresses it
+# so the requester's inbox cycle isn't burned on a zero-signal report.
+# Real receivers / real push_fn closures — no MagicMock.
+# ---------------------------------------------------------------------------
+
+
+class TestSuppressEmptyCompletions:
+    def test_suppress_when_dispatch_id_none_and_summary_empty(self) -> None:
+        # Arrange — exact reproduction of the noise payload's TurnContext
+        # state (begin() set a requester, no dispatch_id; finish() ran
+        # with status=unknown and empty summary).
+        ctx = TurnContext()
+        ctx.begin(requester="lead", dispatch_id=None)
+        ctx.finish(status=STATUS_UNKNOWN, summary="")
+        calls: list = []
+
+        async def _push_fn(report, requester, dispatch_id):
+            calls.append(report)
+
+        async def _scenario():
+            await emit_completion_push(ctx, _push_fn, agent_name="worker")
+            return calls
+
+        # Act
+        observed = asyncio.run(_scenario())
+        # Assert — push_fn was NEVER invoked (the noise payload was suppressed).
+        assert observed == []
+
+    def test_suppress_when_summary_is_whitespace_only(self) -> None:
+        # Arrange — a whitespace-only summary counts as "no content"; the
+        # original empty-string check was naïve and a model that emits
+        # "\n" or "   " would slip past it. The guard strips first.
+        ctx = TurnContext()
+        ctx.begin(requester="lead", dispatch_id=None)
+        ctx.finish(status=STATUS_UNKNOWN, summary="   \n\t  ")
+        calls: list = []
+
+        async def _push_fn(report, requester, dispatch_id):
+            calls.append(report)
+
+        async def _scenario():
+            await emit_completion_push(ctx, _push_fn, agent_name="worker")
+            return calls
+
+        # Act
+        observed = asyncio.run(_scenario())
+        # Assert
+        assert observed == []
+
+    def test_emit_when_dispatch_id_present_even_with_empty_summary(self) -> None:
+        # Arrange — a dispatched turn that legitimately produced no
+        # assistant text (acks, hook-only turns) MUST still report so
+        # the requester can correlate by dispatch_id. The guard only
+        # suppresses the BOTH-empty case.
+        ctx = TurnContext()
+        ctx.begin(requester="lead", dispatch_id="d-no-summary")
+        ctx.finish(status=STATUS_SUCCESS, summary="")
+        calls: list = []
+
+        async def _push_fn(report, requester, dispatch_id):
+            calls.append(report)
+
+        async def _scenario():
+            await emit_completion_push(ctx, _push_fn, agent_name="worker")
+            return calls
+
+        # Act
+        observed = asyncio.run(_scenario())
+        # Assert
+        assert len(observed) == 1
+
+    def test_emit_when_summary_present_even_without_dispatch_id(self) -> None:
+        # Arrange — symmetric: a non-dispatched turn with REAL content
+        # is signal (the lead may forward / surface it). Don't suppress
+        # just because dispatch_id is absent.
+        ctx = TurnContext()
+        ctx.begin(requester="lead", dispatch_id=None)
+        ctx.finish(status=STATUS_SUCCESS, summary="real reply text")
+        calls: list = []
+
+        async def _push_fn(report, requester, dispatch_id):
+            calls.append(report)
+
+        async def _scenario():
+            await emit_completion_push(ctx, _push_fn, agent_name="worker")
+            return calls
+
+        # Act
+        observed = asyncio.run(_scenario())
+        # Assert
+        assert len(observed) == 1
+
+    def test_suppressed_turn_still_marks_pushed_to_prevent_reentry(self) -> None:
+        # Arrange — pin that a suppressed turn flips ``pushed`` so a
+        # double-fire of the Stop hook for the same turn re-evaluates
+        # and skips identically (no double-evaluation cost). Mirrors
+        # the once-per-turn guard's contract.
+        ctx = TurnContext()
+        ctx.begin(requester="lead", dispatch_id=None)
+        ctx.finish(status=STATUS_UNKNOWN, summary="")
+        calls: list = []
+
+        async def _push_fn(report, requester, dispatch_id):
+            calls.append(report)
+
+        async def _scenario():
+            await emit_completion_push(ctx, _push_fn, agent_name="worker")
+            return ctx.pushed
+
+        # Act
+        pushed = asyncio.run(_scenario())
+        # Assert
+        assert pushed is True
+
+
+# ---------------------------------------------------------------------------
 # Full conversation → requester push (real run_conversation, fake SDK module)
 # ---------------------------------------------------------------------------
 

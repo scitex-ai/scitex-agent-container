@@ -126,6 +126,23 @@ async def emit_completion_push(
     requester = turn_context.requester
     if not requester or turn_context.pushed:
         return
+
+    # Fleet-noise guard (lead task PR3, 2026-06-05): suppress a push that
+    # carries NO ledger correlation AND NO content. The wire signature
+    # ``{"agent": <name>, "dispatch_id": null, "status": "unknown",
+    # "summary": ""}`` is the canonical "nothing real to report"
+    # payload — every idle/wake turn that had no incoming dispatch_id
+    # and produced no assistant text fires one. Multiplied across an
+    # N-agent fleet post-restart, those empties eat every subscriber's
+    # turn cycle for zero signal. The completion contract is "tell the
+    # requester something useful happened"; without a dispatch_id OR
+    # summary content, nothing useful did. ``pushed = True`` still flips
+    # so a re-entrant Stop hook on the same turn re-evaluates and skips
+    # identically (no double-evaluation cost).
+    if turn_context.dispatch_id is None and not (turn_context.summary or "").strip():
+        turn_context.pushed = True
+        return
+
     turn_context.pushed = True
 
     from ._session_completion import STATUS_UNKNOWN, build_completion_report
