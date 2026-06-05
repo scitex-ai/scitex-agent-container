@@ -76,3 +76,64 @@ sac image build scitex -y
 
 This is the concrete mechanism behind a "stable vs develop" SAC split: the agent
 image = the pinned stable runner; bump it deliberately.
+
+## When `sac image build` is impossible — bind the host editable over the SIF
+
+On HPC sites (e.g. Spartan) where `sudo` is forbidden AND the user has **no
+`/etc/subuid` mapping** (no unprivileged user-namespace), `apptainer build`
+cannot run at all — neither the sudo path nor the auto-fakeroot path from
+`sac image build` (PR #307) succeeds. Verify with:
+
+```bash
+grep "$USER" /etc/subuid /etc/subgid    # empty → fakeroot is unavailable
+```
+
+In that case you **cannot rebuild the SIF**. The canonical workaround is to
+**bind-mount the host editable `scitex_agent_container` package over the SIF's
+site-packages copy**. The SIF's `/opt/venv-sac/bin/sac` is a click entry-point
+wrapper that imports `scitex_agent_container`; if that package path is
+bind-overridden by the host editable, the SIF's `sac` transparently runs the
+host code without any rebuild — `git pull` + re-exec is the whole update loop.
+
+### Spec-level bind (recommended for fleet)
+
+Add to the agent's `spec.apptainer.binds` so every launch picks it up:
+
+```yaml
+spec:
+  apptainer:
+    binds:
+      - source: /abs/path/to/scitex-agent-container/src/scitex_agent_container
+        target: /opt/venv-sac/lib/python3.12/site-packages/scitex_agent_container
+        read_only: true
+```
+
+### Direct `apptainer exec` (operator one-shot)
+
+For a quick test before baking into spec:
+
+```bash
+apptainer exec \
+  --bind /abs/.../src/scitex_agent_container:/opt/venv-sac/lib/python3.12/site-packages/scitex_agent_container:ro \
+  sac-scitex.sif \
+  sac --version    # → reports the HOST editable's version, not the SIF-baked one
+```
+
+### Caveats
+
+* The host editable's **Python deps must be a subset** of what the SIF's venv
+  already has installed. If a sac PR adds a new dep (rare — most PRs are
+  code-only), `import scitex_agent_container` inside the SIF will hit
+  `ModuleNotFoundError` for the new dep. That's the signal a real rebuild
+  is needed.
+* The host repo's `src/scitex_agent_container/` path **must exist on a
+  filesystem the SIF can see** (typically a shared `/data/...` mount on HPC).
+* Use `read_only: true` (or `:ro` on the CLI) so the in-SIF process can't
+  mutate host source files.
+* This is a workaround for the no-sudo/no-subuid case; on hosts where
+  rebuild IS possible, prefer `sac image build` so the SIF is a real
+  point-in-time snapshot (auditability, reproducibility).
+
+This pattern is also documented in [11_remote-deploy.md](11_remote-deploy.md)
+under the HPC-deployment section — the deploy-side reader gets the same
+workaround without having to spelunk image-build docs first.

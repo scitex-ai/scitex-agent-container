@@ -148,8 +148,36 @@ in-process callers.
 | `spec.remote.user`, `spec.remote.timeout`, `spec.remote.login_shell` | declared in `config.yaml::peers.<peer>` (not per-agent) |
 | `spec.venv` (remote-only path) | `spec.apptainer.image` + in-container venv at `/opt/venv-agent` |
 
+## HPC deployment — no-sudo / no-subuid sites (Spartan etc.)
+
+On HPC sites where `sudo` is forbidden AND the user has no `/etc/subuid`
+mapping, `apptainer build` cannot run at all — neither sudo nor fakeroot
+namespace ops are available. You **cannot** `sac image build` on such
+hosts.
+
+The canonical workaround: bind-mount the host editable
+`scitex_agent_container` package over the SIF's site-packages copy, so
+the SIF's `/opt/venv-sac/bin/sac` runs HOST code without rebuild. Add to
+`spec.apptainer.binds`:
+
+```yaml
+spec:
+  apptainer:
+    binds:
+      - source: /abs/path/to/scitex-agent-container/src/scitex_agent_container
+        target: /opt/venv-sac/lib/python3.12/site-packages/scitex_agent_container
+        read_only: true
+```
+
+`git pull` on the host install is then the entire SIF-update loop.
+Caveats + the operator one-shot `apptainer exec --bind ...` form are
+in [24_image-build.md](24_image-build.md) under "When `sac image build`
+is impossible".
+
 ## See also
 
 - `docs/spec-reference.md` "Top-level shape" — host/hosts canonical reference
 - `07_a2a-protocol-extension-fields.md` — `x-scitex-agent-container.scheduling`
   card field derived from `spec.host` / `spec.hosts`
+- [24_image-build.md](24_image-build.md) — image build/rebuild + the
+  bind-editable workaround for no-sudo/no-subuid HPCs
