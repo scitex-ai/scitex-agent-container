@@ -2,7 +2,7 @@
 description: |
   [TOPIC] Stay responsive to the operator by doing every heavy job in the background.
   [DETAILS] Default doctrine for every sac agent: never block the main conversation turn on long-running work (LaTeX compile, figure builds, pytest, training, big git ops, image builds, large data downloads). Launch heavy work as a BACKGROUND process — `Bash run_in_background=true` or `Agent run_in_background=true` — end the current turn promptly, and handle the result when the runtime delivers the completion notification. The operator's Telegram message is delivered to the same inbox the conversation reads; while a turn is in flight, new Telegram messages QUEUE and are not picked up until the turn ends. The cure is a short turn, not a more clever interrupt. Short turns also keep the prompt cache warm (5-min TTL) and let other peers/the lead drive the agent without waiting minutes per round-trip.
-tags: [scitex-agent-container-responsiveness, background-work, telegram-latency, short-turns]
+tags: [scitex-agent-container-responsiveness-background-work, telegram-latency, short-turns]
 ---
 
 # Responsiveness — short turns + background heavy work
@@ -192,11 +192,9 @@ input on cache hits.
 
 - ``18_full-agent-delegation.md`` — full-agent peer pattern (also
   inherently async; the launcher's turn ends, the peer runs for hours).
-- ``17_inbound-turn-endpoint.md`` — how ``POST /v1/turn`` envelopes
-  reach the same inbox Telegram posts to (so a short turn matters
-  for *any* inbound, not just operator).
-- ``29_progress-reporting-to-lead.md`` — the lead is also a consumer
-  of "agent reachable now" — push milestones, don't make the lead
-  poll while you sit in a 4-minute compile.
-- ``23_telegram-integration.md`` — the Telegram delivery path that
-  this rule exists to keep responsive.
+- ``17_inbound-turn-endpoint.md`` — ``POST /v1/turn`` lands in the
+  same inbox Telegram does; short turns matter for ALL inbound.
+- ``29_progress-reporting-to-lead.md`` — push milestones to the lead;
+  don't make peers poll while a heavy compile blocks your inbox.
+- ``23_telegram-integration.md`` — the delivery path this rule
+  exists to keep responsive.

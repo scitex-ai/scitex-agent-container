@@ -651,6 +651,10 @@ def test_audit_warns_when_fd_missing_from_path(tmp_path: Path) -> None:
     assert "fd (fd-find) not found" in proc.stderr
 
 
+@pytest.mark.skipif(
+    shutil.which("du") is None,
+    reason="du not present on host — cannot scope the failing-gdu test",
+)
 def test_audit_warns_when_gdu_present_but_exits_nonzero(tmp_path: Path) -> None:
     """gdu on PATH but the binary returns non-zero → chain falls
     through to du with a visible WARNING. Uses a REAL `exit 1` shell
@@ -661,8 +665,6 @@ def test_audit_warns_when_gdu_present_but_exits_nonzero(tmp_path: Path) -> None:
     bin_dir.mkdir()
     _write_real_shim(bin_dir / "gdu", "#!/bin/sh\nexit 1\n")
     real_du = shutil.which("du")
-    if real_du is None:
-        pytest.skip("du not present on host — cannot scope the failing-gdu test")
     _write_real_shim(bin_dir / "du", f'#!/bin/sh\nexec "{real_du}" "$@"\n')
     claude = tmp_path / "wd" / ".claude"
     claude.mkdir(parents=True)
@@ -722,6 +724,7 @@ def test_gdu_json_parser_descends_into_subfolders():
     the recursion must descend into it and sum nested files."""
     from scitex_agent_container._workdir_audit import _sum_asize_from_gdu_json
 
+    # Arrange — root contains one top-level file + one nested subfolder
     blob = (
         '[1,2,{"progname":"gdu"},'
         '[{"name":"/r"},'

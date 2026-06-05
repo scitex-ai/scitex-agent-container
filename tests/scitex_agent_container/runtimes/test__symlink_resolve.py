@@ -65,8 +65,10 @@ def test_deref_copy_symlink_dangling_target_raises(tmp_path: Path):
     src = tmp_path / "src"
     src.symlink_to(tmp_path / "does-not-exist")
     dst = tmp_path / "dst"
-    # Act / Assert
-    with pytest.raises(DanglingToHomeSymlinkError):
+    # Act
+    ctx = pytest.raises(DanglingToHomeSymlinkError)
+    # Assert
+    with ctx:
         deref_copy_symlink(src, dst)
 
 
