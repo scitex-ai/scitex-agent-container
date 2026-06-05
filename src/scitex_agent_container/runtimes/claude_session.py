@@ -128,7 +128,18 @@ def _warn_if_heavy_workdir_claude(config: AgentConfig) -> None:
     from .._workdir_audit import audit_workdir_claude
 
     audit = audit_workdir_claude(workdir)
-    if not (audit.exceeded_files or audit.exceeded_bytes):
+    # Fire on EITHER:
+    #   * exceeded totals (the original F-CS8 gate), OR
+    #   * a non-empty bloat_sources list (one of the per-subdir probes
+    #     crossed the bloat threshold).
+    # The latter clause exists because the 2026-06-04 audit refactor
+    # PRUNES ``worktrees/`` from the top-level total (it doesn't slow
+    # boot anymore, see _walk_exclusions + _measure_top_level), so a
+    # worktrees-only-bloated tree no longer trips ``exceeded_*``. The
+    # bloat_sources probe still catches it and the operator still
+    # wants the actionable banner (which already includes the
+    # subdir-specific `mv` remediation lines).
+    if not (audit.exceeded_files or audit.exceeded_bytes or audit.bloat_sources):
         return
 
     # Multi-line LOUD warn — single-line stderr is too easy to lose in

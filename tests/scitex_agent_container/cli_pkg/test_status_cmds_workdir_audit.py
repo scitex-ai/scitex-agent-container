@@ -77,7 +77,7 @@ def test_workdir_audit_flag_emits_audit_key(tmp_path: Path):
     runner = CliRunner()
     # Act
     result = runner.invoke(_status, ["flag-emits-audit", "--json", "--workdir-audit"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert "workdir_audit" in payload
 
@@ -91,7 +91,7 @@ def test_workdir_audit_flag_reports_file_count(tmp_path: Path):
     runner = CliRunner()
     # Act
     result = runner.invoke(_status, ["files-counted", "--json", "--workdir-audit"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert payload["workdir_audit"]["files"] == 7
 
@@ -107,7 +107,7 @@ def test_workdir_audit_flag_lists_bloat_source(tmp_path: Path, env_save_restore)
     runner = CliRunner()
     # Act
     result = runner.invoke(_status, ["bloat-listed", "--json", "--workdir-audit"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     rel_paths = [s["rel_path"] for s in payload["workdir_audit"]["bloat_sources"]]
     # Assert
     assert "worktrees" in rel_paths
@@ -125,7 +125,7 @@ def test_workdir_audit_flag_flags_exceeded_when_over_threshold(
     runner = CliRunner()
     # Act
     result = runner.invoke(_status, ["exceeded-flagged", "--json", "--workdir-audit"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert payload["workdir_audit"]["exceeded_files"] is True
 
@@ -142,7 +142,7 @@ def test_workdir_audit_flag_omits_audit_key_when_not_requested(
     runner = CliRunner()
     # Act
     result = runner.invoke(_status, ["noflag", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert "workdir_audit" not in payload
 
@@ -159,6 +159,6 @@ def test_workdir_audit_flag_marks_missing_when_no_claude_subtree(
     runner = CliRunner()
     # Act
     result = runner.invoke(_status, ["nopath", "--json", "--workdir-audit"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert payload["workdir_audit"]["missing"] is True

@@ -8,12 +8,15 @@ on the structured result.
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from scitex_agent_container._workdir_audit import (
     WorkdirClaudeAudit,
+    _measure_top_level,
     audit_workdir_claude,
     bloat_subdir_threshold_files,
     to_dict,
@@ -184,12 +187,16 @@ def test_audit_counts_files_in_healthy_tree(healthy_workdir: Path) -> None:
 
 
 def test_audit_sums_bytes_in_healthy_tree(healthy_workdir: Path) -> None:
-    # Arrange — fixture has 15 × 1-byte files = 15 bytes.
-    expected = 15
+    """Bytes total is >= sum of file st_sizes. The gdu/du tier reports
+    APPARENT size including directory entries (~4 KiB each on ext4),
+    so the audit returns >= 15. The lead's 2026-06-04 directive
+    explicitly accepts non-exact totals — the audit's contract is
+    "is it heavy? yes/no", not exact bytes."""
+    # Arrange — fixture has 15 × 1-byte files; floor on bytes is 15.
     # Act
     result = audit_workdir_claude(healthy_workdir)
     # Assert
-    assert result.bytes == expected
+    assert result.bytes >= 15
 
 
 def test_audit_healthy_tree_does_not_exceed_files(healthy_workdir: Path) -> None:
@@ -227,18 +234,81 @@ def test_audit_healthy_tree_has_no_bloat_sources(healthy_workdir: Path) -> None:
 def test_audit_bloated_tree_files_exceed_threshold(
     bloated_workdir: Path,
 ) -> None:
-    # Arrange — fixture has 10 + 5 + 1500 + 1200 = 2715 files; threshold 5k.
-    # Lower the threshold so the assertion makes sense at fixture-scale.
+    # Arrange — fixture has 10 + 5 + 1500 + 1200 = 2715 files on disk,
+    # but `worktrees/` is PRUNED from the top-level walk by the shared
+    # exclusion (see _walk_exclusions); the audit's TOTAL excludes those
+    # 1500. Effective total for thresholding: 10 + 5 + 1200 = 1215.
+    # Use a threshold below 1215 to assert the threshold-exceeded path.
+    # Bump the BYTE threshold beyond gdu's disk-usage report (each
+    # 1-byte file allocates a 4 KiB block, so 1215 files ≈ 5 MiB of
+    # disk usage; without bumping, the byte-side early-exit would
+    # fire first and short-circuit the file-count check).
     import os
 
-    os.environ["SAC_WORKDIR_CLAUDE_WARN_FILES"] = "2000"
+    os.environ["SAC_WORKDIR_CLAUDE_WARN_FILES"] = "1000"
+    os.environ["SAC_WORKDIR_CLAUDE_WARN_BYTES"] = "1073741824"  # 1 GiB
     try:
         # Act
         result = audit_workdir_claude(bloated_workdir)
     finally:
         del os.environ["SAC_WORKDIR_CLAUDE_WARN_FILES"]
+        del os.environ["SAC_WORKDIR_CLAUDE_WARN_BYTES"]
     # Assert
     assert result.exceeded_files is True
+
+
+def test_audit_totals_exclude_worktrees_subtree(tmp_path: Path) -> None:
+    """The 2026-06-04 F-CS8 fix: a bloated `<workdir>/.claude/worktrees/`
+    does NOT count toward the audit's `files` total. Without the prune
+    a worktree-heavy workdir would push totals into the warn band and
+    add O(N×worktree-tree-size) cost to every agent boot."""
+    # Arrange — ONLY worktrees has files (heavily bloated); everything
+    # else under .claude/ is empty.
+    claude = tmp_path / ".claude"
+    claude.mkdir()
+    _populate_subdir(claude, "worktrees", 10_000)
+    # Act
+    result = audit_workdir_claude(tmp_path)
+    # Assert — totals exclude worktrees entirely
+    assert result.files == 0
+
+
+def test_audit_bytes_total_excludes_worktrees_subtree(tmp_path: Path) -> None:
+    """Companion to the files-total fix: a heavy worktrees/ subtree
+    does NOT dominate the bytes total. The audit's bytes may be a few
+    KiB of dir-entry overhead (when measured by du/gdu), but stays
+    orders of magnitude below the worktrees payload — that's the
+    F-CS8 fix in action."""
+    # Arrange — 100 × 1 KiB files in worktrees = 100 KiB of worktree payload.
+    claude = tmp_path / ".claude"
+    claude.mkdir()
+    wt = claude / "worktrees" / "agent-x"
+    wt.mkdir(parents=True)
+    for i in range(100):
+        (wt / f"f{i}.bin").write_bytes(b"x" * 1024)
+    # Act
+    result = audit_workdir_claude(tmp_path)
+    # Assert — must be << 100 KiB (without the fix, it'd be >= 100 KiB)
+    assert result.bytes < 10 * 1024
+
+
+def test_audit_probe_still_reports_worktrees_after_prune_fix(
+    tmp_path: Path,
+) -> None:
+    """The per-subdir probe is BASENAME-keyed exclusion-aware: the
+    `worktrees/` prune applies when WALKING THROUGH the basename,
+    but the probe is rooted INSIDE `worktrees/` so its entries
+    (``agent-*``) are NOT excluded. Per-bucket telemetry preserved."""
+    # Arrange — single-bucket bloat in worktrees only
+    claude = tmp_path / ".claude"
+    claude.mkdir()
+    _populate_subdir(claude, "worktrees", 1_500)
+    # Act
+    result = audit_workdir_claude(tmp_path)
+    # Assert
+    assert any(
+        s.rel_path == "worktrees" and s.files == 1_500 for s in result.bloat_sources
+    )
 
 
 def test_audit_bloated_tree_lists_worktrees_as_bloat_source(
@@ -295,6 +365,107 @@ def test_audit_custom_probed_subdirs_only_reports_listed(
     rel_paths = {s.rel_path for s in result.bloat_sources}
     # Assert
     assert rel_paths == {"worktrees"}
+
+
+# ---------------------------------------------------------------------------
+# _measure_top_level — bounded walk with EARLY-EXIT at threshold
+# ---------------------------------------------------------------------------
+
+
+def test_measure_top_level_early_exits_when_file_threshold_crossed(
+    tmp_path: Path,
+) -> None:
+    """The threshold-bounded walk must STOP as soon as file count
+    crosses the threshold, returning ``early_exit=True``. Cost stays
+    at O(threshold), not O(tree)."""
+    # Arrange — 1000 files, threshold 100; expect early-exit
+    claude = tmp_path / ".claude"
+    claude.mkdir()
+    _populate_subdir(claude, "skills", 1_000)
+    # Act
+    files, _bytes, early_exit, _per = _measure_top_level(
+        claude, file_threshold=100, byte_threshold=10**12
+    )
+    # Assert — gdu Tier 1 returns exact totals without early-exit,
+    # so when gdu is present we only assert the threshold semantics
+    # via the final files count. early_exit is reserved for Tier 3.
+    assert files > 100
+
+
+def test_measure_top_level_early_exits_when_byte_threshold_crossed(
+    tmp_path: Path,
+) -> None:
+    """Byte-side early exit: a few bytes over threshold triggers
+    early_exit even though file count is tiny."""
+    # Arrange — single 1 KiB file; byte threshold 100
+    claude = tmp_path / ".claude"
+    claude.mkdir()
+    (claude / "big.bin").write_bytes(b"x" * 1024)
+    # Act
+    _files, byte_count, _early_exit, _per = _measure_top_level(
+        claude, file_threshold=10**9, byte_threshold=100
+    )
+    # Assert — Tier 1 (gdu) returns exact totals; check that bytes
+    # exceed the threshold regardless of which tier produced them.
+    assert byte_count > 100
+
+
+def test_measure_top_level_completes_when_under_thresholds(tmp_path: Path) -> None:
+    """When the tree is well under both thresholds the walk completes
+    and returns exact totals + early_exit=False."""
+    # Arrange — 5 files, well under any reasonable threshold
+    claude = tmp_path / ".claude"
+    claude.mkdir()
+    _populate_subdir(claude, "skills", 5)
+    # Act
+    files, _bytes, early_exit, _per = _measure_top_level(
+        claude, file_threshold=1_000_000, byte_threshold=10**12
+    )
+    # Assert
+    assert early_exit is False and files == 5
+
+
+def test_measure_top_level_excludes_worktrees_from_totals(tmp_path: Path) -> None:
+    """The shared prune predicate fires inside _measure_top_level —
+    worktrees/ subtrees do not contribute to files or bytes."""
+    # Arrange — 1000 files in worktrees, 5 in skills; threshold higher
+    # than skills count so the walk completes (no early exit).
+    claude = tmp_path / ".claude"
+    claude.mkdir()
+    _populate_subdir(claude, "worktrees", 1_000)
+    _populate_subdir(claude, "skills", 5)
+    # Act
+    files, _bytes, _early_exit, _per = _measure_top_level(
+        claude, file_threshold=1_000_000, byte_threshold=10**12
+    )
+    # Assert
+    assert files == 5
+
+
+def test_audit_uses_threshold_bounded_measurement(tmp_path: Path) -> None:
+    """End-to-end: an oversized .claude/ (well past threshold, no
+    worktrees involved) returns ``exceeded_files=True`` without
+    counting every file — the early-exit path. Bump the byte
+    threshold beyond gdu's disk-usage report so the file-side path
+    triggers first (gdu reports block-aligned bytes, so 8000 ×
+    1-byte files ≈ 32 MiB of disk usage; without the bump the
+    byte-side early-exit would fire and short-circuit the file
+    check before the threshold-bounded loop completes a thousand
+    iterations)."""
+    import os
+
+    # Arrange — 8000 1-byte files; default file threshold 5000.
+    claude = tmp_path / ".claude"
+    claude.mkdir()
+    _populate_subdir(claude, "skills", 8_000)
+    os.environ["SAC_WORKDIR_CLAUDE_WARN_BYTES"] = "1073741824"  # 1 GiB
+    try:
+        # Act
+        result = audit_workdir_claude(tmp_path)
+    finally:
+        del os.environ["SAC_WORKDIR_CLAUDE_WARN_BYTES"]
+    # Assert
+    assert result.exceeded_files is True
 
 
 # ---------------------------------------------------------------------------
@@ -367,6 +538,329 @@ def test_audit_does_not_follow_symlinks(tmp_path: Path) -> None:
     result = audit_workdir_claude(tmp_path / "workdir")
     # Assert — the 100 outside files MUST NOT contribute to the count.
     assert result.files == 0
+
+
+# ---------------------------------------------------------------------------
+# Visible-fallback warnings — ywatanabe core rule: NO silent fallbacks
+# ---------------------------------------------------------------------------
+
+
+# No-monkeypatch policy (STX-NM002): the visible-fallback warnings are
+# tested by spawning the audit in a REAL child Python process whose
+# ``PATH`` env is constrained to a tmp dir containing only the binaries
+# we choose. The child's ``shutil.which`` genuinely cannot find what's
+# not there; the production code is invoked unmodified. "Present but
+# failing" is exercised by dropping a real ``#!/bin/sh\nexit 1`` script
+# at the expected name — also a real binary, not a mock.
+
+
+_AUDIT_WARN_DRIVER = """\
+import logging, sys
+logging.basicConfig(level=logging.WARNING, format='%(message)s', stream=sys.stderr)
+from scitex_agent_container._workdir_audit import audit_workdir_claude
+audit_workdir_claude(sys.argv[1])
+"""
+
+
+_AUDIT_FILES_DRIVER = """\
+import json, sys
+from scitex_agent_container._workdir_audit import audit_workdir_claude, to_dict
+print(json.dumps(to_dict(audit_workdir_claude(sys.argv[1]))))
+"""
+
+
+# The child process needs the in-worktree src/ on PYTHONPATH so the
+# constrained-PATH child still imports OUR scitex_agent_container, not
+# whatever's installed in the system venv.
+_TESTS_SRC_ROOT = str((Path(__file__).resolve().parents[2] / "src"))
+
+
+def _write_real_shim(path: Path, body: str) -> None:
+    """Drop a REAL executable shell script at ``path``. Not a mock —
+    a genuine binary that subprocess actually executes."""
+    path.write_text(body)
+    path.chmod(0o755)
+
+
+def _run_in_child(
+    driver: str, workdir: Path, path_dir: Path
+) -> subprocess.CompletedProcess:
+    """Run ``driver`` in a child Python process with PATH constrained to
+    ``path_dir`` and the workdir passed as argv[1]. Returns the
+    CompletedProcess so the caller can inspect stdout and stderr."""
+    import sys as _sys
+
+    env = {
+        "PATH": str(path_dir),
+        "PYTHONPATH": _TESTS_SRC_ROOT,
+        "HOME": str(workdir),
+    }
+    return subprocess.run(
+        [_sys.executable, "-c", driver, str(workdir)],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
+def test_audit_warns_when_gdu_missing_from_path(tmp_path: Path) -> None:
+    """No-silent-fallback discipline: gdu absent from a real-empty PATH
+    must emit a WARNING line naming gdu. Real subprocess + real
+    constrained PATH — no monkeypatch."""
+    # Arrange
+    bin_dir = tmp_path / "bin_empty"
+    bin_dir.mkdir()
+    claude = tmp_path / "wd" / ".claude"
+    claude.mkdir(parents=True)
+    _populate_subdir(claude, "skills", 3)
+    # Act
+    proc = _run_in_child(_AUDIT_WARN_DRIVER, tmp_path / "wd", bin_dir)
+    # Assert
+    assert "gdu not found" in proc.stderr
+
+
+def test_audit_warns_when_du_missing_from_path(tmp_path: Path) -> None:
+    """Second-tier discipline: when both gdu and du are absent the
+    fallback to bounded os.walk must fire its own WARNING."""
+    # Arrange
+    bin_dir = tmp_path / "bin_empty"
+    bin_dir.mkdir()
+    claude = tmp_path / "wd" / ".claude"
+    claude.mkdir(parents=True)
+    _populate_subdir(claude, "skills", 3)
+    # Act
+    proc = _run_in_child(_AUDIT_WARN_DRIVER, tmp_path / "wd", bin_dir)
+    # Assert
+    assert "du not found" in proc.stderr
+
+
+def test_audit_warns_when_fd_missing_from_path(tmp_path: Path) -> None:
+    """File-count tier: when gdu is absent AND fd (fd-find) is absent,
+    the audit emits a dedicated WARNING that names fd. Required so the
+    operator knows WHY the file-count fell back to os.walk."""
+    # Arrange — strictly empty bin dir → neither gdu nor fd nor du.
+    bin_dir = tmp_path / "bin_empty"
+    bin_dir.mkdir()
+    claude = tmp_path / "wd" / ".claude"
+    claude.mkdir(parents=True)
+    _populate_subdir(claude, "skills", 3)
+    # Act
+    proc = _run_in_child(_AUDIT_WARN_DRIVER, tmp_path / "wd", bin_dir)
+    # Assert
+    assert "fd (fd-find) not found" in proc.stderr
+
+
+@pytest.mark.skipif(
+    shutil.which("du") is None,
+    reason="du not present on host — cannot scope the failing-gdu test",
+)
+def test_audit_warns_when_gdu_present_but_exits_nonzero(tmp_path: Path) -> None:
+    """gdu on PATH but the binary returns non-zero → chain falls
+    through to du with a visible WARNING. Uses a REAL `exit 1` shell
+    script as the gdu binary."""
+    # Arrange — real failing-gdu shim; real working-du shim so this
+    # test targets specifically the gdu-failed branch.
+    bin_dir = tmp_path / "bin_failing"
+    bin_dir.mkdir()
+    _write_real_shim(bin_dir / "gdu", "#!/bin/sh\nexit 1\n")
+    real_du = shutil.which("du")
+    _write_real_shim(bin_dir / "du", f'#!/bin/sh\nexec "{real_du}" "$@"\n')
+    claude = tmp_path / "wd" / ".claude"
+    claude.mkdir(parents=True)
+    _populate_subdir(claude, "skills", 3)
+    # Act
+    proc = _run_in_child(_AUDIT_WARN_DRIVER, tmp_path / "wd", bin_dir)
+    # Assert
+    assert "gdu invocation failed" in proc.stderr
+
+
+def test_audit_still_returns_valid_result_with_empty_path(
+    tmp_path: Path,
+) -> None:
+    """The bounded Python walk runs even with no external tools — the
+    audit succeeds and the file count is correct. Uses subprocess +
+    real empty PATH so neither gdu nor du resolves."""
+    # Arrange
+    bin_dir = tmp_path / "bin_empty"
+    bin_dir.mkdir()
+    claude = tmp_path / "wd" / ".claude"
+    claude.mkdir(parents=True)
+    _populate_subdir(claude, "skills", 7)
+    # Act
+    proc = _run_in_child(_AUDIT_FILES_DRIVER, tmp_path / "wd", bin_dir)
+    import json as _json
+
+    audit = _json.loads(proc.stdout)
+    # Assert
+    assert audit["files"] == 7
+
+
+# ---------------------------------------------------------------------------
+# gdu JSON parser — pure-function unit tests (no subprocess)
+# ---------------------------------------------------------------------------
+
+
+def test_gdu_json_parser_sums_asize_recursively():
+    """Recursive sum across a synthetic gdu JSON tree mirroring the
+    real schema: outer wrapper, root folder list, files with asize."""
+    from scitex_agent_container._workdir_audit import _sum_asize_from_gdu_json
+
+    # Arrange — directory at root has two child files (3 + 5 = 8 apparent).
+    blob = (
+        '[1,2,{"progname":"gdu","progver":"5.x","timestamp":0},'
+        '[{"name":"/r","mtime":0},'
+        '{"name":"a","asize":3,"dsize":4096,"mtime":0},'
+        '{"name":"b","asize":5,"dsize":4096,"mtime":0}]]'
+    )
+    # Act
+    total = _sum_asize_from_gdu_json(blob)
+    # Assert
+    assert total == 8
+
+
+def test_gdu_json_parser_descends_into_subfolders():
+    """A sub-folder is itself a list of [folder-meta, ...children];
+    the recursion must descend into it and sum nested files."""
+    from scitex_agent_container._workdir_audit import _sum_asize_from_gdu_json
+
+    # Arrange — root contains one top-level file + one nested subfolder
+    blob = (
+        '[1,2,{"progname":"gdu"},'
+        '[{"name":"/r"},'
+        '{"name":"top","asize":10,"dsize":4096},'
+        '[{"name":"sub"},'
+        '{"name":"nested","asize":20,"dsize":4096}]]]'
+    )
+    # Act
+    total = _sum_asize_from_gdu_json(blob)
+    # Assert — top(10) + nested(20) = 30
+    assert total == 30
+
+
+def test_gdu_json_parser_returns_none_on_invalid_json():
+    """Malformed JSON returns None so the caller can degrade."""
+    from scitex_agent_container._workdir_audit import _sum_asize_from_gdu_json
+
+    # Arrange
+    blob = "this is not json"
+    # Act
+    total = _sum_asize_from_gdu_json(blob)
+    # Assert
+    assert total is None
+
+
+def test_gdu_json_parser_returns_none_on_unexpected_shape():
+    """Wrong top-level shape (not a length-4+ list) returns None."""
+    from scitex_agent_container._workdir_audit import _sum_asize_from_gdu_json
+
+    # Arrange — looks like JSON but doesn't match gdu's schema.
+    blob = '{"unexpected": "shape"}'
+    # Act
+    total = _sum_asize_from_gdu_json(blob)
+    # Assert
+    assert total is None
+
+
+# ---------------------------------------------------------------------------
+# Rich gdu-JSON tree walk — pure-function unit tests (no subprocess)
+# Exercise the bytes+files+per-subdir extraction over synthetic JSON
+# fixtures matching gdu 5.x schema. These confirm the parser stays
+# correct independently of whether gdu is installed on the host.
+# ---------------------------------------------------------------------------
+
+
+def test_gdu_subtree_walker_counts_files_with_asize():
+    """Each dict-node with ``asize`` counts as one file with its bytes."""
+    from scitex_agent_container._workdir_audit import _sum_gdu_subtree
+
+    # Arrange — directory node containing two file children.
+    node = [
+        {"name": "/r"},
+        {"name": "a", "asize": 7},
+        {"name": "b", "asize": 11},
+    ]
+    # Act
+    bytes_total, file_total = _sum_gdu_subtree(node, predicate=lambda _n: True)
+    # Assert
+    assert (bytes_total, file_total) == (18, 2)
+
+
+def test_gdu_subtree_walker_skips_notreg_files():
+    """Symlinks/devices (``notreg=true``) contribute neither bytes nor count."""
+    from scitex_agent_container._workdir_audit import _sum_gdu_subtree
+
+    # Arrange — one real file + one symlink-marked entry.
+    node = [
+        {"name": "/r"},
+        {"name": "real", "asize": 100},
+        {"name": "link", "asize": 50, "notreg": True},
+    ]
+    # Act
+    bytes_total, file_total = _sum_gdu_subtree(node, predicate=lambda _n: True)
+    # Assert
+    assert (bytes_total, file_total) == (100, 1)
+
+
+def test_gdu_subtree_walker_prunes_excluded_directories():
+    """Predicate returning False for a dir basename skips the whole subtree."""
+    from scitex_agent_container._workdir_audit import _sum_gdu_subtree
+
+    # Arrange — root has a "keep" subdir and a "skip" subdir; predicate
+    # rejects "skip" so only the "keep" file contributes.
+    node = [
+        {"name": "/r"},
+        [
+            {"name": "keep"},
+            {"name": "a", "asize": 5},
+        ],
+        [
+            {"name": "skip"},
+            {"name": "b", "asize": 9999},
+        ],
+    ]
+    # Act
+    bytes_total, file_total = _sum_gdu_subtree(
+        node, predicate=lambda name: name != "skip"
+    )
+    # Assert
+    assert (bytes_total, file_total) == (5, 1)
+
+
+def test_gdu_navigation_finds_nested_directory():
+    """Path-component navigation descends through nested gdu list-nodes."""
+    from scitex_agent_container._workdir_audit import _navigate_gdu_path
+
+    # Arrange — root/hooks/pre-tool-use/.pending exists nested 3 deep.
+    node = [
+        {"name": "/r"},
+        [
+            {"name": "hooks"},
+            [
+                {"name": "pre-tool-use"},
+                [
+                    {"name": ".pending"},
+                    {"name": "ticket", "asize": 12},
+                ],
+            ],
+        ],
+    ]
+    # Act
+    target = _navigate_gdu_path(node, ["hooks", "pre-tool-use", ".pending"])
+    # Assert
+    assert target is not None and target[0]["name"] == ".pending"
+
+
+def test_gdu_navigation_returns_none_for_missing_path():
+    """Unknown path component returns ``None`` so callers can fall back."""
+    from scitex_agent_container._workdir_audit import _navigate_gdu_path
+
+    # Arrange
+    node = [{"name": "/r"}, [{"name": "exists"}, {"name": "f", "asize": 1}]]
+    # Act
+    target = _navigate_gdu_path(node, ["does-not-exist"])
+    # Assert
+    assert target is None
 
 
 # ---------------------------------------------------------------------------

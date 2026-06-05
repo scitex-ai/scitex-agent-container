@@ -117,103 +117,191 @@ def test_hook_self_test_passes() -> None:
 # --- BLOCK cases mirrored from the lead's verbatim self-test --------------
 
 
-def test_blocks_pytest() -> None:
-    assert _run_hook(_bash_payload("pytest tests/ -x")).returncode == 2
+def test_blocks_unbounded_pytest_command() -> None:
+    # Arrange
+    payload = _bash_payload("pytest tests/ -x")
+    # Act
+    result = _run_hook(payload)
+    # Assert
+    assert result.returncode == 2
 
 
-def test_blocks_pdflatex() -> None:
-    assert _run_hook(_bash_payload("pdflatex paper.tex")).returncode == 2
+def test_blocks_unbounded_pdflatex_command() -> None:
+    # Arrange
+    payload = _bash_payload("pdflatex paper.tex")
+    # Act
+    result = _run_hook(payload)
+    # Assert
+    assert result.returncode == 2
 
 
-def test_blocks_make() -> None:
-    assert _run_hook(_bash_payload("make -C builddir")).returncode == 2
+def test_blocks_unbounded_make_command() -> None:
+    # Arrange
+    payload = _bash_payload("make -C builddir")
+    # Act
+    result = _run_hook(payload)
+    # Assert
+    assert result.returncode == 2
 
 
-def test_blocks_tectonic() -> None:
-    assert _run_hook(_bash_payload("tectonic manuscript.tex")).returncode == 2
+def test_blocks_unbounded_tectonic_command() -> None:
+    # Arrange
+    payload = _bash_payload("tectonic manuscript.tex")
+    # Act
+    result = _run_hook(payload)
+    # Assert
+    assert result.returncode == 2
 
 
-def test_blocks_pipe_chain() -> None:
-    # `find ... | head -20` — has a pipe, so not "short trivial"
-    assert (
-        _run_hook(_bash_payload("find /work -name '*.py' | head -20")).returncode == 2
-    )
+def test_blocks_pipe_chain_command() -> None:
+    # Arrange — `find ... | head -20` has a pipe, so not "short trivial".
+    payload = _bash_payload("find /work -name '*.py' | head -20")
+    # Act
+    result = _run_hook(payload)
+    # Assert
+    assert result.returncode == 2
 
 
 def test_blocks_install_then_pytest_chain() -> None:
-    # && chain — not trivial; contains heavy pytest tail.
+    # Arrange — && chain; not trivial; contains heavy pytest tail.
     cmd = "uv pip install -e .[all] && python -m pytest -q"
-    assert _run_hook(_bash_payload(cmd)).returncode == 2
+    payload = _bash_payload(cmd)
+    # Act
+    result = _run_hook(payload)
+    # Assert
+    assert result.returncode == 2
 
 
 def test_blocks_timeout_greater_than_seven_seconds() -> None:
-    # timeout 60 is well above the 1-7s bounded window.
-    assert _run_hook(_bash_payload("timeout 60 pytest tests/")).returncode == 2
+    # Arrange — timeout 60 is well above the 1-7s bounded window.
+    payload = _bash_payload("timeout 60 pytest tests/")
+    # Act
+    result = _run_hook(payload)
+    # Assert
+    assert result.returncode == 2
 
 
 def test_blocks_timeout_with_minutes_unit() -> None:
-    # 7m is minutes — the policy only accepts 1-7 seconds (s or no unit).
-    assert _run_hook(_bash_payload("timeout 7m pytest tests/")).returncode == 2
+    # Arrange — 7m is minutes; policy accepts 1-7 seconds (s or none).
+    payload = _bash_payload("timeout 7m pytest tests/")
+    # Act
+    result = _run_hook(payload)
+    # Assert
+    assert result.returncode == 2
 
 
-def test_blocks_long_sleep() -> None:
-    # sleep is in LONG_RE; not trivial; no bound.
-    assert _run_hook(_bash_payload("sleep 30")).returncode == 2
+def test_blocks_long_sleep_command() -> None:
+    # Arrange — sleep is in LONG_RE; not trivial; no bound.
+    payload = _bash_payload("sleep 30")
+    # Act
+    result = _run_hook(payload)
+    # Assert
+    assert result.returncode == 2
 
 
-def test_blocks_long_unbounded_install() -> None:
-    # npm install is in LONG_RE; > 50 chars so not trivial-allowed.
+def test_blocks_long_unbounded_install_command() -> None:
+    # Arrange — npm install is LONG_RE; > 50 chars so not trivial-allowed.
     cmd = "npm install --no-audit --legacy-peer-deps"
-    assert _run_hook(_bash_payload(cmd)).returncode == 2
+    payload = _bash_payload(cmd)
+    # Act
+    result = _run_hook(payload)
+    # Assert
+    assert result.returncode == 2
 
 
 # --- ALLOW cases mirrored from the lead's verbatim self-test --------------
 
 
-def test_allows_timeout_7_pytest() -> None:
-    assert _run_hook(_bash_payload("timeout 7 pytest tests/ -x")).returncode == 0
+def test_allows_timeout_7_bounded_pytest() -> None:
+    # Arrange
+    payload = _bash_payload("timeout 7 pytest tests/ -x")
+    # Act
+    result = _run_hook(payload)
+    # Assert
+    assert result.returncode == 0
 
 
-def test_allows_timeout_7s_pdflatex() -> None:
-    assert _run_hook(_bash_payload("timeout 7s pdflatex paper.tex")).returncode == 0
+def test_allows_timeout_7s_bounded_pdflatex() -> None:
+    # Arrange
+    payload = _bash_payload("timeout 7s pdflatex paper.tex")
+    # Act
+    result = _run_hook(payload)
+    # Assert
+    assert result.returncode == 0
 
 
 def test_allows_timeout_kill_flag_5s_make() -> None:
-    # timeout -k 1 5 make ... — timeout flag + value 5 (within 1-7).
-    assert _run_hook(_bash_payload("timeout -k 1 5 make -C builddir")).returncode == 0
+    # Arrange — timeout -k 1 5 make ...; value 5 (within 1-7).
+    payload = _bash_payload("timeout -k 1 5 make -C builddir")
+    # Act
+    result = _run_hook(payload)
+    # Assert
+    assert result.returncode == 0
 
 
 def test_allows_pytest_run_in_background_true() -> None:
-    assert (
-        _run_hook(_bash_payload("pytest tests/ -x", run_in_background=True)).returncode
-        == 0
-    )
+    # Arrange
+    payload = _bash_payload("pytest tests/ -x", run_in_background=True)
+    # Act
+    result = _run_hook(payload)
+    # Assert
+    assert result.returncode == 0
 
 
 def test_allows_setsid_nohup_explicit_detach() -> None:
+    # Arrange
     cmd = "setsid nohup pdflatex paper.tex >/tmp/x.log 2>&1 &"
-    assert _run_hook(_bash_payload(cmd)).returncode == 0
+    payload = _bash_payload(cmd)
+    # Act
+    result = _run_hook(payload)
+    # Assert
+    assert result.returncode == 0
 
 
 def test_allows_make_detached_with_trailing_ampersand() -> None:
+    # Arrange
     cmd = "make all >/tmp/b.log 2>&1 &"
-    assert _run_hook(_bash_payload(cmd)).returncode == 0
+    payload = _bash_payload(cmd)
+    # Act
+    result = _run_hook(payload)
+    # Assert
+    assert result.returncode == 0
 
 
-def test_allows_short_pwd() -> None:
-    assert _run_hook(_bash_payload("pwd")).returncode == 0
+def test_allows_short_trivial_pwd() -> None:
+    # Arrange
+    payload = _bash_payload("pwd")
+    # Act
+    result = _run_hook(payload)
+    # Assert
+    assert result.returncode == 0
 
 
-def test_allows_short_date() -> None:
-    assert _run_hook(_bash_payload("date")).returncode == 0
+def test_allows_short_trivial_date() -> None:
+    # Arrange
+    payload = _bash_payload("date")
+    # Act
+    result = _run_hook(payload)
+    # Assert
+    assert result.returncode == 0
 
 
-def test_allows_short_git_status() -> None:
-    assert _run_hook(_bash_payload("git -C /work status -s")).returncode == 0
+def test_allows_short_git_status_check() -> None:
+    # Arrange
+    payload = _bash_payload("git -C /work status -s")
+    # Act
+    result = _run_hook(payload)
+    # Assert
+    assert result.returncode == 0
 
 
-def test_allows_short_ls() -> None:
-    assert _run_hook(_bash_payload("ls -la")).returncode == 0
+def test_allows_short_trivial_ls() -> None:
+    # Arrange
+    payload = _bash_payload("ls -la")
+    # Act
+    result = _run_hook(payload)
+    # Assert
+    assert result.returncode == 0
 
 
 # --- numeric tool_input.timeout (enforce_delegation-style, lead-asked) ---
@@ -222,42 +310,59 @@ def test_allows_short_ls() -> None:
 def test_allows_heavy_command_with_tool_timeout_5000ms() -> None:
     # Arrange — pytest is heavy, but the Bash tool's own timeout caps it.
     payload = _bash_payload("pytest tests/", timeout=5000)
-    # Act + Assert
-    assert _run_hook(payload).returncode == 0
+    # Act
+    result = _run_hook(payload)
+    # Assert
+    assert result.returncode == 0
 
 
 def test_allows_heavy_command_with_tool_timeout_exactly_7000ms() -> None:
+    # Arrange
     payload = _bash_payload("pdflatex paper.tex", timeout=7000)
-    assert _run_hook(payload).returncode == 0
+    # Act
+    result = _run_hook(payload)
+    # Assert
+    assert result.returncode == 0
 
 
 def test_blocks_heavy_command_with_tool_timeout_15000ms() -> None:
     # Arrange — timeout is set but too large.
     payload = _bash_payload("pytest tests/", timeout=15000)
-    # Act + Assert
-    assert _run_hook(payload).returncode == 2
+    # Act
+    result = _run_hook(payload)
+    # Assert
+    assert result.returncode == 2
 
 
 def test_blocks_heavy_command_with_tool_timeout_zero() -> None:
     # Arrange — timeout=0 must NOT be treated as bounded.
     payload = _bash_payload("pytest tests/", timeout=0)
-    # Act + Assert
-    assert _run_hook(payload).returncode == 2
+    # Act
+    result = _run_hook(payload)
+    # Assert
+    assert result.returncode == 2
 
 
 # --- non-Bash tool + escape hatch -----------------------------------------
 
 
-def test_allows_non_bash_tool() -> None:
+def test_allows_non_bash_tool_read() -> None:
+    # Arrange — Read tool with a file path; hook should not block.
     payload = json.dumps(
         {"tool_name": "Read", "tool_input": {"file_path": "/etc/hosts"}}
     )
-    assert _run_hook(payload).returncode == 0
+    # Act
+    result = _run_hook(payload)
+    # Assert
+    assert result.returncode == 0
 
 
-def test_honors_escape_hatch_env() -> None:
+def test_honors_escape_hatch_env_var() -> None:
+    # Arrange
     payload = _bash_payload("pytest tests/")
+    # Act
     result = _run_hook(payload, env_override={"CC_ALLOW_FOREGROUND_HEAVY": "1"})
+    # Assert
     assert result.returncode == 0
 
 
@@ -265,48 +370,63 @@ def test_honors_escape_hatch_env() -> None:
 
 
 def test_block_message_names_telegram_latency_cost() -> None:
-    result = _run_hook(_bash_payload("pytest tests/"))
-    stderr = result.stderr.lower()
-    assert result.returncode == 2
-    assert "telegram" in stderr, "block message must name the Telegram-latency cost"
+    # Arrange
+    payload = _bash_payload("pytest tests/")
+    # Act
+    stderr = _run_hook(payload).stderr.lower()
+    # Assert
+    assert "telegram" in stderr
 
 
 def test_block_message_explains_inbox_mechanism() -> None:
-    result = _run_hook(_bash_payload("pytest tests/"))
-    stderr = result.stderr.lower()
-    assert result.returncode == 2
-    assert "inbox" in stderr or "main loop" in stderr or "main turn" in stderr, (
-        "block message must explain the inbox/main-loop mechanism"
-    )
+    # Arrange
+    payload = _bash_payload("pytest tests/")
+    # Act
+    stderr = _run_hook(payload).stderr.lower()
+    # Assert — at least one of the canonical phrasings.
+    assert any(marker in stderr for marker in ("inbox", "main loop", "main turn"))
 
 
 def test_block_message_states_work_is_not_interrupted() -> None:
-    result = _run_hook(_bash_payload("pytest tests/"))
-    stderr = result.stderr.lower()
-    assert result.returncode == 2
-    assert (
-        "not interrupt" in stderr
-        or "continues" in stderr
-        or "off the main loop" in stderr
-    ), "block message must reassure that work CONTINUES, just off the main loop"
+    # Arrange
+    payload = _bash_payload("pytest tests/")
+    # Act
+    stderr = _run_hook(payload).stderr.lower()
+    # Assert — reassures the agent that work CONTINUES off the main loop.
+    assert any(
+        marker in stderr
+        for marker in ("not interrupt", "continues", "off the main loop")
+    )
 
 
 def test_block_message_lists_all_four_relaunch_options() -> None:
-    stderr = _run_hook(_bash_payload("pytest tests/")).stderr
-    assert "run_in_background" in stderr, "must offer Bash run_in_background"
-    assert "setsid nohup" in stderr, "must offer setsid nohup detach"
-    assert "Task" in stderr or "Agent" in stderr, "must offer Task/Agent subagent"
-    assert "timeout 7" in stderr, "must offer timeout 7 bounded fallback"
+    # Arrange
+    payload = _bash_payload("pytest tests/")
+    # Act
+    stderr = _run_hook(payload).stderr
+    # Assert — all four canonical relaunch routes must be present.
+    markers = (
+        "run_in_background" in stderr
+        and "setsid nohup" in stderr
+        and ("Task" in stderr or "Agent" in stderr)
+        and "timeout 7" in stderr
+    )
+    assert markers
 
 
-def test_block_message_documents_escape_hatch() -> None:
-    stderr = _run_hook(_bash_payload("pytest tests/")).stderr
-    assert "CC_ALLOW_FOREGROUND_HEAVY" in stderr, "must document the escape hatch"
+def test_block_message_documents_escape_hatch_env() -> None:
+    # Arrange
+    payload = _bash_payload("pytest tests/")
+    # Act
+    stderr = _run_hook(payload).stderr
+    # Assert
+    assert "CC_ALLOW_FOREGROUND_HEAVY" in stderr
 
 
 def test_block_message_quotes_operator_wording() -> None:
-    # Operator's exact wording reframes the rule for any future agent.
-    stderr = _run_hook(_bash_payload("pytest tests/")).stderr
-    assert "作業中断はしてほしくない" in stderr, (
-        "must include operator's wording 8843/8845"
-    )
+    # Arrange — operator's exact wording reframes the rule for any agent.
+    payload = _bash_payload("pytest tests/")
+    # Act
+    stderr = _run_hook(payload).stderr
+    # Assert
+    assert "作業中断はしてほしくない" in stderr

@@ -54,6 +54,18 @@ def deref_copy_symlink(src: Path, dst: Path) -> None:
     too (``copytree(symlinks=False)``), so no host path leaks into the
     container view.
 
+    Excluded subtrees (see :mod:`.._walk_exclusions`) are SKIPPED via
+    the ``ignore`` callable handed to ``shutil.copytree`` — most
+    importantly ``worktrees/`` directories anywhere in the resolved
+    tree. Without this, a baseline symlink like
+    ``_base/to_home/.claude/skills -> ~/.claude/skills`` would
+    transitively pull every git worktree nested under the host's
+    ``~/.claude/`` into the container overlay at start time — one of
+    the two SAC-side walkers behind the original F-CS8 outage class
+    (corrected 2026-06-04: Claude Code does NOT itself recursively
+    walk ``~/.claude`` at startup; the bloat path was the
+    ``to_home`` deref-copy and the ``_workdir_audit`` walk).
+
     Idempotent: an existing ``dst`` (file, dir, or symlink) is removed
     before the copy so repeated deploys always land current content.
 
@@ -64,6 +76,8 @@ def deref_copy_symlink(src: Path, dst: Path) -> None:
         The message names the symlink path, its literal target, the
         resolved path, and what to do.
     """
+    from .._walk_exclusions import copytree_ignore
+
     literal_target = os.readlink(src)
     resolved = src.resolve(strict=False)
     if not resolved.exists():
@@ -78,7 +92,7 @@ def deref_copy_symlink(src: Path, dst: Path) -> None:
     _replace_dst(dst)
     dst.parent.mkdir(parents=True, exist_ok=True)
     if resolved.is_dir():
-        shutil.copytree(resolved, dst, symlinks=False)
+        shutil.copytree(resolved, dst, symlinks=False, ignore=copytree_ignore())
     else:
         shutil.copy2(resolved, dst, follow_symlinks=True)
     logger.info(
