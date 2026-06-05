@@ -52,9 +52,15 @@ def _register_self_comms_node(*, port: int) -> None:
     the federated graph.
 
     Identity source: ``LeadConfig.name`` (e.g. ``lead`` on the lead
-    host). Hosts without a ``lead:`` block skip this hook quietly —
-    those listens serve only sac-managed agents, which already register
-    themselves through ``record_instance_start``.
+    host). Hosts without a ``lead:`` block emit a LOUD WARNING and
+    skip — those listens serve only sac-managed agents, which
+    register themselves via ``record_instance_start``; operators that
+    EXPECT a lead row (cross-host A2A targeting ``lead``) need to
+    know the listen isn't writing it. The old silent return was the
+    exact bug PR2 (#308) repaired via ``sac registry register``: a
+    missing lead block meant ``resolve_node_host('lead')`` returned
+    ``None`` fleet-wide with no log line pointing at why. The warning
+    + the new repair verb together close the regression door.
     """
     try:
         from .._state.host_config import load
@@ -66,7 +72,22 @@ def _register_self_comms_node(*, port: int) -> None:
         cfg = load()
         lead = cfg.lead
         if lead is None:
-            return  # no operator identity configured; nothing to register
+            # Loud-but-non-fatal: the listen MUST still bind (a failed
+            # bind is worse than a missing federated row), but the
+            # operator needs a paper trail when cross-host 'lead'
+            # resolution starts failing. The repair path is documented
+            # inline so the operator can act without spelunking ADR-0014.
+            click.echo(
+                "# WARN: comms_nodes self-register skipped — host_config "
+                "has no `lead:` block, so this listen will NOT advertise "
+                "an operator-identity row. Other hosts' "
+                "`resolve_node_host('lead')` will return None until a row "
+                "exists. Add a `lead:` block to host_config (preferred) "
+                "OR run `sac registry register --name lead --host <h> "
+                "--a2a-port <p>` for an immediate no-restart repair.",
+                err=True,
+            )
+            return
         local_host = cfg.canonical_host()
         try:
             register_comms_node(
