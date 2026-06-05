@@ -18,6 +18,39 @@ from .._helpers import agent_name_complete, console
 from ._common import _iter_agent_yamls
 
 
+def _any_target_needs_anthropic_oauth(
+    single_targets: list[str], bulk_yamls: list[str]
+) -> bool:
+    """Return True iff at least one target spec uses Anthropic OAuth.
+
+    PR#314 (lead msg 24a8b27c): provider-backed specs (LiteLLM, vLLM,
+    DeepSeek, gateway via ``ANTHROPIC_BASE_URL``) route the SDK session
+    through a non-Anthropic backend; the parent's
+    ``~/.claude/.credentials.json`` is bind-mounted but never read.
+    When EVERY target has ``spec.claude.provider`` non-None, the
+    parent's OAuth preflight is moot.
+
+    Defensive default: if a spec fails to load (unresolvable name,
+    unparseable YAML, schema error), assume it needs OAuth. Better to
+    ask the operator for creds + surface the real spec error on the
+    actual dispatch loop than to skip the gate silently on a broken
+    spec the operator hasn't noticed yet.
+    """
+    from ...config import load_config
+    from ...config._resolve import resolve_with_prefix
+
+    for raw in list(single_targets) + list(bulk_yamls):
+        try:
+            cfg_path = resolve_with_prefix(raw)
+            cfg = load_config(cfg_path)
+        except Exception:  # stx-allow: fallback (reason: defensive — see docstring)
+            return True
+        provider = getattr(getattr(cfg, "claude", None), "provider", None)
+        if provider is None:
+            return True
+    return False
+
+
 @click.command()
 @click.argument(
     "targets",
@@ -293,6 +326,18 @@ def start(
     # see provision_anthropic_auth in runtimes/_sdk_common.py). On
     # failure: exit 1 with the helper's message on stderr, no
     # traceback.
+    #
+    # PR#314 (lead msg 24a8b27c / clew Spartan dogfood 2026-06-06):
+    # also skip when the invocation is purely orchestrator-shaped:
+    #   * ``--broker-self`` parent — never talks to Anthropic; only
+    #     bootstraps a listen + spawns the capsule. The capsule's own
+    #     preflight runs separately (in the broker's child subprocess).
+    #   * EVERY target's spec.claude.provider is non-None — the SDK
+    #     session routes through a non-Anthropic backend (LiteLLM /
+    #     vLLM / DeepSeek / gateway via ANTHROPIC_BASE_URL), and the
+    #     bind-mounted Anthropic credentials are never read.
+    # Either condition is sufficient to skip; the gate stays surgical
+    # — any Anthropic-backed target still triggers the check.
     _preflight_ran = False
 
     def _run_preflight_once() -> None:
@@ -300,6 +345,17 @@ def start(
         if _preflight_ran or no_redispatch:
             return
         _preflight_ran = True
+        # Orchestrator-only invocation — skip the parent's OAuth check.
+        if broker_self:
+            return
+        # All targets provider-backed — no parent-side Anthropic OAuth
+        # needed. Loaded once per invocation (cheap; the same configs
+        # are re-loaded inside run_single_targets / run_bulk_path for
+        # actual dispatch — a future refactor could thread the loaded
+        # configs through, but the duplication is small enough to leave
+        # for now).
+        if not _any_target_needs_anthropic_oauth(single_targets, bulk_yamls_from_dirs):
+            return
         from ..._state._preflight_creds import check_oauth_token_expiry
 
         try:

@@ -179,3 +179,144 @@ class TestApiKeyBypassesPreflight:
         result = runner.invoke(start, ["any-target-name"])
         # Assert: NOT 1 with "claude login" — preflight didn't run.
         assert "claude login" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# PR#314: --broker-self + provider-backed specs skip the parent's OAuth
+# check (lead msg 24a8b27c, clew Spartan dogfood 2026-06-06). The parent
+# in either orchestrator-only mode never talks to Anthropic, so checking
+# its OAuth credentials is spurious — and (per clew's Spartan repro) it
+# blocked the broker boot on a 4.6-day-old expired creds file. Both
+# escape hatches are surgical: any Anthropic-backed target still
+# triggers the check.
+# ---------------------------------------------------------------------------
+
+
+def _install_provider_spec(
+    yaml_dir: Path, name: str, *, base_url: str = "http://127.0.0.1:4000"
+) -> Path:
+    """Write a minimal v3 spec.yaml with spec.claude.provider configured.
+
+    The spec is just enough to load_config + reach the preflight
+    branch's provider-non-None check; downstream dispatch will fail
+    on the missing image/runtime but that runs AFTER the preflight.
+    """
+    agent_dir = yaml_dir / name
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    spec = agent_dir / "spec.yaml"
+    spec.write_text(
+        "apiVersion: scitex-agent-container/v3\n"
+        "kind: Agent\n"
+        "spec:\n"
+        "  claude:\n"
+        "    provider:\n"
+        f"      base_url: {base_url}\n"
+        "      auth_token_env: FAKE_TOKEN_ENV\n"
+        "  apptainer:\n"
+        "    image: /nonexistent/dummy.sif\n",
+        encoding="utf-8",
+    )
+    return spec
+
+
+def _install_anthropic_spec(yaml_dir: Path, name: str) -> Path:
+    """Write a minimal v3 spec.yaml WITHOUT a provider (Anthropic path)."""
+    agent_dir = yaml_dir / name
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    spec = agent_dir / "spec.yaml"
+    spec.write_text(
+        "apiVersion: scitex-agent-container/v3\n"
+        "kind: Agent\n"
+        "spec:\n"
+        "  claude: {}\n"
+        "  apptainer:\n"
+        "    image: /nonexistent/dummy.sif\n",
+        encoding="utf-8",
+    )
+    return spec
+
+
+class TestBrokerSelfBypassesPreflight:
+    """--broker-self is the orchestrator-only flag (PR#311). The parent
+    process never talks to Anthropic — it bootstraps a local listen
+    and spawns the capsule, which gets its own preflight in the
+    broker's child subprocess. Skipping the parent's OAuth check is
+    the durable fix for the Spartan-creds-expiry treadmill that
+    repeatedly bit clew's cohort-A launches."""
+
+    def test_broker_self_skips_oauth_preflight_on_expired_creds(
+        self, tmp_path: Path, env_save_restore
+    ) -> None:
+        # Arrange — expired creds + --broker-self. Pre-PR#314 the
+        # preflight blocked with "claude login"; post-PR#314 it skips.
+        env_save_restore.set("HOME", str(tmp_path))
+        env_save_restore.delete("ANTHROPIC_API_KEY")
+        env_save_restore.delete("SAC_ANTHROPIC_API_KEY")
+        _install_expired_creds(tmp_path)
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, ["any-target-name", "--broker-self"])
+        # Assert — preflight skipped (no "claude login" in output).
+        assert "claude login" not in result.output
+
+
+class TestProviderBackedSpecBypassesPreflight:
+    """When EVERY target's spec.claude.provider is non-None, the SDK
+    routes through a non-Anthropic backend (LiteLLM, vLLM, DeepSeek,
+    gateway via ANTHROPIC_BASE_URL). The bind-mounted Anthropic
+    credentials are never read, so the preflight is moot."""
+
+    def test_provider_backed_target_skips_oauth_preflight(
+        self, tmp_path: Path, env_save_restore
+    ) -> None:
+        # Arrange — expired creds + a provider-backed spec on disk.
+        env_save_restore.set("HOME", str(tmp_path))
+        env_save_restore.delete("ANTHROPIC_API_KEY")
+        env_save_restore.delete("SAC_ANTHROPIC_API_KEY")
+        _install_expired_creds(tmp_path)
+        yaml_dir = tmp_path / "agents"
+        _install_provider_spec(yaml_dir, "provider-agent")
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_YAML_DIRS", str(yaml_dir))
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, ["provider-agent"])
+        # Assert — preflight skipped (no "claude login" in output);
+        # the downstream dispatch may still fail on the dummy.sif but
+        # that comes from agent_start, not the preflight.
+        assert "claude login" not in result.output
+
+    def test_anthropic_backed_target_still_runs_oauth_preflight(
+        self, tmp_path: Path, env_save_restore
+    ) -> None:
+        # Arrange — expired creds + a spec WITHOUT provider. The
+        # preflight MUST still fire (regression guard: don't accidentally
+        # skip all preflights when at least one spec needs OAuth).
+        env_save_restore.set("HOME", str(tmp_path))
+        env_save_restore.delete("ANTHROPIC_API_KEY")
+        env_save_restore.delete("SAC_ANTHROPIC_API_KEY")
+        _install_expired_creds(tmp_path)
+        yaml_dir = tmp_path / "agents"
+        _install_anthropic_spec(yaml_dir, "anthropic-agent")
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_YAML_DIRS", str(yaml_dir))
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, ["anthropic-agent"])
+        # Assert — preflight DID fire (the existing Anthropic path is unchanged).
+        assert "claude login" in result.output
+
+    def test_unresolvable_target_defaults_to_running_oauth_preflight(
+        self, tmp_path: Path, env_save_restore
+    ) -> None:
+        # Arrange — defensive default: if a spec can't be loaded,
+        # the preflight still fires (better to surface the OAuth
+        # state than to silently skip on a broken spec).
+        env_save_restore.set("HOME", str(tmp_path))
+        env_save_restore.delete("ANTHROPIC_API_KEY")
+        env_save_restore.delete("SAC_ANTHROPIC_API_KEY")
+        _install_expired_creds(tmp_path)
+        runner = CliRunner()
+        # Act — target name doesn't resolve to anything on disk.
+        result = runner.invoke(start, ["nonexistent-target-9c4f7a"])
+        # Assert — preflight fired (defensive); operator sees the
+        # OAuth message before they get the spec-resolve error.
+        assert "claude login" in result.output
