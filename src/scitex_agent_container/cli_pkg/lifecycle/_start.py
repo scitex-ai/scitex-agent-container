@@ -159,6 +159,19 @@ from ._common import _iter_agent_yamls
         "to prevent recursion). Internal use mostly."
     ),
 )
+@click.option(
+    "--broker-self",
+    "broker_self",
+    is_flag=True,
+    default=False,
+    help=(
+        "Bootstrap a per-invocation `sac listen` on a free loopback port "
+        "and broker the spawn through it (nested SAC-from-SAC, L2 design). "
+        "Use inside a SLURM allocation / parent SIF where no upstream "
+        "`sac listen` is reachable. The listen is torn down on exit; the "
+        "bearer never touches the operator's main token file."
+    ),
+)
 def start(
     targets: tuple[str, ...],
     no_preflight: bool,
@@ -175,6 +188,7 @@ def start(
     params_overwrite: bool,
     strict_drift: bool,
     no_redispatch: bool,
+    broker_self: bool,
 ) -> None:
     """Start one or more agents from YAML definitions.
 
@@ -337,6 +351,7 @@ def start(
         no_redispatch=no_redispatch,
         multi_foreground=multi_foreground,
         preflight_runner=_run_preflight_once,
+        broker_self=broker_self,
     )
 
 
