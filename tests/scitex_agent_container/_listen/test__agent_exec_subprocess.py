@@ -442,3 +442,237 @@ def test_agents_start_post_ack_failure_returns_502(
         )
     # Assert
     assert resp.status_code == 502
+
+
+# ---------------------------------------------------------------------------
+# PR-α (lead msg d96a468c 2026-06-06): cohort one-shot diagnostic.
+#
+# The pre-α handler runs `sac agents start <name>` WITHOUT --foreground /
+# --one-shot, even when the operator's parent invocation carried them.
+# The apptainer runtime's background branch (Popen + write apptainer_pid +
+# return rc=0 immediately) means the inner subprocess returns success
+# before the capsule has actually proven viable; the PR#313 liveness probe
+# then sees a still-alive Popen pid and returns SUCC even when the capsule
+# crashes seconds later. clew's bm172 repro 2026-06-06: parent rc=0 +
+# "SUCC started" (async ack), 5 min later capsule dead with empty
+# stdout.log, single heartbeat, no fresh STARTUP_FAILED — operator-side
+# observability had nothing to triage. The fix: parent's body now carries
+# ``foreground``/``one_shot`` flags; this handler propagates them to the
+# inner argv → the inner runtime takes the foreground branch
+# (subprocess.run blocks until the capsule exits) → the capsule's real
+# rc + stderr surface up the chain → STARTUP_FAILED.stderr_tail finally
+# tells WHY the capsule crashed. PR#313's probe is skipped on this branch
+# (the foreground subprocess already blocked + the foreground apptainer
+# runtime explicitly does NOT write apptainer_pid; the probe would always
+# false-fail post_ack_no_apptainer_pid).
+# ---------------------------------------------------------------------------
+
+
+def _install_argv_recording_sac_shim(bin_dir: Path) -> Path:
+    """Install a sac shim that records its argv to a sibling log.
+
+    Writes ``<bin_dir>/sac.argv.jsonl`` with one JSON list per
+    invocation, ``[arg1, arg2, ...]``. Returns the path to the log.
+    """
+    import json
+    import sys
+
+    argv_log = bin_dir / "sac.argv.jsonl"
+    script = bin_dir / "sac"
+    body = (
+        f"#!{sys.executable}\n"
+        "import json, sys\n"
+        f"with open({json.dumps(str(argv_log))}, 'a') as fh:\n"
+        "    fh.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+        "sys.exit(0)\n"
+    )
+    script.write_text(body)
+    script.chmod(0o755)
+    return argv_log
+
+
+def test_agents_start_propagates_foreground_flag_to_inner_argv(
+    isolated_listen_env, env_save_restore, tmp_path: Path
+) -> None:
+    """``foreground: true`` body field → inner argv carries ``--foreground``."""
+    # Arrange — argv-recording sac shim; body sets foreground=true.
+    import json
+
+    bin_dir = tmp_path / "sac_bin_fg_argv"
+    bin_dir.mkdir()
+    argv_log = _install_argv_recording_sac_shim(bin_dir)
+    env_save_restore.set("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    env_save_restore.set("SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", "0")
+    app = create_app(token=_TOKEN)
+    # Act
+    with TestClient(app) as client:
+        client.post(
+            "/agents",
+            json={"name": "cohort-child", "foreground": True},
+            headers={"authorization": f"Bearer {_TOKEN}"},
+        )
+    recorded = json.loads(argv_log.read_text().splitlines()[-1])
+    # Assert — --foreground appears between "start" and the positional name.
+    assert "--foreground" in recorded
+
+
+def test_agents_start_propagates_one_shot_flag_to_inner_argv(
+    isolated_listen_env, env_save_restore, tmp_path: Path
+) -> None:
+    """``one_shot: true`` body field → inner argv carries ``--one-shot``."""
+    # Arrange
+    import json
+
+    bin_dir = tmp_path / "sac_bin_os_argv"
+    bin_dir.mkdir()
+    argv_log = _install_argv_recording_sac_shim(bin_dir)
+    env_save_restore.set("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    env_save_restore.set("SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", "0")
+    app = create_app(token=_TOKEN)
+    # Act
+    with TestClient(app) as client:
+        client.post(
+            "/agents",
+            json={"name": "cohort-child", "one_shot": True},
+            headers={"authorization": f"Bearer {_TOKEN}"},
+        )
+    recorded = json.loads(argv_log.read_text().splitlines()[-1])
+    # Assert
+    assert "--one-shot" in recorded
+
+
+def test_agents_start_no_flags_back_compat_inner_argv_unchanged(
+    isolated_listen_env, env_save_restore, tmp_path: Path
+) -> None:
+    """Body without ``foreground`` / ``one_shot`` → inner argv = pre-α shape.
+
+    Back-compat for pre-α brokers (the absent body fields default to
+    False; no flag is appended). Pre-α inner argv was
+    ``["agents", "start", <name>]`` — preserve that exact shape so a
+    future refactor that always-on the flags trips a red test.
+    """
+    # Arrange
+    import json
+
+    bin_dir = tmp_path / "sac_bin_noflags_argv"
+    bin_dir.mkdir()
+    argv_log = _install_argv_recording_sac_shim(bin_dir)
+    env_save_restore.set("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    env_save_restore.set("SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", "0")
+    app = create_app(token=_TOKEN)
+    # Act
+    with TestClient(app) as client:
+        client.post(
+            "/agents",
+            json={"name": "back-compat-child"},
+            headers={"authorization": f"Bearer {_TOKEN}"},
+        )
+    recorded = json.loads(argv_log.read_text().splitlines()[-1])
+    # Assert
+    assert recorded == ["agents", "start", "back-compat-child"]
+
+
+def test_agents_start_rejects_non_bool_foreground(
+    isolated_listen_env, env_save_restore, tmp_path: Path
+) -> None:
+    """``foreground: "yes"`` → 400, never silently coerced.
+
+    Wire shape must be a JSON boolean; string "true" / "1" / "yes" are
+    NOT accepted because the handler propagates to a CLI flag — a typo
+    or schema drift on the caller's side must fail loud, not silently
+    behave one way or the other.
+    """
+    # Arrange
+    env_save_restore.set("SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", "0")
+    app = create_app(token=_TOKEN)
+    # Act
+    with TestClient(app) as client:
+        resp = client.post(
+            "/agents",
+            json={"name": "x", "foreground": "yes"},
+            headers={"authorization": f"Bearer {_TOKEN}"},
+        )
+    # Assert
+    assert resp.status_code == 400
+
+
+def test_agents_start_foreground_skips_post_ack_liveness_probe(
+    isolated_listen_env, env_save_restore, tmp_path: Path
+) -> None:
+    """``foreground=True`` MUST skip the PR#313 post-ack liveness probe.
+
+    Why: the apptainer runtime's foreground branch is ``subprocess.run``
+    (not Popen), so it doesn't write apptainer_pid at all. The probe
+    would always false-fail with ``post_ack_no_apptainer_pid`` and
+    spuriously downgrade a successful one-shot run to 502 +
+    STARTUP_FAILED. With foreground, the inner subprocess has already
+    blocked — the rc captured above IS the truth.
+    """
+    # Arrange — sac shim that returns rc=0 and does NOT write
+    # apptainer_pid (mirrors the foreground-runtime behaviour). Set a
+    # short timeout so a pre-α probe regression would fire a marker
+    # within the test window.
+    bin_dir = tmp_path / "sac_bin_fg_no_probe"
+    bin_dir.mkdir()
+    _install_sac_shim_writing_pid_file(
+        bin_dir, runtime_dir=tmp_path / "unused", pid_value=None
+    )
+    env_save_restore.set("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    env_save_restore.set("SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", "0.5")
+    app = create_app(token=_TOKEN)
+    # Act
+    with TestClient(app) as client:
+        resp = client.post(
+            "/agents",
+            json={"name": "cohort-child", "foreground": True},
+            headers={"authorization": f"Bearer {_TOKEN}"},
+        )
+    # Assert — without the foreground skip, the probe would mark
+    # STARTUP_FAILED + 502; with it, the handler returns 200.
+    assert resp.status_code == 200
+
+
+def test_agents_start_foreground_rc_nonzero_writes_stderr_tail_to_marker(
+    isolated_listen_env, env_save_restore, tmp_path: Path
+) -> None:
+    """Cohort diagnostic: capsule crash → STARTUP_FAILED.stderr_tail.
+
+    With foreground propagated, the inner ``sac agents start`` runs the
+    apptainer runtime in subprocess.run-blocks mode. If the capsule
+    crashes, rc != 0 and the runtime's stderr (the apptainer FATAL
+    line, the in-SIF entrypoint trace, etc.) bubbles back to this
+    handler's ``proc.stderr`` and into ``STARTUP_FAILED.stderr_tail``.
+    PR-α folds in PR9: this contract is THE unblock for finding why
+    clew's bm172 capsule dies after one heartbeat.
+    """
+    # Arrange — sac shim that simulates a capsule crash: emits a
+    # recognisable stderr line and exits non-zero. (No mocks; real
+    # subprocess + real handler + real marker write.)
+    import sys
+
+    bin_dir = tmp_path / "sac_bin_fg_crash"
+    bin_dir.mkdir()
+    script = bin_dir / "sac"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        'sys.stderr.write("FATAL: capsule crashed for the test\\n")\n'
+        "sys.exit(42)\n"
+    )
+    script.chmod(0o755)
+    env_save_restore.set("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    env_save_restore.set("SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", "0")
+    app = create_app(token=_TOKEN)
+    # Act
+    with TestClient(app) as client:
+        client.post(
+            "/agents",
+            json={"name": "crash-child", "foreground": True},
+            headers={"authorization": f"Bearer {_TOKEN}"},
+        )
+    from scitex_agent_container._lifecycle._startup_failed import read_marker
+    from scitex_agent_container._runners._session_state import state_dir_for
+
+    marker = read_marker(state_dir_for("crash-child"))
+    # Assert
+    assert marker is not None and "FATAL: capsule crashed" in marker["stderr_tail"]

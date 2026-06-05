@@ -235,7 +235,19 @@ def agent_start(
     # contract lives in :func:`_in_sif_broker.maybe_broker_in_sif_spawn`.
     from ._in_sif_broker import maybe_broker_in_sif_spawn
 
-    if maybe_broker_in_sif_spawn(config.name, dry_run=dry_run, opener=in_sif_opener):
+    # PR-α (lead msg d96a468c 2026-06-06): propagate --foreground /
+    # --one-shot through the broker so the host listen's /agents handler
+    # appends them to its inner `sac agents start` argv. The cohort
+    # one-shot capsule runs synchronously → real rc + real stderr land
+    # in STARTUP_FAILED on crash (the diagnostic clew needs to find
+    # WHY the bm172 capsule dies after one heartbeat).
+    if maybe_broker_in_sif_spawn(
+        config.name,
+        dry_run=dry_run,
+        opener=in_sif_opener,
+        foreground=foreground,
+        one_shot=one_shot,
+    ):
         return True
 
     # Launch-time LOCAL spec-source drift check. Verifies the git repo

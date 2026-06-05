@@ -124,6 +124,8 @@ def broker_start_to_host(
     bearer: str | None = None,
     timeout_s: float = 30.0,
     opener: Callable | None = None,
+    foreground: bool = False,
+    one_shot: bool = False,
 ) -> dict:
     """POST a spawn request to the host-side ``sac listen``; FAIL LOUD on error.
 
@@ -200,6 +202,8 @@ def broker_start_to_host(
             bearer=bearer,
             timeout_s=timeout_s,
             opener=opener,
+            foreground=foreground,
+            one_shot=one_shot,
         )
     except SpawnRequestError as exc:
         # Re-throw under the broker's own error type so the integration
@@ -221,6 +225,8 @@ def maybe_broker_in_sif_spawn(
     *,
     dry_run: bool,
     opener: Callable | None = None,
+    foreground: bool = False,
+    one_shot: bool = False,
 ) -> bool:
     """Single-call broker chokepoint for the in-SIF redirect in agent_start.
 
@@ -248,11 +254,30 @@ def maybe_broker_in_sif_spawn(
       * Host accepted the request but ``sac agent start`` itself failed
         → :class:`RuntimeError` naming the agent and returncode, with
         the full host response in the message for debug-without-ssh.
+
+    ``foreground`` / ``one_shot``: when the parent ``sac agents start``
+    invocation carried these flags, propagate them through the body so
+    the host listen's ``/agents`` handler appends ``--foreground`` /
+    ``--one-shot`` to its inner ``sac agents start`` argv. This switches
+    the host-side apptainer runtime to the foreground branch
+    (``subprocess.run`` blocks until the capsule exits) so the
+    capsule's actual exit code + stderr flow up the chain and land in
+    ``STARTUP_FAILED.stderr_tail`` on crash — the cohort one-shot
+    diagnostic clew needs (lead msg d96a468c 2026-06-06). Without this
+    propagation, the inner runtime takes the background branch (Popen
+    + return rc=0 immediately) and the post-ack liveness probe sees a
+    still-alive Popen pid, returning SUCC while the capsule dies
+    silently later.
     """
     if dry_run or not is_in_sif():
         return False
 
-    result = broker_start_to_host(name, opener=opener)
+    result = broker_start_to_host(
+        name,
+        opener=opener,
+        foreground=foreground,
+        one_shot=one_shot,
+    )
     rc = result.get("returncode") if isinstance(result, dict) else None
     if rc != 0:
         raise RuntimeError(

@@ -234,6 +234,49 @@ def test_inline_spec_is_forwarded_with_overwrite_flag(listen_env) -> None:
     assert body["spec"] == spec and body["overwrite"] is True
 
 
+# ---------------------------------------------------------------------------
+# PR-α (lead msg d96a468c 2026-06-06): cohort one-shot diagnostic.
+# request_spawn emits ``foreground`` / ``one_shot`` body fields only when
+# truthy so the wire shape is back-compat with pre-α brokers (those
+# ignore absent fields). The host listen's /agents handler reads each
+# field and appends the matching CLI flag to its inner argv.
+# ---------------------------------------------------------------------------
+
+
+def test_body_includes_foreground_true_when_requested(listen_env) -> None:
+    # Arrange
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener, captured = _opener_returning(b'{"name":"c","returncode":0}')
+    # Act
+    request_spawn("c", foreground=True, opener=opener)
+    # Assert
+    assert json.loads(captured["body"])["foreground"] is True
+
+
+def test_body_includes_one_shot_true_when_requested(listen_env) -> None:
+    # Arrange
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener, captured = _opener_returning(b'{"name":"c","returncode":0}')
+    # Act
+    request_spawn("c", one_shot=True, opener=opener)
+    # Assert
+    assert json.loads(captured["body"])["one_shot"] is True
+
+
+def test_body_omits_foreground_and_one_shot_when_default_false(
+    listen_env,
+) -> None:
+    # Arrange — default kwargs absent on the call.
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener, captured = _opener_returning(b'{"name":"c","returncode":0}')
+    # Act
+    request_spawn("c", opener=opener)
+    # Assert — both keys must be ABSENT (not present-but-false) so the
+    # wire shape is byte-identical to pre-α brokers.
+    body = json.loads(captured["body"])
+    assert "foreground" not in body and "one_shot" not in body
+
+
 def test_bearer_token_attached_as_authorization_header(listen_env) -> None:
     # Arrange
     listen_env("LISTEN_BASE_URL", "http://host:9100")
@@ -336,9 +379,7 @@ def test_server_500_raises_spawn_request_error(listen_env) -> None:
     # Arrange — a 500 must propagate as a fail-loud error, not return None.
     listen_env("LISTEN_BASE_URL", "http://host:9100")
     opener = _opener_raising(
-        urlerror.HTTPError(
-            "http://host:9100/agents", 500, "boom", {}, io.BytesIO(b"")
-        )
+        urlerror.HTTPError("http://host:9100/agents", 500, "boom", {}, io.BytesIO(b""))
     )
     captured_status = None
     # Act
@@ -368,7 +409,7 @@ def test_non_dict_2xx_body_raises_spawn_request_error(listen_env) -> None:
     # Arrange — server returns a JSON array instead of an object; must
     # fail loud rather than silently corrupt the caller's downstream use.
     listen_env("LISTEN_BASE_URL", "http://host:9100")
-    opener, _ = _opener_returning(b'[1,2,3]', status=200)
+    opener, _ = _opener_returning(b"[1,2,3]", status=200)
     raised = False
     # Act
     try:

@@ -284,6 +284,55 @@ def test_broker_raises_on_host_listen_acl_deny(listen_env) -> None:
 
 
 # ---------------------------------------------------------------------------
+# PR-α (lead msg d96a468c 2026-06-06): cohort one-shot diagnostic chain.
+# ``broker_start_to_host`` and ``maybe_broker_in_sif_spawn`` forward
+# ``foreground`` / ``one_shot`` to ``request_spawn`` → body fields → host
+# listen's /agents handler argv. Three forwarding tests so a refactor
+# that drops either kwarg trips a red test before the diagnostic value
+# silently regresses.
+# ---------------------------------------------------------------------------
+
+
+def test_broker_forwards_foreground_to_body(listen_env) -> None:
+    # Arrange
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener, captured = _opener_returning(b'{"name":"c","returncode":0}')
+    # Act
+    broker_start_to_host("child", opener=opener, foreground=True)
+    # Assert
+    assert json.loads(captured["body"])["foreground"] is True
+
+
+def test_broker_forwards_one_shot_to_body(listen_env) -> None:
+    # Arrange
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener, captured = _opener_returning(b'{"name":"c","returncode":0}')
+    # Act
+    broker_start_to_host("child", opener=opener, one_shot=True)
+    # Assert
+    assert json.loads(captured["body"])["one_shot"] is True
+
+
+def test_maybe_broker_in_sif_forwards_foreground_to_body(sif_env, listen_env) -> None:
+    # Arrange — flip is_in_sif() to True so the chokepoint actually
+    # brokers (rather than returning False for the bare-host path).
+    from scitex_agent_container._lifecycle._in_sif_broker import (
+        maybe_broker_in_sif_spawn,
+    )
+
+    sif_env("/path/to/parent.sif", key="APPTAINER_CONTAINER")
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener, captured = _opener_returning(b'{"name":"c","returncode":0}')
+    # Act
+    maybe_broker_in_sif_spawn(
+        "child", dry_run=False, opener=opener, foreground=True, one_shot=True
+    )
+    # Assert
+    body = json.loads(captured["body"])
+    assert body["foreground"] is True and body["one_shot"] is True
+
+
+# ---------------------------------------------------------------------------
 # agent_start integration — in-SIF detection redirects to broker
 # ---------------------------------------------------------------------------
 

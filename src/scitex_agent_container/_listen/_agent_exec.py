@@ -393,6 +393,29 @@ async def agents_start(request: Request) -> JSONResponse:
         return JSONResponse(
             {"error": "'caller' must be a string if present"}, status_code=400
         )
+
+    # PR-α (lead msg d96a468c 2026-06-06): cohort one-shot diagnostic.
+    # When the parent's ``sac agents start`` carried --foreground /
+    # --one-shot, the spawn client (_lifecycle/_spawn_client.py) emits
+    # these as body fields. Propagate to the inner argv so the host's
+    # apptainer runtime takes the foreground/one-shot branch
+    # (subprocess.run blocks until the capsule exits) — the capsule's
+    # actual exit code + stderr then flow up into STARTUP_FAILED on
+    # crash, instead of the background branch's "Popen + rc=0
+    # immediately" lie. Each flag is independent + back-compat absent
+    # (default False → no flag, pre-α behaviour).
+    foreground = body.get("foreground", False)
+    if not isinstance(foreground, bool):
+        return JSONResponse(
+            {"error": "'foreground' must be a boolean if present"},
+            status_code=400,
+        )
+    one_shot = body.get("one_shot", False)
+    if not isinstance(one_shot, bool):
+        return JSONResponse(
+            {"error": "'one_shot' must be a boolean if present"},
+            status_code=400,
+        )
     decision, reason = check_spawn(caller=caller)
     if decision == "deny":
         return deny_response(reason or "spawn denied")
@@ -457,9 +480,19 @@ async def agents_start(request: Request) -> JSONResponse:
     child_env = dict(os.environ)
     child_env.pop("APPTAINER_CONTAINER", None)
     child_env.pop("SINGULARITY_CONTAINER", None)
+    # PR-α: propagate --foreground / --one-shot to the inner argv per the
+    # body fields validated above. Order matches the click signature on
+    # `sac agents start` (flags before/after positional name are
+    # equivalent, but keep the positional last for the canonical shape).
+    inner_argv = [sac_bin, "agents", "start"]
+    if foreground:
+        inner_argv.append("--foreground")
+    if one_shot:
+        inner_argv.append("--one-shot")
+    inner_argv.append(name)
     proc = await asyncio.to_thread(
         subprocess.run,
-        [sac_bin, "agents", "start", name],
+        inner_argv,
         capture_output=True,
         text=True,
         check=False,
@@ -530,6 +563,24 @@ async def agents_start(request: Request) -> JSONResponse:
     # Loud failures write a fresh STARTUP_FAILED with the new kind
     # AND downgrade the response to 502 so the operator-side recv
     # path can show a real diagnostic instead of a misleading SUCC.
+    #
+    # PR-α: skip the probe when foreground=True. The inner subprocess
+    # already blocked (apptainer runtime's foreground branch is
+    # subprocess.run, not Popen) and explicitly does NOT write
+    # apptainer_pid — the probe would always report
+    # post_ack_no_apptainer_pid on a successful one-shot run. The real
+    # signal is the inner rc captured above; rc!=0 already wrote
+    # STARTUP_FAILED with stderr_tail (the cohort one-shot diagnostic).
+    if foreground:
+        return JSONResponse(
+            {
+                "name": name,
+                "returncode": proc.returncode,
+                "stdout": proc.stdout,
+                "stderr": proc.stderr,
+            },
+            status_code=200,
+        )
     from .._lifecycle._startup_failed import write_marker
     from .._runners._session_state import state_dir_for
 
