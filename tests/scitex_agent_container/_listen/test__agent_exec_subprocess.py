@@ -112,3 +112,152 @@ def test_agents_start_does_not_use_singular_agent_form(
     argv = subprocess_shim.argv_for("sac")
     # Assert — single-token regression guard.
     assert argv is not None and argv[0] != "agent", argv
+
+
+# ---------------------------------------------------------------------------
+# --broker-self recursive re-entry fix (clew dogfood repro 2026-06-06,
+# lead msg d8f61055): when the listen runs inside a parent SAC's SIF on
+# a SLURM allocation, the child `sac agents start` it execs inherited
+# APPTAINER_CONTAINER / SINGULARITY_CONTAINER from the listen env,
+# is_in_sif() returned True on the child, and maybe_broker_in_sif_spawn
+# re-entered → recursive InSifBrokerError loop. The handler MUST strip
+# those env markers before exec'ing the child so the child takes the
+# bare-host path (direct apptainer-exec the sibling SIF).
+#
+# Test seam: a custom env-recording sac shim writes the child's
+# os.environ snapshot for the two markers to a sibling log file; the
+# test reads it back and asserts neither marker survived.
+# ---------------------------------------------------------------------------
+
+
+def _install_env_recording_sac_shim(bin_dir: Path) -> Path:
+    """Like subprocess_shim's apptainer shim but ALSO records the env.
+
+    Writes ``<bin_dir>/sac.env.jsonl`` with one JSON object per
+    invocation, ``{"APPTAINER_CONTAINER": <value-or-None>,
+    "SINGULARITY_CONTAINER": <value-or-None>}``. Returns the path to
+    the env log file.
+    """
+    import json
+    import sys
+
+    env_log = bin_dir / "sac.env.jsonl"
+    script = bin_dir / "sac"
+    body = (
+        f"#!{sys.executable}\n"
+        "import json, os\n"
+        f"with open({json.dumps(str(env_log))}, 'a') as fh:\n"
+        "    fh.write(json.dumps({\n"
+        "        'APPTAINER_CONTAINER': os.environ.get('APPTAINER_CONTAINER'),\n"
+        "        'SINGULARITY_CONTAINER': os.environ.get('SINGULARITY_CONTAINER'),\n"
+        "    }) + '\\n')\n"
+        "import sys; sys.exit(0)\n"
+    )
+    script.write_text(body)
+    script.chmod(0o755)
+    return env_log
+
+
+def test_agents_start_strips_apptainer_container_env_from_child(
+    isolated_listen_env, env_save_restore, tmp_path: Path
+) -> None:
+    """Pin the recursive-re-entry fix for APPTAINER_CONTAINER."""
+    # Arrange — parent has APPTAINER_CONTAINER set (as the listen
+    # process would inside the parent SAC's SIF on a SLURM allocation);
+    # install a sac shim that records the CHILD subprocess's env.
+    import json
+
+    bin_dir = tmp_path / "sac_env_shim_bin"
+    bin_dir.mkdir()
+    env_log = _install_env_recording_sac_shim(bin_dir)
+    env_save_restore.set("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    env_save_restore.set("APPTAINER_CONTAINER", "/path/to/parent-sac.sif")
+    app = create_app(token=_TOKEN)
+    # Act
+    with TestClient(app) as client:
+        client.post(
+            "/agents",
+            json={"name": "broker-child"},
+            headers={"authorization": f"Bearer {_TOKEN}"},
+        )
+    recorded = json.loads(env_log.read_text().splitlines()[-1])
+    # Assert — the marker must be stripped from the child's env;
+    # otherwise is_in_sif() returns True downstream and we hit the
+    # recursive InSifBrokerError loop clew reproduced on Spartan.
+    assert recorded["APPTAINER_CONTAINER"] is None
+
+
+def test_agents_start_strips_singularity_container_env_from_child(
+    isolated_listen_env, env_save_restore, tmp_path: Path
+) -> None:
+    """Pin the recursive-re-entry fix for SINGULARITY_CONTAINER.
+
+    Clew's actual repro on Spartan jobid 25666081 hit this variant
+    (the legacy Singularity-named env var, set by operator bashrc /
+    SLURM prologue / generate.py._default_sif_path hint). Pinned
+    separately from APPTAINER_CONTAINER so a future refactor that
+    only strips one of the two trips a red test.
+    """
+    # Arrange
+    import json
+
+    bin_dir = tmp_path / "sac_env_shim_bin2"
+    bin_dir.mkdir()
+    env_log = _install_env_recording_sac_shim(bin_dir)
+    env_save_restore.set("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    env_save_restore.set("SINGULARITY_CONTAINER", "/path/to/parent-sac.sif")
+    app = create_app(token=_TOKEN)
+    # Act
+    with TestClient(app) as client:
+        client.post(
+            "/agents",
+            json={"name": "broker-child"},
+            headers={"authorization": f"Bearer {_TOKEN}"},
+        )
+    recorded = json.loads(env_log.read_text().splitlines()[-1])
+    # Assert
+    assert recorded["SINGULARITY_CONTAINER"] is None
+
+
+def test_agents_start_preserves_unrelated_env_vars_to_child(
+    isolated_listen_env, env_save_restore, tmp_path: Path
+) -> None:
+    """The strip MUST be surgical — only the two in-SIF markers.
+
+    Stripping everything else would orphan downstream env-dependent
+    behavior (credentials, account routing, channel bearer, etc.).
+    Pin one canary unrelated var to guard against an over-broad
+    fix (e.g. accidentally passing env={} or os.environ.clear()).
+    """
+    # Arrange
+    import json
+
+    bin_dir = tmp_path / "sac_env_shim_bin3"
+    bin_dir.mkdir()
+    env_log = bin_dir / "sac.canary.jsonl"
+    script = bin_dir / "sac"
+    body = (
+        f"#!{__import__('sys').executable}\n"
+        "import json, os\n"
+        f"with open({__import__('json').dumps(str(env_log))}, 'a') as fh:\n"
+        "    fh.write(json.dumps({\n"
+        "        'CANARY': os.environ.get('SAC_BROKER_SELF_TEST_CANARY'),\n"
+        "    }) + '\\n')\n"
+        "import sys; sys.exit(0)\n"
+    )
+    script.write_text(body)
+    script.chmod(0o755)
+    env_save_restore.set("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    env_save_restore.set("SAC_BROKER_SELF_TEST_CANARY", "must-survive-strip")
+    env_save_restore.set("APPTAINER_CONTAINER", "/parent.sif")
+    app = create_app(token=_TOKEN)
+    # Act
+    with TestClient(app) as client:
+        client.post(
+            "/agents",
+            json={"name": "broker-child"},
+            headers={"authorization": f"Bearer {_TOKEN}"},
+        )
+    recorded = json.loads(env_log.read_text().splitlines()[-1])
+    # Assert
+    assert recorded["CANARY"] == "must-survive-strip"
