@@ -63,12 +63,16 @@ From: ./sac-base.sif
     # package's OWN source tree, copied in by the %files section above.
     # The SIF's sac version is structurally pinned to the source tree
     # that shipped this .def; no `git+...@main` snapshot drift.
+    # claude-agent-sdk MUST be pinned here too — leaving it unpinned
+    # lets uv/pip drift away from the base layer's 0.2.87 pin (the
+    # version that bundles the working claude CLI 2.1.150). Keep
+    # both branches' version in lockstep with apptainer-base.def.
     if command -v uv >/dev/null; then
         uv pip install --python /opt/venv-sac/bin/python \
             black flake8 \
             ipython ipdb \
             pytest pytest-cov \
-            claude-agent-sdk \
+            "claude-agent-sdk==0.2.87" \
             "scitex[all]" \
             /opt/scitex-agent-container-src
     else
@@ -78,7 +82,7 @@ From: ./sac-base.sif
             black flake8 \
             ipython ipdb \
             pytest pytest-cov \
-            claude-agent-sdk \
+            "claude-agent-sdk==0.2.87" \
             "scitex[all]" \
             /opt/scitex-agent-container-src
     fi
