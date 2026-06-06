@@ -60,12 +60,21 @@ From: ubuntu:24.04
     # git/curl/ca-certificates/openssh-client are listed here so any
     # future base-image trim cannot silently drop them — sac runtime
     # hard-depends on each one (HTTPS verify chain, SSH dispatch, git).
+    #
+    # libglib2.0-0 is REQUIRED by the scitex stack: without it,
+    # libgthread-2.0.so.0 is missing and `import scitex.io` silently
+    # falls back to "minimal mode" — runs look green but lose the
+    # full IO surface. Caught by clew's capsule-0220918 cohort-A
+    # audit (2026-06-06); the silent fallback is the real bug, the
+    # missing system lib is the immediate fix. Added on the lib row
+    # because it's a runtime system library (no -dev companion needed
+    # for the consumers that hit the silent-fallback path).
     apt-get update
     apt-get install -y --no-install-recommends \
         ca-certificates curl wget gnupg \
         git openssh-client sshpass autossh git-crypt \
         build-essential pkg-config \
-        libffi-dev libssl-dev libgl1-mesa-dev libc6-dev \
+        libffi-dev libssl-dev libgl1-mesa-dev libc6-dev libglib2.0-0 \
         python3 python3-pip python3-venv python3-dev \
         locales tzdata \
         procps lsof strace less \
