@@ -25,13 +25,29 @@ Two separate concerns, gated independently:
       sidecar is sac's own bus adapter; it must never be auto-wired for a
       foreign channel. Backing MCPs for non-sac channels come from the
       spec's ``to_home/.mcp.json`` (already merged into ``mcp_servers``).
+
+Wake-on-push diagnostics (bug #41 hardening, 2026-06-07):
+  ``_wire_telegrammer_wake`` (concern (c)) used to silently no-op on every
+  misconfig path. Operator complaint: agents look dead on inbound Telegram
+  for any of N reasons (missing channel name, missing a2a port, missing
+  MCP entry, etc.), with no signal pointing at the root cause. Every skip
+  path now emits a WARN-or-ERROR-level log so the operator (or anyone
+  reading the runner stderr) can see exactly which gate failed. The
+  matching host-side preflight ``validate_telegrammer_wake_wiring`` runs
+  in ``_lifecycle/_start.py`` and HARD-ERRORS the start if the channel is
+  requested but the wake URL provably won't wire — that catches the
+  misconfig BEFORE the agent boots, instead of after the operator's third
+  un-replied Telegram message.
 """
 
 from __future__ import annotations
 
 import json as _json
+import logging as _logging
 import os as _os
 from pathlib import Path as _Path
+
+_log = _logging.getLogger(__name__)
 
 
 def merge_home_mcp_servers(mcp_servers: dict) -> dict:
@@ -191,25 +207,156 @@ def _wire_telegrammer_wake(
 
     Gated: only when the channel set requests the telegrammer channel, the
     merged ``mcp_servers`` actually carries the backing entry, and the runner
-    has an ``a2a_port`` (so a ``/v1/turn`` endpoint exists). No-op otherwise —
-    e.g. an interactive CLI with no a2a port keeps the notification-only path.
+    has an ``a2a_port`` (so a ``/v1/turn`` endpoint exists). Each skip path
+    LOGS the reason at WARN/ERROR (bug #41 hardening, 2026-06-07): a silent
+    no-op looks indistinguishable from a bug in the standalone telegrammer JS
+    poller, which trapped the operator in a multi-day "why doesn't my agent
+    wake?" guessing game. Loud diagnostics make the root cause obvious to
+    whoever is reading the runner stderr.
     Never overrides an explicit operator-set TURN_URL in the spec.
     """
     if not any(c.strip() == _TELEGRAMMER_CHANNEL for c in channels):
+        # Channel not requested — nothing to wire and nothing to warn about.
         return
+    # From here down the operator requested the telegrammer channel, so any
+    # gate that drops the wake wiring IS a misconfig worth surfacing.
     if a2a_port is None:
+        _log.warning(
+            "telegrammer wake NOT wired for %r: spec.a2a.port is unset (None) "
+            "but channel %r is requested; without an /v1/turn endpoint the "
+            "standalone telegrammer has no URL to POST inbound Telegram "
+            "messages to, so an idle agent will not wake on Telegram. Fix: "
+            "set spec.a2a.port to 'auto' or an explicit int.",
+            _TELEGRAMMER_CHANNEL,
+            _TELEGRAMMER_CHANNEL,
+        )
         return
     mcps = kwargs.get("mcp_servers")
     if not isinstance(mcps, dict):
+        _log.warning(
+            "telegrammer wake NOT wired: kwargs['mcp_servers'] is %r, not a "
+            "dict; the channel %r is requested but the runner cannot inject "
+            "CLAUDE_CODE_TELEGRAMMER_TURN_URL into a malformed mcp_servers "
+            "table. Likely caller bug.",
+            type(mcps).__name__,
+            _TELEGRAMMER_CHANNEL,
+        )
         return
     entry = mcps.get(_TELEGRAMMER_MCP_KEY)
     if not isinstance(entry, dict):
+        _log.error(
+            "telegrammer wake NOT wired: channel %r is requested but no MCP "
+            "entry keyed %r found in mcp_servers (current keys: %r). The "
+            "agent's to_home/.mcp.json must declare an MCP entry under that "
+            "exact key — the standalone bun/ts telegrammer process keyed any "
+            "other name will not receive CLAUDE_CODE_TELEGRAMMER_TURN_URL "
+            "and an idle agent will not wake on Telegram. Add the entry to "
+            "to_home/.mcp.json under the canonical key %r.",
+            _TELEGRAMMER_CHANNEL,
+            _TELEGRAMMER_MCP_KEY,
+            sorted(mcps.keys()),
+            _TELEGRAMMER_MCP_KEY,
+        )
         return
     env = entry.setdefault("env", {})
     if not isinstance(env, dict):
+        _log.warning(
+            "telegrammer wake NOT wired: mcp_servers[%r]['env'] is %r, not a "
+            "dict; cannot inject CLAUDE_CODE_TELEGRAMMER_TURN_URL. Fix the "
+            "to_home/.mcp.json entry's env to be an object.",
+            _TELEGRAMMER_MCP_KEY,
+            type(env).__name__,
+        )
         return
+    wired_url = f"http://127.0.0.1:{int(a2a_port)}/v1/turn"
     # Operator-set value wins (explicit > inferred).
-    env.setdefault(
+    existing = env.get(_TELEGRAMMER_TURN_URL_ENV)
+    if existing is not None and existing != wired_url:
+        _log.info(
+            "telegrammer wake URL pre-set by operator: %r (auto-wired value "
+            "would have been %r). Operator override preserved; verify the "
+            "pre-set URL actually points at this agent's /v1/turn.",
+            existing,
+            wired_url,
+        )
+    env.setdefault(_TELEGRAMMER_TURN_URL_ENV, wired_url)
+    _log.info(
+        "telegrammer wake wired: %s=%r injected into mcp_servers[%r].env",
         _TELEGRAMMER_TURN_URL_ENV,
-        f"http://127.0.0.1:{int(a2a_port)}/v1/turn",
+        env[_TELEGRAMMER_TURN_URL_ENV],
+        _TELEGRAMMER_MCP_KEY,
     )
+
+
+# ---------------------------------------------------------------------------
+# Host-side preflight (called from ``_lifecycle/_start.py``).
+#
+# The runner-side wake-wiring runs INSIDE the SDK runner after the agent has
+# already booted: a loud log there is good but the operator may not be
+# tailing the runner stderr. The host-side preflight runs at ``sac agents
+# start`` time, BEFORE the runtime is built, and HARD-FAILS the start
+# instead of letting the operator discover the misconfig the next time they
+# message the bot. Catches the F1 (channel-absent) / F2 (port-absent) /
+# F4 (operator override stale) bug shapes loudly at the right place.
+#
+# This preflight cannot check F3 (MCP entry mis-keyed in to_home/.mcp.json)
+# without parsing that file — host-side it would need the agent's
+# workspace path; doable as a follow-up but not in this PR's scope. The
+# runner-side ``_wire_telegrammer_wake`` ERROR log covers F3 at boot time.
+# ---------------------------------------------------------------------------
+
+
+class TelegrammerWakeWiringError(RuntimeError):
+    """The operator requested the telegrammer channel but the wake URL
+    provably won't wire; refuse to start so the misconfig is loud.
+    """
+
+
+def validate_telegrammer_wake_wiring(
+    channels: list[str] | None,
+    a2a_port: int | None,
+    *,
+    agent_name: str = "",
+) -> None:
+    """Host-side preflight — raise if the wake wiring is impossible.
+
+    Called from ``_lifecycle/_start.py`` right after ``resolve_a2a_port``
+    so the start fails LOUD before any runtime is built, instead of the
+    operator discovering the silent no-op via "agent doesn't reply to
+    Telegram" hours later.
+
+    Only fires if ``server:claude-code-telegrammer`` is in ``channels``
+    AND a downstream gate would have silently no-op'd the wake wiring.
+    No-op when the channel is not requested (nothing to validate) or when
+    the channel is requested AND the wiring will succeed.
+
+    Catches the host-visible portion of the bug-#41 failure surface:
+
+      F1: channel not requested → silent no-op (we don't fire here at all
+          — there's nothing to validate).
+      F2: channel requested but ``a2a_port`` is None → would silently
+          no-op the runner-side wake wiring; we raise here instead.
+
+    F3 (MCP entry mis-keyed in ``to_home/.mcp.json``) and F4 (operator
+    pre-set a stale ``CLAUDE_CODE_TELEGRAMMER_TURN_URL``) are not visible
+    here without parsing the to_home tree; the runner-side
+    ``_wire_telegrammer_wake`` logs cover those at agent boot.
+    """
+    if not channels:
+        return
+    if not any(c.strip() == _TELEGRAMMER_CHANNEL for c in channels):
+        return
+    if a2a_port is None:
+        agent_clause = f" for agent {agent_name!r}" if agent_name else ""
+        raise TelegrammerWakeWiringError(
+            f"spec.claude.channels{agent_clause} requests "
+            f"{_TELEGRAMMER_CHANNEL!r} but spec.a2a.port is unset/null. "
+            f"Without an /v1/turn endpoint the standalone telegrammer "
+            f"poller has no URL to POST inbound Telegram messages to, so "
+            f"an idle agent cannot wake on Telegram. Fix: set spec.a2a.port "
+            f"to 'auto' (sac picks a port) or to an explicit free int, then "
+            f"retry the start. To run without the wake (legacy "
+            f"notifications/claude/channel-only behaviour, only renders for "
+            f"already-active turns), remove "
+            f"{_TELEGRAMMER_CHANNEL!r} from spec.claude.channels."
+        )

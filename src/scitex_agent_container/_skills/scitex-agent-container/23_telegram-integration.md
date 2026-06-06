@@ -1,96 +1,95 @@
 ---
 description: |
-  [TOPIC] Telegram fold — sac MCP transport tools + channel-push inbound.
-  [DETAILS] Phase 2+3 wiring: TelegramBridge runs in the sac MCP server,
-  long-polls Telegram, emits notifications/claude/channel on inbound,
-  and backs the six telegram_* MCP tools on outbound. Covers the
-  launcher dependency on --dangerously-load-development-channels, the
-  per-bot-token flock with stale-PID recovery, and the lead-only auth
-  gate via LEAD_TELEGRAM_AUTH_TOKEN.
+  [TOPIC] Per-agent Telegram bot wake contract — how an idle SDK agent picks up an inbound Telegram message.
+  [DETAILS] Each agent runs its OWN claude-code-telegrammer stdio MCP (declared in to_home/.mcp.json under the key `claude-code-telegrammer`). sac's runner injects `CLAUDE_CODE_TELEGRAMMER_TURN_URL=http://127.0.0.1:<a2a_port>/v1/turn` into that MCP's env when `spec.claude.channels` contains `server:claude-code-telegrammer` AND `spec.a2a.port` is set. The standalone telegrammer poller POSTs each inbound to that URL so an IDLE agent wakes (push ≡ in-session channel). The legacy in-sac `_telegram/` bridge was dropped (`refactor(telegram): drop telegram subsystem from sac`) — this skill documents the current per-agent path + the loud diagnostics that fire when any gate fails.
 tags: [scitex-agent-container-telegram-integration]
 ---
 
-# Telegram integration (Phase 2 + 3)
+# Telegram integration — per-agent wake contract
 
-The `_telegram/` package folds claude-code-telegrammer's transport surface
-into sac MCP. The lead's Claude session owns the bot token and emits
-`notifications/claude/channel` for inbound messages; subagents reach
-Telegram via the `telegram_*` MCP tools through the same in-process bridge.
+## Design
 
-## When this skill is relevant
+Each agent runs its OWN Telegram bot via a `claude-code-telegrammer` stdio
+MCP declared in the spec's `to_home/.mcp.json`. The in-sac `_telegram/`
+bridge from earlier phases was retired (`refactor(telegram): drop telegram
+subsystem from sac`). The current path:
 
-* You need to send a Telegram message from a sac agent.
-* You're debugging why inbound Telegram messages aren't reaching Claude.
-* You're audit-checking the per-bot-token lock or the auth-token gate.
+1. Operator's `spec.claude.channels` lists `server:claude-code-telegrammer`.
+2. Operator's `to_home/.mcp.json` declares a stdio MCP under the key
+   `claude-code-telegrammer` (the bun/ts standalone telegrammer process).
+3. sac's runner (`runtimes/_sdk_channels.apply_channels`) injects
+   `CLAUDE_CODE_TELEGRAMMER_TURN_URL=http://127.0.0.1:<spec.a2a.port>/v1/turn`
+   into that MCP entry's env when (1) AND (2) hold AND `spec.a2a.port` is
+   set. Operator-pre-set value wins.
+4. Claude Code spawns the telegrammer MCP as a stdio subprocess.
+5. The telegrammer JS poller (`ts/lib/wake.ts` in the standalone repo) reads
+   `CLAUDE_CODE_TELEGRAMMER_TURN_URL` and on each allowed inbound POSTs the
+   message to that URL.
+6. The runner's `/v1/turn` handler (`_runners/_session_http.py::serve_inbound`)
+   queues a `TurnEnvelope` onto an `asyncio.Queue`. The conversation task
+   drains it, drives a turn through the persistent SDK client, replies.
 
-## Quick check — is the bridge running?
+`<channel>` rendering in the AGENT's session requires the dev-channels
+flag, which `apply_channels` sets to the comma-joined channel set whenever
+ANY `spec.claude.channels` entry is present — the foreign-channel
+generalisation guarded by `test__sdk_channels.py`.
 
-```python
-from scitex_agent_container._telegram import get_bridge
+## Required spec shape
 
-bridge = get_bridge()
-print(bridge is None)        # True on subagents; False on the lead
-print(bridge.is_running)     # True after start(), False before
-print(bridge.allowed_users)  # ['123456']
+```yaml
+spec:
+  a2a:
+    port: auto          # MUST NOT be null/missing; the /v1/turn endpoint
+                        # is the wake URL the telegrammer POSTs to.
+  claude:
+    channels:
+      - server:claude-code-telegrammer  # exact string (whitespace tolerated)
+  # to_home/.mcp.json (sibling file) must contain:
+  #   "mcpServers": {"claude-code-telegrammer": {...stdio entry...}}
 ```
 
-## Inbound flow (Telegram → Claude)
+The MCP entry key MUST be `claude-code-telegrammer` (literal). Any other
+key — `telegrammer`, `claude-telegrammer`, `tg-bot`, etc. — bypasses the
+env injection and the JS poller has no wake URL.
 
-1. Bridge long-polls Telegram with `getUpdates`.
-2. Each update is filtered through `TelegramSpec.allowed_users` — an
-   empty list fails closed (nobody allowed). The filter compares
-   `update.message.from.id` against the list.
-3. Allowed updates become a `{"content": <text>, "meta": {...}}` payload
-   on the bridge's `notifier` callable. `_mcp/server.py` wires that
-   callable to the MCP session, which emits a
-   `notifications/claude/channel` push.
-4. Claude renders `<channel source="telegram" chat_id=... message_id=...
-   user_id=... username=...>` to the running session.
+## Failure surface + diagnostics (bug #41 hardening, 2026-06-07)
 
-**Launcher dependency**: Claude Code only delivers
-`notifications/claude/channel` pushes when the launcher is invoked with
-`--dangerously-load-development-channels server:scitex-agent-container`.
-Without it the notification is silently dropped. The bridge logs a WARN
-at startup to make the dependency visible; check the MCP server's stderr.
+Each silent-skip in `_wire_telegrammer_wake` used to look identical at the
+operator level: "I message my bot, the agent doesn't reply." The wake
+helper now LOGs every skip path; the host-side preflight
+`validate_telegrammer_wake_wiring` (called from `_lifecycle/_start.py`)
+HARD-FAILS the start when the wiring provably won't succeed.
 
-## Outbound flow (Claude → Telegram)
+| Failure | Where it surfaces | Operator fix |
+|---|---|---|
+| `server:claude-code-telegrammer` absent from channels | Silent no-op (intentional — channel not requested) | Add the channel to spec.claude.channels |
+| `spec.a2a.port` is null | `validate_telegrammer_wake_wiring` raises `TelegrammerWakeWiringError` at `sac agents start` time | Set spec.a2a.port to 'auto' or an explicit free int |
+| `to_home/.mcp.json` missing the `claude-code-telegrammer` MCP entry | Runner-side ERROR log: "no MCP entry keyed 'claude-code-telegrammer' found" | Add the MCP entry under the canonical key |
+| `to_home/.mcp.json` entry malformed (`env` not a dict) | Runner-side WARN log | Fix the entry's `env` to be an object |
+| Operator pre-set `CLAUDE_CODE_TELEGRAMMER_TURN_URL` | Runner-side INFO log: "pre-set by operator … not overridden" | Verify the pre-set URL actually points at THIS agent's /v1/turn |
+| Wake URL successfully wired | Runner-side INFO log: "telegrammer wake wired" | Nothing — verify by tailing runner stderr |
 
-The six MCP tools all share the same shape:
+## How to verify on a running agent
 
-* `telegram_send(chat_id, text, reply_to=None)`
-* `telegram_reply(chat_id, text, row_id=None, reply_to=None, mark_read=True)`
-* `telegram_react(chat_id, message_id, emoji)`
-* `telegram_edit_message(chat_id, message_id, text)`
-* `telegram_download_attachment(file_id, dest_dir=None)`
-* `telegram_send_document(chat_id, path, caption=None)`
+```bash
+# 1. Confirm the channel + port are configured.
+sac agents inspect <name> --json | jq '.spec.claude.channels, .spec.a2a.port'
 
-Each tool checks the caller's `LEAD_TELEGRAM_AUTH_TOKEN` against the
-bridge's stored token. Subagents inherit a sanitised env without the
-token, so they get `{"error": "telegram tools are lead-only; ..."}` and
-the bridge is never touched.
+# 2. Confirm the MCP entry key.
+jq '.mcpServers["claude-code-telegrammer"]' \
+  ~/.scitex/agent-container/agents/<name>/to_home/.mcp.json
 
-## Feature flag
+# 3. Tail the runner stderr for the wake-wiring log.
+sac agents logs <name> --stderr | grep -i 'telegrammer wake'
 
-Default ON in Phase 3 (was opt-in in Phase 1). Set
-`SCITEX_AGENT_CONTAINER_TELEGRAM_FOLD=0` to disable tool registration on
-this server.
+# 4. End-to-end: message the bot when the agent is idle, watch for a reply.
+```
 
-## Singleton lock
+## Out of scope (not in this repo)
 
-The bridge takes an exclusive `flock` at
-`~/.scitex/agent-container/runtime/telegram/<token-hash>.lock` (note:
-`runtime/`, not `containers/`). Stale-PID recovery: if the recorded PID
-is dead (`kill(pid, 0)` → `ESRCH`), the lock is reclaimed automatically.
-This is the failure mode the standalone telegrammer suffers from
-(crashed PID leaves a dangling file; future starts block until manual
-`rm`).
-
-If you ever see `TelegramLockError: telegram bridge lock ... is held by
-another live process`, run `ps -p <pid>` on the recorded PID to confirm
-the holder. The bridge will not start a second poller against the same
-bot token — Telegram returns 409 Conflict on dual `getUpdates`.
-
-## Don't touch
-
-* `~/proj/claude-code-telegrammer/` — being retired for sac-fleet use.
-* The Phase 1 stubs — replaced; the import surface is unchanged.
+The JS-side telegrammer (`ts/lib/wake.ts`) is in the standalone
+[claude-code-telegrammer](https://github.com/ywatanabe1989/claude-code-telegrammer)
+repo. If the env var is set but the agent still doesn't wake, the JS
+poller may not be reading + POSTing — file that upstream. The Python-side
+INFO log "telegrammer wake wired" confirms sac did its half; an idle
+agent that still doesn't wake after that points at the JS side.

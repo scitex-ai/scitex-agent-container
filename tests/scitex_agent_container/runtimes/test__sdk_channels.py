@@ -25,8 +25,10 @@ import os
 import pytest
 
 from scitex_agent_container.runtimes._sdk_channels import (
+    TelegrammerWakeWiringError,
     apply_channels,
     merge_home_mcp_servers,
+    validate_telegrammer_wake_wiring,
 )
 
 
@@ -322,3 +324,154 @@ class TestMergeHomeMcpServers:
                 os.environ["MY_REF"] = saved
         # Assert
         assert out["x"]["env"]["K"] == "resolved-value"
+
+
+# ---------------------------------------------------------------------------
+# Bug #41 hardening — diagnostics for the telegrammer-wake silent-skip paths.
+#
+# The runner-side ``_wire_telegrammer_wake`` (called from ``apply_channels``)
+# now LOGs every silent-skip case so the operator can see exactly which gate
+# failed when an idle agent doesn't wake on Telegram. The host-side
+# ``validate_telegrammer_wake_wiring`` HARD-FAILS the start when the channel
+# is requested but the a2a port is unset — catching the misconfig at
+# ``sac agents start`` time instead of after the operator's third
+# un-replied Telegram message.
+# ---------------------------------------------------------------------------
+
+
+class TestTelegrammerWakeDiagnostics:
+    """``_wire_telegrammer_wake`` must LOG (not silently no-op) on each
+    skip path so the operator can see the precise misconfig."""
+
+    def test_a2a_port_missing_logs_warning(self, caplog):
+        # Arrange
+        kwargs: dict = {"mcp_servers": {}}
+        # Act
+        with caplog.at_level(
+            "WARNING", logger="scitex_agent_container.runtimes._sdk_channels"
+        ):
+            apply_channels(kwargs, ["server:claude-code-telegrammer"], None, "clew")
+        # Assert
+        assert any(
+            "spec.a2a.port is unset" in rec.getMessage() for rec in caplog.records
+        )
+
+    def test_mcp_entry_missing_logs_error(self, caplog):
+        # Arrange — channel + a2a port present, but no claude-code-telegrammer
+        # entry in mcp_servers.
+        kwargs: dict = {"mcp_servers": {"some-other-mcp": {"type": "stdio"}}}
+        # Act
+        with caplog.at_level(
+            "ERROR", logger="scitex_agent_container.runtimes._sdk_channels"
+        ):
+            apply_channels(kwargs, ["server:claude-code-telegrammer"], 19007, "clew")
+        # Assert
+        assert any(
+            "claude-code-telegrammer" in rec.getMessage()
+            and "no MCP entry keyed" in rec.getMessage()
+            for rec in caplog.records
+        )
+
+    def test_successful_wiring_logs_info(self, caplog):
+        # Arrange
+        kwargs: dict = {
+            "mcp_servers": {
+                "claude-code-telegrammer": {
+                    "type": "stdio",
+                    "command": "bash",
+                    "args": ["-c", "exec bun run telegram-server.ts"],
+                    "env": {},
+                }
+            }
+        }
+        # Act
+        with caplog.at_level(
+            "INFO", logger="scitex_agent_container.runtimes._sdk_channels"
+        ):
+            apply_channels(kwargs, ["server:claude-code-telegrammer"], 19007, "clew")
+        # Assert
+        assert any(
+            "telegrammer wake wired" in rec.getMessage() for rec in caplog.records
+        )
+
+    def test_no_log_when_channel_not_requested(self, caplog):
+        # Arrange — channel set has NO telegrammer entry, so the wake helper
+        # must produce NO log lines (a benign no-op, not a misconfig).
+        kwargs: dict = {"mcp_servers": {}}
+        # Act
+        with caplog.at_level(
+            "WARNING", logger="scitex_agent_container.runtimes._sdk_channels"
+        ):
+            apply_channels(kwargs, ["server:sac"], 19007, "clew")
+        # Assert
+        assert all(
+            "telegrammer" not in rec.getMessage().lower() for rec in caplog.records
+        )
+
+    def test_operator_set_url_preserved_and_logged(self, caplog):
+        # Arrange
+        kwargs: dict = {
+            "mcp_servers": {
+                "claude-code-telegrammer": {
+                    "type": "stdio",
+                    "command": "bash",
+                    "args": ["-c", "exec bun run telegram-server.ts"],
+                    "env": {
+                        "CLAUDE_CODE_TELEGRAMMER_TURN_URL": "http://operator.example/v1/turn"
+                    },
+                }
+            }
+        }
+        # Act
+        with caplog.at_level(
+            "INFO", logger="scitex_agent_container.runtimes._sdk_channels"
+        ):
+            apply_channels(kwargs, ["server:claude-code-telegrammer"], 19007, "clew")
+        # Assert
+        assert any("pre-set by operator" in rec.getMessage() for rec in caplog.records)
+
+
+class TestValidateTelegrammerWakeWiring:
+    """Host-side preflight in ``_lifecycle/_start.agent_start``: hard-fail
+    the start when the wake wiring provably won't succeed."""
+
+    def test_no_channels_does_not_raise(self):
+        # Arrange — no channels requested at all.
+        # Act + Assert: nothing to validate.
+        validate_telegrammer_wake_wiring(None, None, agent_name="clew")
+
+    def test_empty_channels_does_not_raise(self):
+        # Act + Assert
+        validate_telegrammer_wake_wiring([], None, agent_name="clew")
+
+    def test_other_channel_only_does_not_raise(self):
+        # Arrange — server:sac is fine without a2a port for this check.
+        # Act + Assert
+        validate_telegrammer_wake_wiring(["server:sac"], None, agent_name="clew")
+
+    def test_telegrammer_channel_with_port_does_not_raise(self):
+        # Arrange — channel requested and a2a port set: the runtime can wire.
+        # Act + Assert
+        validate_telegrammer_wake_wiring(
+            ["server:claude-code-telegrammer"], 19007, agent_name="clew"
+        )
+
+    def test_telegrammer_channel_without_port_raises(self):
+        # Act + Assert
+        with pytest.raises(TelegrammerWakeWiringError) as excinfo:
+            validate_telegrammer_wake_wiring(
+                ["server:claude-code-telegrammer"], None, agent_name="clew"
+            )
+        # The raised message must name the agent + the offending channel +
+        # the missing field so the operator can act on it.
+        msg = str(excinfo.value)
+        assert "clew" in msg
+        assert "server:claude-code-telegrammer" in msg
+        assert "spec.a2a.port" in msg
+
+    def test_telegrammer_channel_without_port_no_agent_name(self):
+        # Arrange — caller may not have an agent name (host-side preflight
+        # is called from agent_start which has it; future callers may not).
+        # Act + Assert
+        with pytest.raises(TelegrammerWakeWiringError):
+            validate_telegrammer_wake_wiring(["server:claude-code-telegrammer"], None)
