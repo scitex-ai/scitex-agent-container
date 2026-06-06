@@ -468,27 +468,29 @@ class TestValidateTelegrammerWakeWiring:
         assert result is None
 
     def test_telegrammer_channel_without_port_raises(self):
-        # Arrange — channel requested but no a2a port.
+        # Arrange
         channels = ["server:claude-code-telegrammer"]
-        # Act + Assert
+        # Act
+        # Assert — pytest.raises is the assertion (TQ007: one per test).
         with pytest.raises(TelegrammerWakeWiringError):
             validate_telegrammer_wake_wiring(channels, None, agent_name="clew")
 
     def test_telegrammer_channel_without_port_message_names_agent(self):
         # Arrange
         channels = ["server:claude-code-telegrammer"]
-        # Act + Assert — the raised message must name the agent (operator
-        # needs it to identify which agent is misconfigured). ``match``
-        # folds the message content into the same pytest.raises block so
-        # there's exactly one assertion in the test (STX-TQ007 compliant).
+        # Act
+        # Assert — `match` folds the message content into the raises block
+        # so the operator-naming contract is checked as part of the same
+        # assertion (TQ007 compliant: one assertion per test).
         with pytest.raises(TelegrammerWakeWiringError, match="clew"):
             validate_telegrammer_wake_wiring(channels, None, agent_name="clew")
 
     def test_telegrammer_channel_without_port_message_names_channel(self):
         # Arrange
         channels = ["server:claude-code-telegrammer"]
-        # Act + Assert — the raised message must name the offending channel
-        # so the operator can spot the mis-spec in their YAML.
+        # Act
+        # Assert — the raised message must name the offending channel so the
+        # operator can spot the mis-spec in their YAML.
         with pytest.raises(
             TelegrammerWakeWiringError, match="server:claude-code-telegrammer"
         ):
@@ -497,15 +499,17 @@ class TestValidateTelegrammerWakeWiring:
     def test_telegrammer_channel_without_port_message_names_missing_field(self):
         # Arrange
         channels = ["server:claude-code-telegrammer"]
-        # Act + Assert — the raised message must name the missing field so
-        # the operator knows exactly what to set in spec.yaml.
+        # Act
+        # Assert — the raised message must name the missing field so the
+        # operator knows exactly what to set in spec.yaml.
         with pytest.raises(TelegrammerWakeWiringError, match=r"spec\.a2a\.port"):
             validate_telegrammer_wake_wiring(channels, None, agent_name="clew")
 
     def test_telegrammer_channel_without_port_no_agent_name(self):
-        # Arrange — caller may not have an agent name (host-side preflight
-        # is called from agent_start which has it; future callers may not).
+        # Arrange — caller may not have an agent name (host-side preflight is
+        # called from agent_start which has it; future callers may not).
         channels = ["server:claude-code-telegrammer"]
-        # Act + Assert
+        # Act
+        # Assert — raise still happens without agent_name.
         with pytest.raises(TelegrammerWakeWiringError):
             validate_telegrammer_wake_wiring(channels, None)
