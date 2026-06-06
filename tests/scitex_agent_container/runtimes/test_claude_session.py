@@ -174,6 +174,44 @@ def test_start_forwards_dry_run_kwarg_to_container_runtime(stub_container_rt, tm
     assert kw["dry_run"] is True
 
 
+def test_start_accepts_one_shot_kwarg_without_raising(stub_container_rt, tmp_path):
+    # Arrange — reproducer for the cohort-A blocker:
+    # ``sac agents start --one-shot`` threads
+    # ``start_kw["one_shot"] = True`` through
+    # ``runtime.start(config, **start_kw)`` in
+    # ``_lifecycle/_start.py:440``. Without this kwarg on the
+    # runtime signature the CLI crashes with
+    # ``TypeError: ClaudeSessionRuntime.start() got an unexpected
+    # keyword argument 'one_shot'`` and the launcher cannot drive a
+    # nested-sac dispatch.
+    cfg = AgentConfig(name="x", runtime="docker", workdir=str(tmp_path))
+    rt = _TestableRuntime(stub_container_rt, tmp_path)
+    # Act
+    result = rt.start(cfg, one_shot=True)
+    # Assert — return value is the fake container rt's True; the
+    # test is that the kwarg DID NOT raise TypeError on the runtime
+    # signature.
+    assert result is True
+
+
+def test_start_forwards_one_shot_kwarg_to_container_runtime(
+    stub_container_rt, tmp_path
+):
+    # Arrange — ``one_shot`` is a no-op at this runtime layer (the
+    # one-shot termination semantics come from
+    # ``spec.autonomous.drive_until="DONE"``), but the kwarg is
+    # forwarded to the underlying container runtime so any future
+    # support there works without another signature change. Pin
+    # the forwarding so a later refactor cannot silently drop it.
+    cfg = AgentConfig(name="x", runtime="docker", workdir=str(tmp_path))
+    rt = _TestableRuntime(stub_container_rt, tmp_path)
+    # Act
+    rt.start(cfg, one_shot=True)
+    # Assert
+    _method, kw = stub_container_rt.calls[0]
+    assert kw["one_shot"] is True
+
+
 def test_start_returns_false_when_no_container_engine(tmp_path, capsys):
     # Arrange — legacy runtime that _container_runtime_for returns None for
     cfg = AgentConfig(name="x", runtime="claude-session", workdir=str(tmp_path))
