@@ -155,3 +155,57 @@ def test_active_predicate_false_for_missing_block():
     result = provider_is_active(block)
     # Assert
     assert result is False
+
+
+# ---------------------------------------------------------------------------
+# PR #319 (lead msg a456b610): provider.allowed_tools whitelist validation.
+# The field is optional; when present it must be a list of non-empty
+# strings. Loud errors on any other shape — silent type-coercion would
+# let a yaml string-not-list propagate into ClaudeAgentOptions.tools
+# and the CLI/SDK would fail in less actionable ways downstream.
+# ---------------------------------------------------------------------------
+
+
+def test_allowed_tools_field_absent_returns_no_errors():
+    # Arrange — back-compat: pre-PR#319 specs don't carry this field.
+    block = dict(_VALID_DICT)
+    # Act
+    errors = validate_provider(block)
+    # Assert
+    assert errors == []
+
+
+def test_allowed_tools_valid_list_of_strings_returns_no_errors():
+    # Arrange
+    block = dict(_VALID_DICT, allowed_tools=["Bash", "Read", "Edit"])
+    # Act
+    errors = validate_provider(block)
+    # Assert
+    assert errors == []
+
+
+def test_allowed_tools_string_not_list_returns_loud_error():
+    # Arrange — yaml-quirk: allowed_tools: "Bash,Read" instead of a list.
+    block = dict(_VALID_DICT, allowed_tools="Bash,Read")
+    # Act
+    errors = validate_provider(block)
+    # Assert
+    assert any("must be a list" in e for e in errors)
+
+
+def test_allowed_tools_with_empty_string_entry_returns_loud_error():
+    # Arrange
+    block = dict(_VALID_DICT, allowed_tools=["Bash", "", "Read"])
+    # Act
+    errors = validate_provider(block)
+    # Assert
+    assert any("[1]" in e for e in errors)
+
+
+def test_allowed_tools_with_non_string_entry_returns_loud_error():
+    # Arrange
+    block = dict(_VALID_DICT, allowed_tools=["Bash", 42, "Read"])
+    # Act
+    errors = validate_provider(block)
+    # Assert
+    assert any("[1]" in e for e in errors)

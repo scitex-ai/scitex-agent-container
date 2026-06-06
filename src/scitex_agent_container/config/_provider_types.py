@@ -8,7 +8,7 @@ dataclasses.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -51,3 +51,37 @@ class ProviderSpec:
     ``DEEPSEEK_API_KEY``) — NOT the key value. The operator sources the
     secret file; sac reads the env var's value at start and never logs
     it. Required when the provider block is present."""
+
+    allowed_tools: list[str] = field(default_factory=list)
+    """Whitelist of built-in Claude Code tools to REGISTER when this
+    provider is active. Maps directly to
+    ``ClaudeAgentOptions.tools`` (the SDK ``--tools <csv>`` knob, see
+    ``claude_agent_sdk/_internal/transport/subprocess_cli.py:241-250``),
+    which controls the REGISTERED tool set rather than the use-allow
+    list (``--allowedTools`` / ``--disallowedTools`` only affect
+    permission, not whether the tool's JSON-schema ships in the
+    outbound API request body — confirmed empirically by clew bm172
+    cohort v7 bind-test 2026-06-06).
+
+    Why this matters: an Anthropic-API shim (LiteLLM / vLLM /
+    gateway) may not recognize newer Claude Code built-ins
+    (``ExitPlanMode``, ``BashOutput``, ``KillShell`` were added
+    after LiteLLM 1.52.16). When the shim sees such a tool in the
+    outbound ``tools[]`` it falls through its pydantic Union to the
+    last subclass (``AnthropicComputerTool``), which requires
+    ``display_width_px`` that the unknown tool's payload doesn't
+    have → 422 on every API call → capsule errors all 60 turns.
+    Whitelisting only the shim-recognized tools suppresses the
+    unrecognized builtins at REGISTRATION, so they never enter
+    the outbound body.
+
+    Empty list (the default) means "use the runner's old-stable
+    default whitelist when the provider is active, otherwise leave
+    ``tools`` unset and let the CLI's full default register" — the
+    runner picks the safe shape automatically.
+
+    The string-form provider (e.g. ``provider: mimo``) doesn't carry
+    this field today; the per-registry ``allowed_tools`` plumbing is a
+    follow-up. Operators on the string form fall back to the runner's
+    old-stable default until the registry plumbing lands.
+    """

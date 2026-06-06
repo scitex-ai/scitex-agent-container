@@ -644,6 +644,177 @@ class TestBuildOptions:
 
 
 # ---------------------------------------------------------------------------
+# PR #319 (lead msg a456b610 2026-06-06): provider-aware tool REGISTRATION
+# whitelist. When ``spec.claude.provider`` declares a non-Anthropic backend
+# (LiteLLM / vLLM / gateway), populate ``ClaudeAgentOptions.tools`` so the
+# CLI only REGISTERS the shim-recognized tool set — newer Claude Code
+# builtins (ExitPlanMode, BashOutput, KillShell) never enter the outbound
+# API request body. Root cause: LiteLLM 1.52.16's pydantic Union mis-routes
+# unrecognized tools → AnthropicComputerTool → 422 every turn.
+#
+# Resolution order tested:
+#   1. spec.claude.provider.allowed_tools (operator override) — verbatim.
+#   2. _PROVIDER_DEFAULT_ALLOWED_TOOLS (runner default) — when no spec list.
+#   3. Caller-supplied ``extra={"tools": ...}`` WINS over both above.
+#   4. No provider in cfg → ``tools`` left unset (back-compat).
+# ---------------------------------------------------------------------------
+
+
+def _swap_load_config_with_provider_tools(
+    env: _Env, workdir: str, *, base_url: str, allowed_tools: list[str] | None = None
+) -> None:
+    """Wire load_config to return a stub config with provider + allowed_tools.
+
+    The runner's provider gate consults
+    ``config.claude.provider.base_url`` (non-empty → active). We also
+    expose ``provider.allowed_tools`` so PR #319 can resolve from it.
+    Uses real SimpleNamespace (no monkeypatch of the predicate itself).
+    """
+    import scitex_agent_container.config as cfg_mod
+
+    provider_ns = SimpleNamespace(
+        base_url=base_url,
+        auth_token_env="API_KEY_ENV",
+        allowed_tools=list(allowed_tools or []),
+    )
+    claude_ns = SimpleNamespace(provider=provider_ns, account="")
+    config_ns = SimpleNamespace(expanded_workdir=workdir, claude=claude_ns)
+    env.setattr_module(cfg_mod, "load_config", lambda _path: config_ns)
+
+
+class TestProviderToolsWhitelist:
+    @pytest.fixture
+    def _opts_provider_default_tools(self, sdk_env: _Env, tmp_path):
+        # Arrange — provider active, allowed_tools NOT set in spec.
+        _write_valid_cred(sdk_env, tmp_path)
+        sdk_env.delenv("ANTHROPIC_API_KEY")
+        sdk_env.delenv(_SAC_KEY)
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        _swap_registry(sdk_env, {"config": "cfg.yaml"})
+        _swap_load_config_with_provider_tools(
+            sdk_env, str(ws), base_url="http://127.0.0.1:4000", allowed_tools=[]
+        )
+        # Act
+        opts = build_sdk_options("alpha", permission_mode="bypassPermissions")
+        return opts
+
+    def test_default_tools_excludes_exit_plan_mode(self, _opts_provider_default_tools):
+        # Arrange
+        opts = _opts_provider_default_tools
+        # Act
+        tools = list(opts.tools or [])
+        # Assert — the LiteLLM-1.52.16-incompatible builtin must NOT be
+        # in the runner-default whitelist; clew's v8 422 cascade was
+        # rooted in ExitPlanMode at tools[9] of the outbound body.
+        assert "ExitPlanMode" not in tools
+
+    def test_default_tools_includes_bash(self, _opts_provider_default_tools):
+        # Arrange
+        opts = _opts_provider_default_tools
+        # Act
+        tools = list(opts.tools or [])
+        # Assert — sanity: Bash is the most basic Claude Code builtin.
+        assert "Bash" in tools
+
+    def test_default_tools_includes_agent_for_subagents(
+        self, _opts_provider_default_tools
+    ):
+        # Arrange — Agent must be in the registration list AND
+        # allowed_tools (the existing subagent enablement); the PR #319
+        # default carries it so both lists stay coherent.
+        opts = _opts_provider_default_tools
+        # Act
+        tools = list(opts.tools or [])
+        # Assert
+        assert "Agent" in tools
+
+    @pytest.fixture
+    def _opts_provider_spec_tools(self, sdk_env: _Env, tmp_path):
+        # Arrange — operator OVERRIDES the default with an explicit
+        # allowed_tools list. The runner must honour it verbatim.
+        _write_valid_cred(sdk_env, tmp_path)
+        sdk_env.delenv("ANTHROPIC_API_KEY")
+        sdk_env.delenv(_SAC_KEY)
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        _swap_registry(sdk_env, {"config": "cfg.yaml"})
+        _swap_load_config_with_provider_tools(
+            sdk_env,
+            str(ws),
+            base_url="http://127.0.0.1:4000",
+            allowed_tools=["Bash", "Read"],
+        )
+        # Act
+        opts = build_sdk_options("alpha", permission_mode="bypassPermissions")
+        return opts
+
+    def test_spec_allowed_tools_overrides_default(self, _opts_provider_spec_tools):
+        # Arrange
+        opts = _opts_provider_spec_tools
+        # Act
+        tools = list(opts.tools or [])
+        # Assert — the operator's explicit list wins; the default
+        # (which would have added Edit/Write/Glob/etc.) must NOT leak.
+        assert tools == ["Bash", "Read"]
+
+    @pytest.fixture
+    def _opts_no_provider(self, sdk_env: _Env, tmp_path):
+        # Arrange — back-compat: real Anthropic backend (no provider
+        # block). PR #319's auto-populate must NOT touch ``tools``.
+        _write_valid_cred(sdk_env, tmp_path)
+        sdk_env.delenv("ANTHROPIC_API_KEY")
+        sdk_env.delenv(_SAC_KEY)
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        _swap_registry(sdk_env, {"config": "cfg.yaml"})
+        _swap_load_config(sdk_env, str(ws))  # no provider on the config
+        # Act
+        opts = build_sdk_options("alpha", permission_mode="bypassPermissions")
+        return opts
+
+    def test_no_provider_leaves_tools_unset(self, _opts_no_provider):
+        # Arrange
+        opts = _opts_no_provider
+        # Act
+        tools = opts.tools
+        # Assert — the CLI's full default toolset registers; suppressing
+        # ExitPlanMode/BashOutput/KillShell on an Anthropic backend that
+        # supports them would be a regression.
+        assert tools is None
+
+    @pytest.fixture
+    def _opts_caller_tools_wins(self, sdk_env: _Env, tmp_path):
+        # Arrange — provider active AND caller pre-supplies tools=
+        # via ``extra``. The caller's explicit value MUST win — the
+        # PR #319 auto-populate is "only when caller didn't say".
+        _write_valid_cred(sdk_env, tmp_path)
+        sdk_env.delenv("ANTHROPIC_API_KEY")
+        sdk_env.delenv(_SAC_KEY)
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        _swap_registry(sdk_env, {"config": "cfg.yaml"})
+        _swap_load_config_with_provider_tools(
+            sdk_env, str(ws), base_url="http://127.0.0.1:4000", allowed_tools=[]
+        )
+        # Act
+        opts = build_sdk_options(
+            "alpha",
+            permission_mode="bypassPermissions",
+            extra={"tools": ["OnlyThisOne"]},
+        )
+        return opts
+
+    def test_caller_tools_extra_wins_over_auto_populate(self, _opts_caller_tools_wins):
+        # Arrange
+        opts = _opts_caller_tools_wins
+        # Act
+        tools = list(opts.tools or [])
+        # Assert
+        assert tools == ["OnlyThisOne"]
+
+
+# ---------------------------------------------------------------------------
 # build_sdk_options — explicit --settings load (hooks/settings)
 #
 # setting_sources stays [] (machine-independence: no host ~/.claude

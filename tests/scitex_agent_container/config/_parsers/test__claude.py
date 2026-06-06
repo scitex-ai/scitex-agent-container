@@ -298,3 +298,83 @@ def test_provider_string_form_anthropic_sentinel_yields_no_override():
     result = parse_claude(spec)
     # Assert
     assert result.provider is None
+
+
+# ---------------------------------------------------------------------------
+# PR #319 (lead msg a456b610 2026-06-06): provider.allowed_tools whitelist.
+# Operator declares which built-in tools their shim recognizes; the runner
+# uses that to populate ClaudeAgentOptions.tools so unrecognized newer
+# Claude Code builtins (ExitPlanMode, BashOutput, KillShell) never enter
+# the outbound API request body. Root cause: LiteLLM 1.52.16's pydantic
+# Union mis-routes unrecognized tools → AnthropicComputerTool → 422.
+# ---------------------------------------------------------------------------
+
+
+def test_provider_dict_form_parses_allowed_tools_list():
+    # Arrange
+    spec = {
+        "claude": {
+            "provider": {
+                "base_url": "http://127.0.0.1:4000",
+                "auth_token_env": "VLLM_TOKEN",
+                "allowed_tools": ["Bash", "Read", "Edit"],
+            }
+        }
+    }
+    # Act
+    result = parse_claude(spec)
+    # Assert
+    assert result.provider.allowed_tools == ["Bash", "Read", "Edit"]
+
+
+def test_provider_dict_form_default_allowed_tools_is_empty_list():
+    # Arrange — back-compat: omit allowed_tools entirely.
+    spec = {
+        "claude": {
+            "provider": {
+                "base_url": "http://127.0.0.1:4000",
+                "auth_token_env": "VLLM_TOKEN",
+            }
+        }
+    }
+    # Act
+    result = parse_claude(spec)
+    # Assert — the runner treats [] as "use the runner default".
+    assert result.provider.allowed_tools == []
+
+
+def test_provider_dict_form_non_list_allowed_tools_coerces_to_empty():
+    # Arrange — defensive: a string-not-list (yaml quirk) coerces to [].
+    # The validator separately surfaces this as a loud config error;
+    # the parser keeps the agent from crashing while validation runs.
+    spec = {
+        "claude": {
+            "provider": {
+                "base_url": "http://127.0.0.1:4000",
+                "auth_token_env": "VLLM_TOKEN",
+                "allowed_tools": "Bash,Read",
+            }
+        }
+    }
+    # Act
+    result = parse_claude(spec)
+    # Assert
+    assert result.provider.allowed_tools == []
+
+
+def test_provider_dict_form_non_string_entries_filtered():
+    # Arrange — defensive: drop non-string entries so a partial-bad
+    # yaml doesn't propagate ints/None into ClaudeAgentOptions.tools.
+    spec = {
+        "claude": {
+            "provider": {
+                "base_url": "http://127.0.0.1:4000",
+                "auth_token_env": "VLLM_TOKEN",
+                "allowed_tools": ["Bash", 42, None, "Read", ""],
+            }
+        }
+    }
+    # Act
+    result = parse_claude(spec)
+    # Assert — only the valid non-empty strings survive.
+    assert result.provider.allowed_tools == ["Bash", "Read"]

@@ -41,9 +41,19 @@ def _parse_provider(raw: dict) -> ProviderSpec | None:
         return ProviderSpec(base_url=base_url, auth_token_env=auth_token_env)
     if not isinstance(block, dict):
         return None
+    # PR #319 (lead msg a456b610 2026-06-06): provider.allowed_tools
+    # whitelist → ClaudeAgentOptions.tools. Validated to list[str] by
+    # _provider_validation.validate_provider; here we coerce defensively
+    # so an unvalidated path (tests / fixture configs) still produces a
+    # sane shape rather than crashing the runner.
+    raw_allowed = block.get("allowed_tools")
+    allowed_tools: list[str] = []
+    if isinstance(raw_allowed, list):
+        allowed_tools = [str(t) for t in raw_allowed if isinstance(t, str) and t]
     return ProviderSpec(
         base_url=str(block.get("base_url", "") or ""),
         auth_token_env=str(block.get("auth_token_env", "") or ""),
+        allowed_tools=allowed_tools,
     )
 
 
