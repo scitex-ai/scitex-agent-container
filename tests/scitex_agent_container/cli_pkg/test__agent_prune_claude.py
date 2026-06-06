@@ -54,6 +54,26 @@ def _init_git_repo(workdir: Path) -> None:
         ["git", "config", "user.email", "test@example.com"], cwd=workdir, check=True
     )
     subprocess.run(["git", "config", "user.name", "Test"], cwd=workdir, check=True)
+    # remote.origin.{url,fetch} are needed so `git rev-parse @{u}` and
+    # `git log @{u}..HEAD` (used by the unpushed-commits predicate)
+    # resolve against the simulated origin/* refs we plant below. The
+    # URL is dummy — we never actually fetch — but git's @{u}
+    # machinery refuses to resolve without a configured remote.
+    subprocess.run(
+        ["git", "config", "remote.origin.url", "file:///nonexistent"],
+        cwd=workdir,
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "config",
+            "remote.origin.fetch",
+            "+refs/heads/*:refs/remotes/origin/*",
+        ],
+        cwd=workdir,
+        check=True,
+    )
     (workdir / "README.md").write_text("seed")
     subprocess.run(["git", "add", "."], cwd=workdir, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "seed"], cwd=workdir, check=True)
@@ -216,6 +236,166 @@ def test_plan_worktrees_records_skip_reason_for_locked(tmp_path: Path):
     ]
     # Assert
     assert any("locked" in r for r in skip_reasons)
+
+
+# ---------------------------------------------------------------------------
+# plan_prune — safety predicates (lead 2026-06-06 after clew incident)
+#
+# Three predicates inserted BEFORE the merged-into-base check so a
+# worktree with uncommitted / unpushed / in-use work is preserved
+# even when its branch tip is fully merged. Each test exercises one
+# predicate in isolation against a worktree that would otherwise be
+# eligible (merged + unlocked + branched), confirming the new check
+# moves it to the skip list with a recognizable reason.
+# ---------------------------------------------------------------------------
+
+
+def test_plan_worktrees_skips_uncommitted_unstaged_changes(tmp_path: Path):
+    # Arrange — merged worktree with an uncommitted unstaged edit.
+    workdir = tmp_path / "wd"
+    workdir.mkdir()
+    _init_git_repo(workdir)
+    target = _make_merged_worktree(workdir, "agent-uncommitted-unstaged")
+    (target / "README.md").write_text("dirty work-in-progress\n")  # unstaged edit
+    # Act
+    plan = plan_prune(workdir, pending_age_days=7)
+    candidate_names = {Path(e.path).name for e in plan.worktrees}
+    # Assert
+    assert "agent-uncommitted-unstaged" not in candidate_names
+
+
+def test_plan_worktrees_records_skip_reason_for_uncommitted(tmp_path: Path):
+    # Arrange
+    workdir = tmp_path / "wd"
+    workdir.mkdir()
+    _init_git_repo(workdir)
+    target = _make_merged_worktree(workdir, "agent-uncommitted-reason")
+    (target / "README.md").write_text("dirty\n")
+    # Act
+    plan = plan_prune(workdir, pending_age_days=7)
+    reasons = [
+        s.reason
+        for s in plan.skipped
+        if Path(s.path).name == "agent-uncommitted-reason"
+    ]
+    # Assert
+    assert any("uncommitted" in r for r in reasons)
+
+
+def test_plan_worktrees_skips_uncommitted_staged_changes(tmp_path: Path):
+    # Arrange — merged worktree with a staged-but-uncommitted edit.
+    workdir = tmp_path / "wd"
+    workdir.mkdir()
+    _init_git_repo(workdir)
+    target = _make_merged_worktree(workdir, "agent-uncommitted-staged")
+    (target / "README.md").write_text("staged work\n")
+    subprocess.run(["git", "add", "README.md"], cwd=target, check=True)
+    # Act
+    plan = plan_prune(workdir, pending_age_days=7)
+    candidate_names = {Path(e.path).name for e in plan.worktrees}
+    # Assert
+    assert "agent-uncommitted-staged" not in candidate_names
+
+
+def test_plan_worktrees_skips_unpushed_commits(tmp_path: Path):
+    # Arrange — merged worktree with a clean tree but an upstream-
+    # tracking branch whose HEAD is one commit AHEAD of the recorded
+    # upstream. We set the upstream by hand via update-ref so we don't
+    # need a real remote in the test repo.
+    workdir = tmp_path / "wd"
+    workdir.mkdir()
+    _init_git_repo(workdir)
+    target = _make_merged_worktree(workdir, "agent-unpushed")
+    # Find the worktree's actual branch name (the wrapper picks
+    # ``merged-<name>``) and bind it to origin/<branch> as upstream.
+    branch = subprocess.run(
+        ["git", "-C", str(target), "rev-parse", "--abbrev-ref", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(workdir),
+            "update-ref",
+            f"refs/remotes/origin/{branch}",
+            "HEAD",
+        ],
+        check=True,
+    )
+    # ``git branch --set-upstream-to=origin/<branch>`` validates that the
+    # upstream ref points at a "real" branch (it walks `git remote show
+    # origin` style state, not just the local refs/remotes/ entry). With
+    # only `git update-ref` above, that validation rejects the tracking
+    # setup. Write the branch.<name>.{remote,merge} config directly —
+    # `git log @{u}..HEAD` consults exactly those two config keys to
+    # resolve `@{u}`, which is all the predicate under test depends on.
+    subprocess.run(
+        ["git", "-C", str(target), "config", f"branch.{branch}.remote", "origin"],
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(target),
+            "config",
+            f"branch.{branch}.merge",
+            f"refs/heads/{branch}",
+        ],
+        check=True,
+    )
+    # Now commit a local change so HEAD is ahead of the upstream ref.
+    (target / "local-only.txt").write_text("ahead of upstream\n")
+    subprocess.run(["git", "add", "local-only.txt"], cwd=target, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "local-only commit"], cwd=target, check=True
+    )
+    # The local commit means the branch tip is no longer an ancestor
+    # of origin/develop, so the existing merged-into-base check would
+    # also skip it. Re-point origin/develop at the new HEAD so the
+    # merged check PASSES — that way only the unpushed predicate can
+    # be responsible for the skip we assert below.
+    head = subprocess.run(
+        ["git", "-C", str(target), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "-C", str(workdir), "update-ref", "refs/remotes/origin/develop", head],
+        check=True,
+    )
+    # Act
+    plan = plan_prune(workdir, pending_age_days=7)
+    reasons = [s.reason for s in plan.skipped if Path(s.path).name == "agent-unpushed"]
+    # Assert
+    assert any("unpushed" in r for r in reasons)
+
+
+def test_plan_worktrees_skips_when_process_holds_fd(tmp_path: Path):
+    # Arrange — merged worktree with a Python-held file open under it.
+    # If lsof is unavailable on the host, the predicate falls through
+    # by design (defence-in-depth, not the primary safety bar), so the
+    # test SKIPS rather than fails — pinning the behaviour without
+    # forcing every CI runner to ship lsof.
+    import shutil as _shutil
+
+    if _shutil.which("lsof") is None:
+        pytest.skip("lsof not available on this host; predicate falls through")
+    workdir = tmp_path / "wd"
+    workdir.mkdir()
+    _init_git_repo(workdir)
+    target = _make_merged_worktree(workdir, "agent-fd-held")
+    held_file = target / "README.md"
+    with held_file.open("rb") as _fp:  # keeps an fd open across plan_prune
+        # Act
+        plan = plan_prune(workdir, pending_age_days=7)
+    candidate_names = {Path(e.path).name for e in plan.worktrees}
+    # Assert
+    assert "agent-fd-held" not in candidate_names
 
 
 # ---------------------------------------------------------------------------

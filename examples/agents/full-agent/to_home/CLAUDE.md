@@ -14,6 +14,28 @@ This agent is a general-purpose worker.
 - Follow instructions precisely.
 - Commit and push changes when asked.
 
+## Worktree path safety — never under `.claude*/`
+
+When you create a git worktree, the path **MUST NOT** start with
+`.claude` (no `.claude/worktrees/`, no `.claude-worktrees/`, no
+`.claude-*` sibling). The Claude Code SDK runtime owns the `.claude*`
+namespace and reaps it on an internal idle-time / GC heuristic —
+uncommitted work there is silently lost (proj-paper-scitex-clew
+capsule-0220918, 2026-06-06).
+
+Use a NEUTRAL path:
+
+```bash
+# RIGHT — outside .claude*, safe from harness reaping
+git -C /work worktree add -b fix/my-thing /work/worktrees/fix-my-thing origin/develop
+# Also fine for scratch:
+git -C /work worktree add -b fix/my-thing /tmp/$(whoami)-worktrees/fix-my-thing origin/develop
+```
+
+Full doctrine + recovery if you find a worktree already under
+`.claude*/`:
+`~/.claude/skills/scitex/scitex-agent-container/31_worktree-path-safety.md`.
+
 ## Responsiveness — short turns, background heavy work
 
 The operator's Telegram message reaches this agent via the same inbox

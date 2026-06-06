@@ -194,6 +194,133 @@ def _branch_merged_into(repo: Path, branch: str, base: str) -> bool:
     return out is not None
 
 
+# ---------------------------------------------------------------------------
+# Safety predicates — preserve uncommitted / unpushed / actively-held work.
+#
+# Added 2026-06-06 after proj-paper-scitex-clew's cohort-A incident: an
+# unrelated host-side reaper nuked an active clew worktree at
+# /work/.claude-worktrees/<branch>/ that had uncommitted changes + a
+# running pytest, on an "agent main-loop idle = stale" heuristic. The
+# reaper that did the damage is NOT in this repo (investigation null
+# from inside the container — culprit is host-side), but THIS slash-
+# variant reaper shipped the SAME anti-pattern (no uncommitted /
+# unpushed / in-use check before deciding a worktree is reapable), so
+# the operator directive is defence-in-depth here: idle-time can NEVER
+# be the primary decision; the work-loss predicates fire first.
+#
+# Lead-specified predicate priority order (each independently sufficient
+# to skip; checked in the order below for first-match clarity):
+#   1. uncommitted changes      (git diff / git diff --cached non-empty)
+#   2. unpushed commits         (git log <upstream>..HEAD non-empty)
+#   3. process holding an fd    (lsof +D <dir> non-empty)
+#   4. branch not merged into base   (merge-base --is-ancestor false)
+#   5. idle-time LAST tiebreaker — never first; this file has no
+#      idle-time check today and won't add one without explicit ask.
+# ---------------------------------------------------------------------------
+
+
+def _has_uncommitted_changes(worktree: Path) -> tuple[bool, str]:
+    """Lead's predicate #1 — uncommitted changes (staged or unstaged).
+
+    Returns ``(True, reason)`` if either ``git diff --quiet`` (unstaged
+    working-tree changes) or ``git diff --cached --quiet`` (staged but
+    not committed) reports changes, plus an explanation suitable for
+    the skip-reason log. ``(False, "")`` otherwise.
+
+    Defensive failure mode: if git itself fails to answer (binary
+    missing, repo corrupt, timeout), we treat the worktree as having
+    uncommitted changes (``True``) — the safer direction for data
+    preservation. A genuinely clean worktree responds to git in
+    milliseconds; an unresponsive one is exactly where the operator
+    least wants the reaper to guess.
+    """
+    unstaged = _run_git(["diff", "--quiet"], worktree)
+    if unstaged is None:
+        # rc != 0 from `git diff --quiet` means "there ARE unstaged changes"
+        # (rc=1) OR a hard error (rc=128+). Either way, do not prune.
+        return True, "uncommitted unstaged changes (or git diff failure)"
+    staged = _run_git(["diff", "--cached", "--quiet"], worktree)
+    if staged is None:
+        return True, "uncommitted staged changes (or git diff --cached failure)"
+    return False, ""
+
+
+def _has_unpushed_commits(worktree: Path) -> tuple[bool, str]:
+    """Lead's predicate #2 — unpushed local commits.
+
+    Returns ``(True, reason)`` if ``git log @{u}..HEAD`` lists at least
+    one commit, ``(False, "")`` otherwise. Branches with NO configured
+    upstream fall through as ``(False, "")``: such a branch cannot be
+    "pushed" in the upstream-tracking sense and the merged-into-base
+    predicate (#4) already covers "the work is in develop". The clew
+    incident specifically lost a branch that DID have an upstream
+    plus unpushed commits, so the predicate covers the real failure
+    surface.
+    """
+    out = _run_git(["log", "@{u}..HEAD", "--oneline"], worktree)
+    if out is None:
+        # `git log @{u}..HEAD` rc=128 when no upstream is configured.
+        # Treat "no upstream" as "no unpushed cargo to lose by this
+        # predicate" — the merged-into-base check still gates pruning.
+        return False, ""
+    if out.strip():
+        n = len(out.strip().splitlines())
+        return True, f"{n} unpushed commit(s) ahead of upstream"
+    return False, ""
+
+
+def _has_open_fds(path: Path) -> tuple[bool, str]:
+    """Lead's predicate #3 — a live process holds a file descriptor
+    into the worktree.
+
+    Returns ``(True, reason)`` if ``lsof +D <path>`` lists at least
+    one process. Falls through as ``(False, "")`` when ``lsof`` is
+    absent (it's a defence-in-depth check, not the primary safety
+    bar; predicates #1/#2/#4 still hold without it).
+
+    ``lsof +D`` walks every fd of every process recursively under
+    ``path`` and prints one line per match. We invoke with ``-w``
+    (suppress warnings) and a 15 s timeout; on any subprocess
+    failure (binary missing, timeout, permissions) the predicate
+    falls through to "not held" so the other safety predicates
+    decide.
+    """
+    if shutil.which("lsof") is None:
+        return False, ""
+    # stx-allow: fallback (reason: lsof can timeout or fail with
+    # permission errors on /proc entries it can't read; in that case
+    # we let the other predicates decide rather than blanket-skip
+    # every worktree on a host where lsof is flaky)
+    try:
+        proc = subprocess.run(
+            ["lsof", "-w", "+D", str(path)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (
+        OSError,
+        subprocess.TimeoutExpired,
+    ):  # stx-allow: fallback (reason: see inline comment)
+        return False, ""
+    # lsof returncode is unreliable for "did we find matches?": on the
+    # widely-shipped 4.95.0 release lsof exits 1 even on a successful
+    # match if it ALSO encountered ANY unreadable /proc entry on the
+    # walk (and on a busy host there's almost always something it can't
+    # stat — kernel threads, peers' processes). The `-w` flag silences
+    # those warnings on stderr but does NOT change the exit code.
+    # Parse stdout for content regardless of rc; gate the predicate on
+    # presence of a real data line.
+    #
+    # lsof emits exactly one header line ("COMMAND PID USER FD TYPE
+    # DEVICE SIZE/OFF NODE NAME"); a data line follows for each fd.
+    lines = [ln for ln in proc.stdout.splitlines() if ln.strip()]
+    if len(lines) > 1:  # header + at least one fd row
+        return True, f"{len(lines) - 1} process(es) holding fd(s) under worktree"
+    return False, ""
+
+
 def _list_worktrees(repo: Path) -> list[dict]:
     """Parse `git worktree list --porcelain`. Empty on any failure."""
     raw = _run_git(["worktree", "list", "--porcelain"], repo)
@@ -308,6 +435,32 @@ def _plan_worktrees(
                 )
             )
             continue
+        # Lead's predicate #1 — uncommitted changes (highest priority).
+        # Run BEFORE the merged-into-base check so a branch that has
+        # both "tip merged into develop" AND "in-progress edits on top"
+        # is preserved on the in-progress signal rather than reaped on
+        # the merge signal.
+        uncommitted, reason = _has_uncommitted_changes(child)
+        if uncommitted:
+            skipped.append(
+                PruneSkipEntry(kind="worktree", path=str(child), reason=reason)
+            )
+            continue
+        # Lead's predicate #2 — unpushed local commits.
+        unpushed, reason = _has_unpushed_commits(child)
+        if unpushed:
+            skipped.append(
+                PruneSkipEntry(kind="worktree", path=str(child), reason=reason)
+            )
+            continue
+        # Lead's predicate #3 — live process holding an fd into the dir.
+        held, reason = _has_open_fds(child)
+        if held:
+            skipped.append(
+                PruneSkipEntry(kind="worktree", path=str(child), reason=reason)
+            )
+            continue
+        # Lead's predicate #4 — branch not merged into base.
         merged = any(
             _branch_merged_into(repo, branch, base) for base in _SAFE_BASE_REFS
         )
