@@ -215,6 +215,30 @@ def image_build(layer: str, sandbox: bool, dry_run: bool, yes: bool) -> None:
     # scitex-container backend since they operate on already-built
     # SIFs and don't need build-context staging.
     pkg_root = _RECIPES_DIR.parent
+
+    # Layered .defs (currently: ``scitex``) bootstrap off a prior
+    # layer's SIF via ``Bootstrap: localimage`` / ``From: ./<name>.sif``
+    # — the .def references the SIF as a sibling of itself in the
+    # build-context dir. Resolve the prerequisite SIF path here so
+    # build_layer_from_source can symlink it into the staging dir, and
+    # FAIL LOUD when the prerequisite is missing rather than letting
+    # apptainer FATAL on a half-staged context (the 2026-06-07 cohort-
+    # A rebuild stall: ``sac image build scitex`` ran without the
+    # freshly-built sac-base.sif staged → apptainer FATAL "no such
+    # file or directory" mid-build).
+    bootstrap_sif: Path | None = None
+    if layer == "scitex":
+        bootstrap_sif = out_dir / "sac-base" / "sac-base.sif"
+        if not bootstrap_sif.is_file():
+            click.echo(
+                f"error: scitex layer requires a built sac-base.sif at "
+                f"{bootstrap_sif}; build the base layer first:\n"
+                f"  $ sac image build base -y\n"
+                f"then retry `sac image build scitex -y`.",
+                err=True,
+            )
+            sys.exit(1)
+
     try:
         output = _build_layer_from_source(
             layer=layer,
@@ -223,6 +247,7 @@ def image_build(layer: str, sandbox: bool, dry_run: bool, yes: bool) -> None:
             output_dir=out_dir,
             sandbox=sandbox,
             force=True,  # -y already gated above
+            bootstrap_sif=bootstrap_sif,
         )
     except (FileNotFoundError, RuntimeError) as exc:
         click.echo(f"error: apptainer build failed: {exc}", err=True)
