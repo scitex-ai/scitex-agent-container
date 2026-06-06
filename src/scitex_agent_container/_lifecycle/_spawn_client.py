@@ -175,6 +175,8 @@ def request_spawn(
     bearer: str | None = None,
     timeout_s: float = _DEFAULT_TIMEOUT_S,
     opener: Callable | None = None,
+    foreground: bool = False,
+    one_shot: bool = False,
 ) -> dict:
     """POST a spawn request to the host listen server; FAIL LOUD on error.
 
@@ -208,6 +210,23 @@ def request_spawn(
         Optional ``urllib.request.urlopen``-shaped callable. Default
         ``urlrequest.urlopen``; tests inject a fake opener that returns
         a ``urllib.response``-shaped object (no monkeypatching).
+    foreground
+        Forwarded as ``foreground: true`` in the POST body when set.
+        The host listen's ``/agents`` handler appends ``--foreground``
+        to its inner ``sac agents start`` argv, so the apptainer runtime
+        takes the foreground branch (``subprocess.run`` blocks until the
+        capsule exits) instead of the background branch (Popen + return
+        rc=0 immediately). Required for the one-shot cohort case so the
+        capsule's actual rc + stderr surface up the chain into
+        ``STARTUP_FAILED.stderr_tail`` (clew dogfood 2026-06-06: without
+        this, the post-ack liveness probe sees a still-alive Popen pid
+        and reports SUCC, but the capsule dies later, silently).
+    one_shot
+        Forwarded as ``one_shot: true`` in the POST body when set.
+        The host listen propagates ``--one-shot`` to its inner argv;
+        the capsule runs one SDK turn (its ``startup_prompts``) and
+        exits. Pairs naturally with ``foreground=True`` for the
+        cohort capsule shape.
 
     Returns
     -------
@@ -238,6 +257,13 @@ def request_spawn(
     if spec is not None:
         body["spec"] = spec
         body["overwrite"] = bool(overwrite)
+    # Cohort one-shot diagnostic (clew dogfood 2026-06-06, lead msg
+    # d96a468c): only emit the keys when truthy so the wire shape is
+    # back-compat with pre-α brokers (they ignore the absent fields).
+    if foreground:
+        body["foreground"] = True
+    if one_shot:
+        body["one_shot"] = True
 
     payload = json.dumps(body).encode("utf-8")
     url = f"{base}/agents"
@@ -276,8 +302,7 @@ def request_spawn(
     except (urlerror.URLError, OSError, ValueError) as exc:
         logger.warning("spawn_client: POST %s transport error: %s", url, exc)
         raise SpawnRequestError(
-            f"spawn of {child_name!r} failed: cannot reach listen at "
-            f"{base!r} ({exc})"
+            f"spawn of {child_name!r} failed: cannot reach listen at {base!r} ({exc})"
         ) from exc
 
     parsed = _parse_body(raw)
