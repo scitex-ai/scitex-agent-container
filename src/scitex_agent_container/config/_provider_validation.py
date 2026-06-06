@@ -59,6 +59,25 @@ def validate_provider(provider_block: object) -> list[str]:
                 f"spec.claude.provider.{field_name} must be a string, got "
                 f"{type(val).__name__}"
             )
+    # PR #319 (lead msg a456b610 2026-06-06): optional allowed_tools
+    # whitelist. If present it MUST be a list of non-empty strings;
+    # anything else is a loud config error (silent type-coercion would
+    # let a yaml string-not-list propagate into ClaudeAgentOptions.tools
+    # and downstream the CLI / SDK would fail in less actionable ways).
+    if "allowed_tools" in provider_block:
+        raw = provider_block.get("allowed_tools")
+        if not isinstance(raw, list):
+            errors.append(
+                "spec.claude.provider.allowed_tools must be a list of "
+                f"strings, got {type(raw).__name__}"
+            )
+        else:
+            for idx, item in enumerate(raw):
+                if not isinstance(item, str) or not item:
+                    errors.append(
+                        f"spec.claude.provider.allowed_tools[{idx}] must be a "
+                        f"non-empty string, got {item!r}"
+                    )
     return errors
 
 
