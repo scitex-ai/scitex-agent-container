@@ -313,6 +313,7 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.base_url"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.base_url</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.__init__"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.__init__()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.auth_token_env"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.auth_token_env</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.allowed_tools"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.allowed_tools</span></code></a></li>
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProxySpec"><code class="docutils literal notranslate"><span class="pre">ProxySpec</span></code></a><ul>
@@ -438,7 +439,7 @@
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
 
 
 <div class="viewcode-block" id="ProviderSpec">
@@ -482,7 +483,41 @@
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;NAME of the host env var holding the API key (e.g.</span>
 <span class="sd">    ``DEEPSEEK_API_KEY``) — NOT the key value. The operator sources the</span>
 <span class="sd">    secret file; sac reads the env var&#39;s value at start and never logs</span>
-<span class="sd">    it. Required when the provider block is present.&quot;&quot;&quot;</span></div>
+<span class="sd">    it. Required when the provider block is present.&quot;&quot;&quot;</span>
+
+    <span class="n">allowed_tools</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Whitelist of built-in Claude Code tools to REGISTER when this</span>
+<span class="sd">    provider is active. Maps directly to</span>
+<span class="sd">    ``ClaudeAgentOptions.tools`` (the SDK ``--tools &lt;csv&gt;`` knob, see</span>
+<span class="sd">    ``claude_agent_sdk/_internal/transport/subprocess_cli.py:241-250``),</span>
+<span class="sd">    which controls the REGISTERED tool set rather than the use-allow</span>
+<span class="sd">    list (``--allowedTools`` / ``--disallowedTools`` only affect</span>
+<span class="sd">    permission, not whether the tool&#39;s JSON-schema ships in the</span>
+<span class="sd">    outbound API request body — confirmed empirically by clew bm172</span>
+<span class="sd">    cohort v7 bind-test 2026-06-06).</span>
+
+<span class="sd">    Why this matters: an Anthropic-API shim (LiteLLM / vLLM /</span>
+<span class="sd">    gateway) may not recognize newer Claude Code built-ins</span>
+<span class="sd">    (``ExitPlanMode``, ``BashOutput``, ``KillShell`` were added</span>
+<span class="sd">    after LiteLLM 1.52.16). When the shim sees such a tool in the</span>
+<span class="sd">    outbound ``tools[]`` it falls through its pydantic Union to the</span>
+<span class="sd">    last subclass (``AnthropicComputerTool``), which requires</span>
+<span class="sd">    ``display_width_px`` that the unknown tool&#39;s payload doesn&#39;t</span>
+<span class="sd">    have → 422 on every API call → capsule errors all 60 turns.</span>
+<span class="sd">    Whitelisting only the shim-recognized tools suppresses the</span>
+<span class="sd">    unrecognized builtins at REGISTRATION, so they never enter</span>
+<span class="sd">    the outbound body.</span>
+
+<span class="sd">    Empty list (the default) means &quot;use the runner&#39;s old-stable</span>
+<span class="sd">    default whitelist when the provider is active, otherwise leave</span>
+<span class="sd">    ``tools`` unset and let the CLI&#39;s full default register&quot; — the</span>
+<span class="sd">    runner picks the safe shape automatically.</span>
+
+<span class="sd">    The string-form provider (e.g. ``provider: mimo``) doesn&#39;t carry</span>
+<span class="sd">    this field today; the per-registry ``allowed_tools`` plumbing is a</span>
+<span class="sd">    follow-up. Operators on the string form fall back to the runner&#39;s</span>
+<span class="sd">    old-stable default until the registry plumbing lands.</span>
+<span class="sd">    &quot;&quot;&quot;</span></div>
 
 </pre></div>
 

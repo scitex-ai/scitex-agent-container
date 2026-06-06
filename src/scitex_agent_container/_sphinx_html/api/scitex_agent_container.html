@@ -315,6 +315,7 @@
 <li class="toctree-l4"><a class="reference internal" href="#scitex_agent_container.config.ProviderSpec.base_url"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.base_url</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="#scitex_agent_container.config.ProviderSpec.__init__"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.__init__()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="#scitex_agent_container.config.ProviderSpec.auth_token_env"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.auth_token_env</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scitex_agent_container.config.ProviderSpec.allowed_tools"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.allowed_tools</span></code></a></li>
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="#scitex_agent_container.config.ProxySpec"><code class="docutils literal notranslate"><span class="pre">ProxySpec</span></code></a><ul>
@@ -989,7 +990,7 @@ sidecars are expected to exist. <code class="docutils literal notranslate"><span
 
 <dl class="py class">
 <dt class="sig sig-object py" id="scitex_agent_container.config.ProviderSpec">
-<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">scitex_agent_container.config.</span></span><span class="sig-name descname"><span class="pre">ProviderSpec</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">base_url</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">''</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">auth_token_env</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">''</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scitex_agent_container/config/_provider_types.html#ProviderSpec"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scitex_agent_container.config.ProviderSpec" title="Link to this definition"></a></dt>
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">scitex_agent_container.config.</span></span><span class="sig-name descname"><span class="pre">ProviderSpec</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">base_url</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">''</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">auth_token_env</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">''</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">allowed_tools</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">&lt;factory&gt;</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scitex_agent_container/config/_provider_types.html#ProviderSpec"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scitex_agent_container.config.ProviderSpec" title="Link to this definition"></a></dt>
 <dd><p>Bases: <a class="reference external" href="https://docs.python.org/3/library/functions.html#object" title="(in Python v3.14)"><code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></a></p>
 <p>Vendor-agnostic backend override for the Claude SDK session.</p>
 <p>When set under <code class="docutils literal notranslate"><span class="pre">spec.claude.provider</span></code>, the agent’s SDK session
@@ -1024,7 +1025,7 @@ block is present.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="scitex_agent_container.config.ProviderSpec.__init__">
-<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">base_url</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">''</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">auth_token_env</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">''</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#scitex_agent_container.config.ProviderSpec.__init__" title="Link to this definition"></a></dt>
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">base_url</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">''</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">auth_token_env</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">''</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">allowed_tools</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">&lt;factory&gt;</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#scitex_agent_container.config.ProviderSpec.__init__" title="Link to this definition"></a></dt>
 <dd></dd></dl>
 
 <dl class="py attribute">
@@ -1034,6 +1035,39 @@ block is present.</p>
 <code class="docutils literal notranslate"><span class="pre">DEEPSEEK_API_KEY</span></code>) — NOT the key value. The operator sources the
 secret file; sac reads the env var’s value at start and never logs
 it. Required when the provider block is present.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="scitex_agent_container.config.ProviderSpec.allowed_tools">
+<span class="sig-name descname"><span class="pre">allowed_tools</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#list" title="(in Python v3.14)"><span class="pre">list</span></a><span class="p"><span class="pre">[</span></span><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><span class="pre">str</span></a><span class="p"><span class="pre">]</span></span></span><a class="headerlink" href="#scitex_agent_container.config.ProviderSpec.allowed_tools" title="Link to this definition"></a></dt>
+<dd><p>Whitelist of built-in Claude Code tools to REGISTER when this
+provider is active. Maps directly to
+<code class="docutils literal notranslate"><span class="pre">ClaudeAgentOptions.tools</span></code> (the SDK <code class="docutils literal notranslate"><span class="pre">--tools</span> <span class="pre">&lt;csv&gt;</span></code> knob, see
+<code class="docutils literal notranslate"><span class="pre">claude_agent_sdk/_internal/transport/subprocess_cli.py:241-250</span></code>),
+which controls the REGISTERED tool set rather than the use-allow
+list (<code class="docutils literal notranslate"><span class="pre">--allowedTools</span></code> / <code class="docutils literal notranslate"><span class="pre">--disallowedTools</span></code> only affect
+permission, not whether the tool’s JSON-schema ships in the
+outbound API request body — confirmed empirically by clew bm172
+cohort v7 bind-test 2026-06-06).</p>
+<p>Why this matters: an Anthropic-API shim (LiteLLM / vLLM /
+gateway) may not recognize newer Claude Code built-ins
+(<code class="docutils literal notranslate"><span class="pre">ExitPlanMode</span></code>, <code class="docutils literal notranslate"><span class="pre">BashOutput</span></code>, <code class="docutils literal notranslate"><span class="pre">KillShell</span></code> were added
+after LiteLLM 1.52.16). When the shim sees such a tool in the
+outbound <code class="docutils literal notranslate"><span class="pre">tools[]</span></code> it falls through its pydantic Union to the
+last subclass (<code class="docutils literal notranslate"><span class="pre">AnthropicComputerTool</span></code>), which requires
+<code class="docutils literal notranslate"><span class="pre">display_width_px</span></code> that the unknown tool’s payload doesn’t
+have → 422 on every API call → capsule errors all 60 turns.
+Whitelisting only the shim-recognized tools suppresses the
+unrecognized builtins at REGISTRATION, so they never enter
+the outbound body.</p>
+<p>Empty list (the default) means “use the runner’s old-stable
+default whitelist when the provider is active, otherwise leave
+<code class="docutils literal notranslate"><span class="pre">tools</span></code> unset and let the CLI’s full default register” — the
+runner picks the safe shape automatically.</p>
+<p>The string-form provider (e.g. <code class="docutils literal notranslate"><span class="pre">provider:</span> <span class="pre">mimo</span></code>) doesn’t carry
+this field today; the per-registry <code class="docutils literal notranslate"><span class="pre">allowed_tools</span></code> plumbing is a
+follow-up. Operators on the string form fall back to the runner’s
+old-stable default until the registry plumbing lands.</p>
 </dd></dl>
 
 </dd></dl>
