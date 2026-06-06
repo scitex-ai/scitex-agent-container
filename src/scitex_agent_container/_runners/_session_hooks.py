@@ -108,8 +108,15 @@ async def emit_completion_push(
 
     * the seams aren't wired (``turn_context`` / ``push_fn`` is ``None``) —
       a bare runner with no host control-plane has nowhere to push;
-    * the turn had no requester (a mission/boot turn answers to no peer); or
-    * this turn was already pushed.
+    * the turn had no requester (a mission/boot turn answers to no peer);
+    * this turn was already pushed; or
+    * the push would be structurally empty (see the fleet-noise guards
+      inline below): the summary is empty/whitespace AND either there is
+      no ledger correlation (``dispatch_id is None``) OR no honest
+      outcome was recorded (``status == STATUS_UNKNOWN``). Every empty
+      push burns the requester's turn cycle for zero signal; the union
+      catches both noise patterns observed in the wild without dropping
+      any signal-carrying push.
 
     Status is taken verbatim from ``turn_context.status`` — set honestly by
     the conversation (``success`` on clean drain, ``failure`` on SDK error).
@@ -127,27 +134,43 @@ async def emit_completion_push(
     if not requester or turn_context.pushed:
         return
 
-    # Fleet-noise guard (lead task PR3, 2026-06-05): suppress a push that
-    # carries NO ledger correlation AND NO content. The wire signature
-    # ``{"agent": <name>, "dispatch_id": null, "status": "unknown",
-    # "summary": ""}`` is the canonical "nothing real to report"
-    # payload — every idle/wake turn that had no incoming dispatch_id
-    # and produced no assistant text fires one. Multiplied across an
-    # N-agent fleet post-restart, those empties eat every subscriber's
-    # turn cycle for zero signal. The completion contract is "tell the
-    # requester something useful happened"; without a dispatch_id OR
-    # summary content, nothing useful did. ``pushed = True`` still flips
-    # so a re-entrant Stop hook on the same turn re-evaluates and skips
-    # identically (no double-evaluation cost).
-    if turn_context.dispatch_id is None and not (turn_context.summary or "").strip():
+    from ._session_completion import STATUS_UNKNOWN, build_completion_report
+
+    status = turn_context.status or STATUS_UNKNOWN
+    summary_stripped = (turn_context.summary or "").strip()
+
+    # Fleet-noise guards — suppress structurally-empty pings at the
+    # source. Either signature flips the noise gate:
+    #
+    # (1) PR #309 (2026-06-05): no ledger correlation AND no content.
+    #     The wire signature
+    #     ``{"agent": <name>, "dispatch_id": null, "status": "unknown",
+    #     "summary": ""}`` is the canonical "nothing real to report"
+    #     payload — every idle/wake turn that had no incoming
+    #     dispatch_id and produced no assistant text used to fire one.
+    #
+    # (2) Lead 2026-06-07 (conv 62b0f613104048c6adae11c73d9f8b63): no
+    #     honest outcome AND no content, REGARDLESS of dispatch_id. A
+    #     push with ``status:"unknown"`` + empty summary carries no
+    #     information for the requester even when a dispatch_id is
+    #     set — "we tried this dispatch and have nothing to say about
+    #     it" is worse than useless. Observed in the wild: roughly 1
+    #     in 6 empty pings from a stuck sibling rode a real
+    #     dispatch_id and leaked past guard (1).
+    #
+    # Signal preserved: a push with non-empty summary always emits; a
+    # push with empty summary but an honest status (``success`` or
+    # ``failure``) AND a dispatch_id still emits so the requester can
+    # correlate. ``pushed = True`` still flips so a re-entrant Stop
+    # hook on the same turn re-evaluates and skips identically.
+    if not summary_stripped and (
+        turn_context.dispatch_id is None or status == STATUS_UNKNOWN
+    ):
         turn_context.pushed = True
         return
 
     turn_context.pushed = True
 
-    from ._session_completion import STATUS_UNKNOWN, build_completion_report
-
-    status = turn_context.status or STATUS_UNKNOWN
     report = build_completion_report(
         agent=agent_name,
         dispatch_id=turn_context.dispatch_id,
