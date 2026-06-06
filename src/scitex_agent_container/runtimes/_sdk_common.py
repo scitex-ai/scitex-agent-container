@@ -56,6 +56,27 @@ __all__ = [
     "project_runtime_root",
 ]
 
+# Tools whose schema the LiteLLM (and similar) Anthropic-API shims
+# cannot relay to non-Anthropic backends. When ``spec.claude.provider``
+# declares a provider override (LiteLLM / vLLM / gateway), the Claude
+# Code SDK still registers these tools by default and embeds their full
+# schema in every outbound API request — the shim then chokes on a
+# missing required field and returns 422 on EVERY turn.
+#
+# Concrete case (clew bm172 cohort 2026-06-06, lead msg 5d6fce21):
+# AnthropicComputerTool requires ``display_width_px``; LiteLLM 1.52.16's
+# Anthropic shim drops it on translation → 422 on every API call → the
+# capsule ran the full 60-turn autonomous loop emitting only errors,
+# then naturally exited at max_turns.
+#
+# The SDK's ``disallowed_tools`` field is the right knob:
+# ``"These tools are removed from the model's context and cannot be
+# used"`` (claude_agent_sdk/types.py:1666-1671) — i.e. the schema is
+# never sent to the API. Extend this tuple if other shim-incompatible
+# tools surface; new entries propagate to every provider-backed agent
+# without further wiring.
+_ANTHROPIC_SHIM_INCOMPATIBLE_TOOLS: tuple[str, ...] = ("Computer",)
+
 
 def project_runtime_root(config: "AgentConfig") -> "Path | None":
     """If the agent's YAML lives under a project-scope
@@ -274,6 +295,40 @@ def _resolve_env_refs(value: Any) -> Any:
     return value
 
 
+def _load_agent_config_silent(agent_name: str) -> "AgentConfig | None":
+    """Best-effort: load the agent's ``AgentConfig``; return ``None`` on any failure.
+
+    Used by :func:`build_sdk_options` to consult ``spec.claude.provider``
+    so the option-builder can extend ``disallowed_tools`` for
+    provider-backed agents (the shim-incompatible-tool exclude). Mirrors
+    the resolve-from-registry shape of :func:`resolve_agent_workspace`
+    so the two share the same best-effort failure profile: an
+    unregistered agent / unreadable spec collapses to ``None`` and the
+    option-builder proceeds as if no provider were configured (i.e. no
+    extra disallowed_tools added). This keeps the new gate from breaking
+    pre-existing tests that don't wire a registry entry.
+    """
+    try:
+        from scitex_agent_container._state.registry import Registry
+    except Exception:  # stx-allow: fallback (reason: optional dep at runtime; mirrors resolve_agent_workspace)
+        return None
+    try:
+        entry = Registry().get(agent_name)
+    except Exception:  # stx-allow: fallback (reason: registry IO best-effort)
+        return None
+    if not entry:
+        return None
+    config_path = entry.get("config")
+    if not config_path:
+        return None
+    try:
+        from scitex_agent_container.config import load_config
+
+        return load_config(config_path)
+    except Exception:  # stx-allow: fallback (reason: config load best-effort)
+        return None
+
+
 def resolve_agent_workspace(agent_name: str) -> tuple[dict, str | None]:
     """Resolve ``(mcp_servers, cwd)`` for a registered agent.
 
@@ -476,5 +531,49 @@ def build_sdk_options(
     if "Agent" not in _allowed:
         _allowed.append("Agent")
     kwargs["allowed_tools"] = _allowed
+
+    # Provider-aware Anthropic-tool exclude (clew bm172 cohort 2026-06-06,
+    # lead msg 5d6fce21 / 70664dd3). When the agent routes through a
+    # non-Anthropic provider (LiteLLM / vLLM / gateway), extend
+    # ``disallowed_tools`` with the Anthropic-shim-incompatible set so
+    # the SDK doesn't emit those tools' schemas in outbound API requests
+    # — the shim 422s on the missing required fields (e.g.
+    # AnthropicComputerTool.display_width_px) otherwise.
+    #
+    # Two independent gate signals — widened per lead msg 70664dd3 after
+    # v5b proved spec.claude.flags is not the only declaration path:
+    #
+    #   * ``spec.claude.provider`` carries a non-empty ``base_url`` →
+    #     the canonical sac-managed path; provider_env_flags later
+    #     translates it to ``--env ANTHROPIC_BASE_URL=<base_url>`` for
+    #     the apptainer launch.
+    #   * ``ANTHROPIC_BASE_URL`` env var is non-empty at SDK invocation
+    #     time → catches every other declaration shape:
+    #       - operator put it in ``spec.claude.environment``
+    #       - operator put it in apptainer raw_args env-injection
+    #       - inherited from the host shell that ran ``sac agents start``
+    #       - (and the sac-managed path above, after the apptainer
+    #         translation lands it in the SIF env)
+    #
+    # The two are OR'd because either signal independently means a
+    # provider IS in effect at SDK runtime; without the env-side check
+    # the gate silently no-ops on any non-spec.provider declaration.
+    # The env check is the robust universal shape because
+    # build_sdk_options runs INSIDE the capsule SIF where the env IS
+    # whatever the runtime wired — works regardless of how it got there.
+    # Non-provider agents (real Anthropic backend) are unaffected: both
+    # signals are False, no extra disallowed_tools added. Any caller-
+    # supplied disallowed_tools list is preserved (merge, not replace).
+    from ._apptainer_provider import provider_active
+
+    _provider_cfg = _load_agent_config_silent(agent_name)
+    _spec_says_provider = _provider_cfg is not None and provider_active(_provider_cfg)
+    _env_says_provider = bool((os.environ.get("ANTHROPIC_BASE_URL") or "").strip())
+    if _spec_says_provider or _env_says_provider:
+        _disallowed = list(kwargs.get("disallowed_tools") or [])
+        for _t in _ANTHROPIC_SHIM_INCOMPATIBLE_TOOLS:
+            if _t not in _disallowed:
+                _disallowed.append(_t)
+        kwargs["disallowed_tools"] = _disallowed
 
     return ClaudeAgentOptions(**kwargs)

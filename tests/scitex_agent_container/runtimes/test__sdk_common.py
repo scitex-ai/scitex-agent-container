@@ -704,6 +704,239 @@ class TestSettingsFlag:
 
 
 # ---------------------------------------------------------------------------
+# build_sdk_options — provider-aware Anthropic-tool exclude (clew bm172
+# cohort 2026-06-06, lead msg 5d6fce21). When ``spec.claude.provider``
+# routes the agent through LiteLLM/vLLM/gateway, the Claude Code SDK
+# still registers Anthropic-only tools by default (e.g. AnthropicComputerTool
+# with display_width_px) — the shim drops the unrecognised field and the
+# Anthropic Messages API returns 422 on every API call. The build_sdk_options
+# fix extends disallowed_tools with the shim-incompatible tool names when
+# the provider gate is active, so the SDK never emits those schemas in
+# outbound requests. Tests pin: (i) provider-backed agent → "Computer" in
+# disallowed_tools, (ii) non-provider agent → "Computer" NOT added, (iii)
+# caller-supplied disallowed_tools preserved + merged.
+# ---------------------------------------------------------------------------
+
+
+def _swap_load_config_with_provider(env: _Env, workdir: str, *, base_url: str) -> None:
+    """Wire load_config to return a stub config with an active provider.
+
+    Real ``provider_active`` (in _apptainer_provider) checks
+    ``config.claude.provider.base_url`` non-empty — emit exactly that
+    shape via SimpleNamespace so the predicate is exercised honestly
+    (no monkeypatch of provider_active itself).
+    """
+    import scitex_agent_container.config as cfg_mod
+
+    provider_ns = SimpleNamespace(base_url=base_url, auth_token_env="API_KEY_ENV")
+    claude_ns = SimpleNamespace(provider=provider_ns, account="")
+    config_ns = SimpleNamespace(expanded_workdir=workdir, claude=claude_ns)
+    env.setattr_module(cfg_mod, "load_config", lambda _path: config_ns)
+
+
+class TestProviderAwareToolExclude:
+    @pytest.fixture
+    def _opts_with_provider(self, sdk_env: _Env, tmp_path):
+        # Arrange — auth + workspace setup; load_config returns a stub
+        # with an ACTIVE provider (non-empty base_url).
+        _write_valid_cred(sdk_env, tmp_path)
+        sdk_env.delenv("ANTHROPIC_API_KEY")
+        sdk_env.delenv(_SAC_KEY)
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        _swap_registry(sdk_env, {"config": "cfg.yaml"})
+        _swap_load_config_with_provider(
+            sdk_env, str(ws), base_url="https://litellm.example/v1"
+        )
+        # Act
+        opts = build_sdk_options("alpha", permission_mode="bypassPermissions")
+        return opts
+
+    def test_provider_active_adds_computer_to_disallowed_tools(
+        self, _opts_with_provider
+    ):
+        # Arrange
+        opts = _opts_with_provider
+        # Act
+        disallowed = list(opts.disallowed_tools or [])
+        # Assert
+        assert "Computer" in disallowed
+
+    @pytest.fixture
+    def _opts_without_provider(self, sdk_env: _Env, tmp_path):
+        # Arrange — same auth/workspace setup but load_config returns a
+        # stub WITHOUT a provider (the non-provider control case). Uses
+        # the existing _swap_load_config (no .claude.provider attribute).
+        _write_valid_cred(sdk_env, tmp_path)
+        sdk_env.delenv("ANTHROPIC_API_KEY")
+        sdk_env.delenv(_SAC_KEY)
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        _swap_registry(sdk_env, {"config": "cfg.yaml"})
+        _swap_load_config(sdk_env, str(ws))
+        # Act
+        opts = build_sdk_options("alpha", permission_mode="bypassPermissions")
+        return opts
+
+    def test_no_provider_does_not_add_computer_to_disallowed_tools(
+        self, _opts_without_provider
+    ):
+        # Arrange
+        opts = _opts_without_provider
+        # Act
+        disallowed = list(opts.disallowed_tools or [])
+        # Assert — back-compat: a non-provider agent must NOT have
+        # "Computer" in disallowed_tools (the original Anthropic backend
+        # supports computer-use; suppressing it there would be a
+        # regression).
+        assert "Computer" not in disallowed
+
+    @pytest.fixture
+    def _opts_with_provider_and_caller_disallowed(self, sdk_env: _Env, tmp_path):
+        # Arrange — provider-backed agent AND caller pre-supplies a
+        # disallowed_tools list via ``extra`` — the merge must preserve
+        # the caller's entries AND append "Computer".
+        _write_valid_cred(sdk_env, tmp_path)
+        sdk_env.delenv("ANTHROPIC_API_KEY")
+        sdk_env.delenv(_SAC_KEY)
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        _swap_registry(sdk_env, {"config": "cfg.yaml"})
+        _swap_load_config_with_provider(
+            sdk_env, str(ws), base_url="https://litellm.example/v1"
+        )
+        # Act — caller-supplied disallowed_tools simulates an operator
+        # explicit deny list (e.g. a per-agent override).
+        opts = build_sdk_options(
+            "alpha",
+            permission_mode="bypassPermissions",
+            extra={"disallowed_tools": ["WebFetch", "WebSearch"]},
+        )
+        return list(opts.disallowed_tools or [])
+
+    def test_caller_disallowed_tools_are_preserved(
+        self, _opts_with_provider_and_caller_disallowed
+    ):
+        # Arrange
+        disallowed = _opts_with_provider_and_caller_disallowed
+        # Act
+        preserved = "WebFetch" in disallowed and "WebSearch" in disallowed
+        # Assert
+        assert preserved is True
+
+    def test_caller_disallowed_tools_merged_with_computer(
+        self, _opts_with_provider_and_caller_disallowed
+    ):
+        # Arrange
+        disallowed = _opts_with_provider_and_caller_disallowed
+        # Act
+        has_computer = "Computer" in disallowed
+        # Assert — the merge must APPEND, not replace.
+        assert has_computer is True
+
+    # -----------------------------------------------------------------
+    # PR#318 GATE WIDENING (lead msg 70664dd3 2026-06-06 after v5b
+    # decisive failure). The original gate (provider_active(cfg) only)
+    # silently no-ops when the LiteLLM endpoint is declared via env-
+    # injection (raw_args / spec.claude.environment / inherited host
+    # shell) instead of spec.claude.provider. The widened gate also
+    # consults os.environ.get("ANTHROPIC_BASE_URL") — the robust
+    # universal signal at SDK invocation time inside the SIF, because
+    # build_sdk_options runs in the capsule where the env IS whatever
+    # the runtime wired (spec.provider gets translated to ANTHROPIC_BASE_URL
+    # by provider_env_flags during apptainer launch, and the other
+    # declaration paths land it there too).
+    # -----------------------------------------------------------------
+
+    @pytest.fixture
+    def _opts_env_only_provider(self, sdk_env: _Env, tmp_path):
+        # Arrange — spec has NO provider (so provider_active is False),
+        # but ANTHROPIC_BASE_URL is set in env (raw_args / environment
+        # / shell-export shape).
+        _write_valid_cred(sdk_env, tmp_path)
+        sdk_env.delenv("ANTHROPIC_API_KEY")
+        sdk_env.delenv(_SAC_KEY)
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        _swap_registry(sdk_env, {"config": "cfg.yaml"})
+        _swap_load_config(sdk_env, str(ws))  # no provider on the config
+        sdk_env.setenv("ANTHROPIC_BASE_URL", "https://litellm.example/v1")
+        # Act
+        opts = build_sdk_options("alpha", permission_mode="bypassPermissions")
+        return opts
+
+    def test_env_anthropic_base_url_adds_computer_to_disallowed_tools(
+        self, _opts_env_only_provider
+    ):
+        # Arrange
+        opts = _opts_env_only_provider
+        # Act
+        disallowed = list(opts.disallowed_tools or [])
+        # Assert — env-only declaration must trigger the auto-exclude
+        # just like the spec-side path; otherwise clew-style raw_args
+        # env-injection (the bm172 cohort shape) silently bypasses
+        # the fix.
+        assert "Computer" in disallowed
+
+    @pytest.fixture
+    def _opts_neither_provider_nor_env(self, sdk_env: _Env, tmp_path):
+        # Arrange — explicit double-off control: spec has no provider
+        # AND ANTHROPIC_BASE_URL is unset. Genuine non-provider agent.
+        _write_valid_cred(sdk_env, tmp_path)
+        sdk_env.delenv("ANTHROPIC_API_KEY")
+        sdk_env.delenv(_SAC_KEY)
+        sdk_env.delenv("ANTHROPIC_BASE_URL")
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        _swap_registry(sdk_env, {"config": "cfg.yaml"})
+        _swap_load_config(sdk_env, str(ws))
+        # Act
+        opts = build_sdk_options("alpha", permission_mode="bypassPermissions")
+        return opts
+
+    def test_neither_provider_nor_env_does_not_add_computer(
+        self, _opts_neither_provider_nor_env
+    ):
+        # Arrange
+        opts = _opts_neither_provider_nor_env
+        # Act
+        disallowed = list(opts.disallowed_tools or [])
+        # Assert — back-compat: a genuinely Anthropic-backed agent
+        # (no provider in spec, no ANTHROPIC_BASE_URL in env) must
+        # NOT have Computer added. Suppressing it on the real
+        # Anthropic backend would be a regression.
+        assert "Computer" not in disallowed
+
+    @pytest.fixture
+    def _opts_empty_env_does_not_count(self, sdk_env: _Env, tmp_path):
+        # Arrange — defensive: a present-but-empty ANTHROPIC_BASE_URL
+        # must NOT trigger the auto-exclude. The widened gate uses
+        # ``.strip()`` truthiness so a stray --env ANTHROPIC_BASE_URL=
+        # (typo) doesn't flip the gate on.
+        _write_valid_cred(sdk_env, tmp_path)
+        sdk_env.delenv("ANTHROPIC_API_KEY")
+        sdk_env.delenv(_SAC_KEY)
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        _swap_registry(sdk_env, {"config": "cfg.yaml"})
+        _swap_load_config(sdk_env, str(ws))
+        sdk_env.setenv("ANTHROPIC_BASE_URL", "")  # empty string
+        # Act
+        opts = build_sdk_options("alpha", permission_mode="bypassPermissions")
+        return opts
+
+    def test_empty_anthropic_base_url_does_not_count_as_provider(
+        self, _opts_empty_env_does_not_count
+    ):
+        # Arrange
+        opts = _opts_empty_env_does_not_count
+        # Act
+        disallowed = list(opts.disallowed_tools or [])
+        # Assert
+        assert "Computer" not in disallowed
+
+
+# ---------------------------------------------------------------------------
 # build_sdk_options — server:sac channel sidecar registration
 # ---------------------------------------------------------------------------
 
