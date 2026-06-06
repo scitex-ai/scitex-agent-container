@@ -316,6 +316,26 @@ def agent_start(
     # ``sac listen`` can find the port via state.db without re-parsing
     # the spec.yaml.
     resolve_a2a_port(config)
+
+    # Bug #41 preflight — refuse to start when spec.claude.channels
+    # requests ``server:claude-code-telegrammer`` but spec.a2a.port is
+    # unset/null. Without the /v1/turn endpoint the standalone
+    # telegrammer poller has no URL to POST inbound Telegram to and an
+    # idle agent silently won't wake. Catching this here makes the
+    # misconfig loud at ``sac agents start`` time rather than the
+    # operator discovering it via "agent doesn't reply to Telegram"
+    # three messages later. See ``runtimes/_sdk_channels.
+    # validate_telegrammer_wake_wiring`` for the contract; F3 (MCP key
+    # mis-keyed in to_home/.mcp.json) is covered by the matching
+    # runner-side WARN/ERROR logs in ``_wire_telegrammer_wake``.
+    from ..runtimes._sdk_channels import validate_telegrammer_wake_wiring
+
+    validate_telegrammer_wake_wiring(
+        getattr(config.claude, "channels", None),
+        getattr(config.a2a, "port", None),
+        agent_name=config.name,
+    )
+
     runtime_factory = runtime_factory or _get_runtime
     runtime = runtime_factory(config)
 
