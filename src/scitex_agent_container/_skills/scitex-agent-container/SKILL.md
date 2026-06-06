@@ -30,7 +30,6 @@ session inside Apptainer (local or remote via SSH), observe via
 | Python API | `scitex_agent_container` (`AgentConfig`, `load_config`, `validate_config`, `Registry`; `agent.*`/`db.*`/`host.*`/`peer.*`) |
 | CLI | `scitex-agent-container`, `sac` — see [10_cli.md](10_cli.md) |
 | MCP servers | None bundled — agents spawn their own via `to_home/.mcp.json` |
-| Runtimes | `runtimes/claude_session.py` (SDK-native, default) + apptainer build helpers |
 | Config format | v3 `scitex-agent-container/v3` only — v2 rejected |
 
 ## Sub-skills
@@ -44,7 +43,7 @@ session inside Apptainer (local or remote via SSH), observe via
 - [06_http-api.md](06_http-api.md) — `POST /v1/turn` wire format (`spec.a2a.port` enables)
 
 ### Core
-- [01_config-v3.md](01_config-v3.md) — v3 config format (current); dir-as-SSoT (no `metadata.name`); v2-era `spec.remote`/`spec.skills`/`dot_claude`/top-level `spec.model` rejected
+- [01_config-v3.md](01_config-v3.md) — v3 format; dir-as-SSoT (no `metadata.name`); rejects v2-era `spec.remote`/`spec.skills`/`dot_claude`/`spec.model`
 - [02_multiplexer.md](02_multiplexer.md) — vestigial for agents (SDK runtime); lead-only tmux wrap
 - [03_auto-accept.md](03_auto-accept.md) — modular prompt handlers
 - [04_resource-management.md](04_resource-management.md) — resource management
@@ -53,8 +52,8 @@ session inside Apptainer (local or remote via SSH), observe via
 - [07_a2a-protocol.md](07_a2a-protocol.md) — native A2A protocol (`sac a2a serve`)
 - [07_a2a-protocol-extension-fields.md](07_a2a-protocol-extension-fields.md) — `x-scitex-agent-container.*` AgentCard fields
 - [08_templates.md](08_templates.md) — six pattern templates + examples
-- [14_claude-session-state.md](14_claude-session-state.md) — state-dir layout, auth precedence, `sdk_session` status, supervisor
-- [15_claude-session.md](15_claude-session.md) — claude-session SDK runner (inside the SIF) + `POST /v1/turn` inbound
+- [14_claude-session-state.md](14_claude-session-state.md) — state-dir layout, auth precedence, `sdk_session` status
+- [15_claude-session.md](15_claude-session.md) — SDK runner (in-SIF) + `POST /v1/turn` inbound
 - [16_claude-session-migration.md](16_claude-session-migration.md) — historical: claude-code → SDK migration
 - [17_inbound-turn-endpoint.md](17_inbound-turn-endpoint.md) — `POST /v1/turn` wire format + sidecar replacement
 - [18_full-agent-delegation.md](18_full-agent-delegation.md) — delegate to another *full* agent (vs Task subagent)
@@ -64,13 +63,14 @@ session inside Apptainer (local or remote via SSH), observe via
 - [10_cli.md](10_cli.md) — CLI commands and Python API
 - [11_remote-deploy.md](11_remote-deploy.md) — SSH deployment, src files, venv
 - [12_wsl-connectivity.md](12_wsl-connectivity.md) — WSL connectivity notes
-- [24_image-build.md](24_image-build.md) — apptainer `.sif` build/rebuild, `@develop` pin, rebuild-to-ship gotcha
-- [25_claude-setup-delivery.md](25_claude-setup-delivery.md) — `to_home`→`$HOME` 1:1 mirror, overlay/`--home`, `--settings` hook load
-- [26_credentials-rotation.md](26_credentials-rotation.md) — OAuth model: per-account symlinks, `:rw` bind, preflight, COPY caveat
+- [24_image-build.md](24_image-build.md) — apptainer `.sif` build/rebuild, rebuild-to-ship gotcha
+- [25_claude-setup-delivery.md](25_claude-setup-delivery.md) — `to_home`→`$HOME` mirror, overlay/`--home`, settings hook
+- [26_credentials-rotation.md](26_credentials-rotation.md) — OAuth model + auth mechanics (canonical, `:rw` bind, preflight)
+- [26_credentials-rotation-host.md](26_credentials-rotation-host.md) — refresh + one-refresher invariant + host cron / watch-live / CI rotation
 - [27_credentials-relogin.md](27_credentials-relogin.md) — verified re-login (tmux code-paste) + 401-recovery
 - [28_credential-refresh.md](28_credential-refresh.md) — refresh creds without restart; running agents re-read on next turn
 - [29_progress-reporting-to-lead.md](29_progress-reporting-to-lead.md) — milestone push to lead via a2a_send
-- [30_responsiveness-background-work.md](30_responsiveness-background-work.md) — short turns; heavy work to background so operator Telegram is answered within seconds
+- [30_responsiveness-background-work.md](30_responsiveness-background-work.md) — short turns; long work backgrounded so Telegram answers fast
 
 ### Reference
 - [13_observability.md](13_observability.md) — `sac agents status` JSON contract
@@ -82,8 +82,8 @@ session inside Apptainer (local or remote via SSH), observe via
 
 - [20_env-vars.md](20_env-vars.md) — `SCITEX_*` env vars read at runtime
 - [21_cli-startup-budget.md](21_cli-startup-budget.md) — keep `sac --help` < 500 ms via LazyGroup
-- [22_host-passthrough.md](22_host-passthrough.md) — `spec.mounts`/`spec.user`/`spec.env` for agents needing host fs / git / gh
-- [23_telegram-integration.md](23_telegram-integration.md) — Telegram fold: `_telegram/` bridge, `telegram_*` MCP tools, channel-push inbound, lead-only auth, per-token singleton
+- [22_host-passthrough.md](22_host-passthrough.md) — `spec.mounts`/`spec.user`/`spec.env` for host fs/git/gh access
+- [23_telegram-integration.md](23_telegram-integration.md) — Telegram bridge (`_telegram/`), `telegram_*` MCP tools, channel-push, lead-only auth
 
 ## 30-second start
 
