@@ -685,6 +685,102 @@ class TestSuppressEmptyCompletions:
         # Assert
         assert pushed is True
 
+    def test_suppress_when_status_unknown_even_with_dispatch_id(self) -> None:
+        # Arrange — closes the remaining gap that PR #309 left: a beacon
+        # carrying a real ledger ``dispatch_id`` but ``status=="unknown"``
+        # and empty summary is still information-free for the requester
+        # ("we tried this dispatch and have nothing to say about it"), so
+        # the lead's 2026-06-07 spec requires suppression. Observed in
+        # the wild as ~1-in-6 of a stuck sibling's empty-beacon burst.
+        ctx = TurnContext()
+        ctx.begin(requester="lead", dispatch_id="d-leaked-unk")
+        ctx.finish(status=STATUS_UNKNOWN, summary="")
+        calls: list = []
+
+        async def _push_fn(report, requester, dispatch_id):
+            calls.append(report)
+
+        async def _scenario():
+            await emit_completion_push(ctx, _push_fn, agent_name="worker")
+            return calls
+
+        # Act
+        observed = asyncio.run(_scenario())
+        # Assert — push_fn was NEVER invoked: the dispatch_id by itself
+        # cannot rescue a status==unknown + empty summary payload.
+        assert observed == []
+
+    def test_suppress_when_status_unknown_whitespace_summary_with_dispatch_id(
+        self,
+    ) -> None:
+        # Arrange — whitespace summary still counts as empty for the
+        # status-based guard, so the strip-first contract holds even
+        # when a dispatch_id is set. Guards against a future regression
+        # that special-cases "any non-empty char" without stripping.
+        ctx = TurnContext()
+        ctx.begin(requester="lead", dispatch_id="d-ws-unk")
+        ctx.finish(status=STATUS_UNKNOWN, summary="\n  \t  ")
+        calls: list = []
+
+        async def _push_fn(report, requester, dispatch_id):
+            calls.append(report)
+
+        async def _scenario():
+            await emit_completion_push(ctx, _push_fn, agent_name="worker")
+            return calls
+
+        # Act
+        observed = asyncio.run(_scenario())
+        # Assert
+        assert observed == []
+
+    def test_emit_failure_with_dispatch_id_even_with_empty_summary(self) -> None:
+        # Arrange — signal preservation: a dispatched failure that
+        # produced no captured detail is still a real outcome the
+        # requester needs to hear about (the failure status itself is
+        # signal); the strengthened guard MUST NOT swallow it. Only the
+        # status==unknown path is suppressed when summary is empty.
+        ctx = TurnContext()
+        ctx.begin(requester="lead", dispatch_id="d-honest-fail")
+        ctx.finish(status=STATUS_FAILURE, summary="")
+        calls: list = []
+
+        async def _push_fn(report, requester, dispatch_id):
+            calls.append(report)
+
+        async def _scenario():
+            await emit_completion_push(ctx, _push_fn, agent_name="worker")
+            return calls
+
+        # Act
+        observed = asyncio.run(_scenario())
+        # Assert — failure-status push still emits despite the empty
+        # summary; failure is signal even without summary text.
+        assert len(observed) == 1
+
+    def test_status_unknown_with_real_summary_still_emits(self) -> None:
+        # Arrange — symmetric to the non-empty-content branch in #309:
+        # an honest "unknown" status that DID capture summary text is
+        # signal (e.g. partial output before an interrupt); don't
+        # suppress just because the conversation never reached a clean
+        # ResultMessage / exception path.
+        ctx = TurnContext()
+        ctx.begin(requester="lead", dispatch_id="d-partial")
+        ctx.finish(status=STATUS_UNKNOWN, summary="partial output then interrupt")
+        calls: list = []
+
+        async def _push_fn(report, requester, dispatch_id):
+            calls.append(report)
+
+        async def _scenario():
+            await emit_completion_push(ctx, _push_fn, agent_name="worker")
+            return calls
+
+        # Act
+        observed = asyncio.run(_scenario())
+        # Assert
+        assert len(observed) == 1
+
 
 # ---------------------------------------------------------------------------
 # Full conversation → requester push (real run_conversation, fake SDK module)
