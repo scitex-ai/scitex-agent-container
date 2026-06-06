@@ -67,6 +67,17 @@ From: ./sac-base.sif
     # lets uv/pip drift away from the base layer's 0.2.87 pin (the
     # version that bundles the working claude CLI 2.1.150). Keep
     # both branches' version in lockstep with apptainer-base.def.
+    #
+    # ``xarray`` is listed EXPLICITLY here because ``scitex[all]``'s
+    # current extras set does not pull it. Without xarray, clew's
+    # ``scitex.io`` preflight on Spartan fails its import probe and
+    # silently falls back to "minimal mode" — runs look green but
+    # lose the labelled-array surface the cohort-A capsules need.
+    # Pinned explicit so a future ``scitex[all]`` re-bake cannot
+    # silently drop the dep without surfacing as a build-time
+    # uv/pip failure. (Caught by clew's capsule-0220918 audit,
+    # 2026-06-06; symmetric with the apt-side libglib2.0-0 add in
+    # apptainer-base.def — both close silent-fallback paths.)
     if command -v uv >/dev/null; then
         uv pip install --python /opt/venv-sac/bin/python \
             black flake8 \
@@ -74,6 +85,7 @@ From: ./sac-base.sif
             pytest pytest-cov \
             "claude-agent-sdk==0.2.87" \
             "scitex[all]" \
+            xarray \
             /opt/scitex-agent-container-src
     else
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
@@ -84,6 +96,7 @@ From: ./sac-base.sif
             pytest pytest-cov \
             "claude-agent-sdk==0.2.87" \
             "scitex[all]" \
+            xarray \
             /opt/scitex-agent-container-src
     fi
 
