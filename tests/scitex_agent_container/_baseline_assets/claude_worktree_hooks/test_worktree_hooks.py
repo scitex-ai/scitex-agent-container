@@ -14,7 +14,6 @@ a ≥3-word descriptive name, and exactly one assertion.
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
