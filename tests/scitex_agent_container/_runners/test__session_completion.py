@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import socket
 from pathlib import Path
@@ -620,11 +621,16 @@ class TestSuppressEmptyCompletions:
         # Assert
         assert observed == []
 
-    def test_emit_when_dispatch_id_present_even_with_empty_summary(self) -> None:
-        # Arrange — a dispatched turn that legitimately produced no
-        # assistant text (acks, hook-only turns) MUST still report so
-        # the requester can correlate by dispatch_id. The guard only
-        # suppresses the BOTH-empty case.
+    def test_suppress_success_with_dispatch_id_when_summary_empty(self) -> None:
+        # Arrange — #326-part-2 categorical-guard flip: a SUCCESS turn
+        # with a real dispatch_id but EMPTY summary is now suppressed.
+        # The previous guard let it through (dispatch_id-as-rescue), but
+        # the wild leak under #326 proved the union form was unsafe; the
+        # categorical form predicates on (real-status AND real-summary)
+        # — empty summary alone fails the AND regardless of dispatch_id.
+        # An empty-summary success is acceptable to drop: it carries no
+        # information beyond the dispatch_id itself (which the sender
+        # already minted and the requester already has).
         ctx = TurnContext()
         ctx.begin(requester="lead", dispatch_id="d-no-summary")
         ctx.finish(status=STATUS_SUCCESS, summary="")
@@ -639,8 +645,10 @@ class TestSuppressEmptyCompletions:
 
         # Act
         observed = asyncio.run(_scenario())
-        # Assert
-        assert len(observed) == 1
+        # Assert — push_fn was NEVER invoked: the SUCCESS status alone
+        # cannot rescue an empty-summary payload under the categorical
+        # guard.
+        assert observed == []
 
     def test_emit_when_summary_present_even_without_dispatch_id(self) -> None:
         # Arrange — symmetric: a non-dispatched turn with REAL content
@@ -734,12 +742,18 @@ class TestSuppressEmptyCompletions:
         # Assert
         assert observed == []
 
-    def test_emit_failure_with_dispatch_id_even_with_empty_summary(self) -> None:
-        # Arrange — signal preservation: a dispatched failure that
-        # produced no captured detail is still a real outcome the
-        # requester needs to hear about (the failure status itself is
-        # signal); the strengthened guard MUST NOT swallow it. Only the
-        # status==unknown path is suppressed when summary is empty.
+    def test_suppress_failure_with_dispatch_id_when_summary_empty(self) -> None:
+        # Arrange — #326-part-2 categorical-guard flip: a FAILURE turn
+        # with a real dispatch_id but EMPTY summary is now suppressed.
+        # The previous guard kept it ("failure is signal even without
+        # summary text"), but the wild leak under #326 proved the union
+        # form was unsafe; the categorical form predicates on
+        # (real-status AND real-summary) — empty summary alone fails
+        # the AND regardless of status. A bare ``status=failure`` with
+        # no detail is unactionable for the requester anyway; the
+        # _drive_turn except-branch always sets ``summary=str(exc)``
+        # which is never empty in practice, so this drop loses no real
+        # signal.
         ctx = TurnContext()
         ctx.begin(requester="lead", dispatch_id="d-honest-fail")
         ctx.finish(status=STATUS_FAILURE, summary="")
@@ -754,16 +768,21 @@ class TestSuppressEmptyCompletions:
 
         # Act
         observed = asyncio.run(_scenario())
-        # Assert — failure-status push still emits despite the empty
-        # summary; failure is signal even without summary text.
-        assert len(observed) == 1
+        # Assert — push_fn was NEVER invoked: empty summary fails the
+        # AND-condition even with a real failure status.
+        assert observed == []
 
-    def test_status_unknown_with_real_summary_still_emits(self) -> None:
-        # Arrange — symmetric to the non-empty-content branch in #309:
-        # an honest "unknown" status that DID capture summary text is
-        # signal (e.g. partial output before an interrupt); don't
-        # suppress just because the conversation never reached a clean
-        # ResultMessage / exception path.
+    def test_suppress_status_unknown_even_with_real_summary(self) -> None:
+        # Arrange — #326-part-2 categorical-guard flip: a status=unknown
+        # turn with a REAL summary is now suppressed. The previous
+        # behaviour kept it (status=unknown + content was treated as
+        # signal), but the leak data showed turn_context.summary can
+        # become non-empty while .status stays None on at least one
+        # path — that's exactly how the 60 wild leaks escaped. The
+        # categorical form drops the entire ``status not in
+        # {SUCCESS, FAILURE}`` cone, so no future repopulate-summary-
+        # without-flipping-status race can produce a leak again.
+        # Real-status+real-summary remains the ONLY emit branch.
         ctx = TurnContext()
         ctx.begin(requester="lead", dispatch_id="d-partial")
         ctx.finish(status=STATUS_UNKNOWN, summary="partial output then interrupt")
@@ -778,8 +797,216 @@ class TestSuppressEmptyCompletions:
 
         # Act
         observed = asyncio.run(_scenario())
+        # Assert — push_fn was NEVER invoked: status=unknown alone
+        # fails the AND-condition regardless of summary content.
+        assert observed == []
+
+
+# ---------------------------------------------------------------------------
+# emit_completion_push — #326-part-2 categorical guard (load-bearing
+# regression test). The headline fix is: suppress ANY beacon that isn't
+# (real-status AND real-summary). The three legs below cover the entire
+# truth table at the guard:
+#
+#   leg A — status ∉ {SUCCESS, FAILURE}: drop (regardless of summary)
+#   leg B — summary empty/whitespace:    drop (regardless of status)
+#   leg C — real-status AND real-summary: push
+#
+# Real TurnContext, real push_fn closure (in-process recorder), no mocks.
+# ---------------------------------------------------------------------------
+
+
+class TestCategoricalGuard:
+    @pytest.mark.parametrize(
+        ("status", "summary"),
+        [
+            # leg A (typed-status variant) — explicit non-real statuses
+            # set via finish(). Each row drops regardless of summary
+            # content. Covers STATUS_UNKNOWN (the dominant wild leak
+            # signature) plus a non-canonical string the guard must
+            # also catch (defensive cone: anything-not-real → drop).
+            (STATUS_UNKNOWN, ""),
+            (STATUS_UNKNOWN, "    "),
+            (STATUS_UNKNOWN, "looks like real content but status says otherwise"),
+            ("garbage-not-in-set", "anything"),
+        ],
+    )
+    def test_leg_a_status_not_real_drops_explicit(
+        self, status: str, summary: str
+    ) -> None:
+        # Arrange — guard leg A (explicit non-real status): any status
+        # outside {SUCCESS, FAILURE} means the conversation never
+        # recorded a real outcome; the push is information-free
+        # regardless of summary contents. This row mirrors the wild
+        # leak shape (status=unknown + dispatch_id set + summary
+        # populated by some unaccounted path).
+        ctx = TurnContext()
+        ctx.begin(requester="lead", dispatch_id="d-leg-a")
+        ctx.finish(status=status, summary=summary)
+        calls: list = []
+
+        async def _push_fn(report, requester, dispatch_id):
+            calls.append(report)
+
+        async def _scenario():
+            await emit_completion_push(ctx, _push_fn, agent_name="worker")
+            return calls
+
+        # Act
+        observed = asyncio.run(_scenario())
         # Assert
+        assert observed == []
+
+    @pytest.mark.parametrize(
+        "summary",
+        [
+            # leg A (None-status variant) — the mid-stream-emit shape:
+            # begin() set status=None, finish() never ran. summary may
+            # have been repopulated by some unaccounted path (mirrors
+            # the residual leak hypothesis). The guard must still drop.
+            "",
+            "stream interrupted mid-turn",
+        ],
+    )
+    def test_leg_a_status_none_drops(self, summary: str) -> None:
+        # Arrange — guard leg A (raw-None status): begin() set
+        # status=None; assignment-bypass on .summary mimics the
+        # observed wild leak — where some path repopulated the summary
+        # without flipping .status. The status==UNKNOWN coercion in
+        # emit_completion_push fires (None → "unknown"); the
+        # categorical guard then drops the push as leg A intends.
+        ctx = TurnContext()
+        ctx.begin(requester="lead", dispatch_id="d-leg-a-none")
+        ctx.summary = summary  # direct assignment; finish() not called
+        calls: list = []
+
+        async def _push_fn(report, requester, dispatch_id):
+            calls.append(report)
+
+        async def _scenario():
+            await emit_completion_push(ctx, _push_fn, agent_name="worker")
+            return calls
+
+        # Act
+        observed = asyncio.run(_scenario())
+        # Assert
+        assert observed == []
+
+    @pytest.mark.parametrize(
+        ("status", "summary"),
+        [
+            # leg B — summary is empty/whitespace; status varies. Every
+            # row MUST drop regardless of status, including the honest
+            # SUCCESS/FAILURE cases the previous union-guard let through
+            # under dispatch_id rescue.
+            (STATUS_SUCCESS, ""),
+            (STATUS_SUCCESS, "  \n\t  "),
+            (STATUS_FAILURE, ""),
+            (STATUS_FAILURE, "\n"),
+        ],
+    )
+    def test_leg_b_summary_empty_drops(self, status: str, summary: str) -> None:
+        # Arrange — guard leg B: an empty/whitespace summary carries no
+        # information for the requester even when status is real. The
+        # categorical drop replaces the previous "rescue via dispatch_id"
+        # branch that proved unsafe in production (#326-part-2).
+        ctx = TurnContext()
+        ctx.begin(requester="lead", dispatch_id="d-leg-b")
+        ctx.finish(status=status, summary=summary)
+        calls: list = []
+
+        async def _push_fn(report, requester, dispatch_id):
+            calls.append(report)
+
+        async def _scenario():
+            await emit_completion_push(ctx, _push_fn, agent_name="worker")
+            return calls
+
+        # Act
+        observed = asyncio.run(_scenario())
+        # Assert
+        assert observed == []
+
+    @pytest.mark.parametrize(
+        ("status", "summary"),
+        [
+            # leg C — real-status AND real-summary; the only emit branch.
+            # Both dispatch_id-present and dispatch_id-absent flows must
+            # push: the requester correlates by dispatch_id when set, by
+            # content otherwise; either way the payload is signal.
+            (STATUS_SUCCESS, "real assistant reply"),
+            (STATUS_SUCCESS, "x"),  # minimal but non-empty
+            (STATUS_FAILURE, "ProcessError: claude exited 1"),
+        ],
+    )
+    def test_leg_c_real_status_and_real_summary_pushes(
+        self, status: str, summary: str
+    ) -> None:
+        # Arrange — guard leg C: the ONLY honest emit branch. Confirms
+        # the categorical drop doesn't over-reach and silence legitimate
+        # completions. Mirrors the clean ResultMessage path
+        # (status=SUCCESS, summary=chunks) and the caught-exception path
+        # (status=FAILURE, summary=str(exc)) in _drive_turn verbatim.
+        ctx = TurnContext()
+        ctx.begin(requester="lead", dispatch_id="d-leg-c")
+        ctx.finish(status=status, summary=summary)
+        calls: list = []
+
+        async def _push_fn(report, requester, dispatch_id):
+            calls.append(report)
+
+        async def _scenario():
+            await emit_completion_push(ctx, _push_fn, agent_name="worker")
+            return calls
+
+        # Act
+        observed = asyncio.run(_scenario())
+        # Assert — exactly one push fired, carrying the honest payload
+        # the requester needs.
         assert len(observed) == 1
+
+
+class TestDiagnosticEmitState:
+    def test_diagnostic_log_fires_on_every_reachable_emit_call(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # Arrange — the diagnostic ``log.warning("completion-push
+        # emit-state ...")`` is load-bearing for root-causing the
+        # residual leak path AND bug #2 (legitimate success pushes
+        # silently suppressed by the Stop-hook / finally race). It MUST
+        # fire on every call that reaches the guard, regardless of
+        # whether the guard drops or the push fires. Two scenarios:
+        # a guard-drop (status=unknown) and a clean push (SUCCESS +
+        # real summary).
+        caplog.set_level(
+            logging.WARNING, logger="scitex_agent_container._runners._session_hooks"
+        )
+        ctx_drop = TurnContext()
+        ctx_drop.begin(requester="lead", dispatch_id="d-drop")
+        ctx_drop.finish(status=STATUS_UNKNOWN, summary="")
+        ctx_push = TurnContext()
+        ctx_push.begin(requester="lead", dispatch_id="d-push")
+        ctx_push.finish(status=STATUS_SUCCESS, summary="real reply")
+        calls: list = []
+
+        async def _push_fn(report, requester, dispatch_id):
+            calls.append(report)
+
+        async def _scenario():
+            await emit_completion_push(ctx_drop, _push_fn, agent_name="worker")
+            await emit_completion_push(ctx_push, _push_fn, agent_name="worker")
+
+        # Act
+        asyncio.run(_scenario())
+        # Assert — both reachable calls emitted the emit-state diagnostic;
+        # caller= stamp lets us distinguish Stop-hook vs finally vs other
+        # next SIF cycle without rebuilding for diagnostic logging.
+        diag_lines = [
+            rec
+            for rec in caplog.records
+            if rec.getMessage().startswith("completion-push emit-state")
+        ]
+        assert len(diag_lines) == 2
 
 
 # ---------------------------------------------------------------------------

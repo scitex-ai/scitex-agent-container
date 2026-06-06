@@ -41,6 +41,7 @@ does NOT crash the agent — the turn already completed; the hook returns
 from __future__ import annotations
 
 import logging
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
@@ -110,19 +111,30 @@ async def emit_completion_push(
       a bare runner with no host control-plane has nowhere to push;
     * the turn had no requester (a mission/boot turn answers to no peer);
     * this turn was already pushed; or
-    * the push would be structurally empty (see the fleet-noise guards
-      inline below): the summary is empty/whitespace AND either there is
-      no ledger correlation (``dispatch_id is None``) OR no honest
-      outcome was recorded (``status == STATUS_UNKNOWN``). Every empty
-      push burns the requester's turn cycle for zero signal; the union
-      catches both noise patterns observed in the wild without dropping
-      any signal-carrying push.
+    * the push would not carry information the requester can act on.
+      The CATEGORICAL guard (lead 2026-06-07, #326-part-2): suppress
+      UNLESS BOTH ``status in {SUCCESS, FAILURE}`` AND
+      ``summary_stripped`` is non-empty. The previous union-style guard
+      still leaked ~4% of empty beacons (60 wild leaks observed under
+      #326 in a single 30-min idle window, all ``status="unknown"``,
+      escaping the union because some path repopulated ``.summary``
+      without flipping ``.status``). The categorical form removes the
+      ambiguity: no real outcome OR no content → drop. Anything else
+      is signal and flows.
 
     Status is taken verbatim from ``turn_context.status`` — set honestly by
     the conversation (``success`` on clean drain, ``failure`` on SDK error).
     A ``None`` status (the push fired before the conversation recorded an
     outcome — should not happen, since Stop comes after the ResultMessage)
     is reported as ``unknown``, NEVER fabricated as success.
+
+    A diagnostic ``log.warning("completion-push emit-state ...")`` is
+    emitted on every reachable call so the next SIF cycle captures the
+    actual emit-state at leak-time — root-causing both the residual
+    leak path AND bug #2 (legitimate success pushes silently suppressed
+    by a Stop-hook-fires-before-finally race that flips ``pushed=True``
+    prematurely). The diagnostic stays in until bug #2 is filed and
+    root-caused; it can then drop to DEBUG.
 
     A delivery failure is LOUD (logged at WARNING, requester named) but
     never re-raised: the turn already completed, and a flaky receipt must
@@ -134,38 +146,69 @@ async def emit_completion_push(
     if not requester or turn_context.pushed:
         return
 
-    from ._session_completion import STATUS_UNKNOWN, build_completion_report
+    from ._session_completion import (
+        STATUS_FAILURE,
+        STATUS_SUCCESS,
+        STATUS_UNKNOWN,
+        build_completion_report,
+    )
 
     status = turn_context.status or STATUS_UNKNOWN
     summary_stripped = (turn_context.summary or "").strip()
 
-    # Fleet-noise guards — suppress structurally-empty pings at the
-    # source. Either signature flips the noise gate:
+    # Diagnostic: stamp WHO called us + the full state at emit time so
+    # we can correlate against the stdout warning + the inbox-side leak
+    # next SIF cycle. Stack-introspection (rather than a new kwarg) keeps
+    # the seam stable for the two call sites (Stop hook + _drive_turn
+    # finally) and any future caller. Bounded summary repr so a runaway
+    # turn cannot bloat the log line.
+    _caller_frame = sys._getframe(1)
+    _caller_name = (
+        f"{_caller_frame.f_code.co_filename.rsplit('/', 1)[-1]}:"
+        f"{_caller_frame.f_code.co_name}"
+    )
+    log.warning(
+        "completion-push emit-state requester=%r dispatch_id=%r "
+        "status=%r summary=%r pushed=%r caller=%s",
+        requester,
+        turn_context.dispatch_id,
+        turn_context.status,
+        (turn_context.summary or "")[:80],
+        turn_context.pushed,
+        _caller_name,
+    )
+
+    # Categorical fleet-noise guard (#326-part-2, 2026-06-07).
     #
-    # (1) PR #309 (2026-06-05): no ledger correlation AND no content.
-    #     The wire signature
-    #     ``{"agent": <name>, "dispatch_id": null, "status": "unknown",
-    #     "summary": ""}`` is the canonical "nothing real to report"
-    #     payload — every idle/wake turn that had no incoming
-    #     dispatch_id and produced no assistant text used to fire one.
+    # A completion push only carries information for the requester when
+    # BOTH legs are honest:
+    #   * ``status in {SUCCESS, FAILURE}`` — the conversation reached a
+    #     real outcome (clean ResultMessage or a caught exception). Any
+    #     other status, including the ``STATUS_UNKNOWN`` coercion of a
+    #     ``None`` ``turn_context.status``, means the emit fired before
+    #     the conversation recorded an outcome — by definition nothing
+    #     to report.
+    #   * ``summary_stripped`` is non-empty — the assistant produced
+    #     content the requester can read. A whitespace-only summary
+    #     counts as empty (strip first).
     #
-    # (2) Lead 2026-06-07 (conv 62b0f613104048c6adae11c73d9f8b63): no
-    #     honest outcome AND no content, REGARDLESS of dispatch_id. A
-    #     push with ``status:"unknown"`` + empty summary carries no
-    #     information for the requester even when a dispatch_id is
-    #     set — "we tried this dispatch and have nothing to say about
-    #     it" is worse than useless. Observed in the wild: roughly 1
-    #     in 6 empty pings from a stuck sibling rode a real
-    #     dispatch_id and leaked past guard (1).
+    # If EITHER leg fails, drop. The previous union-style guard
+    # (``status == UNKNOWN`` OR ``dispatch_id is None``, gated on empty
+    # summary) still leaked: in a single 30-min idle window on the
+    # post-#326 SIF, 60 empty ``status="unknown"`` beacons escaped to
+    # clew/neurovista alongside ZERO ``status="success"`` failures —
+    # i.e. some path repopulated ``.summary`` without flipping
+    # ``.status``, slipping past the ``not summary_stripped`` clause.
+    # The categorical form removes that ambiguity by predicating on the
+    # honest-state AND-condition the requester actually needs.
     #
-    # Signal preserved: a push with non-empty summary always emits; a
-    # push with empty summary but an honest status (``success`` or
-    # ``failure``) AND a dispatch_id still emits so the requester can
-    # correlate. ``pushed = True`` still flips so a re-entrant Stop
-    # hook on the same turn re-evaluates and skips identically.
-    if not summary_stripped and (
-        turn_context.dispatch_id is None or status == STATUS_UNKNOWN
-    ):
+    # Bug #2 follow-up (separate from this guard): the absence of any
+    # ``status="success"`` failure in the same window strongly suggests
+    # legitimate success pushes are being suppressed by a Stop-hook /
+    # finally race that flips ``pushed=True`` before the success state
+    # is recorded. Root-caused later with the diagnostic above; the
+    # operator's empty-ping goal is met without it.
+    if status not in (STATUS_SUCCESS, STATUS_FAILURE) or not summary_stripped:
         turn_context.pushed = True
         return
 
