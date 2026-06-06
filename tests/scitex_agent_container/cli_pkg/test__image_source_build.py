@@ -27,6 +27,7 @@ swap module-level references the same way ``test_image_group`` does.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import zipfile
@@ -361,6 +362,89 @@ def test_stage_build_context_pkg_root_is_file_raises_NotADirectoryError(
 
 
 # ---------------------------------------------------------------------------
+# stage_build_context — bootstrap_sif (layered .def support)
+# ---------------------------------------------------------------------------
+
+
+def test_stage_build_context_symlinks_bootstrap_sif_when_provided(
+    tmp_path, fake_pkg_root, fake_def
+):
+    # Arrange — layered .def case: a prerequisite SIF must be staged
+    # next to the .def so apptainer's relative ``From: ./<name>.sif``
+    # resolves at build time. We use a small fake file; the helper
+    # symlinks (not copies) for instant staging of the real ~3 GB
+    # base SIF.
+    dest = tmp_path / "staging"
+    fake_base_sif = tmp_path / "sac-base.sif"
+    fake_base_sif.write_bytes(b"fake SIF bytes")
+    # Act
+    isb.stage_build_context(fake_pkg_root, fake_def, dest, bootstrap_sif=fake_base_sif)
+    # Assert — staged entry is a symlink (not a copy) pointing at the
+    # absolute resolved source-SIF path; survives the dest_dir's
+    # rmtree-on-next-build lifecycle because the target lives outside.
+    staged = dest / "sac-base.sif"
+    assert staged.is_symlink() and Path(os.readlink(staged)) == fake_base_sif.resolve()
+
+
+def test_stage_build_context_omits_bootstrap_sif_entry_when_not_provided(
+    tmp_path, fake_pkg_root, fake_def
+):
+    # Arrange — top-of-stack .def (``base``, ``proxy``) has no
+    # prerequisite SIF. The staging dir must NOT carry a stray .sif
+    # entry that a non-layered build could trip over.
+    dest = tmp_path / "staging"
+    # Act
+    isb.stage_build_context(fake_pkg_root, fake_def, dest)
+    # Assert
+    sifs = list(dest.glob("*.sif"))
+    assert sifs == []
+
+
+def test_stage_build_context_raises_when_bootstrap_sif_missing(
+    tmp_path, fake_pkg_root, fake_def
+):
+    # Arrange — the operator asked for a layered build but the
+    # prerequisite SIF was never produced (e.g. forgot ``sac image
+    # build base`` first). The helper must FAIL LOUD with a message
+    # that names the missing path AND explains the fix — not let
+    # apptainer crash mid-build on a half-staged context (the
+    # 2026-06-07 cohort-A rebuild stall).
+    dest = tmp_path / "staging"
+    ghost_sif = tmp_path / "does-not-exist.sif"
+
+    # Act
+    def _call():
+        isb.stage_build_context(fake_pkg_root, fake_def, dest, bootstrap_sif=ghost_sif)
+
+    # Assert
+    with pytest.raises(FileNotFoundError, match=r"bootstrap SIF not found"):
+        _call()
+
+
+def test_stage_build_context_preserves_staging_dir_when_bootstrap_sif_missing(
+    tmp_path, fake_pkg_root, fake_def
+):
+    # Arrange — when the bootstrap-sif check fails, the staging dir
+    # must NOT have been wiped. Pairs with the resolve-before-wipe
+    # rule already covering pyproject.toml / README.md so prior good
+    # state survives a misconfig.
+    dest = tmp_path / "staging"
+    dest.mkdir()
+    sentinel = dest / "operator-state.txt"
+    sentinel.write_text("must survive a failed stage_build_context call\n")
+    ghost_sif = tmp_path / "does-not-exist.sif"
+
+    # Act
+    try:
+        isb.stage_build_context(fake_pkg_root, fake_def, dest, bootstrap_sif=ghost_sif)
+    except FileNotFoundError:
+        pass
+
+    # Assert
+    assert sentinel.is_file()
+
+
+# ---------------------------------------------------------------------------
 # build_layer_from_source
 # ---------------------------------------------------------------------------
 
@@ -468,6 +552,35 @@ def test_build_layer_from_source_stages_source_at_known_relative_name(
         and (staged_src / "pyproject.toml").is_file()
         and (staged_src / "src" / "scitex_agent_container" / "__init__.py").is_file()
     )
+
+
+def test_build_layer_from_source_forwards_bootstrap_sif_to_staging(
+    tmp_path, fake_pkg_root, fake_def
+):
+    # Arrange — pin that the public builder forwards ``bootstrap_sif``
+    # through to ``stage_build_context`` so the staged context for a
+    # layered .def actually carries the prerequisite SIF. Without this,
+    # apptainer would FATAL on a half-staged context (the 2026-06-07
+    # cohort-A rebuild stall).
+    out_dir = tmp_path / "out"
+    fake_base_sif = tmp_path / "sac-base.sif"
+    fake_base_sif.write_bytes(b"fake SIF")
+
+    # Act
+    with _use_apptainer_runner(lambda *a, **kw: 0):
+        isb.build_layer_from_source(
+            layer="scitex",
+            def_path=fake_def,
+            pkg_root=fake_pkg_root,
+            output_dir=out_dir,
+            bootstrap_sif=fake_base_sif,
+        )
+
+    # Assert — the staging dir for the scitex layer now carries the
+    # bootstrap SIF as a sibling of the staged .def, ready for
+    # apptainer's relative ``From: ./sac-base.sif`` to resolve.
+    staged_base = out_dir / "sac-scitex" / "build-context" / "sac-base.sif"
+    assert staged_base.exists() and staged_base.is_symlink()
 
 
 # ---------------------------------------------------------------------------

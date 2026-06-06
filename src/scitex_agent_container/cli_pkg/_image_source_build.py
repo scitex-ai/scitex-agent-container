@@ -134,6 +134,8 @@ def stage_build_context(
     pkg_root: Path,
     def_path: Path,
     dest_dir: Path,
+    *,
+    bootstrap_sif: Path | None = None,
 ) -> Path:
     """Stage a build-context dir for source-bundled apptainer builds.
 
@@ -141,6 +143,7 @@ def stage_build_context(
 
         dest_dir/
             <def-name>.def                     # copy of def_path
+            <bootstrap_sif.name>               # symlink to bootstrap_sif (if any)
             scitex-agent-container-src/        # pip-installable source tree
                 pyproject.toml                 # from locate_bundled_pyproject
                 src/
@@ -165,6 +168,19 @@ def stage_build_context(
         The .def file to stage. Must exist and be a file.
     dest_dir : Path
         The staging directory. Created (or reset) by this function.
+    bootstrap_sif : Path | None
+        Optional path to a prerequisite SIF that the .def's
+        ``Bootstrap: localimage`` / ``From: ./<name>.sif`` line
+        references. When set, the SIF is symlinked into ``dest_dir``
+        under its own filename so apptainer's relative ``From: ./...``
+        resolves at build time. The symlink uses the absolute resolved
+        target path so it survives the staging dir's rmtree-on-next-
+        build lifecycle. ``None`` for top-of-stack defs (``Bootstrap:
+        docker`` / ``From: ubuntu:24.04`` etc.). Required for layered
+        defs like ``apptainer-scitex.def`` (``From: ./sac-base.sif``);
+        omitting it produces a half-staged build context that
+        apptainer FATAL's on with "no such file or directory" — that
+        was the bug behind the 2026-06-07 cohort-A rebuild stall.
 
     Returns
     -------
@@ -175,7 +191,8 @@ def stage_build_context(
     Raises
     ------
     FileNotFoundError
-        If ``pkg_root`` / ``def_path`` / pyproject.toml is missing.
+        If ``pkg_root`` / ``def_path`` / pyproject.toml / (when set)
+        ``bootstrap_sif`` is missing.
     NotADirectoryError
         If ``pkg_root`` exists but isn't a directory.
     """
@@ -186,11 +203,17 @@ def stage_build_context(
     if not pkg_root.is_dir():
         raise NotADirectoryError(f"package source is not a directory: {pkg_root}")
 
-    # Resolve pyproject.toml + README.md BEFORE wiping dest_dir so a
-    # missing-file failure doesn't strand the operator with a
-    # half-staged tree.
+    # Resolve pyproject.toml + README.md + (when set) bootstrap_sif
+    # BEFORE wiping dest_dir so a missing-file failure doesn't strand
+    # the operator with a half-staged tree.
     pyproject_src = locate_bundled_pyproject(pkg_root)
     readme_src = locate_bundled_readme(pkg_root)
+    if bootstrap_sif is not None and not bootstrap_sif.is_file():
+        raise FileNotFoundError(
+            f"bootstrap SIF not found: {bootstrap_sif} — build the prerequisite "
+            "layer first (e.g. `sac image build base` before `sac image build "
+            "scitex`), then retry."
+        )
 
     # Reset the staging dir. A prior failed build can leave a partial
     # tree behind; copying on top of it would silently mix old + new
@@ -202,6 +225,16 @@ def stage_build_context(
 
     staged_def = dest_dir / def_path.name
     shutil.copy2(def_path, staged_def)
+
+    # Stage the prerequisite SIF (layered build). Use a symlink to the
+    # absolute resolved target: instant (3GB base SIF would otherwise
+    # cost ~30s to copy on SSD, longer on spinning), and apptainer
+    # follows symlinks for the ``Bootstrap: localimage`` / ``From: .
+    # /<name>.sif`` reference at build time. Absolute target means the
+    # link stays valid across cwd changes during the build invocation.
+    if bootstrap_sif is not None:
+        link_path = dest_dir / bootstrap_sif.name
+        link_path.symlink_to(bootstrap_sif.resolve())
 
     # The staged pip-installable source tree:
     #   <staged_src>/pyproject.toml
@@ -296,6 +329,7 @@ def build_layer_from_source(
     output_dir: Path,
     sandbox: bool = False,
     force: bool = True,
+    bootstrap_sif: Path | None = None,
 ) -> Path:
     """Build a sac SIF (or sandbox) from a .def that bundles its own source.
 
@@ -321,6 +355,14 @@ def build_layer_from_source(
         If True, build a writable sandbox directory rather than a SIF.
     force : bool
         Pass ``--force`` to apptainer (overwrite existing artefact).
+    bootstrap_sif : Path | None
+        Optional prerequisite SIF for a layered .def. Forwarded to
+        :func:`stage_build_context` which symlinks it into the staging
+        dir so the .def's ``Bootstrap: localimage`` / ``From: ./<name>.
+        sif`` line resolves at build time. ``None`` for top-of-stack
+        defs (``base``, ``proxy``). Required for ``scitex`` (bootstraps
+        off ``sac-base.sif``); omitting it produces a half-staged
+        context and apptainer FATAL's on "no such file or directory".
 
     Returns
     -------
@@ -339,7 +381,9 @@ def build_layer_from_source(
     artifact_dir.mkdir(parents=True, exist_ok=True)
 
     staging_dir = artifact_dir / "build-context"
-    staged_def = stage_build_context(pkg_root, def_path, staging_dir)
+    staged_def = stage_build_context(
+        pkg_root, def_path, staging_dir, bootstrap_sif=bootstrap_sif
+    )
 
     output_path = artifact_dir / (
         f"sac-{layer}.sandbox" if sandbox else f"sac-{layer}.sif"

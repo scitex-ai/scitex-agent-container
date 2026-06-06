@@ -299,6 +299,54 @@ def test_build_reports_apptainer_failure_with_exit_code_1(home_tmp):
     assert result.exit_code == 1 and "apptainer build failed" in result.output
 
 
+def test_build_scitex_passes_bootstrap_sif_pointing_at_built_base_sif(home_tmp):
+    # Arrange — the scitex layer's .def bootstraps off ``sac-base.sif``
+    # at a path RELATIVE to the build-context dir. The CLI must resolve
+    # the prerequisite SIF and forward it as ``bootstrap_sif`` so the
+    # staging helper symlinks it next to the staged .def.
+    base_dir = ig._CONTAINERS_DIR / "sac-base"
+    base_dir.mkdir(parents=True)
+    base_sif = base_dir / "sac-base.sif"
+    base_sif.write_bytes(b"fake base SIF")
+    runner = CliRunner()
+    # Act
+    with _use_source_builder(result=Path("/tmp/sac-scitex.sif")) as calls:
+        result = runner.invoke(image_group, ["build", "scitex", "--yes"])
+    # Assert
+    kwargs = calls[0][1]
+    assert (
+        result.exit_code == 0
+        and kwargs["layer"] == "scitex"
+        and kwargs["bootstrap_sif"] == base_sif
+    )
+
+
+def test_build_base_passes_none_bootstrap_sif(home_tmp):
+    # Arrange — top-of-stack ``base`` .def has no prerequisite SIF;
+    # CLI must NOT make one up (would dangle a stale symlink in the
+    # staging dir).
+    runner = CliRunner()
+    # Act
+    with _use_source_builder(result=Path("/tmp/sac-base.sif")) as calls:
+        runner.invoke(image_group, ["build", "base", "--yes"])
+    # Assert
+    assert calls[0][1]["bootstrap_sif"] is None
+
+
+def test_build_scitex_errors_loud_when_base_sif_missing(home_tmp):
+    # Arrange — the operator asked for scitex but never built (or
+    # successfully overwrote) sac-base.sif first. The CLI must FAIL
+    # LOUD before invoking the builder, with the exact remediation
+    # command in the error text — not let apptainer FATAL on a half-
+    # staged context (the 2026-06-07 cohort-A rebuild stall).
+    runner = CliRunner()
+    # Act — no _use_source_builder: the failure must short-circuit
+    # before the builder is ever called.
+    result = runner.invoke(image_group, ["build", "scitex", "--yes"])
+    # Assert
+    assert result.exit_code == 1 and "sac image build base" in result.output
+
+
 # ---------------------------------------------------------------------------
 # sandbox
 # ---------------------------------------------------------------------------
