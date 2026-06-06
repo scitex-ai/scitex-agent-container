@@ -272,6 +272,7 @@ class ClaudeSessionRuntime(RuntimeBase):
         force: bool = False,
         dry_run: bool = False,
         foreground: bool = False,
+        one_shot: bool = False,
     ) -> bool:
         """Spawn the container backing the agent.
 
@@ -280,6 +281,24 @@ class ClaudeSessionRuntime(RuntimeBase):
         attaches the operator's stdio to the container; daemon mode
         (the default) returns once the engine reports the container
         is live.
+
+        ``one_shot`` is accepted for API parity with the CLI:
+        ``sac agents start --one-shot`` threads
+        ``start_kw["one_shot"] = True`` through
+        ``runtime.start(config, **start_kw)`` in
+        ``_lifecycle/_start.py``. At this runtime layer it is a
+        no-op (mirroring the ``no_preflight`` precedent above) —
+        the one-shot termination semantics are governed by
+        ``spec.autonomous.drive_until="DONE"`` in the agent's
+        spec.yaml, not by a runtime flag. Accepting the kwarg here
+        keeps the CLI ↔ runtime contract aligned so the
+        ``--broker-self --foreground --one-shot`` launcher path
+        (cohort-A nested-sac dispatch) does not crash with
+        ``TypeError: ClaudeSessionRuntime.start() got an
+        unexpected keyword argument 'one_shot'``. The kwarg is
+        forwarded to the underlying container runtime so any
+        future support there works without another signature
+        change.
         """
         container_rt = self._container_runtime_for(config)
         if container_rt is None:
@@ -309,6 +328,7 @@ class ClaudeSessionRuntime(RuntimeBase):
             force=force,
             dry_run=dry_run,
             foreground=foreground,
+            one_shot=one_shot,
         )
 
     def stop(self, config: AgentConfig) -> bool:
