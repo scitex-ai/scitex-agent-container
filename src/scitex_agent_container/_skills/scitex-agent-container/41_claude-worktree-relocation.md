@@ -1,3 +1,14 @@
+---
+description: |
+  [TOPIC] Claude Code worktree relocation hooks (F-CS8 prevention)
+  [DETAILS] Canonical WorktreeCreate/WorktreeRemove hook scripts that relocate
+  Claude Code's default `.claude/worktrees/<name>` creations to
+  `<git-root>/.worktrees/<name>` where the operator's prune cron maintains
+  hygiene. Stops the recurring multi-GB / 100k-file accumulation that wedges
+  agents (F-CS8 recurrence ~100×, neurovista wedge 22.9 GB / 80k files).
+tags: [scitex-agent-container-claude-worktree]
+---
+
 # Claude Code worktree relocation — F-CS8 prevention
 
 Claude Code's bundled binary creates session/agent worktrees under
