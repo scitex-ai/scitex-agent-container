@@ -280,6 +280,27 @@ async def run_conversation(
             _drain_failed_inbox(inbox, exc)
             return
 
+        # Instrumentation (bug #42 hardening, 2026-06-07): name every
+        # stdio MCP we are about to hand to the SDK so a future "MCP X
+        # silently dropped" recurrence (operator-visible symptom: bot
+        # stopped responding after restart) leaves a self-diagnosing
+        # trail in stdout.log. The corresponding ``apptainer_restart``
+        # mount + lock race that originally caused this is closed in
+        # ``_lifecycle/_stop.py::_wait_for_previous_runtime_to_exit``;
+        # this log is the OBSERVABILITY half so a regression of either
+        # the race or the SDK's per-MCP launch is visible without
+        # bouncing the agent or attaching to its stderr.
+        try:
+            mcp_keys = sorted((getattr(options, "mcp_servers", None) or {}).keys())
+        except Exception:  # stx-allow: fallback (reason: options surface is SDK-version-dependent — never fail the conversation on a logging probe)
+            mcp_keys = ["<unreadable>"]
+        logger.info(
+            "claude-session %s: launching SDK (attempt=%d resume=%s mcp_servers=%r)",
+            name,
+            attempt,
+            current_sid,
+            mcp_keys,
+        )
         try:
             async with ClaudeSDKClient(options=options) as client:
                 while True:
