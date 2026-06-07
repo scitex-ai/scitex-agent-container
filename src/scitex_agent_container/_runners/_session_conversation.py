@@ -64,6 +64,57 @@ def _drain_failed_inbox(inbox: "asyncio.Queue", exc: BaseException) -> None:
             env.response.set_exception(exc)
 
 
+async def _wake_on_inbound(inbox, client) -> None:
+    """Watch ``inbox`` while a turn is in flight; interrupt the SDK
+    when the next envelope arrives so the consumer loop can dequeue it.
+
+    Pairs 1:1 with each ``_drive_turn`` invocation (#41, lead a2a
+    ``f39bdcc5`` + ``b4e223e0``). The conversation loop spawns this as
+    a sibling task, lets it await on the inbox's non-destructive
+    "queue is non-empty" event, and cancels it in ``finally`` so it
+    cannot leak across turn boundaries.
+
+    Semantics:
+
+    * ``await inbox.wait_for_item()`` returns when the queue's
+      ``_not_empty`` event fires — i.e. the next envelope has been put
+      AND has not yet been consumed by the conversation loop. Because
+      this loop's ``inbox.get()`` already consumed the CURRENT
+      envelope, the wake fires only on a NEW envelope queued mid-turn.
+    * On wake, ``await client.interrupt()`` asks the SDK to stop the
+      current iterator. The SDK guarantee (verified empirically in
+      :mod:`_session_turn`) is that any in-flight assistant text /
+      tool-result is already captured in ``chunks`` by the time the
+      iterator returns — so the interrupt does NOT corrupt or tear
+      the current turn. The new envelope is then processed as a
+      clean FOLLOW-UP message in the next loop iteration.
+    * Exceptions from ``interrupt`` are swallowed (logged WARNING)
+      because the wake task must NEVER kill the conversation loop;
+      worst case the original turn finishes naturally and the new
+      envelope is processed one turn-cap later.
+
+    The wake task EXITS after one interrupt — there's only ever one
+    in-flight turn, and the consumer loop will spawn a fresh wake
+    task for the next turn.
+    """
+    try:
+        await inbox.wait_for_item()
+    except asyncio.CancelledError:
+        # Normal path when the turn completed before any new envelope
+        # arrived — the consumer cancels us in ``finally``.
+        raise
+    try:
+        await client.interrupt()
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # stx-allow: fallback (reason: wake task is best-effort; never let SDK interrupt failure kill the conversation loop — the original turn will finish naturally instead)
+        logger.warning(
+            "wake-on-inbound: client.interrupt() failed (turn will "
+            "finish naturally before the new envelope is processed): %s",
+            exc,
+        )
+
+
 def _resume_candidate(
     state_dir: Path,
     *,
@@ -309,23 +360,57 @@ async def run_conversation(
                         return
                     if not isinstance(env, TurnEnvelope):
                         continue
-                    await _drive_turn(
-                        client,
-                        env,
-                        state_dir=state_dir,
-                        pid=pid,
-                        stop=stop,
-                        print_stream=print_stream,
-                        sdk_types=sdk_types,
-                        name=name,
-                        host=host,
-                        db_writer=db_writer,
-                        stderr_capture=stderr_capture,
-                        turn_context=turn_context,
-                        push_fn=push_fn,
-                        task_observations=task_observations,
-                        task_types=task_types,
+                    # Wake-on-inbound (#41, lead a2a f39bdcc5 + b4e223e0):
+                    # Spawn a concurrent task that watches the inbox while
+                    # the SDK is driving the current turn. If a new envelope
+                    # arrives MID-TURN (i.e. while ``_drive_turn``'s
+                    # ``receive_response()`` iterator is awaiting on a long
+                    # tool call — bash monitor, idle MCP), the wake task
+                    # calls ``client.interrupt()`` so the SDK winds the
+                    # current iterator down cleanly. ``_drive_turn`` then
+                    # returns, this loop re-enters ``await inbox.get()``,
+                    # and the queued envelope dequeues immediately. Without
+                    # this, the agent sits at near-0% CPU until the SDK's
+                    # idle tool returns on its own (the wedge mode that
+                    # blocks operator + lead sends on proj-paper-scitex-clew
+                    # and proj-neurovista, 2026-06-07).
+                    #
+                    # ``wait_for_item`` is non-destructive — the inbox
+                    # entry stays in the queue and is dequeued by the
+                    # next iteration's ``inbox.get()`` above. The wake
+                    # task is always cancelled in the ``finally`` so it
+                    # cannot leak across turn boundaries.
+                    wake_task = asyncio.create_task(
+                        _wake_on_inbound(inbox, client),
+                        name=f"wake-on-inbound-{name}",
                     )
+                    try:
+                        await _drive_turn(
+                            client,
+                            env,
+                            state_dir=state_dir,
+                            pid=pid,
+                            stop=stop,
+                            print_stream=print_stream,
+                            sdk_types=sdk_types,
+                            name=name,
+                            host=host,
+                            db_writer=db_writer,
+                            stderr_capture=stderr_capture,
+                            turn_context=turn_context,
+                            push_fn=push_fn,
+                            task_observations=task_observations,
+                            task_types=task_types,
+                        )
+                    finally:
+                        wake_task.cancel()
+                        try:
+                            await wake_task
+                        except (
+                            asyncio.CancelledError,
+                            BaseException,
+                        ):  # stx-allow: fallback (reason: wake task is best-effort; never let its bookkeeping kill the conversation loop)
+                            pass
                     if env.exit_after:
                         stop.set()
                         return
