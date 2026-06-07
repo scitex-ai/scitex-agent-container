@@ -20,7 +20,18 @@ jobs:
         uses: contributor-assistant/github-action@v2.6.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PERSONAL_ACCESS_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+          # PS-168 §1 (workflow-secret-env-prefix): per-package secrets in
+          # .github/workflows/ must carry the SCITEX_AGENT_CONTAINER_ prefix.
+          # GITHUB_TOKEN above is the GitHub-builtin (cross-cutting, allow-
+          # listed); GH_PERSONAL_ACCESS_TOKEN is a repo-set secret the CLA
+          # assistant needs for writing to the cla-signatures branch on behalf
+          # of external contributors, so it MUST carry the package prefix.
+          # The repo secret must be added under the prefixed name in GitHub
+          # Settings → Secrets → Actions for this workflow to function for
+          # non-allow-listed contributors; ywatanabe1989's own PRs are
+          # allow-listed below and never exercise this token, so a missing
+          # secret is recoverable without breaking maintainer flow.
+          PERSONAL_ACCESS_TOKEN: ${{ secrets.SCITEX_AGENT_CONTAINER_GH_PERSONAL_ACCESS_TOKEN }}
         with:
           path-to-signatures: "signatures/cla.json"
           path-to-document: "https://github.com/ywatanabe1989/scitex-agent-container/blob/main/CLA.md"
