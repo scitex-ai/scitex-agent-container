@@ -6,6 +6,7 @@ Extracted from the former monolithic ``lifecycle.py`` (split for the
 
 from __future__ import annotations
 
+import logging
 import time
 import traceback
 from pathlib import Path
@@ -18,6 +19,22 @@ from ._handover_loader import _load_handover_module
 from ._hook_runner import _fire_forget_hook, _run_hooks
 from ._instances import end_local_instance as _end_local_instance
 from ._runtime_select import _get_runtime
+
+logger = logging.getLogger(__name__)
+
+# Default upper bound on how long ``agent_restart`` will wait for the
+# previous runtime to actually exit before starting the new one. Tuned
+# for apptainer healthy teardown (~0.5–2 s); 15 s leaves comfortable
+# headroom for a loaded host. The race this closes: new container boots
+# while the old one still holds /home/agent overlay + per-agent stdio MCP
+# child still holds its PID lock file → new bun child's ``acquireLock``
+# sees the live old PID and exits 1 → claude silently drops the MCP.
+_DEFAULT_WAIT_FOR_STOP_TIMEOUT_S = 15.0
+# Poll interval while waiting. 0.25 s is small enough that a 1-second
+# teardown costs <=4 polls; large enough that a healthy host doesn't
+# spend measurable CPU on the loop. ``sleep_fn`` controls real-time
+# behavior; tests pass ``_no_sleep`` to spin as fast as Python allows.
+_WAIT_FOR_STOP_POLL_INTERVAL_S = 0.25
 
 
 def agent_stop(
@@ -150,6 +167,56 @@ def agent_stop_all(
     return results
 
 
+def _wait_for_previous_runtime_to_exit(
+    name: str,
+    config_path: str,
+    *,
+    runtime_factory: Optional[Callable[[AgentConfig], Any]],
+    sleep_fn: Callable[[float], None],
+    timeout_s: float,
+) -> bool:
+    """Block until the previous runtime instance is no longer running.
+
+    Returns True if the runtime stopped cleanly within ``timeout_s``,
+    False on timeout (caller proceeds anyway after a LOUD warning — see
+    ``agent_restart`` docstring for the race this closes). ``timeout_s
+    <= 0`` skips the gate entirely (legacy ``sleep_fn(2)`` behaviour,
+    preserved for callers that want the bypass).
+    """
+    if timeout_s <= 0:
+        sleep_fn(2)
+        return True
+    # Load once: config is stable across the gate and re-loading per poll
+    # would multiply YAML parsing on a busy host.
+    try:
+        config = load_config(config_path)
+    except Exception:  # stx-allow: fallback (reason: YAML may have been edited mid-restart; fall back to the legacy fixed sleep instead of blocking the restart on a transient parse error — the new container will surface the real error when it boots)
+        sleep_fn(2)
+        return True
+    factory = runtime_factory or _get_runtime
+    runtime = factory(config)
+    deadline = time.monotonic() + timeout_s
+    while runtime.is_running(config):
+        if time.monotonic() >= deadline:
+            logger.warning(
+                "agent_restart for %r: previous runtime still running after "
+                "%.2fs (SIGTERM ignored or teardown hung); proceeding to "
+                "start anyway. WARNING: this may trigger the apptainer "
+                'double-mount race ("destination is already in the mount '
+                'point list") and stdio-MCP lock-file contention (the '
+                "standalone bun telegrammer poller exits 1 on lock held by "
+                "the orphaned previous PID, claude then silently drops the "
+                "MCP). If %r repeatedly fails to honor SIGTERM, investigate "
+                "the runtime stop path (see ApptainerContainerRuntime.stop).",
+                name,
+                timeout_s,
+                name,
+            )
+            return False
+        sleep_fn(_WAIT_FOR_STOP_POLL_INTERVAL_S)
+    return True
+
+
 def agent_restart(
     name: str,
     registry: Registry | None = None,
@@ -158,6 +225,7 @@ def agent_restart(
     sleep_fn: Callable[[float], None] = time.sleep,
     handover_mod: Any = None,
     config_resolver: Optional[Callable[[str], str]] = None,
+    wait_for_stop_timeout_s: float = _DEFAULT_WAIT_FOR_STOP_TIMEOUT_S,
 ) -> bool:
     """Restart an agent by name: resolve spec → stop → settle → start.
 
@@ -183,6 +251,26 @@ def agent_restart(
     recorded host before reaching here, like ``stop`` does). By the
     time control reaches this function the target is local.
 
+    Teardown gate (2026-06-07, bug #42 — telegrammer drops after restart):
+    Between ``agent_stop`` (which sends SIGTERM and returns immediately —
+    ``ApptainerContainerRuntime.stop`` says "No wait loop yet — sac's
+    outer lifecycle does its own poll") and ``agent_start``, this function
+    now polls ``runtime.is_running`` until False or
+    ``wait_for_stop_timeout_s`` elapses. The legacy fixed ``sleep_fn(2)``
+    was the SOLE settle window — it raced the apptainer teardown on a
+    loaded host. Operator-visible symptom: the new container booted while
+    the old one still held the ``/home/agent`` overlay (apptainer warned
+    "destination is already in the mount point list"), AND the old SDK's
+    per-agent stdio MCP child (the standalone bun telegrammer poller)
+    was still alive holding ``$HOME/.claude-code-telegrammer-*/...lock``.
+    The new bun child's ``acquireLock`` then hit ``process.kill(old_pid,
+    0)`` SUCCESS → ``process.exit(1)``, claude silently marked the MCP
+    failed and never retried it. ``sac`` + Mermaid MCPs reloaded fine
+    (no inter-instance lock for those), masking the bug as "only Telegram
+    broke." On timeout we LOG LOUD (so a stuck previous instance is
+    self-diagnosing from stdout.log) and proceed — silently spinning
+    forever locks the operator out of restart entirely.
+
     Args:
         name: Agent name.
         registry: Optional registry instance.
@@ -194,6 +282,11 @@ def agent_restart(
             :func:`config.resolve_config`). Injected for tests so the
             no-registry-row fallback can be exercised against a real
             on-disk spec without monkeypatching internals.
+        wait_for_stop_timeout_s: Upper bound on the previous-runtime
+            readiness gate (see "Teardown gate" above). Default 15 s —
+            ~10× a healthy apptainer teardown. Set to 0 to skip the gate
+            entirely (legacy behaviour, retained for tests of unrelated
+            code paths).
 
     Raises:
         RuntimeError: When ``name`` has neither a registry row NOR a
@@ -236,7 +329,13 @@ def agent_restart(
         runtime_factory=runtime_factory,
         handover_mod=handover_mod,
     )
-    sleep_fn(2)
+    _wait_for_previous_runtime_to_exit(
+        name,
+        config_path,
+        runtime_factory=runtime_factory,
+        sleep_fn=sleep_fn,
+        timeout_s=wait_for_stop_timeout_s,
+    )
     # Clear BOTH the persisted session_id AND session_id_history before the
     # restart. A plain ``agent_restart`` previously called ``agent_start``
     # WITHOUT force=True (so no session reset ran at all), and the

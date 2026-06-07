@@ -1330,6 +1330,142 @@ def test_agent_restart_no_row_uses_default_resolver_discovery_chain(
     assert ok is True and len(runtime.start_calls) == 1
 
 
+class _StaggeredRuntime(FakeRuntime):
+    """Real fake whose ``is_running`` returns the next bool from a stage list.
+
+    Models the apptainer teardown race: after ``stop()`` sends SIGTERM the
+    container takes several ``is_running`` polls to actually exit. Used by
+    ``test_agent_restart_waits_for_runtime_to_stop_before_starting`` to
+    pin the bug shape (start was called WHILE the previous instance was
+    still running) and verify the fix.
+    """
+
+    def __init__(self, *, stages: list[bool]) -> None:
+        super().__init__(start_result=True)
+        # Copy so the test can keep the list intact for assertions later.
+        self._stages = list(stages)
+        self.is_running_calls = 0
+        self.was_running_at_start: bool | None = None
+
+    def is_running(self, config: AgentConfig) -> bool:
+        i = self.is_running_calls
+        self.is_running_calls += 1
+        # After the stage list is exhausted, stay at the last value (False
+        # on a healthy teardown).
+        if i < len(self._stages):
+            return self._stages[i]
+        return self._stages[-1] if self._stages else False
+
+    def start(self, config: AgentConfig, **kwargs: Any) -> bool:
+        # Record whether the previous instance was STILL RUNNING at the
+        # moment start() fired — this is the exact bug shape we're fixing.
+        # Read directly off the stage list so the recording itself doesn't
+        # consume a poll slot.
+        i = self.is_running_calls
+        if i == 0:
+            self.was_running_at_start = self._stages[0] if self._stages else False
+        else:
+            idx = min(i - 1, len(self._stages) - 1)
+            self.was_running_at_start = self._stages[idx]
+        return super().start(config, **kwargs)
+
+
+def test_agent_restart_waits_for_runtime_to_stop_before_starting(
+    tmp_path: Path, registry: Registry
+) -> None:
+    """Restart MUST wait for the previous container to actually exit.
+
+    Bug shape (2026-06-07, operator-visible): ``agent_restart`` called
+    ``runtime.stop()`` (which sends SIGTERM and returns immediately) then
+    slept a fixed 2 s and called ``runtime.start()``. With apptainer, the
+    old container's ``/home/agent`` overlay was still mounted when the
+    new one booted ("destination is already in the mount point list"
+    warning in stdout.log), and the old SDK's per-agent stdio MCP
+    children (the standalone bun telegrammer poller) were still alive
+    holding their PID lock file. The new bun child then hit
+    ``acquireLock`` against the live old PID and exited 1; claude
+    silently marked the MCP failed and never retried it. Symptom: the
+    Telegram bot stopped responding after every ``sac agents restart``
+    even though ``sac`` + Mermaid MCPs reloaded fine (no inter-instance
+    lock for those).
+
+    Fix: poll ``runtime.is_running`` until it returns False (with a
+    bounded timeout) BEFORE calling ``runtime.start``. The fixed
+    ``sleep_fn(2)`` is replaced by a real readiness gate.
+    """
+    # Arrange — a runtime that reports "still running" for the first
+    # three polls after stop and only flips to "stopped" on the fourth.
+    # This mirrors a realistic apptainer teardown (~0.5–2 s under
+    # healthy load).
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    runtime = _StaggeredRuntime(stages=[True, True, True, False])
+
+    # Act
+    ok = lc.agent_restart(
+        "alpha",
+        registry=registry,
+        runtime_factory=lambda _c: runtime,
+        sleep_fn=_no_sleep,
+        handover_mod=FakeHandover(),
+    )
+
+    # Assert — start was called AND only after is_running flipped to False.
+    assert ok is True
+    assert len(runtime.start_calls) == 1
+    assert runtime.was_running_at_start is False, (
+        "agent_restart called runtime.start() while runtime.is_running() was "
+        "still True — this is the apptainer mount + telegrammer lock race "
+        f"(stages={runtime._stages}, polls={runtime.is_running_calls})"
+    )
+    # And it must have polled at least the number of "still running" stages.
+    assert runtime.is_running_calls >= 4, (
+        f"agent_restart should poll runtime.is_running until False; got "
+        f"{runtime.is_running_calls} polls"
+    )
+
+
+def test_agent_restart_warns_and_proceeds_when_previous_runtime_will_not_exit(
+    tmp_path: Path, registry: Registry, caplog: Any
+) -> None:
+    """If the previous runtime ignores SIGTERM past the wait timeout,
+    ``agent_restart`` must emit a LOUD warning naming the operator-visible
+    consequences (mount race + telegrammer lock contention) and proceed —
+    a stuck container is rare, but silently spinning forever locks the
+    operator out of restart entirely.
+    """
+    import logging as _logging
+
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    # is_running stays True forever — models a previous instance that
+    # never honors SIGTERM in budget.
+    runtime = _StaggeredRuntime(stages=[True])
+
+    caplog.set_level(_logging.WARNING, logger="scitex_agent_container._lifecycle._stop")
+    ok = lc.agent_restart(
+        "alpha",
+        registry=registry,
+        runtime_factory=lambda _c: runtime,
+        sleep_fn=_no_sleep,
+        handover_mod=FakeHandover(),
+        # Short timeout so the test is fast; ``_no_sleep`` makes the poll
+        # loop spin as fast as Python allows.
+        wait_for_stop_timeout_s=0.05,
+    )
+
+    # Started despite the timeout (loud-but-proceed semantics).
+    assert ok is True
+    assert len(runtime.start_calls) == 1
+    # And there is a WARN-level log naming the race so a future
+    # "telegrammer dropped after restart" recurrence is self-diagnosing
+    # from stdout.log.
+    messages = " ".join(rec.getMessage() for rec in caplog.records)
+    assert "still running" in messages or "SIGTERM" in messages, (
+        f"expected loud warning about the unkilled previous instance; got: {messages!r}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # agent_status
 # ---------------------------------------------------------------------------
