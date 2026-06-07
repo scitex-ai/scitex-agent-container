@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from ._tunnel_types import TunnelSpec
+
 
 @dataclass
 class ProviderSpec:
@@ -85,3 +87,14 @@ class ProviderSpec:
     follow-up. Operators on the string form fall back to the runner's
     old-stable default until the registry plumbing lands.
     """
+
+    tunnel: TunnelSpec | None = None
+    """OPTIONAL SSH ProxyJump tunnel to the provider endpoint. When
+    set, sac stands up a local ``ssh -L`` forward through
+    ``tunnel.jump_host`` to ``tunnel.target_host:tunnel.remote_port``
+    at agent-start and rewrites :attr:`base_url` to
+    ``http://localhost:<bound_port>`` if :attr:`base_url` was empty.
+    See :class:`scitex_agent_container.config.TunnelSpec` for the
+    field schema and :mod:`scitex_agent_container._network._tunnel_manager`
+    for the lifecycle contract. ``None`` (default) = no tunnel; the
+    base_url must be directly reachable from the host running sac."""
