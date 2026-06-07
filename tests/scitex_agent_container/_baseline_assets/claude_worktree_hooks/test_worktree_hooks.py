@@ -280,8 +280,10 @@ class TestWorktreeCreateLoudFailure:
     def test_empty_stdin_exits_nonzero(self, tmp_path: Path) -> None:
         # Arrange — hook fired with no input (misconfiguration) must
         # fail loud, not silently echo something the SDK will accept.
+        script = CREATE_SCRIPT
+        # Act
         result = subprocess.run(
-            [sys.executable, str(CREATE_SCRIPT)],
+            [sys.executable, str(script)],
             input="",
             capture_output=True,
             text=True,
@@ -291,9 +293,12 @@ class TestWorktreeCreateLoudFailure:
 
     def test_malformed_json_stdin_exits_nonzero(self) -> None:
         # Arrange
+        script = CREATE_SCRIPT
+        bad_input = "not json at all"
+        # Act
         result = subprocess.run(
-            [sys.executable, str(CREATE_SCRIPT)],
-            input="not json at all",
+            [sys.executable, str(script)],
+            input=bad_input,
             capture_output=True,
             text=True,
         )
@@ -408,8 +413,10 @@ class TestWorktreeRemove:
 
     def test_remove_with_empty_stdin_exits_nonzero(self) -> None:
         # Arrange
+        script = REMOVE_SCRIPT
+        # Act
         result = subprocess.run(
-            [sys.executable, str(REMOVE_SCRIPT)],
+            [sys.executable, str(script)],
             input="",
             capture_output=True,
             text=True,
