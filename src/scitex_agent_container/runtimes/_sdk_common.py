@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ._sdk_channels import apply_channels, merge_home_mcp_servers
+from ._skills_manifest import build_skills_manifest_block
 
 if TYPE_CHECKING:  # pragma: no cover — typing only
     from claude_agent_sdk import ClaudeAgentOptions
@@ -130,6 +131,31 @@ def _cred_file_path() -> Path:
     if cfg_dir:
         return Path(cfg_dir) / ".credentials.json"
     return Path.home() / ".claude" / ".credentials.json"
+
+
+def _container_skills_root() -> Path | None:
+    """Resolve the in-container ``$HOME/.claude/skills`` directory, or None.
+
+    The ``to_home`` materializer drops every skill at exactly this
+    prefix inside the container (see ``_skills/scitex-agent-container/
+    25_claude-setup-delivery.md``). Detection mirrors the existing
+    ``_container_settings_path`` resolver: read ``$HOME`` directly
+    (the runner already executes inside the container, so ``$HOME``
+    points at the container's home), regardless of whether the
+    apptainer env vars are set.
+
+    Returns ``None`` when ``$HOME`` is unset (rare; defensive).
+    Returns the directory PATH unconditionally when ``$HOME`` is set —
+    the existence check is the manifest builder's job (per-skill,
+    not whole-dir). A missing whole-skills dir is a valid state
+    (some agents have no skills mounted); the manifest builder then
+    rolls every named skill into a path-only bullet, which is the
+    correct "operator must see the gap" signal.
+    """
+    home = os.environ.get("HOME")
+    if not home:
+        return None
+    return Path(home) / ".claude" / "skills"
 
 
 def _container_settings_path() -> str | None:
@@ -345,6 +371,73 @@ def _load_agent_config_silent(agent_name: str) -> "AgentConfig | None":
         return None
 
 
+# Idempotency anchor — same literal as ``_skills_manifest._BLOCK_HEADING``.
+# Inlined here (instead of imported) so the build-sdk-options path stays
+# readable as a self-contained predicate.
+_SKILLS_MANIFEST_HEADING = "## Available skills"
+
+
+def _augment_system_prompt_with_skills_manifest(
+    system_prompt: str | None, agent_cfg: "AgentConfig | None"
+) -> str | None:
+    """Return the system_prompt augmented with the SOFT skill manifest.
+
+    Returns ``None`` when no augmentation should be applied — caller
+    leaves the system_prompt as-is. Returns the new string otherwise.
+
+    The wiring contract (LOCKED — see ``_skills_manifest.py`` for the
+    block-shape doctrine):
+
+    * ``agent_cfg`` is ``None`` → no augmentation (no per-agent skills
+      surface to consult).
+    * ``agent_cfg.labels.skills`` empty / absent → no augmentation.
+    * ``system_prompt`` already contains the LOCKED ``## Available
+      skills`` heading → already augmented by a prior call on the
+      same config; skip (idempotent).
+    * Otherwise: parse the CSV, build the block, and APPEND to the
+      system_prompt with a single blank line separator. When the
+      caller passed ``system_prompt=None`` (no base), the block IS
+      the system_prompt.
+
+    Best-effort: any failure to compute the augmentation returns
+    ``None`` (caller leaves the prompt alone). The manifest is
+    advisory; a malformed config must not block agent start.
+    """
+    if agent_cfg is None:
+        return None
+    # The labels attribute is a plain dict[str, str] on AgentConfig.
+    labels = getattr(agent_cfg, "labels", None)
+    if not isinstance(labels, dict):
+        return None
+    skills_csv = labels.get("skills") or ""
+    skill_names = [s.strip() for s in skills_csv.split(",") if s.strip()]
+    if not skill_names:
+        return None
+
+    # Idempotency: a system_prompt that already carries the heading
+    # was augmented on a prior pass. Skip silently — re-applying would
+    # double the block and bloat context on every restart.
+    if system_prompt and _SKILLS_MANIFEST_HEADING in system_prompt:
+        return None
+
+    skills_root = _container_skills_root()
+    if skills_root is None:
+        # No $HOME → no in-container skills dir to point at. Refuse to
+        # augment rather than emit a manifest whose paths can't resolve.
+        return None
+
+    try:
+        block = build_skills_manifest_block(skill_names, skills_root)
+    except Exception:  # stx-allow: fallback (reason: manifest is advisory; a malformed input must not block agent start)
+        return None
+    if block is None:
+        return None
+
+    if system_prompt:
+        return f"{system_prompt}\n\n{block}"
+    return block
+
+
 def resolve_agent_workspace(agent_name: str) -> tuple[dict, str | None]:
     """Resolve ``(mcp_servers, cwd)`` for a registered agent.
 
@@ -441,6 +534,11 @@ def build_sdk_options(
         ) from exc
 
     provision_anthropic_auth()
+    # Load the AgentConfig ONCE — both the provider-tools whitelist
+    # (PR #319, further down) and the skill-manifest augmentation
+    # (below) consume the same config. A second silent load would
+    # double the registry/disk IO on every option-builder entry.
+    _agent_cfg = _load_agent_config_silent(agent_name)
     mcp_servers, workdir = resolve_agent_workspace(agent_name)
     # Merge to_home-deployed $HOME/.mcp.json (the per-agent MCP delivery
     # path) — resolve_agent_workspace returns {} inside an apptainer
@@ -472,6 +570,31 @@ def build_sdk_options(
     kwargs: dict = {}
     if system_prompt is not None:
         kwargs["system_prompt"] = system_prompt
+
+    # SOFT skill-manifest augmentation. The per-agent
+    # ``metadata.labels.skills`` CSV (parsed at config load into
+    # ``AgentConfig.labels``) names which skills the operator wants the
+    # agent to know about; we append a bullet-list block to the
+    # ``system_prompt`` so the agent discovers them and lazy-loads via
+    # the ``Skill`` tool.
+    #
+    # Why HERE and not at body-inlining time: bodies are NEVER inlined —
+    # the skill body is loaded on demand via the Skill tool. The
+    # manifest just lists name + first-paragraph description + path. See
+    # ``_skills_manifest.py`` module docstring for the full doctrine.
+    #
+    # Idempotency: when the resolved ``system_prompt`` already contains
+    # the LOCKED ``"## Available skills\n"`` heading, the manifest was
+    # already appended by a prior call on the same config — skip.
+    # Lifecycle paths can re-enter ``build_sdk_options`` more than once
+    # per agent start; a doubled block would leak the same advice twice
+    # and bloat context.
+    _augmented = _augment_system_prompt_with_skills_manifest(
+        kwargs.get("system_prompt"), _agent_cfg
+    )
+    if _augmented is not None:
+        kwargs["system_prompt"] = _augmented
+
     if model:
         kwargs["model"] = model
     if permission_mode:
@@ -567,13 +690,8 @@ def build_sdk_options(
     # an explicit caller value WINS over this auto-populate.
     from ._apptainer_provider import provider_active
 
-    _provider_cfg = _load_agent_config_silent(agent_name)
-    if (
-        _provider_cfg is not None
-        and provider_active(_provider_cfg)
-        and "tools" not in kwargs
-    ):
-        provider = getattr(getattr(_provider_cfg, "claude", None), "provider", None)
+    if _agent_cfg is not None and provider_active(_agent_cfg) and "tools" not in kwargs:
+        provider = getattr(getattr(_agent_cfg, "claude", None), "provider", None)
         spec_tools = list(getattr(provider, "allowed_tools", []) or [])
         if spec_tools:
             kwargs["tools"] = spec_tools
