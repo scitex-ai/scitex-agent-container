@@ -63,6 +63,26 @@ dependencies = [
     "scitex-container>=0.1.0",
     "scitex-logging>=0.1.5",
     "scitex-ssh>=1.0.0",
+    # Canonical YAML task store (`<git-root>/.scitex/todo/tasks.yaml`)
+    # used by the per-agent runtime skill so each project agent records
+    # its own work-in-flight as a queryable dependency graph instead of
+    # in private memory. ADR-0008 D5 (hard-dep rollout) — fleet-wide
+    # skill-propagation needs the verbs to be importable everywhere,
+    # not gated behind a per-agent venv install.
+    #
+    # Lazy-load contract (verified by proj-scitex-todo 2026-06-07,
+    # a2a 87095307): `import scitex_todo` is zero-file-I/O — module
+    # level only does `import yaml` + closed-enum tuples + the dataclass;
+    # `_model.load_tasks(path)` is called solely by explicit mutation
+    # verbs; the `fcntl.flock` is on a sibling `.lock` file opened
+    # INSIDE the `_store_lock()` contextmanager (request-scoped, not
+    # session-scoped). Two idle agents importing it cause zero contention.
+    #
+    # v0.3.0 is the release that shipped the public CLI surface sac's
+    # `_session_cli.py` and the agent skill rely on (`scitex-todo add /
+    # update / done / list-tasks / summary / resolve-store / init-store`);
+    # that is our hard minimum.
+    "scitex-todo>=0.3.0",
     # A2A protocol surface — Phase 1 SDK adoption (see GITIGNORED/A2A_MIGRATION.md).
     # `[http-server]` extras pull in starlette + sse-starlette for the
     # JSON-RPC + SSE routes we mount in `a2a/_server.py`.
