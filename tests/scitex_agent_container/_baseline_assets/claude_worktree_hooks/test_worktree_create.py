@@ -1,8 +1,8 @@
-"""End-to-end tests for the Claude Code worktree-relocation hooks.
+"""End-to-end tests for the ``worktree_create.py`` hook.
 
 NO MOCKS. Every test drives the real hook script as a subprocess against
-a real ephemeral git repository created via ``tmp_path`` and ``git
-init``. The hook contract is what Claude Code's bundled binary enforces
+a real ephemeral git repository (see ``conftest.py``'s ``ephemeral_repo``
+fixture). The hook contract is what Claude Code's bundled binary enforces
 at runtime (verified 2026-06-06 in the deobfuscated
 ``executeWorktreeCreateHook`` JS function); the regression coverage
 below pins both directions of the I/O contract + the policy invariants.
@@ -13,106 +13,19 @@ a ≥3-word descriptive name, and exactly one assertion.
 
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 from pathlib import Path
-from typing import Iterator
 
-import pytest
-
-# The hook scripts live alongside the source-of-truth asset dir; the
-# tests resolve them by package-relative import so a refactor of the
-# asset path is caught at import time, not at script-spawn time.
-HOOK_DIR = (
-    Path(__file__).resolve().parents[4]
-    / "src"
-    / "scitex_agent_container"
-    / "_baseline_assets"
-    / "claude_worktree_hooks"
+from .conftest import (
+    CREATE_SCRIPT,
+    _create_payload,
+    _git,
+    _run_hook,
 )
-CREATE_SCRIPT = HOOK_DIR / "worktree_create.py"
-REMOVE_SCRIPT = HOOK_DIR / "worktree_remove.py"
-
 
 # ---------------------------------------------------------------------------
-# Real ephemeral git repo — used by every test that exercises hook IO
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def ephemeral_repo(tmp_path: Path) -> Iterator[Path]:
-    """Create a real on-disk git repo with a ``develop`` branch + initial commit.
-
-    The hooks' "fresh-from-origin/develop-else-HEAD" base-resolution path
-    needs SOMETHING to branch from; an empty fresh repo (no commits) has
-    no resolvable HEAD and would fail in a way that's noise here. We
-    seed a single commit on ``develop`` so the create-hook exercises its
-    real base-resolution branch instead of an edge case.
-
-    No ``origin`` is configured — that exercises the "HEAD fallback"
-    branch of ``_resolve_base`` and keeps the test self-contained (no
-    network, no shared remote). A separate test pins the
-    ``origin/develop`` branch when an origin IS configured.
-    """
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _git(repo, "init", "-q", "--initial-branch=develop")
-    # Identity is required for ``git commit``; tests must not depend on
-    # the host's ``git config user.*``.
-    _git(repo, "config", "user.email", "test@example.invalid")
-    _git(repo, "config", "user.name", "SAC Test")
-    (repo / "README.md").write_text("seed\n")
-    _git(repo, "add", "README.md")
-    _git(repo, "commit", "-q", "-m", "seed")
-    yield repo
-
-
-def _git(cwd: Path, *args: str) -> str:
-    """Run ``git -C cwd <args>``; assert success and return stdout."""
-    res = subprocess.run(
-        ["git", "-C", str(cwd), *args],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return res.stdout.strip()
-
-
-def _run_hook(
-    script: Path, payload: dict, cwd: Path | None = None
-) -> subprocess.CompletedProcess:
-    """Invoke the hook script with the given JSON payload on stdin.
-
-    Returns the completed process so individual tests can assert on
-    returncode / stdout / stderr without retrying or coupling.
-    """
-    return subprocess.run(
-        [sys.executable, str(script)],
-        input=json.dumps(payload),
-        capture_output=True,
-        text=True,
-        cwd=str(cwd) if cwd else None,
-    )
-
-
-def _create_payload(name: str, cwd: Path) -> dict:
-    """Mirror the shape Claude Code's ``executeWorktreeCreateHook``
-    constructs at runtime (verified 2026-06-06 against the bundled binary)."""
-    return {
-        "hook_event_name": "WorktreeCreate",
-        "name": name,
-        "cwd": str(cwd),
-        "session_id": "test-session-id",
-        "transcript_path": str(cwd / ".transcript"),
-        "permission_mode": "default",
-        "agent_id": "test-agent-id",
-        "agent_type": "test",
-    }
-
-
-# ---------------------------------------------------------------------------
-# worktree_create.py — the headline relocation: target lands under .worktrees/
+# Relocation invariant — target lands under .worktrees/, NOT .claude/worktrees
 # ---------------------------------------------------------------------------
 
 
@@ -123,10 +36,8 @@ class TestWorktreeCreateRelocation:
         # Arrange — the whole point of the hook: stop creations under
         # ``.claude/worktrees/`` and put them under ``.worktrees/``.
         payload = _create_payload("relocate-probe", ephemeral_repo)
-
         # Act
         result = _run_hook(CREATE_SCRIPT, payload)
-
         # Assert — single-line stdout = absolute path under .worktrees/
         emitted = result.stdout.strip()
         assert emitted == str(ephemeral_repo / ".worktrees" / "relocate-probe")
@@ -222,10 +133,8 @@ class TestWorktreeCreateOnLingeringBranch:
         name = "lingering-branch"
         _git(ephemeral_repo, "branch", f"claude/{name}")
         payload = _create_payload(name, ephemeral_repo)
-
         # Act
         result = _run_hook(CREATE_SCRIPT, payload)
-
         # Assert
         assert result.returncode == 0
 
@@ -277,7 +186,7 @@ class TestWorktreeCreateLoudFailure:
         # Assert
         assert result.returncode != 0
 
-    def test_empty_stdin_exits_nonzero(self, tmp_path: Path) -> None:
+    def test_empty_stdin_exits_nonzero(self) -> None:
         # Arrange — hook fired with no input (misconfiguration) must
         # fail loud, not silently echo something the SDK will accept.
         script = CREATE_SCRIPT
@@ -328,119 +237,12 @@ class TestWorktreeCreateBaseResolution:
         (ephemeral_repo / "newer.txt").write_text("local-only\n")
         _git(ephemeral_repo, "add", "newer.txt")
         _git(ephemeral_repo, "commit", "-q", "-m", "local-only")
-
         origin_develop_sha = _git(ephemeral_repo, "rev-parse", "origin/develop")
         payload = _create_payload("base-resolve-probe", ephemeral_repo)
-
         # Act
         result = _run_hook(CREATE_SCRIPT, payload)
         target = Path(result.stdout.strip())
-
         # Assert — the new worktree's HEAD == origin/develop (NOT
         # the local develop HEAD which has the extra commit).
         new_sha = _git(target, "rev-parse", "HEAD")
         assert new_sha == origin_develop_sha
-
-
-# ---------------------------------------------------------------------------
-# worktree_remove.py — counterpart, idempotent + loud on failure
-# ---------------------------------------------------------------------------
-
-
-class TestWorktreeRemove:
-    def test_remove_unregisters_a_created_worktree(self, ephemeral_repo: Path) -> None:
-        # Arrange — create one via the create-hook, then run the
-        # remove-hook against the path it returned.
-        create_payload = _create_payload("remove-probe", ephemeral_repo)
-        created = _run_hook(CREATE_SCRIPT, create_payload).stdout.strip()
-        remove_payload = {
-            "hook_event_name": "WorktreeRemove",
-            "worktree_path": created,
-            "session_id": "test-session-id",
-            "transcript_path": str(ephemeral_repo / ".transcript"),
-            "permission_mode": "default",
-            "agent_id": "test-agent-id",
-            "agent_type": "test",
-            "cwd": str(ephemeral_repo),
-        }
-
-        # Act
-        _run_hook(REMOVE_SCRIPT, remove_payload)
-
-        # Assert
-        listed = _git(ephemeral_repo, "worktree", "list", "--porcelain")
-        assert f"worktree {created}" not in listed
-
-    def test_remove_exits_zero_on_success(self, ephemeral_repo: Path) -> None:
-        # Arrange
-        create_payload = _create_payload("remove-exit-probe", ephemeral_repo)
-        created = _run_hook(CREATE_SCRIPT, create_payload).stdout.strip()
-        remove_payload = {
-            "hook_event_name": "WorktreeRemove",
-            "worktree_path": created,
-            "session_id": "s",
-            "transcript_path": str(ephemeral_repo / ".transcript"),
-            "permission_mode": "default",
-            "agent_id": "a",
-            "agent_type": "t",
-            "cwd": str(ephemeral_repo),
-        }
-        # Act
-        result = _run_hook(REMOVE_SCRIPT, remove_payload)
-        # Assert
-        assert result.returncode == 0
-
-    def test_remove_is_idempotent_on_already_gone_path(self, tmp_path: Path) -> None:
-        # Arrange — operator's daily prune cron already wiped the
-        # worktree; SDK re-fires the remove hook on a vanished path.
-        # The desired end-state ("this path is no longer a worktree")
-        # is already true, so the hook must succeed silently.
-        gone_path = tmp_path / "gone" / "worktree"
-        remove_payload = {
-            "hook_event_name": "WorktreeRemove",
-            "worktree_path": str(gone_path),
-            "session_id": "s",
-            "transcript_path": str(tmp_path / ".transcript"),
-            "permission_mode": "default",
-            "agent_id": "a",
-            "agent_type": "t",
-            "cwd": str(tmp_path),
-        }
-        # Act
-        result = _run_hook(REMOVE_SCRIPT, remove_payload)
-        # Assert
-        assert result.returncode == 0
-
-    def test_remove_with_empty_stdin_exits_nonzero(self) -> None:
-        # Arrange
-        script = REMOVE_SCRIPT
-        # Act
-        result = subprocess.run(
-            [sys.executable, str(script)],
-            input="",
-            capture_output=True,
-            text=True,
-        )
-        # Assert
-        assert result.returncode != 0
-
-    def test_remove_with_missing_worktree_path_exits_nonzero(self) -> None:
-        # Arrange
-        payload = {
-            "hook_event_name": "WorktreeRemove",
-            "session_id": "s",
-            "transcript_path": "/tmp/t",
-            "permission_mode": "default",
-            "agent_id": "a",
-            "agent_type": "t",
-            "cwd": "/tmp",
-        }
-        # Act
-        result = subprocess.run(
-            [sys.executable, str(REMOVE_SCRIPT)],
-            input=json.dumps(payload),
-            capture_output=True,
-            text=True,
-        )
-        # Assert
-        assert result.returncode != 0
