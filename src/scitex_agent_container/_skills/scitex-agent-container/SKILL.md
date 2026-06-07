@@ -77,7 +77,7 @@ session inside Apptainer (local or remote via SSH), observe via
 
 ### Lessons
 - [40_troubleshooting.md](40_troubleshooting.md) — Common issues and debugging
-- [41_claude-worktree-relocation.md](41_claude-worktree-relocation.md) — WorktreeCreate/WorktreeRemove hooks that relocate Claude Code's `.claude/worktrees/` creations to `<root>/.worktrees/` (F-CS8 prevention)
+- [41_claude-worktree-relocation.md](41_claude-worktree-relocation.md) — F-CS8 prevention
 
 ## Environment
 

@@ -6,7 +6,7 @@ description: |
   `<git-root>/.worktrees/<name>` where the operator's prune cron maintains
   hygiene. Stops the recurring multi-GB / 100k-file accumulation that wedges
   agents (F-CS8 recurrence ~100×, neurovista wedge 22.9 GB / 80k files).
-tags: [scitex-agent-container-claude-worktree]
+tags: [scitex-agent-container-claude-worktree-relocation]
 ---
 
 # Claude Code worktree relocation — F-CS8 prevention
