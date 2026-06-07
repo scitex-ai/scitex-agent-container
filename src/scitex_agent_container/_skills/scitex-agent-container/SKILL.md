@@ -77,6 +77,7 @@ session inside Apptainer (local or remote via SSH), observe via
 
 ### Lessons
 - [40_troubleshooting.md](40_troubleshooting.md) — Common issues and debugging
+- [41](41_claude-worktree-relocation.md)
 
 ## Environment
 

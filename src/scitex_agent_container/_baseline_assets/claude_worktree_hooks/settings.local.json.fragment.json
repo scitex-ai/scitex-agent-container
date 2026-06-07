@@ -1,0 +1,26 @@
+{
+  "_comment_worktree_hooks": "Claude Code WorktreeCreate / WorktreeRemove hook wiring. Source-of-truth verified 2026-06-06 against the JS function VRH (executeWorktreeCreateHook) in claude_agent_sdk._bundled.claude. Merge into the baseline settings.local.json under `hooks`. Scripts live next to this fragment as worktree_create.py / worktree_remove.py and must be deployed to $HOME/.claude/hooks/claude_worktree_hooks/ on every agent via to_home materialization.",
+
+  "hooks": {
+    "WorktreeCreate": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/venv-agent/bin/python3 $HOME/.claude/hooks/claude_worktree_hooks/worktree_create.py"
+          }
+        ]
+      }
+    ],
+    "WorktreeRemove": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/venv-agent/bin/python3 $HOME/.claude/hooks/claude_worktree_hooks/worktree_remove.py"
+          }
+        ]
+      }
+    ]
+  }
+}
