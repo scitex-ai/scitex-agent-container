@@ -6,7 +6,7 @@
   <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>scitex-agent-container - Declarative AI Agent Lifecycle Management &mdash; scitex-agent-container v0.21.9</title>
+  <title>scitex-agent-container — Declarative, On-Prem-First Agent Container Runtime &mdash; scitex-agent-container v0.21.9</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=9edc463e" />
       <link rel="stylesheet" type="text/css" href="_static/copybutton.css?v=76b2166b" />
@@ -419,7 +419,7 @@
           <div role="navigation" aria-label="Page navigation">
   <ul class="wy-breadcrumbs">
       <li><a href="#" class="icon icon-home" aria-label="Home"></a></li>
-      <li class="breadcrumb-item active">scitex-agent-container - Declarative AI Agent Lifecycle Management</li>
+      <li class="breadcrumb-item active">scitex-agent-container — Declarative, On-Prem-First Agent Container Runtime</li>
       <li class="wy-breadcrumbs-aside">
               <a href="https://github.com/ywatanabe1989/scitex-agent-container/blob/main/docs/sphinx/index.rst" class="fa fa-github"> Edit on GitHub</a>
       </li>
@@ -429,9 +429,12 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
            <div itemprop="articleBody">
              
-  <section id="scitex-agent-container-declarative-ai-agent-lifecycle-management">
-<h1>scitex-agent-container - Declarative AI Agent Lifecycle Management<a class="headerlink" href="#scitex-agent-container-declarative-ai-agent-lifecycle-management" title="Link to this heading"></a></h1>
-<p><strong>scitex-agent-container</strong> is a declarative YAML-based framework for defining, managing, and orchestrating AI coding agent instances. Part of <a class="reference external" href="https://scitex.ai">SciTeX</a>.</p>
+  <section id="scitex-agent-container-declarative-on-prem-first-agent-container-runtime">
+<h1>scitex-agent-container — Declarative, On-Prem-First Agent Container Runtime<a class="headerlink" href="#scitex-agent-container-declarative-on-prem-first-agent-container-runtime" title="Link to this heading"></a></h1>
+<p><strong>scitex-agent-container</strong> (<code class="docutils literal notranslate"><span class="pre">sac</span></code>) turns one <code class="docutils literal notranslate"><span class="pre">spec.yaml</span></code> into one
+long-lived, sandboxed, fleet-addressable Claude Code agent. Runs
+anywhere Apptainer runs — laptop, HPC login node, on-prem cluster,
+air-gapped server. Part of <a class="reference external" href="https://scitex.ai">SciTeX</a>.</p>
 <div class="toctree-wrapper compound">
 <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
 <ul>
@@ -536,35 +539,46 @@
 </li>
 </ul>
 </div>
-<section id="key-features">
-<h2>Key Features<a class="headerlink" href="#key-features" title="Link to this heading"></a></h2>
+<section id="why-sac">
+<h2>Why sac<a class="headerlink" href="#why-sac" title="Link to this heading"></a></h2>
 <ul class="simple">
-<li><p><strong>YAML Definitions</strong>: Declarative agent configuration via YAML files</p></li>
-<li><p><strong>Lifecycle Management</strong>: Create, start, stop, and destroy agent instances</p></li>
-<li><p><strong>Rich Status</strong>: <code class="docutils literal notranslate"><span class="pre">status</span> <span class="pre">--json</span></code> emits pane state, workspace files,
-hook-captured tool history, and <code class="docutils literal notranslate"><span class="pre">last_tool_at</span></code> /
-<code class="docutils literal notranslate"><span class="pre">last_mcp_tool_at</span></code> functional-heartbeat shortcuts for dashboards</p></li>
-<li><p><strong>Claude Code Hook Integration</strong>: <code class="docutils literal notranslate"><span class="pre">hook-event</span></code> ingests Claude Code
-<code class="docutils literal notranslate"><span class="pre">PreToolUse</span></code> / <code class="docutils literal notranslate"><span class="pre">PostToolUse</span></code> / <code class="docutils literal notranslate"><span class="pre">UserPromptSubmit</span></code> / <code class="docutils literal notranslate"><span class="pre">Stop</span></code>
-events into a per-agent ring buffer</p></li>
-<li><p><strong>Zero Coupling</strong>: No knowledge of any downstream orchestrator;
-consumers (e.g. scitex-orochi) wrap <code class="docutils literal notranslate"><span class="pre">status</span> <span class="pre">--json</span></code> to post to
-their own hubs</p></li>
+<li><p><strong>Declarative agents.</strong> One <code class="docutils literal notranslate"><span class="pre">spec.yaml</span></code> per agent — the file <em>is</em>
+the agent (dir-as-SSoT). Reproducible, version-controlled,
+diff-reviewable.</p></li>
+<li><p><strong>Rootless Apptainer isolation.</strong> Runs where Docker/cloud sandboxes
+cannot — HPC login nodes, on-prem, air-gapped. No root, no daemon,
+no Docker socket. Hardened by default via <code class="docutils literal notranslate"><span class="pre">--containall</span></code>.</p></li>
+<li><p><strong>LLM-agnostic / on-prem-capable.</strong> Default: Anthropic OAuth.
+Alternative: any Anthropic-API-compatible backend (DeepSeek, MiMo /
+Xiaomi, a self-hosted LiteLLM / vLLM-with-Anthropic-shim gateway)
+via <code class="docutils literal notranslate"><span class="pre">spec.claude.provider</span></code>. Data, code, and inference can stay
+entirely on your network.</p></li>
+<li><p><strong>Fleet ops out of the box.</strong> A2A push (<code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/v1/turn</span></code>),
+health / heartbeat, restart policies, multi-account credential
+rotation with auto-quota-watch, MCP + CLI + Python surface,
+cross-host orchestration via <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">fleet</span></code>.</p></li>
+<li><p><strong>AGPL-3.0.</strong> Research-freedom license — infrastructure stays open,
+modifications stay shareable.</p></li>
 </ul>
 </section>
 <section id="quick-example">
 <h2>Quick Example<a class="headerlink" href="#quick-example" title="Link to this heading"></a></h2>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Create and launch an agent from YAML definition</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Create and launch an agent from its YAML definition</span>
 sac<span class="w"> </span>agents<span class="w"> </span>start<span class="w"> </span>my-agent
 
-<span class="c1"># List agents and their status</span>
-sac<span class="w"> </span>agents<span class="w"> </span>list
+<span class="c1"># Fleet view / per-agent status</span>
+sac<span class="w"> </span>agents<span class="w"> </span>status
+sac<span class="w"> </span>agents<span class="w"> </span>status<span class="w"> </span>my-agent<span class="w"> </span>--json
 
-<span class="c1"># Inspect status as JSON</span>
-sac<span class="w"> </span>agents<span class="w"> </span>list<span class="w"> </span>--json
+<span class="c1"># Send a follow-up turn to a running agent</span>
+sac<span class="w"> </span>agents<span class="w"> </span>send<span class="w"> </span>my-agent<span class="w"> </span><span class="s2">&quot;What is 2+2?&quot;</span>
 
-<span class="c1"># Stop an agent</span>
+<span class="c1"># Tail the structured transcript</span>
+sac<span class="w"> </span>agents<span class="w"> </span>tail<span class="w"> </span>my-agent
+
+<span class="c1"># Stop / delete</span>
 sac<span class="w"> </span>agents<span class="w"> </span>stop<span class="w"> </span>my-agent
+sac<span class="w"> </span>agents<span class="w"> </span>delete<span class="w"> </span>my-agent<span class="w"> </span>-y
 </pre></div>
 </div>
 </section>

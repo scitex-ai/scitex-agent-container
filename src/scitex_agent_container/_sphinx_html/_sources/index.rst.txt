@@ -1,9 +1,12 @@
 .. scitex-agent-container documentation master file
 
-scitex-agent-container - Declarative AI Agent Lifecycle Management
-===================================================================
+scitex-agent-container — Declarative, On-Prem-First Agent Container Runtime
+===========================================================================
 
-**scitex-agent-container** is a declarative YAML-based framework for defining, managing, and orchestrating AI coding agent instances. Part of `SciTeX <https://scitex.ai>`_.
+**scitex-agent-container** (``sac``) turns one ``spec.yaml`` into one
+long-lived, sandboxed, fleet-addressable Claude Code agent. Runs
+anywhere Apptainer runs — laptop, HPC login node, on-prem cluster,
+air-gapped server. Part of `SciTeX <https://scitex.ai>`_.
 
 .. toctree::
    :maxdepth: 2
@@ -38,37 +41,48 @@ scitex-agent-container - Declarative AI Agent Lifecycle Management
 
    api/scitex_agent_container
 
-Key Features
-------------
+Why sac
+-------
 
-- **YAML Definitions**: Declarative agent configuration via YAML files
-- **Lifecycle Management**: Create, start, stop, and destroy agent instances
-- **Rich Status**: ``status --json`` emits pane state, workspace files,
-  hook-captured tool history, and ``last_tool_at`` /
-  ``last_mcp_tool_at`` functional-heartbeat shortcuts for dashboards
-- **Claude Code Hook Integration**: ``hook-event`` ingests Claude Code
-  ``PreToolUse`` / ``PostToolUse`` / ``UserPromptSubmit`` / ``Stop``
-  events into a per-agent ring buffer
-- **Zero Coupling**: No knowledge of any downstream orchestrator;
-  consumers (e.g. scitex-orochi) wrap ``status --json`` to post to
-  their own hubs
+- **Declarative agents.** One ``spec.yaml`` per agent — the file *is*
+  the agent (dir-as-SSoT). Reproducible, version-controlled,
+  diff-reviewable.
+- **Rootless Apptainer isolation.** Runs where Docker/cloud sandboxes
+  cannot — HPC login nodes, on-prem, air-gapped. No root, no daemon,
+  no Docker socket. Hardened by default via ``--containall``.
+- **LLM-agnostic / on-prem-capable.** Default: Anthropic OAuth.
+  Alternative: any Anthropic-API-compatible backend (DeepSeek, MiMo /
+  Xiaomi, a self-hosted LiteLLM / vLLM-with-Anthropic-shim gateway)
+  via ``spec.claude.provider``. Data, code, and inference can stay
+  entirely on your network.
+- **Fleet ops out of the box.** A2A push (``POST /v1/turn``),
+  health / heartbeat, restart policies, multi-account credential
+  rotation with auto-quota-watch, MCP + CLI + Python surface,
+  cross-host orchestration via ``sac fleet``.
+- **AGPL-3.0.** Research-freedom license — infrastructure stays open,
+  modifications stay shareable.
 
 Quick Example
 -------------
 
 .. code-block:: bash
 
-    # Create and launch an agent from YAML definition
+    # Create and launch an agent from its YAML definition
     sac agents start my-agent
 
-    # List agents and their status
-    sac agents list
+    # Fleet view / per-agent status
+    sac agents status
+    sac agents status my-agent --json
 
-    # Inspect status as JSON
-    sac agents list --json
+    # Send a follow-up turn to a running agent
+    sac agents send my-agent "What is 2+2?"
 
-    # Stop an agent
+    # Tail the structured transcript
+    sac agents tail my-agent
+
+    # Stop / delete
     sac agents stop my-agent
+    sac agents delete my-agent -y
 
 Indices and tables
 ==================
