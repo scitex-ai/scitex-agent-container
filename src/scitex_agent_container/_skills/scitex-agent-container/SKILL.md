@@ -27,7 +27,7 @@ session inside Apptainer (local or remote via SSH), observe via
 
 | Surface | Location |
 |---|---|
-| Python API | `scitex_agent_container` (`AgentConfig`, `load_config`, `validate_config`, `Registry`; `agent.*`/`db.*`/`host.*`/`peer.*`) |
+| Python API | `scitex_agent_container` (`AgentConfig`, `load_config`, `Registry`; `agent.*`/`peer.*`/`host.*`) |
 | CLI | `scitex-agent-container`, `sac` — see [10_cli.md](10_cli.md) |
 | MCP servers | None bundled — agents spawn their own via `to_home/.mcp.json` |
 | Config format | v3 `scitex-agent-container/v3` only — v2 rejected |
@@ -44,7 +44,7 @@ session inside Apptainer (local or remote via SSH), observe via
 
 ### Core
 - [01_config-v3.md](01_config-v3.md) — v3 format; dir-as-SSoT (no `metadata.name`); rejects v2-era `spec.remote`/`spec.skills`/`dot_claude`/`spec.model`
-- [02_multiplexer.md](02_multiplexer.md) — vestigial for agents (SDK runtime); lead-only tmux wrap
+- [02_multiplexer.md](02_multiplexer.md) — vestigial; lead-only tmux wrap
 - [03_auto-accept.md](03_auto-accept.md) — modular prompt handlers
 - [04_resource-management.md](04_resource-management.md) — resource management
 - [05_resource-heartbeat.md](05_resource-heartbeat.md) — resource heartbeat
@@ -57,20 +57,21 @@ session inside Apptainer (local or remote via SSH), observe via
 - [16_claude-session-migration.md](16_claude-session-migration.md) — historical: claude-code → SDK migration
 - [17_inbound-turn-endpoint.md](17_inbound-turn-endpoint.md) — `POST /v1/turn` wire format + sidecar replacement
 - [18_full-agent-delegation.md](18_full-agent-delegation.md) — delegate to another *full* agent (vs Task subagent)
-- [19_full-agent-troubleshooting.md](19_full-agent-troubleshooting.md) — stuck-peer recovery, reaper pattern, hard/soft skills
+- [19_full-agent-troubleshooting.md](19_full-agent-troubleshooting.md) — stuck-peer recovery + reaper pattern
 
 ### Workflows
 - [10_cli.md](10_cli.md) — CLI commands and Python API
 - [11_remote-deploy.md](11_remote-deploy.md) — SSH deployment, src files, venv
 - [12_wsl-connectivity.md](12_wsl-connectivity.md) — WSL connectivity notes
 - [24_image-build.md](24_image-build.md) — apptainer `.sif` build/rebuild, rebuild-to-ship gotcha
-- [25_claude-setup-delivery.md](25_claude-setup-delivery.md) — `to_home`→`$HOME` mirror, overlay/`--home`, settings hook
+- [25_claude-setup-delivery.md](25_claude-setup-delivery.md) — `to_home`→`$HOME`, overlay/`--home`, settings hook
 - [26_credentials-rotation.md](26_credentials-rotation.md) — OAuth model + auth mechanics (canonical, `:rw` bind, preflight)
 - [26_credentials-rotation-host.md](26_credentials-rotation-host.md) — refresh + one-refresher invariant + host cron / watch-live / CI rotation
 - [27_credentials-relogin.md](27_credentials-relogin.md) — verified re-login (tmux code-paste) + 401-recovery
 - [28_credential-refresh.md](28_credential-refresh.md) — refresh creds without restart; running agents re-read on next turn
 - [29_progress-reporting-to-lead.md](29_progress-reporting-to-lead.md) — milestone push to lead via a2a_send
 - [30_responsiveness-background-work.md](30_responsiveness-background-work.md) — short turns; long work backgrounded so Telegram answers fast
+- [31_worktree-path-safety.md](31_worktree-path-safety.md) — keep worktrees outside `.claude*/`; harness reaps that namespace
 
 ### Reference
 - [13_observability.md](13_observability.md) — `sac agents status` JSON contract
