@@ -272,9 +272,18 @@ class ApptainerContainerRuntime(RuntimeBase):
         # when the operator already declared --workdir in raw_args. The
         # flag is curated (emitted before raw_args) so an operator's own
         # --workdir still wins via the helper's raw_args skip.
-        from ._apptainer_tmpfs import tmpfs_workdir_flags
+        from ._apptainer_tmpfs import opt_tmp_flags, tmpfs_workdir_flags
 
         argv += tmpfs_workdir_flags(config, state_dir)
+
+        # Second tmpfs-overflow defence: bind a per-agent host scratch
+        # dir at /opt/tmp inside the container and redirect $TMPDIR
+        # there. Stops heavy ML capsules (TF/Keras tokenizer caches,
+        # BERT preprocessing) from wedging on the small writable-tmpfs
+        # overlay when they use ``tempfile.gettempdir()`` instead of
+        # literal /tmp. Per #50 option 4 (lead a2a 7d14d69b); confirmed
+        # live on proj-paper-scitex-clew capsule-0238624.
+        argv += opt_tmp_flags(config, state_dir)
 
         # Anthropic-auth argv — emits the backend wiring (env + creds
         # bind). Branches internally on whether spec.claude.provider is

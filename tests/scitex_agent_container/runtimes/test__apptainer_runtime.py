@@ -223,6 +223,66 @@ def test_argv_emits_workdir_bind_mount(tmp_path: Path) -> None:
     assert any(b.endswith(":/work") and str(workdir) in b for b in binds)
 
 
+def test_argv_emits_opt_tmp_bind(tmp_path: Path) -> None:
+    # Arrange — #50 option 4 (lead a2a 7d14d69b): every agent gets
+    # /opt/tmp bound to a per-agent host scratch dir by default so
+    # ML workloads writing to $TMPDIR hit real disk, not the writable-
+    # tmpfs overlay. Verified live on clew capsule-0238624.
+    rt = ApptainerContainerRuntime()
+    state_dir = tmp_path / "state"
+    cfg = _config(tmp_path / "wd")
+    # Act
+    argv = rt.build_run_argv(cfg, state_dir=state_dir, sif_path=tmp_path / "x.sif")
+    # Assert
+    bind_idxs = [i for i, a in enumerate(argv) if a == "--bind"]
+    binds = [argv[i + 1] for i in bind_idxs]
+    assert any(b.endswith(":/opt/tmp") and str(state_dir) in b for b in binds), (
+        f"expected a bind to /opt/tmp under {state_dir}; binds={binds}"
+    )
+
+
+def test_argv_emits_tmpdir_env_pointing_at_opt_tmp(tmp_path: Path) -> None:
+    # Arrange — companion of the bind above: $TMPDIR must point at
+    # /opt/tmp so tempfile.gettempdir() lands there. Otherwise heavy
+    # ML caps (TF/Keras tokenizer caches) fall through to /tmp and
+    # we're back to the wedge.
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd")
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    # Assert
+    env_idxs = [i for i, a in enumerate(argv) if a == "--env"]
+    env_pairs = [argv[i + 1] for i in env_idxs]
+    assert "TMPDIR=/opt/tmp" in env_pairs
+
+
+def test_argv_skips_opt_tmp_bind_when_operator_owns_it(tmp_path: Path) -> None:
+    # Arrange — operator already mapped a host dir to /opt/tmp via
+    # spec.apptainer.binds; sac must NOT add its own (apptainer rejects
+    # duplicate mounts at the same container path).
+    rt = ApptainerContainerRuntime()
+    cfg = _config(
+        tmp_path / "wd",
+        apptainer=ApptainerSpec(binds=["/host/scratch:/opt/tmp"]),
+    )
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    # Assert
+    bind_idxs = [i for i, a in enumerate(argv) if a == "--bind"]
+    binds = [argv[i + 1] for i in bind_idxs]
+    # Operator's bind appears
+    assert "/host/scratch:/opt/tmp" in binds
+    # sac's per-agent bind does NOT — count of /opt/tmp binds is 1
+    opt_tmp_binds = [b for b in binds if b.endswith(":/opt/tmp")]
+    assert len(opt_tmp_binds) == 1, (
+        f"expected exactly 1 /opt/tmp bind; got {opt_tmp_binds}"
+    )
+
+
 def test_argv_emits_state_dir_bind_mount(tmp_path: Path) -> None:
     # Arrange — state_dir is bound at /state/<name>, not /state.
     rt = ApptainerContainerRuntime()

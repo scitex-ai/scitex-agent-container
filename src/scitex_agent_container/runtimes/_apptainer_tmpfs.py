@@ -1,4 +1,4 @@
-"""Sized ``/tmp`` scratch for the apptainer runtime.
+"""Sized ``/tmp`` scratch + ``TMPDIR=/opt/tmp`` redirect for apptainer.
 
 Why this exists
 ---------------
@@ -10,34 +10,48 @@ pytest fixtures with file IO routinely fill that 64 MB tmpfs mid-run
 and fail with "No space left on device" (the symptom that triggered
 this feature — see the FUTURE note ``sac-container-tmpfs-size.md``).
 
+Heavy ML capsules (TF/Keras tokenizer caches, BERT preprocessing) hit
+the SAME wall through a slightly different path: ``tempfile.gettempdir()``
+honours ``$TMPDIR`` before falling through to ``/tmp``. If the workload
+writes a multi-GB dataset to its tempdir under ``--writable-tmpfs``,
+the writable-tmpfs overlay (also a small in-memory tmpfs) fills and
+the process wedges silently — the symptom proj-paper-scitex-clew hit
+on cohort-A capsule-0238624 (a2a ``d346a786``, 2026-06-07).
+
 What we do
 ----------
-Apptainer's ``-W/--workdir <dir>`` flag relocates the in-container
-``/tmp`` and ``/var/tmp`` (and ``$HOME`` under ``--contain``, but sac
-pins ``$HOME`` via ``--home`` so that part is moot) onto a host
-directory, replacing the tiny session tmpfs with the host filesystem's
-capacity. We create a per-agent scratch dir under
-``<state_dir>/tmp-scratch`` and emit ``--workdir <dir>``.
+TWO independent measures, both default-on:
 
-``spec.apptainer.tmpfs_size`` (default ``"2G"``) is the **minimum
-free-space guarantee**: before launch we verify the host filesystem
-backing the scratch dir has at least that many bytes free, and fail
-loud (``TmpfsSpaceError``) if not — rather than letting the agent
-discover the shortfall mid-run with an opaque ENOSPC. It is NOT a hard
-cap: an unprivileged apptainer user cannot mount a size-capped tmpfs
-(``--mount type=tmpfs`` is rejected by apptainer 1.4 — only ``bind`` is
-supported), so the honest contract is "at least this much room",
-backed by the host disk. Setting ``tmpfs_size: ""`` opts out entirely
-(no ``--workdir``; the legacy 64 MB tmpfs is used).
+1. **``--workdir <state_dir>/tmp-scratch``** (function
+   :func:`tmpfs_workdir_flags`). Apptainer's ``-W/--workdir <dir>``
+   flag relocates the in-container ``/tmp`` and ``/var/tmp`` onto a
+   host directory, replacing the tiny session tmpfs with the host
+   filesystem's capacity. ``spec.apptainer.tmpfs_size`` (default
+   ``"2G"``) is the minimum free-space guarantee: before launch we
+   verify the host filesystem backing the scratch dir has at least
+   that many bytes free, raising :class:`TmpfsSpaceError` if not.
+
+2. **``--bind <state_dir>/opt-tmp:/opt/tmp`` + ``--env TMPDIR=/opt/tmp``**
+   (function :func:`opt_tmp_flags`). Apps that write to ``$TMPDIR``
+   instead of literal ``/tmp`` (Python's ``tempfile``, sqlite3
+   wal-shm, TF/Keras caches) land on the bound per-agent host
+   scratch dir rather than the writable-tmpfs overlay. Per #50
+   lead-decision option 4 (a2a ``7d14d69b``, 2026-06-07), confirmed
+   live by proj-paper-scitex-clew capsule-0238624 (submission.json
+   T+7min after the TMPDIR=/opt/tmp fix landed). No host-/tmp leak
+   (per-agent scratch dir, not host ``/tmp``).
+
+Both measures key on ``spec.apptainer.tmpfs_size`` — setting it to
+``""`` opts out of BOTH (legacy 64 MB tmpfs everywhere). Operator
+escape hatches (their own ``--workdir`` in ``raw_args``; their own
+``TMPDIR`` in ``apptainer.env``; their own bind to ``/opt/tmp``) all
+win — sac never overrides an explicit operator choice.
 
 Compatibility
 -------------
-``--workdir`` composes cleanly with the hardened default flags
+Both flag sets compose cleanly with the hardened default flags
 (``--containall --cleanenv --writable-tmpfs --home /home/agent``) and
-with PR #183's overlay upper-home bind — verified end-to-end. When the
-operator already declares their own ``-W``/``--workdir`` in
-``apptainer.raw_args`` (relaxed escape-hatch), sac skips its own to
-avoid a duplicate/conflicting flag.
+with PR #183's overlay upper-home bind — verified end-to-end.
 """
 
 from __future__ import annotations
@@ -128,4 +142,89 @@ def tmpfs_workdir_flags(config, state_dir: Path) -> list[str]:
     return ["--workdir", str(scratch)]
 
 
-__all__ = ["tmpfs_workdir_flags", "parse_tmpfs_size_bytes", "TmpfsSpaceError"]
+def opt_tmp_flags(config, state_dir: Path) -> list[str]:
+    """Return ``--bind`` + ``--env`` flags to redirect ``$TMPDIR`` onto
+    a per-agent host scratch dir at ``/opt/tmp`` inside the container.
+
+    Default emission (under the default ``ApptainerSpec``):
+
+    .. code-block:: text
+
+        --bind <state_dir>/opt-tmp:/opt/tmp --env TMPDIR=/opt/tmp
+
+    The bind makes ``/opt/tmp`` inside the container point at a host
+    directory (so writes hit real disk, not the writable-tmpfs overlay
+    or the 64 MB session tmpfs). The ``TMPDIR`` env redirects Python's
+    ``tempfile.gettempdir()``, sqlite3 wal-shm files, and most C-lib
+    tempdir lookups to that path. Together these stop heavy ML
+    capsules (TF/Keras tokenizer caches, BERT preprocessing, multi-GB
+    pickles) from wedging on a small in-memory tmpfs.
+
+    Per #50 lead-decision option 4 (a2a ``7d14d69b``, 2026-06-07);
+    confirmed live by proj-paper-scitex-clew capsule-0238624
+    (a2a ``d346a786``).
+
+    Returns ``[]`` (no-op) when:
+      * ``spec.apptainer.tmpfs_size`` is empty (operator opt-out,
+        consistent with :func:`tmpfs_workdir_flags`).
+
+    Operator overrides are respected:
+      * If ``spec.apptainer.env.TMPDIR`` is set (any value), sac does
+        not append its own ``--env TMPDIR=...`` (last-wins would have
+        won, but emitting our own would be wasted argv noise and
+        confusing in logs).
+      * If ``spec.apptainer.binds`` already includes any entry whose
+        container side is ``/opt/tmp``, sac skips its own bind to
+        avoid a duplicate-mount error.
+
+    Creates ``<state_dir>/opt-tmp`` if it doesn't exist (mode 0o700
+    via apptainer's default umask). Does NOT preflight free space —
+    the user-facing knob for that is ``spec.apptainer.tmpfs_size``,
+    which :func:`tmpfs_workdir_flags` already polices.
+    """
+    ap = getattr(config, "apptainer", None)
+    if ap is None:
+        size = "2G"
+        env: dict = {}
+        binds: list = []
+    else:
+        size = getattr(ap, "tmpfs_size", "2G")
+        env = dict(getattr(ap, "env", None) or {})
+        binds = list(getattr(ap, "binds", None) or [])
+
+    if not size:
+        # Operator opted out of sac's tmpfs management; don't
+        # surreptitiously inject /opt/tmp bind+env either.
+        return []
+
+    flags: list[str] = []
+
+    # Skip the bind if the operator already mapped something to
+    # /opt/tmp. The container side is the LAST colon-separated field
+    # (possibly followed by an optional :ro/:rw mode), so we check
+    # whether any bind entry mentions ``:/opt/tmp`` as its container
+    # path. This is a substring check by design — bind grammar is
+    # ``host:container[:mode]``, container paths never contain colons,
+    # so ``:/opt/tmp`` (or ``:/opt/tmp:``) is unambiguous.
+    operator_owns_opt_tmp_bind = any(
+        ":/opt/tmp" in b and (b.endswith(":/opt/tmp") or ":/opt/tmp:" in b)
+        for b in binds
+    )
+    if not operator_owns_opt_tmp_bind:
+        opt_scratch = state_dir.expanduser() / "opt-tmp"
+        opt_scratch.mkdir(parents=True, exist_ok=True)
+        flags += ["--bind", f"{opt_scratch}:/opt/tmp"]
+
+    # Skip the TMPDIR env if the operator already set it (any value).
+    if "TMPDIR" not in env:
+        flags += ["--env", "TMPDIR=/opt/tmp"]
+
+    return flags
+
+
+__all__ = [
+    "tmpfs_workdir_flags",
+    "opt_tmp_flags",
+    "parse_tmpfs_size_bytes",
+    "TmpfsSpaceError",
+]
