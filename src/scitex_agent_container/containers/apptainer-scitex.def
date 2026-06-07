@@ -78,6 +78,36 @@ From: ./sac-base.sif
     # uv/pip failure. (Caught by clew's capsule-0220918 audit,
     # 2026-06-06; symmetric with the apt-side libglib2.0-0 add in
     # apptainer-base.def — both close silent-fallback paths.)
+    # Two-pass install — single-pass shipped pre-#41 (0.21.9) sac for
+    # every scitex-layer rebuild after the scitex PyPI cut.
+    #
+    # Why: ``scitex[all]`` has a transitive
+    # ``scitex-agent-container==0.21.9; extra == "all"`` (verified
+    # against PyPI metadata 2026-06-07). Resolved alongside the
+    # bundled local source ``/opt/scitex-agent-container-src`` in ONE
+    # ``uv pip install``, uv installs the PyPI 0.21.9 wheel for the
+    # transitive constraint, then sees the local source resolves to
+    # the SAME version (0.21.9; develop hasn't bumped) and SKIPS the
+    # re-install under its "version-already-satisfied" check. The SIF
+    # quietly ships pre-#41 sac despite the .def staging the .def-time
+    # source tree. Lead a2a ``f3f9bfa0`` + ``ce08f1d0`` (2026-06-07)
+    # caught this on the #41 deploy attempt — the rebuilt SIF didn't
+    # carry ``WakeableInbox`` even though the git pin was on develop HEAD.
+    #
+    # Fix: split into two install invocations.
+    #   step 1: scitex[all] + everything else (resolves the transitive
+    #     scitex-agent-container==0.21.9 from PyPI; that wheel is OK to
+    #     install — it'll get overwritten in step 2).
+    #   step 2: ``--force-reinstall --no-deps /opt/scitex-agent-container-src``
+    #     — force-reinstall because uv/pip's version-already-satisfied
+    #     check would otherwise skip; --no-deps because step 1 already
+    #     resolved every transitive, re-resolving here would thrash for
+    #     no gain.
+    #
+    # ``--reinstall-package scitex-agent-container`` is the uv-specific
+    # shorthand (narrower blast radius) and would also work; we use the
+    # portable ``--force-reinstall --no-deps`` form so the pip-fallback
+    # branch below uses the same flags.
     if command -v uv >/dev/null; then
         uv pip install --python /opt/venv-sac/bin/python \
             black flake8 \
@@ -85,7 +115,9 @@ From: ./sac-base.sif
             pytest pytest-cov \
             "claude-agent-sdk==0.2.87" \
             "scitex[all]" \
-            xarray \
+            xarray
+        uv pip install --python /opt/venv-sac/bin/python \
+            --force-reinstall --no-deps \
             /opt/scitex-agent-container-src
     else
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
@@ -96,7 +128,9 @@ From: ./sac-base.sif
             pytest pytest-cov \
             "claude-agent-sdk==0.2.87" \
             "scitex[all]" \
-            xarray \
+            xarray
+        /opt/venv-sac/bin/pip install --no-cache-dir \
+            --force-reinstall --no-deps \
             /opt/scitex-agent-container-src
     fi
 
