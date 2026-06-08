@@ -14,6 +14,7 @@ from pathlib import Path
 import yaml
 
 from ._acl_validation import validate_phase3_acl
+from ._model_chain_validation import validate_model_chain
 from ._provider_validation import provider_is_active, validate_provider
 
 # Accepted shapes for ``spec.model`` (F-CS7).
@@ -95,6 +96,9 @@ _KNOWN_SPEC_KEYS = frozenset(
         "to_home",  # ADR-0006 — directory mirrored into container $HOME
         "comms",  # Phase-3 ACL: outbound/inbound + a2a listen toggle
         "lineage",  # Phase-3 ACL: group=solitary + may_spawn
+        "model",  # ADR-0018 v4: spec.model.<label>.* cascade-fallback chain
+        # (label-keyed dict). String-form values are still rejected
+        # below as the deprecated v2 alias; only dicts are honored.
         # v3 removed (rejected explicitly below with relocation hints):
         # image (→ spec.apptainer.image), mounts (→ spec.apptainer.binds),
         # env (→ spec.apptainer.env), model (→ spec.claude.model),
@@ -105,11 +109,17 @@ _KNOWN_SPEC_KEYS = frozenset(
 
 # v3-realign: top-level fields that moved into engine blocks. Reject
 # loudly with a hint pointing to the new home (§3 Removed from v3).
+#
+# ADR-0018 caveat: top-level ``spec.model`` is REINTRODUCED as a v4 dict
+# (label-keyed cascade chain). The validator below treats a STRING value
+# as the deprecated v2/v3 shape and points at ``spec.claude.model``; a
+# DICT value is the v4 cascade and gets handed to validate_model_chain.
+# Empty / list / other shapes fall through to the v3 relocation hint
+# (operators see the same advice the legacy path emitted).
 _V3_RELOCATED_FIELDS: dict[str, str] = {
     "image": "spec.apptainer.image",
     "mounts": "spec.apptainer.binds",
     "env": "spec.apptainer.env",
-    "model": "spec.claude.model",
 }
 
 # v3-realign: fields removed outright (no relocation — different owners).
@@ -288,6 +298,49 @@ def validate_raw(raw: dict, path: str) -> list[str]:
                 "exclusive — a provider backend uses an API key, not "
                 "Anthropic OAuth. Set exactly one."
             )
+
+        # ADR-0018 v4 — spec.model.<label>.* cascade-fallback chain.
+        # When present, validate every label entry through the dedicated
+        # validator. A STRING-form value at the top level is the
+        # deprecated v2 alias (the v3 home is spec.claude.model); reject
+        # with the same hint the v3 relocation map emitted. A non-dict
+        # non-string is a type error. Absent → no-op (v3 specs work
+        # unchanged via the spec.claude alias path inside
+        # parse_model_chain).
+        spec_model = spec.get("model")
+        if spec_model is not None:
+            if isinstance(spec_model, str):
+                errors.append(
+                    "spec.model is no longer accepted at the top level as a "
+                    "string; move it to spec.claude.model (v3 spec realignment "
+                    "§3). For the ADR-0018 v4 cascade-fallback shape, use a "
+                    "dict: spec.model.<label>.{provider, model_id, account|api_key}."
+                )
+            elif not isinstance(spec_model, dict):
+                errors.append(
+                    f"spec.model must be a dict of label → config, got "
+                    f"{type(spec_model).__name__} (ADR-0018 v4)."
+                )
+            else:
+                errors.extend(
+                    validate_model_chain(
+                        spec_model,
+                        agent_name=(metadata or {}).get("name"),
+                    )
+                )
+                # spec.claude and spec.model are mutually exclusive — both
+                # declare the same provider/auth axis. The parser's v3
+                # alias path covers the back-compat case (v3 declares
+                # only spec.claude; v4 declares only spec.model);
+                # declaring BOTH leaves the runtime guessing which wins.
+                if claude_block:
+                    errors.append(
+                        "spec.claude and spec.model are mutually exclusive — "
+                        "v3 specs use spec.claude.* (auto-aliased to a single "
+                        "'legacy' label internally); v4 specs use "
+                        "spec.model.<label>.*. Remove the deprecated "
+                        "spec.claude block when adopting v4."
+                    )
 
         # container.runtime
         container = spec.get("container", {}) or {}

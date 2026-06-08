@@ -21,6 +21,7 @@ from ._parsers import (
     parse_hosts_spec,
     parse_lineage,
     parse_listen,
+    parse_model_chain,
     parse_proxy,
     parse_restart,
     parse_skills,
@@ -241,6 +242,13 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     # back-compat consumers and populated from the new homes.
     claude_spec = parse_claude(spec)
     apptainer_spec = parse_apptainer(spec)
+    # ADR-0018 v4 cascade chain. PR A scope: parser produces the chain
+    # (v4 ``spec.model`` or v3 ``spec.claude.*`` aliased to a single
+    # ``legacy`` label). Runtime continues reading ``claude_spec`` for
+    # the moment; the chain rides on AgentConfig for the PR B/C/D
+    # follow-ups to consume. See ``config/_parsers/_model_chain.py``
+    # for the parse rules and the one-shot deprecation warning behavior.
+    model_chain_spec = parse_model_chain(spec, agent_name=name)
     model = claude_spec.model or "sonnet"
     display_model = MODEL_DISPLAY_NAMES.get(model, model)
     auto_env["SCITEX_AGENT_CONTAINER_MODEL"] = display_model
@@ -303,6 +311,7 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         labels=labels,
         container=parse_container(spec),
         claude=claude_spec,
+        model_chain=model_chain_spec,
         health=parse_health(spec),
         watchdog=parse_watchdog(spec),
         restart=parse_restart(spec),

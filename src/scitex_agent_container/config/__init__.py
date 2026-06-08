@@ -16,8 +16,10 @@ from pathlib import Path
 
 import yaml
 
+from ._env_var_substitution import is_env_var_ref, resolve_env_var_ref
 from ._host import resolve_hostname, substitute_hostnames
 from ._loaders import compose_effective_name, load_v3
+from ._model_chain_types import ModelChain, ModelLabel
 from ._provider_types import ProviderSpec
 from ._proxy_types import ProxySpec
 from ._resolve import resolve_config
@@ -47,6 +49,8 @@ __all__ = [
     "HookSpec",
     "HostsSpec",
     "ListenPort",
+    "ModelChain",
+    "ModelLabel",
     "ProviderSpec",
     "ProxySpec",
     "RestartSpec",
@@ -55,6 +59,8 @@ __all__ = [
     "StartupCommand",
     "WatchdogSpec",
     "compose_effective_name",
+    "is_env_var_ref",
+    "resolve_env_var_ref",
     "load_config",
     "resolve_config",
     "resolve_hostname",

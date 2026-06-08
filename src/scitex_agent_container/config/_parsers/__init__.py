@@ -28,6 +28,7 @@ from ._hooks import parse_hooks
 from ._hosts import _VALID_SCHEDULING_MODES, parse_hosts_spec, parse_scheduling
 from ._listen import parse_listen
 from ._mcp import interpolate_mcp_servers
+from ._model_chain import parse_model_chain
 from ._proxy import parse_proxy
 from ._restart import parse_restart
 from ._skills import parse_skills
@@ -53,6 +54,7 @@ __all__ = [
     "parse_hosts_spec",
     "parse_lineage",
     "parse_listen",
+    "parse_model_chain",
     "parse_proxy",
     "parse_restart",
     "parse_scheduling",

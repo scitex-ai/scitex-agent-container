@@ -9,6 +9,7 @@ from typing import Any, Dict
 # Phase-3 ACL dataclasses (kept in a sibling module under the per-file
 # line cap; re-exported here for the :class:`AgentConfig` field defaults).
 from ._acl_types import CommsSpec, LineageSpec  # noqa: E402,F401
+from ._model_chain_types import ModelChain  # noqa: F401 — used in TYPE-quoted field
 from ._provider_types import ProviderSpec
 
 
@@ -436,6 +437,15 @@ class AgentConfig:
     labels: dict[str, str] = field(default_factory=dict)
     container: ContainerSpec = field(default_factory=ContainerSpec)
     claude: ClaudeSpec = field(default_factory=ClaudeSpec)
+    # ADR-0018 v4 cascade-fallback model chain. Label-keyed dict where
+    # each entry is a complete provider config; the dict's INSERTION
+    # ORDER is the implicit fallback cascade order (PR B runtime
+    # dispatcher walks this on 429/auth errors). Empty default keeps
+    # back-compat: v3 specs declare ``spec.claude.*`` and the loader
+    # rewrites that into a single-label ``model_chain['legacy']``
+    # entry via :func:`config._parsers._model_chain.parse_model_chain`.
+    # See :mod:`config._model_chain_types` for the dataclass schema.
+    model_chain: "ModelChain" = field(default_factory=dict)
     health: HealthSpec = field(default_factory=HealthSpec)
     watchdog: WatchdogSpec = field(default_factory=WatchdogSpec)
     restart: RestartSpec = field(default_factory=RestartSpec)
