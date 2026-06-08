@@ -37,10 +37,21 @@ From: ./sac-base.sif
     export DEBIAN_FRONTEND=noninteractive
 
     # ---- 1. Audio / video system deps ----------------------------------
+    # libxcb1 / libgl1 / libglib2.0-0 are REQUIRED by scitex_cv (cv2):
+    # without libxcb.so.1, ``import scitex`` → ``scitex_cv`` → ``cv2`` raises
+    # ``libxcb.so.1: cannot open shared object file``, which parks every
+    # downstream ripple-wm lane (ripple / gpfa / nt / memory_load — they
+    # all `import scitex` at module load). libgl1 pairs with libxcb to
+    # cover cv2's headless OpenGL probe. libglib2.0-0 is already in the
+    # :base layer (lib-gthread silent-fallback fix, 2026-06-06) but kept
+    # here belt-and-suspenders so a future :base trim cannot resurrect
+    # the silent-fallback path inside :scitex. (Lead a2a 2026-06-08:
+    # SIF rebuild was blocking ALL ripple-wm compute lanes.)
     apt-get update
     apt-get install -y --no-install-recommends \
         ffmpeg \
-        portaudio19-dev
+        portaudio19-dev \
+        libxcb1 libgl1 libglib2.0-0
     rm -rf /var/lib/apt/lists/*
 
     # ---- 2. Python venv + scitex stack ---------------------------------
