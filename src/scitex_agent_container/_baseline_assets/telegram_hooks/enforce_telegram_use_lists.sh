@@ -5,13 +5,19 @@
 #
 # OP-PRIO-FMT rule 3 (operator 2026-06-09): a Telegram message that
 # enumerates 3+ items MUST present them as a list, not as run-on
-# prose. The operator skims structured lists; commma-soup hides the
-# count and forces re-reading.
+# prose. The operator skims structured lists; comma-soup AND
+# slash-cramming hide the count and force re-reading.
 #
-# Detection: a single non-list line contains 3+ comma-separated
-# fragments joined by "and" / "or" / "、" / "，". Lines that already
-# start with a list marker (``-``, ``*``, ``1.``, ``1a.``, ``A)``,
-# etc.) are exempt.
+# Detection (any one of these on a single non-list line fires):
+#   - 3+ comma-separated fragments (EN ``,`` with ``and``/``or``
+#     conjunction, OR JP ``、`` / ``，`` 2+ occurrences), OR
+#   - 3+ items separated by `` / `` (slash with SURROUNDING spaces).
+#     The operator's most common run-on form (lead 2026-06-09):
+#     ``やること: 認証PR / ボード整理 / スキル更新 / 通知設定``.
+#     URL / path slashes (``http://...``, ``/home/...``) are guarded
+#     because their slashes have NO surrounding spaces.
+# Lines that already start with a list marker (``-``, ``*``, ``1.``,
+# ``1a.``, ``A)``, etc.) are exempt.
 #
 # Fires on: tool_name matches the matcher in settings.local.json
 # (must be the FQ mcp__claude-code-telegrammer__reply name — operator
@@ -37,11 +43,18 @@ if [[ "${1:-}" == "--self-test" ]]; then
     T="mcp__claude-code-telegrammer__reply"
     run "prose 3 items \"A, B, and C\"      -> block" "$T" "did A, B, and C in one pass." 2
     run "prose 3 items JP 「A、B、C」        -> block" "$T" "A、B、C を実装した。" 2
+    # Lead 2026-06-09 detection-gap repro: slash-separated cramming.
+    run "slash 4 items JP やること:...      -> block" "$T" "やること: 認証PR / ボード整理 / スキル更新 / 通知設定" 2
+    run "slash 3 items EN \"A / B / C\"     -> block" "$T" "did A / B / C in parallel" 2
+    run "slash 2 items only \"A / B\"       -> allow" "$T" "ran A / B" 0
+    # URL/path slashes must NOT trip (no spaces around the slashes).
+    run "URL with many slashes              -> allow" "$T" "see https://example.com/path/to/file" 0
+    run "POSIX path many slashes            -> allow" "$T" "edited /home/agent/.claude/hooks/x.sh" 0
     run "two items only \"A and B\"         -> allow" "$T" "did A and B." 0
     run "list already \"- A\\n- B\\n- C\"   -> allow" "$T" $'- A\n- B\n- C' 0
     run "numbered list \"1. A\\n2. B\\n3.C\" -> allow" "$T" $'1. A\n2. B\n3. C' 0
     run "non-enumeration prose             -> allow" "$T" "PR opened" 0
-    run "non-telegram tool ignored         -> allow" "Bash" "A, B, and C" 0
+    run "non-telegram tool ignored         -> allow" "Bash" "A / B / C" 0
     run "empty text                        -> allow" "$T" "" 0
     echo "pass=$pass fail=$fail"
     [[ "$fail" == "0" ]] && exit 0 || exit 1
@@ -68,6 +81,11 @@ LIST_PREFIX = re.compile(r"^\s*(?:[-*•]|\d+[a-z]?[.)]|[A-E]\))\s")
 #   - 2+ commas (EN: ",") OR 2+ JP commas ("、" / "，")
 #   - AND a closing conjunction ("and " / "or " / "、" trailing).
 EN_PROSE = re.compile(r"\b(?:and|or)\b\s+\S", re.IGNORECASE)
+# Slash-cramming detector (lead 2026-06-09 gap fix). Matches a literal
+# slash with REQUIRED surrounding spaces, so URLs (``http://``) and
+# POSIX paths (``/home/...``) — whose slashes have no spaces around
+# them — never trip. 2+ occurrences = 3+ items = "use a list".
+SLASH_SEP = re.compile(r" / ")
 for raw in text.split("\n"):
     line = raw.strip()
     if not line:
@@ -77,13 +95,16 @@ for raw in text.split("\n"):
     en_commas = line.count(",")
     jp_commas = line.count("、") + line.count("，")
     has_conjunction = bool(EN_PROSE.search(line)) or line.count("、") >= 2
-    if (en_commas >= 2 and has_conjunction) or jp_commas >= 2:
+    slash_seps = len(SLASH_SEP.findall(line))
+    if (en_commas >= 2 and has_conjunction) or jp_commas >= 2 or slash_seps >= 2:
         sys.stderr.write(
             "BLOCKED by enforce_telegram_use_lists.sh: prose "
             f"enumeration detected in line {line!r}. Operator "
             "(2026-06-09) wants 3+ items as a list — comma-soup "
-            "hides the count and forces re-reading on the phone.\n\n"
+            "AND slash-cramming hide the count and force "
+            "re-reading on the phone.\n\n"
             "  - Bad : \"did A, B, and C in one pass.\"\n"
+            "  - Bad : \"やること: 認証PR / ボード整理 / スキル更新 / 通知設定\"\n"
             "  - Good: \"- A\\n- B\\n- C\" (or numbered 1./2./3.).\n\n"
             "Rare one-off override: set env CC_ALLOW_PROSE_ENUM=1.\n"
         )
