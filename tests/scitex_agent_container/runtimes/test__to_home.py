@@ -642,6 +642,58 @@ class TestResolveBaselineToHomeDir:
         # Assert
         assert resolved is None
 
+    def test_resolves_sibling_shared_dir_under_agents_root(self, tmp_path):
+        """OP-PRIO-3 (2026-06-09 operator rename): the canonical baseline
+        sibling is now ``_shared/`` (was ``_base/``). When only ``_shared/``
+        exists, the resolver picks it.
+        """
+        # Arrange — spec dir with a sibling _shared/to_home (no _base).
+        agents_root = tmp_path / "agents"
+        spec_dir = agents_root / "test-agent"
+        spec_dir.mkdir(parents=True)
+        shared_baseline = agents_root / "_shared" / "to_home"
+        shared_baseline.mkdir(parents=True)
+        # Act
+        resolved = resolve_baseline_to_home_dir(spec_dir)
+        # Assert
+        assert resolved == shared_baseline
+
+    def test_resolves_legacy_base_dir_when_shared_absent(self, tmp_path):
+        """OP-PRIO-3 back-compat: an operator who has not yet renamed the
+        dotfile from ``_base/`` to ``_shared/`` must keep working —
+        legacy ``_base/`` is honoured as a fallback when ``_shared/``
+        is absent.
+        """
+        # Arrange — only legacy _base/to_home present.
+        agents_root = tmp_path / "agents"
+        spec_dir = agents_root / "test-agent"
+        spec_dir.mkdir(parents=True)
+        legacy_baseline = agents_root / "_base" / "to_home"
+        legacy_baseline.mkdir(parents=True)
+        # Act
+        resolved = resolve_baseline_to_home_dir(spec_dir)
+        # Assert
+        assert resolved == legacy_baseline
+
+    def test_shared_wins_over_legacy_base_when_both_present(self, tmp_path):
+        """OP-PRIO-3 transition: during a half-finished rename the operator
+        may have BOTH ``_shared/`` AND legacy ``_base/`` on disk. The
+        canonical ``_shared/`` must win so a partial-rename does not
+        silently fall back to stale ``_base/`` content.
+        """
+        # Arrange — both layouts exist simultaneously.
+        agents_root = tmp_path / "agents"
+        spec_dir = agents_root / "test-agent"
+        spec_dir.mkdir(parents=True)
+        shared_baseline = agents_root / "_shared" / "to_home"
+        shared_baseline.mkdir(parents=True)
+        legacy_baseline = agents_root / "_base" / "to_home"
+        legacy_baseline.mkdir(parents=True)
+        # Act
+        resolved = resolve_baseline_to_home_dir(spec_dir)
+        # Assert
+        assert resolved == shared_baseline
+
 
 class TestMaterializeBaselineOverlay:
     def test_baseline_only_file_lands_in_home(self, tmp_path):

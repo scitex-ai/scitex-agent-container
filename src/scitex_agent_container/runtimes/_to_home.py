@@ -55,9 +55,13 @@ dereference-copy).
 Baseline location (see :func:`resolve_baseline_to_home_dir`):
 
   - ``$SAC_TO_HOME_BASELINE`` — explicit override (absolute dir), or
-  - ``<agents_dir>/_base/to_home/`` — a sibling ``_base`` dir under the
-    agents root (agents live at ``<agents_dir>/<name>/``, so the agents
-    root is the spec dir's parent).
+  - ``<agents_dir>/_shared/to_home/`` — canonical sibling under the
+    agents root (OP-PRIO-3 rename 2026-06-09; was ``_base/``). Agents
+    live at ``<agents_dir>/<name>/``, so the agents root is the spec
+    dir's parent.
+  - ``<agents_dir>/_base/to_home/`` — legacy fallback honoured so an
+    in-place dotfile rename can land without a flag-day. The canonical
+    ``_shared/`` wins when both exist.
 
 Absent baseline dir → behaves exactly as before (no baseline = current
 behavior; fully backward compatible).
@@ -153,13 +157,24 @@ _MARKER_PROTECTED_BASENAMES = frozenset({"CLAUDE.md", "state.md"})
 _TIGHT_PERM_BASENAMES = frozenset({".env"})
 
 # Env var: explicit override for the shared/common baseline to_home dir.
-# Absolute path. When unset we fall back to ``<agents_dir>/_base/to_home``.
+# Absolute path. When unset we fall back first to ``<agents_dir>/_shared/
+# to_home`` (canonical, OP-PRIO-3 rename 2026-06-09), then to the legacy
+# ``<agents_dir>/_base/to_home`` for operators mid-rename.
 _BASELINE_ENV_VAR = "SAC_TO_HOME_BASELINE"
 
 # Name of the sibling dir (under the agents root) that holds the common
 # baseline. Agents live at ``<agents_dir>/<name>/``, so the agents root
-# is the spec dir's parent and the baseline is ``<parent>/_base/to_home``.
-_BASELINE_DIR_NAME = "_base"
+# is the spec dir's parent and the baseline is
+# ``<parent>/_shared/to_home``.
+#
+# Operator rename 2026-06-09 (OP-PRIO-3): the canonical name moved from
+# ``_base`` to ``_shared`` — "shared" reads as a noun + describes the
+# overlay-precedence semantics more honestly (every agent shares this
+# layer; per-agent ``to_home`` overlays on top). The legacy ``_base``
+# remains accepted as a fallback so an in-place rename of the dotfile
+# does not need a flag-day — see :func:`resolve_baseline_to_home_dir`.
+_BASELINE_DIR_NAME = "_shared"
+_LEGACY_BASELINE_DIR_NAME = "_base"
 
 
 # --- public API ------------------------------------------------------------
@@ -196,9 +211,14 @@ def resolve_baseline_to_home_dir(spec_dir: Path | None) -> Path | None:
 
     Resolution order:
       1. ``$SAC_TO_HOME_BASELINE`` (absolute dir) — explicit override.
-      2. ``<agents_dir>/_base/to_home`` — a sibling ``_base`` dir under
-         the agents root. Agents live at ``<agents_dir>/<name>/``, so the
-         agents root is ``spec_dir.parent``.
+      2. ``<agents_dir>/_shared/to_home`` — canonical sibling under the
+         agents root (OP-PRIO-3 rename 2026-06-09). Agents live at
+         ``<agents_dir>/<name>/``, so the agents root is
+         ``spec_dir.parent``.
+      3. ``<agents_dir>/_base/to_home`` — legacy fallback so an
+         in-place dotfile rename can land without a flag-day. The
+         canonical ``_shared/`` wins when both exist, so a partial
+         rename does not silently fall back to stale ``_base/`` content.
 
     Returns ``None`` when no baseline dir can be resolved (no baseline =
     current behavior; fully backward compatible).
@@ -209,8 +229,11 @@ def resolve_baseline_to_home_dir(spec_dir: Path | None) -> Path | None:
         return p if p.is_dir() else None
     if spec_dir is None:
         return None
-    p = spec_dir.parent / _BASELINE_DIR_NAME / "to_home"
-    return p if p.is_dir() else None
+    canonical = spec_dir.parent / _BASELINE_DIR_NAME / "to_home"
+    if canonical.is_dir():
+        return canonical
+    legacy = spec_dir.parent / _LEGACY_BASELINE_DIR_NAME / "to_home"
+    return legacy if legacy.is_dir() else None
 
 
 def materialize_to_home(spec_dir: Path, workspace_home: Path) -> None:

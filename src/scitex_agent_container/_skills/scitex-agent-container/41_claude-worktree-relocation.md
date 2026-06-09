@@ -46,11 +46,11 @@ diagnostics.
 1. Copy both `worktree_create.py` and `worktree_remove.py` into the
    baseline to_home tree:
 
-       <agents_dir>/_base/to_home/.claude/hooks/claude_worktree_hooks/
+       <agents_dir>/_shared/to_home/.claude/hooks/claude_worktree_hooks/
 
 2. Merge the `hooks` block from
    `settings.local.json.fragment.json` into
-   `<agents_dir>/_base/to_home/.claude/settings.local.json` (under the
+   `<agents_dir>/_shared/to_home/.claude/settings.local.json` (under the
    top-level `hooks` key). Preserve the `_comment_worktree_hooks`
    string — it carries the source-of-truth audit trail.
 
@@ -83,7 +83,7 @@ silent schema drift would break the relocation.
 
 The hook scripts are canonical, version-controlled, regression-tested
 implementations of a fleet-wide policy. Shipping them here (instead of
-ad-hoc in the operator's dotfiles `_base/to_home/`) means:
+ad-hoc in the operator's dotfiles `_shared/to_home/`) means:
 
 * The implementation has an audit trail (commit history + PR review).
 * The hook contract is pinned by tests, not by the operator's memory.
