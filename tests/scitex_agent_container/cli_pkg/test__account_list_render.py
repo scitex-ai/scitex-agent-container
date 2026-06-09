@@ -12,7 +12,11 @@ The renderer module is the bullet-1/2/3 fix surface:
 * bullet 2 — credential TTL ticks under ``watch -n1`` (minute-resolution
   format) and the per-account usage snapshot age is rendered next to
   the % so a stale number is obvious.
-* bullet 3 — ``rich.table.Table`` with aligned columns, short ``As-of``.
+* bullet 3 — ``rich.table.Table`` with aligned columns, short
+  ``Last Update`` (renamed from ``As-of`` per the 2026-06-09 operator
+  ask). Per-row 5h%/7d% cells carry an inline ``→HH:MM`` /
+  ``→Day HHh`` reset hint when the upstream Anthropic usage API
+  returned a ``resets_at`` timestamp for that window.
 
 The ``--refresh`` flag is asserted via the CLI surface (click invocation)
 with a real fake fetcher injected through a temporary monkey of the
@@ -36,10 +40,14 @@ from scitex_agent_container.cli_pkg._account_list_render import (
     build_stored_rows,
     format_as_of_short,
     format_dt_local,
+    format_reset_day_hour,
+    format_reset_hhmm,
     format_snapshot_age,
     format_ttl_live,
     local_timezone,
+    needs_rolling_legend,
     render_stored_table_to_str,
+    rolling_legend_line,
     usage_for_account,
 )
 from scitex_agent_container.cli_pkg.account_group import account
@@ -274,7 +282,7 @@ def test_format_snapshot_age_future_clamps_to_zero():
 
 
 # ---------------------------------------------------------------------------
-# Bullet 3 — short As-of and table shape
+# Bullet 3 — short Last Update (renamed from As-of) and table shape
 # ---------------------------------------------------------------------------
 
 
@@ -355,7 +363,7 @@ def test_render_stored_table_has_column_headers():
     # Act
     out = render_stored_table_to_str(rows, now=now)
     # Assert — every column header is present.
-    for col in ("ID", "Email", "Plan", "Status(+TTL)", "5h%", "7d%", "As-of"):
+    for col in ("ID", "Email", "Plan", "Status(+TTL)", "5h%", "7d%", "Last Update"):
         assert col in out, f"missing column header: {col!r}\n---\n{out}"
 
 
@@ -476,8 +484,340 @@ def test_render_stored_table_shows_age_next_to_pct():
     now = datetime(2026, 5, 31, 12, 14, 0, tzinfo=timezone.utc)
     # Act
     out = render_stored_table_to_str(rows, now=now)
-    # Assert — `(3m)` appears in the As-of column.
+    # Assert — `(3m)` appears in the Last Update column.
     assert "(3m)" in out
+
+
+# ---------------------------------------------------------------------------
+# 2026-06-09 task — per-window reset hint on 5h% / 7d% cells
+# ---------------------------------------------------------------------------
+
+
+def test_format_reset_hhmm_renders_arrow_hhmm(env_save_restore):
+    """``format_reset_hhmm`` emits ``→HH:MM`` in the operator's local tz."""
+    # Arrange — 12:05 UTC = 21:05 JST.
+    env_save_restore.set("TZ", "Asia/Tokyo")
+    # Act
+    rendered = format_reset_hhmm("2026-05-31T12:05:00+00:00")
+    # Assert
+    assert rendered == "→21:05"
+
+
+def test_format_reset_hhmm_none_returns_empty():
+    # Arrange
+    value = None
+    # Act
+    rendered = format_reset_hhmm(value)
+    # Assert
+    assert rendered == ""
+
+
+def test_format_reset_hhmm_unparseable_returns_empty():
+    """A malformed reset timestamp must NOT crash the table — empty string."""
+    # Arrange
+    value = "not-a-timestamp"
+    # Act
+    rendered = format_reset_hhmm(value)
+    # Assert
+    assert rendered == ""
+
+
+def test_format_reset_day_hour_renders_arrow_day_hour(env_save_restore):
+    """``format_reset_day_hour`` emits ``→Day HHh`` in the operator's local tz."""
+    # Arrange — 2026-06-04 08:00 UTC = 2026-06-04 17:00 JST → Thu 17h.
+    env_save_restore.set("TZ", "Asia/Tokyo")
+    # Act
+    rendered = format_reset_day_hour("2026-06-04T08:00:00+00:00")
+    # Assert
+    assert rendered == "→Thu 17h"
+
+
+def test_format_reset_day_hour_none_returns_empty():
+    # Arrange
+    value = None
+    # Act
+    rendered = format_reset_day_hour(value)
+    # Assert
+    assert rendered == ""
+
+
+def test_format_reset_day_hour_unparseable_returns_empty():
+    # Arrange
+    value = "not-a-timestamp"
+    # Act
+    rendered = format_reset_day_hour(value)
+    # Assert
+    assert rendered == ""
+
+
+def test_render_stored_table_5h_cell_carries_reset_hint(env_save_restore):
+    """5h% cell renders ``42% (→HH:MM)`` when ``reset_at_5h`` is present."""
+    # Arrange — 12:05 UTC = 21:05 JST.
+    env_save_restore.set("TZ", "Asia/Tokyo")
+    rows = [
+        AccountRow(
+            name="work",
+            email="w@example.com",
+            plan_label="Pro",
+            tier="default_claude_pro",
+            freshness_state="VALID",
+            freshness_hours=2.8,
+            used_pct_5h=42.0,
+            used_pct_7d=15.0,
+            snapshot_as_of="2026-05-31T12:11:00+00:00",
+            reset_at_5h="2026-05-31T12:05:00+00:00",
+            reset_at_7d=None,
+        ),
+    ]
+    now = datetime(2026, 5, 31, 12, 14, 0, tzinfo=timezone.utc)
+    # Act
+    out = render_stored_table_to_str(rows, now=now)
+    # Assert — operator example shape from the 2026-06-09 task.
+    assert "42% (→21:05)" in out
+
+
+def test_render_stored_table_7d_cell_carries_reset_hint(env_save_restore):
+    """7d% cell renders ``15% (→Day HHh)`` when ``reset_at_7d`` is present."""
+    # Arrange — 2026-06-04 08:00 UTC = 2026-06-04 17:00 JST = Thu 17h.
+    env_save_restore.set("TZ", "Asia/Tokyo")
+    rows = [
+        AccountRow(
+            name="work",
+            email="w@example.com",
+            plan_label="Pro",
+            tier="default_claude_pro",
+            freshness_state="VALID",
+            freshness_hours=2.8,
+            used_pct_5h=42.0,
+            used_pct_7d=15.0,
+            snapshot_as_of="2026-05-31T12:11:00+00:00",
+            reset_at_5h=None,
+            reset_at_7d="2026-06-04T08:00:00+00:00",
+        ),
+    ]
+    now = datetime(2026, 5, 31, 12, 14, 0, tzinfo=timezone.utc)
+    # Act
+    out = render_stored_table_to_str(rows, now=now)
+    # Assert
+    assert "15% (→Thu 17h)" in out
+
+
+def test_render_stored_table_falls_back_to_bare_pct_when_no_reset_5h():
+    """No ``reset_at_5h`` → cell is just ``42%``; no fabricated reset hint."""
+    # Arrange
+    rows = [
+        AccountRow(
+            name="work",
+            email="w@example.com",
+            plan_label="Pro",
+            tier="default_claude_pro",
+            freshness_state="VALID",
+            freshness_hours=2.8,
+            used_pct_5h=42.0,
+            used_pct_7d=None,
+            snapshot_as_of="2026-05-31T12:11:00+00:00",
+            reset_at_5h=None,
+            reset_at_7d=None,
+        ),
+    ]
+    now = datetime(2026, 5, 31, 12, 14, 0, tzinfo=timezone.utc)
+    # Act
+    out = render_stored_table_to_str(rows, now=now)
+    # Assert — bare percentage, no `(→` arrow that would fake a reset.
+    assert "42%" in out and "(→" not in out
+
+
+def test_needs_rolling_legend_true_when_row_lacks_both_resets():
+    """When a row carries neither reset_at, the CLI needs the legend line."""
+    # Arrange
+    rows = [
+        AccountRow(
+            name="work",
+            email="w@example.com",
+            plan_label="Pro",
+            tier="default_claude_pro",
+            freshness_state="VALID",
+            freshness_hours=2.8,
+            used_pct_5h=42.0,
+            used_pct_7d=15.0,
+            snapshot_as_of="2026-05-31T12:11:00+00:00",
+            reset_at_5h=None,
+            reset_at_7d=None,
+        ),
+    ]
+    # Act
+    need = needs_rolling_legend(rows)
+    # Assert
+    assert need is True
+
+
+def test_needs_rolling_legend_false_when_every_row_has_resets():
+    """Per-row hint already discloses the rolling contract — no legend needed."""
+    # Arrange
+    rows = [
+        AccountRow(
+            name="work",
+            email="w@example.com",
+            plan_label="Pro",
+            tier="default_claude_pro",
+            freshness_state="VALID",
+            freshness_hours=2.8,
+            used_pct_5h=42.0,
+            used_pct_7d=15.0,
+            snapshot_as_of="2026-05-31T12:11:00+00:00",
+            reset_at_5h="2026-05-31T12:05:00+00:00",
+            reset_at_7d="2026-06-04T08:00:00+00:00",
+        ),
+    ]
+    # Act
+    need = needs_rolling_legend(rows)
+    # Assert
+    assert need is False
+
+
+def test_needs_rolling_legend_false_when_no_rows():
+    """An empty stored-accounts list never needs the legend."""
+    # Arrange
+    rows: list[AccountRow] = []
+    # Act
+    need = needs_rolling_legend(rows)
+    # Assert
+    assert need is False
+
+
+def test_rolling_legend_line_explains_both_windows():
+    """The legend names BOTH windows so the operator knows what 5h/7d mean."""
+    # Arrange
+    # (no setup)
+    # Act
+    legend = rolling_legend_line()
+    # Assert
+    assert "5h" in legend and "7d" in legend and "rolling" in legend
+
+
+def test_render_stored_table_header_stays_compact_when_no_reset():
+    """The 5h%/7d% column headers stay compact (no ``(rolling)`` cram).
+
+    Width gripe #3: don't blow up the header. The rolling-contract
+    disclosure now lives in a one-line legend printed by the CLI
+    below the table; the table header is just ``5h%`` / ``7d%``.
+    """
+    # Arrange — neither row has reset_at.
+    rows = [
+        AccountRow(
+            name="work",
+            email="w@example.com",
+            plan_label="Pro",
+            tier="default_claude_pro",
+            freshness_state="VALID",
+            freshness_hours=2.8,
+            used_pct_5h=42.0,
+            used_pct_7d=15.0,
+            snapshot_as_of="2026-05-31T12:11:00+00:00",
+            reset_at_5h=None,
+            reset_at_7d=None,
+        ),
+    ]
+    now = datetime(2026, 5, 31, 12, 14, 0, tzinfo=timezone.utc)
+    # Act
+    out = render_stored_table_to_str(rows, now=now)
+    # Assert — bare headers; no ``(rolling)`` smashed into the column.
+    assert "5h% (rolling)" not in out and "7d% (rolling)" not in out
+
+
+def test_render_stored_table_last_update_header_pinned():
+    """The Last-Update column header is the new name (was ``As-of``).
+
+    Gripe #1 of the 2026-06-09 operator ask: ``As-of`` was unreadable.
+    """
+    # Arrange
+    rows = [
+        AccountRow(
+            name="work",
+            email="w@example.com",
+            plan_label="Pro",
+            tier="default_claude_pro",
+            freshness_state="VALID",
+            freshness_hours=2.8,
+            used_pct_5h=42.0,
+            used_pct_7d=15.0,
+            snapshot_as_of="2026-05-31T12:11:00+00:00",
+        ),
+    ]
+    now = datetime(2026, 5, 31, 12, 14, 0, tzinfo=timezone.utc)
+    # Act
+    out = render_stored_table_to_str(rows, now=now)
+    # Assert — new header present, old header gone.
+    assert "Last Update" in out
+    assert "As-of" not in out
+
+
+def test_render_stored_table_width_fits_120_cols(env_save_restore):
+    """Operator gripe #3: the table must stay readable on ~120 cols.
+
+    Renders a representative row with both reset hints + day-hour
+    Last-Update + multi-character TTL. Each line of the rich-drawn
+    table must fit within the explicit 120-column width budget the
+    renderer is asked to honour.
+    """
+    # Arrange — JST so the reset hints carry the operator's wall clock.
+    env_save_restore.set("TZ", "Asia/Tokyo")
+    rows = [
+        AccountRow(
+            name="ywatanabe-scitex-ai",
+            email="ywatanabe@scitex.ai",
+            plan_label="Max 20x",
+            tier="default_claude_max_20x",
+            freshness_state="VALID",
+            freshness_hours=2.8,
+            used_pct_5h=42.0,
+            used_pct_7d=15.0,
+            snapshot_as_of="2026-05-31T12:11:00+00:00",
+            reset_at_5h="2026-05-31T12:05:00+00:00",
+            reset_at_7d="2026-06-04T08:00:00+00:00",
+        ),
+    ]
+    now = datetime(2026, 5, 31, 12, 14, 0, tzinfo=timezone.utc)
+    # Act
+    out = render_stored_table_to_str(rows, now=now, width=120)
+    lines = out.splitlines()
+    # Assert — every rendered line must fit in 120 columns.
+    over = [(i, len(ln)) for i, ln in enumerate(lines) if len(ln) > 120]
+    assert not over, f"lines exceed 120 cols: {over}\n---\n{out}"
+
+
+def test_build_stored_rows_propagates_reset_at_from_cache(sandbox_home):
+    """``build_stored_rows`` carries ``reset_at_5h`` / ``reset_at_7d`` from cache.
+
+    The Anthropic OAuth usage API returns ``resets_at`` for both
+    windows; the per-account ``usage.json`` cache writer in
+    :mod:`._account.claude_usage` persists those as ``reset_at_5h``
+    / ``reset_at_7d``. ``build_stored_rows`` must propagate them so
+    the renderer can show the per-row hint.
+    """
+    # Arrange — stage a stored account whose usage.json carries both reset_at_*.
+    save_account("work", {"email_address": "w@x"}, home=sandbox_home)
+    accts = sandbox_home / ".scitex" / "agent-container" / "accounts" / "work"
+    (accts / ".credentials.json").write_text(
+        json.dumps({"claudeAiOauth": {"subscriptionType": "pro"}})
+    )
+    (accts / "usage.json").write_text(
+        json.dumps(
+            {
+                "used_pct_5h": 42.0,
+                "used_pct_7d": 15.0,
+                "reset_at_5h": "2026-05-31T12:05:00+00:00",
+                "reset_at_7d": "2026-06-04T08:00:00+00:00",
+                "fetched_at": "2026-05-31T12:11:00+00:00",
+                "as_of": "2026-05-31T12:11:00+00:00",
+            }
+        )
+    )
+    # Act
+    rows = build_stored_rows([{"name": "work", "email_address": "w@x"}])
+    # Assert
+    assert rows[0].reset_at_5h == "2026-05-31T12:05:00+00:00"
+    assert rows[0].reset_at_7d == "2026-06-04T08:00:00+00:00"
 
 
 # ---------------------------------------------------------------------------
@@ -682,7 +1022,7 @@ def test_cli_list_human_renders_table_columns(sandbox_home):
     # Act
     result = runner.invoke(account, ["list"])
     # Assert — column headers from the rich table.
-    for col in ("ID", "Email", "Plan", "Status(+TTL)", "5h%", "7d%", "As-of"):
+    for col in ("ID", "Email", "Plan", "Status(+TTL)", "5h%", "7d%", "Last Update"):
         assert col in result.output, f"missing column {col!r}:\n{result.output}"
 
 
@@ -734,4 +1074,105 @@ def test_cli_list_json_usage_as_of_keeps_iso_t_separator(sandbox_home):
     assert "T" in as_of, (
         f"--json must carry through ISO `T` separator on usage.as_of; "
         f"got {as_of!r} (usage={usage!r})"
+    )
+
+
+# ---------------------------------------------------------------------------
+# JSON schema stability — header rename + reset-hint feature must NOT mutate
+# the machine-readable contract downstream consumers parse.
+# ---------------------------------------------------------------------------
+
+
+def _seed_account_with_full_usage_cache(sandbox_home) -> None:
+    """Stage a stored account whose usage.json carries every field the API ships."""
+    save_account("work", {"email_address": "w@example.com"}, home=sandbox_home)
+    accts = sandbox_home / ".scitex" / "agent-container" / "accounts" / "work"
+    (accts / "usage.json").write_text(
+        json.dumps(
+            {
+                "used_pct_5h": 42.0,
+                "used_pct_7d": 15.0,
+                "reset_at_5h": "2026-05-31T12:05:00+00:00",
+                "reset_at_7d": "2026-06-04T08:00:00+00:00",
+                "fetched_at": "2026-05-31T12:11:00+00:00",
+                "as_of": "2026-05-31T12:11:00+00:00",
+            }
+        )
+    )
+
+
+def test_cli_list_json_does_not_introduce_last_update_key(sandbox_home):
+    """The ``As-of`` → ``Last Update`` rename is HUMAN-RENDER-ONLY.
+
+    The JSON path must not start emitting a ``last_update`` key (or
+    anything similar) — downstream consumers parse ``as_of``.
+    """
+    # Arrange
+    _seed_account_with_full_usage_cache(sandbox_home)
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(account, ["list", "--json"])
+    # Assert — neither the new nor the old human-renderer header
+    # appears as a JSON key.
+    assert "last_update" not in result.output.lower()
+    assert "Last Update" not in result.output
+
+
+def test_cli_list_json_carries_through_reset_at_5h(sandbox_home):
+    """``--json`` exposes ``reset_at_5h`` from the upstream API.
+
+    The renderer reads ``reset_at_5h`` from the per-account
+    ``usage.json`` cache for its inline hint; the JSON path must
+    carry the SAME key through so JSON consumers can compute their
+    own reset display.
+    """
+    # Arrange
+    _seed_account_with_full_usage_cache(sandbox_home)
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(account, ["list", "--json"])
+    payload = json.loads(result.output)
+    usage = payload["stored"][0]["usage"]
+    # Assert
+    assert usage["reset_at_5h"] == "2026-05-31T12:05:00+00:00"
+
+
+def test_cli_list_json_carries_through_reset_at_7d(sandbox_home):
+    """``--json`` exposes ``reset_at_7d`` from the upstream API."""
+    # Arrange
+    _seed_account_with_full_usage_cache(sandbox_home)
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(account, ["list", "--json"])
+    payload = json.loads(result.output)
+    usage = payload["stored"][0]["usage"]
+    # Assert
+    assert usage["reset_at_7d"] == "2026-06-04T08:00:00+00:00"
+
+
+def test_cli_list_human_shows_reset_hint_when_cache_has_reset_at(sandbox_home):
+    """End-to-end: cache → renderer → operator sees ``42% (→...)``.
+
+    The bullet-2 contract of the 2026-06-09 task: when the per-account
+    cache carries ``reset_at_5h``, the human-rendered table cell must
+    show the inline reset hint. We don't pin a specific local time
+    (tests run on hosts in arbitrary timezones) — only the arrow
+    marker, which is the renderer's unambiguous reset signal.
+    """
+    # Arrange — full account + a credentials snapshot so the live
+    # fetcher path is taken; with no real OAuth token the fetcher
+    # falls back to the cached ``usage.json`` we seed below.
+    _seed_account_with_full_usage_cache(sandbox_home)
+    accts = sandbox_home / ".scitex" / "agent-container" / "accounts" / "work"
+    (accts / ".credentials.json").write_text(
+        json.dumps({"claudeAiOauth": {"subscriptionType": "pro"}})
+    )
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(account, ["list"])
+    # Assert — bullet-2 contract: the inline arrow marker reaches the
+    # operator. The exact local time depends on the host TZ; assert
+    # on the marker shape so the test is timezone-independent.
+    assert "(→" in result.output, (
+        f"missing inline reset hint in human table:\n{result.output}"
     )

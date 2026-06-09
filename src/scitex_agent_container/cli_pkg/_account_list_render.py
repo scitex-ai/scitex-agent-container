@@ -4,228 +4,51 @@ Split out of ``account_group.py`` to keep that file under the per-file
 line cap (same pattern as ``_account_status.py`` and ``_account_refresh.py``)
 and so the renderer is unit-testable without going through ``CliRunner``.
 
-Three concerns live here, one per public helper:
+This module now holds the THREE pieces that need on-disk state:
 
-1. :func:`local_timezone` / :func:`format_dt_local` — render an ISO-8601
-   timestamp in the operator's local timezone. Precedence:
-   ``SCITEX_AGENT_CONTAINER_TZ`` env wins, else ``TZ`` env, else the
-   system local timezone (``datetime.astimezone()`` with no arg). This
-   is the bullet-1 fix: the prior renderer emitted UTC.
+1. :class:`AccountRow` — pre-resolved row dataclass (pure data; the
+   formatting helpers live in :mod:`._account_list_format`).
+2. :func:`render_stored_table` — turn rows into a ``rich.table.Table``.
+3. :func:`usage_for_account`, :func:`build_stored_rows`,
+   :func:`build_stored_json` — fetch / shape the data the CLI command
+   feeds into the renderer or the JSON path.
 
-2. :func:`format_ttl_live` / :func:`format_snapshot_age` — render the
-   credential TTL and the per-account usage snapshot age with enough
-   resolution that a 60-second tick is VISIBLE under ``watch -n1``. The
-   prior ``+2.8h`` collapsed any sub-hour change into the same string,
-   making the operator think the value was cached. TTL is computed
-   live from ``expiresAt`` on every call; this module only formats it.
+Pure formatting helpers (``local_timezone``, ``format_dt_local``,
+``format_ttl_live``, ``format_snapshot_age``, ``format_as_of_short``,
+``format_reset_hhmm``, ``format_reset_day_hour``) are re-exported from
+:mod:`._account_list_format` so existing callers (and the historical
+test surface) keep importing them from this module without churn.
 
-3. :func:`render_stored_table` — render the Stored-accounts block as a
-   ``rich.table.Table`` with aligned columns:
-
-       ID | Email | Plan | Status(+TTL) | 5h% | 7d% | As-of
-
-   ``As-of`` is the per-account usage snapshot age in short day+hour
-   form (``Sun 21h``), not microsecond ISO.
-
-The JSON-output path of ``sac accounts list --json`` is NOT touched —
-it still emits ISO-8601 ``as_of`` strings. Only the human renderer
-reformats at display time.
+Header note (2026-06-09 task): the human renderer's last column was
+renamed ``As-of`` → ``Last Update`` because the operator could not
+parse the abbreviation. The 5h%/7d% cells now carry an inline reset
+hint (``→HH:MM`` for 5h, ``→Day HHh`` for 7d) computed from the
+Anthropic OAuth usage API's ``resets_at`` field. The JSON output path
+(``sac accounts list --json``) is NOT touched — its schema stays the
+machine-readable contract downstream consumers parse.
 """
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from datetime import datetime, timezone, tzinfo
+from datetime import datetime
 
 from rich.console import Console
 from rich.table import Table
 
-# ---------------------------------------------------------------------------
-# Timezone resolution (bullet 1)
-# ---------------------------------------------------------------------------
-
-# Project-specific env wins over the standard POSIX ``TZ`` so a host-wide
-# ``TZ`` doesn't accidentally override an explicit per-tool preference.
-_PROJECT_TZ_ENV = "SCITEX_AGENT_CONTAINER_TZ"
-
-
-def local_timezone(env: dict[str, str] | None = None) -> tzinfo | None:
-    """Return the effective render timezone for the operator.
-
-    Precedence:
-
-    1. ``SCITEX_AGENT_CONTAINER_TZ`` env — project-specific override.
-    2. ``TZ`` env — standard POSIX.
-    3. ``None`` — caller should pass ``None`` through to
-       ``datetime.astimezone()`` which then picks up the system local
-       timezone.
-
-    Args:
-        env: Override for ``os.environ`` (tests pass a dict).
-
-    Returns:
-        A ``tzinfo`` if one of the env vars resolves, else ``None``.
-        Unknown / unparseable values silently fall through (we never
-        want a typo in ``TZ`` to crash ``sac accounts list``).
-    """
-    src = env if env is not None else os.environ
-    for key in (_PROJECT_TZ_ENV, "TZ"):
-        name = src.get(key)
-        if not name:
-            continue
-        tz = _resolve_tz(name)
-        if tz is not None:
-            return tz
-    return None
-
-
-def _resolve_tz(name: str) -> tzinfo | None:
-    """Return a ``tzinfo`` for IANA ``name`` (``Asia/Tokyo``), or None.
-
-    Uses the stdlib ``zoneinfo`` so no third-party dependency creeps in.
-    Returns ``None`` on any failure so a bad env value falls through to
-    the next layer of the precedence chain rather than crashing.
-    """
-    # stx-allow: fallback (reason: a bad TZ env value (typo, missing
-    # tzdata on the host) must not crash `sac accounts list` — fall
-    # through to the next precedence layer and ultimately system local.)
-    try:
-        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-
-        return ZoneInfo(name)
-    except (ZoneInfoNotFoundError, ValueError, ModuleNotFoundError):
-        return None
-    except (
-        Exception
-    ):  # stx-allow: fallback (reason: catch-all safety net — see inline comment)
-        return None
-
-
-def format_dt_local(
-    iso_or_dt: str | datetime | None,
-    *,
-    env: dict[str, str] | None = None,
-) -> str:
-    """Render an ISO-8601 timestamp (or aware datetime) in local TZ.
-
-    Returns ``"-"`` for ``None`` / empty / unparseable input. Naive
-    datetimes are assumed UTC (matches what the JSON path writes).
-    """
-    dt = _coerce_dt(iso_or_dt)
-    if dt is None:
-        return "-"
-    tz = local_timezone(env)
-    if tz is None:
-        # No env override → system local (astimezone with no arg).
-        return dt.astimezone().isoformat(timespec="seconds")
-    return dt.astimezone(tz).isoformat(timespec="seconds")
-
-
-def _coerce_dt(value: str | datetime | None) -> datetime | None:
-    """Coerce ``value`` to an aware datetime; ``None`` on any failure."""
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
-    if not isinstance(value, str) or not value.strip():
-        return None
-    # stx-allow: fallback (reason: ISO parser is strict; a malformed
-    # cache timestamp must render as "-" rather than crash the table.)
-    try:
-        dt = datetime.fromisoformat(value)
-    except ValueError:
-        return None
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
-
+from ._account_list_format import (
+    format_as_of_short,
+    format_dt_local,
+    format_reset_day_hour,
+    format_reset_hhmm,
+    format_snapshot_age,
+    format_ttl_live,
+    local_timezone,
+)
 
 # ---------------------------------------------------------------------------
-# TTL + age formatting (bullet 2 — must tick under watch -n1)
-# ---------------------------------------------------------------------------
-
-
-def format_ttl_live(hours: float | None) -> str:
-    """Render signed-hours-to-expiry with minute-resolution.
-
-    Prior format ``+2.8h`` collapsed a 60-second tick into the same
-    string. This renders as ``+2h48m`` / ``-138h35m`` / ``+45s`` so a
-    one-second tick under ``watch -n1`` is visible after ~60s.
-
-    ``None`` → ``"-"``.
-    """
-    if hours is None:
-        return "-"
-    total_seconds = int(round(hours * 3600.0))
-    sign = "+" if total_seconds >= 0 else "-"
-    s = abs(total_seconds)
-    h, rem = divmod(s, 3600)
-    m, sec = divmod(rem, 60)
-    if h:
-        return f"{sign}{h}h{m:02d}m"
-    if m:
-        return f"{sign}{m}m{sec:02d}s"
-    return f"{sign}{sec}s"
-
-
-def format_snapshot_age(
-    snapshot_iso: str | datetime | None,
-    *,
-    now: datetime | None = None,
-) -> str:
-    """Render the per-account usage snapshot age as ``3m`` / ``1h`` / ``12s``.
-
-    Used in the bullet-2 fix: the upstream usage% API is expensive to
-    refetch on every render, so the snapshot is intentionally cached.
-    Showing the age next to the % makes a stale number OBVIOUS instead
-    of silently shipping yesterday's percentage as if it were live.
-
-    ``None`` / unparseable → ``"?"``.
-    """
-    dt = _coerce_dt(snapshot_iso)
-    if dt is None:
-        return "?"
-    now_dt = now or datetime.now(timezone.utc)
-    if now_dt.tzinfo is None:
-        now_dt = now_dt.replace(tzinfo=timezone.utc)
-    delta_s = int((now_dt - dt).total_seconds())
-    if delta_s < 0:
-        delta_s = 0
-    if delta_s < 60:
-        return f"{delta_s}s"
-    if delta_s < 3600:
-        return f"{delta_s // 60}m"
-    if delta_s < 86400:
-        return f"{delta_s // 3600}h"
-    return f"{delta_s // 86400}d"
-
-
-def format_as_of_short(
-    iso_or_dt: str | datetime | None,
-    *,
-    env: dict[str, str] | None = None,
-) -> str:
-    """Render an As-of timestamp as day-of-week + hour: ``Sun 21h``.
-
-    Uses the local-tz precedence chain (project env > TZ env > system
-    local) so a UTC ``as_of`` lands in the operator's wall clock. The
-    output is intentionally low-resolution — the operator only needs
-    to know whether the value is from this hour, two hours ago, or
-    yesterday. Sub-hour resolution is the snapshot AGE column's job
-    (see :func:`format_snapshot_age`).
-
-    ``None`` / unparseable → ``"-"``.
-    """
-    dt = _coerce_dt(iso_or_dt)
-    if dt is None:
-        return "-"
-    tz = local_timezone(env)
-    local = dt.astimezone(tz) if tz is not None else dt.astimezone()
-    # %a = Sun/Mon/...; %H = 00-23.
-    return local.strftime("%a %Hh")
-
-
-# ---------------------------------------------------------------------------
-# Row data model + table renderer (bullet 3)
+# Row data model
 # ---------------------------------------------------------------------------
 
 
@@ -255,6 +78,12 @@ class AccountRow:
         Float percentages or ``None``.
     snapshot_as_of
         ISO-8601 string from the usage cache, or ``None``.
+    reset_at_5h, reset_at_7d
+        ISO-8601 reset timestamps from the Anthropic OAuth usage API
+        (``resets_at`` field, parsed by :mod:`._account.claude_usage`).
+        ``None`` when the API did not return them (older caches /
+        outages); the renderer falls back to the bare percentage cell
+        in that case rather than fabricating a value.
     """
 
     name: str
@@ -266,10 +95,35 @@ class AccountRow:
     used_pct_5h: float | None
     used_pct_7d: float | None
     snapshot_as_of: str | None
+    reset_at_5h: str | None = None
+    reset_at_7d: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Table renderer
+# ---------------------------------------------------------------------------
 
 
 def _fmt_pct(value: float | None) -> str:
+    """Render a percentage as ``42%``; ``None`` → ``-``."""
     return "-" if value is None else f"{float(value):.0f}%"
+
+
+def _fmt_pct_with_reset(value: float | None, hint: str) -> str:
+    """Combine percentage + reset hint: ``42% (→21:05)`` / ``-`` / ``42%``.
+
+    ``hint`` is the output of :func:`format_reset_hhmm` or
+    :func:`format_reset_day_hour` — empty string when the API didn't
+    return a reset timestamp, in which case the cell is just ``42%``
+    (and the column header carries the ``(rolling)`` qualifier so the
+    operator still knows it's a rolling window).
+    """
+    if value is None:
+        return "-"
+    pct = f"{float(value):.0f}%"
+    if not hint:
+        return pct
+    return f"{pct} ({hint})"
 
 
 def _fmt_status(state: str, hours: float | None) -> str:
@@ -278,7 +132,9 @@ def _fmt_status(state: str, hours: float | None) -> str:
     return f"{state} {format_ttl_live(hours)}"
 
 
-def _fmt_as_of_cell(snapshot_as_of: str | None, *, now: datetime | None = None) -> str:
+def _fmt_last_update_cell(
+    snapshot_as_of: str | None, *, now: datetime | None = None
+) -> str:
     """Combine short day+hour with age suffix: ``Sun 21h (3m)`` / ``- (?)``."""
     if not snapshot_as_of:
         return "-"
@@ -293,10 +149,20 @@ def render_stored_table(
     """Build a ``rich.table.Table`` for the Stored-accounts block.
 
     Columns (left-to-right):
-      ID | Email | Plan | Status(+TTL) | 5h% | 7d% | As-of
+      ID | Email | Plan | Status(+TTL) | 5h% | 7d% | Last Update
 
-    ``now`` is an injection seam so the bullet-2 liveness tests can
-    drive the snapshot-age cell deterministically without monkeypatching
+    The 5h% / 7d% cells carry an inline reset hint when the upstream
+    Anthropic usage API returned one for that row (operator gripe #2
+    of 2026-06-09: "いつ区切りが戻るのか分からない"). When the API
+    did NOT return any reset timestamps, the operator still needs to
+    know the windows are ROLLING (not calendar-day) — for that case
+    the CLI prints a one-line legend below the table; see
+    :func:`needs_rolling_legend` / :func:`rolling_legend_line`. The
+    column header stays compact (``5h%`` / ``7d%``) so the table fits
+    in a typical operator terminal.
+
+    ``now`` is an injection seam so the snapshot-age tests can drive
+    the Last-Update cell deterministically without monkeypatching
     ``datetime.now``.
     """
     table = Table(title="Stored accounts", title_justify="left", show_lines=False)
@@ -306,18 +172,44 @@ def render_stored_table(
     table.add_column("Status(+TTL)")
     table.add_column("5h%", justify="right")
     table.add_column("7d%", justify="right")
-    table.add_column("As-of")
+    table.add_column("Last Update")
     for r in rows:
         table.add_row(
             r.name,
             r.email,
             f"{r.plan_label} [{r.tier}]",
             _fmt_status(r.freshness_state, r.freshness_hours),
-            _fmt_pct(r.used_pct_5h),
-            _fmt_pct(r.used_pct_7d),
-            _fmt_as_of_cell(r.snapshot_as_of, now=now),
+            _fmt_pct_with_reset(r.used_pct_5h, format_reset_hhmm(r.reset_at_5h)),
+            _fmt_pct_with_reset(r.used_pct_7d, format_reset_day_hour(r.reset_at_7d)),
+            _fmt_last_update_cell(r.snapshot_as_of, now=now),
         )
     return table
+
+
+def needs_rolling_legend(rows: list[AccountRow]) -> bool:
+    """Return True iff at least one row lacks BOTH reset_at fields.
+
+    Used by the CLI to decide whether to print the explanatory legend
+    below the table. When EVERY row has a per-row reset hint, the
+    legend would be redundant — the cells already carry the
+    information.
+    """
+    if not rows:
+        return False
+    return any(r.reset_at_5h is None and r.reset_at_7d is None for r in rows)
+
+
+def rolling_legend_line() -> str:
+    """One-line legend operators see when reset_at is missing.
+
+    Per the 2026-06-09 task contract: "リセットのアンカーが取れない
+    場合は列凡例/ヘッダで5h=直近5時間ローリング, 7d=直近7日ローリン
+    グと明示". English wording matches the rest of the table.
+    """
+    return (
+        "Legend: 5h = rolling 5-hour window; 7d = rolling 7-day window. "
+        "(→HH:MM / →Day HHh next to the % marks the next reset.)"
+    )
 
 
 def render_stored_table_to_str(
@@ -409,7 +301,9 @@ def build_stored_rows(
 
     Pure orchestration: pulls plan/tier (offline), credential freshness
     (live recompute from ``expiresAt`` on every call), and usage% (cached
-    or re-fetched depending on ``refresh``).
+    or re-fetched depending on ``refresh``). Also carries through the
+    per-window ``reset_at_5h`` / ``reset_at_7d`` so the cells can render
+    the inline reset hint (gripe #2 of 2026-06-09).
     """
     from .._account.creds_sync import account_freshness
     from .._state.account_store import read_account_plan
@@ -431,6 +325,8 @@ def build_stored_rows(
                 used_pct_5h=usage.get("used_pct_5h"),
                 used_pct_7d=usage.get("used_pct_7d"),
                 snapshot_as_of=usage.get("as_of") or usage.get("fetched_at"),
+                reset_at_5h=usage.get("reset_at_5h"),
+                reset_at_7d=usage.get("reset_at_7d"),
             )
         )
     return rows
@@ -442,7 +338,9 @@ def build_stored_json(accounts: list[dict], *, refresh: bool = False) -> list[di
     Each entry carries OFFLINE plan/tier, credential FRESHNESS
     (``state`` + signed hours), and the per-account usage payload.
     Timestamps remain ISO-8601 for JSON consumers — only the human
-    renderer reformats.
+    renderer reformats. The usage dict already carries
+    ``reset_at_5h`` / ``reset_at_7d`` from the upstream API, so JSON
+    consumers can compute their own reset hints if they want one.
     """
     from .._account.creds_sync import account_freshness
     from .._state.account_store import read_account_plan
@@ -465,10 +363,14 @@ __all__ = [
     "build_stored_rows",
     "format_as_of_short",
     "format_dt_local",
+    "format_reset_day_hour",
+    "format_reset_hhmm",
     "format_snapshot_age",
     "format_ttl_live",
     "local_timezone",
+    "needs_rolling_legend",
     "render_stored_table",
     "render_stored_table_to_str",
+    "rolling_legend_line",
     "usage_for_account",
 ]
