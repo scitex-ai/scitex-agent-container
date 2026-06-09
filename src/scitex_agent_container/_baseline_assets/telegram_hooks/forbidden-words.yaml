@@ -17,6 +17,7 @@
 # dodge.
 
 forbidden_word:
+  # ---- Disowning phrases (lead 2026-06-09) ------------------------------
   - word: 既存の問題
     reason: 'distancing/disowning: 問題は「我々の」もの。「既存」と呼ぶことで責任を切り離す印象を与える。'
     use_instead: '「(我々の)問題」と中立に呼ぶ、または事実だけを述べる (例: ``X が失敗している``)。'
@@ -26,3 +27,10 @@ forbidden_word:
   - word: 無関係
     reason: 'distancing/disowning: 「関係ない」と同様。問題を遠ざける言い回し。'
     use_instead: '別件であれば「別件: ...」、優先度判断であれば「優先度低: ...」と明示する。'
+  # ---- Katakana-jargon (operator 2026-06-09) ----------------------------
+  - word: ナッジ
+    reason: 'katakana jargon: 動詞「促す」「ヒント」など日本語で十分な意味をカタカナで隠す。'
+    use_instead: '日本語で具体的に言う (例: ``リマインダー`` → ``通知``、``ヒント``、``一言促す``、``NUDGE`` ラベルは英語そのまま)。'
+  - word: なっじ
+    reason: 'katakana jargon (hiragana spelling): same as ナッジ.'
+    use_instead: '日本語で具体的に言う (``通知`` / ``ヒント`` / ``一言促す``)。'
