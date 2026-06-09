@@ -15,17 +15,22 @@
 # "pre-existing", "unrelated", or "irrelevant"). Block them at the
 # comms layer so the agent rephrases before the operator reads the
 # dodge.
+#
+# Operator 2026-06-09 (comprehensive update): every katakana-jargon
+# entry has an English equivalent ALSO banned so the same word in
+# either script is caught. English patterns are case-insensitive with
+# word boundaries — ``fallback``, ``Fallback``, ``FALLBACK`` all hit.
 
 forbidden_word:
   # ---- Disowning phrases (lead 2026-06-09) ------------------------------
   - word: 既存の問題
     reason: 'distancing/disowning: 問題は「我々の」もの。「既存」と呼ぶことで責任を切り離す印象を与える。'
     use_instead: '「(我々の)問題」と中立に呼ぶ、または事実だけを述べる (例: ``X が失敗している``)。'
-  - word: 関係ない
-    reason: 'distancing/disowning: 問題を「関係ない」と切ることで責任放棄に読まれる。'
+  - pattern: '関係(ない|無い)'
+    reason: 'distancing/disowning: 問題を「関係(ない|無い)」と切ることで責任放棄に読まれる。'
     use_instead: '事実ベースで言う (例: ``X とは別件``)、または「私の担当範囲外なので Y に依頼します」と所有を移譲する。'
   - word: 無関係
-    reason: 'distancing/disowning: 「関係ない」と同様。問題を遠ざける言い回し。'
+    reason: 'distancing/disowning: 「関係(ない|無い)」と同様。問題を遠ざける言い回し。'
     use_instead: '別件であれば「別件: ...」、優先度判断であれば「優先度低: ...」と明示する。'
   # ---- Katakana-jargon (operator 2026-06-09) ----------------------------
   - word: ナッジ
@@ -34,3 +39,31 @@ forbidden_word:
   - word: なっじ
     reason: 'katakana jargon (hiragana spelling): same as ナッジ.'
     use_instead: '日本語で具体的に言う (``通知`` / ``ヒント`` / ``一言促す``)。'
+  - word: ステイル
+    reason: 'katakana jargon: ``stale`` の日本語化。「古い」「陳腐化」など普通の語を隠す。'
+    use_instead: '日本語で言う (``古い`` / ``陳腐化`` / ``期限切れ``)。'
+  - word: フォールバック
+    reason: 'katakana jargon: ``fallback`` の日本語化。「代替」「次善策」「予備経路」など具体語を隠す。'
+    use_instead: '具体語で言う (``代替`` / ``予備経路`` / ``二次パス``)。'
+  - word: ロールバック
+    reason: 'katakana jargon: ``rollback`` の日本語化。「巻き戻し」「差し戻し」など具体語を隠す。'
+    use_instead: '具体語で言う (``巻き戻し`` / ``差し戻し`` / ``前バージョンに戻す``)。'
+  - word: ウェッジ
+    reason: 'katakana jargon: ``wedge`` の日本語化。「詰まり」「ハング」「ブロック」など具体的な失敗様態を隠す。'
+    use_instead: '具体的な失敗様態で言う (``詰まり`` / ``ハング`` / ``応答無し`` / ``ブロック``)。'
+  # ---- English equivalents of katakana jargon (operator 2026-06-09) -----
+  - pattern: '(?i)\bnudge\b'
+    reason: 'english equivalent of ナッジ: same hidden-verb objection.'
+    use_instead: 'use concrete English (``reminder`` / ``hint`` / ``one-liner``) or the JP equivalent.'
+  - pattern: '(?i)\bstale\b'
+    reason: 'english equivalent of ステイル: same hidden-meaning objection.'
+    use_instead: 'use concrete English (``out-of-date`` / ``expired`` / ``no longer current``).'
+  - pattern: '(?i)\bfallback\b'
+    reason: 'english equivalent of フォールバック: hides the actual alternative path.'
+    use_instead: 'name the path (``secondary route`` / ``backup`` / ``alternative``).'
+  - pattern: '(?i)\brollback\b'
+    reason: 'english equivalent of ロールバック: hides the actual revert step.'
+    use_instead: 'name the step (``revert to <ref>`` / ``undo`` / ``restore previous``).'
+  - pattern: '(?i)\bwedge\b'
+    reason: 'english equivalent of ウェッジ: hides the failure mode.'
+    use_instead: 'name the failure mode (``hang`` / ``stuck`` / ``deadlocked`` / ``no response``).'

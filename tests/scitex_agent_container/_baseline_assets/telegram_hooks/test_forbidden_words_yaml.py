@@ -44,12 +44,31 @@ _BASELINE_YAML = (
     / "forbidden-words.yaml"
 )
 
-_REQUIRED_DISOWNING_PHRASES = ("既存の問題", "関係ない", "無関係")
-# Operator added 2026-06-09: katakana jargon "ナッジ" + hiragana
-# spelling "なっじ" are banned the same way (lead applies "nudge"
-# the English label in NUDGE/REMINDER context; the katakana
-# Japanese-ification of it is what's banned).
-_REQUIRED_KATAKANA_JARGON = ("ナッジ", "なっじ")
+# Disowning phrases — three required entries. The "関係" form is a
+# REGEX (operator 2026-06-09: covers both 関係ない and 関係無い).
+# The other two are literal words.
+_REQUIRED_DISOWNING_WORDS = ("既存の問題", "無関係")
+_REQUIRED_DISOWNING_PATTERNS = ("関係(ない|無い)",)
+# Operator 2026-06-09 (comprehensive): every katakana-jargon entry has
+# an English equivalent ALSO banned. The katakana entries are literal
+# words (Japanese has no word boundaries) and the English ones are
+# regex patterns with ``(?i)\b...\b`` so case-insensitive word-bounded
+# matches catch "fallback", "Fallback", "FALLBACK" alike.
+_REQUIRED_KATAKANA_JARGON_WORDS = (
+    "ナッジ",
+    "なっじ",
+    "ステイル",
+    "フォールバック",
+    "ロールバック",
+    "ウェッジ",
+)
+_REQUIRED_ENGLISH_EQUIVALENT_PATTERNS = (
+    r"(?i)\bnudge\b",
+    r"(?i)\bstale\b",
+    r"(?i)\bfallback\b",
+    r"(?i)\brollback\b",
+    r"(?i)\bwedge\b",
+)
 
 
 def _load(path: Path) -> dict:
@@ -76,21 +95,43 @@ class TestForbiddenWordsYaml:
         # Assert
         assert isinstance(data.get("forbidden_word"), list)
 
-    def test_carries_all_required_disowning_phrases(self, path: Path) -> None:
-        # Arrange — three phrases the lead mandated 2026-06-09.
+    def test_carries_all_required_disowning_words(self, path: Path) -> None:
+        # Arrange — literal-word disowning phrases the lead mandated 2026-06-09.
         data = _load(path)
         words = {e.get("word") for e in _entries(data)}
         # Act
-        missing = [w for w in _REQUIRED_DISOWNING_PHRASES if w not in words]
+        missing = [w for w in _REQUIRED_DISOWNING_WORDS if w not in words]
         # Assert
         assert missing == []
 
-    def test_carries_all_required_katakana_jargon(self, path: Path) -> None:
-        # Arrange — katakana-jargon entries the operator mandated 2026-06-09.
+    def test_carries_all_required_disowning_patterns(self, path: Path) -> None:
+        # Arrange — regex disowning pattern (関係(ない|無い)) the lead mandated 2026-06-09.
+        data = _load(path)
+        patterns = {e.get("pattern") for e in _entries(data)}
+        # Act
+        missing = [p for p in _REQUIRED_DISOWNING_PATTERNS if p not in patterns]
+        # Assert
+        assert missing == []
+
+    def test_carries_all_required_katakana_jargon_words(self, path: Path) -> None:
+        # Arrange — katakana-jargon literal-word entries the operator
+        # mandated 2026-06-09 (comprehensive update).
         data = _load(path)
         words = {e.get("word") for e in _entries(data)}
         # Act
-        missing = [w for w in _REQUIRED_KATAKANA_JARGON if w not in words]
+        missing = [w for w in _REQUIRED_KATAKANA_JARGON_WORDS if w not in words]
+        # Assert
+        assert missing == []
+
+    def test_carries_all_required_english_equivalent_patterns(self, path: Path) -> None:
+        # Arrange — English equivalents of every katakana-jargon entry,
+        # banned via case-insensitive word-bounded regex (operator 2026-06-09).
+        data = _load(path)
+        patterns = {e.get("pattern") for e in _entries(data)}
+        # Act
+        missing = [
+            p for p in _REQUIRED_ENGLISH_EQUIVALENT_PATTERNS if p not in patterns
+        ]
         # Assert
         assert missing == []
 
@@ -111,16 +152,24 @@ class TestForbiddenWordsYaml:
         assert bad == [], f"entries missing required keys: {bad!r}"
 
 
-def test_project_and_baseline_carry_identical_disowning_set() -> None:
+def _word_set(path: Path) -> set:
+    return {e.get("word") for e in _entries(_load(path)) if e.get("word")}
+
+
+def _pattern_set(path: Path) -> set:
+    return {e.get("pattern") for e in _entries(_load(path)) if e.get("pattern")}
+
+
+def test_project_and_baseline_carry_identical_disowning_word_set() -> None:
     """Drift guard: the project-local config + the canonical
-    deployable must stay in sync on the disowning trio so a
-    project-local override never silently drops a phrase from the
-    fleet-wide ban list.
+    deployable must stay in sync on the disowning literal-word set
+    so a project-local override never silently drops a phrase from
+    the fleet-wide ban list.
     """
     # Arrange
-    proj = {e.get("word") for e in _entries(_load(_PROJECT_YAML))}
-    baseline = {e.get("word") for e in _entries(_load(_BASELINE_YAML))}
-    required = set(_REQUIRED_DISOWNING_PHRASES)
+    proj = _word_set(_PROJECT_YAML)
+    baseline = _word_set(_BASELINE_YAML)
+    required = set(_REQUIRED_DISOWNING_WORDS)
     # Act
     proj_has = required & proj
     baseline_has = required & baseline
@@ -128,15 +177,42 @@ def test_project_and_baseline_carry_identical_disowning_set() -> None:
     assert (proj_has, baseline_has) == (required, required)
 
 
-def test_project_and_baseline_carry_identical_katakana_jargon_set() -> None:
-    """Drift guard for the katakana-jargon entries (operator 2026-06-09):
-    project + baseline YAML stay in sync so the ban list does not
-    fork via a project-local override.
+def test_project_and_baseline_carry_identical_disowning_pattern_set() -> None:
+    """Drift guard for the disowning regex pattern (operator 2026-06-09)."""
+    # Arrange
+    proj = _pattern_set(_PROJECT_YAML)
+    baseline = _pattern_set(_BASELINE_YAML)
+    required = set(_REQUIRED_DISOWNING_PATTERNS)
+    # Act
+    proj_has = required & proj
+    baseline_has = required & baseline
+    # Assert
+    assert (proj_has, baseline_has) == (required, required)
+
+
+def test_project_and_baseline_carry_identical_katakana_jargon_word_set() -> None:
+    """Drift guard for the katakana-jargon literal-word entries
+    (operator 2026-06-09 comprehensive update).
     """
     # Arrange
-    proj = {e.get("word") for e in _entries(_load(_PROJECT_YAML))}
-    baseline = {e.get("word") for e in _entries(_load(_BASELINE_YAML))}
-    required = set(_REQUIRED_KATAKANA_JARGON)
+    proj = _word_set(_PROJECT_YAML)
+    baseline = _word_set(_BASELINE_YAML)
+    required = set(_REQUIRED_KATAKANA_JARGON_WORDS)
+    # Act
+    proj_has = required & proj
+    baseline_has = required & baseline
+    # Assert
+    assert (proj_has, baseline_has) == (required, required)
+
+
+def test_project_and_baseline_carry_identical_english_equivalent_pattern_set() -> None:
+    """Drift guard for the English-equivalent regex patterns
+    (operator 2026-06-09 comprehensive update).
+    """
+    # Arrange
+    proj = _pattern_set(_PROJECT_YAML)
+    baseline = _pattern_set(_BASELINE_YAML)
+    required = set(_REQUIRED_ENGLISH_EQUIVALENT_PATTERNS)
     # Act
     proj_has = required & proj
     baseline_has = required & baseline
