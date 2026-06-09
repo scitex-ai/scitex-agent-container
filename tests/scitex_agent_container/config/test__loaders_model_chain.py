@@ -22,6 +22,10 @@ spec declaring both blocks raises with the mutex message.
 
 PA-306 fixtures: real ``tmp_path`` + real YAML loading; no
 ``unittest.mock.patch``.
+
+STX-TQ007 split: every test below holds a single assertion. When a
+prior test verified N facets, this file now carries N one-assert
+tests sharing a small Arrange+Act helper.
 """
 
 from __future__ import annotations
@@ -64,16 +68,37 @@ def _write_spec(tmp_path, body: str) -> "pytest.Path":
     return spec
 
 
+def _load_or_capture_error(tmp_path, body: str) -> str:
+    """Arrange + Act helper for the validator-error cases.
+
+    Writes ``body`` as a spec and calls :func:`load_config`; expects it
+    to raise :class:`ValueError`. Returns ``str(exception)`` so each
+    split test can assert on a single substring without re-running the
+    loader. If no exception fires, raises ``AssertionError`` so the
+    test setup itself is obviously broken (we never silently return).
+    """
+    spec = _write_spec(tmp_path, body)
+    try:
+        load_config(spec)
+    except ValueError as exc:
+        return str(exc)
+    raise AssertionError(
+        "_load_or_capture_error expected ValueError from load_config but "
+        "none was raised"
+    )
+
+
 # ---------------------------------------------------------------------------
 # v4 path — spec.model.<label>.*
+#
+# The two-label spec below is loaded once per test (the loader is cheap
+# and tmp_path is per-test). Each test pins ONE facet of the resulting
+# AgentConfig.
 # ---------------------------------------------------------------------------
 
-
-def test_v4_spec_populates_model_chain(tmp_path):
-    spec = _write_spec(
-        tmp_path,
-        _BASELINE_SPEC
-        + """\
+_TWO_LABEL_V4_BODY = (
+    _BASELINE_SPEC
+    + """\
   model:
     primary:
       provider: anthropic
@@ -83,17 +108,48 @@ def test_v4_spec_populates_model_chain(tmp_path):
       provider: deepseek
       model_id: deepseek-chat
       api_key: $DEEPSEEK_API_KEY
-""",
-    )
+"""
+)
+
+
+def test_v4_spec_model_chain_is_a_dict(tmp_path):
+    # Arrange
+    spec = _write_spec(tmp_path, _TWO_LABEL_V4_BODY)
+    # Act
     cfg = load_config(spec)
+    # Assert
     assert isinstance(cfg.model_chain, dict)
+
+
+def test_v4_spec_model_chain_preserves_label_order(tmp_path):
+    # Arrange
+    spec = _write_spec(tmp_path, _TWO_LABEL_V4_BODY)
+    # Act
+    cfg = load_config(spec)
+    # Assert
     assert list(cfg.model_chain.keys()) == ["primary", "backup"]
+
+
+def test_v4_spec_primary_label_carries_anthropic_account_form(tmp_path):
+    # Arrange
+    spec = _write_spec(tmp_path, _TWO_LABEL_V4_BODY)
+    # Act
+    cfg = load_config(spec)
+    # Assert
     assert cfg.model_chain["primary"] == ModelLabel(
         provider="anthropic",
         model_id="claude-sonnet-4-6",
         account="ywatanabe-scitex-ai",
         api_key="",
     )
+
+
+def test_v4_spec_backup_label_carries_api_key_form(tmp_path):
+    # Arrange
+    spec = _write_spec(tmp_path, _TWO_LABEL_V4_BODY)
+    # Act
+    cfg = load_config(spec)
+    # Assert
     assert cfg.model_chain["backup"] == ModelLabel(
         provider="deepseek",
         model_id="deepseek-chat",
@@ -104,6 +160,7 @@ def test_v4_spec_populates_model_chain(tmp_path):
 
 def test_v4_single_label_still_requires_label_key(tmp_path):
     """Operator must wrap a single config in a label (ADR-0018 §"Single-config")."""
+    # Arrange
     spec = _write_spec(
         tmp_path,
         _BASELINE_SPEC
@@ -115,7 +172,9 @@ def test_v4_single_label_still_requires_label_key(tmp_path):
       account: ywatanabe-scitex-ai
 """,
     )
+    # Act
     cfg = load_config(spec)
+    # Assert
     assert list(cfg.model_chain.keys()) == ["default"]
 
 
@@ -123,6 +182,7 @@ def test_v4_insertion_order_preserved_through_loader(tmp_path):
     """Cascade fallback semantics depend on dict insertion order — verify the
     loader preserves the operator's intended order through validation.
     """
+    # Arrange
     spec = _write_spec(
         tmp_path,
         _BASELINE_SPEC
@@ -142,35 +202,73 @@ def test_v4_insertion_order_preserved_through_loader(tmp_path):
       api_key: $XIAOMI_API_KEY
 """,
     )
+    # Act
     cfg = load_config(spec)
+    # Assert
     assert list(cfg.model_chain.keys()) == ["zebra", "aardvark", "middle"]
 
 
 # ---------------------------------------------------------------------------
-# v3 alias path — spec.claude.provider (registered name)
+# v3 alias path — spec.claude.provider (registered name).
+#
+# The shared spec below populates spec.claude with deepseek; the v3
+# alias produces a single "legacy" label AND keeps claude_spec
+# populated for back-compat consumers. Each split test verifies one
+# facet.
 # ---------------------------------------------------------------------------
 
-
-def test_v3_registered_provider_aliases_to_legacy_label(tmp_path):
-    spec = _write_spec(
-        tmp_path,
-        _BASELINE_SPEC
-        + """\
+_V3_DEEPSEEK_CLAUDE_BODY = (
+    _BASELINE_SPEC
+    + """\
   claude:
     model: deepseek-chat
     provider: deepseek
-""",
-    )
+"""
+)
+
+
+def test_v3_registered_provider_aliases_to_single_legacy_label(tmp_path):
+    # Arrange
+    spec = _write_spec(tmp_path, _V3_DEEPSEEK_CLAUDE_BODY)
+    # Act
     cfg = load_config(spec)
-    # Legacy alias produces a single "legacy" label populated from the
-    # v3 spec.claude block. The claude_spec ALSO populates for back-
-    # compat consumers.
+    # Assert
     assert list(cfg.model_chain.keys()) == ["legacy"]
-    legacy = cfg.model_chain["legacy"]
-    assert legacy.provider == "deepseek"
-    assert legacy.model_id == "deepseek-chat"
-    assert legacy.account == ""
-    # claude block still populates (existing runtime continues to work).
+
+
+def test_v3_legacy_label_provider_matches_spec_claude_provider(tmp_path):
+    # Arrange
+    spec = _write_spec(tmp_path, _V3_DEEPSEEK_CLAUDE_BODY)
+    # Act
+    cfg = load_config(spec)
+    # Assert
+    assert cfg.model_chain["legacy"].provider == "deepseek"
+
+
+def test_v3_legacy_label_model_id_matches_spec_claude_model(tmp_path):
+    # Arrange
+    spec = _write_spec(tmp_path, _V3_DEEPSEEK_CLAUDE_BODY)
+    # Act
+    cfg = load_config(spec)
+    # Assert
+    assert cfg.model_chain["legacy"].model_id == "deepseek-chat"
+
+
+def test_v3_legacy_label_account_defaults_to_empty(tmp_path):
+    # Arrange
+    spec = _write_spec(tmp_path, _V3_DEEPSEEK_CLAUDE_BODY)
+    # Act
+    cfg = load_config(spec)
+    # Assert
+    assert cfg.model_chain["legacy"].account == ""
+
+
+def test_v3_claude_block_still_populates_for_back_compat(tmp_path):
+    # Arrange
+    spec = _write_spec(tmp_path, _V3_DEEPSEEK_CLAUDE_BODY)
+    # Act
+    cfg = load_config(spec)
+    # Assert — existing runtime code reading cfg.claude continues to work.
     assert cfg.claude.model == "deepseek-chat"
 
 
@@ -183,44 +281,79 @@ def test_no_spec_claude_no_spec_model_yields_empty_chain(tmp_path):
     """When the spec declares NEITHER spec.claude NOR spec.model, the
     chain is empty — the v3 alias only fires when spec.claude exists.
     """
+    # Arrange
     spec = _write_spec(tmp_path, _BASELINE_SPEC)
+    # Act
     cfg = load_config(spec)
+    # Assert
     assert cfg.model_chain == {}
 
 
-def test_v3_spec_claude_model_only_aliases_to_legacy_with_empty_provider(tmp_path):
-    """When spec.claude has model but no provider, the v3 alias still
-    fires and produces a single 'legacy' label with the model id but an
-    empty provider. The validator will reject this at strict-mode
-    enforcement time (PR B); for PR A the schema is permissive — the
-    parser doesn't try to invent a provider.
-    """
-    spec = _write_spec(
-        tmp_path,
-        _BASELINE_SPEC
-        + """\
+# ---------------------------------------------------------------------------
+# v3 — spec.claude.model only (no provider).
+#
+# The v3 alias still fires and produces a single 'legacy' label with
+# the model id but an empty provider. The validator will reject this at
+# strict-mode enforcement time (PR B); for PR A the schema is
+# permissive — the parser doesn't try to invent a provider.
+# ---------------------------------------------------------------------------
+
+_V3_CLAUDE_MODEL_ONLY_BODY = (
+    _BASELINE_SPEC
+    + """\
   claude:
     model: sonnet
-""",
-    )
+"""
+)
+
+
+def test_v3_spec_claude_model_only_aliases_to_single_legacy_label(tmp_path):
+    # Arrange
+    spec = _write_spec(tmp_path, _V3_CLAUDE_MODEL_ONLY_BODY)
+    # Act
     cfg = load_config(spec)
+    # Assert
     assert list(cfg.model_chain.keys()) == ["legacy"]
-    legacy = cfg.model_chain["legacy"]
-    assert legacy.model_id == "sonnet"
-    assert legacy.provider == ""  # operator declared no provider
+
+
+def test_v3_spec_claude_model_only_legacy_label_carries_model_id(tmp_path):
+    # Arrange
+    spec = _write_spec(tmp_path, _V3_CLAUDE_MODEL_ONLY_BODY)
+    # Act
+    cfg = load_config(spec)
+    # Assert
+    assert cfg.model_chain["legacy"].model_id == "sonnet"
+
+
+def test_v3_spec_claude_model_only_legacy_label_provider_is_empty(tmp_path):
+    # Arrange
+    spec = _write_spec(tmp_path, _V3_CLAUDE_MODEL_ONLY_BODY)
+    # Act
+    cfg = load_config(spec)
+    # Assert — operator declared no provider; parser does not invent one.
+    assert cfg.model_chain["legacy"].provider == ""
+
+
+def test_v3_spec_claude_model_only_claude_block_still_populates(tmp_path):
+    # Arrange
+    spec = _write_spec(tmp_path, _V3_CLAUDE_MODEL_ONLY_BODY)
+    # Act
+    cfg = load_config(spec)
+    # Assert
     assert cfg.claude.model == "sonnet"
 
 
 # ---------------------------------------------------------------------------
-# Mutex — spec.claude + spec.model both present
+# Mutex — spec.claude + spec.model both present.
+#
+# The validator must reject. Split into (a) "the call raises" and
+# (b) "the message names the mutex" so a future phrasing tweak only
+# breaks one of the two tests.
 # ---------------------------------------------------------------------------
 
-
-def test_spec_claude_and_spec_model_both_present_rejected(tmp_path):
-    spec = _write_spec(
-        tmp_path,
-        _BASELINE_SPEC
-        + """\
+_BOTH_BLOCKS_BODY = (
+    _BASELINE_SPEC
+    + """\
   claude:
     model: claude-sonnet-4-6
   model:
@@ -228,44 +361,81 @@ def test_spec_claude_and_spec_model_both_present_rejected(tmp_path):
       provider: anthropic
       model_id: claude-sonnet-4-6
       account: ywatanabe-scitex-ai
-""",
-    )
-    with pytest.raises(ValueError) as excinfo:
+"""
+)
+
+
+def test_spec_claude_and_spec_model_both_present_raises(tmp_path):
+    # Arrange
+    spec = _write_spec(tmp_path, _BOTH_BLOCKS_BODY)
+    # Act + Assert (single `pytest.raises` block — one assertion)
+    with pytest.raises(ValueError):
         load_config(spec)
-    msg = str(excinfo.value)
+
+
+def test_spec_claude_and_spec_model_both_present_error_names_mutex(tmp_path):
+    # Arrange + Act
+    msg = _load_or_capture_error(tmp_path, _BOTH_BLOCKS_BODY)
+    # Assert
     assert "spec.claude and spec.model are mutually exclusive" in msg
 
 
-def test_spec_model_string_rejected_as_v2_alias(tmp_path):
+# ---------------------------------------------------------------------------
+# Type rejections — spec.model: <string> (deprecated v2 alias).
+# ---------------------------------------------------------------------------
+
+_SPEC_MODEL_STRING_BODY = (
+    _BASELINE_SPEC
+    + """\
+  model: claude-sonnet-4-6
+"""
+)
+
+
+def test_spec_model_string_raises(tmp_path):
+    # Arrange
+    spec = _write_spec(tmp_path, _SPEC_MODEL_STRING_BODY)
+    # Act + Assert
+    with pytest.raises(ValueError):
+        load_config(spec)
+
+
+def test_spec_model_string_error_points_to_spec_claude_model(tmp_path):
     """Top-level ``spec.model: <string>`` is the deprecated v2 alias —
     the validator must reject with the v3 relocation hint pointing at
     ``spec.claude.model``."""
-    spec = _write_spec(
-        tmp_path,
-        _BASELINE_SPEC
-        + """\
-  model: claude-sonnet-4-6
-""",
-    )
-    with pytest.raises(ValueError) as excinfo:
-        load_config(spec)
-    msg = str(excinfo.value)
+    # Arrange + Act
+    msg = _load_or_capture_error(tmp_path, _SPEC_MODEL_STRING_BODY)
+    # Assert
     assert "spec.model is no longer accepted at the top level as a string" in msg
 
 
-def test_spec_model_list_rejected_as_wrong_type(tmp_path):
-    spec = _write_spec(
-        tmp_path,
-        _BASELINE_SPEC
-        + """\
+# ---------------------------------------------------------------------------
+# Type rejections — spec.model: <list> (wrong shape).
+# ---------------------------------------------------------------------------
+
+_SPEC_MODEL_LIST_BODY = (
+    _BASELINE_SPEC
+    + """\
   model:
     - foo
     - bar
-""",
-    )
-    with pytest.raises(ValueError) as excinfo:
+"""
+)
+
+
+def test_spec_model_list_raises(tmp_path):
+    # Arrange
+    spec = _write_spec(tmp_path, _SPEC_MODEL_LIST_BODY)
+    # Act + Assert
+    with pytest.raises(ValueError):
         load_config(spec)
-    msg = str(excinfo.value)
+
+
+def test_spec_model_list_error_says_must_be_dict_of_label(tmp_path):
+    # Arrange + Act
+    msg = _load_or_capture_error(tmp_path, _SPEC_MODEL_LIST_BODY)
+    # Assert
     assert "spec.model must be a dict of label" in msg
 
 
@@ -273,59 +443,112 @@ def test_spec_model_list_rejected_as_wrong_type(tmp_path):
 # Validation through validate_model_chain — wired correctly?
 # ---------------------------------------------------------------------------
 
-
-def test_v4_unknown_provider_surfaces_validator_error(tmp_path):
-    spec = _write_spec(
-        tmp_path,
-        _BASELINE_SPEC
-        + """\
+_UNKNOWN_PROVIDER_BODY = (
+    _BASELINE_SPEC
+    + """\
   model:
     primary:
       provider: not-a-registered-provider
       model_id: some-model
       api_key: $SOME_KEY
-""",
-    )
-    with pytest.raises(ValueError) as excinfo:
+"""
+)
+
+
+def test_v4_unknown_provider_raises(tmp_path):
+    # Arrange
+    spec = _write_spec(tmp_path, _UNKNOWN_PROVIDER_BODY)
+    # Act + Assert
+    with pytest.raises(ValueError):
         load_config(spec)
-    msg = str(excinfo.value)
-    # validate_model_chain emits a "not a registered provider" error
-    # that mentions the known providers; we don't tie the test to the
-    # exact phrasing, just the substring that identifies the diagnostic.
+
+
+def test_v4_unknown_provider_error_mentions_offending_provider_name(tmp_path):
+    """``validate_model_chain`` emits a "not a registered provider" error
+    that mentions the known providers; we don't tie the test to the
+    exact phrasing, just the substring that identifies the diagnostic.
+    """
+    # Arrange + Act
+    msg = _load_or_capture_error(tmp_path, _UNKNOWN_PROVIDER_BODY)
+    # Assert
     assert "not-a-registered-provider" in msg
 
 
-def test_v4_api_key_and_account_both_set_rejected(tmp_path):
-    spec = _write_spec(
-        tmp_path,
-        _BASELINE_SPEC
-        + """\
+# ---------------------------------------------------------------------------
+# Validation — api_key + account mutex on a single label.
+#
+# Three facets pinned: the validator raises, the diagnostic names the
+# label, and the diagnostic names the conflicting field. Split into
+# three one-assert tests.
+# ---------------------------------------------------------------------------
+
+_API_KEY_AND_ACCOUNT_BOTH_BODY = (
+    _BASELINE_SPEC
+    + """\
   model:
     primary:
       provider: anthropic
       model_id: claude-sonnet-4-6
       account: ywatanabe-scitex-ai
       api_key: $SOME_KEY
-""",
-    )
-    with pytest.raises(ValueError) as excinfo:
+"""
+)
+
+
+def test_v4_api_key_and_account_both_set_raises(tmp_path):
+    # Arrange
+    spec = _write_spec(tmp_path, _API_KEY_AND_ACCOUNT_BOTH_BODY)
+    # Act + Assert
+    with pytest.raises(ValueError):
         load_config(spec)
-    msg = str(excinfo.value)
-    # The exact phrasing is validator-owned; just verify the mutex
-    # diagnostic fires for label 'primary'.
+
+
+def test_v4_api_key_and_account_both_set_error_names_the_label(tmp_path):
+    # Arrange + Act
+    msg = _load_or_capture_error(tmp_path, _API_KEY_AND_ACCOUNT_BOTH_BODY)
+    # Assert — the diagnostic must identify which label is in violation.
     assert "primary" in msg
+
+
+def test_v4_api_key_and_account_both_set_error_names_conflicting_field(tmp_path):
+    # Arrange + Act
+    msg = _load_or_capture_error(tmp_path, _API_KEY_AND_ACCOUNT_BOTH_BODY)
+    # Assert — the diagnostic must name at least one of the two
+    # conflicting fields (exact phrasing is validator-owned).
     assert "api_key" in msg or "account" in msg
 
 
-def test_model_chain_typing_is_dict(tmp_path):
-    """Smoke — ``ModelChain`` is a plain dict alias; runtime callers can
-    iterate and index without isinstance-on-a-protocol gymnastics."""
-    chain: ModelChain = {
+# ---------------------------------------------------------------------------
+# ModelChain typing smoke
+# ---------------------------------------------------------------------------
+
+
+def _build_alpha_only_chain() -> ModelChain:
+    """Arrange helper: a single-label chain used by the typing smoke tests."""
+    return {
         "alpha": ModelLabel(
             provider="anthropic",
             model_id="claude-sonnet-4-6",
             account="ywatanabe-scitex-ai",
         )
     }
-    assert isinstance(chain, dict)
-    assert list(chain.keys()) == ["alpha"]
+
+
+def test_model_chain_typing_is_a_plain_dict():
+    """``ModelChain`` is a plain dict alias; runtime callers can iterate
+    and index without isinstance-on-a-protocol gymnastics."""
+    # Arrange
+    chain = _build_alpha_only_chain()
+    # Act
+    instance_check = isinstance(chain, dict)
+    # Assert
+    assert instance_check is True
+
+
+def test_model_chain_typing_round_trips_inserted_label_key():
+    # Arrange
+    chain = _build_alpha_only_chain()
+    # Act
+    keys = list(chain.keys())
+    # Assert
+    assert keys == ["alpha"]
