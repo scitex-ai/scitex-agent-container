@@ -44,10 +44,10 @@ session inside Apptainer (local or remote via SSH), observe via
 
 ### Core
 - [01_config-v3.md](01_config-v3.md) — v3 format; dir-as-SSoT (no `metadata.name`); rejects v2-era `spec.remote`/`spec.skills`/`dot_claude`/`spec.model`
-- [02_multiplexer.md](02_multiplexer.md) — vestigial; lead-only tmux wrap
-- [03_auto-accept.md](03_auto-accept.md) — modular prompt handlers
-- [04_resource-management.md](04_resource-management.md) — resource management
-- [05_resource-heartbeat.md](05_resource-heartbeat.md) — resource heartbeat
+- [02_multiplexer.md](02_multiplexer.md) — vestigial; tmux wrap
+- [03_auto-accept.md](03_auto-accept.md) — prompt handlers
+- [04_resource-management.md](04_resource-management.md)
+- [05_resource-heartbeat.md](05_resource-heartbeat.md)
 - [06_env-injection-ports.md](06_env-injection-ports.md) — four env-injection ports + decision tree
 - [07_a2a-protocol.md](07_a2a-protocol.md) — native A2A protocol (`sac a2a serve`)
 - [07_a2a-protocol-extension-fields.md](07_a2a-protocol-extension-fields.md) — `x-scitex-agent-container.*` AgentCard fields
@@ -77,8 +77,8 @@ session inside Apptainer (local or remote via SSH), observe via
 - [13_observability.md](13_observability.md) — `sac agents status` JSON contract
 
 ### Lessons
-- [40_troubleshooting.md](40_troubleshooting.md) — Common issues and debugging
-- [41](41_claude-worktree-relocation.md)
+- [40_troubleshooting.md](40_troubleshooting.md) — common issues
+- [41_claude-worktree-relocation.md](41_claude-worktree-relocation.md)
 
 ## Environment
 
