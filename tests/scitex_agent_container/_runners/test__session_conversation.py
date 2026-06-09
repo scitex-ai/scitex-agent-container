@@ -809,13 +809,25 @@ def _make_wedge_sdk_module(captured_clients: list) -> types.ModuleType:
     return mod
 
 
-def test_wake_on_inbound_interrupts_sdk_when_envelope_arrives_mid_turn(
-    tmp_path: Path,
-) -> None:
-    # Arrange — a fake SDK that simulates a wedged tool call (turn 1
-    # blocks until interrupt fires). The test puts a second envelope
-    # while the first turn is mid-stream; the wake task MUST interrupt
-    # the SDK so the consumer loop can advance.
+# ---------------------------------------------------------------------------
+# wake-on-inbound — interrupt SDK when a second envelope arrives mid-turn.
+#
+# Behaviour pinned across the next three tests (split for one-assert-per-
+# test). A fake SDK simulates a wedged tool call (turn 1 blocks until
+# interrupt fires). The test queues a second envelope mid-stream; the
+# wake task MUST interrupt the SDK so the consumer loop can advance,
+# but MUST NOT interrupt before the second envelope arrives.
+# ---------------------------------------------------------------------------
+
+
+def _drive_wake_scenario(tmp_path: Path, label: str):
+    """Arrange + Act for the wake-on-inbound scenario.
+
+    Returns (client, interrupted_before_second_env: bool) so each split
+    test can assert on a single facet. ``interrupted_before_second_env``
+    captures the no-spurious-interrupt invariant: the wake task MUST
+    NOT fire until the second envelope is actually queued.
+    """
     captured_clients: list = []
     sdk_mod = _make_wedge_sdk_module(captured_clients)
 
@@ -828,14 +840,10 @@ def test_wake_on_inbound_interrupts_sdk_when_envelope_arrives_mid_turn(
         # Put the first envelope; the conversation will start driving it
         # and IMMEDIATELY block on the simulated tool wait.
         await inbox.put(env_first)
-        # Also queue a shutdown AFTER the second envelope so the
-        # conversation loop exits cleanly once both turns drain.
-        # (We add the second envelope below, AFTER giving the conversation
-        # time to enter the wedged tool wait.)
         conv = asyncio.create_task(
             runner._run_conversation(
-                "wake-test",
-                tmp_path / "wake-test",
+                label,
+                tmp_path / label,
                 pid=1,
                 inbox=inbox,
                 resume_session_id=None,
@@ -850,10 +858,10 @@ def test_wake_on_inbound_interrupts_sdk_when_envelope_arrives_mid_turn(
         # this is where the agent would sit indefinitely.
         await asyncio.sleep(0.05)
         client = captured_clients[0]
-        assert client.interrupt_called is False, (
-            "interrupt MUST NOT fire before a second envelope arrives — "
-            "would break the no-spurious-interrupt invariant"
-        )
+        # Capture (not assert) the no-spurious-interrupt invariant —
+        # the dedicated test asserts on the captured flag so this helper
+        # keeps the one-assert-per-test contract.
+        interrupted_before_second_env = client.interrupt_called
 
         # Now queue the SECOND envelope mid-turn. The wake task should
         # fire, calling interrupt() and unblocking the first turn.
@@ -866,27 +874,62 @@ def test_wake_on_inbound_interrupts_sdk_when_envelope_arrives_mid_turn(
         await asyncio.wait_for(env_second.response, timeout=2.0)
         await asyncio.wait_for(conv, timeout=2.0)
 
-        return client
+        return client, interrupted_before_second_env
 
-    # Act
-    client = asyncio.run(_run())
-
-    # Assert
-    assert client.interrupt_called is True, (
-        "wake task did not call client.interrupt() — the wedge persists"
-    )
-    assert client.queries == ["first", "second"], (
-        f"second envelope was not processed after interrupt; queries={client.queries}"
-    )
+    return asyncio.run(_run())
 
 
-def test_wake_on_inbound_preserves_partial_text_when_interrupt_fires(
+def test_wake_on_inbound_does_not_interrupt_before_second_envelope_arrives(
     tmp_path: Path,
 ) -> None:
-    # Arrange — same wedge fake; this test pins the edge case the lead
-    # asked us to verify (b4e223e0): when interrupt fires MID-tool, the
-    # ASSISTANT TEXT ALREADY YIELDED must reach the first turn's
-    # response future (not be torn / lost / corrupted).
+    # Arrange
+    label = "wake-test-no-spurious"
+    # Act
+    _client, interrupted_before_second_env = _drive_wake_scenario(tmp_path, label)
+    # Assert — interrupt MUST NOT fire before a second envelope arrives;
+    # otherwise the no-spurious-interrupt invariant is broken.
+    assert interrupted_before_second_env is False
+
+
+def test_wake_on_inbound_calls_interrupt_when_second_envelope_arrives(
+    tmp_path: Path,
+) -> None:
+    # Arrange
+    label = "wake-test-interrupt"
+    # Act
+    client, _interrupted_before_second_env = _drive_wake_scenario(tmp_path, label)
+    # Assert — wake task fired client.interrupt() so the wedge resolves.
+    assert client.interrupt_called is True
+
+
+def test_wake_on_inbound_processes_both_envelopes_after_interrupt(
+    tmp_path: Path,
+) -> None:
+    # Arrange
+    label = "wake-test-both"
+    # Act
+    client, _interrupted_before_second_env = _drive_wake_scenario(tmp_path, label)
+    # Assert — the second envelope is processed after the interrupt
+    # unblocks the first turn.
+    assert client.queries == ["first", "second"]
+
+
+# ---------------------------------------------------------------------------
+# wake-on-inbound — partial assistant text preserved across mid-tool interrupt.
+#
+# Edge case pinned (b4e223e0): when interrupt fires MID-tool, the
+# ASSISTANT TEXT ALREADY YIELDED must reach the first turn's response
+# future (not be torn / lost / corrupted). The same wedge fake is
+# reused; assertions split per turn.
+# ---------------------------------------------------------------------------
+
+
+def _drive_preserve_scenario(tmp_path: Path, label: str) -> tuple[str, str]:
+    """Arrange + Act for the partial-text-preservation scenario.
+
+    Returns (reply_first, reply_second) so each split test can assert
+    on one turn's reply without breaking the one-assert-per-test rule.
+    """
     captured_clients: list = []
     sdk_mod = _make_wedge_sdk_module(captured_clients)
 
@@ -899,8 +942,8 @@ def test_wake_on_inbound_preserves_partial_text_when_interrupt_fires(
         await inbox.put(env_first)
         conv = asyncio.create_task(
             runner._run_conversation(
-                "preserve-test",
-                tmp_path / "preserve-test",
+                label,
+                tmp_path / label,
                 pid=1,
                 inbox=inbox,
                 resume_session_id=None,
@@ -918,18 +961,30 @@ def test_wake_on_inbound_preserves_partial_text_when_interrupt_fires(
         await asyncio.wait_for(conv, timeout=2.0)
         return reply_first, reply_second
 
-    # Act
-    reply_first, reply_second = asyncio.run(_run())
+    return asyncio.run(_run())
 
+
+def test_wake_on_inbound_preserves_first_turn_partial_text_across_interrupt(
+    tmp_path: Path,
+) -> None:
+    # Arrange
+    label = "preserve-test-first"
+    # Act
+    reply_first, _reply_second = _drive_preserve_scenario(tmp_path, label)
     # Assert — the partial assistant text yielded BEFORE the interrupt
-    # must appear in the first turn's reply. The second turn's reply
-    # carries its own partial text. Neither is torn.
-    assert "partial-turn-1" in reply_first, (
-        f"first turn lost its pre-interrupt assistant text; got: {reply_first!r}"
-    )
-    assert "partial-turn-2" in reply_second, (
-        f"second turn lost its assistant text; got: {reply_second!r}"
-    )
+    # must appear in the first turn's reply (not lost / torn).
+    assert "partial-turn-1" in reply_first
+
+
+def test_wake_on_inbound_preserves_second_turn_partial_text(
+    tmp_path: Path,
+) -> None:
+    # Arrange
+    label = "preserve-test-second"
+    # Act
+    _reply_first, reply_second = _drive_preserve_scenario(tmp_path, label)
+    # Assert — the second turn's reply carries its own partial text.
+    assert "partial-turn-2" in reply_second
 
 
 def test_wake_on_inbound_does_not_fire_when_no_second_envelope_arrives(

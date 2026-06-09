@@ -1370,39 +1370,50 @@ class _StaggeredRuntime(FakeRuntime):
         return super().start(config, **kwargs)
 
 
-def test_agent_restart_waits_for_runtime_to_stop_before_starting(
-    tmp_path: Path, registry: Registry
-) -> None:
-    """Restart MUST wait for the previous container to actually exit.
+# ---------------------------------------------------------------------------
+# agent_restart — wait for previous runtime to stop before starting.
+#
+# Bug shape (2026-06-07, operator-visible): ``agent_restart`` called
+# ``runtime.stop()`` (which sends SIGTERM and returns immediately) then
+# slept a fixed 2 s and called ``runtime.start()``. With apptainer, the
+# old container's ``/home/agent`` overlay was still mounted when the
+# new one booted ("destination is already in the mount point list"
+# warning in stdout.log), and the old SDK's per-agent stdio MCP
+# children (the standalone bun telegrammer poller) were still alive
+# holding their PID lock file. The new bun child then hit
+# ``acquireLock`` against the live old PID and exited 1; claude
+# silently marked the MCP failed and never retried it. Symptom: the
+# Telegram bot stopped responding after every ``sac agents restart``
+# even though ``sac`` + Mermaid MCPs reloaded fine (no inter-instance
+# lock for those).
+#
+# Fix: poll ``runtime.is_running`` until it returns False (with a
+# bounded timeout) BEFORE calling ``runtime.start``. The fixed
+# ``sleep_fn(2)`` is replaced by a real readiness gate. The cases
+# below split the prior four-assertion test into one-assert tests so
+# CI red names exactly which contract broke.
+# ---------------------------------------------------------------------------
 
-    Bug shape (2026-06-07, operator-visible): ``agent_restart`` called
-    ``runtime.stop()`` (which sends SIGTERM and returns immediately) then
-    slept a fixed 2 s and called ``runtime.start()``. With apptainer, the
-    old container's ``/home/agent`` overlay was still mounted when the
-    new one booted ("destination is already in the mount point list"
-    warning in stdout.log), and the old SDK's per-agent stdio MCP
-    children (the standalone bun telegrammer poller) were still alive
-    holding their PID lock file. The new bun child then hit
-    ``acquireLock`` against the live old PID and exited 1; claude
-    silently marked the MCP failed and never retried it. Symptom: the
-    Telegram bot stopped responding after every ``sac agents restart``
-    even though ``sac`` + Mermaid MCPs reloaded fine (no inter-instance
-    lock for those).
 
-    Fix: poll ``runtime.is_running`` until it returns False (with a
-    bounded timeout) BEFORE calling ``runtime.start``. The fixed
-    ``sleep_fn(2)`` is replaced by a real readiness gate.
+def _build_staggered_setup(
+    tmp_path: Path, registry: Registry, *, stages: list[bool]
+) -> _StaggeredRuntime:
+    """Arrange helper for the staggered-teardown restart cases.
+
+    Mirrors a realistic apptainer teardown (~0.5-2 s under healthy
+    load): ``is_running`` returns ``True`` for the leading ``True``
+    stages, then ``False``. Returns the staged runtime; callers issue
+    the restart in their own ``# Act`` so each test keeps AAA markers
+    on separate lines.
     """
-    # Arrange — a runtime that reports "still running" for the first
-    # three polls after stop and only flips to "stopped" on the fourth.
-    # This mirrors a realistic apptainer teardown (~0.5–2 s under
-    # healthy load).
     spec = _write_spec(tmp_path)
     registry.add("alpha", str(spec), "cld-alpha")
-    runtime = _StaggeredRuntime(stages=[True, True, True, False])
+    return _StaggeredRuntime(stages=stages)
 
-    # Act
-    ok = lc.agent_restart(
+
+def _restart_alpha(runtime: _StaggeredRuntime, registry: Registry) -> bool:
+    """Act helper: drive ``agent_restart`` against the staged runtime."""
+    return lc.agent_restart(
         "alpha",
         registry=registry,
         runtime_factory=lambda _c: runtime,
@@ -1410,40 +1421,93 @@ def test_agent_restart_waits_for_runtime_to_stop_before_starting(
         handover_mod=FakeHandover(),
     )
 
-    # Assert — start was called AND only after is_running flipped to False.
-    assert ok is True
-    assert len(runtime.start_calls) == 1
-    assert runtime.was_running_at_start is False, (
-        "agent_restart called runtime.start() while runtime.is_running() was "
-        "still True — this is the apptainer mount + telegrammer lock race "
-        f"(stages={runtime._stages}, polls={runtime.is_running_calls})"
-    )
-    # And it must have polled at least the number of "still running" stages.
-    assert runtime.is_running_calls >= 4, (
-        f"agent_restart should poll runtime.is_running until False; got "
-        f"{runtime.is_running_calls} polls"
-    )
 
-
-def test_agent_restart_warns_and_proceeds_when_previous_runtime_will_not_exit(
-    tmp_path: Path, registry: Registry, caplog: Any
+def test_agent_restart_returns_true_after_waiting_for_previous_to_stop(
+    tmp_path: Path, registry: Registry
 ) -> None:
-    """If the previous runtime ignores SIGTERM past the wait timeout,
-    ``agent_restart`` must emit a LOUD warning naming the operator-visible
-    consequences (mount race + telegrammer lock contention) and proceed —
-    a stuck container is rare, but silently spinning forever locks the
-    operator out of restart entirely.
+    # Arrange
+    runtime = _build_staggered_setup(
+        tmp_path, registry, stages=[True, True, True, False]
+    )
+    # Act
+    ok = _restart_alpha(runtime, registry)
+    # Assert
+    assert ok is True
+
+
+def test_agent_restart_calls_runtime_start_exactly_once_after_waiting_for_stop(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    runtime = _build_staggered_setup(
+        tmp_path, registry, stages=[True, True, True, False]
+    )
+    # Act
+    _restart_alpha(runtime, registry)
+    # Assert
+    assert len(runtime.start_calls) == 1
+
+
+def test_agent_restart_does_not_call_start_while_previous_runtime_is_still_running(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    runtime = _build_staggered_setup(
+        tmp_path, registry, stages=[True, True, True, False]
+    )
+    # Act
+    _restart_alpha(runtime, registry)
+    # Assert — agent_restart must NOT have called runtime.start() while
+    # runtime.is_running() was still True; that would re-trigger the
+    # apptainer mount + telegrammer lock race.
+    assert runtime.was_running_at_start is False
+
+
+def test_agent_restart_polls_is_running_until_false(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    runtime = _build_staggered_setup(
+        tmp_path, registry, stages=[True, True, True, False]
+    )
+    # Act
+    _restart_alpha(runtime, registry)
+    # Assert — must poll at least the number of "still running" stages
+    # (4 polls covers 3 True samples + the final False).
+    assert runtime.is_running_calls >= 4
+
+
+# ---------------------------------------------------------------------------
+# agent_restart — previous runtime that ignores SIGTERM past timeout.
+#
+# Loud-but-proceed semantics: a stuck container is rare, but silently
+# spinning forever locks the operator out of restart entirely. We must
+# (a) still return True, (b) still call start() on the new runtime, and
+# (c) emit a WARN-level log naming the race so a future "telegrammer
+# dropped after restart" recurrence is self-diagnosing from stdout.log.
+# ---------------------------------------------------------------------------
+
+
+def _build_unkillable_setup(
+    tmp_path: Path, registry: Registry, caplog: Any
+) -> _StaggeredRuntime:
+    """Arrange helper: previous runtime whose ``is_running`` stays True
+    forever; caplog routed to the stop module so WARN records are
+    captured for the warning-content assertion.
     """
     import logging as _logging
 
     spec = _write_spec(tmp_path)
     registry.add("alpha", str(spec), "cld-alpha")
-    # is_running stays True forever — models a previous instance that
-    # never honors SIGTERM in budget.
-    runtime = _StaggeredRuntime(stages=[True])
-
     caplog.set_level(_logging.WARNING, logger="scitex_agent_container._lifecycle._stop")
-    ok = lc.agent_restart(
+    return _StaggeredRuntime(stages=[True])
+
+
+def _restart_alpha_with_short_wait(
+    runtime: _StaggeredRuntime, registry: Registry
+) -> bool:
+    """Act helper: bounded-timeout restart so the test is fast."""
+    return lc.agent_restart(
         "alpha",
         registry=registry,
         runtime_factory=lambda _c: runtime,
@@ -1454,16 +1518,40 @@ def test_agent_restart_warns_and_proceeds_when_previous_runtime_will_not_exit(
         wait_for_stop_timeout_s=0.05,
     )
 
-    # Started despite the timeout (loud-but-proceed semantics).
+
+def test_agent_restart_returns_true_when_previous_runtime_will_not_exit(
+    tmp_path: Path, registry: Registry, caplog: Any
+) -> None:
+    # Arrange
+    runtime = _build_unkillable_setup(tmp_path, registry, caplog)
+    # Act
+    ok = _restart_alpha_with_short_wait(runtime, registry)
+    # Assert
     assert ok is True
+
+
+def test_agent_restart_starts_new_runtime_when_previous_runtime_will_not_exit(
+    tmp_path: Path, registry: Registry, caplog: Any
+) -> None:
+    # Arrange
+    runtime = _build_unkillable_setup(tmp_path, registry, caplog)
+    # Act
+    _restart_alpha_with_short_wait(runtime, registry)
+    # Assert
     assert len(runtime.start_calls) == 1
-    # And there is a WARN-level log naming the race so a future
-    # "telegrammer dropped after restart" recurrence is self-diagnosing
-    # from stdout.log.
+
+
+def test_agent_restart_warns_about_still_running_previous_runtime(
+    tmp_path: Path, registry: Registry, caplog: Any
+) -> None:
+    # Arrange
+    runtime = _build_unkillable_setup(tmp_path, registry, caplog)
+    # Act
+    _restart_alpha_with_short_wait(runtime, registry)
     messages = " ".join(rec.getMessage() for rec in caplog.records)
-    assert "still running" in messages or "SIGTERM" in messages, (
-        f"expected loud warning about the unkilled previous instance; got: {messages!r}"
-    )
+    # Assert — a WARN log mentions the race so a future "telegrammer
+    # dropped after restart" recurrence is self-diagnosing from stdout.log.
+    assert "still running" in messages or "SIGTERM" in messages
 
 
 # ---------------------------------------------------------------------------
