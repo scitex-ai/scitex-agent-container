@@ -6,6 +6,37 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.21.10] — 2026-06-09
+
+### Changed
+- **feat(accounts): `sac accounts list` window-reset display**
+  (operator gripe via lead, 2026-06-09). Three operator-visible
+  clarifications to the Stored-accounts table; no behaviour change
+  in the JSON path (`sac accounts list --json` schema is stable):
+  - Column header `As-of` renamed to `Last Update` — the operator
+    could not parse the abbreviation.
+  - 5h%/7d% cells now carry an inline reset hint computed from the
+    Anthropic OAuth usage API's `resets_at` field (parsed by
+    `_account.claude_usage` into `reset_at_5h` / `reset_at_7d`).
+    Example shapes: `42% (→21:05)` for the 5-hour rolling window,
+    `15% (→Thu 17h)` for the 7-day rolling window. Local-tz
+    precedence chain unchanged
+    (`SCITEX_AGENT_CONTAINER_TZ` > `TZ` > system local).
+  - When the upstream API did NOT return reset timestamps (older
+    caches / API outage) the CLI prints a one-line legend below
+    the table — `5h = rolling 5-hour window; 7d = rolling 7-day
+    window` — so the operator still knows the windows are rolling
+    rather than calendar-day. Headers stay compact so the table
+    fits a typical ~120-col terminal.
+
+  Implementation lifted the pure formatting helpers out of
+  `_account_list_render.py` into a sibling `_account_list_format.py`
+  so neither module exceeds the 512-line per-file cap (the renderer
+  re-exports the helpers so existing imports keep working).
+  Two new fields on `AccountRow`: `reset_at_5h` / `reset_at_7d`
+  (optional, default `None`). `build_stored_rows` propagates them
+  from the per-account `usage.json` cache.
+
 ## [0.21.9] — 2026-06-01
 
 ### Fixed

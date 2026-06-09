@@ -120,8 +120,8 @@ def account_save(name: str, email: str | None, dry_run: bool, yes: bool) -> None
     help=(
         "Force a fresh upstream usage fetch by discarding the per-account "
         "usage.json cache before rendering. Without this flag the 5-min "
-        "cache is consulted to avoid hammering the API; the As-of column "
-        "always shows the snapshot age so a stale number is obvious."
+        "cache is consulted to avoid hammering the API; the Last Update "
+        "column always shows the snapshot age so a stale number is obvious."
     ),
 )
 def account_list(as_json: bool, refresh: bool) -> None:
@@ -140,7 +140,9 @@ def account_list(as_json: bool, refresh: bool) -> None:
     from ._account_list_render import (
         build_stored_json,
         build_stored_rows,
+        needs_rolling_legend,
         render_stored_table,
+        rolling_legend_line,
     )
     from ._helpers import console
     from .status_cmds import _format_claude_account_block
@@ -182,7 +184,14 @@ def account_list(as_json: bool, refresh: bool) -> None:
             "No accounts stored. Use: scitex-agent-container account save <name>"
         )
         return
-    console.print(render_stored_table(build_stored_rows(accounts, refresh=refresh)))
+    rows = build_stored_rows(accounts, refresh=refresh)
+    console.print(render_stored_table(rows))
+    # When the upstream usage API didn't return per-row reset
+    # timestamps (older caches / API outage), the per-cell `(→...)`
+    # hint can't render. Print a one-line legend so the operator
+    # still sees the rolling-window contract instead of guessing.
+    if needs_rolling_legend(rows):
+        console.print(rolling_legend_line())
 
 
 @account.command("delete")
