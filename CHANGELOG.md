@@ -6,6 +6,42 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.21.11] — 2026-06-09
+
+PATCH release. Re-cut of v0.21.10's accounts-list redesign after the
+v0.21.10 tag's release workflow failed on `test_audit_all_clean` (PR
+#349 itself introduced 3 STX-TQ007 violations in the new
+`test__account_list_render.py` plus a stale SK-301 SKILL.md WARN that
+was still on develop). v0.21.10 exists as a "ghost" tag — no PyPI
+artifact, no GitHub Release; operators install
+`scitex-agent-container==0.21.11` for the accounts-list redesign
+PLUS the cleanup that unblocks the release pipeline.
+
+### Fixed
+- **chore(repo): clean 17 pre-existing audit-all violators** (#348,
+  unblocks #341/#344/release). Splits 7 STX-TQ007 violators in
+  `tests/scitex_agent_container/config/test__loaders_model_chain.py`
+  (12→29 tests, 1-assert each via shared Arrange+Act helper); 4
+  STX-TQ002 (AAA-marker) violators in
+  `tests/scitex_agent_container/_runners/test__session_inbox.py`;
+  relocates `tests/scitex_agent_container/containers/
+  test_apptainer_scitex_def_libxcb.py` to `tests/integration/` to
+  satisfy PS-204 (orphan-test mirror rule) while preserving the
+  libxcb / libgl1 / libglib2.0-0 regression guards; adds the
+  required `## <N> Interfaces` H2 and Four Freedoms blockquote to
+  `README.md` (PS-107 / PS-110); trims `SKILL.md` from 6181→6070
+  bytes to clear SK-301 (74-byte margin under the 6144 budget);
+  fixes the post-relocation `parents[2]` repo-root walker in the
+  moved apptainer-def test; and splits 3 STX-TQ007 violators
+  introduced by #349 in `test__account_list_render.py`. No
+  behaviour change — only test shape and docs.
+
+### Included from v0.21.10 (ghost tag — not on PyPI)
+- **feat(accounts): `sac accounts list` window-reset display**
+  (operator gripe via lead, 2026-06-09). See the v0.21.10 entry
+  below for the full description. Headers, per-row reset hints,
+  and rolling-window legend all ship in v0.21.11.
+
 ## [0.21.10] — 2026-06-09
 
 ### Changed
