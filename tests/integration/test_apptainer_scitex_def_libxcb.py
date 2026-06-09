@@ -29,10 +29,9 @@ from pathlib import Path
 import pytest
 
 # Resolve the .def relative to this test file so the test works regardless
-# of the worktree path. tests/scitex_agent_container/containers/ is 3
-# levels below the repo root; .def is at src/scitex_agent_container/
-# containers/apptainer-scitex.def.
-_REPO_ROOT = Path(__file__).resolve().parents[3]
+# of the worktree path. tests/integration/ is 2 levels below the repo
+# root; .def is at src/scitex_agent_container/containers/apptainer-scitex.def.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 _SCITEX_DEF = (
     _REPO_ROOT
     / "src"

@@ -10,12 +10,20 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
+
+# Module-level capability probe: the FD-held predicate is defence-in-
+# depth and relies on ``lsof``. When ``lsof`` is missing the predicate
+# falls through by design, so the test below SKIPS rather than fails —
+# moved to a decorator so the function body keeps a single assertion
+# (an in-body ``pytest.skip(...)`` call counts toward TQ007).
+_LSOF_AVAILABLE = shutil.which("lsof") is not None
 
 from scitex_agent_container.cli_pkg._agent_prune_claude import (
     apply_plan,
@@ -375,16 +383,15 @@ def test_plan_worktrees_skips_unpushed_commits(tmp_path: Path):
     assert any("unpushed" in r for r in reasons)
 
 
+@pytest.mark.skipif(
+    not _LSOF_AVAILABLE,
+    reason="lsof not available on this host; the FD-held predicate falls through",
+)
 def test_plan_worktrees_skips_when_process_holds_fd(tmp_path: Path):
     # Arrange — merged worktree with a Python-held file open under it.
-    # If lsof is unavailable on the host, the predicate falls through
-    # by design (defence-in-depth, not the primary safety bar), so the
-    # test SKIPS rather than fails — pinning the behaviour without
-    # forcing every CI runner to ship lsof.
-    import shutil as _shutil
-
-    if _shutil.which("lsof") is None:
-        pytest.skip("lsof not available on this host; predicate falls through")
+    # The lsof capability gate lives on the decorator above so the body
+    # keeps a single assertion (in-body ``pytest.skip(...)`` counts as
+    # an assertion under STX-TQ007).
     workdir = tmp_path / "wd"
     workdir.mkdir()
     _init_git_repo(workdir)

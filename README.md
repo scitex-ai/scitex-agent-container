@@ -194,7 +194,7 @@ curl -s http://127.0.0.1:7878/v1/health                # healthcheck
 
 See [`scripts/systemd/README.md`](scripts/systemd/README.md) for the full recipe + the federated-jobs vs hand-maintained-services split.
 
-## Interfaces
+## Three Interfaces
 
 <details open>
 <summary><strong>CLI ⭐⭐⭐ (primary)</strong></summary>
@@ -343,6 +343,8 @@ spec:
 
 ## Four Freedoms for Research
 
+> Four Freedoms for Research
+>
 > 0. The freedom to **run** your research anywhere — your machine, your terms.
 > 1. The freedom to **study** how every step works — from raw data to final manuscript.
 > 2. The freedom to **redistribute** your workflows, not just your papers.

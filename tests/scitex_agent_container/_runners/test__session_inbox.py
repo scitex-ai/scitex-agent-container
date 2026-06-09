@@ -323,13 +323,15 @@ def _make_env(text: str = "hi") -> TurnEnvelope:
 
 
 def test_make_inbox_returns_wakeable_inbox():
-    # Arrange / Act
+    # Arrange
     async def _go():
         inbox = make_inbox()
         return isinstance(inbox, WakeableInbox)
 
+    # Act
+    is_wakeable = asyncio.run(_go())
     # Assert
-    assert asyncio.run(_go()) is True
+    assert is_wakeable is True
 
 
 def test_wakeable_inbox_put_then_get_returns_same_envelope():
@@ -346,11 +348,24 @@ def test_wakeable_inbox_put_then_get_returns_same_envelope():
     assert got.text == "hello"
 
 
-def test_wakeable_inbox_wait_for_item_returns_when_envelope_arrives():
-    # Arrange — wait_for_item is blocked until a producer puts.
+# ---------------------------------------------------------------------------
+# wait_for_item — blocks before a put, wakes after a put.
+#
+# Split into two one-assert tests so CI red names exactly which half of
+# the contract broke. The shared scenario captures both pre-put and
+# post-put state and returns them; each test asserts on one snapshot.
+# ---------------------------------------------------------------------------
+
+
+def _drive_wait_for_item_scenario() -> tuple[list[str], list[str]]:
+    """Arrange + Act helper: starts a waiter, records observed state
+    BEFORE a put, then puts and records observed state AFTER the put
+    has unblocked the waiter. Returns (state_before_put, state_after_put).
+    """
+
     async def _scenario():
         inbox = make_inbox()
-        observed = []
+        observed: list[str] = []
 
         async def _waiter():
             await inbox.wait_for_item()
@@ -359,15 +374,32 @@ def test_wakeable_inbox_wait_for_item_returns_when_envelope_arrives():
         waiter = asyncio.create_task(_waiter())
         # Give the waiter time to actually start waiting.
         await asyncio.sleep(0.01)
-        assert observed == []  # Pin: still waiting before put.
+        # Snapshot BEFORE the put: still waiting (no "woke" yet).
+        state_before_put = list(observed)
         await inbox.put(_make_env())
         await asyncio.wait_for(waiter, timeout=1.0)
-        return observed
+        state_after_put = list(observed)
+        return state_before_put, state_after_put
 
+    return asyncio.run(_scenario())
+
+
+def test_wakeable_inbox_wait_for_item_blocks_before_put():
+    # Arrange
+    # (no per-test setup beyond what the scenario helper does)
     # Act
-    observed = asyncio.run(_scenario())
-    # Assert
-    assert observed == ["woke"]
+    state_before_put, _state_after_put = _drive_wait_for_item_scenario()
+    # Assert — the waiter is still parked while the queue is empty.
+    assert state_before_put == []
+
+
+def test_wakeable_inbox_wait_for_item_returns_when_envelope_arrives():
+    # Arrange
+    # (no per-test setup beyond what the scenario helper does)
+    # Act
+    _state_before_put, state_after_put = _drive_wait_for_item_scenario()
+    # Assert — once an envelope is put the waiter wakes and appends.
+    assert state_after_put == ["woke"]
 
 
 def test_wakeable_inbox_wait_for_item_returns_immediately_when_nonempty():
@@ -460,9 +492,19 @@ def test_wakeable_inbox_put_nowait_signals_event():
     assert sz == 1
 
 
-def test_wakeable_inbox_get_waits_when_empty_and_returns_on_put():
-    # Arrange — sanity that asyncio.Queue semantics are preserved (get
-    # blocks until a put arrives).
+# ---------------------------------------------------------------------------
+# get — blocks on empty queue, returns once a put arrives (asyncio.Queue
+# semantics). Split into two one-assert tests; the shared scenario
+# captures the consumer's observed state both BEFORE and AFTER the put.
+# ---------------------------------------------------------------------------
+
+
+def _drive_get_blocks_then_returns_scenario() -> tuple[list[str], list[str]]:
+    """Arrange + Act helper: starts a get-consumer, records its observed
+    state BEFORE a put, then puts and records the observed state AFTER
+    the put has unblocked the get. Returns (state_before_put, state_after_put).
+    """
+
     async def _scenario():
         inbox = make_inbox()
         observed: list[str] = []
@@ -473,15 +515,33 @@ def test_wakeable_inbox_get_waits_when_empty_and_returns_on_put():
 
         consumer = asyncio.create_task(_consumer())
         await asyncio.sleep(0.01)
-        assert observed == []
+        # Snapshot BEFORE the put: consumer is parked on get().
+        state_before_put = list(observed)
         await inbox.put(_make_env("late"))
         await asyncio.wait_for(consumer, timeout=1.0)
-        return observed
+        state_after_put = list(observed)
+        return state_before_put, state_after_put
 
+    return asyncio.run(_scenario())
+
+
+def test_wakeable_inbox_get_blocks_when_queue_empty():
+    # Arrange
+    # (no per-test setup beyond what the scenario helper does)
     # Act
-    seen = asyncio.run(_scenario())
-    # Assert
-    assert seen == ["late"]
+    state_before_put, _state_after_put = _drive_get_blocks_then_returns_scenario()
+    # Assert — the consumer has not observed any envelope while the
+    # queue is empty.
+    assert state_before_put == []
+
+
+def test_wakeable_inbox_get_returns_envelope_after_put():
+    # Arrange
+    # (no per-test setup beyond what the scenario helper does)
+    # Act
+    _state_before_put, state_after_put = _drive_get_blocks_then_returns_scenario()
+    # Assert — once an envelope is put the parked consumer dequeues it.
+    assert state_after_put == ["late"]
 
 
 def test_wakeable_inbox_two_concurrent_waiters_both_wake():
@@ -532,9 +592,9 @@ def test_wakeable_inbox_get_nowait_returns_item_synchronously():
 
 
 def test_wakeable_inbox_get_nowait_raises_queue_empty_on_empty():
-    # Arrange / Act / Assert — must surface asyncio.QueueEmpty so
-    # callers like _drain_failed_inbox can break their drain loop on
-    # the same exception type they always have.
+    # Arrange — must surface asyncio.QueueEmpty so callers like
+    # _drain_failed_inbox can break their drain loop on the same
+    # exception type they always have.
     async def _scenario():
         inbox = make_inbox()
         try:
@@ -543,7 +603,10 @@ def test_wakeable_inbox_get_nowait_raises_queue_empty_on_empty():
             return "queue-empty"
         return "no-raise"
 
-    assert asyncio.run(_scenario()) == "queue-empty"
+    # Act
+    outcome = asyncio.run(_scenario())
+    # Assert
+    assert outcome == "queue-empty"
 
 
 def test_wakeable_inbox_get_nowait_clears_event_when_drains_last():
@@ -560,11 +623,14 @@ def test_wakeable_inbox_get_nowait_clears_event_when_drains_last():
             return "blocked"
         return "did-not-block"
 
-    assert asyncio.run(_scenario()) == "blocked"
+    # Act
+    outcome = asyncio.run(_scenario())
+    # Assert
+    assert outcome == "blocked"
 
 
 def test_wakeable_inbox_qsize_and_empty_match_asyncio_queue():
-    # Arrange / Act
+    # Arrange
     async def _scenario():
         inbox = make_inbox()
         results: list[tuple[bool, int]] = [(inbox.empty(), inbox.qsize())]
@@ -574,6 +640,7 @@ def test_wakeable_inbox_qsize_and_empty_match_asyncio_queue():
         results.append((inbox.empty(), inbox.qsize()))
         return results
 
-    # Assert
+    # Act
     results = asyncio.run(_scenario())
+    # Assert
     assert results == [(True, 0), (False, 1), (True, 0)]
