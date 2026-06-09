@@ -43,7 +43,7 @@ session inside Apptainer (local or remote via SSH), observe via
 - [06_http-api.md](06_http-api.md) — `POST /v1/turn` wire format (`spec.a2a.port` enables)
 
 ### Core
-- [01_config-v3.md](01_config-v3.md) — v3 format; dir-as-SSoT (no `metadata.name`); rejects v2-era `spec.remote`/`spec.skills`/`dot_claude`/`spec.model`
+- [01_config-v3.md](01_config-v3.md) — v3 format; dir-as-SSoT; rejects v2-era keys
 - [02_multiplexer.md](02_multiplexer.md) — vestigial; lead-only tmux wrap
 - [03_auto-accept.md](03_auto-accept.md) — modular prompt handlers
 - [04_resource-management.md](04_resource-management.md) — resource management
@@ -65,7 +65,7 @@ session inside Apptainer (local or remote via SSH), observe via
 - [12_wsl-connectivity.md](12_wsl-connectivity.md) — WSL connectivity notes
 - [24_image-build.md](24_image-build.md) — apptainer `.sif` build/rebuild, rebuild-to-ship gotcha
 - [25_claude-setup-delivery.md](25_claude-setup-delivery.md) — `to_home`→`$HOME`, overlay/`--home`, settings hook
-- [26_credentials-rotation.md](26_credentials-rotation.md) — OAuth model + auth mechanics (canonical, `:rw` bind, preflight)
+- [26_credentials-rotation.md](26_credentials-rotation.md) — OAuth + auth mechanics
 - [26_credentials-rotation-host.md](26_credentials-rotation-host.md) — refresh + one-refresher invariant + host cron / watch-live / CI rotation
 - [27_credentials-relogin.md](27_credentials-relogin.md) — verified re-login (tmux code-paste) + 401-recovery
 - [28_credential-refresh.md](28_credential-refresh.md) — refresh creds without restart; running agents re-read on next turn
