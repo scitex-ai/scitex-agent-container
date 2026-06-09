@@ -816,6 +816,12 @@ def test_wake_on_inbound_interrupts_sdk_when_envelope_arrives_mid_turn(
     # blocks until interrupt fires). The test puts a second envelope
     # while the first turn is mid-stream; the wake task MUST interrupt
     # the SDK so the consumer loop can advance.
+    #
+    # The scenario captures THREE observables in one tuple (no-spurious-
+    # interrupt before put, interrupt fired after put, both envelopes
+    # processed in order) so a single STX-TQ007-compliant assert pins
+    # all three invariants — a failure in any one breaks the tuple
+    # equality and surfaces the offending leg in the error message.
     captured_clients: list = []
     sdk_mod = _make_wedge_sdk_module(captured_clients)
 
@@ -850,10 +856,9 @@ def test_wake_on_inbound_interrupts_sdk_when_envelope_arrives_mid_turn(
         # this is where the agent would sit indefinitely.
         await asyncio.sleep(0.05)
         client = captured_clients[0]
-        assert client.interrupt_called is False, (
-            "interrupt MUST NOT fire before a second envelope arrives — "
-            "would break the no-spurious-interrupt invariant"
-        )
+        # Snapshot the pre-put state: interrupt must NOT have fired yet —
+        # firing here would break the no-spurious-interrupt invariant.
+        interrupt_before_second_put = client.interrupt_called
 
         # Now queue the SECOND envelope mid-turn. The wake task should
         # fire, calling interrupt() and unblocking the first turn.
@@ -866,17 +871,20 @@ def test_wake_on_inbound_interrupts_sdk_when_envelope_arrives_mid_turn(
         await asyncio.wait_for(env_second.response, timeout=2.0)
         await asyncio.wait_for(conv, timeout=2.0)
 
-        return client
+        return (
+            interrupt_before_second_put,
+            client.interrupt_called,
+            list(client.queries),
+        )
 
     # Act
-    client = asyncio.run(_run())
+    interrupt_before, interrupt_after, queries = asyncio.run(_run())
 
     # Assert
-    assert client.interrupt_called is True, (
-        "wake task did not call client.interrupt() — the wedge persists"
-    )
-    assert client.queries == ["first", "second"], (
-        f"second envelope was not processed after interrupt; queries={client.queries}"
+    assert (interrupt_before, interrupt_after, queries) == (
+        False,
+        True,
+        ["first", "second"],
     )
 
 
@@ -920,15 +928,20 @@ def test_wake_on_inbound_preserves_partial_text_when_interrupt_fires(
 
     # Act
     reply_first, reply_second = asyncio.run(_run())
+    membership = (
+        "partial-turn-1" in reply_first,
+        "partial-turn-2" in reply_second,
+    )
 
     # Assert — the partial assistant text yielded BEFORE the interrupt
-    # must appear in the first turn's reply. The second turn's reply
-    # carries its own partial text. Neither is torn.
-    assert "partial-turn-1" in reply_first, (
-        f"first turn lost its pre-interrupt assistant text; got: {reply_first!r}"
-    )
-    assert "partial-turn-2" in reply_second, (
-        f"second turn lost its assistant text; got: {reply_second!r}"
+    # must appear in the first turn's reply, and the second turn's
+    # reply must carry its own partial text. Neither is torn. Both
+    # legs are pinned by a single tuple-equality assert per STX-TQ007;
+    # a failure here surfaces which leg lost its text via the False
+    # value in the tuple repr.
+    assert membership == (True, True), (
+        f"partial-text preservation broke; reply_first={reply_first!r} "
+        f"reply_second={reply_second!r}"
     )
 
 

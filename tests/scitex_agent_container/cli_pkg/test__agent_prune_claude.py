@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -375,16 +376,18 @@ def test_plan_worktrees_skips_unpushed_commits(tmp_path: Path):
     assert any("unpushed" in r for r in reasons)
 
 
+@pytest.mark.skipif(
+    shutil.which("lsof") is None,
+    reason=(
+        "lsof not available on this host; the fd-holder predicate falls "
+        "through by design (defence-in-depth, not the primary safety bar) "
+        "— pin the behaviour only on runners that ship lsof."
+    ),
+)
 def test_plan_worktrees_skips_when_process_holds_fd(tmp_path: Path):
     # Arrange — merged worktree with a Python-held file open under it.
-    # If lsof is unavailable on the host, the predicate falls through
-    # by design (defence-in-depth, not the primary safety bar), so the
-    # test SKIPS rather than fails — pinning the behaviour without
-    # forcing every CI runner to ship lsof.
-    import shutil as _shutil
-
-    if _shutil.which("lsof") is None:
-        pytest.skip("lsof not available on this host; predicate falls through")
+    # The module-level skipif handles missing lsof so STX-TQ007 sees a
+    # single assertion (no in-body pytest.skip call counted alongside it).
     workdir = tmp_path / "wd"
     workdir.mkdir()
     _init_git_repo(workdir)
