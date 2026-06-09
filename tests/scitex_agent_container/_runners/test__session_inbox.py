@@ -323,13 +323,15 @@ def _make_env(text: str = "hi") -> TurnEnvelope:
 
 
 def test_make_inbox_returns_wakeable_inbox():
-    # Arrange / Act
+    # Arrange
     async def _go():
         inbox = make_inbox()
         return isinstance(inbox, WakeableInbox)
 
+    # Act
+    is_wakeable = asyncio.run(_go())
     # Assert
-    assert asyncio.run(_go()) is True
+    assert is_wakeable is True
 
 
 def test_wakeable_inbox_put_then_get_returns_same_envelope():
@@ -590,9 +592,9 @@ def test_wakeable_inbox_get_nowait_returns_item_synchronously():
 
 
 def test_wakeable_inbox_get_nowait_raises_queue_empty_on_empty():
-    # Arrange / Act / Assert — must surface asyncio.QueueEmpty so
-    # callers like _drain_failed_inbox can break their drain loop on
-    # the same exception type they always have.
+    # Arrange — must surface asyncio.QueueEmpty so callers like
+    # _drain_failed_inbox can break their drain loop on the same
+    # exception type they always have.
     async def _scenario():
         inbox = make_inbox()
         try:
@@ -601,7 +603,10 @@ def test_wakeable_inbox_get_nowait_raises_queue_empty_on_empty():
             return "queue-empty"
         return "no-raise"
 
-    assert asyncio.run(_scenario()) == "queue-empty"
+    # Act
+    outcome = asyncio.run(_scenario())
+    # Assert
+    assert outcome == "queue-empty"
 
 
 def test_wakeable_inbox_get_nowait_clears_event_when_drains_last():
@@ -618,11 +623,14 @@ def test_wakeable_inbox_get_nowait_clears_event_when_drains_last():
             return "blocked"
         return "did-not-block"
 
-    assert asyncio.run(_scenario()) == "blocked"
+    # Act
+    outcome = asyncio.run(_scenario())
+    # Assert
+    assert outcome == "blocked"
 
 
 def test_wakeable_inbox_qsize_and_empty_match_asyncio_queue():
-    # Arrange / Act
+    # Arrange
     async def _scenario():
         inbox = make_inbox()
         results: list[tuple[bool, int]] = [(inbox.empty(), inbox.qsize())]
@@ -632,6 +640,7 @@ def test_wakeable_inbox_qsize_and_empty_match_asyncio_queue():
         results.append((inbox.empty(), inbox.qsize()))
         return results
 
-    # Assert
+    # Act
     results = asyncio.run(_scenario())
+    # Assert
     assert results == [(True, 0), (False, 1), (True, 0)]
