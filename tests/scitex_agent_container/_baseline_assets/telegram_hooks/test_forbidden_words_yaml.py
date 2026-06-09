@@ -45,6 +45,11 @@ _BASELINE_YAML = (
 )
 
 _REQUIRED_DISOWNING_PHRASES = ("既存の問題", "関係ない", "無関係")
+# Operator added 2026-06-09: katakana jargon "ナッジ" + hiragana
+# spelling "なっじ" are banned the same way (lead applies "nudge"
+# the English label in NUDGE/REMINDER context; the katakana
+# Japanese-ification of it is what's banned).
+_REQUIRED_KATAKANA_JARGON = ("ナッジ", "なっじ")
 
 
 def _load(path: Path) -> dict:
@@ -80,6 +85,15 @@ class TestForbiddenWordsYaml:
         # Assert
         assert missing == []
 
+    def test_carries_all_required_katakana_jargon(self, path: Path) -> None:
+        # Arrange — katakana-jargon entries the operator mandated 2026-06-09.
+        data = _load(path)
+        words = {e.get("word") for e in _entries(data)}
+        # Act
+        missing = [w for w in _REQUIRED_KATAKANA_JARGON if w not in words]
+        # Assert
+        assert missing == []
+
     def test_every_entry_has_required_schema_fields(self, path: Path) -> None:
         # Arrange — the hook's nudge message names ``reason`` +
         # ``use_instead`` for every blocked word; missing either field
@@ -107,6 +121,22 @@ def test_project_and_baseline_carry_identical_disowning_set() -> None:
     proj = {e.get("word") for e in _entries(_load(_PROJECT_YAML))}
     baseline = {e.get("word") for e in _entries(_load(_BASELINE_YAML))}
     required = set(_REQUIRED_DISOWNING_PHRASES)
+    # Act
+    proj_has = required & proj
+    baseline_has = required & baseline
+    # Assert
+    assert (proj_has, baseline_has) == (required, required)
+
+
+def test_project_and_baseline_carry_identical_katakana_jargon_set() -> None:
+    """Drift guard for the katakana-jargon entries (operator 2026-06-09):
+    project + baseline YAML stay in sync so the ban list does not
+    fork via a project-local override.
+    """
+    # Arrange
+    proj = {e.get("word") for e in _entries(_load(_PROJECT_YAML))}
+    baseline = {e.get("word") for e in _entries(_load(_BASELINE_YAML))}
+    required = set(_REQUIRED_KATAKANA_JARGON)
     # Act
     proj_has = required & proj
     baseline_has = required & baseline
