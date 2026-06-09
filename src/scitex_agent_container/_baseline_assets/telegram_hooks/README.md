@@ -70,3 +70,34 @@ ANY restarted agent (the operator's preferred verification path):
 If any rule fires NUDGE (not BLOCK), the matcher fix did NOT land —
 re-check `settings.local.json` for the `mcp__claude-code-telegrammer__reply`
 FQ matcher (OP-PRIO-2).
+
+## Forbidden-words YAML (lead directive 2026-06-09)
+
+A separate hook (`forbidden_words.sh`, canonical schema + loader owned
+by scitex-dev) is already wired into the operator's dotfile baseline
+under the same matcher block. It reads a YAML config at:
+
+* `~/.scitex/dev/config/forbidden-words.yaml` (global)
+* `<cwd>/.scitex/dev/config/forbidden-words.yaml` (project-specific)
+
+The lead added three **distancing/disowning** phrases to ban
+fleet-wide on 2026-06-09: `既存の問題`, `関係ない`, `無関係`. The
+data lives in two version-controlled places:
+
+1. `<repo>/.scitex/dev/config/forbidden-words.yaml` — picked up
+   automatically when an agent runs with `cwd=/work` (the project-local
+   layer in the loader's UNION).
+2. `<repo>/src/scitex_agent_container/_baseline_assets/telegram_hooks/forbidden-words.yaml`
+   — canonical deployable; operators copy or symlink it into
+   `~/.scitex/dev/config/forbidden-words.yaml` so every host (and the
+   lead's own session) blocks the same words.
+
+       cp <repo>/src/scitex_agent_container/_baseline_assets/telegram_hooks/forbidden-words.yaml \
+          ~/.scitex/dev/config/forbidden-words.yaml
+
+After deployment a Telegram reply containing any of the three phrases
+hits `rc=2` + a stderr nudge naming the word, the reason it is
+forbidden, and the suggested replacement. The pytest at
+`tests/scitex_agent_container/_baseline_assets/telegram_hooks/test_forbidden_words_yaml.py`
+pins both YAML copies stay in sync on the disowning trio so a
+project-local override never silently drops a phrase.
