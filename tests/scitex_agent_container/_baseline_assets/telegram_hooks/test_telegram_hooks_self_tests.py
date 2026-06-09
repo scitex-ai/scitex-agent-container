@@ -1,4 +1,4 @@
-"""Pytest wrapper around the 5 OP-PRIO-FMT telegram-format hook scripts'
+"""Pytest wrapper around the 6 OP-PRIO-FMT telegram-format hook scripts'
 embedded ``--self-test`` modes.
 
 Each script under
@@ -89,6 +89,16 @@ def test_encourage_telegram_terse_style_self_test_passes():
     _assert_self_test_clean(result)
 
 
+def test_enforce_telegram_structured_format_self_test_passes():
+    # Arrange — OP-PRIO-FMT rule 6 (operator 2026-06-09): structured-
+    # format hook covers numbering, prose-length, です/ます tone, and
+    # the サ変名詞 体言止め complement (operator 2026-06-09 escalation
+    # after 3 real crew escapes).
+    result = _run_self_test("enforce_telegram_structured_format.sh")
+    # Act / Assert
+    _assert_self_test_clean(result)
+
+
 @pytest.mark.parametrize(
     "script_name",
     [
@@ -97,6 +107,7 @@ def test_encourage_telegram_terse_style_self_test_passes():
         "enforce_telegram_numbering.sh",
         "enforce_telegram_use_lists.sh",
         "encourage_telegram_terse_style.sh",
+        "enforce_telegram_structured_format.sh",
     ],
 )
 def test_hook_script_exists_and_is_executable(script_name: str):
