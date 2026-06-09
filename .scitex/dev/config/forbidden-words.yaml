@@ -1,0 +1,33 @@
+# Project-level forbidden-words config for the
+# ``forbidden_words.sh`` pre-tool-use hook (canonical schema +
+# loader owned by scitex-dev). Pre-send Telegram messages whose
+# text matches any entry below are BLOCKED with the entry's
+# ``reason`` + ``use_instead`` text.
+#
+# Lead directive 2026-06-09: distancing / disowning phrases
+# defuse ownership of a problem (it is "ours" until proven
+# otherwise; never "pre-existing", "unrelated", or "irrelevant").
+# Block them at the comms layer so the agent rephrases before
+# the operator ever reads the dodge.
+#
+# Schema: forbidden_word: [ {word | pattern, reason, use_instead}, ... ]
+# Loader path order (UNION; project ADDS to global):
+#   ~/.scitex/dev/config/forbidden-words.yaml      (global)
+#   <cwd>/.scitex/dev/config/forbidden-words.yaml  (this file when cwd=/work)
+#
+# Operators on other hosts get the same rules by copying or
+# symlinking _baseline_assets/telegram_hooks/forbidden-words.yaml
+# into ~/.scitex/dev/config/ — see that file's sibling README.md
+# for the deployment recipe.
+
+forbidden_word:
+  # ---- Disowning phrases (lead 2026-06-09) ------------------------------
+  - word: 既存の問題
+    reason: 'distancing/disowning: 問題は「我々の」もの。「既存」と呼ぶことで責任を切り離す印象を与える。'
+    use_instead: '「(我々の)問題」と中立に呼ぶ、または事実だけを述べる (例: ``X が失敗している``)。'
+  - word: 関係ない
+    reason: 'distancing/disowning: 問題を「関係ない」と切ることで責任放棄に読まれる。'
+    use_instead: '事実ベースで言う (例: ``X とは別件``)、または「私の担当範囲外なので Y に依頼します」と所有を移譲する。'
+  - word: 無関係
+    reason: 'distancing/disowning: 「関係ない」と同様。問題を遠ざける言い回し。'
+    use_instead: '別件であれば「別件: ...」、優先度判断であれば「優先度低: ...」と明示する。'
