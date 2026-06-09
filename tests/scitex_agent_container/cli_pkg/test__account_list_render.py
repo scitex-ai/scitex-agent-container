@@ -725,12 +725,17 @@ def test_render_stored_table_header_stays_compact_when_no_reset():
     assert "5h% (rolling)" not in out and "7d% (rolling)" not in out
 
 
-def test_render_stored_table_last_update_header_pinned():
-    """The Last-Update column header is the new name (was ``As-of``).
+# ---------------------------------------------------------------------------
+# Gripe #1 of the 2026-06-09 operator ask: ``As-of`` was unreadable.
+# Pin the renamed header on both sides — the new name MUST appear and
+# the old name MUST be gone. Split into one-assert tests so CI red
+# names exactly which side regressed (header missing vs. legacy name
+# leaked back).
+# ---------------------------------------------------------------------------
 
-    Gripe #1 of the 2026-06-09 operator ask: ``As-of`` was unreadable.
-    """
-    # Arrange
+
+def _build_last_update_header_inputs() -> tuple[list[AccountRow], datetime]:
+    """Arrange helper: build the (rows, now) pair for the header-rename cases."""
     rows = [
         AccountRow(
             name="work",
@@ -745,10 +750,26 @@ def test_render_stored_table_last_update_header_pinned():
         ),
     ]
     now = datetime(2026, 5, 31, 12, 14, 0, tzinfo=timezone.utc)
+    return rows, now
+
+
+def test_render_stored_table_header_includes_last_update():
+    """The renamed ``Last Update`` header is present in the table."""
+    # Arrange
+    rows, now = _build_last_update_header_inputs()
     # Act
     out = render_stored_table_to_str(rows, now=now)
-    # Assert — new header present, old header gone.
+    # Assert
     assert "Last Update" in out
+
+
+def test_render_stored_table_header_omits_legacy_as_of():
+    """The legacy ``As-of`` header name does not leak back into output."""
+    # Arrange
+    rows, now = _build_last_update_header_inputs()
+    # Act
+    out = render_stored_table_to_str(rows, now=now)
+    # Assert
     assert "As-of" not in out
 
 
@@ -786,16 +807,18 @@ def test_render_stored_table_width_fits_120_cols(env_save_restore):
     assert not over, f"lines exceed 120 cols: {over}\n---\n{out}"
 
 
-def test_build_stored_rows_propagates_reset_at_from_cache(sandbox_home):
-    """``build_stored_rows`` carries ``reset_at_5h`` / ``reset_at_7d`` from cache.
+# ---------------------------------------------------------------------------
+# ``build_stored_rows`` must carry BOTH ``reset_at_5h`` and
+# ``reset_at_7d`` through from the per-account ``usage.json`` cache so
+# the renderer can show the per-row hint. The Anthropic OAuth usage API
+# returns ``resets_at`` for both windows; the cache writer in
+# :mod:`._account.claude_usage` persists those. Split per-window so CI
+# red names exactly which propagation regressed.
+# ---------------------------------------------------------------------------
 
-    The Anthropic OAuth usage API returns ``resets_at`` for both
-    windows; the per-account ``usage.json`` cache writer in
-    :mod:`._account.claude_usage` persists those as ``reset_at_5h``
-    / ``reset_at_7d``. ``build_stored_rows`` must propagate them so
-    the renderer can show the per-row hint.
-    """
-    # Arrange — stage a stored account whose usage.json carries both reset_at_*.
+
+def _seed_stored_account_with_reset_cache(sandbox_home) -> None:
+    """Arrange helper: stage a stored account whose usage.json carries both reset_at_*."""
     save_account("work", {"email_address": "w@x"}, home=sandbox_home)
     accts = sandbox_home / ".scitex" / "agent-container" / "accounts" / "work"
     (accts / ".credentials.json").write_text(
@@ -813,10 +836,25 @@ def test_build_stored_rows_propagates_reset_at_from_cache(sandbox_home):
             }
         )
     )
+
+
+def test_build_stored_rows_propagates_reset_at_5h_from_cache(sandbox_home):
+    """``build_stored_rows`` carries ``reset_at_5h`` from the cache."""
+    # Arrange
+    _seed_stored_account_with_reset_cache(sandbox_home)
     # Act
     rows = build_stored_rows([{"name": "work", "email_address": "w@x"}])
     # Assert
     assert rows[0].reset_at_5h == "2026-05-31T12:05:00+00:00"
+
+
+def test_build_stored_rows_propagates_reset_at_7d_from_cache(sandbox_home):
+    """``build_stored_rows`` carries ``reset_at_7d`` from the cache."""
+    # Arrange
+    _seed_stored_account_with_reset_cache(sandbox_home)
+    # Act
+    rows = build_stored_rows([{"name": "work", "email_address": "w@x"}])
+    # Assert
     assert rows[0].reset_at_7d == "2026-06-04T08:00:00+00:00"
 
 
@@ -1101,20 +1139,39 @@ def _seed_account_with_full_usage_cache(sandbox_home) -> None:
     )
 
 
-def test_cli_list_json_does_not_introduce_last_update_key(sandbox_home):
-    """The ``As-of`` → ``Last Update`` rename is HUMAN-RENDER-ONLY.
+# ---------------------------------------------------------------------------
+# JSON-schema stability under the ``As-of`` → ``Last Update`` rename.
+# That rename is HUMAN-RENDER-ONLY: the JSON path must NOT start
+# emitting a ``last_update`` key (or anything similar) — downstream
+# consumers parse ``as_of``. Split into the snake-case (JSON key
+# shape) and title-case (human header shape) assertions so CI red
+# names exactly which leak path opened.
+# ---------------------------------------------------------------------------
 
-    The JSON path must not start emitting a ``last_update`` key (or
-    anything similar) — downstream consumers parse ``as_of``.
-    """
-    # Arrange
+
+def _stage_cli_list_json_runner(sandbox_home) -> CliRunner:
+    """Arrange helper: seed account cache, return a CliRunner ready for the JSON list path."""
     _seed_account_with_full_usage_cache(sandbox_home)
-    runner = CliRunner()
+    return CliRunner()
+
+
+def test_cli_list_json_does_not_emit_snake_case_last_update_key(sandbox_home):
+    """The JSON output does not start emitting a ``last_update`` key."""
+    # Arrange
+    runner = _stage_cli_list_json_runner(sandbox_home)
     # Act
     result = runner.invoke(account, ["list", "--json"])
-    # Assert — neither the new nor the old human-renderer header
-    # appears as a JSON key.
+    # Assert
     assert "last_update" not in result.output.lower()
+
+
+def test_cli_list_json_does_not_leak_title_case_last_update_header(sandbox_home):
+    """The human-renderer ``Last Update`` header does not leak into JSON output."""
+    # Arrange
+    runner = _stage_cli_list_json_runner(sandbox_home)
+    # Act
+    result = runner.invoke(account, ["list", "--json"])
+    # Assert
     assert "Last Update" not in result.output
 
 
