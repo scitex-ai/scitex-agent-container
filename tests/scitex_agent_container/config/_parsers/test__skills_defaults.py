@@ -28,24 +28,30 @@ from scitex_agent_container.config._parsers._skills_defaults import (
 
 
 def test_base_required_skills_is_a_tuple():
-    # Arrange / Act
-    value = BASE_REQUIRED_SKILLS
+    # Arrange
+    constant = BASE_REQUIRED_SKILLS
+    # Act
+    value = constant
     # Assert
     assert isinstance(value, tuple)
 
 
 def test_base_required_skills_first_entry_is_scitex_todo():
-    # Arrange / Act
-    first = BASE_REQUIRED_SKILLS[0]
+    # Arrange
+    constant = BASE_REQUIRED_SKILLS
+    # Act
+    first = constant[0]
     # Assert (operator directive: scitex-todo is fleet-wide required)
     assert first == "scitex-todo"
 
 
 def test_base_required_skills_has_no_duplicates():
-    # Arrange / Act
-    seen = set(BASE_REQUIRED_SKILLS)
+    # Arrange
+    constant = BASE_REQUIRED_SKILLS
+    # Act
+    seen = set(constant)
     # Assert
-    assert len(seen) == len(BASE_REQUIRED_SKILLS)
+    assert len(seen) == len(constant)
 
 
 # ---------------------------------------------------------------------------
@@ -144,7 +150,9 @@ def test_apply_dedupes_duplicates_within_per_spec_list():
     ],
 )
 def test_apply_returns_list_of_strings(per_spec):
-    # Arrange / Act
-    merged = apply_base_required_skills(per_spec)
+    # Arrange
+    input_list = per_spec
+    # Act
+    merged = apply_base_required_skills(input_list)
     # Assert
     assert all(isinstance(s, str) for s in merged)
