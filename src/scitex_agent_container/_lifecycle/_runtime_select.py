@@ -13,11 +13,26 @@ from ..config import AgentConfig
 
 
 def _get_runtime(config: AgentConfig):
-    """Return the SDK runtime for the config.
+    """Return the agent runtime (SDK or tmux) for the config.
 
-    Sac is apptainer-only since the 2026-05-13 ripout. Empty / unset
-    ``spec.runtime`` is treated as ``"apptainer"``.
+    Day-2 (E) — branches on ``spec.claude.runtime``:
+
+    * ``"sdk"`` (default) → ``ClaudeSessionRuntime`` running
+      ``claude-agent-sdk`` over the post-2026-06-15 Agent SDK credit.
+    * ``"tmux"`` → ``ClaudeCodeRuntime`` driving the interactive
+      ``claude`` TUI through tmux send-keys / capture-pane, preserving
+      flat-rate subscription economics for the SAC fleet.
+
+    Container-engine selection (``spec.runtime``) is unchanged —
+    apptainer-only since the 2026-05-13 ripout; empty / unset is
+    treated as ``"apptainer"``.
     """
+    claude_runtime = getattr(getattr(config, "claude", None), "runtime", "sdk")
+    if claude_runtime == "tmux":
+        from .._runners._tmux.claude_code import ClaudeCodeRuntime
+
+        return ClaudeCodeRuntime()
+
     if config.runtime in ("", "apptainer"):
         from ..runtimes.claude_session import ClaudeSessionRuntime
 

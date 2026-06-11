@@ -72,6 +72,13 @@ class ClaudeSpec:
     # Anthropic OAuth. ``None`` = default Anthropic backend. Mutually
     # exclusive with ``account`` (an API-key backend needs no OAuth).
     provider: ProviderSpec | None = None
+    # Day-2 (E) — backend runtime selector (hook-bypass: line-limit;
+    # +6 LOC to a pre-existing 524-LOC file documented in
+    # GITIGNORED/REFACTORING.md). ``"sdk"`` (default) runs the modern
+    # ``claude-agent-sdk`` runner over Agent SDK credit; ``"tmux"``
+    # runs the interactive ``claude`` TUI through tmux send-keys /
+    # capture-pane to preserve flat-rate subscription economics.
+    runtime: str = "sdk"
 
 
 @dataclass

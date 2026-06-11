@@ -82,6 +82,15 @@ def parse_claude(spec: dict) -> ClaudeSpec:
     raw_options = raw.get("raw_options", {}) or {}
     if not isinstance(raw_options, dict):
         raw_options = {}
+    # Day-2 (E) — ``spec.claude.runtime`` selects the backend driver:
+    # ``"sdk"`` (default) runs the SDK runner; ``"tmux"`` runs the
+    # interactive ``claude`` TUI via tmux send-keys / capture-pane.
+    # Unknown values pass through here so the validator owns the
+    # single source of the "unknown runtime" diagnostic — keeps the
+    # error message + allowed-set in one place.
+    runtime = raw.get("runtime", "sdk")
+    if not isinstance(runtime, str) or not runtime:
+        runtime = "sdk"
     return ClaudeSpec(
         model=str(raw.get("model", "") or ""),
         channels=raw.get("channels", []) or [],
@@ -93,4 +102,5 @@ def parse_claude(spec: dict) -> ClaudeSpec:
         account=str(raw.get("account", "") or ""),
         provider=_parse_provider(raw),
         raw_options=dict(raw_options),
+        runtime=runtime,
     )

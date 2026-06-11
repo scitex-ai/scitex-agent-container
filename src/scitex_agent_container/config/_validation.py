@@ -289,6 +289,20 @@ def validate_raw(raw: dict, path: str) -> list[str]:
                 "Anthropic OAuth. Set exactly one."
             )
 
+        # Day-2 (E) — spec.claude.runtime opt-in for the tmux TUI driver.
+        # Default ``"sdk"`` runs the existing claude-agent-sdk runner;
+        # ``"tmux"`` runs the interactive ``claude`` TUI through tmux
+        # send-keys / capture-pane, preserving flat-rate subscription
+        # economics after the 2026-06-15 Anthropic Agent SDK split.
+        claude_runtime = claude_block.get("runtime")
+        if claude_runtime is not None and claude_runtime not in ("sdk", "tmux"):
+            errors.append(
+                f"spec.claude.runtime must be 'sdk' or 'tmux', got "
+                f"{claude_runtime!r}. 'sdk' (default) runs the claude-agent-sdk "
+                f"runner over Agent SDK credit; 'tmux' runs the interactive "
+                f"claude TUI through tmux to preserve subscription economics."
+            )
+
         # container.runtime
         container = spec.get("container", {}) or {}
         cr = container.get("runtime")

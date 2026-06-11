@@ -1,310 +1,77 @@
-"""Claude Code runtime adapter."""
+"""Claude Code tmux runtime — orchestrator.
+
+The pre-SDK ``ClaudeCodeRuntime`` drives the *interactive* ``claude``
+TUI through a tmux session (no SDK package, no ``claude -p``). This
+file is the orchestrator: it owns ``start`` / ``stop`` / ``is_running``
+/ ``logs`` and delegates the heavy lifting to siblings under this
+package so the file stays under the 512-LOC discipline cap.
+
+Day-2 (D) cleanup:
+* ``src_files`` deploy/cleanup branch removed — the A2A→tmux bridge
+  (``_turn_endpoint``) supersedes it as the inbound input channel.
+* ``ssh_remote`` dispatch branch removed — cross-host work goes through
+  the A2A bridge, not bare-metal SSH.
+* The multiplexer-lifecycle path moved to ``_session_lifecycle``.
+* The auto-accept polling loop moved to ``_auto_accept_loop``.
+
+What remains here is the runtime-class wiring + container-engine
+delegation + post-start orchestration (auto-accept, startup commands,
+A2A sidecar).
+"""
 
 from __future__ import annotations
 
 import logging
-import re
 import threading
 import time
-from pathlib import Path
 
-# Import-depth note (Day-1 salvage, 2026-06-12):
-# This file moved from ``runtimes/claude_code.py`` to
-# ``_runners/_tmux/claude_code.py``. Relative imports were re-rooted
-# up two levels (out of _tmux, out of _runners) to reach top-level
-# sibling subpackages still in their original locations:
-#   from .X            ->  from ...runtimes.X    (sibling pkg kept in runtimes/)
-#   from ..config      ->  from ...config
-#   from .._network.Y  ->  from ..._network.Y
-# Within-subpackage siblings (tmux, multiplexer, pane_capture,
-# prompts) still use the local `from .X` form.
 from ..._network.host_identity import is_local_host
 from ...config import AgentConfig
 from ...runtimes.a2a_sidecar import start_sidecar as _a2a_start_sidecar
 from ...runtimes.a2a_sidecar import stop_sidecar as _a2a_stop_sidecar
 from ...runtimes.base import RuntimeBase
-from ...runtimes.claude_md import cleanup_claude_md, setup_claude_md
-from ...runtimes.mcp_config import cleanup_mcp_config, setup_mcp_config
-from ...runtimes.onboarding import ensure_project_onboarding
-from ...runtimes.settings_json import (
-    cleanup_settings_json,
-    ensure_global_settings_json,
-    setup_settings_json,
+from ._auto_accept_loop import send_auto_accept_keystrokes
+from ._session_lifecycle import (
+    build_command,
+    build_env_exports,
+    build_env_source_prelude,
+    cleanup_workspace,
+    needs_auto_accept,
+    setup_workspace,
 )
-
-# BLOCKER (Day-1 salvage): ``src_files`` and ``ssh_remote`` modules
-# were removed from runtimes/ by later commits (6fb9131 replaced
-# src_files with dot_claude/; d21e999 deleted ssh_remote/RemoteSpec).
-# These imports therefore raise ModuleNotFoundError at runtime. They
-# are kept in their original shape so the orchestrator's call-sites
-# remain visible to Day-2 work, which will either reintroduce the
-# legacy modules under _runners/_tmux/ or refactor the call-sites.
-from .src_files import (  # noqa: F401  # MISSING — Day-2 blocker
-    cleanup_src_claude_md,
-    cleanup_src_env,
-    cleanup_src_mcp_json,
-    deploy_src_claude_md,
-    deploy_src_env,
-    deploy_src_mcp_json,
-)
-from .ssh_remote import (
-    SSHPreflightError as SSHPreflightError,  # noqa: F401  # MISSING — Day-2 blocker
-)
-from .ssh_remote import SSHRemote  # MISSING — Day-2 blocker
 
 logger = logging.getLogger(__name__)
-
-# Backward-compatible alias: existing code imports _SSHRemote from this module
-_SSHRemote = SSHRemote
-
-# Backward-compatible aliases for extracted functions
-_setup_claude_md = setup_claude_md
-_cleanup_claude_md = cleanup_claude_md
 
 
 def _should_dispatch_remote(config: AgentConfig) -> bool:
     """True iff the config is remote AND the remote host is not ourselves.
 
-    If ``remote.host`` matches a local identity (hostname / alias / env /
-    YAML / fleet default), log an INFO message and return False so callers
-    fall back to the local in-process runtime instead of self-SSH.
+    Day-2: ``spec.remote`` dispatch via SSHRemote was removed. This
+    helper survives to log the deprecation cleanly — when a remote
+    config sneaks through, log and treat as local (so the runtime path
+    is unambiguous). Cross-host work belongs on the A2A bridge.
     """
-    if not config.remote.is_remote:
+    if not getattr(config.remote, "is_remote", False):
         return False
     if is_local_host(config.remote.host):
         logger.info(
-            "remote.host=%r matches local identity -> falling back to LocalRuntime",
+            "remote.host=%r matches local identity -> falling back to local",
             config.remote.host,
         )
         return False
-    return True
-
-
-def _encode_workdir_for_claude_projects(workdir: str) -> str:
-    """Encode a workdir path the way Claude Code names its projects dir.
-
-    Claude Code stores per-project session history under
-    ``~/.claude/projects/<encoded>/`` where ``<encoded>`` is the absolute
-    workdir with both ``/`` and ``.`` replaced by ``-``. Dot-prefixed path
-    segments like ``/.dotfiles`` therefore produce a double-dash
-    (``/`` + ``.`` → ``-`` + ``-``); runs of three or more dashes are
-    collapsed back to ``--`` to match Claude Code's own normalization.
-    """
-    abs_path = str(
-        Path(workdir).expanduser().resolve()
-        if Path(workdir).expanduser().exists()
-        else Path(workdir).expanduser()
+    logger.warning(
+        "remote.host=%r set, but ssh_remote dispatch was removed in Day-2; "
+        "treating as local. Use the A2A bridge for cross-host work.",
+        config.remote.host,
     )
-    encoded = abs_path.replace("/", "-").replace(".", "-")
-    return re.sub(r"-{3,}", "--", encoded)
-
-
-def _session_resumable(
-    workdir: str,
-    user_home: str | None = None,
-    max_age_minutes: int | None = None,
-) -> bool:
-    """Return True iff Claude Code has a resumable session for ``workdir``.
-
-    A session is considered resumable when
-    ``~/.claude/projects/<encoded>/`` exists and contains at least one
-    non-empty ``*.jsonl`` transcript. Used by the ``continue-or-new``
-    session mode to decide whether ``--continue`` is safe to pass.
-
-    If ``max_age_minutes`` is set, the most-recently-modified jsonl must be
-    newer than that many minutes; otherwise returns False (treat as stale).
-    """
-    import time as _time
-
-    home = Path(user_home) if user_home else Path.home()
-    encoded = _encode_workdir_for_claude_projects(workdir)
-    proj_dir = home / ".claude" / "projects" / encoded
-    if not proj_dir.is_dir():
-        return False
-    candidates = []
-    for entry in proj_dir.glob("*.jsonl"):
-        try:
-            st = entry.stat()
-            if entry.is_file() and st.st_size > 0:
-                candidates.append((st.st_mtime, entry))
-        except OSError:  # stx-allow: fallback (reason: file system operation failure)
-            continue
-    if not candidates:
-        return False
-    if max_age_minutes is not None:
-        newest_mtime = max(mtime for mtime, _ in candidates)
-        age_minutes = (_time.time() - newest_mtime) / 60
-        if age_minutes > max_age_minutes:
-            logger.info(
-                "session age %.1f min > max_age_minutes=%d for %s, treating as stale",
-                age_minutes,
-                max_age_minutes,
-                workdir,
-            )
-            return False
-    return True
-
-
-def _has_src_files(config: AgentConfig) -> bool:
-    """Check if src_CLAUDE.md or src_mcp.json exist next to the YAML."""
-    if not config.config_path:
-        return False
-    defdir = Path(config.config_path).parent
-    return (
-        (defdir / "src_CLAUDE.md").exists()
-        or (defdir / "src_mcp.json").exists()
-        or (defdir / "src_env").exists()
-    )
+    return False
 
 
 class ClaudeCodeRuntime(RuntimeBase):
-    """Runtime for launching Claude Code agents in screen sessions."""
-
-    def _build_command(self, config: AgentConfig) -> str:
-        """Build the claude CLI command from config.
-
-        Session modes:
-          - ``continue-or-new`` (default): pass ``--continue`` only when a
-            prior session exists for the workdir; otherwise launch fresh.
-            Graceful fallback is silent (logged at info level) so rolling
-            restarts preserve /compact history without risking hard failure.
-          - ``continue``: always pass ``--continue`` (may fail if no prior
-            session — explicit opt-in for callers that want strict resume).
-          - ``new``: never pass ``--continue``.
-        """
-        parts = ["claude"]
-        parts.append(f"--model '{config.model}'")
-
-        for flag in config.claude.flags:
-            parts.append(flag)
-
-        workdir = config.expanded_workdir
-        if not any(workdir in f for f in config.claude.flags):
-            parts.append(f"--add-dir '{workdir}'")
-
-        mode = config.claude.session
-        max_age = config.claude.continue_max_age_minutes
-        if mode == "continue":
-            if max_age is not None and not _session_resumable(
-                config.expanded_workdir, max_age_minutes=max_age
-            ):
-                logger.warning(
-                    "session=continue: session too stale (max_age=%d min) for %s, launching fresh",
-                    max_age,
-                    config.expanded_workdir,
-                )
-            else:
-                parts.append("--continue")
-        elif mode == "continue-or-new":
-            if _session_resumable(config.expanded_workdir, max_age_minutes=max_age):
-                parts.append("--continue")
-                logger.info(
-                    "session=continue-or-new: resumable session found for %s, passing --continue",
-                    config.expanded_workdir,
-                )
-            else:
-                # Warning rather than info: continue-or-new is best-effort, so
-                # we still launch fresh, but a missed resume often points to
-                # an encoding/path bug (the ~/.claude/projects/<encoded>/ dir
-                # didn't match) and silent info hides that.
-                logger.warning(
-                    "session=continue-or-new: no resumable session for %s, launching fresh",
-                    config.expanded_workdir,
-                )
-        elif mode == "resume":
-            resume_id = config.claude.resume_id.strip()
-            if resume_id:
-                parts.append(f"--resume '{resume_id}'")
-                logger.info(
-                    "session=resume: passing --resume %s for %s",
-                    resume_id,
-                    config.expanded_workdir,
-                )
-            else:
-                # No explicit ID — fall back to --continue (most recent session)
-                logger.warning(
-                    "session=resume: no resume_id set for %s, falling back to --continue",
-                    config.expanded_workdir,
-                )
-                parts.append("--continue")
-        # mode == "new" (or any other): no --continue flag
-
-        return " ".join(parts)
-
-    def _build_env_exports(self, config: AgentConfig) -> str:
-        """Build export statements from env dict.
-
-        Values support:
-        - ~ prefix: expanded to $HOME
-        - ${VAR} syntax: resolved from os.environ at launch time
-        """
-        import os as _os
-        import re
-
-        def _resolve(val: str) -> str:
-            """Expand ~ and ${VAR} references."""
-            if val.startswith("~"):
-                val = val.replace("~", "$HOME", 1)
-            # Resolve ${VAR} from os.environ
-            return re.sub(
-                r"\$\{(\w+)\}",
-                lambda m: _os.environ.get(m.group(1), m.group(0)),
-                val,
-            )
-
-        lines = []
-        # Source .env files first so explicit env: values in YAML override them.
-        # Relative paths are resolved relative to workdir on the target host.
-        # set -a / set +a auto-exports every variable sourced from the file.
-        for env_file in config.env_files:
-            if env_file.startswith("/") or env_file.startswith("~"):
-                file_path = f'"{env_file}"'
-            else:
-                # Workspace-relative: workdir is cd'd to before this runs.
-                file_path = f'"./{env_file}"'
-            lines.append(
-                f"if [ -f {file_path} ]; then set -a; . {file_path}; set +a; fi"
-            )
-        for key, value in config.env.items():
-            lines.append(f'export {key}="{_resolve(str(value))}"')
-        # Always export the canonical fleet hostname so downstream consumers
-        # (orochi MCP sidecar, telegram, etc.) register with "mba" rather
-        # than the OS-reported FQDN ("Yusukes-MacBook-Air.local"). The
-        # sidecar already prefers SCITEX_OROCHI_MACHINE over Node's
-        # hostname() — this just hands it the canonical value.
-        # stx-allow: fallback (reason: resolve_hostname() can fail on misconfiguration; leaving SCITEX_OROCHI_MACHINE unset is safe because the sidecar falls back to its own hostname() call)
-        try:
-            from ..config._host import resolve_hostname
-
-            _canonical = resolve_hostname()
-            if _canonical:
-                lines.append(f'export SCITEX_OROCHI_MACHINE="{_canonical}"')
-                lines.append(f'export SCITEX_AGENT_CONTAINER_HOSTNAME="{_canonical}"')
-        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-            # resolve_hostname falls through to socket.gethostname() short
-            # form on misconfig; if even that raises, leave the env unset
-            # and let the sidecar fall back to its own hostname() call.
-            pass
-        # Cross-package env vars (e.g., orochi-side channel/auth config)
-        # are caller's concern: declare them in the agent YAML's env
-        # block and they are exported above with the rest of config.env.
-        return "\n".join(lines)
-
-    # Telegram access.json is not managed by agent-container.
-    # Agent-container only passes config via env vars.
-
-    def _needs_auto_accept(self, config: AgentConfig) -> bool:
-        """Check if the claude command includes flags that trigger TUI prompts."""
-        if not config.claude.auto_accept:
-            return False
-        dangerous_flags = [
-            "--dangerously-skip-permissions",
-            "--dangerously-load-development-channels",
-        ]
-        return any(any(df in f for df in dangerous_flags) for f in config.claude.flags)
+    """Runtime for launching Claude Code agents in tmux sessions."""
 
     def _get_mux(self, config: AgentConfig) -> type:
-        """Get the multiplexer class for this config."""
+        """Return the multiplexer class for this config."""
         from .multiplexer import get_multiplexer
 
         return get_multiplexer(config)
@@ -332,211 +99,16 @@ class ClaudeCodeRuntime(RuntimeBase):
             time.sleep(2)
         return False
 
-    def _setup_auto_accept_log(self, config: AgentConfig) -> logging.Logger:
-        """Create a file logger for auto-accept diagnostics."""
-        from datetime import datetime
-
-        log_dir = Path.home() / ".scitex" / "agent-container" / "logs" / config.name
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_file = log_dir / "auto-accept.log"
-
-        file_logger = logging.getLogger(f"auto-accept.{config.name}")
-        file_logger.setLevel(logging.DEBUG)
-        # Remove old handlers to avoid duplicates on restart
-        file_logger.handlers.clear()
-        handler = logging.FileHandler(str(log_file), mode="a")
-        handler.setFormatter(
-            logging.Formatter("%(asctime)s %(levelname)s: %(message)s")
-        )
-        file_logger.addHandler(handler)
-        file_logger.info(
-            "=== Auto-accept session started at %s ===",
-            datetime.now().isoformat(),
-        )
-        return file_logger
-
-    def _send_auto_accept_keystrokes(self, config: AgentConfig) -> bool:
-        """Poll multiplexer content and auto-accept TUI prompts.
-
-        Uses modular prompt handlers from prompts.py. Each handler
-        detects a specific prompt and sends the appropriate keystrokes.
-        Prompt order is not assumed — all handlers are checked each poll.
-
-        Logs every poll cycle to ~/.scitex/agent-container/logs/{name}/auto-accept.log
-        for post-mortem diagnosis of hung agents.
-
-        Returns True if all prompts were accepted, False on timeout.
-        """
-        from .prompts import PROMPT_HANDLERS, detect_and_respond, is_ready
-
-        if not self._needs_auto_accept(config):
-            return True
-
-        flog = self._setup_auto_accept_log(config)
-        handler_names = [h.name for h in PROMPT_HANDLERS]
-        logger.info(
-            "Auto-accepting TUI prompts for %s (handlers: %s)",
-            config.screen_name,
-            ", ".join(handler_names),
-        )
-        flog.info("Handlers: %s", ", ".join(handler_names))
-
-        timeout = 90
-        start = time.monotonic()
-        accepted: set[str] = set()
-        mux = self._get_mux(config)
-        poll_count = 0
-        content_preview = "(not yet polled)"
-
-        def _send(session_name: str, *keys: str) -> None:
-            mux.send_keys(session_name, *keys)
-
-        while time.monotonic() - start < timeout:
-            poll_count += 1
-            elapsed = time.monotonic() - start
-
-            if not mux.exists(config.screen_name):
-                msg = f"Session {config.screen_name} disappeared at poll {poll_count} ({elapsed:.0f}s)"
-                logger.warning(msg)
-                flog.warning(msg)
-                return False
-
-            content = self._get_content(config)
-            content_preview = content.strip()[:300] if content.strip() else "(empty)"
-            flog.debug(
-                "Poll %d (%.0fs) accepted=%s content:\n%s",
-                poll_count,
-                elapsed,
-                accepted or "none",
-                content_preview,
-            )
-
-            # Check if claude is ready (all prompts done)
-            if is_ready(content):
-                msg = f"Auto-accept complete for {config.screen_name} (accepted: {accepted or 'none'}) after {elapsed:.0f}s"
-                logger.info(msg)
-                flog.info(msg)
-                return True
-
-            # Try each handler against current content
-            matched = detect_and_respond(
-                content,
-                accepted,
-                lambda *keys: _send(config.screen_name, *keys),
-            )
-            if matched:
-                accepted.add(matched)
-                flog.info(
-                    "Matched handler '%s' at poll %d (%.0fs), sent keys",
-                    matched,
-                    poll_count,
-                    elapsed,
-                )
-                time.sleep(2)
-                continue
-
-            time.sleep(2)
-
-        msg = (
-            f"TIMEOUT ({timeout}s) for {config.screen_name} "
-            f"after {poll_count} polls. accepted={accepted or 'none'}. "
-            f"Last content:\n{content_preview}"
-        )
-        logger.warning(msg)
-        flog.warning(msg)
-        return False
-
-    def _wait_for_ready_state(self, config: AgentConfig) -> bool:
-        """Gate startup commands behind a Claude Code ready-state probe.
-
-        Returns True if the caller should proceed to dispatch commands,
-        False if it should abort (strict on_timeout=capture_and_fail).
-        Legacy configs without ``spec.startup.ready_patterns`` always
-        return True immediately (fire-and-hope preserved).
-        """
-        from .._lifecycle.ready_state import wait_for_ready
-
-        startup = getattr(config, "startup", None)
-        patterns = [p.regex for p in getattr(startup, "ready_patterns", []) or []]
-        if not patterns:
-            return True
-
-        pane = config.screen_name
-        mux = self._get_mux(config)
-
-        def _capture(target: str) -> str:
-            return mux.capture_content(target)
-
-        log_dir = Path(f"~/.scitex/agent-container/logs/{config.name}").expanduser()
-        log_dir.mkdir(parents=True, exist_ok=True)
-
-        def _on_timeout(tail_text: str) -> None:
-            ts = time.strftime("%Y%m%dT%H%M%S")
-            path = log_dir / f"boot-capture-{ts}.txt"
-            try:
-                path.write_text(tail_text or "")
-                logger.warning(
-                    "ready_state timeout for %s; wrote boot capture to %s",
-                    config.name,
-                    path,
-                )
-            except (
-                OSError
-            ):  # stx-allow: fallback (reason: file system operation failure)
-                logger.exception(
-                    "Failed to write boot capture for %s to %s",
-                    config.name,
-                    path,
-                )
-
-        logger.info(
-            "waiting for Claude Code ready state on pane %s (timeout=%.0fs)",
-            pane,
-            startup.ready_timeout_seconds,
-        )
-        ready = wait_for_ready(
-            agent_name=config.name,
-            pane_target=pane,
-            patterns=patterns,
-            idle_ticks=startup.ready_idle_ticks,
-            poll_interval=startup.ready_poll_interval_seconds,
-            timeout=startup.ready_timeout_seconds,
-            capture_callback=_on_timeout,
-            capture_fn=_capture,
-        )
-
-        if ready:
-            logger.info("ready detected, sending startup commands to %s", pane)
-            return True
-
-        if startup.on_timeout == "capture_and_fail":
-            logger.error(
-                "ready_state timeout for %s with on_timeout=capture_and_fail; "
-                "skipping startup commands",
-                config.name,
-            )
-            return False
-
-        logger.warning(
-            "ready_state timeout for %s with on_timeout=capture_and_proceed; "
-            "sending startup commands anyway (legacy fire-and-hope)",
-            config.name,
-        )
-        return True
-
     def _run_startup_commands(self, config: AgentConfig) -> None:
         """Send startup commands to the screen session with delays.
 
-        Uses the multiplexer's ``send_text_and_submit`` so the Enter
-        keystroke lands as a separate call after the text has settled.
-        Previously we appended ``\\r`` to the command and sent both as
-        one ``send_keys`` call; on a busy TUI that occasionally caused
-        the text to arrive but the submit to be dropped (the
-        "intended prompt sent but Enter failed" symptom the user
-        reported).
+        Day-2 (D) simplification: the legacy ``_wait_for_ready_state``
+        ready-pattern probe (which depended on ``_lifecycle/ready_state``
+        — removed post-ba6755e) was dropped. The A2A bridge is the
+        modern readiness signal: the agent's first turn confirms
+        live-ness without needing the runtime to scan the pane for a
+        custom regex.
         """
-        if not self._wait_for_ready_state(config):
-            return
         startup_spec = getattr(config, "startup", None)
         commands = (
             list(startup_spec.commands)
@@ -547,7 +119,6 @@ class ClaudeCodeRuntime(RuntimeBase):
         for sc in commands:
             if sc.delay > 0:
                 time.sleep(sc.delay)
-            # stx-allow: fallback (reason: multiplexer send can fail if the session is temporarily unavailable; logging the error and continuing allows remaining startup commands to be attempted)
             try:
                 mux.send_text_and_submit(config.screen_name, sc.command)
                 logger.info(
@@ -556,7 +127,7 @@ class ClaudeCodeRuntime(RuntimeBase):
                     sc.delay,
                     sc.command,
                 )
-            except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+            except Exception:  # stx-allow: fallback (catch-all safety net)
                 logger.exception(
                     "Failed to send startup command to %s: %s",
                     config.screen_name,
@@ -565,8 +136,9 @@ class ClaudeCodeRuntime(RuntimeBase):
 
     def _post_start_tasks(self, config: AgentConfig) -> None:
         """Run post-start tasks: auto-accept prompts, startup commands."""
-        if self._needs_auto_accept(config):
-            accepted = self._send_auto_accept_keystrokes(config)
+        if needs_auto_accept(config):
+            mux = self._get_mux(config)
+            accepted = send_auto_accept_keystrokes(config, mux)
             if not accepted:
                 logger.warning(
                     "Auto-accept failed for %s; skipping startup commands",
@@ -574,6 +146,38 @@ class ClaudeCodeRuntime(RuntimeBase):
                 )
                 return
         self._run_startup_commands(config)
+
+    # ------------------------------------------------------------------
+    # Container-runtime delegation
+    # ------------------------------------------------------------------
+
+    def _delegate_container(self, config: AgentConfig, verb: str, *args, **kw):
+        """Return ``runtime.<verb>(config, ...)`` for the configured engine.
+
+        Returns ``None`` when ``container.runtime == "none"`` so the
+        caller falls back to the in-process tmux path.
+        """
+        runtime = config.container.runtime
+        if runtime == "none":
+            return None
+        if runtime == "docker":
+            from ..apptainer import ApptainerRuntime  # noqa: F401  (kept for parity)
+            from ..docker import DockerRuntime
+
+            return getattr(DockerRuntime(), verb)(config, *args, **kw)
+        if runtime == "podman":
+            from ..podman import PodmanRuntime
+
+            return getattr(PodmanRuntime(), verb)(config, *args, **kw)
+        if runtime == "apptainer":
+            from ..apptainer import ApptainerRuntime
+
+            return getattr(ApptainerRuntime(), verb)(config, *args, **kw)
+        return None
+
+    # ------------------------------------------------------------------
+    # Public lifecycle
+    # ------------------------------------------------------------------
 
     def start(
         self,
@@ -584,61 +188,27 @@ class ClaudeCodeRuntime(RuntimeBase):
     ) -> bool:
         """Start a Claude Code agent.
 
-        ``force`` is passed through to SSHRemote.start so the remote
-        ``scitex-agent-container start`` call receives ``--force`` and
-        stops any existing instance before relaunching.
-
-        ``dry_run``: materialize the workspace (CLAUDE.md, .mcp.json,
+        ``dry_run``: materialise the workspace (CLAUDE.md, .mcp.json,
         .env, settings.json) but do NOT launch the multiplexer or the
         Claude Code process. Returns True when prep succeeds.
         """
         if _should_dispatch_remote(config):
-            return SSHRemote.start(config, no_preflight=no_preflight, force=force)
+            return False  # ssh_remote dispatch removed; logged in helper
 
-        if config.container.runtime != "none":
-            from .apptainer import ApptainerRuntime
-            from .docker import DockerRuntime
-            from .podman import PodmanRuntime
+        ct_result = self._delegate_container(config, "start")
+        if ct_result is not None:
+            return ct_result
 
-            if config.container.runtime == "docker":
-                return DockerRuntime().start(config)
-            elif config.container.runtime == "podman":
-                return PodmanRuntime().start(config)
-            elif config.container.runtime == "apptainer":
-                return ApptainerRuntime().start(config)
-
-        cmd = self._build_command(config)
-        env_exports = self._build_env_exports(config)
+        cmd = build_command(config)
+        env_exports = build_env_exports(config)
         workdir = config.expanded_workdir
 
-        # Source workspace .env before explicit env so path-based token vars
-        # (SCITEX_OROCHI_A2A_TOKEN_PATH, etc.) reach the agent process.
-        # config.env exports follow and take precedence over .env values.
-        env_file = Path(workdir) / ".env"
-        env_source = (
-            f"if [ -f '{env_file}' ]; then set -a; source '{env_file}'; set +a; fi"
-        )
+        env_source = build_env_source_prelude(workdir)
         env_exports = env_source + ("\n" + env_exports if env_exports else "")
 
-        # Pre-populate ~/.claude.json projects entry so the agent skips
-        # interactive onboarding (theme / login-method / dev-channels prompts).
-        ensure_project_onboarding(workdir)
-
-        # v2: deploy src files from definition directory
-        # v1: generate from config (legacy)
-        is_v2 = bool(config.mcp_servers) or _has_src_files(config)
-        if is_v2:
-            deploy_src_claude_md(config, workdir)
-            deploy_src_mcp_json(config, workdir)
-            deploy_src_env(config, workdir)
-        else:
-            _setup_claude_md(config, workdir)
-        setup_mcp_config(config, workdir)
-        ensure_global_settings_json()
-        setup_settings_json(config, workdir)
+        setup_workspace(config, workdir)
 
         if dry_run:
-            # Workspace materialized; skip multiplexer + Claude Code launch.
             return True
 
         mux = self._get_mux(config)
@@ -651,17 +221,13 @@ class ClaudeCodeRuntime(RuntimeBase):
         )
 
         if started:
-            # stx-allow: fallback (reason: a2a sidecar is optional; a spawn failure must not prevent the agent itself from starting)
             try:
                 _a2a_start_sidecar(config)
-            except Exception:  # noqa: BLE001 — never block agent start  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+            except Exception:  # stx-allow: fallback (catch-all)
                 logger.exception("a2a sidecar spawn failed for %s", config.name)
 
-            has_tasks = self._needs_auto_accept(config) or config.startup_commands
+            has_tasks = needs_auto_accept(config) or config.startup_commands
             if has_tasks:
-                # Run post-start tasks in a foreground thread and wait for
-                # completion. Using daemon=True would let the CLI exit before
-                # auto-accept finishes, killing the thread prematurely.
                 thread = threading.Thread(
                     target=self._post_start_tasks,
                     args=(config,),
@@ -676,74 +242,58 @@ class ClaudeCodeRuntime(RuntimeBase):
     def stop(self, config: AgentConfig) -> bool:
         """Stop a Claude Code agent."""
         if _should_dispatch_remote(config):
-            return SSHRemote.stop(config)
+            return False
 
-        if config.container.runtime != "none":
-            from .apptainer import ApptainerRuntime
-            from .docker import DockerRuntime
-            from .podman import PodmanRuntime
+        ct_result = self._delegate_container(config, "stop")
+        if ct_result is not None:
+            return ct_result
 
-            if config.container.runtime == "docker":
-                return DockerRuntime().stop(config)
-            elif config.container.runtime == "podman":
-                return PodmanRuntime().stop(config)
-            elif config.container.runtime == "apptainer":
-                return ApptainerRuntime().stop(config)
-
-        # stx-allow: fallback (reason: a2a sidecar cleanup is best-effort; a stop failure must not prevent the agent session from being torn down)
         try:
             _a2a_stop_sidecar(config)
-        except Exception:  # noqa: BLE001 — never block agent stop  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+        except Exception:  # stx-allow: fallback (catch-all)
             logger.exception("a2a sidecar stop failed for %s", config.name)
 
-        is_v2 = bool(config.mcp_servers) or _has_src_files(config)
-        if is_v2:
-            cleanup_src_claude_md(config, config.expanded_workdir)
-            cleanup_src_mcp_json(config, config.expanded_workdir)
-            cleanup_src_env(config, config.expanded_workdir)
-        else:
-            _cleanup_claude_md(config, config.expanded_workdir)
-        cleanup_mcp_config(config, config.expanded_workdir)
-        cleanup_settings_json(config, config.expanded_workdir)
-
+        cleanup_workspace(config, config.expanded_workdir)
         return self._get_mux(config).stop(config.screen_name)
 
     def is_running(self, config: AgentConfig) -> bool:
         """Check if the Claude Code agent is running."""
         if _should_dispatch_remote(config):
-            return SSHRemote.is_running(config)
+            return False
 
-        if config.container.runtime == "docker":
-            from .docker import DockerRuntime
-
-            return DockerRuntime().is_running(config)
-        elif config.container.runtime == "podman":
-            from .podman import PodmanRuntime
-
-            return PodmanRuntime().is_running(config)
-        elif config.container.runtime == "apptainer":
-            from .apptainer import ApptainerRuntime
-
-            return ApptainerRuntime().is_running(config)
+        ct_result = self._delegate_container(config, "is_running")
+        if ct_result is not None:
+            return ct_result
 
         return self._get_mux(config).exists(config.screen_name)
 
     def logs(self, config: AgentConfig, lines: int = 50) -> str:
         """Get logs from the Claude Code agent."""
         if _should_dispatch_remote(config):
-            return SSHRemote.logs(config, lines)
+            return ""
 
-        if config.container.runtime == "docker":
-            from .docker import DockerRuntime
-
-            return DockerRuntime().logs(config, lines)
-        elif config.container.runtime == "podman":
-            from .podman import PodmanRuntime
-
-            return PodmanRuntime().logs(config, lines)
-        elif config.container.runtime == "apptainer":
-            from .apptainer import ApptainerRuntime
-
-            return ApptainerRuntime().logs(config, lines)
+        ct_result = self._delegate_container(config, "logs", lines)
+        if ct_result is not None:
+            return ct_result
 
         return self._get_mux(config).capture_logs(config.screen_name, lines)
+
+
+def start_tmux_runner(
+    config: AgentConfig,
+    *,
+    no_preflight: bool = False,
+    force: bool = False,
+    dry_run: bool = False,
+) -> bool:
+    """Entry point used by the lifecycle layer for the tmux runtime.
+
+    Mirrors the SDK runner's ``ClaudeSessionRuntime().start`` signature
+    so the dispatcher can call either one through the same shape.
+    """
+    return ClaudeCodeRuntime().start(
+        config, no_preflight=no_preflight, force=force, dry_run=dry_run
+    )
+
+
+__all__ = ["ClaudeCodeRuntime", "start_tmux_runner"]
