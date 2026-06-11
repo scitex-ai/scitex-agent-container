@@ -437,15 +437,21 @@ class TestValidateConfig:
 
 
 class TestSkillsSpec:
-    def test_default_skills_required_is_empty(self):
-        # Arrange
+    def test_default_skills_required_carries_base_defaults(self):
+        # Arrange — even a minimal v3 spec (no `spec.skills` block, which
+        # v3 rejects anyway) must inherit the fleet-wide base defaults
+        # (e.g. `scitex-todo`) so every agent loads them at startup.
+        from scitex_agent_container.config._parsers._skills_defaults import (
+            BASE_REQUIRED_SKILLS,
+        )
+
         path = _write_config(MINIMAL_CONFIG)
         try:
             config = load_config(path)
             # Act
             value = config.skills.required
             # Assert
-            assert value == []
+            assert value == list(BASE_REQUIRED_SKILLS)
         finally:
             Path(path).unlink()
 

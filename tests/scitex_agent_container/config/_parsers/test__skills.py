@@ -3,11 +3,17 @@
 Each test pins exactly one observable behaviour of the parser. The
 ``spec.skills`` block is optional and accepts three shapes that all
 collapse to a :class:`SkillsSpec`: missing or ``None`` yields documented
-defaults; a dict carries ``required``/``available`` lists verbatim;
+defaults; a dict carries ``available`` verbatim and merges the
+fleet-wide ``BASE_REQUIRED_SKILLS`` ahead of ``required``;
 ``injection_mode``, ``match_by`` and ``match_style`` are validated
 against fixed enumerations with documented fallback values
 (``at-import``, ``["skill-id", "tag"]``, ``exact``). ``injection_mode``
 and ``match_style`` strip surrounding whitespace before validation.
+
+The base-default merge behaviour is itself pinned in
+:mod:`test__skills_defaults` (the merge function's own contract);
+the tests here only assert that ``parse_skills`` actually CALLS that
+merge, so a regression that bypasses it surfaces in this file.
 
 TQ cleanup: module docstring summarises intent (TQ001); every test
 carries AAA markers (TQ002); descriptive names spell out the verified
@@ -21,6 +27,9 @@ from __future__ import annotations
 import pytest
 
 from scitex_agent_container.config._parsers._skills import parse_skills
+from scitex_agent_container.config._parsers._skills_defaults import (
+    BASE_REQUIRED_SKILLS,
+)
 
 # ---------------------------------------------------------------------------
 # Missing skills block -> default SkillsSpec
@@ -30,7 +39,12 @@ from scitex_agent_container.config._parsers._skills import parse_skills
 @pytest.mark.parametrize(
     ("attr", "expected"),
     [
-        ("required", []),
+        # `required` is the fleet-wide base defaults merged into the
+        # (here empty) per-spec list — pinned to the constant so a
+        # future addition to BASE_REQUIRED_SKILLS reflows this test
+        # without an edit, and a regression that bypasses the merge
+        # surfaces here.
+        ("required", list(BASE_REQUIRED_SKILLS)),
         ("available", []),
         ("injection_mode", "at-import"),
         ("match_by", ["skill-id", "tag"]),
@@ -152,13 +166,23 @@ def test_partial_match_style_is_accepted():
 # ---------------------------------------------------------------------------
 
 
-def test_required_list_is_passed_through_verbatim():
+def test_required_list_is_merged_with_base_defaults():
     # Arrange
     spec = {"skills": {"required": ["a"], "available": ["b", "c"]}}
     # Act
     result = parse_skills(spec)
+    # Assert (base defaults prepended; per-spec entry preserved after)
+    assert result.required == [*BASE_REQUIRED_SKILLS, "a"]
+
+
+def test_required_list_deduplicates_per_spec_against_base_defaults():
+    # Arrange — operator put `scitex-todo` in the per-spec list too;
+    # the merged output must NOT contain a duplicate.
+    spec = {"skills": {"required": ["scitex-todo", "a"]}}
+    # Act
+    result = parse_skills(spec)
     # Assert
-    assert result.required == ["a"]
+    assert result.required == ["scitex-todo", "a"]
 
 
 def test_available_list_is_passed_through_verbatim():
