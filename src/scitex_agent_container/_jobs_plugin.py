@@ -38,7 +38,17 @@ def provide_jobs() -> "list[JobSpec]":
                 "accounts, skipping the active one (avoids refresh-token "
                 "rotation race)."
             ),
-            kind="systemd",
+            # 2026-06-11 (lead msg c5212862): scitex_dev.jobs.JobSpec kind
+            # taxonomy is {"service","timer","cron"} since scitex-dev #153.
+            # ``sac.accounts-refresh`` is a periodic systemd --user timer
+            # (token TTL ~7h, refresh every 2h) → ``kind="timer"`` with the
+            # cadence carried by ``on_unit_active_sec`` below. The legacy
+            # ``kind="systemd"`` is no longer accepted; it raises
+            # ``ValueError`` at construction time and ``scitex-dev
+            # ecosystem up`` silently drops sac's whole provider
+            # (provider-isolated, WARN-only), leaving the OAuth refresh
+            # unmanaged.
+            kind="timer",
             on_boot_sec="15min",
             on_unit_active_sec="2h",
             timeout_sec=120,
