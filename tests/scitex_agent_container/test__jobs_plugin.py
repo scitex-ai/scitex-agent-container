@@ -19,7 +19,7 @@ jobs_mod = pytest.importorskip(
     reason="installed scitex-dev predates the scitex_dev.jobs contract",
 )
 
-from scitex_agent_container._jobs_plugin import provide_jobs
+from scitex_agent_container._jobs_plugin import provide_jobs  # noqa: E402
 
 
 def test_provider_returns_single_job() -> None:
@@ -54,12 +54,26 @@ def test_provider_job_command_skips_active() -> None:
     assert job.command == "sac accounts refresh --all --skip-active"
 
 
-def test_provider_job_kind_is_systemd() -> None:
-    # Arrange — call the registered provider.
+def test_provider_job_kind_is_timer() -> None:
+    # Arrange — call the registered provider. The legacy ``kind=
+    # "systemd"`` is no longer accepted by JobSpec.validate() since
+    # scitex-dev #153; ``sac.accounts-refresh`` is a periodic
+    # systemd --user timer (token TTL ~7h, refresh every 2h) so the
+    # canonical kind is ``"timer"`` (lead msg c5212862, 2026-06-11).
     # Act
     job = provide_jobs()[0]
     # Assert
-    assert job.kind == "systemd"
+    assert job.kind == "timer"
+
+
+def test_every_provided_job_uses_an_allowed_kind() -> None:
+    # Arrange — defensive: even when a new entry is added without a
+    # paired pinning test, the taxonomy gate still fires here so the
+    # whole provider is never silently dropped by ``ecosystem up``.
+    # Act
+    kinds = {j.kind for j in provide_jobs()}
+    # Assert — JobSpec.ALLOWED_KINDS is the canonical taxonomy.
+    assert kinds <= jobs_mod.ALLOWED_KINDS
 
 
 def test_provider_job_cadence_is_two_hours() -> None:
