@@ -23,8 +23,6 @@ from __future__ import annotations
 
 import dataclasses
 
-import pytest
-
 from scitex_agent_container._account.rate_limit_classifier import (
     AccountUsageSnapshot,
     Mode,
