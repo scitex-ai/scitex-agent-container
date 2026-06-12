@@ -56,13 +56,25 @@ SHARED_TOKEN = "test-token-wi4"
 
 @pytest.fixture
 def isolated_env(tmp_path: Path):
-    """Point every on-disk root at ``tmp_path`` for the duration of one test."""
+    """Point every on-disk root at ``tmp_path`` for the duration of one test.
+
+    The self-peer discovery (op-2026-06-12-15) calls
+    :func:`config._resolve._project_local_dirs` which walks CWD
+    upward for ``.scitex/agent-container/agents/`` — the sac repo's
+    own checked-in ``agents/self/spec.yaml`` would otherwise leak
+    into every ``list_agents`` response. Stub that helper to ``[]``
+    for the test's lifetime so the only sources are the tmp_path-
+    rooted registry + ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` (popped).
+    """
+    from scitex_agent_container.config import _resolve as _config_resolve
+
     saved_home = os.environ.get("HOME")
     saved_reg_env = os.environ.get("SCITEX_AGENT_CONTAINER_REGISTRY_DIR")
     saved_run_env = os.environ.get("SCITEX_AGENT_CONTAINER_RUNTIME_DIR")
     saved_yaml_env = os.environ.get("SCITEX_AGENT_CONTAINER_YAML_DIRS")
     saved_reg_const = _reg.REGISTRY_DIR
     saved_state_const = _ss.DEFAULT_STATE_ROOT
+    saved_project_local = _config_resolve._project_local_dirs
 
     os.environ["HOME"] = str(tmp_path)
     os.environ["SCITEX_AGENT_CONTAINER_REGISTRY_DIR"] = str(tmp_path / "registry")
@@ -70,12 +82,14 @@ def isolated_env(tmp_path: Path):
     os.environ.pop("SCITEX_AGENT_CONTAINER_YAML_DIRS", None)
     _reg.REGISTRY_DIR = tmp_path / "registry"
     _ss.DEFAULT_STATE_ROOT = tmp_path / "runtime"
+    _config_resolve._project_local_dirs = lambda start=None: []
 
     try:
         yield tmp_path
     finally:
         _reg.REGISTRY_DIR = saved_reg_const
         _ss.DEFAULT_STATE_ROOT = saved_state_const
+        _config_resolve._project_local_dirs = saved_project_local
         for key, val in (
             ("HOME", saved_home),
             ("SCITEX_AGENT_CONTAINER_REGISTRY_DIR", saved_reg_env),

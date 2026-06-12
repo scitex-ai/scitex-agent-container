@@ -1,0 +1,25 @@
+# Generic self-register spec (op-2026-06-12-15, TG 12631 → 12638).
+#
+# The literal ``agents/self/`` directory is the SSoT for
+# "register the RUNNING session". The actual peer name comes from
+# the running listen's RUNTIME IDENTITY (resolved by
+# scitex_agent_container._listen.server._resolve_runtime_self_identity,
+# which reads host_config.lead.name) — NOT from a hard-coded
+# ``name:`` field below. That keeps the convention completely
+# generic: no node is special-cased anywhere in code.
+#
+# Required:
+#   listen_url   — the local listen endpoint this session owns
+#
+# Optional:
+#   description  — short label shown in ``sac a2a peers`` output
+#
+# DO NOT add a ``name:`` field. The dir literal ``self`` plus the
+# listen's runtime identity is the canonical name source.
+#
+# DO NOT add ``apiVersion`` or ``spec:`` — those are the
+# container-agent gates; presence excludes this file from self-peer
+# discovery (see ``_listen/_self_peers.py::is_self_peer_spec``).
+
+listen_url: http://127.0.0.1:7878
+description: "self-registered listen session (runtime identity from host_config)"
