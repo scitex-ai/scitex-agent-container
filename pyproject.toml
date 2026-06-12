@@ -213,6 +213,36 @@ Documentation = "https://scitex-agent-container.readthedocs.io"
 # legitimately expose far more MCP tools than Python-API functions").
 mcp_parity_exempt = true
 
+# §6a — per-package env-var prefix allowlist.
+#
+# scitex-agent-container ships an operator-facing ``SAC_*`` env-var
+# surface that pre-dates the SciTeX-ecosystem ``SCITEX_<PKG>_*``
+# convention. Operator-authored shell exports, ~/.dotfiles, agent
+# spec ``env:`` blocks, and the dotfiles hook ecosystem all reference
+# these literal names; renaming them to ``SCITEX_AGENT_CONTAINER_*``
+# would break every running deployment without buying any operator-
+# visible upside (the brand prefix IS the established operator
+# surface, not a noise-silencer for new code that should have used
+# the canonical prefix).
+#
+# Examples of the surface this opts in:
+#   * ``SAC_LISTEN_BEARER`` / ``SAC_LISTEN_BASE_URL`` — bus auth +
+#     dial address the channel reads at startup.
+#   * ``SAC_HOST`` / ``SAC_NAME`` — runtime identity overrides.
+#   * ``SAC_ANTHROPIC_API_KEY`` / ``SAC_CHANNEL_AUTO_ACK`` —
+#     channel-mode operator toggles.
+#   * ``SAC_SSH_CONTROL_DIR`` / ``SAC_PROBE_LOG_ROOT`` /
+#     ``SAC_HOST_IDENTITY_PATH`` /
+#     ``SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S`` — operations knobs.
+#
+# Spec: scitex_dev/_cli/audit/_summary/_env_allowlist.py — the entry
+# applies "equal-to-stripped or prefix-match", so ``"SAC_"`` matches
+# every ``SAC_*`` env var without listing them individually. New
+# code that does not need brand-compat MUST still use the canonical
+# ``SCITEX_AGENT_CONTAINER_*`` prefix — this allowlist closes the
+# audit-cli ERROR on the legacy surface, not on future regressions.
+env_allowlist = ["SAC_"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/scitex_agent_container"]
 
