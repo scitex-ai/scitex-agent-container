@@ -201,17 +201,28 @@ class ApptainerContainerRuntime(RuntimeBase):
         # no longer scaffolds parent directories — the host dir IS the
         # filesystem at /home/agent. We pre-create the parent on the
         # host side so the bind has somewhere to land.
+        # P3a-2 (operator directive feedback_scitex_todo_single_shared_store,
+        # lead a2a 214dd26d): prepend the fleet-default binds (today:
+        # ~/.scitex/todo for scitex-todo's single shared store) so every
+        # agent inherits the store mount even when its spec doesn't carry
+        # the explicit line. Explicit spec entries to the same destination
+        # override the default — see ``_p3a_default_binds``.
+        from ._p3a_default_binds import apply_default_binds
+
         ap_for_binds = getattr(config, "apptainer", None)
-        if ap_for_binds is not None:
-            for b in getattr(ap_for_binds, "binds", None) or []:
-                bs = str(b)
-                if ":" in bs:
-                    _, _, rest = bs.partition(":")
-                    dst = rest.split(":", 1)[0]
-                    if dst.startswith("/home/agent/"):
-                        rel = dst[len("/home/agent/") :]
-                        (home_host / rel).mkdir(parents=True, exist_ok=True)
-                argv += ["--bind", bs]
+        spec_binds = (
+            [str(b) for b in getattr(ap_for_binds, "binds", None) or []]
+            if ap_for_binds is not None
+            else []
+        )
+        for bs in apply_default_binds(spec_binds):
+            if ":" in bs:
+                _, _, rest = bs.partition(":")
+                dst = rest.split(":", 1)[0]
+                if dst.startswith("/home/agent/"):
+                    rel = dst[len("/home/agent/") :]
+                    (home_host / rel).mkdir(parents=True, exist_ok=True)
+            argv += ["--bind", bs]
 
         # GPU passthrough — apptainer's --nv binds the host CUDA libs
         # and devices into the container. --rocm does the same for AMD.
