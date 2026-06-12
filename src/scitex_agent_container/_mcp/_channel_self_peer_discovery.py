@@ -66,8 +66,17 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 log = logging.getLogger(__name__)
+
+# Type alias for the runtime-identity resolver — a zero-arg callable that
+# returns the running session's runtime identity (``host_config.lead.name``
+# in production) or ``None`` if no identity is configured. Injectable into
+# :func:`discover_self_identity` to avoid monkeypatching the listen-side
+# module in tests (PA-306 §3 no-mocks) and to keep a clean single
+# collaborator boundary.
+RuntimeIdentityResolver = Callable[[], "str | None"]
 
 
 # Relative path under each cwd ancestor that the discovery searches.
@@ -111,30 +120,51 @@ def _walk_upward_for_spec(start: Path) -> Path | None:
         current = parent
 
 
-def _resolve_name(self_identity: str | None) -> str:
-    """Resolve the peer name via the explicit → resolver → literal chain.
+def _default_runtime_resolver() -> str | None:
+    """Default runtime-identity resolver — defers to the listen-side gate.
 
-    Mirrors the listen-side gate so the channel and the listen agree on
-    "who am I". A missing ``self_identity`` AND a ``None`` from the
-    listen-side resolver degrade to the literal ``"self"`` with a
-    WARNING log — the same degraded shape
-    :func:`_listen._self_peers.load_self_peer` produces, by design.
+    Kept separate from :func:`_resolve_name` so callers (and tests) can
+    inject an alternative resolver via the ``runtime_resolver`` parameter
+    on :func:`discover_self_identity` without monkeypatching the listen
+    module. The import is lazy on purpose: callers who pass an explicit
+    ``self_identity`` never pay the listen-server import cost, and
+    callers who inject their own resolver never touch the listen module
+    at all.
     """
-    if self_identity and self_identity.strip():
-        return self_identity
-    # Lazy import to avoid pulling the listen server graph into every
-    # mcp-channel startup when the caller already passed an explicit name.
     try:
         from .._listen.server import _resolve_runtime_self_identity
-    except Exception:  # stx-allow: fallback (reason: listen module import must not block channel startup; degrade to literal "self" with a warning)
+    except Exception:  # stx-allow: fallback (reason: listen module import must not block channel startup; surface as None and let _resolve_name degrade)
         log.warning(
             "sac channel self-discovery: cannot import "
             "_listen.server._resolve_runtime_self_identity; "
             "falling back to literal 'self'"
         )
-        return "self"
+        return None
+    return _resolve_runtime_self_identity()
+
+
+def _resolve_name(
+    self_identity: str | None,
+    runtime_resolver: RuntimeIdentityResolver | None = None,
+) -> str:
+    """Resolve the peer name via the explicit → resolver → literal chain.
+
+    Mirrors the listen-side gate so the channel and the listen agree on
+    "who am I". A missing ``self_identity`` AND a ``None`` from the
+    runtime resolver degrade to the literal ``"self"`` with a WARNING
+    log — the same degraded shape
+    :func:`_listen._self_peers.load_self_peer` produces, by design.
+
+    ``runtime_resolver`` is injected by callers (and tests — PA-306 §3
+    no-mocks) when they want to override the default lazy-import path to
+    :func:`_listen.server._resolve_runtime_self_identity`. ``None``
+    keeps the production default.
+    """
+    if self_identity and self_identity.strip():
+        return self_identity
+    resolver: RuntimeIdentityResolver = runtime_resolver or _default_runtime_resolver
     try:
-        resolved = _resolve_runtime_self_identity()
+        resolved = resolver()
     except Exception:  # stx-allow: fallback (reason: identity resolver errors must never block channel startup; degrade with a warning)
         log.warning(
             "sac channel self-discovery: runtime identity resolver "
@@ -153,7 +183,10 @@ def _resolve_name(self_identity: str | None) -> str:
 
 
 def discover_self_identity(
-    start: Path | None = None, *, self_identity: str | None = None
+    start: Path | None = None,
+    *,
+    self_identity: str | None = None,
+    runtime_resolver: RuntimeIdentityResolver | None = None,
 ) -> DiscoveredSelfIdentity | None:
     """Discover the running session's identity via cwd-walk for the self spec.
 
@@ -162,8 +195,24 @@ def discover_self_identity(
     YAML is gated through
     :func:`_listen._self_peers.is_self_peer_spec` (predicate parity
     with the listen-side discovery). The name is resolved by
-    :func:`_resolve_name`: explicit arg > listen-side runtime
-    identity resolver > literal ``"self"`` (with a WARNING log).
+    :func:`_resolve_name`: explicit arg > runtime resolver > literal
+    ``"self"`` (with a WARNING log).
+
+    Parameters
+    ----------
+    start:
+        Directory to start the upward walk from. Defaults to ``cwd``.
+    self_identity:
+        Explicit runtime identity supplied by the caller (typically
+        ``sac mcp channel --name``). Wins over the resolver.
+    runtime_resolver:
+        Optional zero-arg callable returning the running session's
+        runtime identity (``host_config.lead.name`` in production) or
+        ``None``. ``None`` (the default) defers to
+        :func:`_default_runtime_resolver`, which lazy-imports
+        :func:`_listen.server._resolve_runtime_self_identity`. Tests
+        and embedders inject their own resolver here instead of
+        monkeypatching the listen module — see PA-306 §3 no-mocks.
 
     Returns ``None`` on every failure mode (never raises):
 
@@ -218,7 +267,7 @@ def discover_self_identity(
         else None
     )
 
-    name = _resolve_name(self_identity)
+    name = _resolve_name(self_identity, runtime_resolver=runtime_resolver)
 
     return DiscoveredSelfIdentity(
         name=name,

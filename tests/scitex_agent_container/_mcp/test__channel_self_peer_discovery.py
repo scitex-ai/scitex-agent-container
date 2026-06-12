@@ -23,6 +23,7 @@ import logging
 from pathlib import Path
 
 import pytest
+
 from scitex_agent_container._mcp._channel_self_peer_discovery import (
     DiscoveredSelfIdentity,
     discover_self_identity,
@@ -118,15 +119,13 @@ def test_discover_self_identity_description_is_none_when_absent(tmp_path: Path):
     assert result is not None and result.description is None
 
 
-def test_discover_self_identity_returns_frozen_dataclass(tmp_path: Path):
+def test_discover_self_identity_returns_dataclass_instance(tmp_path: Path):
     # Arrange
     _write_self_spec(tmp_path, "listen_url: http://127.0.0.1:7878\n")
     # Act
     result = discover_self_identity(start=tmp_path, self_identity="x")
-    # Assert: frozen → assignment must raise.
-    assert result is not None
-    with pytest.raises((AttributeError, Exception)):
-        result.name = "mutated"  # type: ignore[misc]
+    # Assert
+    assert isinstance(result, DiscoveredSelfIdentity)
 
 
 # ---------------------------------------------------------------------------
@@ -186,51 +185,44 @@ def test_discover_self_identity_returns_none_on_yaml_parse_error(
 
 
 def test_discover_self_identity_resolves_runtime_identity_when_no_explicit_name(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ):
-    # Arrange: no explicit self_identity → falls back to listen-side resolver.
+    # Arrange: no explicit self_identity → injected resolver wins.
     _write_self_spec(tmp_path, "listen_url: http://127.0.0.1:7878\n")
-    import scitex_agent_container._listen.server as listen_server
-
-    monkeypatch.setattr(
-        listen_server, "_resolve_runtime_self_identity", lambda: "resolved-runtime"
-    )
     # Act
-    result = discover_self_identity(start=tmp_path)
+    result = discover_self_identity(
+        start=tmp_path,
+        runtime_resolver=lambda: "resolved-runtime",
+    )
     # Assert
     assert result is not None and result.name == "resolved-runtime"
 
 
-def test_discover_self_identity_falls_back_to_literal_self_with_warning(
+def test_discover_self_identity_falls_back_to_literal_self_when_resolver_returns_none(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ):
-    # Arrange: no explicit name, resolver returns None → literal "self" + warning.
+    # Arrange: no explicit name, injected resolver returns None.
     _write_self_spec(tmp_path, "listen_url: http://127.0.0.1:7878\n")
-    import scitex_agent_container._listen.server as listen_server
-
-    monkeypatch.setattr(listen_server, "_resolve_runtime_self_identity", lambda: None)
     caplog.set_level(logging.WARNING)
     # Act
-    result = discover_self_identity(start=tmp_path)
+    result = discover_self_identity(
+        start=tmp_path,
+        runtime_resolver=lambda: None,
+    )
     # Assert
     assert result is not None and result.name == "self"
 
 
 def test_discover_self_identity_literal_self_fallback_logs_warning(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ):
     # Arrange
     _write_self_spec(tmp_path, "listen_url: http://127.0.0.1:7878\n")
-    import scitex_agent_container._listen.server as listen_server
-
-    monkeypatch.setattr(listen_server, "_resolve_runtime_self_identity", lambda: None)
     caplog.set_level(logging.WARNING)
     # Act
-    discover_self_identity(start=tmp_path)
+    discover_self_identity(start=tmp_path, runtime_resolver=lambda: None)
     # Assert: at least one WARNING was logged.
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) >= 1
@@ -242,29 +234,49 @@ def test_discover_self_identity_literal_self_fallback_logs_warning(
 
 
 def test_discovered_self_identity_has_required_fields():
-    # Arrange + Act
+    # Arrange
+    name = "x"
+    listen_url = "http://h:1"
+    spec_path = Path("/tmp/spec.yaml")
+    description = "d"
+    # Act
+    obj = DiscoveredSelfIdentity(
+        name=name,
+        listen_url=listen_url,
+        spec_path=spec_path,
+        description=description,
+    )
+    # Assert
+    assert (
+        obj.name == name
+        and obj.listen_url == listen_url
+        and obj.spec_path == spec_path
+        and obj.description == description
+    )
+
+
+def test_discovered_self_identity_description_allows_none():
+    # Arrange
+    kwargs = dict(
+        name="x",
+        listen_url="http://h:1",
+        spec_path=Path("/tmp/spec.yaml"),
+        description=None,
+    )
+    # Act
+    obj = DiscoveredSelfIdentity(**kwargs)
+    # Assert
+    assert obj.description is None
+
+
+def test_discovered_self_identity_is_frozen():
+    # Arrange
     obj = DiscoveredSelfIdentity(
         name="x",
         listen_url="http://h:1",
         spec_path=Path("/tmp/spec.yaml"),
         description="d",
     )
-    # Assert
-    assert (
-        obj.name == "x"
-        and obj.listen_url == "http://h:1"
-        and obj.spec_path == Path("/tmp/spec.yaml")
-        and obj.description == "d"
-    )
-
-
-def test_discovered_self_identity_description_allows_none():
-    # Arrange + Act
-    obj = DiscoveredSelfIdentity(
-        name="x",
-        listen_url="http://h:1",
-        spec_path=Path("/tmp/spec.yaml"),
-        description=None,
-    )
-    # Assert
-    assert obj.description is None
+    # Act + Assert: frozen dataclass → field assignment must raise.
+    with pytest.raises(Exception):
+        obj.name = "mutated"  # type: ignore[misc]
