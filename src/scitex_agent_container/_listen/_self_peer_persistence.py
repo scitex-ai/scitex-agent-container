@@ -197,12 +197,20 @@ def persist_discovered_self_peers(
             )
             continue
         try:
+            spec_path = peer.get("config") if isinstance(peer, Mapping) else None
             register_comms_node(
                 name=name,
                 host=host,
                 a2a_port=port,
                 source_host=None,  # locally-discovered
                 db_path=db_path,
+                # PR L1 (operator directive 12847) — discriminator for
+                # the loud-collision error message. Q4 always writes
+                # self-peer rows; the discovered spec file's path goes
+                # in ``source_path`` so a collision visibly names WHICH
+                # spec.yaml tried to register.
+                kind="self-peer",
+                source_path=str(spec_path) if spec_path else None,
             )
             written += 1
         except CommsNodeConflictError as exc:
