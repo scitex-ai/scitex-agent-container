@@ -277,6 +277,11 @@ def test_discovered_self_identity_is_frozen():
         spec_path=Path("/tmp/spec.yaml"),
         description="d",
     )
-    # Act + Assert: frozen dataclass → field assignment must raise.
-    with pytest.raises(Exception):
+    raised: Exception | None = None
+    # Act: attempt to mutate a frozen-dataclass field.
+    try:
         obj.name = "mutated"  # type: ignore[misc]
+    except Exception as exc:  # stx-allow: test-capture (reason: STX-TQ002 splits Act from Assert; frozen mutation is the Act, capturing the exc lets the Assert check it.)
+        raised = exc
+    # Assert
+    assert raised is not None
