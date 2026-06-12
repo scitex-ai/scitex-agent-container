@@ -66,6 +66,13 @@ _KNOWN_TOP_LEVEL_KEYS = frozenset({"apiVersion", "kind", "metadata", "spec"})
 # else is rejected at parse time.
 _VALID_KINDS = frozenset({"Agent", "AgentProxy"})
 
+# spec.runtime — LAUNCH-MODE selector (operator directive 12870, lead
+# a2a b58dd5d3). Repurposed from the legacy container-engine selector
+# (degenerate since sac became apptainer-only on 2026-05-13). ``""``
+# and ``"apptainer"`` are accepted as back-compat and mapped to
+# ``"claude-agent-sdk"`` at dispatch — see ``_lifecycle/_runtime_select``.
+_VALID_RUNTIMES = frozenset({"claude-agent-sdk", "tui", "apptainer", ""})
+
 
 _SDK_IMAGE = "scitex-agent-container:scitex"
 
@@ -221,15 +228,20 @@ def validate_raw(raw: dict, path: str) -> list[str]:
                 f"known keys: {sorted(_KNOWN_SPEC_KEYS)}."
             )
 
-        # spec.runtime — sac is apptainer-only since the docker/podman
-        # ripout (2026-05-13). Empty/unset is accepted and defaults to
-        # apptainer at dispatch.
+        # spec.runtime — LAUNCH-MODE selector (operator directive 12870,
+        # lead a2a b58dd5d3). Repurposed from the legacy container-engine
+        # selector (degenerate since sac became apptainer-only on
+        # 2026-05-13). See _VALID_RUNTIMES + _runtime_select for the
+        # accepted values + back-compat mapping.
         runtime = spec.get("runtime")
-        if runtime and runtime != "apptainer":
+        if runtime and runtime not in _VALID_RUNTIMES:
             errors.append(
-                f"spec.runtime must be 'apptainer' (got '{runtime}'). "
-                "Sac is apptainer-only since 2026-05-13; docker / podman "
-                "support was removed for simplicity."
+                f"spec.runtime must be one of {sorted(_VALID_RUNTIMES)} "
+                f"(got '{runtime}'). 'claude-agent-sdk' (default) =  "
+                "headless SDK runner; 'tui' = tmux-backed interactive "
+                "Claude TUI; 'apptainer' / '' = back-compat for the "
+                "pre-2026-06-13 container-engine field, mapped to "
+                "'claude-agent-sdk' at dispatch."
             )
 
         # spec.image — moved to spec.apptainer.image in v3 (handled by the
