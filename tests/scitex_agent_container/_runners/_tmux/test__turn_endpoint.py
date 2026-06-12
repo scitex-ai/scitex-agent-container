@@ -8,6 +8,12 @@ contract:
 * pane delta returned on ready-marker detection
 * timeout raises with the partial pane delta on the exception
 * timeout DOES NOT call ``kill-session`` (the multiplexer survives)
+
+Test style (project standards — STX-TQ002 / STX-TQ007):
+* Each test carries explicit ``# Arrange`` / ``# Act`` / ``# Assert``
+  markers on their own lines in order.
+* One assertion per test. Multi-assert observations are split across
+  one-assert-per-test functions so the precise failure surfaces.
 """
 
 from __future__ import annotations
@@ -30,7 +36,7 @@ NOT_READY_TAIL = "\nWorking…  esc to interrupt\n"
 
 
 # ---------------------------------------------------------------------------
-# Fake TmuxDriver
+# Fake TmuxDriver (in-test real implementation, not a mock)
 # ---------------------------------------------------------------------------
 
 
@@ -95,23 +101,61 @@ def _fake_sleep_clock():
 
 
 # ---------------------------------------------------------------------------
-# Tests
+# inject_turn — send-keys argv sequence
 # ---------------------------------------------------------------------------
 
 
-def test_inject_turn_sends_text_then_enter_in_separate_calls():
-    """B.1 contract: bridge issues exactly ``text`` then ``Enter``.
-
-    Mirrors the salvaged ``TmuxManager.send_text_and_submit`` insight:
-    the two keystrokes must be SEPARATE ``send-keys`` calls (a
-    trailing ``\\r`` would be sent as raw input and the TUI sometimes
-    drops it during a re-render).
-    """
+def _ready_tmux_after_one_turn() -> "FakeTmux":
+    """Helper: a FakeTmux that returns baseline first, then a ready pane."""
     pane_baseline = "❯  \n"
     pane_ready = pane_baseline + READY_TAIL
-    fake = FakeTmux([pane_baseline, pane_ready])
-    sleep, mono = _fake_sleep_clock()
+    return FakeTmux([pane_baseline, pane_ready])
 
+
+def test_inject_turn_send_calls_first_entry_is_text():
+    """B.1: bridge issues the prompt text as its first send-keys call."""
+    # Arrange
+    fake = _ready_tmux_after_one_turn()
+    sleep, mono = _fake_sleep_clock()
+    # Act
+    inject_turn(
+        fake,
+        "sac-claude",
+        "hello world",
+        timeout_s=10.0,
+        poll_interval_s=0.5,
+        sleep_fn=sleep,
+        monotonic_fn=mono,
+    )
+    # Assert
+    assert fake.send_calls[0] == ("sac-claude", "hello world")
+
+
+def test_inject_turn_send_calls_second_entry_is_enter():
+    """B.1: bridge issues Enter as a SEPARATE send-keys call (trailing
+    ``\\r`` in the text would be dropped by the TUI on a re-render)."""
+    # Arrange
+    fake = _ready_tmux_after_one_turn()
+    sleep, mono = _fake_sleep_clock()
+    # Act
+    inject_turn(
+        fake,
+        "sac-claude",
+        "hello world",
+        timeout_s=10.0,
+        poll_interval_s=0.5,
+        sleep_fn=sleep,
+        monotonic_fn=mono,
+    )
+    # Assert
+    assert fake.send_calls[1] == ("sac-claude", "Enter")
+
+
+def test_inject_turn_returns_turn_result_instance():
+    # Arrange
+    fake = _ready_tmux_after_one_turn()
+    sleep, mono = _fake_sleep_clock()
+    # Act
     result = inject_turn(
         fake,
         "sac-claude",
@@ -121,23 +165,46 @@ def test_inject_turn_sends_text_then_enter_in_separate_calls():
         sleep_fn=sleep,
         monotonic_fn=mono,
     )
-
-    # Exactly the inject keystrokes: text first, then Enter.
-    assert fake.send_calls == [
-        ("sac-claude", "hello world"),
-        ("sac-claude", "Enter"),
-    ]
+    # Assert
     assert isinstance(result, TurnResult)
+
+
+def test_inject_turn_result_not_timed_out_on_ready():
+    # Arrange
+    fake = _ready_tmux_after_one_turn()
+    sleep, mono = _fake_sleep_clock()
+    # Act
+    result = inject_turn(
+        fake,
+        "sac-claude",
+        "hello world",
+        timeout_s=10.0,
+        poll_interval_s=0.5,
+        sleep_fn=sleep,
+        monotonic_fn=mono,
+    )
+    # Assert
     assert not result.timed_out
 
 
-def test_inject_turn_returns_pane_delta_on_ready():
-    """B contract: bridge returns the suffix that appeared post-injection."""
+# ---------------------------------------------------------------------------
+# inject_turn — pane delta semantics
+# ---------------------------------------------------------------------------
+
+
+def _delta_scenario_fake() -> "FakeTmux":
+    """Helper: baseline then a ready pane containing 'assistant reply here'."""
     baseline = "previous turn output\n❯  \n"
     after_ready = baseline + "assistant reply here\n" + READY_TAIL
-    fake = FakeTmux([baseline, after_ready])
-    sleep, mono = _fake_sleep_clock()
+    return FakeTmux([baseline, after_ready])
 
+
+def test_inject_turn_delta_contains_post_injection_reply():
+    """B contract: returned text contains the post-injection suffix."""
+    # Arrange
+    fake = _delta_scenario_fake()
+    sleep, mono = _fake_sleep_clock()
+    # Act
     result = inject_turn(
         fake,
         "sac-x",
@@ -147,23 +214,66 @@ def test_inject_turn_returns_pane_delta_on_ready():
         sleep_fn=sleep,
         monotonic_fn=mono,
     )
-
-    assert not result.timed_out
+    # Assert
     assert "assistant reply here" in result.text
-    # The delta is the suffix after baseline, not the full pane.
+
+
+def test_inject_turn_delta_does_not_contain_pre_injection_baseline():
+    """The delta is the suffix after baseline, not the full pane."""
+    # Arrange
+    fake = _delta_scenario_fake()
+    sleep, mono = _fake_sleep_clock()
+    # Act
+    result = inject_turn(
+        fake,
+        "sac-x",
+        "what is 2+2",
+        timeout_s=10.0,
+        poll_interval_s=0.5,
+        sleep_fn=sleep,
+        monotonic_fn=mono,
+    )
+    # Assert
     assert "previous turn output" not in result.text
+
+
+def test_inject_turn_poll_count_one_when_ready_on_first_capture():
+    # Arrange
+    fake = _delta_scenario_fake()
+    sleep, mono = _fake_sleep_clock()
+    # Act
+    result = inject_turn(
+        fake,
+        "sac-x",
+        "what is 2+2",
+        timeout_s=10.0,
+        poll_interval_s=0.5,
+        sleep_fn=sleep,
+        monotonic_fn=mono,
+    )
+    # Assert
     assert result.poll_count == 1
 
 
-def test_inject_turn_raises_on_timeout_no_ready_marker():
-    """B contract: bridge raises after N polls without a ready marker."""
+# ---------------------------------------------------------------------------
+# inject_turn — timeout semantics
+# ---------------------------------------------------------------------------
+
+
+def _busy_forever_fake() -> "FakeTmux":
+    """Helper: pane stays 'busy' (no ready marker) forever."""
     baseline = "❯  \n"
     busy = baseline + NOT_READY_TAIL
-    # Pane stays "busy" forever — ready marker never appears.
-    fake = FakeTmux([baseline, busy])
-    sleep, mono = _fake_sleep_clock()
+    return FakeTmux([baseline, busy])
 
-    with pytest.raises(TurnTimeoutError) as excinfo:
+
+def test_inject_turn_raises_turn_timeout_when_ready_never_appears():
+    """B contract: bridge raises after N polls without a ready marker."""
+    # Arrange
+    fake = _busy_forever_fake()
+    sleep, mono = _fake_sleep_clock()
+    # Act / Assert
+    with pytest.raises(TurnTimeoutError):
         inject_turn(
             fake,
             "sac-y",
@@ -174,25 +284,77 @@ def test_inject_turn_raises_on_timeout_no_ready_marker():
             monotonic_fn=mono,
         )
 
-    err = excinfo.value
-    assert err.session == "sac-y"
-    assert err.result.timed_out is True
-    # Partial pane delta is carried on the exception so the HTTP layer
-    # can surface it in the 504 body.
-    assert "Working" in err.result.text or err.result.text == ""
+
+def test_inject_turn_timeout_carries_session_on_exception():
+    # Arrange
+    fake = _busy_forever_fake()
+    sleep, mono = _fake_sleep_clock()
+    # Act
+    with pytest.raises(TurnTimeoutError) as excinfo:
+        inject_turn(
+            fake,
+            "sac-y",
+            "hung turn",
+            timeout_s=3.0,
+            poll_interval_s=1.0,
+            sleep_fn=sleep,
+            monotonic_fn=mono,
+        )
+    # Assert
+    assert excinfo.value.session == "sac-y"
 
 
-def test_inject_turn_does_not_kill_session_on_timeout():
+def test_inject_turn_timeout_carries_timed_out_flag_on_exception():
+    # Arrange
+    fake = _busy_forever_fake()
+    sleep, mono = _fake_sleep_clock()
+    # Act
+    with pytest.raises(TurnTimeoutError) as excinfo:
+        inject_turn(
+            fake,
+            "sac-y",
+            "hung turn",
+            timeout_s=3.0,
+            poll_interval_s=1.0,
+            sleep_fn=sleep,
+            monotonic_fn=mono,
+        )
+    # Assert
+    assert excinfo.value.result.timed_out is True
+
+
+def test_inject_turn_timeout_carries_partial_pane_delta_on_exception():
+    """Partial pane delta is carried on the exception so the HTTP layer
+    can surface it in the 504 body."""
+    # Arrange
+    fake = _busy_forever_fake()
+    sleep, mono = _fake_sleep_clock()
+    # Act
+    with pytest.raises(TurnTimeoutError) as excinfo:
+        inject_turn(
+            fake,
+            "sac-y",
+            "hung turn",
+            timeout_s=3.0,
+            poll_interval_s=1.0,
+            sleep_fn=sleep,
+            monotonic_fn=mono,
+        )
+    # Assert — accept either the busy marker or an empty partial delta.
+    text = excinfo.value.result.text
+    assert "Working" in text or text == ""
+
+
+def test_inject_turn_timeout_does_not_kill_session():
     """B.4 contract: bridge MUST leave the tmux session alive on timeout.
 
     A turn timeout might just mean a long tool call; killing the
     multiplexer would wipe the agent's whole TUI state.
     """
-    baseline = "❯  \n"
-    busy = baseline + NOT_READY_TAIL
-    fake = FakeTmux([baseline, busy])
+    # Arrange
+    fake = _busy_forever_fake()
     sleep, mono = _fake_sleep_clock()
-
+    # Act
     with pytest.raises(TurnTimeoutError):
         inject_turn(
             fake,
@@ -203,39 +365,80 @@ def test_inject_turn_does_not_kill_session_on_timeout():
             sleep_fn=sleep,
             monotonic_fn=mono,
         )
-
-    # Bridge MUST NOT have asked the driver to kill the session.
+    # Assert
     assert fake.kill_calls == []
-    # Bridge does not even probe session_exists for kill-decisions —
-    # it simply re-raises. The send_keys log must show no follow-up
-    # cancellation key (e.g., C-c) being injected either.
-    cancel_seq = ("sac-z", "C-c")
-    assert cancel_seq not in fake.send_calls
+
+
+def test_inject_turn_timeout_does_not_inject_cancel_keys():
+    """The bridge does not even probe session_exists for kill-decisions —
+    it simply re-raises. The send_keys log must show no follow-up
+    cancellation key (e.g., C-c) being injected either."""
+    # Arrange
+    fake = _busy_forever_fake()
+    sleep, mono = _fake_sleep_clock()
+    # Act
+    with pytest.raises(TurnTimeoutError):
+        inject_turn(
+            fake,
+            "sac-z",
+            "no-reply",
+            timeout_s=2.0,
+            poll_interval_s=0.5,
+            sleep_fn=sleep,
+            monotonic_fn=mono,
+        )
+    # Assert
+    assert ("sac-z", "C-c") not in fake.send_calls
+
+
+# ---------------------------------------------------------------------------
+# _pane_delta helper
+# ---------------------------------------------------------------------------
 
 
 def test_pane_delta_returns_tail_when_baseline_is_prefix():
     """``_pane_delta`` returns the suffix when the baseline is a prefix."""
-    assert _pane_delta("abc\n", "abc\nDEF\n") == "DEF\n"
+    # Arrange
+    baseline = "abc\n"
+    current = "abc\nDEF\n"
+    # Act
+    delta = _pane_delta(baseline, current)
+    # Assert
+    assert delta == "DEF\n"
 
 
 def test_pane_delta_returns_full_current_when_baseline_not_prefix():
     """When the pane has scrolled out of view, return ``current`` verbatim."""
-    assert _pane_delta("abc\n", "completely different\n") == ("completely different\n")
+    # Arrange
+    baseline = "abc\n"
+    current = "completely different\n"
+    # Act
+    delta = _pane_delta(baseline, current)
+    # Assert
+    assert delta == "completely different\n"
 
 
-def test_inject_turn_keeps_polling_until_ready_marker_appears():
-    """The poll loop spins through busy states before finding ready."""
+# ---------------------------------------------------------------------------
+# inject_turn — polling loop semantics
+# ---------------------------------------------------------------------------
+
+
+def _multi_poll_states() -> list[str]:
     baseline = "❯  \n"
-    states = [
+    return [
         baseline,
         baseline + NOT_READY_TAIL,
         baseline + NOT_READY_TAIL,
         baseline + "partial reply\n" + NOT_READY_TAIL,
         baseline + "full reply\n" + READY_TAIL,
     ]
-    fake = FakeTmux(states)
-    sleep, mono = _fake_sleep_clock()
 
+
+def test_inject_turn_does_not_time_out_when_ready_eventually_appears():
+    # Arrange
+    fake = FakeTmux(_multi_poll_states())
+    sleep, mono = _fake_sleep_clock()
+    # Act
     result = inject_turn(
         fake,
         "sac-poll",
@@ -245,19 +448,52 @@ def test_inject_turn_keeps_polling_until_ready_marker_appears():
         sleep_fn=sleep,
         monotonic_fn=mono,
     )
-
+    # Assert
     assert not result.timed_out
+
+
+def test_inject_turn_text_contains_full_reply_after_polling():
+    # Arrange
+    fake = FakeTmux(_multi_poll_states())
+    sleep, mono = _fake_sleep_clock()
+    # Act
+    result = inject_turn(
+        fake,
+        "sac-poll",
+        "multi-poll turn",
+        timeout_s=100.0,
+        poll_interval_s=1.0,
+        sleep_fn=sleep,
+        monotonic_fn=mono,
+    )
+    # Assert
     assert "full reply" in result.text
+
+
+def test_inject_turn_poll_count_at_least_two_when_multi_poll():
+    # Arrange
+    fake = FakeTmux(_multi_poll_states())
+    sleep, mono = _fake_sleep_clock()
+    # Act
+    result = inject_turn(
+        fake,
+        "sac-poll",
+        "multi-poll turn",
+        timeout_s=100.0,
+        poll_interval_s=1.0,
+        sleep_fn=sleep,
+        monotonic_fn=mono,
+    )
+    # Assert
     assert result.poll_count >= 2
 
 
-def test_inject_turn_session_survives_on_repeated_failures():
+def test_inject_turn_session_never_killed_across_repeated_failures():
     """Even after many failed turns, the bridge never escalates to kill."""
-    baseline = "❯  \n"
-    busy = baseline + NOT_READY_TAIL
-    fake = FakeTmux([baseline, busy])
+    # Arrange
+    fake = _busy_forever_fake()
     sleep, mono = _fake_sleep_clock()
-
+    # Act
     for _ in range(3):
         with pytest.raises(TurnTimeoutError):
             inject_turn(
@@ -269,5 +505,5 @@ def test_inject_turn_session_survives_on_repeated_failures():
                 sleep_fn=sleep,
                 monotonic_fn=mono,
             )
-
+    # Assert
     assert fake.kill_calls == []
