@@ -24,10 +24,11 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 __all__ = [
     "CommsNodeConflictError",
+    "RegisterCommsNodeKind",
     "list_comms_nodes",
     "lookup_comms_node",
     "register_comms_node",
@@ -36,21 +37,52 @@ __all__ = [
 ]
 
 
-class CommsNodeConflictError(RuntimeError):
-    """Two hosts claim the same ``name`` with different ``(host, a2a_port)``.
+RegisterCommsNodeKind = Literal["spec", "self-peer", "manual"]
+"""Discriminator passed by callers of :func:`register_comms_node`.
 
-    Raised by :func:`register_comms_node` when the existing row was
-    sync'd from a different ``source_host`` than the caller and the
-    new (host, a2a_port) pair disagrees with what's already stored.
+``spec`` — the row is being written from the canonical container-spec
+path (``_lifecycle/_instances._record_local_instance`` after a spec-
+driven ``sac start``).
+
+``self-peer`` — the row is being written from a self-peer registration
+path (``_mcp/_channel_self_register.register_self_node`` or the Q4
+``_listen/_self_peer_persistence.persist_discovered_self_peers``).
+
+``manual`` — operator-driven ``sac registry register`` or a test
+fixture. Default when the caller doesn't pass one explicitly. The
+kind is NOT persisted into ``comms_nodes`` (no schema change) — it
+flows into :class:`CommsNodeConflictError`'s message so the operator
+sees WHICH path tried to overwrite WHICH.
+"""
+
+
+class CommsNodeConflictError(RuntimeError):
+    """Two registrations disagree on a ``name``'s ``(host, a2a_port)``.
+
+    Raised by :func:`register_comms_node` whenever a write would
+    silently OVERWRITE an existing row with a different
+    ``(host, a2a_port)``. Two collision shapes share this exception
+    (operator directive 12847 — fail-loud, no silent winner):
+
+    1. **Cross-host conflict.** Existing row was sync'd from
+       ``source_host=A``; the caller registers with
+       ``source_host=B`` and a different ``(host, a2a_port)``.
+       Two hosts independently claim the same name — neither has
+       authority over the other.
+    2. **Same-source different-target conflict (PR L1).** Existing
+       row and caller both have the SAME ``source_host`` (e.g. both
+       are local registrations with ``source_host=None``) but the
+       caller's ``(host, a2a_port)`` differs from what's stored.
+       Until PR L1 this silently last-writer-wins; that is the exact
+       silent-shadow the operator's directive locks out. The caller
+       must pass ``replace=True`` to opt into the overwrite (only
+       reached deliberately through the upcoming ``--prefer`` flag,
+       which is the explicit-client-option half of the directive).
 
     ADR-0014 conflict policy: fail-loud (α) over last-writer-wins (β).
-    Silent LWW would let a misconfigured peer stomp the authoritative
-    row on the next pull; making the operator resolve the collision
-    is the safe default.
-
-    The exception carries enough context (name, existing host/port +
-    source, new host/port + source) for the caller's log line to point
-    at the misconfig directly.
+    The exception carries enough context (kind, source_path, existing
+    host/port + source, new host/port + source) for the caller's log
+    line to point at the misconfig directly.
     """
 
 
@@ -61,10 +93,14 @@ def register_comms_node(
     a2a_port: int,
     source_host: str | None = None,
     db_path: Path | None = None,
+    kind: RegisterCommsNodeKind = "manual",
+    source_path: str | None = None,
+    replace: bool = False,
 ) -> None:
     """Idempotent upsert into ``comms_nodes``.
 
-    Behaviour:
+    Behaviour (PR L1, operator directive 12847 — fail-loud, no silent
+    last-writer-wins overwrite):
 
     * No existing row → INSERT a new one. ``registered_at`` and
       ``updated_at`` are set to ``time.time()``.
@@ -73,14 +109,43 @@ def register_comms_node(
       a tombstoned row, which is the natural way a "node came back"
       sync converges).
     * Existing row with DIFFERENT ``(host, a2a_port)`` AND a different
-      ``source_host`` → raise :class:`CommsNodeConflictError`. Same
-      ``source_host`` overwriting is allowed (the originating host is
-      the authoritative reporter for its own rows).
+      ``source_host`` → raise :class:`CommsNodeConflictError`. Two
+      hosts independently claim the same name; neither has authority
+      over the other (operator-rename is the only resolution).
+    * Existing row with DIFFERENT ``(host, a2a_port)`` but the SAME
+      ``source_host`` — until PR L1 this silently overwrote the row.
+      It now raises :class:`CommsNodeConflictError` UNLESS the caller
+      opts in with ``replace=True``. The opt-in is wired by the
+      upcoming ``--prefer spec|self`` operator flag (the explicit-
+      client-option half of the directive). Default callers — the
+      spec-driven paired-write, the channel self-register, the Q4
+      self-peer persistence — do NOT set ``replace=True``; they catch
+      the exception and log, so a real collision surfaces in the
+      operator's logs and no row is silently shadowed.
 
-    The ``source_host`` distinguishes "I'm hearing about this node
-    from peer X" (sync) from "this is a local registration" (NULL).
-    Two hosts independently claiming the same name is the collision
-    case fail-loud is designed to catch.
+    Parameters
+    ----------
+    kind:
+        Discriminator for the calling path (``spec`` / ``self-peer``
+        / ``manual``). Flows into the error message so the operator
+        sees WHICH path tried to overwrite WHICH; NOT persisted (no
+        schema change). Default ``"manual"`` keeps the existing
+        public surface backwards-compatible for callers that don't
+        pass it (operator-driven ``sac registry register``, tests).
+    source_path:
+        Optional caller-supplied source identifier (the spec file
+        path for ``kind="spec"``, the discovered
+        ``agents/<n>/spec.yaml`` path for ``kind="self-peer"``, a
+        CLI invocation tag for ``kind="manual"``). Surfaces in the
+        error message so the operator can disambiguate by path
+        (per operator's "distinguishable by path anyway" hint).
+    replace:
+        Opt-in to overwrite an existing same-source row with a
+        different ``(host, a2a_port)``. Wired by the ``--prefer``
+        flag once that PR lands; passing it from elsewhere is the
+        explicit-replace contract and bypasses the loud-fail check.
+        Has no effect on the cross-host (different ``source_host``)
+        conflict — that one ALWAYS raises.
     """
     if not name:
         raise ValueError("register_comms_node: name must be non-empty")
@@ -109,8 +174,7 @@ def register_comms_node(
             )
             return
         same_target = (
-            str(existing["host"]) == host
-            and int(existing["a2a_port"]) == a2a_port
+            str(existing["host"]) == host and int(existing["a2a_port"]) == a2a_port
         )
         existing_source = existing["source_host"]
         if same_target:
@@ -121,22 +185,45 @@ def register_comms_node(
                 (now, source_host, name),
             )
             return
-        # Different target — only allow when the SAME source is updating
-        # its own row (e.g. an operator re-bound the listen on a new port).
-        if existing_source == source_host:
-            conn.execute(
-                "UPDATE comms_nodes SET host = ?, a2a_port = ?, "
-                "updated_at = ?, ended_at = NULL WHERE name = ?",
-                (host, a2a_port, now, name),
+        # Different target.
+        if existing_source != source_host:
+            # Cross-host conflict — always raise; operator rename is the
+            # only resolvable path.
+            raise CommsNodeConflictError(
+                f"comms_nodes name conflict for {name!r}: "
+                f"existing=(host={existing['host']!r}, "
+                f"port={int(existing['a2a_port'])}, "
+                f"source={existing_source!r}) "
+                f"new=(kind={kind!r}, host={host!r}, port={a2a_port}, "
+                f"source={source_host!r}, source_path={source_path!r}). "
+                f"ADR-0014: names are globally unique. Rename or "
+                f"unregister one and re-run `sac registry sync --all`."
             )
-            return
-        raise CommsNodeConflictError(
-            f"comms_nodes name conflict for {name!r}: "
-            f"existing=(host={existing['host']!r}, port={int(existing['a2a_port'])}, "
-            f"source={existing_source!r}) "
-            f"new=(host={host!r}, port={a2a_port}, source={source_host!r}). "
-            f"ADR-0014: names are globally unique. Rename or unregister one "
-            f"and re-run `sac registry sync --all`."
+        # Same source, different target. PR L1 (operator directive
+        # 12847) — fail loud on collision, no silent last-writer-wins.
+        if not replace:
+            other_kind = "spec" if kind == "self-peer" else "self-peer pointer"
+            raise CommsNodeConflictError(
+                f"comms_nodes silent-overwrite refused for {name!r} "
+                f"(operator directive 12847, PR L1): "
+                f"existing=(host={existing['host']!r}, "
+                f"port={int(existing['a2a_port'])}, "
+                f"source={existing_source!r}) "
+                f"incoming=(kind={kind!r}, host={host!r}, "
+                f"port={a2a_port}, source={source_host!r}, "
+                f"source_path={source_path!r}). "
+                f"Two registrations for the same name disagree on the "
+                f"(host, a2a_port) target. Resolve by either:\n"
+                f"  - rerunning the canonical writer with "
+                f"`--prefer {kind}` to declare intent (overwrites), or\n"
+                f"  - removing/renaming the conflicting {other_kind} "
+                f"so a single source owns this name."
+            )
+        # Explicit replace — operator-confirmed via --prefer flag.
+        conn.execute(
+            "UPDATE comms_nodes SET host = ?, a2a_port = ?, "
+            "updated_at = ?, ended_at = NULL WHERE name = ?",
+            (host, a2a_port, now, name),
         )
 
 
@@ -208,9 +295,7 @@ def lookup_comms_node(
         "source_host": (
             str(row["source_host"]) if row["source_host"] is not None else None
         ),
-        "ended_at": (
-            float(row["ended_at"]) if row["ended_at"] is not None else None
-        ),
+        "ended_at": (float(row["ended_at"]) if row["ended_at"] is not None else None),
     }
 
 
@@ -264,9 +349,7 @@ def list_comms_nodes(
             "source_host": (
                 str(r["source_host"]) if r["source_host"] is not None else None
             ),
-            "ended_at": (
-                float(r["ended_at"]) if r["ended_at"] is not None else None
-            ),
+            "ended_at": (float(r["ended_at"]) if r["ended_at"] is not None else None),
         }
         for r in rows
     ]

@@ -115,8 +115,18 @@ def record_local_instance(config: AgentConfig, runtime: Any) -> str | None:
                 host=host,
                 a2a_port=int(a2a_port),
                 source_host=None,
+                # PR L1 (operator directive 12847) — discriminator
+                # for the loud-collision error message. ``spec``
+                # claims the spec-driven origin; ``source_path`` is
+                # the agent's spec-resolved file (best-effort —
+                # config.config_path may be None for synthesised
+                # configs from tests).
+                kind="spec",
+                source_path=getattr(config, "config_path", None)
+                or getattr(config, "spec_path", None)
+                or f"<spec:{config.name}>",
             )
-        except Exception:  # stx-allow: fallback (reason: never block agent start on registry write)
+        except Exception:  # stx-allow: fallback (reason: never block agent start on registry write; PR L1's CommsNodeConflictError surfaces here as a logged collision rather than a silent shadow.)
             pass
 
     state_dir = _state_dir_for(config, runtime)
@@ -160,7 +170,9 @@ def end_local_instance(config: AgentConfig, runtime: Any) -> bool:
             from .._state.state_db_nodes import unregister_comms_node
 
             unregister_comms_node(name=config.name)
-        except Exception:  # stx-allow: fallback (reason: never block agent stop on registry write)
+        except (
+            Exception
+        ):  # stx-allow: fallback (reason: never block agent stop on registry write)
             pass
 
     if state_dir is not None:

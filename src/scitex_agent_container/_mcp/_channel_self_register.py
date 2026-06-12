@@ -137,6 +137,14 @@ def register_self_node(
                 a2a_port=port,
                 source_host=None,  # locally-registered
                 db_path=db_path,
+                # PR L1 (operator directive 12847) — discriminator
+                # for the loud-collision error message. The channel
+                # is a self-peer registration source by definition.
+                # ``source_path`` carries the listen_url so a
+                # collision error visibly names the URL the channel
+                # tried to bind.
+                kind="self-peer",
+                source_path=listen_url,
             )
             return True
         except CommsNodeConflictError as exc:

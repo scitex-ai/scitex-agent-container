@@ -189,8 +189,38 @@ def test_register_comms_node_idempotent_same_target(db_path: Path) -> None:
     assert second["updated_at"] >= first["updated_at"]
 
 
-def test_register_comms_node_same_source_can_update_target(db_path: Path) -> None:
-    # Arrange
+def test_register_comms_node_same_source_different_target_raises_without_replace(
+    db_path: Path,
+) -> None:
+    # Arrange — PR L1 (operator directive 12847): same-source same-name
+    # with a DIFFERENT (host, a2a_port) must NOT silently overwrite.
+    register_comms_node(
+        name="lead",
+        host="mba",
+        a2a_port=8642,
+        source_host=None,
+        db_path=db_path,
+    )
+    raised: BaseException | None = None
+    # Act
+    try:
+        register_comms_node(
+            name="lead",
+            host="mba",
+            a2a_port=9000,
+            source_host=None,
+            db_path=db_path,
+        )
+    except CommsNodeConflictError as exc:  # stx-allow: test-capture (reason: STX-TQ002 splits Act from Assert; the function is contracted to raise on same-source different-target without replace=True.)
+        raised = exc
+    # Assert
+    assert isinstance(raised, CommsNodeConflictError)
+
+
+def test_register_comms_node_same_source_different_target_overwrites_with_replace(
+    db_path: Path,
+) -> None:
+    # Arrange — opt-in via replace=True (wired by upcoming --prefer flag).
     register_comms_node(
         name="lead",
         host="mba",
@@ -205,10 +235,175 @@ def test_register_comms_node_same_source_can_update_target(db_path: Path) -> Non
         a2a_port=9000,
         source_host=None,
         db_path=db_path,
+        replace=True,
     )
     info = lookup_comms_node(name="lead", db_path=db_path)
     # Assert
     assert info["a2a_port"] == 9000
+
+
+def test_register_comms_node_error_message_names_incoming_kind(
+    db_path: Path,
+) -> None:
+    # Arrange
+    register_comms_node(
+        name="lead",
+        host="mba",
+        a2a_port=8642,
+        source_host=None,
+        db_path=db_path,
+    )
+    raised: BaseException | None = None
+    # Act
+    try:
+        register_comms_node(
+            name="lead",
+            host="mba",
+            a2a_port=9000,
+            source_host=None,
+            db_path=db_path,
+            kind="self-peer",
+        )
+    except CommsNodeConflictError as exc:  # stx-allow: test-capture (reason: STX-TQ002 splits Act from Assert; the only thing the assert checks is that the message contains the kind.)
+        raised = exc
+    # Assert
+    assert raised is not None and "self-peer" in str(raised)
+
+
+def test_register_comms_node_error_message_names_incoming_source_path(
+    db_path: Path,
+) -> None:
+    # Arrange
+    register_comms_node(
+        name="lead",
+        host="mba",
+        a2a_port=8642,
+        source_host=None,
+        db_path=db_path,
+    )
+    incoming_path = "/home/agent/proj/foo/agents/lead/spec.yaml"
+    raised: BaseException | None = None
+    # Act
+    try:
+        register_comms_node(
+            name="lead",
+            host="mba",
+            a2a_port=9000,
+            source_host=None,
+            db_path=db_path,
+            kind="self-peer",
+            source_path=incoming_path,
+        )
+    except (
+        CommsNodeConflictError
+    ) as exc:  # stx-allow: test-capture (reason: STX-TQ002 splits Act from Assert.)
+        raised = exc
+    # Assert
+    assert raised is not None and incoming_path in str(raised)
+
+
+def test_register_comms_node_error_message_names_existing_target(
+    db_path: Path,
+) -> None:
+    # Arrange
+    register_comms_node(
+        name="lead",
+        host="mba",
+        a2a_port=8642,
+        source_host=None,
+        db_path=db_path,
+    )
+    raised: BaseException | None = None
+    # Act
+    try:
+        register_comms_node(
+            name="lead",
+            host="mba",
+            a2a_port=9000,
+            source_host=None,
+            db_path=db_path,
+        )
+    except (
+        CommsNodeConflictError
+    ) as exc:  # stx-allow: test-capture (reason: STX-TQ002 splits Act from Assert.)
+        raised = exc
+    # Assert
+    assert raised is not None and "8642" in str(raised)
+
+
+def test_register_comms_node_error_message_mentions_prefer_flag_hint(
+    db_path: Path,
+) -> None:
+    # Arrange
+    register_comms_node(
+        name="lead",
+        host="mba",
+        a2a_port=8642,
+        source_host=None,
+        db_path=db_path,
+    )
+    raised: BaseException | None = None
+    # Act
+    try:
+        register_comms_node(
+            name="lead",
+            host="mba",
+            a2a_port=9000,
+            source_host=None,
+            db_path=db_path,
+            kind="self-peer",
+        )
+    except (
+        CommsNodeConflictError
+    ) as exc:  # stx-allow: test-capture (reason: STX-TQ002 splits Act from Assert.)
+        raised = exc
+    # Assert
+    assert raised is not None and "--prefer" in str(raised)
+
+
+def test_register_comms_node_replace_false_does_not_change_row(
+    db_path: Path,
+) -> None:
+    # Arrange
+    register_comms_node(
+        name="lead",
+        host="mba",
+        a2a_port=8642,
+        source_host=None,
+        db_path=db_path,
+    )
+    raised: BaseException | None = None
+    # Act
+    try:
+        register_comms_node(
+            name="lead",
+            host="mba",
+            a2a_port=9000,
+            source_host=None,
+            db_path=db_path,
+        )
+    except CommsNodeConflictError as exc:  # stx-allow: test-capture (reason: STX-TQ002 splits Act from Assert; assert is the row stayed unchanged.)
+        raised = exc
+    info = lookup_comms_node(name="lead", db_path=db_path)
+    # Assert
+    assert raised is not None and info["a2a_port"] == 8642
+
+
+def test_register_comms_node_default_kind_keeps_backwards_compat(
+    db_path: Path,
+) -> None:
+    # Arrange — no kwargs beyond the pre-L1 surface; an INSERT must succeed.
+    # Act
+    register_comms_node(
+        name="alpha",
+        host="mba",
+        a2a_port=12345,
+        source_host=None,
+        db_path=db_path,
+    )
+    info = lookup_comms_node(name="alpha", db_path=db_path)
+    # Assert
+    assert info is not None
 
 
 def test_register_comms_node_conflict_different_source_raises(
