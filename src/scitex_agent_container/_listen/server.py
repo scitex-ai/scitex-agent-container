@@ -118,6 +118,15 @@ async def list_agents(_request: Request) -> JSONResponse:
             "list_agents: self-peer discovery failed (returning registry rows only): %s",
             exc,
         )
+    # Q1 (lead dispatch a2a dc6fd23387f64e329049d218cf85a4d4): surface
+    # ``a2a_port`` + derived ``turn_url`` on every row so scitex-todo's
+    # notify resolver (P3a-b) can dispatch nudge→turn without redeploy.
+    # Idempotent: self-peer rows that already carry a non-None value
+    # keep theirs (the discovery layer is the authoritative source for
+    # those).
+    from ._registry_endpoints import enrich_row_with_endpoint
+
+    rows = [enrich_row_with_endpoint(row) for row in rows]
     return JSONResponse({"agents": rows})
 
 
@@ -180,6 +189,12 @@ async def agent_status(request: Request) -> JSONResponse:
     if marker is not None:
         body["status"] = "startup_failed"
         body["startup_failed"] = marker
+    # Q1 (lead dispatch a2a dc6fd23387f64e329049d218cf85a4d4): surface
+    # ``a2a_port`` + derived ``turn_url`` so a status poll yields the
+    # same endpoint shape ``GET /agents`` does.
+    from ._registry_endpoints import enrich_row_with_endpoint
+
+    body = enrich_row_with_endpoint(body)
     return JSONResponse(body)
 
 
