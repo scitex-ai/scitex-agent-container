@@ -6,14 +6,18 @@ the derived ``/v1/turn`` URL on every row so scitex-todo's notify
 resolver (P3a-b) can dispatch nudge→turn without redeploying.
 
 STX-TQ002 AAA + STX-TQ007 one-assert. No mocks — uses real state.db
-under ``tmp_path`` plus ``monkeypatch`` to redirect the module-level
-``DEFAULT_DB_PATH`` (same pattern as ``test_server.py``'s
-``cross_host_env`` fixture).
+under ``tmp_path`` plus a hand-rolled yield-fixture that swaps the
+process-level state-db env var + module attribute and restores both
+on teardown (same effect as the ``cross_host_env`` fixture in
+``test_server.py``, without the ``monkeypatch`` parameter that
+PA-306 §3 forbids).
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+from typing import Iterator
 
 import pytest
 
@@ -27,32 +31,60 @@ from scitex_agent_container._state import state_db_instances as _instances
 # ---------------------------------------------------------------------------
 
 
+_STATE_DB_ENV = "SCITEX_AGENT_CONTAINER_STATE_DB"
+_SAC_HOST_ENV = "SAC_HOST"
+
+
+def _swap_env(name: str, value: str | None) -> str | None:
+    """Set or unset env var ``name`` to ``value``; return the prior value.
+
+    No ``monkeypatch`` dependency — the fixtures below pair this with a
+    matching restore call in a ``finally`` block.
+    """
+    prev = os.environ.get(name)
+    if value is None:
+        os.environ.pop(name, None)
+    else:
+        os.environ[name] = value
+    return prev
+
+
 @pytest.fixture
-def isolated_state_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def isolated_state_db(tmp_path: Path) -> Iterator[Path]:
     """Redirect ``state.db`` writes to a per-test tmp file.
 
     Mirrors the ``cross_host_env`` fixture in ``test_server.py``:
     ``DEFAULT_DB_PATH`` is captured at import time so just setting the
-    env var is not enough — we patch the module attribute directly.
+    env var is not enough — we swap the module attribute directly and
+    restore it on teardown.
     """
     db = tmp_path / "state.db"
-    monkeypatch.setenv("SCITEX_AGENT_CONTAINER_STATE_DB", str(db))
-    monkeypatch.setattr(_state_db, "DEFAULT_DB_PATH", db)
+    prev_env = _swap_env(_STATE_DB_ENV, str(db))
+    prev_attr = _state_db.DEFAULT_DB_PATH
+    _state_db.DEFAULT_DB_PATH = db
     _state_db.init_schema(db)
-    return db
+    try:
+        yield db
+    finally:
+        _state_db.DEFAULT_DB_PATH = prev_attr
+        _swap_env(_STATE_DB_ENV, prev_env)
 
 
 @pytest.fixture
-def isolated_host_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def isolated_host_env(tmp_path: Path) -> Iterator[Path]:
     """Pin host_config + state.db to ``tmp_path`` so canonical_host is stable."""
     db = tmp_path / "state.db"
-    monkeypatch.setenv("SCITEX_AGENT_CONTAINER_STATE_DB", str(db))
-    monkeypatch.setattr(_state_db, "DEFAULT_DB_PATH", db)
+    prev_db_env = _swap_env(_STATE_DB_ENV, str(db))
+    prev_host_env = _swap_env(_SAC_HOST_ENV, "test-host")
+    prev_attr = _state_db.DEFAULT_DB_PATH
+    _state_db.DEFAULT_DB_PATH = db
     _state_db.init_schema(db)
-    # Pin the canonical hostname so ``resolve_a2a_host``'s local fallback
-    # is deterministic.
-    monkeypatch.setenv("SAC_HOST", "test-host")
-    return db
+    try:
+        yield db
+    finally:
+        _state_db.DEFAULT_DB_PATH = prev_attr
+        _swap_env(_STATE_DB_ENV, prev_db_env)
+        _swap_env(_SAC_HOST_ENV, prev_host_env)
 
 
 # ---------------------------------------------------------------------------
