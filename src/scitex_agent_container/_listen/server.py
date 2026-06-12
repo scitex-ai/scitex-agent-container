@@ -476,9 +476,23 @@ def create_app(*, token: str, local_host: str | None = None) -> Starlette:
     # listen-side analogue of ``_mcp._channel_self_register``'s
     # channel-path UPSERT. Idempotent (UPSERT keyed on name), best-
     # effort (every failure logs and continues — startup MUST proceed).
+    #
+    # Starlette dropped the legacy ``on_startup=`` kwarg in favour of
+    # the ``lifespan`` async-context-manager API, so the persistence
+    # call goes inside an ``@asynccontextmanager`` adapter. The
+    # adapter awaits the persistence helper before yielding (= app
+    # ready), then yields control back so the server starts handling
+    # requests; teardown is a no-op (persistence is one-shot at boot).
+    from contextlib import asynccontextmanager
+
     from ._self_peer_persistence import persist_self_peers_on_listen_startup
 
-    app = Starlette(routes=routes, on_startup=[persist_self_peers_on_listen_startup])
+    @asynccontextmanager
+    async def _lifespan(app):  # type: ignore[no-untyped-def]
+        await persist_self_peers_on_listen_startup()
+        yield
+
+    app = Starlette(routes=routes, lifespan=_lifespan)
     # Per-app shared state for the WI-3 inbox surface.
     app.state.inbox = Broker()
     app.state.nodes = NodeRegistry()
