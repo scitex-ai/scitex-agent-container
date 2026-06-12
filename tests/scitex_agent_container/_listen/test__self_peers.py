@@ -69,8 +69,10 @@ def test_is_self_peer_spec_rejects_blob_with_apiversion_container_marker():
 
 
 def test_is_self_peer_spec_rejects_non_mapping_input_none():
-    # Arrange / Act
-    accepted = is_self_peer_spec(None)
+    # Arrange
+    blob = None
+    # Act
+    accepted = is_self_peer_spec(blob)
     # Assert
     assert accepted is False
 
