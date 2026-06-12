@@ -43,6 +43,15 @@ def _spec(model):
         "claude-sonnet-4-6",
         "claude-haiku-4-5",
         "claude-haiku-4-5-20251001",
+        # Fable family added 2026-06-12 (lead msg 0bde9c41). Fable
+        # ships as a 1-digit family version (``claude-fable-5``); the
+        # ``[1m]`` suffix is the CLI-native 1M-context tier selector,
+        # empirically verified against SDK 0.2.87 / CLI 2.1.150 to
+        # round-trip with model_usage[claude-fable-5[1m]].contextWindow=1M.
+        "fable",
+        "fable[1m]",
+        "claude-fable-5",
+        "claude-fable-5[1m]",
     ],
 )
 def test_valid_models_pass(model):
@@ -61,6 +70,7 @@ _INVALID_MODELS = [
     "claude-opus",
     "claude-sonnet",
     "claude-haiku",
+    "claude-fable",  # abbreviated — Fable still requires the digit
     "opusx",
     "claude-foo-1-2",  # unknown family
 ]
