@@ -201,8 +201,9 @@ def test_register_comms_node_same_source_different_target_raises_without_replace
         source_host=None,
         db_path=db_path,
     )
-    # Act + Assert
-    with pytest.raises(CommsNodeConflictError):
+    raised: BaseException | None = None
+    # Act
+    try:
         register_comms_node(
             name="lead",
             host="mba",
@@ -210,6 +211,10 @@ def test_register_comms_node_same_source_different_target_raises_without_replace
             source_host=None,
             db_path=db_path,
         )
+    except CommsNodeConflictError as exc:  # stx-allow: test-capture (reason: STX-TQ002 splits Act from Assert; the function is contracted to raise on same-source different-target without replace=True.)
+        raised = exc
+    # Assert
+    assert isinstance(raised, CommsNodeConflictError)
 
 
 def test_register_comms_node_same_source_different_target_overwrites_with_replace(
