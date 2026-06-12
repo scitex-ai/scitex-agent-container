@@ -18,8 +18,6 @@ Test style (project standards — STX-TQ002 / STX-TQ007):
 
 from __future__ import annotations
 
-import pytest
-
 from scitex_agent_container._runners._tmux._turn_endpoint import (
     TurnResult,
     TurnTimeoutError,

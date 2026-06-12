@@ -31,7 +31,19 @@ def scitex_dev_audit():
 def test_audit_all_clean(scitex_dev_audit):
     # Arrange
     package = "scitex-agent-container"
+    # ``§6a`` (env-var prefix) — pre-existing on develop; SAC_* is the
+    # sac short prefix used pervasively (12 occurrences as of
+    # 2026-06-12: SAC_ANTHROPIC_API_KEY, SAC_CHANNEL_AUTO_ACK,
+    # SAC_HOST_IDENTITY_PATH, SAC_LISTEN_BASE_URL, SAC_LISTEN_BEARER,
+    # SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S, SAC_NAME,
+    # SAC_PROBE_LOG_ROOT, SAC_SSH_CONTROL_DIR, SAC_SSH_CONTROL_MASTER,
+    # SAC_STATUSLINE_STATE_DIR, SAC_WORKDIR_CLAUDE_WARN_BYTES).
+    # Lead msg c49c2274 ruling (a): pre-approve via skip_rules and
+    # split the rename / allowlist-extension decision into a
+    # follow-up backlog issue ("SAC_ as official short prefix, or
+    # rename to SCITEX_AGENT_CONTAINER_*"). This unblocks PR2 green.
+    skip_rules = ("§6a",)
     # Act
-    result = scitex_dev_audit(package)
+    result = scitex_dev_audit(package, skip_rules=skip_rules)
     # Assert
     assert result is None or result is True or result == 0 or result is not Ellipsis

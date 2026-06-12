@@ -14,8 +14,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
-
 from scitex_agent_container._lifecycle._runtime_select import _get_runtime
 
 

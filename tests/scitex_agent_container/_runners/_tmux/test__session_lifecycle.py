@@ -12,7 +12,6 @@ or real claude.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
 from scitex_agent_container._runners._tmux._session_lifecycle import (
     _encode_workdir_for_claude_projects,
