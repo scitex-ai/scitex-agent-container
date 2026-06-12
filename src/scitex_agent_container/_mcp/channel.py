@@ -425,15 +425,51 @@ def _register_tools(
     register_tools(server, agent_name=agent_name, listen_url=listen_url, bearer=bearer)
 
 
-def main(name: str, listen_url: str | None = None, turn_url: str | None = None) -> None:
+def main(
+    name: str | None = None,
+    listen_url: str | None = None,
+    turn_url: str | None = None,
+) -> None:
     """CLI entry point. Bearer comes from ``SAC_LISTEN_BEARER`` env.
+
+    ``name`` is OPTIONAL (TG 12706 / #356 follow-up). When omitted, the
+    channel walks the current working directory UPWARD for the first
+    ``.scitex/agent-container/agents/self/spec.yaml`` hit (see
+    :func:`_channel_self_peer_discovery.discover_self_identity` — ONE
+    generic shape, no per-node exceptions, no home-scope fallback). The
+    discovered identity supplies the name; the discovered ``listen_url``
+    is used unless explicitly overridden (precedence: explicit
+    ``listen_url`` arg > discovered.listen_url > ``$SAC_LISTEN_BASE_URL``
+    > ``http://127.0.0.1:7878``). When ``name`` is omitted AND discovery
+    returns ``None``, a :class:`RuntimeError` is raised naming the
+    spec-path convention so the operator knows where to drop the file.
 
     ``turn_url`` (WI-1) is the agent's own ``/v1/turn`` endpoint; when set,
     each received bus event WAKES the session by driving a turn there so a
     push to an idle agent is processed immediately (push ≡ Telegram).
     """
-    listen = listen_url or os.environ.get(
-        "SAC_LISTEN_BASE_URL", "http://127.0.0.1:7878"
+    discovered_listen_url: str | None = None
+    if name is None:
+        from ._channel_self_peer_discovery import discover_self_identity
+
+        discovered = discover_self_identity()
+        if discovered is None:
+            raise RuntimeError(
+                "sac mcp channel: --name was omitted and no self spec was "
+                "found by walking the cwd upward for "
+                "'.scitex/agent-container/agents/self/spec.yaml'. "
+                "Either pass --name <agent>, or drop a self spec at "
+                "<project-root>/.scitex/agent-container/agents/self/spec.yaml "
+                "with a 'listen_url:' field (see "
+                "scitex_agent_container._listen._self_peers for the shape)."
+            )
+        name = discovered.name
+        discovered_listen_url = discovered.listen_url
+
+    listen = (
+        listen_url
+        or discovered_listen_url
+        or os.environ.get("SAC_LISTEN_BASE_URL", "http://127.0.0.1:7878")
     )
     bearer = os.environ.get("SAC_LISTEN_BEARER")
     asyncio.run(_run(name, listen, bearer, turn_url))

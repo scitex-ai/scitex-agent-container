@@ -138,8 +138,14 @@ def mcp_start(use_http: bool, host: str, port: int, dry_run: bool, yes: bool) ->
 @mcp.command("channel")
 @click.option(
     "--name",
-    required=True,
-    help="Agent name whose inbox to subscribe to.",
+    required=False,
+    default=None,
+    help=(
+        "Agent name whose inbox to subscribe to. When omitted, the "
+        "channel walks cwd upward for "
+        ".scitex/agent-container/agents/self/spec.yaml and derives the "
+        "name from the running session's runtime identity."
+    ),
 )
 @click.option(
     "--listen-url",
@@ -158,7 +164,7 @@ def mcp_start(use_http: bool, host: str, port: int, dry_run: bool, yes: bool) ->
         "does not advance an idle agent's turn."
     ),
 )
-def mcp_channel(name: str, listen_url: str | None, turn_url: str | None) -> None:
+def mcp_channel(name: str | None, listen_url: str | None, turn_url: str | None) -> None:
     """Run the sac push channel adapter as a stdio MCP subprocess.
 
     Intended to be spawned by Claude Code via
