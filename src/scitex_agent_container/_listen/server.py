@@ -57,13 +57,100 @@ async def health(_request: Request) -> JSONResponse:
 
 
 async def list_agents(_request: Request) -> JSONResponse:
-    """List agents the local Registry knows about."""
+    """List agents the local Registry knows about + self-peers.
+
+    Two sources, concatenated in this order:
+
+    1. Container-agent rows from :meth:`Registry.list_all` — the
+       traditional ``sac a2a peers`` shape (``name`` / ``config`` /
+       ``pid`` / ``started_at`` / ``screen``).
+    2. Self-peer rows from :func:`_self_peers.discover_self_peers`
+       — any agent dir whose ``spec.yaml`` carries only a
+       ``listen_url`` (no container ``spec`` block, no
+       ``apiVersion``). These have no ``pid`` / ``screen`` — they
+       are external listen sessions that own a port and want to be
+       discoverable. Carries ``"kind": "self-peer"`` so peer-aware
+       clients can branch on the source.
+
+    Dedup: a self-peer whose ``name`` already appears in the
+    container-row list loses to the container row (the running
+    container is the more authoritative source). Order matches
+    operator-facing convention: container rows first, then
+    self-peers alphabetically by ``name``.
+    """
+    rows: list[dict] = []
+    seen_names: set[str] = set()
     try:
         reg = Registry()
-        rows = reg.list_all()
+        for row in reg.list_all():
+            rows.append(row)
+            name = row.get("name") if isinstance(row, dict) else None
+            if isinstance(name, str):
+                seen_names.add(name)
     except Exception as exc:  # stx-allow: fallback (reason: surface a JSON error to the caller rather than ASGI 500 stack)
         return JSONResponse({"error": str(exc)}, status_code=500)
+    # Self-peers — best-effort. Failures here must NOT mask a healthy
+    # container-row response (an unreadable agents dir is operator
+    # state, not a listen failure).
+    #
+    # Runtime self-identity is derived from host_config — the same
+    # source the existing channel/listen self-registration paths
+    # consult. Missing host_config / missing ``lead:`` block degrades
+    # to ``None``; :func:`discover_self_peers` then surfaces the
+    # literal ``self`` dir as ``"self"`` with a logged warning, which
+    # is the loudest signal short of failing the request.
+    try:
+        from ..config._resolve import _search_dirs
+        from ._self_peers import discover_self_peers
+
+        primary, env_dirs, fleet_dirs = _search_dirs()
+        search_dirs = [*env_dirs, primary, *fleet_dirs]
+        self_identity = _resolve_runtime_self_identity()
+        for peer in discover_self_peers(search_dirs, self_identity=self_identity):
+            if peer["name"] in seen_names:
+                continue
+            rows.append(peer)
+            seen_names.add(peer["name"])
+    except Exception as exc:  # stx-allow: fallback (reason: self-peer discovery must never block the registry response)
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "list_agents: self-peer discovery failed (returning registry rows only): %s",
+            exc,
+        )
     return JSONResponse({"agents": rows})
+
+
+def _resolve_runtime_self_identity() -> str | None:
+    """Return the running listen's runtime identity, or ``None``.
+
+    Reads :func:`host_config.load().lead.name` — the same source the
+    existing channel/listen self-registration paths
+    (:mod:`_mcp._channel_self_register`,
+    :func:`cli_pkg.listen_cmds._register_self_comms_node`) consult.
+    A missing ``lead:`` block in host_config returns ``None`` — the
+    self-peer discovery downstream then surfaces the literal
+    ``self`` dir as ``"self"`` so the operator sees the gap rather
+    than getting a silently-renamed peer row.
+
+    Generic on purpose: there is no name-specific branching here.
+    ``host_config.lead.name`` is THE host's "who am I" answer for
+    operator-class sessions; a future evolution that supports
+    multiple self-identities on one host would extend the host_config
+    shape, not insert per-name special cases here.
+    """
+    try:
+        from .._state.host_config import load as load_host_config
+
+        cfg = load_host_config()
+        lead = getattr(cfg, "lead", None)
+        if lead is not None:
+            name = getattr(lead, "name", None)
+            if isinstance(name, str) and name.strip():
+                return name
+    except Exception:  # stx-allow: fallback (reason: host_config errors must never block the /agents response)
+        pass
+    return None
 
 
 async def agent_status(request: Request) -> JSONResponse:
