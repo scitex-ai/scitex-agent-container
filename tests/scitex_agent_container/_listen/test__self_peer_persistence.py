@@ -335,6 +335,64 @@ def test_persist_returns_zero_for_empty_peer_list(
 
 
 # ---------------------------------------------------------------------------
+# skip_names — running listen's own identity must not be double-persisted
+# ---------------------------------------------------------------------------
+
+
+def test_persist_skips_peer_whose_name_is_in_skip_names(
+    isolated_state_db: Path,
+) -> None:
+    # Arrange — the literal self/spec.yaml resolves to the listen's own
+    # name ("lead" in production); the listen-side
+    # _register_self_comms_node path already owns that row.
+    peers = [{"name": "lead", "listen_url": "http://127.0.0.1:7878"}]
+    # Act
+    written = persist_discovered_self_peers(
+        peers,
+        db_path=isolated_state_db,
+        canonical_host="test-host",
+        skip_names=frozenset({"lead"}),
+    )
+    # Assert
+    assert written == 0
+
+
+def test_persist_skips_only_the_named_peer_and_writes_the_rest(
+    isolated_state_db: Path,
+) -> None:
+    # Arrange — `lead` is skipped, the unrelated `capsule-3` is not.
+    peers = [
+        {"name": "lead", "listen_url": "http://127.0.0.1:7878"},
+        {"name": "capsule-3", "listen_url": "http://10.0.0.7:8181"},
+    ]
+    # Act
+    written = persist_discovered_self_peers(
+        peers,
+        db_path=isolated_state_db,
+        canonical_host="test-host",
+        skip_names=frozenset({"lead"}),
+    )
+    # Assert
+    assert written == 1
+
+
+def test_persist_skip_names_leaves_skipped_peer_absent_from_db(
+    isolated_state_db: Path,
+) -> None:
+    # Arrange
+    peers = [{"name": "lead", "listen_url": "http://127.0.0.1:7878"}]
+    # Act
+    persist_discovered_self_peers(
+        peers,
+        db_path=isolated_state_db,
+        canonical_host="test-host",
+        skip_names=frozenset({"lead"}),
+    )
+    # Assert
+    assert _count_comms_nodes(isolated_state_db, name="lead") == 0
+
+
+# ---------------------------------------------------------------------------
 # End-to-end via discover_self_peers — real cwd-walk
 # ---------------------------------------------------------------------------
 

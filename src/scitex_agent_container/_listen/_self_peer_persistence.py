@@ -94,6 +94,7 @@ def persist_discovered_self_peers(
     *,
     db_path: Path | None = None,
     canonical_host: str | None = None,
+    skip_names: frozenset[str] = frozenset(),
 ) -> int:
     """Best-effort UPSERT every discovered self-peer into ``comms_nodes``.
 
@@ -116,6 +117,16 @@ def persist_discovered_self_peers(
         persisting rows with an empty / wrong host is worse than
         persisting nothing, because cross-host A2A POSTs dial that
         column.
+    skip_names:
+        Peer names to skip (no UPSERT) — typically ``{self_identity}``
+        so the running listen does NOT double-register its OWN row
+        via this persistence path. The listen's runtime identity has
+        a dedicated registration site
+        (:mod:`cli_pkg.listen_cmds._register_self_comms_node`); going
+        through both writes a row with the cwd-walk's resolved host
+        instead of the listen-side host_config, which then causes
+        cross-host forward refusals in single-host test environments
+        (the regression CI run 27435959935 caught).
 
     Returns
     -------
@@ -159,6 +170,14 @@ def persist_discovered_self_peers(
                 "self-peer persistence: skipping peer with no name: %r",
                 peer,
             )
+            continue
+        if name in skip_names:
+            # Running listen's own identity — already registered via the
+            # listen-side ``_register_self_comms_node`` path with the
+            # authoritative host. Persisting it again here would race
+            # the canonical-host-vs-cwd-walk-host write and break
+            # single-host POST flows that expect ``host`` to match
+            # ``$SAC_HOST`` / host_config.canonical_host.
             continue
         if not isinstance(listen_url, str) or not listen_url.strip():
             log.warning(
@@ -233,7 +252,15 @@ async def persist_self_peers_on_listen_startup() -> int:
             exc,
         )
         return 0
-    written = persist_discovered_self_peers(peers)
+    # Skip the running listen's OWN identity — that row is owned by
+    # the listen-side ``_register_self_comms_node`` path with the
+    # authoritative ``canonical_host``. Persisting it again here would
+    # race the canonical-host-vs-cwd-walk-host write and break
+    # single-host POST flows (regression CI run 27435959935).
+    skip_names: frozenset[str] = (
+        frozenset({self_identity}) if isinstance(self_identity, str) else frozenset()
+    )
+    written = persist_discovered_self_peers(peers, skip_names=skip_names)
     log.info(
         "self-peer persistence on_startup: persisted %d row(s) into comms_nodes",
         written,
