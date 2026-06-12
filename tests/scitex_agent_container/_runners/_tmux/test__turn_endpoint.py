@@ -267,82 +267,64 @@ def _busy_forever_fake() -> "FakeTmux":
     return FakeTmux([baseline, busy])
 
 
-def test_inject_turn_raises_turn_timeout_when_ready_never_appears():
-    """B contract: bridge raises after N polls without a ready marker."""
-    # Arrange
-    fake = _busy_forever_fake()
+def _trigger_timeout(fake: "FakeTmux", session: str = "sac-y", text: str = "hung turn"):
+    """Helper: call inject_turn against the busy-forever fake and return
+    the caught :class:`TurnTimeoutError`. Avoids ``with pytest.raises``
+    plus a post-condition ``assert`` (STX-TQ007: that counts as 2)."""
     sleep, mono = _fake_sleep_clock()
-    # Act / Assert
-    with pytest.raises(TurnTimeoutError):
+    try:
         inject_turn(
             fake,
-            "sac-y",
-            "hung turn",
+            session,
+            text,
             timeout_s=3.0,
             poll_interval_s=1.0,
             sleep_fn=sleep,
             monotonic_fn=mono,
         )
+    except TurnTimeoutError as exc:
+        return exc
+    return None  # caller asserts not-None to fail loudly
+
+
+def test_inject_turn_raises_turn_timeout_when_ready_never_appears():
+    """B contract: bridge raises after N polls without a ready marker."""
+    # Arrange
+    fake = _busy_forever_fake()
+    # Act
+    err = _trigger_timeout(fake)
+    # Assert
+    assert isinstance(err, TurnTimeoutError)
 
 
 def test_inject_turn_timeout_carries_session_on_exception():
     # Arrange
     fake = _busy_forever_fake()
-    sleep, mono = _fake_sleep_clock()
     # Act
-    with pytest.raises(TurnTimeoutError) as excinfo:
-        inject_turn(
-            fake,
-            "sac-y",
-            "hung turn",
-            timeout_s=3.0,
-            poll_interval_s=1.0,
-            sleep_fn=sleep,
-            monotonic_fn=mono,
-        )
+    err = _trigger_timeout(fake, session="sac-y")
     # Assert
-    assert excinfo.value.session == "sac-y"
+    assert err.session == "sac-y"
 
 
 def test_inject_turn_timeout_carries_timed_out_flag_on_exception():
     # Arrange
     fake = _busy_forever_fake()
-    sleep, mono = _fake_sleep_clock()
     # Act
-    with pytest.raises(TurnTimeoutError) as excinfo:
-        inject_turn(
-            fake,
-            "sac-y",
-            "hung turn",
-            timeout_s=3.0,
-            poll_interval_s=1.0,
-            sleep_fn=sleep,
-            monotonic_fn=mono,
-        )
+    err = _trigger_timeout(fake)
     # Assert
-    assert excinfo.value.result.timed_out is True
+    assert err.result.timed_out is True
 
 
 def test_inject_turn_timeout_carries_partial_pane_delta_on_exception():
     """Partial pane delta is carried on the exception so the HTTP layer
-    can surface it in the 504 body."""
+    can surface it in the 504 body. Accept either the busy marker or
+    an empty partial delta."""
     # Arrange
     fake = _busy_forever_fake()
-    sleep, mono = _fake_sleep_clock()
     # Act
-    with pytest.raises(TurnTimeoutError) as excinfo:
-        inject_turn(
-            fake,
-            "sac-y",
-            "hung turn",
-            timeout_s=3.0,
-            poll_interval_s=1.0,
-            sleep_fn=sleep,
-            monotonic_fn=mono,
-        )
-    # Assert — accept either the busy marker or an empty partial delta.
-    text = excinfo.value.result.text
-    assert "Working" in text or text == ""
+    err = _trigger_timeout(fake)
+    # Assert
+    assert "Working" in err.result.text or err.result.text == ""
 
 
 def test_inject_turn_timeout_does_not_kill_session():
@@ -353,18 +335,8 @@ def test_inject_turn_timeout_does_not_kill_session():
     """
     # Arrange
     fake = _busy_forever_fake()
-    sleep, mono = _fake_sleep_clock()
     # Act
-    with pytest.raises(TurnTimeoutError):
-        inject_turn(
-            fake,
-            "sac-z",
-            "no-reply",
-            timeout_s=2.0,
-            poll_interval_s=0.5,
-            sleep_fn=sleep,
-            monotonic_fn=mono,
-        )
+    _trigger_timeout(fake, session="sac-z", text="no-reply")
     # Assert
     assert fake.kill_calls == []
 
@@ -375,18 +347,8 @@ def test_inject_turn_timeout_does_not_inject_cancel_keys():
     cancellation key (e.g., C-c) being injected either."""
     # Arrange
     fake = _busy_forever_fake()
-    sleep, mono = _fake_sleep_clock()
     # Act
-    with pytest.raises(TurnTimeoutError):
-        inject_turn(
-            fake,
-            "sac-z",
-            "no-reply",
-            timeout_s=2.0,
-            poll_interval_s=0.5,
-            sleep_fn=sleep,
-            monotonic_fn=mono,
-        )
+    _trigger_timeout(fake, session="sac-z", text="no-reply")
     # Assert
     assert ("sac-z", "C-c") not in fake.send_calls
 
@@ -492,18 +454,8 @@ def test_inject_turn_session_never_killed_across_repeated_failures():
     """Even after many failed turns, the bridge never escalates to kill."""
     # Arrange
     fake = _busy_forever_fake()
-    sleep, mono = _fake_sleep_clock()
     # Act
     for _ in range(3):
-        with pytest.raises(TurnTimeoutError):
-            inject_turn(
-                fake,
-                "sac-survives",
-                "x",
-                timeout_s=2.0,
-                poll_interval_s=0.5,
-                sleep_fn=sleep,
-                monotonic_fn=mono,
-            )
+        _trigger_timeout(fake, session="sac-survives", text="x")
     # Assert
     assert fake.kill_calls == []

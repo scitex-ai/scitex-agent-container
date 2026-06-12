@@ -187,6 +187,7 @@ def test_handler_present_in_registry(expected_name: str):
     """
     # Arrange
     names = {h.name for h in P.PROMPT_HANDLERS}
-
-    # Act / Assert
-    assert expected_name in names
+    # Act
+    present = expected_name in names
+    # Assert
+    assert present

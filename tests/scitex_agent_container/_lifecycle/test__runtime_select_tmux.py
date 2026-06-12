@@ -71,9 +71,14 @@ def test_unsupported_container_runtime_raises_when_sdk_path_selected():
     """If claude.runtime='sdk' but spec.runtime is unknown, ValueError."""
     # Arrange
     config = _config(claude_runtime="sdk", runtime="docker")
-    # Act / Assert
-    with pytest.raises(ValueError, match="Unsupported runtime"):
+    # Act
+    raised: Exception | None = None
+    try:
         _get_runtime(config)
+    except ValueError as exc:
+        raised = exc
+    # Assert
+    assert raised is not None and "Unsupported runtime" in str(raised)
 
 
 def test_tmux_runtime_bypasses_unsupported_container_runtime_check():

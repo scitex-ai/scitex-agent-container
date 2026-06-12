@@ -68,13 +68,68 @@ def _should_dispatch_remote(config: AgentConfig) -> bool:
 
 
 class ClaudeCodeRuntime(RuntimeBase):
-    """Runtime for launching Claude Code agents in tmux sessions."""
+    """Runtime for launching Claude Code agents in tmux sessions.
+
+    Optional dependency-injection kwargs (default ``None`` resolves to
+    the real implementation) give tests a real no-mock seam: instead of
+    ``monkeypatch.setattr(cc.ClaudeCodeRuntime, "_get_mux", ...)``, a
+    test constructs the runtime with the override directly:
+
+        rt = ClaudeCodeRuntime(
+            mux_factory=lambda c: fake_mux,
+            setup_workspace_fn=lambda c, w: None,
+            a2a_start_fn=lambda c: None,
+        )
+
+    This avoids PA-306 (no-mocks) while keeping production callers'
+    no-arg signature unchanged (``ClaudeCodeRuntime()``).
+    """
+
+    def __init__(
+        self,
+        mux_factory=None,
+        setup_workspace_fn=None,
+        cleanup_workspace_fn=None,
+        a2a_start_fn=None,
+        a2a_stop_fn=None,
+    ) -> None:
+        self._mux_factory = mux_factory
+        self._setup_workspace_fn = setup_workspace_fn
+        self._cleanup_workspace_fn = cleanup_workspace_fn
+        self._a2a_start_fn = a2a_start_fn
+        self._a2a_stop_fn = a2a_stop_fn
 
     def _get_mux(self, config: AgentConfig) -> type:
         """Return the multiplexer class for this config."""
+        if self._mux_factory is not None:
+            return self._mux_factory(config)
         from .multiplexer import get_multiplexer
 
         return get_multiplexer(config)
+
+    def _do_setup_workspace(self, config: AgentConfig, workdir: str) -> None:
+        if self._setup_workspace_fn is not None:
+            self._setup_workspace_fn(config, workdir)
+            return
+        setup_workspace(config, workdir)
+
+    def _do_cleanup_workspace(self, config: AgentConfig, workdir: str) -> None:
+        if self._cleanup_workspace_fn is not None:
+            self._cleanup_workspace_fn(config, workdir)
+            return
+        cleanup_workspace(config, workdir)
+
+    def _do_a2a_start(self, config: AgentConfig) -> None:
+        if self._a2a_start_fn is not None:
+            self._a2a_start_fn(config)
+            return
+        _a2a_start_sidecar(config)
+
+    def _do_a2a_stop(self, config: AgentConfig) -> None:
+        if self._a2a_stop_fn is not None:
+            self._a2a_stop_fn(config)
+            return
+        _a2a_stop_sidecar(config)
 
     def _send_keys(self, config: AgentConfig, *keys: str) -> None:
         """Send keys to the agent's multiplexer session."""
@@ -206,7 +261,7 @@ class ClaudeCodeRuntime(RuntimeBase):
         env_source = build_env_source_prelude(workdir)
         env_exports = env_source + ("\n" + env_exports if env_exports else "")
 
-        setup_workspace(config, workdir)
+        self._do_setup_workspace(config, workdir)
 
         if dry_run:
             return True
@@ -222,7 +277,7 @@ class ClaudeCodeRuntime(RuntimeBase):
 
         if started:
             try:
-                _a2a_start_sidecar(config)
+                self._do_a2a_start(config)
             except Exception:  # stx-allow: fallback (catch-all)
                 logger.exception("a2a sidecar spawn failed for %s", config.name)
 
@@ -249,11 +304,11 @@ class ClaudeCodeRuntime(RuntimeBase):
             return ct_result
 
         try:
-            _a2a_stop_sidecar(config)
+            self._do_a2a_stop(config)
         except Exception:  # stx-allow: fallback (catch-all)
             logger.exception("a2a sidecar stop failed for %s", config.name)
 
-        cleanup_workspace(config, config.expanded_workdir)
+        self._do_cleanup_workspace(config, config.expanded_workdir)
         return self._get_mux(config).stop(config.screen_name)
 
     def is_running(self, config: AgentConfig) -> bool:
