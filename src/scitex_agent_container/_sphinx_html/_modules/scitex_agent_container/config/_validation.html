@@ -469,9 +469,18 @@
 <span class="n">_VALID_MODEL_RE</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span>
 <span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    ^(?:</span>
-<span class="sd">        (?:opus|sonnet|haiku|inherit|default)</span>
+<span class="sd">        (?:opus|sonnet|haiku|fable|inherit|default)</span>
 <span class="sd">        |</span>
-<span class="sd">        claude-(?:opus|sonnet|haiku)-\d+-\d+(?:-[a-z0-9]+)*</span>
+<span class="sd">        # opus/sonnet/haiku ship as ``family-N-M`` (e.g. ``claude-opus-4-7``).</span>
+<span class="sd">        # Fable is published as a single-digit family version</span>
+<span class="sd">        # (``claude-fable-5``); see lead-confirmed 2026-06-12 (msg</span>
+<span class="sd">        # 6172e53d ruling 1). The ``[1m]`` context-suffix is CLI-native</span>
+<span class="sd">        # (proven empirically — msg 6f7e2f56) and bolted on below.</span>
+<span class="sd">        claude-(?:</span>
+<span class="sd">            (?:opus|sonnet|haiku)-\d+-\d+</span>
+<span class="sd">            |</span>
+<span class="sd">            fable-\d+</span>
+<span class="sd">        )(?:-[a-z0-9]+)*</span>
 <span class="sd">    )</span>
 <span class="sd">    (?:\[[a-zA-Z0-9_]+\])?</span>
 <span class="sd">    $</span>
