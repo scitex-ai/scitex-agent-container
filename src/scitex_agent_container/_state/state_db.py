@@ -323,6 +323,36 @@ CREATE TABLE IF NOT EXISTS node_comms_policy (
     may_spawn         INTEGER NOT NULL DEFAULT 1,
     updated_at        REAL NOT NULL
 );
+
+-- Theme 15: explicit (node, group) join table that supersedes the
+-- single-label ``node_comms_policy.lineage_group`` column for nodes
+-- that need to participate in MULTIPLE groups (groups-mesh
+-- self-register). The column survives as the legacy/singleton fallback
+-- the ACL still reads when no explicit row exists for the pair (see
+-- :func:`state_db_groups.has_shared_group`). ``migrate_node_groups_split``
+-- (also in state_db_groups) idempotently backfills any non-reserved
+-- legacy lineage_group value as a single explicit row so the join
+-- table is byte-equivalent to the pre-Theme-15 ACL view for nodes
+-- that only ever needed one group.
+--
+-- The (node_name, group_name) pair is the natural key — duplicate
+-- (node, group) pairs are nonsense, and the legacy code reads "Alice
+-- is in ops" as a single fact regardless of how the row was authored.
+-- ``created_at`` is REAL (UNIX epoch seconds) for consistency with the
+-- rest of state.db (lineage.created_at, comms_grants.created_at,
+-- etc.) — the migration uses ``node_comms_policy.updated_at`` as the
+-- backfill timestamp.
+CREATE TABLE IF NOT EXISTS comms_node_groups (
+    node_name   TEXT NOT NULL,
+    group_name  TEXT NOT NULL,
+    created_at  REAL NOT NULL,
+    PRIMARY KEY (node_name, group_name)
+);
+-- Group-name index speeds up "who else is in this group" lookups,
+-- which is the hot path for ``has_shared_group`` and the eventual
+-- group-broadcast features.
+CREATE INDEX IF NOT EXISTS idx_comms_node_groups_group
+    ON comms_node_groups(group_name);
 """
 
 # Tables exposed by `sac db query --table=<t>`. Whitelisted so users
@@ -342,6 +372,7 @@ KNOWN_TABLES = (
     "comms_grants",
     "comms_nodes",
     "node_comms_policy",
+    "comms_node_groups",
 )
 
 
