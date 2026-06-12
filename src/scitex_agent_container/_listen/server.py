@@ -470,7 +470,15 @@ def create_app(*, token: str, local_host: str | None = None) -> Starlette:
         Route("/v1/acl/grant", acl_grant, methods=["POST"]),
     ]
     routes += _v1_agent_routes("/agents")
-    app = Starlette(routes=routes)
+    # Q4 (lead a2a c8b64f298b8a...): on listen startup, persist every
+    # self-peer discovered via the cwd-walk into ``comms_nodes`` so the
+    # federated graph survives a listen restart / host reboot. The
+    # listen-side analogue of ``_mcp._channel_self_register``'s
+    # channel-path UPSERT. Idempotent (UPSERT keyed on name), best-
+    # effort (every failure logs and continues — startup MUST proceed).
+    from ._self_peer_persistence import persist_self_peers_on_listen_startup
+
+    app = Starlette(routes=routes, on_startup=[persist_self_peers_on_listen_startup])
     # Per-app shared state for the WI-3 inbox surface.
     app.state.inbox = Broker()
     app.state.nodes = NodeRegistry()
