@@ -40,3 +40,11 @@ logs/
 # (CI in docs.yml strips this before committing _sphinx_html/)
 _sphinx_html/.doctrees/
 .worktrees/
+.claude-pending-parked-*/
+worktrees/
+.worktrees-new/
+.tmp-audit/
+.tmp-adr/
+.tmp-tui-driver/
+.promote-*.yaml
+.promote-*.sh
