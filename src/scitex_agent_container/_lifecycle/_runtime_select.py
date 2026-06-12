@@ -3,28 +3,67 @@
 Extracted from the former monolithic ``lifecycle.py`` (split for the
 512-line module limit). ``lifecycle`` re-exports both names so existing
 ``lc._get_runtime`` / ``lc._fallback_workdir`` call sites are unchanged.
+
+``spec.runtime`` semantics — operator directive 12870, lead a2a
+``b58dd5d3b4d640d2a7f31f16c710e839``: the field was repurposed from
+container-engine selector to LAUNCH-MODE selector. Accepted values
+(validated in ``config/_validation.py:_VALID_RUNTIMES``):
+
+  * ``claude-agent-sdk`` — headless SDK runner (the long-standing
+    default; what every existing spec gets at dispatch).
+  * ``tui``              — interactive tmux-backed Claude TUI session
+    (the June-15 SDK-pool-cutoff pivot).
+  * ``apptainer`` / ``""`` — back-compat: the pre-2026-06-13 container-
+    engine values. Mapped to ``claude-agent-sdk`` here with a
+    deprecation log so the existing spec corpus stays valid through
+    the migration window without an op-day mass-rewrite.
 """
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from ..config import AgentConfig
 
+log = logging.getLogger(__name__)
+
 
 def _get_runtime(config: AgentConfig):
-    """Return the SDK runtime for the config.
+    """Return the runtime adapter for the config's launch mode.
 
-    Sac is apptainer-only since the 2026-05-13 ripout. Empty / unset
-    ``spec.runtime`` is treated as ``"apptainer"``.
+    Branches on ``config.runtime`` (the launch-mode selector).
+    Back-compat: an empty string or the legacy ``"apptainer"`` value
+    (the old container-engine selector) is mapped to
+    ``"claude-agent-sdk"`` with a one-line deprecation log.
     """
-    if config.runtime in ("", "apptainer"):
+    runtime = config.runtime or ""
+    if runtime in ("", "apptainer"):
+        if runtime == "apptainer":
+            log.warning(
+                "spec.runtime='apptainer' is deprecated — the field was "
+                "repurposed from container-engine to launch-mode on "
+                "2026-06-13 (operator directive 12870). Treating as "
+                "runtime='claude-agent-sdk' (the current default). "
+                "Update %r's spec to runtime: claude-agent-sdk to "
+                "silence this warning.",
+                getattr(config, "name", "<unknown>"),
+            )
         from ..runtimes.claude_session import ClaudeSessionRuntime
 
         return ClaudeSessionRuntime()
+    if runtime == "claude-agent-sdk":
+        from ..runtimes.claude_session import ClaudeSessionRuntime
+
+        return ClaudeSessionRuntime()
+    if runtime == "tui":
+        from ..runtimes.tui_session import TuiSessionRuntime
+
+        return TuiSessionRuntime()
     raise ValueError(
-        f"Unsupported runtime: {config.runtime!r}. "
-        "Sac is apptainer-only since 2026-05-13."
+        f"Unsupported spec.runtime: {runtime!r}. "
+        "Accepted values: 'claude-agent-sdk', 'tui' "
+        "(plus back-compat 'apptainer' / '')."
     )
 
 

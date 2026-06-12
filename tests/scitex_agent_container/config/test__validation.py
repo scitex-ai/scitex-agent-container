@@ -202,6 +202,50 @@ def test_validate_raw_rejects_unknown_runtime_value():
 
 
 # ---------------------------------------------------------------------------
+# spec.runtime — repurposed to launch-mode (operator directive 12870)
+# ---------------------------------------------------------------------------
+
+
+def test_validate_raw_accepts_runtime_claude_agent_sdk():
+    # Arrange
+    raw = {
+        "apiVersion": "scitex-agent-container/v3",
+        "kind": "Agent",
+        "spec": {"runtime": "claude-agent-sdk"},
+    }
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert not [e for e in errors if "spec.runtime" in e]
+
+
+def test_validate_raw_accepts_runtime_tui():
+    # Arrange
+    raw = {
+        "apiVersion": "scitex-agent-container/v3",
+        "kind": "Agent",
+        "spec": {"runtime": "tui"},
+    }
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert not [e for e in errors if "spec.runtime" in e]
+
+
+def test_validate_raw_accepts_runtime_apptainer_for_backcompat():
+    # Arrange — pre-2026-06-13 corpus must keep validating.
+    raw = {
+        "apiVersion": "scitex-agent-container/v3",
+        "kind": "Agent",
+        "spec": {"runtime": "apptainer"},
+    }
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert not [e for e in errors if "spec.runtime" in e]
+
+
+# ---------------------------------------------------------------------------
 # F-CS3 — autonomous spec block (phase 1: schema only)
 # ---------------------------------------------------------------------------
 
