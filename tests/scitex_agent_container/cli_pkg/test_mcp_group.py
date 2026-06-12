@@ -91,7 +91,7 @@ def _use_run_server_import_error() -> Iterator[None]:
 def _use_get_server(server: object) -> Iterator[object]:
     """Swap ``_load_get_server`` to return a loader yielding ``server``."""
     saved = mg._load_get_server
-    mg._load_get_server = lambda: (lambda: server)
+    mg._load_get_server = lambda: lambda: server
     try:
         yield server
     finally:
@@ -367,7 +367,7 @@ class _FakeChannelMain:
     def __init__(self) -> None:
         self.calls: list[dict] = []
 
-    def __call__(self, *, name: str, listen_url=None, turn_url=None) -> None:
+    def __call__(self, *, name=None, listen_url=None, turn_url=None) -> None:
         self.calls.append(
             {"name": name, "listen_url": listen_url, "turn_url": turn_url}
         )
@@ -409,6 +409,54 @@ def test_channel_turn_url_defaults_to_none():
         result = runner.invoke(mcp, ["channel", "--name", "lead"])
     # Assert
     assert result.exit_code == 0 and fake.calls[0]["turn_url"] is None
+
+
+# ---------------------------------------------------------------------------
+# channel — cwd-walk self-peer discovery fallback (TG 12706, #356 follow-up)
+# ---------------------------------------------------------------------------
+
+
+class _RecordingChannelMain:
+    """Plain-def recording callable (NOT MagicMock).
+
+    Accepts ``name`` as positional OR keyword to match the
+    CLI invocation shape, and records each call as a dict so the
+    test asserts against the exact arguments forwarded.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def __call__(self, name=None, listen_url=None, turn_url=None) -> None:
+        self.calls.append(
+            {"name": name, "listen_url": listen_url, "turn_url": turn_url}
+        )
+
+
+def test_channel_runs_without_name_when_self_spec_present_in_cwd():
+    # Arrange: drop a self spec under an isolated cwd and invoke `sac mcp
+    # channel` with NO --name flag. The CLI should accept the missing
+    # flag (optional now) and forward name=None down to channel.main —
+    # discovery happens inside main, not in the CLI.
+    fake = _RecordingChannelMain()
+    runner = CliRunner()
+    saved = mg._load_channel_main
+    mg._load_channel_main = lambda: fake
+    try:
+        with runner.isolated_filesystem():
+            from pathlib import Path
+
+            spec = Path(".scitex/agent-container/agents/self/spec.yaml")
+            spec.parent.mkdir(parents=True, exist_ok=True)
+            spec.write_text("listen_url: http://127.0.0.1:7878\n")
+            # Act
+            result = runner.invoke(mcp, ["channel"])
+    finally:
+        mg._load_channel_main = saved
+    # Assert: CLI accepted the missing flag and forwarded name=None.
+    assert (
+        result.exit_code == 0 and len(fake.calls) == 1 and fake.calls[0]["name"] is None
+    )
 
 
 # ---------------------------------------------------------------------------
