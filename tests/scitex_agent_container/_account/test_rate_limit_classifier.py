@@ -24,6 +24,7 @@ from __future__ import annotations
 import dataclasses
 
 import pytest
+
 from scitex_agent_container._account.rate_limit_classifier import (
     AccountUsageSnapshot,
     Mode,
@@ -89,9 +90,14 @@ def test_account_usage_snapshot_defaults_to_zero_7d():
 def test_account_usage_snapshot_is_frozen_against_mutation():
     # Arrange
     snapshot = AccountUsageSnapshot(used_pct_5h=10.0, used_pct_7d=20.0)
-    # Act / Assert
-    with pytest.raises(dataclasses.FrozenInstanceError):
+    raised: BaseException | None = None
+    # Act: attempt a frozen-dataclass mutation.
+    try:
         snapshot.used_pct_5h = 99.0  # type: ignore[misc]
+    except dataclasses.FrozenInstanceError as exc:  # stx-allow: test-capture (reason: STX-TQ002 splits Act from Assert; frozen mutation is the Act, capturing the exc lets the Assert check the precise type.)
+        raised = exc
+    # Assert
+    assert isinstance(raised, dataclasses.FrozenInstanceError)
 
 
 # ---------------------------------------------------------------------------
