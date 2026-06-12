@@ -34,25 +34,21 @@ def _get_runtime(config: AgentConfig):
 
     Branches on ``config.runtime`` (the launch-mode selector).
     Back-compat: an empty string or the legacy ``"apptainer"`` value
-    (the old container-engine selector) is mapped to
-    ``"claude-agent-sdk"`` with a one-line deprecation log.
+    (the old container-engine selector) maps to ``"claude-agent-sdk"``
+    SILENTLY. The deprecation log for ``runtime='apptainer'`` fires
+    at the actual start path
+    (:func:`_lifecycle._start.start_agent`) — not here, because
+    every status / list / discovery walk also goes through
+    :func:`_get_runtime` and a per-call warning would (a) spam the
+    operator's logs and (b) contaminate CLI output streams
+    (CliRunner-captured commands like ``sac agents status --json``
+    end up with the warning text in ``result.output``).
+    Lead a2a ``f468a6d2e11443598103ed1672e2e40b``: emit the
+    deprecation when the runtime is actually USED to start
+    something, not on every read.
     """
     runtime = config.runtime or ""
-    if runtime in ("", "apptainer"):
-        if runtime == "apptainer":
-            log.warning(
-                "spec.runtime='apptainer' is deprecated — the field was "
-                "repurposed from container-engine to launch-mode on "
-                "2026-06-13 (operator directive 12870). Treating as "
-                "runtime='claude-agent-sdk' (the current default). "
-                "Update %r's spec to runtime: claude-agent-sdk to "
-                "silence this warning.",
-                getattr(config, "name", "<unknown>"),
-            )
-        from ..runtimes.claude_session import ClaudeSessionRuntime
-
-        return ClaudeSessionRuntime()
-    if runtime == "claude-agent-sdk":
+    if runtime in ("", "apptainer", "claude-agent-sdk"):
         from ..runtimes.claude_session import ClaudeSessionRuntime
 
         return ClaudeSessionRuntime()
@@ -61,9 +57,34 @@ def _get_runtime(config: AgentConfig):
 
         return TuiSessionRuntime()
     raise ValueError(
-        f"Unsupported spec.runtime: {runtime!r}. "
-        "Accepted values: 'claude-agent-sdk', 'tui' "
-        "(plus back-compat 'apptainer' / '')."
+        f"Unsupported runtime: {runtime!r}. "
+        "spec.runtime must be 'claude-agent-sdk' (default), 'tui' "
+        "(June-15 SDK-pool-cutoff pivot), or the back-compat "
+        "'apptainer' / '' (mapped to 'claude-agent-sdk' at dispatch)."
+    )
+
+
+def warn_if_legacy_apptainer_runtime(config: AgentConfig) -> None:
+    """Emit the back-compat deprecation log if ``config.runtime`` is
+    the legacy container-engine value.
+
+    Called from :func:`_lifecycle._start.start_agent` (the actual
+    start path) so the deprecation fires on a real launch, not on
+    every status / list walk that also goes through
+    :func:`_get_runtime`. NEVER raises — the deprecation is
+    informational; failing to log it must not block a start.
+    """
+    runtime = getattr(config, "runtime", "") or ""
+    if runtime != "apptainer":
+        return
+    log.warning(
+        "spec.runtime='apptainer' is deprecated — the field was "
+        "repurposed from container-engine to launch-mode on "
+        "2026-06-13 (operator directive 12870). Treating as "
+        "runtime='claude-agent-sdk' (the current default). "
+        "Update %r's spec to runtime: claude-agent-sdk to silence "
+        "this warning.",
+        getattr(config, "name", "<unknown>"),
     )
 
 

@@ -19,7 +19,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from scitex_agent_container._lifecycle._runtime_select import _get_runtime
+from scitex_agent_container._lifecycle._runtime_select import (
+    _get_runtime,
+    warn_if_legacy_apptainer_runtime,
+)
 from scitex_agent_container.runtimes.claude_session import ClaudeSessionRuntime
 from scitex_agent_container.runtimes.tui_session import TuiSessionRuntime
 
@@ -65,22 +68,21 @@ def test_get_runtime_returns_tui_session_for_runtime_tui():
 # ---------------------------------------------------------------------------
 
 
-def test_get_runtime_maps_apptainer_to_claude_session(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+def test_get_runtime_maps_apptainer_to_claude_session() -> None:
     # Arrange
     config = SimpleNamespace(name="alpha", runtime="apptainer")
-    caplog.set_level(logging.WARNING)
     # Act
     rt = _get_runtime(config)
     # Assert
     assert isinstance(rt, ClaudeSessionRuntime)
 
 
-def test_get_runtime_apptainer_emits_deprecation_warning(
+def test_get_runtime_does_not_emit_deprecation_warning(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    # Arrange
+    # Arrange — the deprecation log lives on the START path now (lead a2a
+    # f468a6d2, fix-pattern #364 v3) so status / list / discovery walks
+    # that hit ``_get_runtime`` don't contaminate CLI output streams.
     config = SimpleNamespace(name="alpha", runtime="apptainer")
     caplog.set_level(logging.WARNING)
     # Act
@@ -91,17 +93,34 @@ def test_get_runtime_apptainer_emits_deprecation_warning(
         for r in caplog.records
         if r.levelno == logging.WARNING and "deprecated" in r.getMessage()
     ]
+    assert deprecation_warnings == []
+
+
+def test_warn_if_legacy_apptainer_runtime_fires_for_apptainer(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Arrange
+    config = SimpleNamespace(name="alpha", runtime="apptainer")
+    caplog.set_level(logging.WARNING)
+    # Act
+    warn_if_legacy_apptainer_runtime(config)
+    # Assert
+    deprecation_warnings = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and "deprecated" in r.getMessage()
+    ]
     assert len(deprecation_warnings) >= 1
 
 
-def test_get_runtime_apptainer_warning_names_the_agent(
+def test_warn_if_legacy_apptainer_runtime_names_the_agent(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     # Arrange
     config = SimpleNamespace(name="my-research-agent", runtime="apptainer")
     caplog.set_level(logging.WARNING)
     # Act
-    _get_runtime(config)
+    warn_if_legacy_apptainer_runtime(config)
     # Assert
     deprecation_messages = " ".join(
         r.getMessage() for r in caplog.records if r.levelno == logging.WARNING
@@ -109,14 +128,31 @@ def test_get_runtime_apptainer_warning_names_the_agent(
     assert "my-research-agent" in deprecation_messages
 
 
-def test_get_runtime_empty_runtime_emits_no_deprecation_warning(
+def test_warn_if_legacy_apptainer_runtime_silent_for_empty_runtime(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     # Arrange — empty is the historical default, not a deprecation case.
     config = SimpleNamespace(name="alpha", runtime="")
     caplog.set_level(logging.WARNING)
     # Act
-    _get_runtime(config)
+    warn_if_legacy_apptainer_runtime(config)
+    # Assert
+    deprecation_warnings = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and "deprecated" in r.getMessage()
+    ]
+    assert deprecation_warnings == []
+
+
+def test_warn_if_legacy_apptainer_runtime_silent_for_claude_agent_sdk(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Arrange
+    config = SimpleNamespace(name="alpha", runtime="claude-agent-sdk")
+    caplog.set_level(logging.WARNING)
+    # Act
+    warn_if_legacy_apptainer_runtime(config)
     # Assert
     deprecation_warnings = [
         r
