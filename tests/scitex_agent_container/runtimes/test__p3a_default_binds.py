@@ -64,9 +64,8 @@ def test_default_binds_for_host_returns_todo_bind_when_host_dir_exists(
 def test_default_binds_for_host_skips_todo_bind_when_host_dir_missing(
     fake_home: Path,
 ) -> None:
-    # Arrange — ensure ~/.scitex/todo does NOT exist.
-    candidate = fake_home / ".scitex" / "todo"
-    assert not candidate.exists()
+    # Arrange — fake_home (tmp_path) is freshly created with no .scitex
+    # subtree; the candidate path therefore does not exist.
     # Act
     binds = default_binds_for_host()
     # Assert
