@@ -38,9 +38,18 @@ from ._provider_validation import provider_is_active, validate_provider
 _VALID_MODEL_RE = re.compile(
     r"""
     ^(?:
-        (?:opus|sonnet|haiku|inherit|default)
+        (?:opus|sonnet|haiku|fable|inherit|default)
         |
-        claude-(?:opus|sonnet|haiku)-\d+-\d+(?:-[a-z0-9]+)*
+        # opus/sonnet/haiku ship as ``family-N-M`` (e.g. ``claude-opus-4-7``).
+        # Fable is published as a single-digit family version
+        # (``claude-fable-5``); see lead-confirmed 2026-06-12 (msg
+        # 6172e53d ruling 1). The ``[1m]`` context-suffix is CLI-native
+        # (proven empirically — msg 6f7e2f56) and bolted on below.
+        claude-(?:
+            (?:opus|sonnet|haiku)-\d+-\d+
+            |
+            fable-\d+
+        )(?:-[a-z0-9]+)*
     )
     (?:\[[a-zA-Z0-9_]+\])?
     $
