@@ -497,6 +497,13 @@
 <span class="c1"># else is rejected at parse time.</span>
 <span class="n">_VALID_KINDS</span> <span class="o">=</span> <span class="nb">frozenset</span><span class="p">({</span><span class="s2">&quot;Agent&quot;</span><span class="p">,</span> <span class="s2">&quot;AgentProxy&quot;</span><span class="p">})</span>
 
+<span class="c1"># spec.runtime — LAUNCH-MODE selector (operator directive 12870, lead</span>
+<span class="c1"># a2a b58dd5d3). Repurposed from the legacy container-engine selector</span>
+<span class="c1"># (degenerate since sac became apptainer-only on 2026-05-13). ``&quot;&quot;``</span>
+<span class="c1"># and ``&quot;apptainer&quot;`` are accepted as back-compat and mapped to</span>
+<span class="c1"># ``&quot;claude-agent-sdk&quot;`` at dispatch — see ``_lifecycle/_runtime_select``.</span>
+<span class="n">_VALID_RUNTIMES</span> <span class="o">=</span> <span class="nb">frozenset</span><span class="p">({</span><span class="s2">&quot;claude-agent-sdk&quot;</span><span class="p">,</span> <span class="s2">&quot;tui&quot;</span><span class="p">,</span> <span class="s2">&quot;apptainer&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">})</span>
+
 
 <span class="n">_SDK_IMAGE</span> <span class="o">=</span> <span class="s2">&quot;scitex-agent-container:scitex&quot;</span>
 
@@ -652,15 +659,20 @@
                 <span class="sa">f</span><span class="s2">&quot;known keys: </span><span class="si">{</span><span class="nb">sorted</span><span class="p">(</span><span class="n">_KNOWN_SPEC_KEYS</span><span class="p">)</span><span class="si">}</span><span class="s2">.&quot;</span>
             <span class="p">)</span>
 
-        <span class="c1"># spec.runtime — sac is apptainer-only since the docker/podman</span>
-        <span class="c1"># ripout (2026-05-13). Empty/unset is accepted and defaults to</span>
-        <span class="c1"># apptainer at dispatch.</span>
+        <span class="c1"># spec.runtime — LAUNCH-MODE selector (operator directive 12870,</span>
+        <span class="c1"># lead a2a b58dd5d3). Repurposed from the legacy container-engine</span>
+        <span class="c1"># selector (degenerate since sac became apptainer-only on</span>
+        <span class="c1"># 2026-05-13). See _VALID_RUNTIMES + _runtime_select for the</span>
+        <span class="c1"># accepted values + back-compat mapping.</span>
         <span class="n">runtime</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;runtime&quot;</span><span class="p">)</span>
-        <span class="k">if</span> <span class="n">runtime</span> <span class="ow">and</span> <span class="n">runtime</span> <span class="o">!=</span> <span class="s2">&quot;apptainer&quot;</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">runtime</span> <span class="ow">and</span> <span class="n">runtime</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">_VALID_RUNTIMES</span><span class="p">:</span>
             <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                <span class="sa">f</span><span class="s2">&quot;spec.runtime must be &#39;apptainer&#39; (got &#39;</span><span class="si">{</span><span class="n">runtime</span><span class="si">}</span><span class="s2">&#39;). &quot;</span>
-                <span class="s2">&quot;Sac is apptainer-only since 2026-05-13; docker / podman &quot;</span>
-                <span class="s2">&quot;support was removed for simplicity.&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;spec.runtime must be one of </span><span class="si">{</span><span class="nb">sorted</span><span class="p">(</span><span class="n">_VALID_RUNTIMES</span><span class="p">)</span><span class="si">}</span><span class="s2"> &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;(got &#39;</span><span class="si">{</span><span class="n">runtime</span><span class="si">}</span><span class="s2">&#39;). &#39;claude-agent-sdk&#39; (default) =  &quot;</span>
+                <span class="s2">&quot;headless SDK runner; &#39;tui&#39; = tmux-backed interactive &quot;</span>
+                <span class="s2">&quot;Claude TUI; &#39;apptainer&#39; / &#39;&#39; = back-compat for the &quot;</span>
+                <span class="s2">&quot;pre-2026-06-13 container-engine field, mapped to &quot;</span>
+                <span class="s2">&quot;&#39;claude-agent-sdk&#39; at dispatch.&quot;</span>
             <span class="p">)</span>
 
         <span class="c1"># spec.image — moved to spec.apptainer.image in v3 (handled by the</span>
