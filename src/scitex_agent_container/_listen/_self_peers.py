@@ -55,8 +55,7 @@ Public surface:
 
 Out of scope (deferred follow-ups):
 
-* Pull-side MCP registration (TG 12633) — TODO: shipped in PR
-  #<set-after-open> via
+* Pull-side MCP registration (TG 12633) — shipped in PR #359 via
   ``src/scitex_agent_container/_mcp/_channel_self_peer_discovery.py``.
   The listening node's sac MCP CLIENT now surfaces itself via the
   same generic cwd-walk shape so a peer's ``a2a_peers`` listing
