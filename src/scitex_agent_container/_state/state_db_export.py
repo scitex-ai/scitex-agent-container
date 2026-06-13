@@ -79,6 +79,9 @@ def _table_filter_clauses(
         # the row is upserted on every agent_start with no historical
         # tail (latest write wins).
         "node_comms_policy": ("WHERE updated_at >= ?", (since,)),
+        # acl_deny_notify_log — rate-limit ledger keyed on (sender, target);
+        # the ts-equivalent column is ``last_notified_at`` (REAL).
+        "acl_deny_notify_log": ("WHERE last_notified_at >= ?", (since,)),
     }
     return {t: explicit.get(t, ("WHERE ts >= ?", (since,))) for t in known_tables}
 
